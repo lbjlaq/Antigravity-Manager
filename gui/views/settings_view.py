@@ -5,14 +5,16 @@ import platform
 from pathlib import Path
 from theme import get_palette
 from icons import AppIcons
+from localization import t, get_language, get_language_options
 
 RADIUS_CARD = 12
 PADDING_PAGE = 20
 
 class SettingsView(ft.Container):
-    def __init__(self, page: ft.Page):
+    def __init__(self, page: ft.Page, on_language_change=None):
         super().__init__()
         self.page = page
+        self.on_language_change = on_language_change
         self.expand = True
         self.padding = PADDING_PAGE
         
@@ -25,6 +27,16 @@ class SettingsView(ft.Container):
             spacing=5,
             padding=10,
             auto_scroll=True,
+        )
+
+        self.language_dropdown = ft.Dropdown(
+            value=get_language(),
+            options=[
+                ft.dropdown.Option(opt["code"], t(f"language.{opt['code']}"))
+                for opt in get_language_options()
+            ],
+            width=180,
+            on_change=self.handle_language_change,
         )
         
         # Redirect stdout to capture logs
@@ -46,10 +58,23 @@ class SettingsView(ft.Container):
         self.build_ui() # Rebuild UI to update colors
         self.update()
 
+    def update_locale(self):
+        self.refresh_language_dropdown()
+        self.build_ui()
+        self.update()
+
+    def refresh_language_dropdown(self):
+        current = self.language_dropdown.value or get_language()
+        self.language_dropdown.options = [
+            ft.dropdown.Option(opt["code"], t(f"language.{opt['code']}"))
+            for opt in get_language_options()
+        ]
+        self.language_dropdown.value = current
+
     def build_ui(self):
         self.content = ft.Column(
             [
-                ft.Text("设置", size=28, weight=ft.FontWeight.BOLD, color=self.palette.text_main),
+                ft.Text(t("settings.title"), size=28, weight=ft.FontWeight.BOLD, color=self.palette.text_main),
                 ft.Container(height=20),
                 
                 # Top Row: Data Management + About (side by side)
@@ -59,7 +84,7 @@ class SettingsView(ft.Container):
                         ft.Container(
                             content=ft.Column(
                                 [
-                                    ft.Text("数据管理", size=13, weight=ft.FontWeight.BOLD, color=self.palette.text_grey),
+                                    ft.Text(t("settings.data"), size=13, weight=ft.FontWeight.BOLD, color=self.palette.text_grey),
                                     ft.Container(height=10),
                                     ft.Container(
                                         content=ft.Column(
@@ -74,8 +99,8 @@ class SettingsView(ft.Container):
                                                         ),
                                                         ft.Column(
                                                             [
-                                                                ft.Text("本地数据目录", size=15, weight=ft.FontWeight.W_600, color=self.palette.text_main),
-                                                                ft.Text("查看备份文件和数据库", size=12, color=self.palette.text_grey),
+                                                                ft.Text(t("settings.local_dir"), size=15, weight=ft.FontWeight.W_600, color=self.palette.text_main),
+                                                                ft.Text(t("settings.view_backups"), size=12, color=self.palette.text_grey),
                                                             ],
                                                             spacing=2,
                                                             alignment=ft.MainAxisAlignment.CENTER
@@ -84,8 +109,17 @@ class SettingsView(ft.Container):
                                                     spacing=15
                                                 ),
                                                 ft.Container(height=20),
+                                                ft.Row(
+                                                    [
+                                                        ft.Text(t("settings.language"), size=13, color=self.palette.text_main, weight=ft.FontWeight.W_600),
+                                                        self.language_dropdown,
+                                                    ],
+                                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                                ),
+                                                ft.Container(height=12),
                                                 ft.Container(
-                                                    content=ft.Text("打开文件夹", size=13, color=self.palette.primary, weight=ft.FontWeight.BOLD),
+                                                    content=ft.Text(t("settings.open_folder"), size=13, color=self.palette.primary, weight=ft.FontWeight.BOLD),
                                                     padding=ft.padding.symmetric(horizontal=20, vertical=10),
                                                     border_radius=8,
                                                     bgcolor=self.palette.bg_light_blue,
@@ -99,7 +133,7 @@ class SettingsView(ft.Container):
                                         padding=20,
                                         bgcolor=self.palette.bg_card,
                                         border_radius=RADIUS_CARD,
-                                        height=170,
+                                        height=210,
                                         shadow=ft.BoxShadow(
                                             spread_radius=0,
                                             blur_radius=10,
@@ -117,7 +151,7 @@ class SettingsView(ft.Container):
                         ft.Container(
                             content=ft.Column(
                                 [
-                                    ft.Text("关于", size=13, weight=ft.FontWeight.BOLD, color=self.palette.text_grey),
+                                    ft.Text(t("settings.about"), size=13, weight=ft.FontWeight.BOLD, color=self.palette.text_grey),
                                     ft.Container(height=10),
                                     ft.Container(
                                         content=ft.Column(
@@ -125,14 +159,14 @@ class SettingsView(ft.Container):
                                                 ft.Row(
                                                     [
                                                         ft.Icon(ft.Icons.INFO_OUTLINE, size=20, color=self.palette.primary),
-                                                        ft.Text("Antigravity Manager", size=15, weight=ft.FontWeight.BOLD, color=self.palette.text_main),
+                                                        ft.Text(t("app.fullname"), size=15, weight=ft.FontWeight.BOLD, color=self.palette.text_main),
                                                     ],
                                                     spacing=10
                                                 ),
                                                 ft.Container(height=15),
                                                 ft.Row(
                                                     [
-                                                        ft.Text("作者：", size=13, color=self.palette.text_grey, weight=ft.FontWeight.W_500),
+                                                        ft.Text(t("settings.author"), size=13, color=self.palette.text_grey, weight=ft.FontWeight.W_500),
                                                         ft.Text("Ctrler", size=13, color=self.palette.text_main),
                                                     ],
                                                     spacing=5
@@ -140,7 +174,7 @@ class SettingsView(ft.Container):
                                                 ft.Container(height=8),
                                                 ft.Row(
                                                     [
-                                                        ft.Text("公众号：", size=13, color=self.palette.text_grey, weight=ft.FontWeight.W_500),
+                                                        ft.Text(t("settings.wechat"), size=13, color=self.palette.text_grey, weight=ft.FontWeight.W_500),
                                                         ft.Text("Ctrler", size=13, color=self.palette.text_main),
                                                     ],
                                                     spacing=5
@@ -172,7 +206,7 @@ class SettingsView(ft.Container):
                 ft.Container(height=20),
                 
                 # Logs Section (takes up remaining space)
-                ft.Text("系统日志", size=13, weight=ft.FontWeight.BOLD, color=self.palette.text_grey),
+                ft.Text(t("settings.logs"), size=13, weight=ft.FontWeight.BOLD, color=self.palette.text_grey),
                 ft.Container(height=10),
                 ft.Container(
                     content=self.log_view,
@@ -194,7 +228,7 @@ class SettingsView(ft.Container):
     def open_data_folder(self, e):
         path_to_open = os.path.expanduser("~/.antigravity-agent")
         if not os.path.exists(path_to_open):
-             path_to_open = os.getcwd()
+            path_to_open = os.getcwd()
         
         path_to_open = os.path.normpath(path_to_open)
              
@@ -207,6 +241,11 @@ class SettingsView(ft.Container):
                 print(f"Failed to open folder: {e}")
         else:
             os.system(f"xdg-open '{path_to_open}'")
+
+    def handle_language_change(self, e):
+        lang = e.control.value
+        if lang and self.on_language_change:
+            self.on_language_change(lang)
 
     class LogRedirector:
         def __init__(self, log_view):

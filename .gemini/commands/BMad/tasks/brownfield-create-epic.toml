@@ -1,0 +1,6 @@
+description = "Executes the BMad Task: Brownfield Create Epic"
+prompt = """
+CRITICAL: You are to execute the BMad Task defined below.
+
+@{.bmad-core/tasks/brownfield-create-epic.md}
+"""

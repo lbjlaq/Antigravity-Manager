@@ -9,6 +9,18 @@ from datetime import datetime
 # 日志工具
 # -------------------------------------------------------------------------
 
+
+def _t(key, **kwargs):
+    try:
+        from localization import t
+
+        return t(key, **kwargs)
+    except Exception:
+        try:
+            return key.format(**kwargs)
+        except Exception:
+            return key
+
 def get_log_file_path():
     """获取日志文件路径"""
     try:
@@ -156,10 +168,10 @@ def open_uri(uri):
             # Linux: 使用 xdg-open
             subprocess.Popen(["xdg-open", uri])
         else:
-            error(f"不支持的操作系统: {system}")
+            error(_t("log.uri.unsupported", platform=system))
             return False
         
         return True
     except Exception as e:
-        error(f"打开 URI 失败: {e}")
+        error(_t("log.uri.fail", error=e))
         return False

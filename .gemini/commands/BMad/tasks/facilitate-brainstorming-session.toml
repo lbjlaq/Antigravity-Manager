@@ -1,0 +1,6 @@
+description = "Executes the BMad Task: Facilitate Brainstorming Session"
+prompt = """
+CRITICAL: You are to execute the BMad Task defined below.
+
+@{.bmad-core/tasks/facilitate-brainstorming-session.md}
+"""

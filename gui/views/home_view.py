@@ -7,6 +7,7 @@ from account_manager import add_account_snapshot, list_accounts_data, switch_acc
 from db_manager import get_current_account_info
 from theme import get_palette
 from icons import AppIcons
+from localization import t
 
 RADIUS_CARD = 12
 PADDING_PAGE = 20
@@ -27,7 +28,7 @@ class HomeView(ft.Container):
             content=ft.Row(
                 [
                     ft.Icon(AppIcons.info, size=16, color=self.palette.primary),
-                    ft.Text("正在检测状态...", size=13, weight=ft.FontWeight.W_500, color=self.palette.primary)
+                    ft.Text(t("status.checking"), size=13, weight=ft.FontWeight.W_500, color=self.palette.primary)
                 ],
                 alignment=ft.MainAxisAlignment.CENTER,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER
@@ -40,9 +41,9 @@ class HomeView(ft.Container):
         )
         
         # List Header Elements
-        self.list_title = ft.Text("账号列表", size=18, weight=ft.FontWeight.BOLD, color=self.palette.text_main)
+        self.list_title = ft.Text(t("list.title"), size=18, weight=ft.FontWeight.BOLD, color=self.palette.text_main)
         self.stats_badge = ft.Container(
-            content=ft.Text("0", size=12, color=self.palette.primary, weight=ft.FontWeight.BOLD),
+            content=ft.Text(t("list.count", count=0), size=12, color=self.palette.primary, weight=ft.FontWeight.BOLD),
             bgcolor=self.palette.bg_light_blue,
             padding=ft.padding.symmetric(horizontal=8, vertical=2),
             border_radius=10,
@@ -51,6 +52,7 @@ class HomeView(ft.Container):
         # Accounts list
         self.accounts_list = ft.Column(spacing=12, scroll=ft.ScrollMode.HIDDEN)
         self.current_email = None
+        self._pending_locale_refresh = False
         
         # Start status monitoring
         self.running = True
@@ -59,6 +61,9 @@ class HomeView(ft.Container):
         self.running = True
         self.build_ui()
         self.refresh_data()
+        if self._pending_locale_refresh:
+            self._pending_locale_refresh = False
+            self.update_locale()
         self.monitor_thread = threading.Thread(target=self.monitor_status, daemon=True)
         self.monitor_thread.start()
         
@@ -112,7 +117,7 @@ class HomeView(ft.Container):
                             content=ft.Row(
                                 [
                                     ft.Icon(AppIcons.add, size=14, color="#FFFFFF"), # Always white on primary
-                                    ft.Text("备份当前", size=13, color="#FFFFFF", weight=ft.FontWeight.W_600)
+                                    ft.Text(t("backup.button"), size=13, color="#FFFFFF", weight=ft.FontWeight.W_600)
                                 ],
                                 spacing=4,
                                 alignment=ft.MainAxisAlignment.CENTER
@@ -144,6 +149,8 @@ class HomeView(ft.Container):
         )
 
     def refresh_data(self):
+        if not self.page:
+            return
         # Refresh current email
         info = get_current_account_info()
         if info and "email" in info:
@@ -154,7 +161,7 @@ class HomeView(ft.Container):
         accounts = list_accounts_data()
         
         # Update stats badge
-        self.stats_badge.content.value = f"{len(accounts)} 个备份"
+        self.stats_badge.content.value = t("list.count", count=len(accounts))
         
         if not accounts:
             self.accounts_list.controls.append(
@@ -163,7 +170,7 @@ class HomeView(ft.Container):
                         [
                             ft.Icon(AppIcons.document, size=40, color=self.palette.text_grey),
                             ft.Container(height=10),
-                            ft.Text("暂无备份记录", color=self.palette.text_grey, size=14),
+                            ft.Text(t("list.empty"), color=self.palette.text_grey, size=14),
                         ],
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER
                     ),
@@ -181,7 +188,7 @@ class HomeView(ft.Container):
 
     def format_last_used(self, iso_str):
         if not iso_str:
-            return "从未"
+            return t("never")
         try:
             dt = datetime.fromisoformat(iso_str)
             return dt.strftime("%Y-%m-%d %H:%M")
@@ -220,7 +227,7 @@ class HomeView(ft.Container):
                                         [
                                             ft.Text(acc['name'], size=15, weight=ft.FontWeight.BOLD, color=self.palette.text_main),
                                             ft.Container(
-                                                content=ft.Text("当前", size=10, color=self.palette.primary, weight=ft.FontWeight.BOLD),
+                                                content=ft.Text(t("badge.current"), size=10, color=self.palette.primary, weight=ft.FontWeight.BOLD),
                                                 bgcolor=self.palette.bg_light_blue,
                                                 padding=ft.padding.symmetric(horizontal=6, vertical=2),
                                                 border_radius=4,
@@ -245,7 +252,7 @@ class HomeView(ft.Container):
                             ft.Column(
                                 [
                                     ft.Text(
-                                        "上次使用", 
+                                        t("last.used"), 
                                         size=10, 
                                         color=self.palette.text_grey,
                                         text_align=ft.TextAlign.RIGHT
@@ -266,12 +273,12 @@ class HomeView(ft.Container):
                                 icon_color=self.palette.text_grey,
                                 items=[
                                     ft.PopupMenuItem(
-                                        text="切换到此账号", 
+                                        text=t("menu.switch"), 
                                         icon=ft.Icons.SWAP_HORIZ,
                                         on_click=lambda e: self.switch_to_account(acc['id'])
                                     ),
                                     ft.PopupMenuItem(
-                                        text="删除备份", 
+                                        text=t("menu.delete"), 
                                         icon=ft.Icons.DELETE_OUTLINE,
                                         on_click=lambda e: self.delete_acc(acc['id'])
                                     ),
@@ -318,13 +325,13 @@ class HomeView(ft.Container):
                 self.status_bar.bgcolor = self.palette.bg_light_green
                 icon.name = AppIcons.check_circle
                 icon.color = "#34C759"
-                text.value = "Antigravity 正在后台运行中"
+                text.value = t("status.running")
                 text.color = "#34C759"
             else:
                 self.status_bar.bgcolor = self.palette.bg_light_red
                 icon.name = AppIcons.pause_circle
                 icon.color = "#FF3B30"
-                text.value = "Antigravity 服务已停止 (点击启动)"
+                text.value = t("status.stopped")
                 text.color = "#FF3B30"
             
             self.update()
@@ -338,11 +345,11 @@ class HomeView(ft.Container):
 
     def show_message(self, message, is_error=False):
         dlg = ft.CupertinoAlertDialog(
-            title=ft.Text("提示"),
+            title=ft.Text(t("dialog.info")),
             content=ft.Text(message),
             actions=[
                 ft.CupertinoDialogAction(
-                    "确定", 
+                    t("dialog.ok"), 
                     is_destructive_action=is_error,
                     on_click=lambda e: self.page.close(dlg)
                 )
@@ -354,7 +361,7 @@ class HomeView(ft.Container):
         if start_antigravity():
             pass
         else:
-            self.show_message("启动失败", True)
+            self.show_message(t("start.failed"), True)
 
     def stop_app(self, e):
         def close_task():
@@ -373,13 +380,14 @@ class HomeView(ft.Container):
                     pass
             except Exception as e:
                 import traceback
-                error_msg = f"备份异常: {str(e)}\n{traceback.format_exc()}"
+                error_msg = f"{t('backup.error', error=str(e))}\n{traceback.format_exc()}"
                 from utils import error
                 error(error_msg)
-                self.show_message(f"备份错误: {str(e)}", True)
+                self.show_message(t("backup.error", error=str(e)), True)
         threading.Thread(target=backup_task, daemon=True).start()
 
-    def show_confirm_dialog(self, title, content, on_confirm, confirm_text="确定", is_destructive=False):
+    def show_confirm_dialog(self, title, content, on_confirm, confirm_text=None, is_destructive=False):
+        confirm_text = confirm_text or t("dialog.ok")
         def handle_confirm(e):
             on_confirm()
             self.page.close(dlg)
@@ -389,7 +397,7 @@ class HomeView(ft.Container):
             content=ft.Text(content),
             actions=[
                 ft.CupertinoDialogAction(
-                    "取消", 
+                    t("dialog.cancel"), 
                     on_click=lambda e: self.page.close(dlg)
                 ),
                 ft.CupertinoDialogAction(
@@ -409,13 +417,13 @@ class HomeView(ft.Container):
                     # Optional: show success message
                     # self.show_message("切换账号成功")
                 else:
-                    self.show_message("切换账号失败，请检查日志", True)
+                    self.show_message(t("switch.failed"), True)
             except Exception as e:
                 import traceback
-                error_msg = f"切换账号异常: {str(e)}\n{traceback.format_exc()}"
+                error_msg = f"{t('switch.error', error=str(e))}\n{traceback.format_exc()}"
                 from utils import error
                 error(error_msg)
-                self.show_message(f"发生错误: {str(e)}", True)
+                self.show_message(t("switch.error", error=str(e)), True)
         threading.Thread(target=task, daemon=True).start()
 
     def delete_acc(self, account_id):
@@ -424,19 +432,30 @@ class HomeView(ft.Container):
                 if delete_account(account_id):
                     self.refresh_data()
                 else:
-                    self.show_message("删除账号失败，请检查日志", True)
+                    self.show_message(t("delete.failed"), True)
             except Exception as e:
                 import traceback
-                error_msg = f"删除异常: {str(e)}\n{traceback.format_exc()}"
+                error_msg = f"{t('delete.error', error=str(e))}\n{traceback.format_exc()}"
                 from utils import error
                 error(error_msg)
-                self.show_message(f"删除错误: {str(e)}", True)
+                self.show_message(t("delete.error", error=str(e)), True)
             self.page.update()
 
         self.show_confirm_dialog(
-            title="确认删除",
-            content="确定要删除这个账号备份吗？此操作无法撤销。",
+            title=t("confirm.delete.title"),
+            content=t("confirm.delete.content"),
             on_confirm=confirm_delete,
-            confirm_text="删除",
+            confirm_text=t("confirm.delete.confirm"),
             is_destructive=True
         )
+
+    def update_locale(self):
+        if not self.page:
+            self._pending_locale_refresh = True
+            return
+        status_row = self.status_bar.content
+        status_row.controls[1].value = t("status.checking")
+        self.list_title.value = t("list.title")
+        self.refresh_data()
+        self.build_ui()
+        self.update()

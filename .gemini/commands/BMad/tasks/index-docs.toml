@@ -1,0 +1,6 @@
+description = "Executes the BMad Task: Index Docs"
+prompt = """
+CRITICAL: You are to execute the BMad Task defined below.
+
+@{.bmad-core/tasks/index-docs.md}
+"""

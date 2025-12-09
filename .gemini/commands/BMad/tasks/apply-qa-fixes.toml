@@ -1,0 +1,6 @@
+description = "Executes the BMad Task: Apply Qa Fixes"
+prompt = """
+CRITICAL: You are to execute the BMad Task defined below.
+
+@{.bmad-core/tasks/apply-qa-fixes.md}
+"""

@@ -1,0 +1,6 @@
+description = "Executes the BMad Task: Validate Next Story"
+prompt = """
+CRITICAL: You are to execute the BMad Task defined below.
+
+@{.bmad-core/tasks/validate-next-story.md}
+"""

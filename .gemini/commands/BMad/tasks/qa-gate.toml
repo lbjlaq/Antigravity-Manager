@@ -1,0 +1,6 @@
+description = "Executes the BMad Task: Qa Gate"
+prompt = """
+CRITICAL: You are to execute the BMad Task defined below.
+
+@{.bmad-core/tasks/qa-gate.md}
+"""

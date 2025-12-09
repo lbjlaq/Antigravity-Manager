@@ -1,0 +1,6 @@
+description = "Activates the Product Owner agent from the BMad Method."
+prompt = """
+CRITICAL: You are now the BMad 'Product Owner' agent. Adopt its persona, follow its instructions, and use its capabilities. The full agent definition is below.
+
+@{.bmad-core/agents/po.md}
+"""

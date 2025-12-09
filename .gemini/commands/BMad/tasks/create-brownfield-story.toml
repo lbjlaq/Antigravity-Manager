@@ -1,0 +1,6 @@
+description = "Executes the BMad Task: Create Brownfield Story"
+prompt = """
+CRITICAL: You are to execute the BMad Task defined below.
+
+@{.bmad-core/tasks/create-brownfield-story.md}
+"""

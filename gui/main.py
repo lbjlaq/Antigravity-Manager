@@ -7,6 +7,7 @@ from views.home_view import HomeView
 from views.settings_view import SettingsView
 from theme import get_palette
 from icons import AppIcons
+from localization import t, set_language
 
 class SidebarItem(ft.Container):
     def __init__(self, icon, label, selected, on_click, palette):
@@ -44,16 +45,19 @@ class Sidebar(ft.Container):
         self.width = 200
         self.padding = ft.padding.only(top=20, left=10, right=10)
         
-        self.items = [
-            {"icon": AppIcons.dashboard, "label": "仪表盘"},
-            {"icon": AppIcons.settings, "label": "设置"},
-        ]
+        self.items = self.get_items()
         
         # Initialize theme without calling update()
         self.palette = get_palette(self.page)
         self.bgcolor = self.palette.sidebar_bg
         self.border = ft.border.only(right=ft.BorderSide(1, self.palette.sidebar_border))
         self.build_menu()
+
+    def get_items(self):
+        return [
+            {"icon": AppIcons.dashboard, "label": t("nav.dashboard")},
+            {"icon": AppIcons.settings, "label": t("nav.settings")},
+        ]
 
     def update_theme(self):
         self.palette = get_palette(self.page)
@@ -78,7 +82,7 @@ class Sidebar(ft.Container):
         self.content = ft.Column(
             [
                 ft.Container(
-                    content=ft.Text("Antigravity", size=12, weight=ft.FontWeight.BOLD, color=self.palette.text_grey),
+                    content=ft.Text(t("app.brand"), size=12, weight=ft.FontWeight.BOLD, color=self.palette.text_grey),
                     padding=ft.padding.only(left=10, bottom=10)
                 ),
                 ft.Column(menu_items, spacing=2)
@@ -91,6 +95,11 @@ class Sidebar(ft.Container):
         self.update()
         self.on_nav_change(index)
 
+    def update_language(self):
+        self.items = self.get_items()
+        self.build_menu()
+        self.update()
+
 def main(page: ft.Page):
     # 尝试在启动时写入日志，验证路径和权限
     try:
@@ -102,7 +111,7 @@ def main(page: ft.Page):
     except Exception as e:
         print(f"启动日志写入失败: {e}")
 
-    page.title = "Antigravity Manager"
+    page.title = t("app.title")
     page.theme_mode = ft.ThemeMode.SYSTEM
     
     # Window settings optimization
@@ -126,7 +135,15 @@ def main(page: ft.Page):
     
     # Define views
     home_view = HomeView(page)
-    settings_view = SettingsView(page)
+
+    def handle_language_change(lang_code):
+        if set_language(lang_code):
+            sidebar.update_language()
+            home_view.update_locale()
+            settings_view.update_locale()
+            page.update()
+
+    settings_view = SettingsView(page, on_language_change=handle_language_change)
     
     views = {
         0: home_view,

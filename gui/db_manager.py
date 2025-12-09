@@ -6,6 +6,7 @@ from datetime import datetime
 
 # Use relative imports
 from utils import info, error, warning, debug, get_antigravity_db_paths
+from localization import t
 
 # 需要备份的键列表
 KEYS_TO_BACKUP = [
@@ -23,28 +24,28 @@ def get_db_connection(db_path):
     except sqlite3.Error as e:
         error_msg = str(e)
         if "locked" in error_msg.lower():
-            error(f"数据库被锁定: {e}")
-            error("提示: 请确保 Antigravity 应用已完全关闭")
+            error(t("log.db.locked", error=e))
+            error(t("log.db.locked.hint"))
         else:
-            error(f"连接数据库失败: {e}")
+            error(t("log.db.connect.fail", error=e))
         return None
     except Exception as e:
-        error(f"连接数据库时发生意外错误: {e}")
+        error(t("log.db.unexpected", error=e))
         return None
 
 def backup_account(email, backup_file_path):
     """备份账号数据到 JSON 文件"""
     db_paths = get_antigravity_db_paths()
     if not db_paths:
-        error("未找到 Antigravity 数据库路径")
+        error(t("log.db.missing"))
         return False
     
     db_path = db_paths[0]
     if not db_path.exists():
-        error(f"数据库文件不存在: {db_path}")
+        error(t("log.db.path.missing", path=db_path))
         return False
         
-    info(f"正在从数据库备份数据: {db_path}")
+    info(t("log.db.backup.start", path=db_path))
     conn = get_db_connection(db_path)
     if not conn:
         return False
@@ -59,9 +60,9 @@ def backup_account(email, backup_file_path):
             row = cursor.fetchone()
             if row:
                 data_map[key] = row[0]
-                debug(f"备份字段: {key}")
+                debug(t("log.db.field.backup", field=key))
             else:
-                debug(f"字段不存在: {key}")
+                debug(t("log.db.field.missing", field=key))
         
 
         
@@ -73,14 +74,14 @@ def backup_account(email, backup_file_path):
         with open(backup_file_path, 'w', encoding='utf-8') as f:
             json.dump(data_map, f, ensure_ascii=False, indent=2)
             
-        info(f"备份成功: {backup_file_path}")
+        info(t("log.db.backup.success", path=backup_file_path))
         return True
         
     except sqlite3.Error as e:
-        error(f"数据库查询出错: {e}")
+        error(t("log.db.query.error", error=e))
         return False
     except Exception as e:
-        error(f"备份过程出错: {e}")
+        error(t("log.db.backup.error", error=e))
         return False
     finally:
         conn.close()
@@ -88,19 +89,19 @@ def backup_account(email, backup_file_path):
 def restore_account(backup_file_path):
     """从 JSON 文件恢复账号数据"""
     if not os.path.exists(backup_file_path):
-        error(f"备份文件不存在: {backup_file_path}")
+        error(t("log.backupfile.missing", path=backup_file_path))
         return False
         
     try:
         with open(backup_file_path, 'r', encoding='utf-8') as f:
             backup_data = json.load(f)
     except Exception as e:
-        error(f"读取备份文件失败: {e}")
+        error(t("log.backupfile.readfail", error=e))
         return False
         
     db_paths = get_antigravity_db_paths()
     if not db_paths:
-        error("未找到 Antigravity 数据库路径")
+        error(t("log.db.missing"))
         return False
     
     # 通常有两个数据库文件: state.vscdb 和 state.vscdb.backup
@@ -125,7 +126,7 @@ def _restore_single_db(db_path, backup_data):
     if not db_path.exists():
         return False
         
-    info(f"正在恢复数据库: {db_path}")
+        info(t("log.db.restore.title", path=db_path))
     conn = get_db_connection(db_path)
     if not conn:
         return False
@@ -144,18 +145,18 @@ def _restore_single_db(db_path, backup_data):
                     
                 cursor.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)", (key, value))
                 restored_keys.append(key)
-                debug(f"恢复字段: {key}")
+                debug(t("log.db.field.restore", field=key))
 
             
         conn.commit()
-        info(f"数据库恢复完成: {db_path}")
+        info(t("log.db.restore.done", path=db_path))
         return True
         
     except sqlite3.Error as e:
-        error(f"数据库写入出错: {e}")
+        error(t("log.db.write.error", error=e))
         return False
     except Exception as e:
-        error(f"恢复过程出错: {e}")
+        error(t("log.db.restore.error", error=e))
         return False
     finally:
         conn.close()
@@ -220,9 +221,7 @@ def get_current_account_info():
         return None
         
     except Exception as e:
-        error(f"提取账号信息出错: {e}")
+        error(t("log.db.extract.error", error=e))
         return None
     finally:
         conn.close()
-
-
