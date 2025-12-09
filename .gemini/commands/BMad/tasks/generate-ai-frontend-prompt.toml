@@ -1,6 +1,0 @@
-description = "Executes the BMad Task: Generate Ai Frontend Prompt"
-prompt = """
-CRITICAL: You are to execute the BMad Task defined below.
-
-@{.bmad-core/tasks/generate-ai-frontend-prompt.md}
-"""

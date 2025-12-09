@@ -1,6 +1,0 @@
-description = "Executes the BMad Task: Document Project"
-prompt = """
-CRITICAL: You are to execute the BMad Task defined below.
-
-@{.bmad-core/tasks/document-project.md}
-"""

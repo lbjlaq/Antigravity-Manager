@@ -1,6 +1,0 @@
-description = "Executes the BMad Task: Create Next Story"
-prompt = """
-CRITICAL: You are to execute the BMad Task defined below.
-
-@{.bmad-core/tasks/create-next-story.md}
-"""
