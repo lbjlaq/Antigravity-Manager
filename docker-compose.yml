@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  antigravity:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: antigravity-server:latest
+    container_name: antigravity-api
+    ports:
+      - "8045:8045"
+    volumes:
+      # 账号数据持久化
+      - ./data/accounts:/data/accounts
+      # 配置持久化
+      - ./data/config:/data/config
+      # Web UI 静态文件 (可选)
+      - ./web/dist:/app/static:ro
+    environment:
+      - ANTIGRAVITY_PORT=8045
+      - ANTIGRAVITY_HOST=0.0.0.0
+      - ANTIGRAVITY_API_KEY=${ANTIGRAVITY_API_KEY:-sk-antigravity}
+      - ANTIGRAVITY_ACCOUNTS_DIR=/data/accounts
+      - ANTIGRAVITY_CONFIG_DIR=/data/config
+      - ANTIGRAVITY_STATIC_DIR=/app/static
+      - ANTIGRAVITY_REQUEST_TIMEOUT=120
+      # 上游代理 (可选)
+      - ANTIGRAVITY_UPSTREAM_PROXY=${ANTIGRAVITY_UPSTREAM_PROXY:-}
+      # 日志级别
+      - RUST_LOG=${RUST_LOG:-antigravity_server=info,tower_http=debug}
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8045/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - antigravity-net
+
+networks:
+  antigravity-net:
+    driver: bridge

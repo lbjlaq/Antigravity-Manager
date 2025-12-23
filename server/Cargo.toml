@@ -1,0 +1,59 @@
+[package]
+name = "antigravity-server"
+version = "0.1.0"
+edition = "2021"
+description = "Antigravity API Server - A local AI gateway for Gemini and Claude"
+authors = ["Antigravity Team"]
+license = "CC-BY-NC-SA-4.0"
+
+[[bin]]
+name = "antigravity-server"
+path = "src/main.rs"
+
+[dependencies]
+# Web 框架
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
+
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-stream = "0.3"
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP 客户端
+reqwest = { version = "0.12", features = ["json", "stream", "socks"] }
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# 工具库
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
+base64 = "0.22"
+rand = "0.8"
+regex = "1"
+thiserror = "2"
+anyhow = "1"
+
+# 并发
+dashmap = "6"
+
+# SSE 流解析
+eventsource-stream = "0.2"
+
+# 配置与 CLI
+clap = { version = "4", features = ["derive", "env"] }
+dotenvy = "0.15"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
