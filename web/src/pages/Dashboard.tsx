@@ -6,8 +6,8 @@ import { useAccountStore } from '../stores/useAccountStore';
 import CurrentAccount from '../components/dashboard/CurrentAccount';
 import BestAccounts from '../components/dashboard/BestAccounts';
 import AddAccountDialog from '../components/accounts/AddAccountDialog';
-import { save } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { save } from '../utils/dialog';
+import { invoke } from '../utils/invoke';
 import { showToast } from '../components/common/ToastContainer';
 import { Account } from '../types/account';
 
@@ -87,7 +87,7 @@ function Dashboard() {
 
     const handleAddAccount = async (email: string, refreshToken: string) => {
         await addAccount(email, refreshToken);
-        await fetchAccounts(); // 刷新列表
+        // store中的addAccount已经会自动刷新列表，这里不需要重复调用
     };
 
     const [isRefreshing, setIsRefreshing] = useState(false);

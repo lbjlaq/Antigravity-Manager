@@ -38,7 +38,7 @@ function BackgroundTaskRunner() {
                 clearInterval(intervalId);
             }
         };
-    }, [config?.auto_refresh, config?.refresh_interval]);
+    }, [config?.auto_refresh, config?.refresh_interval, refreshAllQuotas]);
 
     // Auto Sync Current Account Effect
     useEffect(() => {
@@ -68,7 +68,7 @@ function BackgroundTaskRunner() {
                 clearInterval(intervalId);
             }
         };
-    }, [config?.auto_sync, config?.sync_interval]);
+    }, [config?.auto_sync, config?.sync_interval, fetchCurrentAccount]);
 
     // Render nothing
     return null;

@@ -45,9 +45,9 @@ COPY --from=builder /app/target/release/antigravity-server /usr/local/bin/
 # 创建数据目录
 RUN mkdir -p /data/accounts /data/config /app/static
 
-# 设置环境变量
-ENV ANTIGRAVITY_PORT=8045
-ENV ANTIGRAVITY_HOST=0.0.0.0
+# 设置环境变量（代码中使用 PORT 和 HOST）
+ENV PORT=8045
+ENV HOST=0.0.0.0
 ENV ANTIGRAVITY_ACCOUNTS_DIR=/data/accounts
 ENV ANTIGRAVITY_CONFIG_DIR=/data/config
 ENV ANTIGRAVITY_STATIC_DIR=/app/static

@@ -11,15 +11,17 @@ services:
       - "8045:8045"
     volumes:
       # 账号数据持久化
-      - ./data/accounts:/data/accounts
+      - ./server/data/accounts:/data/accounts
       # 配置持久化
-      - ./data/config:/data/config
+      - ./server/data/config:/data/config
       # Web UI 静态文件 (可选)
       - ./web/dist:/app/static:ro
     environment:
-      - ANTIGRAVITY_PORT=8045
-      - ANTIGRAVITY_HOST=0.0.0.0
-      - ANTIGRAVITY_API_KEY=${ANTIGRAVITY_API_KEY:-sk-antigravity}
+      # 服务器配置（代码中使用 PORT 和 API_KEY）
+      - PORT=8045
+      - HOST=0.0.0.0
+      - API_KEY=${API_KEY:-sk-antigravity}
+      # 数据目录（代码中可能使用这些环境变量）
       - ANTIGRAVITY_ACCOUNTS_DIR=/data/accounts
       - ANTIGRAVITY_CONFIG_DIR=/data/config
       - ANTIGRAVITY_STATIC_DIR=/app/static

@@ -1,7 +1,7 @@
 
 import { useEffect } from 'react';
 import { useConfigStore } from '../../stores/useConfigStore';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '../../utils/window';
 
 export default function ThemeManager() {
     const { config, loadConfig } = useConfigStore();

@@ -17,11 +17,11 @@ interface AccountState {
     refreshQuota: (accountId: string) => Promise<void>;
     refreshAllQuotas: () => Promise<accountService.RefreshStats>;
 
-    // 新增 actions
-    startOAuthLogin: () => Promise<void>;
-    cancelOAuthLogin: () => Promise<void>;
-    importV1Accounts: () => Promise<void>;
-    importFromDb: () => Promise<void>;
+    // 以下功能仅在桌面端可用，Web端已移除
+    // startOAuthLogin: () => Promise<void>;
+    // cancelOAuthLogin: () => Promise<void>;
+    // importV1Accounts: () => Promise<void>;
+    // importFromDb: () => Promise<void>;
 }
 
 export const useAccountStore = create<AccountState>((set, get) => ({
@@ -113,48 +113,17 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    startOAuthLogin: async () => {
-        set({ loading: true, error: null });
-        try {
-            await accountService.startOAuthLogin();
-            await get().fetchAccounts();
-            set({ loading: false });
-        } catch (error) {
-            set({ error: String(error), loading: false });
-            throw error;
-        }
-    },
-
-    cancelOAuthLogin: async () => {
-        try {
-            await accountService.cancelOAuthLogin();
-            set({ loading: false, error: null });
-        } catch (error) {
-            console.error('[Store] Cancel OAuth failed:', error);
-        }
-    },
-
-    importV1Accounts: async () => {
-        set({ loading: true, error: null });
-        try {
-            await accountService.importV1Accounts();
-            await get().fetchAccounts();
-            set({ loading: false });
-        } catch (error) {
-            set({ error: String(error), loading: false });
-            throw error;
-        }
-    },
-
-    importFromDb: async () => {
-        set({ loading: true, error: null });
-        try {
-            await accountService.importFromDb();
-            await get().fetchAccounts();
-            set({ loading: false });
-        } catch (error) {
-            set({ error: String(error), loading: false });
-            throw error;
-        }
-    },
+    // 以下功能仅在桌面端可用，Web端已移除实现
+    // startOAuthLogin: async () => {
+    //     throw new Error('OAuth登录仅在桌面端可用');
+    // },
+    // cancelOAuthLogin: async () => {
+    //     throw new Error('OAuth登录仅在桌面端可用');
+    // },
+    // importV1Accounts: async () => {
+    //     throw new Error('从V1导入仅在桌面端可用');
+    // },
+    // importFromDb: async () => {
+    //     throw new Error('从数据库导入仅在桌面端可用');
+    // },
 }));

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Sparkles } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '../utils/invoke';
 import { useConfigStore } from '../stores/useConfigStore';
 import { AppConfig } from '../types/config';
 import ModalDialog from '../components/common/ModalDialog';
@@ -34,9 +33,7 @@ function Settings() {
     });
 
     // Dialog state
-    // Dialog state
     const [isClearLogsOpen, setIsClearLogsOpen] = useState(false);
-    const [dataDirPath, setDataDirPath] = useState<string>('~/.antigravity_tools/');
 
     // Update check state
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
@@ -49,11 +46,6 @@ function Settings() {
 
     useEffect(() => {
         loadConfig();
-
-        // 获取真实数据目录路径
-        invoke<string>('get_data_dir_path')
-            .then(path => setDataDirPath(path))
-            .catch(err => console.error('Failed to get data dir:', err));
     }, [loadConfig]);
 
     useEffect(() => {
@@ -81,29 +73,7 @@ function Settings() {
         setIsClearLogsOpen(false);
     };
 
-    const handleOpenDataDir = async () => {
-        try {
-            await invoke('open_data_folder');
-        } catch (error) {
-            showToast(`${t('common.error')}: ${error}`, 'error');
-        }
-    };
-
-    const handleSelectExportPath = async () => {
-        try {
-            // @ts-ignore
-            const selected = await open({
-                directory: true,
-                multiple: false,
-                title: t('settings.advanced.export_path'),
-            });
-            if (selected && typeof selected === 'string') {
-                setFormData({ ...formData, default_export_path: selected });
-            }
-        } catch (error) {
-            showToast(`${t('common.error')}: ${error}`, 'error');
-        }
-    };
+    // Web版本不支持打开文件夹和选择路径功能
 
     const handleCheckUpdate = async () => {
         setIsCheckingUpdate(true);
@@ -310,52 +280,11 @@ function Settings() {
                         <div className="space-y-4">
                             <h2 className="text-lg font-semibold text-gray-900 dark:text-base-content">{t('settings.advanced.title')}</h2>
 
-                            {/* 默认导出路径 */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-900 dark:text-base-content mb-1">{t('settings.advanced.export_path')}</label>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        className="flex-1 px-4 py-4 border border-gray-200 dark:border-base-300 rounded-lg bg-gray-50 dark:bg-base-200 text-gray-900 dark:text-base-content font-medium"
-                                        value={formData.default_export_path || t('settings.advanced.export_path_placeholder')}
-                                        readOnly
-                                    />
-                                    {formData.default_export_path && (
-                                        <button
-                                            className="px-4 py-2 border border-gray-200 dark:border-base-300 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors"
-                                            onClick={() => setFormData({ ...formData, default_export_path: undefined })}
-                                        >
-                                            {t('common.clear')}
-                                        </button>
-                                    )}
-                                    <button
-                                        className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 hover:text-gray-900 dark:hover:text-base-content transition-colors"
-                                        onClick={handleSelectExportPath}
-                                    >
-                                        {t('settings.advanced.select_btn')}
-                                    </button>
-                                </div>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.advanced.default_export_path_desc')}</p>
-                            </div>
-
-                            {/* 数据目录 */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-900 dark:text-base-content mb-1">{t('settings.advanced.data_dir')}</label>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        className="flex-1 px-4 py-4 border border-gray-200 dark:border-base-300 rounded-lg bg-gray-50 dark:bg-base-200 text-gray-900 dark:text-base-content font-medium"
-                                        value={dataDirPath}
-                                        readOnly
-                                    />
-                                    <button
-                                        className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 hover:text-gray-900 dark:hover:text-base-content transition-colors"
-                                        onClick={handleOpenDataDir}
-                                    >
-                                        {t('settings.advanced.open_btn')}
-                                    </button>
-                                </div>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.advanced.data_dir_desc')}</p>
+                            {/* Web版本提示 */}
+                            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
+                                <p className="text-sm text-blue-800 dark:text-blue-200">
+                                    ℹ️ {t('settings.advanced.web_version_note', 'Web版本数据存储在服务器端，无需配置本地路径。')}
+                                </p>
                             </div>
 
                             <div className="border-t border-gray-200 dark:border-base-200 pt-4">

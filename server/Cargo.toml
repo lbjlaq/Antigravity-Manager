@@ -41,6 +41,7 @@ rand = "0.8"
 regex = "1"
 thiserror = "2"
 anyhow = "1"
+dirs = "5"
 
 # 并发
 dashmap = "6"

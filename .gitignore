@@ -27,8 +27,16 @@ dist-ssr
 src-tauri/target/
 src-tauri/gen/
 src-tauri/.env
+server/target/
 
 # Environment
 .env
 .env.*
 environment/
+
+# MCP temporary files
+.mcp_dialog_port
+
+# Account data (contains sensitive tokens)
+server/data/accounts/
+server/data/config/

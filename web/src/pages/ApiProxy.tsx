@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../utils/invoke';
 import {
     Power,
     Copy,
@@ -108,7 +108,8 @@ export default function ApiProxy() {
     useEffect(() => {
         loadConfig();
         loadStatus();
-        const interval = setInterval(loadStatus, 3000);
+        // 降低轮询频率：每10秒检查一次状态（桌面端也是10秒）
+        const interval = setInterval(loadStatus, 10000);
         return () => clearInterval(interval);
     }, []);
 

@@ -4,23 +4,22 @@ export interface UpstreamProxyConfig {
 }
 
 export interface ProxyConfig {
-    enabled?: boolean;
+    enabled: boolean;
     port: number;
-    apiKey: string;
-    autoStart: boolean;
-    modelMapping: Record<string, string>;
-    requestTimeout: number;
-    upstreamProxy?: UpstreamProxyConfig;
+    api_key: string;
+    auto_start: boolean;
+    anthropic_mapping?: Record<string, string>;
+    request_timeout: number;
+    upstream_proxy: UpstreamProxyConfig;
 }
 
 export interface AppConfig {
     language: string;
     theme: string;
-    autoRefresh?: boolean;
-    refreshInterval?: number;
-    autoSync?: boolean;
-    syncInterval?: number;
-    defaultExportPath?: string;
+    auto_refresh: boolean;
+    refresh_interval: number;
+    auto_sync: boolean;
+    sync_interval: number;
+    default_export_path?: string;
     proxy: ProxyConfig;
 }
-

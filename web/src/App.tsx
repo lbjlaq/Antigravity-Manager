@@ -1,3 +1,6 @@
+
+
+// Fixed imports below
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 
 import Layout from './components/layout/Layout';
@@ -8,8 +11,9 @@ import ApiProxy from './pages/ApiProxy';
 import ThemeManager from './components/common/ThemeManager';
 import { useEffect } from 'react';
 import { useConfigStore } from './stores/useConfigStore';
-import { useAccountStore } from './stores/useAccountStore';
+// import { useAccountStore } from './stores/useAccountStore'; // Unused in App
 import { useTranslation } from 'react-i18next';
+// import { listen } from '@tauri-apps/api/event'; // Removed
 
 const router = createBrowserRouter([
   {
@@ -38,21 +42,26 @@ const router = createBrowserRouter([
 
 function App() {
   const { config, loadConfig } = useConfigStore();
-  const { fetchAccounts } = useAccountStore();
+  // const { fetchCurrentAccount, fetchAccounts } = useAccountStore(); // Unused
   const { i18n } = useTranslation();
 
   useEffect(() => {
     loadConfig();
-    // 初始化时加载账号列表
-    fetchAccounts();
-  }, [loadConfig, fetchAccounts]);
+  }, [loadConfig]);
 
-  // 从配置同步语言
+  // Sync language from config
   useEffect(() => {
     if (config?.language) {
       i18n.changeLanguage(config.language);
     }
   }, [config?.language, i18n]);
+
+  // Listen for tray events (Removed for Web Version)
+  /*
+  useEffect(() => {
+    // ... Tauri event listeners removed ...
+  }, []);
+  */
 
   return (
     <>
