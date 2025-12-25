@@ -24,4 +24,5 @@ export interface AppConfig {
     sync_interval: number;
     default_export_path?: string;
     proxy: ProxyConfig;
+    antigravity_executable?: string;
 }

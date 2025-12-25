@@ -193,7 +193,15 @@
             "clear_logs": "Clear Logs Cache",
             "clear_logs_title": "Clear Logs Confirmation",
             "clear_logs_msg": "Are you sure you want to clear all log cache files?",
-            "logs_cleared": "Logs cache cleared"
+            "logs_cleared": "Logs cache cleared",
+            "antigravity_path": "Antigravity Executable Path",
+            "antigravity_path_placeholder": "Not set (Auto-detect)",
+            "antigravity_path_desc": "Linux users may need to configure the path manually if Antigravity is not installed in standard locations. Click 'Auto Detect' to get path from running process.",
+            "antigravity_path_saved": "Antigravity path saved",
+            "antigravity_path_detected": "Path detected and saved",
+            "antigravity_path_not_found": "Antigravity process not found, please select manually",
+            "antigravity_path_cleared": "Path configuration cleared",
+            "detect_btn": "Auto Detect"
         },
         "about": {
             "title": "About",

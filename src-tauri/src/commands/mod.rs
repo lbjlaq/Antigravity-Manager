@@ -435,6 +435,46 @@ pub async fn get_antigravity_path() -> Result<String, String> {
     }
 }
 
+/// 设置 Antigravity 可执行文件路径
+#[tauri::command]
+pub async fn set_antigravity_path(path: Option<String>) -> Result<(), String> {
+    // 如果提供了路径，验证文件存在
+    if let Some(ref p) = path {
+        if !p.is_empty() {
+            let path_buf = std::path::PathBuf::from(p);
+            if !path_buf.exists() {
+                return Err(format!("指定的路径不存在: {}", p));
+            }
+            modules::logger::log_info(&format!("设置 Antigravity 路径: {}", p));
+        }
+    }
+
+    // 更新配置
+    let mut config = modules::load_app_config()?;
+    config.antigravity_executable = path;
+    modules::save_app_config(&config)?;
+
+    Ok(())
+}
+
+/// 自动检测并保存 Antigravity 路径（从运行中的进程）
+#[tauri::command]
+pub async fn detect_antigravity_path() -> Result<Option<String>, String> {
+    // 尝试从运行中的进程检测
+    match modules::process::get_antigravity_executable_path() {
+        Some(path) => {
+            let path_str = path.to_string_lossy().to_string();
+            // 自动保存到配置
+            let mut config = modules::load_app_config()?;
+            config.antigravity_executable = Some(path_str.clone());
+            modules::save_app_config(&config)?;
+            modules::logger::log_info(&format!("自动检测并保存 Antigravity 路径: {}", path_str));
+            Ok(Some(path_str))
+        }
+        None => Ok(None)
+    }
+}
+
 /// 检测更新响应结构
 #[derive(serde::Serialize)]
 pub struct UpdateInfo {

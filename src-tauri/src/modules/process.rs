@@ -41,15 +41,25 @@ pub fn is_antigravity_running() -> bool {
 
         #[cfg(target_os = "linux")]
         {
-            // 匹配进程名或可执行文件名 (忽略大小写)
-            if name.contains("antigravity") {
-                return true;
-            }
+            // 获取自身可执行文件路径，用于排除自己
+            let self_exe = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.canonicalize().ok());
+
             if let Some(exe) = process.exe() {
-                if let Some(file_name) = exe.file_name() {
-                    if file_name.to_string_lossy().to_lowercase() == "antigravity" {
-                        return true;
+                // 如果是自身进程，跳过
+                if let Some(ref self_path) = self_exe {
+                    if let Ok(proc_canonical) = exe.canonicalize() {
+                        if proc_canonical == *self_path {
+                            continue;
+                        }
                     }
+                }
+
+                let exe_str = exe.to_string_lossy().to_lowercase();
+                // 匹配可执行文件路径包含 "antigravity"，但排除包含 "tools" 的（管理器本身）
+                if exe_str.contains("antigravity") && !exe_str.contains("tools") {
+                    return true;
                 }
             }
         }
@@ -171,19 +181,26 @@ fn get_antigravity_pids() -> Vec<u32> {
         
         #[cfg(target_os = "linux")]
         {
-            let name = process.name().to_string_lossy().to_lowercase();
-            let is_match = if name.contains("antigravity") {
-                true
-            } else if let Some(exe) = process.exe() {
-                exe.file_name()
-                    .map(|f| f.to_string_lossy().to_lowercase() == "antigravity")
-                    .unwrap_or(false)
-            } else {
-                false
-            };
+            // 获取自身可执行文件路径
+            let self_exe = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.canonicalize().ok());
 
-            if is_match {
-                pids.push(pid_u32);
+            if let Some(exe) = process.exe() {
+                // 如果是自身进程，跳过
+                if let Some(ref self_path) = self_exe {
+                    if let Ok(proc_canonical) = exe.canonicalize() {
+                        if proc_canonical == *self_path {
+                            continue;
+                        }
+                    }
+                }
+
+                let exe_str = exe.to_string_lossy().to_lowercase();
+                // 匹配可执行文件路径包含 "antigravity"，但排除包含 "tools" 的（管理器本身）
+                if exe_str.contains("antigravity") && !exe_str.contains("tools") {
+                    pids.push(pid_u32);
+                }
             }
         }
     }
@@ -455,9 +472,15 @@ pub fn start_antigravity() -> Result<(), String> {
 
     #[cfg(target_os = "linux")]
     {
-        Command::new("antigravity")
+        // 使用配置或检测到的路径启动
+        let exe_path = get_antigravity_executable_path()
+            .ok_or_else(|| "未找到 Antigravity 可执行文件，请在设置中手动配置路径".to_string())?;
+
+        crate::modules::logger::log_info(&format!("使用路径启动 Antigravity: {:?}", exe_path));
+
+        Command::new(&exe_path)
             .spawn()
-            .map_err(|e| format!("启动失败: {}", e))?;
+            .map_err(|e| format!("启动失败 ({}): {}", exe_path.display(), e))?;
     }
 
     crate::modules::logger::log_info("Antigravity 启动命令已发送");
@@ -465,17 +488,31 @@ pub fn start_antigravity() -> Result<(), String> {
 }
 
 /// 获取 Antigravity 可执行文件路径（跨平台）
-/// 
+///
 /// 查找策略（优先级从高到低）：
-/// 1. 从运行中的进程获取路径（最可靠，支持任意安装位置）
-/// 2. 遍历标准安装位置
-/// 3. 返回 None
+/// 1. 用户配置的路径（最高优先级）
+/// 2. 从运行中的进程获取路径（最可靠，支持任意安装位置）
+/// 3. 遍历标准安装位置
+/// 4. 返回 None
 pub fn get_antigravity_executable_path() -> Option<std::path::PathBuf> {
+    // 策略0: 优先使用用户配置的路径
+    if let Ok(config) = crate::modules::config::load_app_config() {
+        if let Some(ref configured_path) = config.antigravity_executable {
+            let path = std::path::PathBuf::from(configured_path);
+            if path.exists() {
+                crate::modules::logger::log_info(&format!("使用配置的 Antigravity 路径: {:?}", path));
+                return Some(path);
+            } else {
+                crate::modules::logger::log_warn(&format!("配置的 Antigravity 路径不存在: {:?}", path));
+            }
+        }
+    }
+
     // 策略1: 从运行进程获取（支持任意位置）
     if let Some(path) = get_path_from_running_process() {
         return Some(path);
     }
-    
+
     // 策略2: 检查标准安装位置
     check_standard_locations()
 }
@@ -513,8 +550,22 @@ fn get_path_from_running_process() -> Option<std::path::PathBuf> {
             
             #[cfg(target_os = "linux")]
             {
-                // Linux: 检查进程名或路径包含 antigravity
-                if name.contains("antigravity") || exe_path.contains("antigravity") {
+                // 获取自身可执行文件路径
+                let self_exe = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.canonicalize().ok());
+
+                // 如果是自身进程，跳过
+                if let Some(ref self_path) = self_exe {
+                    if let Ok(proc_canonical) = exe.canonicalize() {
+                        if proc_canonical == *self_path {
+                            continue;
+                        }
+                    }
+                }
+
+                // 匹配可执行文件路径包含 "antigravity"，但排除包含 "tools" 的（管理器本身）
+                if exe_path.contains("antigravity") && !exe_path.contains("tools") {
                     return Some(exe.to_path_buf());
                 }
             }

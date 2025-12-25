@@ -13,6 +13,9 @@ pub struct AppConfig {
     pub default_export_path: Option<String>,
     #[serde(default)]
     pub proxy: ProxyConfig,
+    /// Antigravity 可执行文件路径（Linux 上可能需要手动配置）
+    #[serde(default)]
+    pub antigravity_executable: Option<String>,
 }
 
 impl AppConfig {
@@ -26,6 +29,7 @@ impl AppConfig {
             sync_interval: 5,
             default_export_path: None,
             proxy: ProxyConfig::default(),
+            antigravity_executable: None,
         }
     }
 }
