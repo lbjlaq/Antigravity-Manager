@@ -197,7 +197,7 @@
             "logs_cleared": "日志缓存已清理",
             "antigravity_path": "Antigravity 可执行文件路径",
             "antigravity_path_placeholder": "未设置（自动检测）",
-            "antigravity_path_desc": "Linux 用户如果 Antigravity 不在标准位置，需要手动配置路径。点击"自动检测"可从运行中的进程获取路径。",
+            "antigravity_path_desc": "Linux 用户如果 Antigravity 不在标准位置，需要手动配置路径。点击「自动检测」可从运行中的进程获取路径。",
             "antigravity_path_saved": "Antigravity 路径已保存",
             "antigravity_path_detected": "已自动检测并保存路径",
             "antigravity_path_not_found": "未找到 Antigravity 进程，请手动选择路径",
