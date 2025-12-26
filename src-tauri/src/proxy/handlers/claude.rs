@@ -69,13 +69,14 @@ pub async fn handle_messages(
     let upstream = state.upstream.clone();
     
     // 3. 准备闭包
-    let request_for_body = request.clone();
+    let mut request_for_body = request.clone();
     let token_manager = state.token_manager;
     
     let pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
 
     let mut last_error = String::new();
+    let mut retried_without_thinking = false;
     
     for attempt in 0..max_attempts {
         // 4. 获取 Token (使用内置的时间窗口锁定机制)
@@ -231,6 +232,44 @@ pub async fn handle_messages(
         last_error = format!("HTTP {}: {}", status, error_text);
         
         let status_code = status.as_u16();
+
+        // Special-case 400 errors caused by invalid/foreign thinking signatures (common after /resume).
+        // Retry once by stripping thinking blocks & thinking config from the request, and by disabling
+        // the "-thinking" model variant if present.
+        if status_code == 400
+            && !retried_without_thinking
+            && (error_text.contains("Invalid `signature`")
+                || error_text.contains("thinking.signature: Field required")
+                || error_text.contains("thinking.signature"))
+        {
+            retried_without_thinking = true;
+            tracing::warn!("Upstream rejected thinking signature; retrying once with thinking stripped");
+
+            // 1) Remove thinking config
+            request_for_body.thinking = None;
+
+            // 2) Remove thinking blocks from message history
+            for msg in request_for_body.messages.iter_mut() {
+                if let crate::proxy::mappers::claude::models::MessageContent::Array(blocks) = &mut msg.content {
+                    blocks.retain(|b| !matches!(b, crate::proxy::mappers::claude::models::ContentBlock::Thinking { .. }));
+                }
+            }
+
+            // 3) Prefer non-thinking Claude model variant on retry (best-effort)
+            if request_for_body.model.contains("claude-") {
+                let mut m = request_for_body.model.clone();
+                m = m.replace("-thinking", "");
+                // If it's a dated alias, fall back to a stable non-thinking id
+                if m.contains("claude-sonnet-4-5-") {
+                    m = "claude-sonnet-4-5".to_string();
+                } else if m.contains("claude-opus-4-5-") || m.contains("claude-opus-4-") {
+                    m = "claude-opus-4-5".to_string();
+                }
+                request_for_body.model = m;
+            }
+
+            continue;
+        }
         
         // 只有 429 (限流), 403 (权限/地区限制) 和 401 (认证失效) 触发账号轮换
         if status_code == 429 || status_code == 403 || status_code == 401 {

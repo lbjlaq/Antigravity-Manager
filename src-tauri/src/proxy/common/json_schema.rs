@@ -70,24 +70,9 @@ pub fn clean_json_schema(value: &mut Value) {
                 }
             }
 
-            // 3. 递归处理 properties, items, allOf, anyOf, oneOf 等
-            for (key, v) in map.iter_mut() {
-                // 特殊处理 properties 和 items 的子节点
-                if key == "properties" {
-                    if let Some(props_obj) = v.as_object_mut() {
-                        for (_, prop_val) in props_obj.iter_mut() {
-                            clean_json_schema(prop_val);
-                        }
-                    }
-                } else if key == "items" {
-                    clean_json_schema(v);
-                } else if key == "allOf" || key == "anyOf" || key == "oneOf" {
-                    if let Some(arr) = v.as_array_mut() {
-                        for item in arr {
-                            clean_json_schema(item);
-                        }
-                    }
-                }
+            // 3. 递归处理所有子节点（Schema 中可能存在任意嵌套字段，如 `value`）
+            for v in map.values_mut() {
+                clean_json_schema(v);
             }
         }
         Value::Array(arr) => {
