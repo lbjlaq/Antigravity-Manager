@@ -53,7 +53,7 @@
     *   **OpenAI 格式**: 提供 `/v1/chat/completions` 端点，兼容 99% 的现有 AI 应用。
     *   **Anthropic 格式**: 提供原生 `/v1/messages` 接口，支持 **Claude Code CLI** 的全功能（如思思维链、系统提示词）。
     *   **Gemini 格式**: 支持 Google 官方 SDK 直接调用。
-*   **智能状态自愈**: 当请求遇到 `429 (Too Many Requests)` 或 `401 (Expire)` 时，后端会毫秒级触发 **自动重试与静默轮换**，确保业务不中断。
+*   **智能状态自愈**: 当请求遇到 `429 (Too Many Requests)` 或 `401 (Expire)` 时，后端会自动重试与静默轮换。对于 `429`，会遵循上游返回的 `RetryInfo.retryDelay` / `quotaResetDelay` 做短暂等待后重试；仅在确认配额已耗尽时才会快速失败，避免无意义重试。
 
 ### 4. 🔀 模型路由中心 (Model Router)
 *   **系列化映射**: 您可以将复杂的原始模型 ID 归类到“规格家族”（如将所有 GPT-4 请求统一路由到 `gemini-3-pro-high`）。

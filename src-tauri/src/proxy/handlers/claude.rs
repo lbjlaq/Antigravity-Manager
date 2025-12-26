@@ -238,15 +238,26 @@ pub async fn handle_messages(
         // Example: RATE_LIMIT_EXCEEDED + RetryInfo.retryDelay / metadata.quotaResetDelay.
         if status_code == 429 {
             if let Some(delay_ms) = crate::proxy::upstream::retry::parse_retry_delay(&error_text) {
-                let actual_delay = delay_ms.saturating_add(200).min(10_000);
-                tracing::warn!(
-                    "Claude Upstream 429 on attempt {}/{}, waiting {}ms then retrying",
-                    attempt + 1,
-                    max_attempts,
-                    actual_delay
-                );
-                sleep(Duration::from_millis(actual_delay)).await;
-                continue;
+                // Short delay: wait and retry on the same attempt loop.
+                // Long delay: skip waiting and allow the normal rotation logic below to kick in.
+                if delay_ms <= 5_000 {
+                    let actual_delay = delay_ms.saturating_add(200);
+                    tracing::warn!(
+                        "Claude Upstream 429 on attempt {}/{}, waiting {}ms then retrying",
+                        attempt + 1,
+                        max_attempts,
+                        actual_delay
+                    );
+                    sleep(Duration::from_millis(actual_delay)).await;
+                    continue;
+                } else {
+                    tracing::warn!(
+                        "Claude Upstream 429 on attempt {}/{}, retry delay {}ms too long; rotating account",
+                        attempt + 1,
+                        max_attempts,
+                        delay_ms
+                    );
+                }
             }
         }
 
