@@ -71,8 +71,9 @@ pub async fn start_proxy_service(
     }
     
     // 启动 Axum 服务器
-    let (axum_server, server_handle) = 
+    let (axum_server, server_handle) =
         match crate::proxy::AxumServer::start(
+            config.get_bind_address().to_string(),
             config.port,
             token_manager.clone(),
             config.anthropic_mapping.clone(),
@@ -104,7 +105,7 @@ pub async fn start_proxy_service(
     Ok(ProxyStatus {
         running: true,
         port: config.port,
-        base_url: format!("http://localhost:{}", config.port),
+        base_url: format!("http://127.0.0.1:{}", config.port),
         active_accounts,
     })
 }
@@ -141,7 +142,7 @@ pub async fn get_proxy_status(
         Some(instance) => Ok(ProxyStatus {
             running: true,
             port: instance.config.port,
-            base_url: format!("http://localhost:{}", instance.config.port),
+            base_url: format!("http://127.0.0.1:{}", instance.config.port),
             active_accounts: instance.token_manager.len(),
         }),
         None => Ok(ProxyStatus {

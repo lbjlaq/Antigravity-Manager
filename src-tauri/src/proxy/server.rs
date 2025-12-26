@@ -61,6 +61,7 @@ impl AxumServer {
     }
     /// 启动 Axum 服务器
     pub async fn start(
+        host: String,
         port: u16,
         token_manager: Arc<TokenManager>,
         anthropic_mapping: std::collections::HashMap<String, String>,
@@ -111,10 +112,10 @@ impl AxumServer {
             .with_state(state);
         
         // 绑定地址
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("{}:{}", host, port);
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
-            .map_err(|e| format!("端口 {} 绑定失败: {}", port, e))?;
+            .map_err(|e| format!("地址 {} 绑定失败: {}", addr, e))?;
         
         tracing::info!("反代服务器启动在 http://{}", addr);
         

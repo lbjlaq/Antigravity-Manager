@@ -5,6 +5,7 @@ export interface UpstreamProxyConfig {
 
 export interface ProxyConfig {
     enabled: boolean;
+    allow_lan_access?: boolean;
     port: number;
     api_key: string;
     auto_start: boolean;
