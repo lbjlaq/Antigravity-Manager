@@ -9,6 +9,7 @@ use axum::{
 use bytes::Bytes;
 use futures::StreamExt;
 use serde_json::{json, Value};
+use tokio::time::{sleep, Duration};
 use tracing::{debug, error};
 
 use crate::proxy::mappers::claude::{
@@ -233,6 +234,22 @@ pub async fn handle_messages(
         
         let status_code = status.as_u16();
 
+        // Handle transient 429s using upstream-provided retry delay (avoid surfacing errors to clients).
+        // Example: RATE_LIMIT_EXCEEDED + RetryInfo.retryDelay / metadata.quotaResetDelay.
+        if status_code == 429 {
+            if let Some(delay_ms) = crate::proxy::upstream::retry::parse_retry_delay(&error_text) {
+                let actual_delay = delay_ms.saturating_add(200).min(10_000);
+                tracing::warn!(
+                    "Claude Upstream 429 on attempt {}/{}, waiting {}ms then retrying",
+                    attempt + 1,
+                    max_attempts,
+                    actual_delay
+                );
+                sleep(Duration::from_millis(actual_delay)).await;
+                continue;
+            }
+        }
+
         // Special-case 400 errors caused by invalid/foreign thinking signatures (common after /resume).
         // Retry once by stripping thinking blocks & thinking config from the request, and by disabling
         // the "-thinking" model variant if present.
@@ -273,9 +290,13 @@ pub async fn handle_messages(
         
         // 只有 429 (限流), 403 (权限/地区限制) 和 401 (认证失效) 触发账号轮换
         if status_code == 429 || status_code == 403 || status_code == 401 {
-            // 如果是 429 且标记为配额耗尽，直接报错，避免穿透整个账号池
-            if status_code == 429 && (error_text.contains("QUOTA_EXHAUSTED") || error_text.contains("quota")) {
-                error!("Claude Quota exhausted (429) on attempt {}/{}, stopping to protect pool.", attempt + 1, max_attempts);
+            // If it's a hard quota exhaustion with no retry delay, fail fast to avoid pointless retries.
+            if status_code == 429 && error_text.contains("QUOTA_EXHAUSTED") {
+                error!(
+                    "Claude Quota exhausted (429) on attempt {}/{}, stopping.",
+                    attempt + 1,
+                    max_attempts
+                );
                 return (status, error_text).into_response();
             }
 
