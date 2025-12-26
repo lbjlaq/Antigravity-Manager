@@ -3,6 +3,9 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
 /// 获取当前正在运行的可执行文件规范化路径
 fn get_current_exe_path() -> Option<std::path::PathBuf> {
     std::env::current_exe()
@@ -327,6 +330,7 @@ pub fn close_antigravity(timeout_secs: u64) -> Result<(), String> {
             for pid in pids {
                 let _ = Command::new("taskkill")
                     .args(["/F", "/PID", &pid.to_string()])
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
                     .output();
             }
             // 给一点点时间让系统清理 PID
@@ -680,6 +684,7 @@ pub fn start_antigravity() -> Result<(), String> {
         // 尝试通过注册表或默认路径启动
         let result = Command::new("cmd")
             .args(["/C", "start", "antigravity://"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .spawn();
         
         if result.is_err() {
