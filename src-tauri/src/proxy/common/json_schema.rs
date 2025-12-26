@@ -16,6 +16,9 @@ pub fn clean_json_schema(value: &mut Value) {
                 "format",
                 "default",
                 "uniqueItems",
+                // Claude/JSONSchema extensions not accepted by Gemini
+                "enumCaseInsensitive",
+                "enumNormalizeWhitespace",
                 "minLength",
                 "maxLength",
                 "minimum",
