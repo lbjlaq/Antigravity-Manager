@@ -374,6 +374,7 @@ fn build_generation_config(claude_req: &ClaudeRequest, has_web_search: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::common::json_schema::clean_json_schema;
 
     #[test]
     fn test_simple_request() {

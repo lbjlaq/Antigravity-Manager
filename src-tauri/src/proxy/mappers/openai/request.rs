@@ -177,7 +177,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[test]
     fn test_transform_openai_request() {
         let req = OpenAIRequest {
             model: "gpt-4".to_string(),
