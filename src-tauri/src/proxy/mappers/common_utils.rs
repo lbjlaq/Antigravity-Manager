@@ -123,7 +123,8 @@ mod tests {
         let config = resolve_request_config("gpt-4o", "gemini-2.5-flash");
         assert_eq!(config.request_type, "web_search");
         assert!(config.inject_google_search);
-        assert_eq!(config.final_model, "gpt-4o");
+        // final_model should be the MAPPED model, not the original
+        assert_eq!(config.final_model, "gemini-2.5-flash");
     }
 
     #[test]

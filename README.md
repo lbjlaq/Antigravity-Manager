@@ -1,38 +1,42 @@
-# Antigravity Tools 🚀
+# Antigravity Master 🚀
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
   <h3>您的个人高性能 AI 调度网关</h3>
   <p>不仅仅是账号管理，更是打破 API 调用壁垒的终极解决方案。</p>
-  
+
   <p>
-    <a href="https://github.com/lbjlaq/Antigravity-Manager">
+    <a href="https://github.com/marovole/Antigravity-Manager">
       <img src="https://img.shields.io/badge/Version-3.3.0-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
     <img src="https://img.shields.io/badge/Frontend-React-61DAFB?style=flat-square" alt="React">
+    <img src="https://img.shields.io/badge/Droid-Supported-green?style=flat-square" alt="Droid">
     <img src="https://img.shields.io/badge/License-CC--BY--NC--SA--4.0-lightgrey?style=flat-square" alt="License">
   </p>
 
   <p>
-    <a href="#-核心功能">核心功能</a> • 
-    <a href="#-界面导览">界面导览</a> • 
-    <a href="#-技术架构">技术架构</a> • 
-    <a href="#-安装指南">安装指南</a> • 
+    <a href="#-核心功能">核心功能</a> •
+    <a href="#-界面导览">界面导览</a> •
+    <a href="#-droid-集成">Droid 集成</a> •
+    <a href="#-技术架构">技术架构</a> •
+    <a href="#-安装指南">安装指南</a> •
     <a href="#-快速接入">快速接入</a>
   </p>
 
   <p>
-    <strong>简体中文</strong> | 
+    <strong>简体中文</strong> |
     <a href="./README_EN.md">English</a>
   </p>
 </div>
 
 ---
 
-**Antigravity Tools** 是一个专为开发者和 AI 爱好者设计的全功能桌面应用。它将多账号管理、协议转换和智能请求调度完美结合，为您提供一个稳定、极速且成本低廉的 **本地 AI 中转站**。
+> **📢 关于本项目**: 这是 [Antigravity-Manager](https://github.com/lbjlaq/Antigravity-Manager) 的 Fork 版本，主要增加了对 **Droid** 客户端的完整支持，并优化了 JSON Schema 处理和 Claude thinking 模式的兼容性。
+
+**Antigravity Master** 是一个专为开发者和 AI 爱好者设计的全功能桌面应用。它将多账号管理、协议转换和智能请求调度完美结合，为您提供一个稳定、极速且成本低廉的 **本地 AI 中转站**。
 
 通过本应用，您可以将常见的 Web 端 Session (Google/Anthropic) 转化为标准化的 API 接口，彻底消除不同厂商间的协议鸿沟。
 
@@ -62,6 +66,37 @@
 ### 5. 🎨 多模态与 Imagen 3 支持
 *   **高级画质控制**: 支持通过 OpenAI `size` (如 `1024x1024`, `16:9`) 参数自动映射到 Imagen 3 的相应规格。
 *   **超强 Body 支持**: 后端支持高达 **100MB** 的 Payload，处理 4K 高清图识别绰绰有余。
+
+## 🤖 Droid 集成
+
+**Antigravity Master** 完整支持 [Droid](https://github.com/anthropics/droid) 客户端。在 API 反代页面启动服务后，将以下配置添加到 Droid 的 `custom_models` 中：
+
+```json
+{
+  "model_display_name": "antigravity opus 4.5",
+  "model": "claude-opus-4-5-thinking",
+  "base_url": "http://127.0.0.1:8045",
+  "api_key": "YOUR_API_KEY",
+  "provider": "anthropic"
+}
+```
+
+### ⚠️ 重要提示
+
+- **base_url 不要包含路径后缀**：Droid 会根据 `provider` 设置自动添加对应路径
+- **支持的 provider**：
+  - `anthropic` - Claude 模型，自动添加 `/v1/messages`
+  - `openai` - Gemini 模型（使用 OpenAI 协议），自动添加 `/v1/chat/completions`
+  - `gemini` - Gemini 模型（使用 Gemini 原生协议），推荐使用 ✅
+
+### 支持的模型
+
+| 模型名称 | 模型 ID | 推荐 Provider |
+|---------|--------|---------------|
+| Claude Opus 4.5 (Thinking) | `claude-opus-4-5-thinking` | anthropic |
+| Claude Sonnet 4.5 | `claude-sonnet-4-5` | anthropic |
+| Gemini 3 Pro High | `gemini-3-pro-high` | gemini ✅ |
+| Gemini 3 Flash | `gemini-3-flash` | gemini ✅ |
 
 ## 📸 界面导览 (GUI Overview)
 
@@ -176,7 +211,7 @@ print(response.choices[0].message.content)
 *   **版本演进 (Changelog)**:
     *   **v3.3.0 (2025-12-27)**:
         - **重大更新 (Major Updates)**:
-            - **Codex CLI & Claude CLI 深度适配 (核心致谢 @llsenyue PR #93)**: 
+            - **Codex CLI & Claude CLI 深度适配 (核心致谢 @llsenyue PR #93)**:
                 - **全面兼容 Coding Agent**: 实现了对 Codex CLI 的完美支持，包括 `/v1/responses` 端点的深度适配与 shell 工具调用指令的智能转换 (SSOP)。
                 - **Claude CLI 推理增强**: 引入了全局 `thoughtSignature` 存储与回填逻辑，彻底解决了 Claude CLI 使用 Gemini 3 系列模型时的签名校验报错。
             - **OpenAI 协议栈重构**:
@@ -186,12 +221,18 @@ print(response.choices[0].message.content)
                 - **默认本地回环**: 反代服务器默认监听 `127.0.0.1`，仅允许本机访问，保障隐私安全。
                 - **可选 LAN 访问**: 新增 `allow_lan_access` 配置开关，开启后监听 `0.0.0.0` 以允许局域网设备访问。
                 - **安全提示**: 前端 UI 提供明确的安全警告及状态提示。
-        - **前端体验升级**: 
+        - **前端体验升级**:
             - **多协议端点可视化**: 在 API 反代页面新增端点详情展示，支持对 Chat/Completions/Responses 不同端点的独立快捷复制。
+        - **Droid 兼容性增强 (Fork)**:
+            - **thoughtSignature 完整修复**: 彻底解决了 Gemini 3 系列模型在启用工具调用时的 `thought_signature` 错误。系统会检测 `tools` 参数并自动禁用 thinking mode。
+            - **JSON Schema $ref 增强**: 递归收集所有 `$defs`/`definitions` 并完整展开引用，解决嵌套 `$ref` 导致的错误。
     *   **v3.2.8 (2025-12-26)**:
         - **Bug 修复 (Bug Fixes)**:
             - **OpenAI 协议多模态与图片模型支持**: 彻底修复了在 OpenAI 协议下向视觉模型(如 `gemini-3-pro-image`)发送图片请求时因 `content` 格式不匹配导致的 400 错误。
             - **视觉能力全面补齐**: 现在 OpenAI 协议支持自动解析 Base64 图片并映射为上游 `inlineData`,使其具备与 Claude 协议同等的图像处理能力。
+            - **Gemini 3 系列 thoughtSignature 兼容性修复**: 彻底解决了 Droid 客户端使用 Gemini 3 Pro 模型时的 `Function call is missing a thought_signature` 错误。系统现在会自动为 OpenAI 和 Gemini 协议中的 `functionCall` 生成虚拟 `thoughtSignature`，满足 Gemini 3 系列模型的新要求。
+            - **JSON Schema $ref 展开增强**: 重写了 `$ref` 处理逻辑，递归收集所有 `$defs`/`definitions` 并完整展开引用，解决了嵌套 `$ref` 导致的 `Unknown name "$ref"` 错误。
+            - **required 数组同步清理**: 新增 `required` 与 `properties` 的自动同步逻辑，移除引用不存在属性的条目，解决了 Schema 校验失败问题。
     *   **v3.2.7 (2025-12-26)**:
         - **新功能 (New Features)**:
             - **开机自动启动**: 新增开机自动启动功能,可在设置页面的"通用"标签中一键开启/关闭系统启动时自动运行 Antigravity Tools。

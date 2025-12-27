@@ -74,8 +74,8 @@ pub async fn handle_messages(
     
     crate::modules::logger::log_info(&format!("Received Claude request for model: {}, content_preview: {:.100}...", request.model, latest_msg));
 
-    // 1. 获取 会话 ID (已废弃基于内容的哈希，改用 TokenManager 内部的时间窗口锁定)
-    let session_id: Option<&str> = None;
+    // 1. 获取 会话 ID (已废弃基于内容的哈希,改用 TokenManager 内部的时间窗口锁定)
+    let _session_id: Option<&str> = None;
 
     // 2. 获取 UpstreamClient
     let upstream = state.upstream.clone();
@@ -279,7 +279,14 @@ pub async fn handle_messages(
             && !retried_without_thinking
             && (error_text.contains("Invalid `signature`")
                 || error_text.contains("thinking.signature: Field required")
-                || error_text.contains("thinking.signature"))
+                || error_text.contains("thinking.signature")
+                // Handle "Expected `thinking` or `redacted_thinking`, but found `tool_use`" errors
+                || error_text.contains("Expected `thinking`")
+                || error_text.contains("Expected 'thinking'")
+                || error_text.contains("must start with a thinking block")
+                // Gemini 3 specific: thought_signature required for function calls with thinking mode
+                || error_text.contains("thought_signature")
+                || error_text.contains("thoughtSignature"))
         {
             retried_without_thinking = true;
             tracing::warn!("Upstream rejected thinking signature; retrying once with thinking stripped");

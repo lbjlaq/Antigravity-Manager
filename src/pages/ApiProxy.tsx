@@ -895,6 +895,71 @@ print(response.text)`;
                     </div>
                 )}
 
+                {/* Droid 配置说明 */}
+                {appConfig && status.running && (
+                    <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 overflow-hidden">
+                        <div className="p-3">
+                            <div className="flex items-center gap-3 mb-3">
+                                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center shadow-md">
+                                    <Terminal size={16} className="text-white" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-gray-900 dark:text-base-content">
+                                        🤖 {t('proxy.droid.title', 'Droid Integration')}
+                                    </h3>
+                                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                                        {t('proxy.droid.subtitle', 'Configure Droid to use Antigravity Master as API provider')}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <p className="text-xs text-gray-700 dark:text-gray-300 mb-4 leading-relaxed">
+                                {t('proxy.droid.description', 'Add the following configuration to your Droid custom_models settings. Note: base_url should NOT include /v1/messages - Droid will append it automatically.')}
+                            </p>
+
+                            <div className="bg-gray-900 rounded-xl overflow-hidden">
+                                <div className="p-3 border-b border-gray-800 flex items-center justify-between">
+                                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                                        {t('proxy.droid.config_example', 'Droid Configuration Example')}
+                                    </span>
+                                    <button
+                                        onClick={() => {
+                                            const port = status.running ? status.port : (appConfig?.proxy.port || 8045);
+                                            const apiKey = appConfig?.proxy.api_key || 'YOUR_API_KEY';
+                                            const config = JSON.stringify({
+                                                model_display_name: "antigravity opus 4.5",
+                                                model: "claude-opus-4-5-thinking",
+                                                base_url: `http://127.0.0.1:${port}`,
+                                                api_key: apiKey,
+                                                provider: "anthropic"
+                                            }, null, 2);
+                                            copyToClipboard(config, 'droid-config');
+                                        }}
+                                        className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-white"
+                                    >
+                                        {copied === 'droid-config' ? <CheckCircle size={16} /> : <Copy size={16} />}
+                                    </button>
+                                </div>
+                                <pre className="p-4 text-[11px] font-mono leading-relaxed text-blue-100 overflow-x-auto">
+{`{
+  "model_display_name": "antigravity opus 4.5",
+  "model": "claude-opus-4-5-thinking",
+  "base_url": "http://127.0.0.1:${status.running ? status.port : (appConfig?.proxy.port || 8045)}",
+  "api_key": "${appConfig?.proxy.api_key || 'YOUR_API_KEY'}",
+  "provider": "anthropic"
+}`}
+                                </pre>
+                            </div>
+
+                            <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                                <p className="text-xs text-amber-800 dark:text-amber-200">
+                                    <strong>⚠️ {t('proxy.droid.important', 'Important')}:</strong> {t('proxy.droid.note', 'The base_url must NOT include path suffixes like /v1/messages. Droid automatically appends the appropriate path based on the provider setting.')}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* 支持模型与集成 */}
                 {appConfig && (
                     <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 overflow-hidden mt-4">

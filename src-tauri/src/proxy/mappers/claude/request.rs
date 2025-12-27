@@ -41,8 +41,10 @@ pub fn transform_claude_request_in(
     let allow_dummy_thought = config.final_model.starts_with("gemini-");
 
     // 4. Generation Config & Thinking
-    let generation_config = build_generation_config(claude_req, has_web_search_tool);
-    
+    // Check if tools are present (function calls require thoughtSignature when thinking is enabled)
+    let has_tools = claude_req.tools.is_some() && !claude_req.tools.as_ref().unwrap().is_empty();
+    let generation_config = build_generation_config(claude_req, has_web_search_tool, has_tools);
+
     // Check if thinking is enabled
     let is_thinking_enabled = claude_req.thinking.as_ref()
         .map(|t| t.type_ == "enabled")
@@ -371,26 +373,62 @@ fn build_tools(
 }
 
 /// 构建 Generation Config
-fn build_generation_config(claude_req: &ClaudeRequest, has_web_search: bool) -> Value {
+fn build_generation_config(claude_req: &ClaudeRequest, has_web_search: bool, has_tools: bool) -> Value {
     let mut config = json!({});
 
     // Thinking 配置
+    // CRITICAL: Gemini 3 models with thinking capability require thoughtSignature for function calls.
+    // Since Claude API clients don't preserve thoughtSignature, we must handle this carefully:
+    //
+    // Model breakdown:
+    // - gemini-3-flash (Fast mode): NO thinking support - ignore thinking requests
+    // - gemini-3-flash-thinking: HAS thinking, requires thoughtSignature with tools
+    // - gemini-3-pro: HAS thinking, requires thoughtSignature with tools
+    //
+    // Strategy:
+    // 1. gemini-3-flash (without -thinking suffix): Don't enable thinking at all
+    // 2. gemini-3-flash-thinking / gemini-3-pro + tools: Disable thinking to avoid signature issues
+    // 3. gemini-3-flash-thinking / gemini-3-pro without tools: Enable thinking normally
+
+    let model = &claude_req.model;
+    let is_gemini_3_flash_fast = model.contains("gemini-3-flash") && !model.contains("thinking");
+    let is_gemini_3_with_thinking = (model.contains("gemini-3-flash") && model.contains("thinking"))
+        || model.contains("gemini-3-pro")
+        || model.contains("gemini-exp");
+
     if let Some(thinking) = &claude_req.thinking {
         if thinking.type_ == "enabled" {
-            let mut thinking_config = json!({"includeThoughts": true});
-
-            if let Some(budget_tokens) = thinking.budget_tokens {
-                let mut budget = budget_tokens;
-                // gemini-2.5-flash 上限 24576
-                let is_flash_model = has_web_search
-                    || claude_req.model.contains("gemini-2.5-flash");
-                if is_flash_model {
-                    budget = budget.min(24576);
-                }
-                thinking_config["thinkingBudget"] = json!(budget);
+            // Gemini 3 Flash (Fast mode) doesn't support thinking - explicitly disable
+            if is_gemini_3_flash_fast {
+                tracing::info!("[Claude] Gemini 3 Flash (Fast) doesn't support thinking mode - explicitly disabling");
+                config["thinkingConfig"] = json!({"includeThoughts": false});
             }
+            // Gemini 3 with thinking + tools = must disable thinking (thoughtSignature requirement)
+            else if is_gemini_3_with_thinking && has_tools {
+                tracing::warn!("[Claude] Gemini 3 thinking model with tools detected - disabling thinking to avoid thoughtSignature requirement");
+                config["thinkingConfig"] = json!({"includeThoughts": false});
+            }
+            // All other cases: enable thinking normally
+            else {
+                let mut thinking_config = json!({"includeThoughts": true});
 
-            config["thinkingConfig"] = thinking_config;
+                if let Some(budget_tokens) = thinking.budget_tokens {
+                    let mut budget = budget_tokens;
+                    // gemini-2.5-flash 上限 24576
+                    let is_flash_model = has_web_search
+                        || claude_req.model.contains("gemini-2.5-flash");
+                    if is_flash_model {
+                        budget = budget.min(24576);
+                    }
+                    thinking_config["thinkingBudget"] = json!(budget);
+                }
+
+                config["thinkingConfig"] = thinking_config;
+
+                if has_tools {
+                    tracing::info!("[Claude] Thinking mode enabled with tools present - signature handling required");
+                }
+            }
         }
     }
 
@@ -492,13 +530,13 @@ mod tests {
         assert!(schema["properties"]["unit"].get("default").is_none());
         assert!(schema["properties"]["date"].get("format").is_none());
 
-        // Check union type handling ["string", "null"] -> "STRING"
-        assert_eq!(schema["properties"]["unit"]["type"], "STRING");
+        // Check union type handling ["string", "null"] -> "string"
+        assert_eq!(schema["properties"]["unit"]["type"], "string");
 
-        // Check types are uppercased
-        assert_eq!(schema["type"], "OBJECT");
-        assert_eq!(schema["properties"]["location"]["type"], "STRING");
-        assert_eq!(schema["properties"]["date"]["type"], "STRING");
+        // Check types are lowercased
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["properties"]["location"]["type"], "string");
+        assert_eq!(schema["properties"]["date"]["type"], "string");
     }
 
     #[test]
