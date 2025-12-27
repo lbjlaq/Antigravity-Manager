@@ -85,22 +85,55 @@ impl AxumServer {
             upstream_proxy: proxy_state.clone(),
             upstream: Arc::new(crate::proxy::upstream::client::UpstreamClient::new(Some(upstream_proxy.clone()))),
         };
-        
+
         // 构建路由 - 使用新架构的 handlers！
         use crate::proxy::handlers;
-        // 构建路由
+        use crate::proxy::middleware::admin_login;
+
+        // 无需认证的路由
+        let public_routes = Router::new()
+            // Web管理界面（登录页面）
+            .route("/admin", get(handlers::admin::serve_admin_ui))
+            .route("/admin/", get(handlers::admin::serve_admin_ui))
+            .route("/admin/icon.png", get(handlers::admin::serve_icon))
+            // 登录API
+            .route("/api/admin/login", post(admin_login));
+
+        // 需要认证的Admin API路由
+        let admin_routes = Router::new()
+            .route("/api/admin/config", get(handlers::admin::get_config))
+            .route("/api/admin/config", post(handlers::admin::update_config))
+            .route("/api/admin/config/export", get(handlers::admin::export_config))
+            .route("/api/admin/config/import", post(handlers::admin::import_config))
+            .route("/api/admin/stats", get(handlers::admin::get_stats))
+            .route("/api/admin/logs/stream", get(handlers::admin::logs_stream))
+            .route("/api/admin/accounts", get(handlers::admin::list_accounts))
+            .route("/api/admin/accounts", post(handlers::admin::add_account))
+            .route("/api/admin/accounts/:id", axum::routing::delete(handlers::admin::delete_account))
+            .route("/api/admin/accounts/:id/switch", post(handlers::admin::switch_account))
+            .route("/api/admin/accounts/:id/refresh-quota", post(handlers::admin::refresh_account_quota))
+            .route("/api/admin/status", get(handlers::admin::get_status))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::proxy::middleware::admin_auth_middleware
+            ));
+
+        // 构建完整路由
         let app = Router::new()
+            .merge(public_routes)
+            .merge(admin_routes)
+
             // OpenAI Protocol
             .route("/v1/models", get(handlers::openai::handle_list_models))
             .route("/v1/chat/completions", post(handlers::openai::handle_chat_completions))
             .route("/v1/completions", post(handlers::openai::handle_completions))
             .route("/v1/responses", post(handlers::openai::handle_completions)) // 兼容 Codex CLI
-            
+
             // Claude Protocol
             .route("/v1/messages", post(handlers::claude::handle_messages))
             .route("/v1/messages/count_tokens", post(handlers::claude::handle_count_tokens))
             .route("/v1/models/claude", get(handlers::claude::handle_list_models))
-            
+
             // Gemini Protocol (Native)
             .route("/v1beta/models", get(handlers::gemini::handle_list_models))
             // Handle both GET (get info) and POST (generateContent with colon) at the same route
@@ -109,10 +142,11 @@ impl AxumServer {
             .route("/healthz", get(health_check_handler))
             .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
             .layer(TraceLayer::new_for_http())
+            .layer(axum::middleware::from_fn(crate::proxy::middleware::stats_middleware))
             .layer(axum::middleware::from_fn(crate::proxy::middleware::auth_middleware))
             .layer(crate::proxy::middleware::cors_layer())
             .with_state(state);
-        
+
         // 绑定地址
         let addr = format!("{}:{}", host, port);
         let listener = tokio::net::TcpListener::bind(&addr)

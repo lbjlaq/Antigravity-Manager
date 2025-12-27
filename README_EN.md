@@ -17,11 +17,12 @@
   </p>
 
   <p>
-    <a href="#-features">Features</a> • 
-    <a href="#-gui-overview">GUI Overview</a> • 
-    <a href="#-architecture">Architecture</a> • 
-    <a href="#-installation">Installation</a> • 
-    <a href="#-quick-integration">Integration</a>
+    <a href="#-features">Features</a> •
+    <a href="#-gui-overview">GUI Overview</a> •
+    <a href="#-architecture">Architecture</a> •
+    <a href="#-installation">Installation</a> •
+    <a href="#-quick-integration">Integration</a> •
+    <a href="./HEADLESS_DEPLOYMENT_EN.md">🖥️ Headless Server Deployment</a>
   </p>
 
   <p>
@@ -111,6 +112,56 @@ Download from [GitHub Releases](https://github.com/lbjlaq/Antigravity-Manager/re
 *   **macOS**: `.dmg` (Universal, Apple Silicon & Intel)
 *   **Windows**: `.msi` or portable `.zip`
 *   **Linux**: `.deb` or `AppImage`
+
+### Option C: Build from Source
+
+#### Desktop Version (with GUI)
+```bash
+# Clone the repository
+git clone https://github.com/lbjlaq/Antigravity-Manager.git
+cd Antigravity-Manager
+
+# Install frontend dependencies
+npm install
+
+# Build the desktop app
+npm run tauri build
+```
+
+#### Headless Server Version (No GUI)
+```bash
+# Method 1: Use the automated script (Recommended)
+chmod +x build-headless.sh
+./build-headless.sh
+
+# Method 2: Manual compilation
+cd src-tauri
+cargo build --release --bin headless-proxy --features headless --no-default-features
+
+# Build output location
+# target/release/headless-proxy
+```
+
+**Technical Highlights**:
+- Uses **rustls** for static linking, no system OpenSSL required
+- Completely excludes GUI dependencies (GTK/webkit)
+- Binary size reduced by 67%, memory usage reduced by 75%
+- **Built-in Web Admin Interface** for browser-based configuration
+
+**Quick Start**:
+```bash
+# Start the service
+./src-tauri/target/release/headless-proxy
+
+# Access the admin interface in your browser
+# http://localhost:8045/admin
+```
+
+**Web Admin Features**:
+- Configuration: Port, LAN access, timeouts, etc.
+- Model Mapping: Anthropic/OpenAI/Custom mappings
+- Account Management: Add, remove, switch accounts
+- Quota Monitoring: Real-time quota status
 
 ### 🛠️ Troubleshooting
 

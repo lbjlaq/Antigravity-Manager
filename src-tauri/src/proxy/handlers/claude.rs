@@ -75,7 +75,7 @@ pub async fn handle_messages(
     crate::modules::logger::log_info(&format!("Received Claude request for model: {}, content_preview: {:.100}...", request.model, latest_msg));
 
     // 1. 获取 会话 ID (已废弃基于内容的哈希，改用 TokenManager 内部的时间窗口锁定)
-    let session_id: Option<&str> = None;
+    let _session_id: Option<&str> = None;
 
     // 2. 获取 UpstreamClient
     let upstream = state.upstream.clone();

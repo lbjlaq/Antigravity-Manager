@@ -1,25 +1,27 @@
 mod models;
-mod modules;
+pub mod modules;
+#[cfg(feature = "gui")]
 mod commands;
 mod utils;
-mod proxy;  // 反代服务模块
+pub mod proxy;  // 反代服务模块
 pub mod error;
 
+#[cfg(feature = "gui")]
 use tauri::Manager;
-use modules::logger;
-use tracing::{info, error};
 
 // 测试命令
+#[cfg(feature = "gui")]
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[cfg(feature = "gui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化日志
     logger::init_logger();
-    
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -42,7 +44,7 @@ pub fn run() {
             info!("Setup starting...");
             modules::tray::create_tray(app.handle())?;
             info!("Tray created");
-            
+
             // 自动启动反代服务
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -63,7 +65,7 @@ pub fn run() {
                     }
                 }
             });
-            
+
             Ok(())
         })
         .on_window_event(|window, event| {

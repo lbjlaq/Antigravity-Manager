@@ -12,6 +12,7 @@ pub mod handlers;          // API 端点处理器
 pub mod middleware;        // Axum 中间件
 pub mod upstream;          // 上游客户端
 pub mod common;            // 公共工具
+pub mod admin;             // Admin API 模型和工具
 
 pub use config::ProxyConfig;
 pub use token_manager::TokenManager;

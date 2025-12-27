@@ -3,6 +3,7 @@ use dashmap::DashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
 pub struct ProxyToken {
@@ -20,6 +21,7 @@ pub struct TokenManager {
     tokens: Arc<DashMap<String, ProxyToken>>,  // account_id -> ProxyToken
     current_index: Arc<AtomicUsize>,
     last_used_account: Arc<tokio::sync::Mutex<Option<(String, std::time::Instant)>>>,
+    pinned_account: Arc<RwLock<Option<String>>>,
     data_dir: PathBuf,
 }
 
@@ -30,6 +32,7 @@ impl TokenManager {
             tokens: Arc::new(DashMap::new()),
             current_index: Arc::new(AtomicUsize::new(0)),
             last_used_account: Arc::new(tokio::sync::Mutex::new(None)),
+            pinned_account: Arc::new(RwLock::new(None)),
             data_dir,
         }
     }
@@ -70,10 +73,91 @@ impl TokenManager {
                 }
             }
         }
-        
+
         Ok(count)
     }
-    
+
+    /// 从磁盘重新加载账号（增量同步，避免短暂空池）
+    pub async fn reload_accounts(&self) -> Result<usize, String> {
+        use std::collections::{HashMap, HashSet};
+
+        let accounts_dir = self.data_dir.join("accounts");
+        if !accounts_dir.exists() {
+            self.tokens.clear();
+            let mut last_used = self.last_used_account.lock().await;
+            *last_used = None;
+            let mut pinned = self.pinned_account.write().await;
+            *pinned = None;
+            return Ok(0);
+        }
+
+        let entries = std::fs::read_dir(&accounts_dir)
+            .map_err(|e| format!("读取账号目录失败: {}", e))?;
+
+        let mut next: HashMap<String, ProxyToken> = HashMap::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            match self.load_single_account(&path).await {
+                Ok(Some(token)) => {
+                    next.insert(token.account_id.clone(), token);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!("加载账号失败 {:?}: {}", path, e);
+                }
+            }
+        }
+
+        let next_keys: HashSet<String> = next.keys().cloned().collect();
+
+        // 删除不存在的旧 token
+        let existing_keys: Vec<String> = self.tokens.iter().map(|e| e.key().clone()).collect();
+        for key in existing_keys {
+            if !next_keys.contains(&key) {
+                self.tokens.remove(&key);
+            }
+        }
+
+        // 覆盖/新增
+        for (key, token) in next {
+            self.tokens.insert(key, token);
+        }
+
+        // 清理 last_used / pinned 指向的无效账号
+        {
+            let mut last_used = self.last_used_account.lock().await;
+            if let Some((account_id, _)) = &*last_used {
+                if !self.tokens.contains_key(account_id) {
+                    *last_used = None;
+                }
+            }
+        }
+        {
+            let mut pinned = self.pinned_account.write().await;
+            if let Some(account_id) = pinned.as_ref() {
+                if !self.tokens.contains_key(account_id) {
+                    *pinned = None;
+                }
+            }
+        }
+
+        Ok(self.tokens.len())
+    }
+
+    /// 固定（pin）指定账号为优先账号；传 None 表示取消固定
+    pub async fn pin_account(&self, account_id: Option<String>) {
+        let mut pinned = self.pinned_account.write().await;
+        *pinned = account_id;
+    }
+
+    pub async fn pinned_account_id(&self) -> Option<String> {
+        self.pinned_account.read().await.clone()
+    }
+
     /// 加载单个账号
     async fn load_single_account(&self, path: &PathBuf) -> Result<Option<ProxyToken>, String> {
         let content = std::fs::read_to_string(path)
@@ -124,8 +208,8 @@ impl TokenManager {
         }))
     }
     
-    /// 获取当前可用的 Token（带 60s 时间窗口锁定机制）
-    /// 参数 `_quota_group` 用于区分 "claude" vs "gemini" 组
+    /// 获取当前可用的 Token（带 60s 时间窗口锁定机制 + pin 账号支持）
+    /// 参数 `quota_group` 用于区分 "claude" vs "gemini" 组
     /// 参数 `force_rotate` 为 true 时将忽略锁定，强制切换账号
     pub async fn get_token(&self, quota_group: &str, force_rotate: bool) -> Result<(String, String, String), String> {
         let total = self.tokens.len();
@@ -133,10 +217,22 @@ impl TokenManager {
             return Err("Token pool is empty".to_string());
         }
 
+        // 0. 如果有 pin 且不强制轮换，优先使用指定账号
+        let mut target_token: Option<ProxyToken> = None;
+        if !force_rotate {
+            if let Some(pinned_id) = self.pinned_account.read().await.clone() {
+                if let Some(entry) = self.tokens.get(&pinned_id) {
+                    tracing::info!("Pinned 账号生效: {}", entry.email);
+                    target_token = Some(entry.value().clone());
+                } else {
+                    tracing::warn!("Pinned 账号不存在于池中: {}", pinned_id);
+                }
+            }
+        }
+
         // 1. 检查时间窗口锁定 (60秒内强制复用上一个账号)
         // 优化策略: 画图请求 (image_gen) 默认不锁定，以最大化并发能力
-        let mut target_token = None;
-        if !force_rotate && quota_group != "image_gen" {
+        if target_token.is_none() && !force_rotate && quota_group != "image_gen" {
             let last_used = self.last_used_account.lock().await;
             if let Some((account_id, last_time)) = &*last_used {
                 if last_time.elapsed().as_secs() < 60 {
@@ -150,6 +246,11 @@ impl TokenManager {
 
         // 2. 如果没有锁定、锁定失效或强制轮换，则进行轮询记录并更新锁定信息
         let mut token = if let Some(t) = target_token {
+            // 如果是 pin 模式，同样更新 last_used（用于复用统计/日志一致性）
+            if !force_rotate && quota_group != "image_gen" {
+                let mut last_used = self.last_used_account.lock().await;
+                *last_used = Some((t.account_id.clone(), std::time::Instant::now()));
+            }
             t
         } else {
             // 简单轮换策略 (Round Robin)
@@ -158,13 +259,13 @@ impl TokenManager {
                 .nth(idx)
                 .map(|entry| entry.value().clone())
                 .ok_or("Failed to retrieve token from pool")?;
-            
+
             // 更新最后使用的账号及时间 (如果是普通对话请求)
             if quota_group != "image_gen" {
                 let mut last_used = self.last_used_account.lock().await;
                 *last_used = Some((selected_token.account_id.clone(), std::time::Instant::now()));
             }
-            
+
             let action_msg = if force_rotate { "强制切换" } else { "切换" };
             tracing::info!("{}到账号: {}", action_msg, selected_token.email);
             selected_token

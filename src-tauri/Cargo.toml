@@ -15,18 +15,43 @@ edition = "2021"
 name = "antigravity_tools_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "headless-proxy"
+path = "src/bin/headless.rs"
+required-features = ["headless"]
+
+[features]
+default = ["gui"]
+gui = [
+  "dep:tauri",
+  "dep:tauri-build",
+  "dep:tauri-plugin-opener",
+  "dep:tauri-plugin-dialog",
+  "dep:tauri-plugin-fs",
+  "dep:tauri-plugin-single-instance",
+  "dep:tauri-plugin-autostart",
+]
+headless = []
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-opener = "2"
+# GUI 依赖 (仅在 gui feature 启用时编译)
+tauri = { version = "2", features = ["tray-icon", "image-png"], optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2.4.2", optional = true }
+tauri-plugin-fs = { version = "2.4.4", optional = true }
+tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"], optional = true }
+tauri-plugin-autostart = { version = "2.5.1", optional = true }
+
+# 核心依赖 (GUI 和 headless 共享)
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = "0.4"
 dirs = "5.0"
-reqwest = { version = "0.12", features = ["json", "stream", "socks"] }
+reqwest = { version = "0.12", features = ["json", "stream", "socks", "rustls-tls"], default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -34,12 +59,10 @@ base64 = "0.22"
 sysinfo = "0.31"
 tokio = { version = "1", features = ["full"] }
 url = "2.5.7"
-tauri-plugin-dialog = "2.4.2"
-tauri-plugin-fs = "2.4.4"
 image = "0.25.9"
 thiserror = "2.0.17"
 
-# 反代服务依赖
+# 反代服务依赖 (GUI 和 headless 共享)
 axum = "0.7"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
@@ -55,7 +78,5 @@ regex = "1.12.2"                    # Duration 解析
 once_cell = "1.19"                  # 静态初始化 (模型映射表)
 pin-project = "1.1"                 # Pin 投影辅助
 bytes = "1.5"                       # SSE 字节操作
-tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
 tracing-appender = "0.2.4"
 tracing-log = "0.2.0"
-tauri-plugin-autostart = "2.5.1"

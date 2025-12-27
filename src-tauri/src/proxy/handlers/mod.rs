@@ -4,3 +4,4 @@
 pub mod claude;
 pub mod openai;
 pub mod gemini;
+pub mod admin;  // Web管理界面

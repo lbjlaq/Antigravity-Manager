@@ -1,0 +1,1743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Antigravity Proxy - Admin Panel</title>
+
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
+
+    <!-- TailwindCSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        :root {
+            --bg-primary: #1a1b26;
+            --bg-secondary: #24283b;
+            --bg-tertiary: #414868;
+            --text-primary: #c0caf5;
+            --text-secondary: #a9b1d6;
+            --border-color: #414868;
+            --accent: #7aa2f7;
+            --accent-hover: #8ab4f8;
+            --success: #9ece6a;
+            --warning: #e0af68;
+            --danger: #f7768e;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+        }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-primary); }
+        ::-webkit-scrollbar-thumb { background-color: var(--border-color); border-radius: 20px; }
+        ::-webkit-scrollbar-thumb:hover { background-color: var(--accent); }
+
+        .sidebar-link.active {
+            background-color: var(--accent);
+            color: var(--bg-primary);
+            font-weight: 600;
+        }
+
+        .content-panel { display: none; }
+        .content-panel.active { display: block; }
+
+        #loginOverlay {
+            position: fixed;
+            inset: 0;
+            background: var(--bg-primary);
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+        #loginOverlay.show { display: flex; }
+
+        .form-input {
+            width: 100%;
+            padding: 0.625rem 0.875rem;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(122, 162, 247, 0.15);
+        }
+
+        .btn {
+            padding: 0.625rem 1.25rem;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+        .btn:hover { transform: translateY(-1px); }
+        .btn:active { transform: translateY(0); }
+        .btn-primary { background: var(--accent); color: var(--bg-primary); }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-success { background: var(--success); color: var(--bg-primary); }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); }
+
+        .card {
+            background: var(--bg-secondary);
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border-radius: 0.75rem;
+            padding: 1.25rem;
+            border-left: 4px solid var(--accent);
+        }
+
+        .mapping-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .account-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            padding: 1rem;
+            transition: all 0.2s;
+        }
+        .account-card.active {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(122, 162, 247, 0.2);
+        }
+
+        .log-area {
+            background: var(--bg-primary);
+            border-radius: 0.5rem;
+            height: 400px;
+            overflow-y: auto;
+            padding: 1rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8125rem;
+            border: 1px solid var(--border-color);
+        }
+        .log-entry {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.25rem 0;
+            border-bottom: 1px solid rgba(65, 72, 104, 0.3);
+        }
+        .log-timestamp { color: var(--text-secondary); white-space: nowrap; }
+        .log-level { font-weight: 600; min-width: 50px; }
+        .log-level-INFO { color: var(--accent); }
+        .log-level-WARN { color: var(--warning); }
+        .log-level-ERROR { color: var(--danger); }
+        .log-level-PROXY { color: var(--success); }
+        .log-status-2xx { color: var(--success); }
+        .log-status-4xx { color: var(--warning); }
+        .log-status-5xx { color: var(--danger); }
+
+        .quota-progress {
+            width: 100%;
+            height: 6px;
+            background: var(--bg-primary);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 0.25rem;
+        }
+        .quota-progress-bar {
+            height: 100%;
+            background: var(--accent);
+            transition: width 0.3s ease;
+        }
+        .quota-progress-bar.low { background: var(--danger); }
+        .quota-progress-bar.medium { background: var(--warning); }
+
+        .alert {
+            padding: 0.875rem 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1rem;
+            display: none;
+            animation: slideIn 0.3s ease-out;
+        }
+        .alert.show { display: flex; align-items: center; gap: 0.75rem; }
+        .alert-success { background: rgba(158, 206, 106, 0.15); border: 1px solid var(--success); color: var(--success); }
+        .alert-error { background: rgba(247, 118, 142, 0.15); border: 1px solid var(--danger); color: var(--danger); }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .chart-bar {
+            width: 100%;
+            max-width: 40px;
+            background: var(--accent);
+            border-radius: 4px 4px 0 0;
+            transition: height 0.3s ease;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .toggle-switch.active { background: var(--success); }
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.2s;
+        }
+        .toggle-switch.active::after { transform: translateX(20px); }
+
+        @media (max-width: 1024px) {
+            .mapping-row { grid-template-columns: 1fr; }
+        }
+
+        .btn:focus-visible, .sidebar-link:focus-visible, .toggle-switch:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+    </style>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'bg-primary': 'var(--bg-primary)',
+                        'bg-secondary': 'var(--bg-secondary)',
+                        'bg-tertiary': 'var(--bg-tertiary)',
+                        'accent': 'var(--accent)',
+                        'text-primary': 'var(--text-primary)',
+                        'text-secondary': 'var(--text-secondary)',
+                        'border-color': 'var(--border-color)',
+                        'success': 'var(--success)',
+                        'warning': 'var(--warning)',
+                        'danger': 'var(--danger)',
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-bg-primary">
+
+    <!-- Login Overlay -->
+    <div id="loginOverlay">
+        <div class="card max-w-md w-11/12">
+            <div class="text-center mb-6">
+                <img src="/admin/icon.png" alt="Logo" class="w-16 h-16 mx-auto mb-3">
+                <h2 class="text-xl font-bold text-text-primary">Antigravity-Manager</h2>
+                <p class="text-text-secondary text-sm mt-1" data-i18n="login.subtitle">Enter API Key to continue</p>
+            </div>
+            <form id="loginForm">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-text-secondary mb-2" data-i18n="login.apiKeyLabel">API Key</label>
+                    <input type="password" id="apiKey" class="form-input" data-i18n-placeholder="login.apiKeyPlaceholder" placeholder="sk-xxxxxxxx-xxxx-xxxx" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-full">
+                    <i class="fas fa-sign-in-alt mr-2"></i><span data-i18n="login.button">Login</span>
+                </button>
+            </form>
+            <p class="text-xs text-text-secondary text-center mt-4">
+                <span data-i18n="login.hint">API Key in:</span> <code class="bg-bg-tertiary px-1.5 py-0.5 rounded text-xs">~/.antigravity_tools/gui_config.json</code>
+            </p>
+        </div>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="flex h-screen overflow-hidden">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="w-64 bg-bg-secondary flex-shrink-0 flex flex-col fixed inset-y-0 left-0 z-30 transform -translate-x-full lg:translate-x-0 transition-transform duration-300">
+            <!-- Logo -->
+            <div class="h-16 flex items-center px-4 border-b border-border-color">
+                <img src="/admin/icon.png" alt="Logo" class="w-8 h-8 mr-2">
+                <span class="text-sm font-bold text-text-primary truncate">Antigravity-Manager</span>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
+                <a href="#dashboard" class="sidebar-link flex items-center px-4 py-2.5 rounded-lg text-text-secondary hover:bg-accent hover:text-bg-primary transition-all duration-200 active">
+                    <i class="fas fa-chart-line w-5 text-center"></i>
+                    <span class="ml-3 text-sm font-medium" data-i18n="nav.dashboard">Dashboard</span>
+                </a>
+                <a href="#accounts" class="sidebar-link flex items-center px-4 py-2.5 rounded-lg text-text-secondary hover:bg-accent hover:text-bg-primary transition-all duration-200">
+                    <i class="fas fa-users w-5 text-center"></i>
+                    <span class="ml-3 text-sm font-medium" data-i18n="nav.accounts">Accounts</span>
+                </a>
+                <a href="#logs" class="sidebar-link flex items-center px-4 py-2.5 rounded-lg text-text-secondary hover:bg-accent hover:text-bg-primary transition-all duration-200">
+                    <i class="fas fa-terminal w-5 text-center"></i>
+                    <span class="ml-3 text-sm font-medium" data-i18n="nav.logs">Logs</span>
+                </a>
+                <a href="#settings" class="sidebar-link flex items-center px-4 py-2.5 rounded-lg text-text-secondary hover:bg-accent hover:text-bg-primary transition-all duration-200">
+                    <i class="fas fa-cog w-5 text-center"></i>
+                    <span class="ml-3 text-sm font-medium" data-i18n="nav.settings">Settings</span>
+                </a>
+                <a href="#mapping" class="sidebar-link flex items-center px-4 py-2.5 rounded-lg text-text-secondary hover:bg-accent hover:text-bg-primary transition-all duration-200">
+                    <i class="fas fa-project-diagram w-5 text-center"></i>
+                    <span class="ml-3 text-sm font-medium" data-i18n="nav.mapping">Model Mapping</span>
+                </a>
+                <a href="#backup" class="sidebar-link flex items-center px-4 py-2.5 rounded-lg text-text-secondary hover:bg-accent hover:text-bg-primary transition-all duration-200">
+                    <i class="fas fa-database w-5 text-center"></i>
+                    <span class="ml-3 text-sm font-medium" data-i18n="nav.backup">Backup</span>
+                </a>
+            </nav>
+
+            <!-- Sidebar Footer -->
+            <div class="px-4 py-4 border-t border-border-color">
+                <div class="flex items-center justify-between text-xs text-text-secondary">
+                    <span id="sidebarVersion">v3.3.0</span>
+                    <span id="sidebarAccounts">0 accounts</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <div class="flex-1 flex flex-col lg:ml-64 transition-all duration-300">
+            <!-- Header -->
+            <header class="h-16 bg-bg-secondary flex items-center justify-between px-6 border-b border-border-color flex-shrink-0">
+                <div class="flex items-center">
+                    <button id="menuToggle" class="lg:hidden mr-4 text-text-secondary hover:text-accent transition-colors" aria-label="Toggle menu" aria-controls="sidebar" aria-expanded="false">
+                        <i class="fas fa-bars text-lg" aria-hidden="true"></i>
+                    </button>
+                    <h2 id="pageTitle" class="text-lg font-semibold text-text-primary">Dashboard</h2>
+                </div>
+                <div class="flex items-center gap-4">
+                    <div class="flex items-center gap-2 text-sm">
+                        <span class="relative flex h-2.5 w-2.5">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-success"></span>
+                        </span>
+                        <span class="text-text-secondary hidden sm:inline" data-i18n="header.service">Service:</span>
+                        <span class="text-success font-medium hidden sm:inline" data-i18n="header.online">Online</span>
+                    </div>
+                    <button id="langToggle" onclick="toggleLanguage()" class="text-text-secondary hover:text-accent transition-colors text-sm font-medium" title="Switch Language" aria-label="Switch Language">
+                        <span id="langLabel">EN</span>
+                    </button>
+                    <button onclick="logout()" class="text-text-secondary hover:text-danger transition-colors" title="Logout" aria-label="Logout">
+                        <i class="fas fa-sign-out-alt" aria-hidden="true"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Content Area -->
+            <main class="flex-1 overflow-y-auto p-6">
+                <div class="max-w-6xl mx-auto">
+                    <div id="alertContainer" aria-live="polite"></div>
+
+                    <!-- Dashboard Panel -->
+                    <section id="dashboard-panel" class="content-panel active">
+                        <!-- Stats Grid -->
+                        <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                            <div class="stat-card">
+                                <p class="text-xs text-text-secondary uppercase tracking-wide" data-i18n="dashboard.totalRequests">Total Requests</p>
+                                <p class="text-2xl font-bold text-text-primary mt-1" id="statReqTotal">0</p>
+                            </div>
+                            <div class="stat-card">
+                                <p class="text-xs text-text-secondary uppercase tracking-wide" data-i18n="dashboard.successRate">Success Rate</p>
+                                <p class="text-2xl font-bold text-success mt-1" id="statSuccessRate">-</p>
+                            </div>
+                            <div class="stat-card">
+                                <p class="text-xs text-text-secondary uppercase tracking-wide" data-i18n="dashboard.avgLatency">Avg Latency</p>
+                                <p class="text-2xl font-bold text-text-primary mt-1" id="statAvgLatency">-</p>
+                            </div>
+                            <div class="stat-card">
+                                <p class="text-xs text-text-secondary uppercase tracking-wide" data-i18n="dashboard.p95Latency">P95 Latency</p>
+                                <p class="text-2xl font-bold text-text-primary mt-1" id="statP95Latency">-</p>
+                            </div>
+                            <div class="stat-card">
+                                <p class="text-xs text-text-secondary uppercase tracking-wide" data-i18n="dashboard.rps">RPS</p>
+                                <p class="text-2xl font-bold text-accent mt-1" id="statRps">0</p>
+                            </div>
+                        </div>
+
+                        <!-- Chart -->
+                        <div class="card">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-sm font-semibold text-text-primary" data-i18n="dashboard.chartTitle">Request Volume (6h)</h3>
+                                <button onclick="loadStats()" class="text-text-secondary hover:text-accent text-sm">
+                                    <i class="fas fa-sync-alt mr-1"></i><span data-i18n="dashboard.refresh">Refresh</span>
+                                </button>
+                            </div>
+                            <div class="flex items-end justify-around h-32 gap-2" id="requestChart">
+                                <div class="flex flex-col items-center flex-1">
+                                    <div class="chart-bar" style="height: 0%"></div>
+                                    <span class="text-xs text-text-secondary mt-2">-5h</span>
+                                </div>
+                                <div class="flex flex-col items-center flex-1">
+                                    <div class="chart-bar" style="height: 0%"></div>
+                                    <span class="text-xs text-text-secondary mt-2">-4h</span>
+                                </div>
+                                <div class="flex flex-col items-center flex-1">
+                                    <div class="chart-bar" style="height: 0%"></div>
+                                    <span class="text-xs text-text-secondary mt-2">-3h</span>
+                                </div>
+                                <div class="flex flex-col items-center flex-1">
+                                    <div class="chart-bar" style="height: 0%"></div>
+                                    <span class="text-xs text-text-secondary mt-2">-2h</span>
+                                </div>
+                                <div class="flex flex-col items-center flex-1">
+                                    <div class="chart-bar" style="height: 0%"></div>
+                                    <span class="text-xs text-text-secondary mt-2">-1h</span>
+                                </div>
+                                <div class="flex flex-col items-center flex-1">
+                                    <div class="chart-bar" style="height: 0%"></div>
+                                    <span class="text-xs text-text-secondary mt-2">Now</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Quick Stats -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                            <div class="card">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center">
+                                        <i class="fas fa-users text-accent"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs text-text-secondary" data-i18n="dashboard.totalAccounts">Total Accounts</p>
+                                        <p class="text-lg font-bold text-text-primary" id="statTotalAccounts">0</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-lg bg-success/20 flex items-center justify-center">
+                                        <i class="fas fa-check-circle text-success"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs text-text-secondary" data-i18n="dashboard.activeAccounts">Active Accounts</p>
+                                        <p class="text-lg font-bold text-text-primary" id="statActiveAccounts">0</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-lg bg-danger/20 flex items-center justify-center">
+                                        <i class="fas fa-ban text-danger"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs text-text-secondary" data-i18n="dashboard.forbidden">Forbidden</p>
+                                        <p class="text-lg font-bold text-text-primary" id="statForbiddenAccounts">0</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Accounts Panel -->
+                    <section id="accounts-panel" class="content-panel">
+                        <div class="card mb-6">
+                            <h3 class="text-sm font-semibold text-text-primary mb-4">
+                                <i class="fas fa-plus-circle text-accent mr-2"></i><span data-i18n="accounts.addTitle">Add Account</span>
+                            </h3>
+                            <textarea id="refreshToken" class="form-input h-24 font-mono text-sm resize-none" data-i18n-placeholder="accounts.addPlaceholder" placeholder="Paste Google OAuth Refresh Token..."></textarea>
+                            <button onclick="addAccount()" class="btn btn-success mt-3">
+                                <i class="fas fa-plus mr-2"></i><span data-i18n="accounts.addButton">Add Account</span>
+                            </button>
+                        </div>
+
+                        <div class="card">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-sm font-semibold text-text-primary">
+                                    <i class="fas fa-users text-accent mr-2"></i><span data-i18n="accounts.listTitle">Account List</span>
+                                </h3>
+                                <div class="flex items-center gap-3">
+                                    <button onclick="refreshAllQuotas()" class="btn btn-secondary text-xs py-1.5 px-3">
+                                        <i class="fas fa-sync-alt mr-1"></i><span data-i18n="accounts.refreshAll">Refresh All</span>
+                                    </button>
+                                    <span class="text-xs text-text-secondary" id="accountsCount">0 accounts</span>
+                                </div>
+                            </div>
+                            <div id="accountsContainer" class="space-y-3">
+                                <p class="text-text-secondary text-sm text-center py-8" data-i18n="accounts.loading">Loading accounts...</p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Logs Panel -->
+                    <section id="logs-panel" class="content-panel">
+                        <div class="card">
+                            <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+                                <h3 class="text-sm font-semibold text-text-primary">
+                                    <i class="fas fa-terminal text-accent mr-2"></i><span data-i18n="logs.title">Real-time Logs</span>
+                                </h3>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <select id="logLevelFilter" class="form-input py-1.5 px-3 text-sm w-auto">
+                                        <option value="all" data-i18n="logs.allLevels">All Levels</option>
+                                        <option value="proxy">Proxy</option>
+                                        <option value="error">Error</option>
+                                        <option value="warn">Warning</option>
+                                        <option value="info">Info</option>
+                                    </select>
+                                    <select id="logStatusFilter" class="form-input py-1.5 px-3 text-sm w-auto">
+                                        <option value="all" data-i18n="logs.allStatus">All Status</option>
+                                        <option value="2xx">2xx</option>
+                                        <option value="4xx">4xx</option>
+                                        <option value="5xx">5xx</option>
+                                    </select>
+                                    <input type="text" id="logTextFilter" class="form-input py-1.5 px-3 text-sm w-40" data-i18n-placeholder="logs.search" placeholder="Search...">
+                                    <button id="logPauseBtn" onclick="toggleLogPause()" class="btn btn-secondary py-1.5 px-3 text-sm">
+                                        <i class="fas fa-pause mr-1"></i><span data-i18n="logs.pause">Pause</span>
+                                    </button>
+                                    <button onclick="clearLogs()" class="btn btn-secondary py-1.5 px-3 text-sm">
+                                        <i class="fas fa-trash mr-1"></i><span data-i18n="logs.clear">Clear</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="log-area" id="logArea">
+                                <div class="text-center text-text-secondary py-8" data-i18n="logs.connecting">Connecting to log stream...</div>
+                            </div>
+                            <div class="flex items-center justify-between mt-3 text-xs text-text-secondary">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-2 h-2 rounded-full bg-danger" id="logConnDot"></span>
+                                    <span id="logConnStatus" data-i18n="logs.disconnected">Disconnected</span>
+                                </div>
+                                <span id="logCount">0 logs</span>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Settings Panel -->
+                    <section id="settings-panel" class="content-panel">
+                        <div class="card">
+                            <h3 class="text-sm font-semibold text-text-primary mb-4">
+                                <i class="fas fa-sliders-h text-accent mr-2"></i><span data-i18n="settings.title">Basic Configuration</span>
+                            </h3>
+                            <form id="configForm" class="space-y-4">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm text-text-secondary mb-1.5" data-i18n="settings.port">Server Port</label>
+                                        <input type="number" id="port" class="form-input" min="1" max="65535" required>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm text-text-secondary mb-1.5" data-i18n="settings.timeout">Request Timeout (s)</label>
+                                        <input type="number" id="timeout" class="form-input" min="10" max="600" required>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between p-3 bg-bg-primary rounded-lg">
+                                    <div>
+                                        <p class="text-sm font-medium text-text-primary" id="lan-toggle-label" data-i18n="settings.lanAccess">Allow LAN Access</p>
+                                        <p class="text-xs text-text-secondary" data-i18n="settings.lanDesc">Enable access from other devices on network</p>
+                                    </div>
+                                    <button id="allowLanToggle" type="button" role="switch" aria-checked="false" aria-labelledby="lan-toggle-label" class="toggle-switch" onclick="toggleLan()"></button>
+                                </div>
+                                <button type="submit" class="btn btn-success">
+                                    <i class="fas fa-save mr-2"></i><span data-i18n="settings.save">Save Configuration</span>
+                                </button>
+                            </form>
+                        </div>
+                    </section>
+
+                    <!-- Model Mapping Panel -->
+                    <section id="mapping-panel" class="content-panel">
+                        <div class="space-y-6">
+                            <!-- Anthropic Mapping -->
+                            <div class="card">
+                                <h3 class="text-sm font-semibold text-text-primary mb-4">
+                                    <i class="fas fa-robot text-accent mr-2"></i><span data-i18n="mapping.anthropicTitle">Anthropic (Claude) Mapping</span>
+                                </h3>
+                                <div id="anthropicMappings" class="space-y-2"></div>
+                                <button type="button" class="btn btn-secondary mt-3 text-sm" onclick="addMapping('anthropic')">
+                                    <i class="fas fa-plus mr-1"></i><span data-i18n="mapping.addMapping">Add Mapping</span>
+                                </button>
+                            </div>
+
+                            <!-- OpenAI Mapping -->
+                            <div class="card">
+                                <h3 class="text-sm font-semibold text-text-primary mb-4">
+                                    <i class="fas fa-brain text-accent mr-2"></i><span data-i18n="mapping.openaiTitle">OpenAI (GPT) Mapping</span>
+                                </h3>
+                                <div id="openaiMappings" class="space-y-2"></div>
+                                <button type="button" class="btn btn-secondary mt-3 text-sm" onclick="addMapping('openai')">
+                                    <i class="fas fa-plus mr-1"></i><span data-i18n="mapping.addMapping">Add Mapping</span>
+                                </button>
+                            </div>
+
+                            <!-- Custom Mapping -->
+                            <div class="card">
+                                <h3 class="text-sm font-semibold text-text-primary mb-4">
+                                    <i class="fas fa-code text-accent mr-2"></i><span data-i18n="mapping.customTitle">Custom Mapping</span>
+                                </h3>
+                                <div id="customMappings" class="space-y-2"></div>
+                                <button type="button" class="btn btn-secondary mt-3 text-sm" onclick="addMapping('custom')">
+                                    <i class="fas fa-plus mr-1"></i><span data-i18n="mapping.addMapping">Add Mapping</span>
+                                </button>
+                            </div>
+
+                            <button type="button" class="btn btn-success" onclick="saveMappings()">
+                                <i class="fas fa-save mr-2"></i><span data-i18n="mapping.saveAll">Save All Mappings</span>
+                            </button>
+                        </div>
+                    </section>
+
+                    <!-- Backup Panel -->
+                    <section id="backup-panel" class="content-panel">
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <!-- Config Backup -->
+                            <div class="card">
+                                <h3 class="text-sm font-semibold text-text-primary mb-4">
+                                    <i class="fas fa-file-export text-accent mr-2"></i><span data-i18n="backup.configTitle">Configuration Backup</span>
+                                </h3>
+                                <p class="text-sm text-text-secondary mb-4 max-w-prose" data-i18n="backup.configDesc">Export your configuration to JSON or import from a backup file.</p>
+                                <div class="flex gap-3">
+                                    <button onclick="exportConfig()" class="btn btn-primary flex-1">
+                                        <i class="fas fa-download mr-2"></i><span data-i18n="backup.export">Export</span>
+                                    </button>
+                                    <label class="btn btn-secondary flex-1 cursor-pointer text-center">
+                                        <i class="fas fa-upload mr-2"></i><span data-i18n="backup.import">Import</span>
+                                        <input type="file" id="configFileInput" accept=".json" onchange="handleConfigImport(event)" class="hidden">
+                                    </label>
+                                </div>
+                                <div id="configPreviewContainer" class="mt-4 hidden">
+                                    <label class="block text-sm text-text-secondary mb-1.5" data-i18n="backup.preview">Preview:</label>
+                                    <div class="bg-bg-primary rounded-lg p-3 max-h-48 overflow-auto">
+                                        <pre id="configPreview" class="text-xs font-mono text-text-primary whitespace-pre-wrap"></pre>
+                                    </div>
+                                    <div class="flex gap-2 mt-3">
+                                        <button onclick="validateImportConfig()" class="btn btn-secondary text-sm" data-i18n="backup.validate">Validate</button>
+                                        <button id="applyConfigBtn" onclick="applyImportConfig()" class="btn btn-success text-sm" disabled data-i18n="backup.apply">Apply</button>
+                                        <button onclick="cancelConfigImport()" class="btn btn-danger text-sm" data-i18n="backup.cancel">Cancel</button>
+                                    </div>
+                                    <div id="configValidationResult" class="mt-2 text-sm"></div>
+                                </div>
+                            </div>
+
+                            <!-- Batch Import -->
+                            <div class="card">
+                                <h3 class="text-sm font-semibold text-text-primary mb-4">
+                                    <i class="fas fa-file-import text-accent mr-2"></i><span data-i18n="backup.batchTitle">Batch Account Import</span>
+                                </h3>
+                                <p class="text-sm text-text-secondary mb-4" data-i18n="backup.batchDesc">Paste tokens (one per line) or GUI exported JSON array.</p>
+                                <textarea id="batchTokens" class="form-input h-32 font-mono text-sm resize-none" data-i18n-placeholder="backup.batchPlaceholder" placeholder="Paste tokens or JSON array..."></textarea>
+                                <div class="flex flex-wrap items-center gap-3 mt-3">
+                                    <button onclick="parseBatchTokens()" class="btn btn-secondary text-sm">
+                                        <i class="fas fa-search mr-1"></i><span data-i18n="backup.parse">Parse</span>
+                                    </button>
+                                    <label class="flex items-center gap-1.5 text-sm text-text-secondary">
+                                        <input type="checkbox" id="batchDedupe" checked class="rounded">
+                                        <span data-i18n="backup.dedupe">Dedupe</span>
+                                    </label>
+                                    <label class="flex items-center gap-1.5 text-sm text-text-secondary">
+                                        <input type="checkbox" id="batchTrim" checked class="rounded">
+                                        <span data-i18n="backup.trim">Trim</span>
+                                    </label>
+                                    <span id="batchParseInfo" class="text-sm text-text-secondary"></span>
+                                </div>
+                                <button id="batchImportBtn" onclick="executeBatchImport()" class="btn btn-success mt-3" disabled>
+                                    <i class="fas fa-file-import mr-2"></i><span data-i18n="backup.importAll">Import All</span>
+                                </button>
+                                <div id="batchProgress" class="mt-4 hidden">
+                                    <div class="h-2 bg-bg-primary rounded-full overflow-hidden">
+                                        <div id="batchProgressBar" class="h-full bg-accent transition-all duration-300" style="width: 0%"></div>
+                                    </div>
+                                    <p id="batchProgressText" class="text-xs text-text-secondary mt-1" data-i18n="backup.importing">Importing...</p>
+                                </div>
+                                <div id="batchResults" class="mt-4 hidden p-3 bg-bg-primary rounded-lg">
+                                    <p class="text-sm font-medium text-text-primary mb-2" data-i18n="backup.results">Import Results</p>
+                                    <div class="flex gap-4 text-sm">
+                                        <span class="text-success"><span data-i18n="backup.success">Success:</span> <span id="batchSuccessCount">0</span></span>
+                                        <span class="text-danger"><span data-i18n="backup.failed">Failed:</span> <span id="batchFailCount">0</span></span>
+                                    </div>
+                                    <div id="batchDetailResults" class="mt-2 max-h-32 overflow-y-auto text-xs"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Mobile Overlay -->
+    <div id="sidebarOverlay" class="fixed inset-0 bg-black/50 z-20 hidden lg:hidden"></div>
+
+    <script>
+        // ==================== State ====================
+        let config = null;
+        let accounts = [];
+        let authToken = null;
+        let logBuffer = [];
+        let logPaused = false;
+        let logSSE = null;
+        let importedConfig = null;
+        let parsedTokens = [];
+        let currentLang = localStorage.getItem('lang') || 'en';
+        const LOG_DOM_CAP = 200;
+        const LOG_BUFFER_CAP = 1000;
+
+        // ==================== i18n ====================
+        const i18n = {
+            en: {
+                // Login
+                'login.subtitle': 'Enter API Key to continue',
+                'login.apiKeyLabel': 'API Key',
+                'login.apiKeyPlaceholder': 'sk-xxxxxxxx-xxxx-xxxx',
+                'login.button': 'Login',
+                'login.hint': 'API Key in:',
+                'login.success': 'Login successful',
+                'login.invalid': 'Invalid API Key',
+                // Navigation
+                'nav.dashboard': 'Dashboard',
+                'nav.accounts': 'Accounts',
+                'nav.logs': 'Logs',
+                'nav.settings': 'Settings',
+                'nav.mapping': 'Model Mapping',
+                'nav.backup': 'Backup',
+                // Page Titles
+                'page.dashboard': 'Dashboard',
+                'page.accounts': 'Account Management',
+                'page.logs': 'Real-time Logs',
+                'page.settings': 'Settings',
+                'page.mapping': 'Model Mapping',
+                'page.backup': 'Backup & Import',
+                // Header
+                'header.service': 'Service:',
+                'header.online': 'Online',
+                // Dashboard
+                'dashboard.totalRequests': 'Total Requests',
+                'dashboard.successRate': 'Success Rate',
+                'dashboard.avgLatency': 'Avg Latency',
+                'dashboard.p95Latency': 'P95 Latency',
+                'dashboard.rps': 'RPS',
+                'dashboard.chartTitle': 'Request Volume (6h)',
+                'dashboard.refresh': 'Refresh',
+                'dashboard.totalAccounts': 'Total Accounts',
+                'dashboard.activeAccounts': 'Active Accounts',
+                'dashboard.forbidden': 'Forbidden',
+                // Accounts
+                'accounts.addTitle': 'Add Account',
+                'accounts.addPlaceholder': 'Paste Google OAuth Refresh Token...',
+                'accounts.addButton': 'Add Account',
+                'accounts.listTitle': 'Account List',
+                'accounts.loading': 'Loading accounts...',
+                'accounts.noAccounts': 'No accounts yet',
+                'accounts.active': 'Active',
+                'accounts.switch': 'Switch',
+                'accounts.refreshQuota': 'Refresh',
+                'accounts.refreshAll': 'Refresh All',
+                'accounts.refreshingAll': 'Refreshing all quotas...',
+                'accounts.allRefreshed': 'All quotas refreshed',
+                'accounts.forbidden': 'Account forbidden',
+                'accounts.added': 'Account added',
+                'accounts.deleted': 'Account deleted',
+                'accounts.switched': 'Account switched',
+                'accounts.quotaRefreshed': 'Quota refreshed',
+                'accounts.enterToken': 'Please enter Refresh Token',
+                // Logs
+                'logs.title': 'Real-time Logs',
+                'logs.allLevels': 'All Levels',
+                'logs.allStatus': 'All Status',
+                'logs.search': 'Search...',
+                'logs.pause': 'Pause',
+                'logs.resume': 'Resume',
+                'logs.clear': 'Clear',
+                'logs.connecting': 'Connecting to log stream...',
+                'logs.connected': 'Connected',
+                'logs.disconnected': 'Disconnected',
+                'logs.reconnecting': 'Reconnecting...',
+                'logs.cleared': 'Logs cleared',
+                // Settings
+                'settings.title': 'Basic Configuration',
+                'settings.port': 'Server Port',
+                'settings.timeout': 'Request Timeout (s)',
+                'settings.lanAccess': 'Allow LAN Access',
+                'settings.lanDesc': 'Enable access from other devices on network',
+                'settings.save': 'Save Configuration',
+                'settings.saved': 'Configuration saved',
+                // Mapping
+                'mapping.anthropicTitle': 'Anthropic (Claude) Mapping',
+                'mapping.openaiTitle': 'OpenAI (GPT) Mapping',
+                'mapping.customTitle': 'Custom Mapping',
+                'mapping.addMapping': 'Add Mapping',
+                'mapping.saveAll': 'Save All Mappings',
+                'mapping.saved': 'Mappings saved',
+                'mapping.source': 'Source model',
+                'mapping.target': 'Target model',
+                // Backup
+                'backup.configTitle': 'Configuration Backup',
+                'backup.configDesc': 'Export your configuration to JSON or import from a backup file.',
+                'backup.export': 'Export',
+                'backup.import': 'Import',
+                'backup.preview': 'Preview:',
+                'backup.validate': 'Validate',
+                'backup.apply': 'Apply',
+                'backup.cancel': 'Cancel',
+                'backup.valid': 'Valid configuration',
+                'backup.exported': 'Configuration exported',
+                'backup.applied': 'Configuration applied',
+                'backup.batchTitle': 'Batch Account Import',
+                'backup.batchDesc': 'Paste tokens (one per line) or GUI exported JSON array.',
+                'backup.batchPlaceholder': 'Paste tokens or JSON array...',
+                'backup.parse': 'Parse',
+                'backup.dedupe': 'Dedupe',
+                'backup.trim': 'Trim',
+                'backup.importAll': 'Import All',
+                'backup.tokensParsed': 'tokens parsed',
+                'backup.importing': 'Importing...',
+                'backup.success': 'Success:',
+                'backup.failed': 'Failed:',
+                'backup.results': 'Import Results',
+                // Common
+                'common.delete': 'Delete',
+                'common.confirm': 'Confirm',
+                'common.requestFailed': 'Request failed:',
+            },
+            zh: {
+                // Login
+                'login.subtitle': '请输入 API Key 继续',
+                'login.apiKeyLabel': 'API 密钥',
+                'login.apiKeyPlaceholder': 'sk-xxxxxxxx-xxxx-xxxx',
+                'login.button': '登录',
+                'login.hint': 'API Key 位于:',
+                'login.success': '登录成功',
+                'login.invalid': 'API Key 无效',
+                // Navigation
+                'nav.dashboard': '仪表盘',
+                'nav.accounts': '账号管理',
+                'nav.logs': '日志',
+                'nav.settings': '设置',
+                'nav.mapping': '模型映射',
+                'nav.backup': '备份',
+                // Page Titles
+                'page.dashboard': '仪表盘',
+                'page.accounts': '账号管理',
+                'page.logs': '实时日志',
+                'page.settings': '设置',
+                'page.mapping': '模型映射',
+                'page.backup': '备份与导入',
+                // Header
+                'header.service': '服务:',
+                'header.online': '在线',
+                // Dashboard
+                'dashboard.totalRequests': '总请求数',
+                'dashboard.successRate': '成功率',
+                'dashboard.avgLatency': '平均延迟',
+                'dashboard.p95Latency': 'P95 延迟',
+                'dashboard.rps': 'RPS',
+                'dashboard.chartTitle': '请求量 (6小时)',
+                'dashboard.refresh': '刷新',
+                'dashboard.totalAccounts': '总账号数',
+                'dashboard.activeAccounts': '活跃账号',
+                'dashboard.forbidden': '已禁用',
+                // Accounts
+                'accounts.addTitle': '添加账号',
+                'accounts.addPlaceholder': '粘贴 Google OAuth Refresh Token...',
+                'accounts.addButton': '添加账号',
+                'accounts.listTitle': '账号列表',
+                'accounts.loading': '加载中...',
+                'accounts.noAccounts': '暂无账号',
+                'accounts.active': '当前',
+                'accounts.switch': '切换',
+                'accounts.refreshQuota': '刷新',
+                'accounts.forbidden': '账号已禁用',
+                'accounts.added': '账号已添加',
+                'accounts.deleted': '账号已删除',
+                'accounts.switched': '已切换账号',
+                'accounts.quotaRefreshed': '配额已刷新',
+                'accounts.enterToken': '请输入 Refresh Token',
+                'accounts.refreshAll': '全部刷新',
+                'accounts.refreshingAll': '正在刷新所有配额...',
+                'accounts.allRefreshed': '所有配额已刷新',
+                // Logs
+                'logs.title': '实时日志',
+                'logs.allLevels': '所有级别',
+                'logs.allStatus': '所有状态',
+                'logs.search': '搜索...',
+                'logs.pause': '暂停',
+                'logs.resume': '继续',
+                'logs.clear': '清空',
+                'logs.connecting': '连接日志流...',
+                'logs.connected': '已连接',
+                'logs.disconnected': '已断开',
+                'logs.reconnecting': '重连中...',
+                'logs.cleared': '日志已清空',
+                // Settings
+                'settings.title': '基础配置',
+                'settings.port': '服务端口',
+                'settings.timeout': '请求超时 (秒)',
+                'settings.lanAccess': '允许局域网访问',
+                'settings.lanDesc': '允许网络中的其他设备访问',
+                'settings.save': '保存配置',
+                'settings.saved': '配置已保存',
+                // Mapping
+                'mapping.anthropicTitle': 'Anthropic (Claude) 映射',
+                'mapping.openaiTitle': 'OpenAI (GPT) 映射',
+                'mapping.customTitle': '自定义映射',
+                'mapping.addMapping': '添加映射',
+                'mapping.saveAll': '保存所有映射',
+                'mapping.saved': '映射已保存',
+                'mapping.source': '源模型',
+                'mapping.target': '目标模型',
+                // Backup
+                'backup.configTitle': '配置备份',
+                'backup.configDesc': '将配置导出为 JSON 或从备份文件导入。',
+                'backup.export': '导出',
+                'backup.import': '导入',
+                'backup.preview': '预览:',
+                'backup.validate': '验证',
+                'backup.apply': '应用',
+                'backup.cancel': '取消',
+                'backup.valid': '配置有效',
+                'backup.exported': '配置已导出',
+                'backup.applied': '配置已应用',
+                'backup.batchTitle': '批量导入账号',
+                'backup.batchDesc': '粘贴 token（每行一个）或 GUI 导出的 JSON 数组。',
+                'backup.batchPlaceholder': '粘贴 token 或 JSON 数组...',
+                'backup.parse': '解析',
+                'backup.dedupe': '去重',
+                'backup.trim': '修剪',
+                'backup.importAll': '全部导入',
+                'backup.tokensParsed': '个 token 已解析',
+                'backup.importing': '导入中...',
+                'backup.success': '成功:',
+                'backup.failed': '失败:',
+                'backup.results': '导入结果',
+                // Common
+                'common.delete': '删除',
+                'common.confirm': '确认',
+                'common.requestFailed': '请求失败:',
+            }
+        };
+
+        function t(key) {
+            return i18n[currentLang][key] || i18n['en'][key] || key;
+        }
+
+        function toggleLanguage() {
+            currentLang = currentLang === 'en' ? 'zh' : 'en';
+            localStorage.setItem('lang', currentLang);
+            document.getElementById('langLabel').textContent = currentLang.toUpperCase();
+            document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+            applyI18n();
+            handleNavigation(window.location.hash);
+        }
+
+        function applyI18n() {
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                el.textContent = t(key);
+            });
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const key = el.getAttribute('data-i18n-placeholder');
+                el.placeholder = t(key);
+            });
+        }
+
+        // ==================== Navigation ====================
+        function getPageTitle(hash) {
+            const titles = {
+                '#dashboard': t('page.dashboard'),
+                '#accounts': t('page.accounts'),
+                '#logs': t('page.logs'),
+                '#settings': t('page.settings'),
+                '#mapping': t('page.mapping'),
+                '#backup': t('page.backup')
+            };
+            return titles[hash] || t('page.dashboard');
+        }
+
+        function handleNavigation(hash) {
+            if (!hash) hash = '#dashboard';
+            document.querySelectorAll('.sidebar-link').forEach(link => {
+                link.classList.toggle('active', link.getAttribute('href') === hash);
+            });
+            document.querySelectorAll('.content-panel').forEach(panel => {
+                panel.classList.toggle('active', panel.id === `${hash.substring(1)}-panel`);
+            });
+            document.getElementById('pageTitle').textContent = getPageTitle(hash);
+            if (window.innerWidth < 1024) {
+                closeSidebar();
+            }
+        }
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            const menuBtn = document.getElementById('menuToggle');
+            const isOpen = sidebar.classList.toggle('-translate-x-full');
+            overlay.classList.toggle('hidden');
+            menuBtn.setAttribute('aria-expanded', !isOpen);
+        }
+
+        function closeSidebar() {
+            document.getElementById('sidebar').classList.add('-translate-x-full');
+            document.getElementById('sidebarOverlay').classList.add('hidden');
+            document.getElementById('menuToggle').setAttribute('aria-expanded', 'false');
+        }
+
+        // ==================== Auth ====================
+        function getToken() {
+            return authToken || localStorage.getItem('admin_token');
+        }
+
+        function setToken(token) {
+            authToken = token;
+            localStorage.setItem('admin_token', token);
+            document.cookie = `admin_token=${token}; path=/; max-age=604800`;
+        }
+
+        function clearToken() {
+            authToken = null;
+            localStorage.removeItem('admin_token');
+            document.cookie = 'admin_token=; path=/; max-age=0';
+        }
+
+        function checkAuth() {
+            if (!getToken()) {
+                document.getElementById('loginOverlay').classList.add('show');
+                return false;
+            }
+            return true;
+        }
+
+        function logout() {
+            stopStatsAutoRefresh();
+            if (logSSE) {
+                logSSE.close();
+                logSSE = null;
+            }
+            clearToken();
+            document.getElementById('loginOverlay').classList.add('show');
+        }
+
+        // ==================== Utils ====================
+        function showAlert(message, type = 'success') {
+            const container = document.getElementById('alertContainer');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type} show`;
+            const icon = document.createElement('i');
+            icon.className = `fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}`;
+            icon.setAttribute('aria-hidden', 'true');
+            const span = document.createElement('span');
+            span.textContent = message;
+            alert.appendChild(icon);
+            alert.appendChild(span);
+            alert.setAttribute('role', 'status');
+            container.appendChild(alert);
+            setTimeout(() => alert.remove(), 5000);
+        }
+
+        async function fetchWithError(url, options = {}) {
+            const token = getToken();
+            if (token) {
+                options.headers = options.headers || {};
+                options.headers['Authorization'] = `Bearer ${token}`;
+            }
+            try {
+                const response = await fetch(url, options);
+                if (response.status === 401) {
+                    clearToken();
+                    document.getElementById('loginOverlay').classList.add('show');
+                    throw new Error('Authentication failed');
+                }
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+                return data;
+            } catch (error) {
+                showAlert(`Request failed: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // ==================== Config ====================
+        async function loadConfig() {
+            const data = await fetchWithError('/api/admin/config');
+            config = data;
+            document.getElementById('port').value = config.proxy.port;
+            document.getElementById('timeout').value = config.proxy.request_timeout;
+            const toggle = document.getElementById('allowLanToggle');
+            toggle.classList.toggle('active', config.proxy.allow_lan_access);
+            toggle.setAttribute('aria-checked', config.proxy.allow_lan_access);
+            renderMappings('anthropic', config.proxy.anthropic_mapping);
+            renderMappings('openai', config.proxy.openai_mapping);
+            renderMappings('custom', config.proxy.custom_mapping);
+        }
+
+        function toggleLan() {
+            const toggle = document.getElementById('allowLanToggle');
+            const isActive = toggle.classList.toggle('active');
+            toggle.setAttribute('aria-checked', isActive);
+        }
+
+        document.getElementById('configForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = {
+                port: parseInt(document.getElementById('port').value),
+                allow_lan_access: document.getElementById('allowLanToggle').classList.contains('active'),
+                request_timeout: parseInt(document.getElementById('timeout').value)
+            };
+            await fetchWithError('/api/admin/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(formData)
+            });
+            showAlert(t('settings.saved'), 'success');
+        });
+
+        // ==================== Mappings ====================
+        function renderMappings(type, mappings) {
+            const container = document.getElementById(`${type}Mappings`);
+            container.innerHTML = '';
+            Object.entries(mappings).forEach(([key, value]) => addMappingRow(container, key, value));
+            if (Object.keys(mappings).length === 0) addMappingRow(container, '', '');
+        }
+
+        function addMappingRow(container, key = '', value = '') {
+            const row = document.createElement('div');
+            row.className = 'mapping-row';
+            const srcInput = document.createElement('input');
+            srcInput.type = 'text';
+            srcInput.className = 'form-input text-sm';
+            srcInput.placeholder = t('mapping.source');
+            srcInput.value = key;
+            const tgtInput = document.createElement('input');
+            tgtInput.type = 'text';
+            tgtInput.className = 'form-input text-sm';
+            tgtInput.placeholder = t('mapping.target');
+            tgtInput.value = value;
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'btn btn-danger py-2 px-3';
+            delBtn.setAttribute('aria-label', t('common.delete'));
+            const delIcon = document.createElement('i');
+            delIcon.className = 'fas fa-trash';
+            delIcon.setAttribute('aria-hidden', 'true');
+            delBtn.appendChild(delIcon);
+            delBtn.addEventListener('click', () => row.remove());
+            row.appendChild(srcInput);
+            row.appendChild(tgtInput);
+            row.appendChild(delBtn);
+            container.appendChild(row);
+        }
+
+        function addMapping(type) {
+            addMappingRow(document.getElementById(`${type}Mappings`));
+        }
+
+        function collectMappings(type) {
+            const rows = document.querySelectorAll(`#${type}Mappings .mapping-row`);
+            const mapping = {};
+            rows.forEach(row => {
+                const inputs = row.querySelectorAll('input');
+                const key = inputs[0].value.trim();
+                const value = inputs[1].value.trim();
+                if (key && value) mapping[key] = value;
+            });
+            return mapping;
+        }
+
+        async function saveMappings() {
+            await fetchWithError('/api/admin/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    anthropic_mapping: collectMappings('anthropic'),
+                    openai_mapping: collectMappings('openai'),
+                    custom_mapping: collectMappings('custom')
+                })
+            });
+            showAlert(t('mapping.saved'), 'success');
+        }
+
+        // ==================== Accounts ====================
+        async function loadAccounts() {
+            accounts = await fetchWithError('/api/admin/accounts');
+            renderAccounts();
+            updateStats();
+        }
+
+        function renderAccounts() {
+            const container = document.getElementById('accountsContainer');
+            container.innerHTML = '';
+            document.getElementById('accountsCount').textContent = `${accounts.length} ${currentLang === 'zh' ? '个账号' : 'accounts'}`;
+            document.getElementById('sidebarAccounts').textContent = `${accounts.length} ${currentLang === 'zh' ? '个账号' : 'accounts'}`;
+
+            if (accounts.length === 0) {
+                const p = document.createElement('p');
+                p.className = 'text-text-secondary text-sm text-center py-8';
+                p.textContent = t('accounts.noAccounts');
+                container.appendChild(p);
+                return;
+            }
+
+            const fragment = document.createDocumentFragment();
+            accounts.forEach(acc => {
+                const card = document.createElement('div');
+                card.className = `account-card ${acc.is_active ? 'active' : ''}`;
+
+                const header = document.createElement('div');
+                header.className = 'flex items-center justify-between mb-2';
+                const emailSpan = document.createElement('span');
+                emailSpan.className = 'font-medium text-text-primary';
+                emailSpan.textContent = acc.email;
+                header.appendChild(emailSpan);
+                if (acc.is_active) {
+                    const activeSpan = document.createElement('span');
+                    activeSpan.className = 'text-xs bg-success/20 text-success px-2 py-0.5 rounded';
+                    activeSpan.textContent = t('accounts.active');
+                    header.appendChild(activeSpan);
+                }
+                card.appendChild(header);
+
+                if (acc.name) {
+                    const nameP = document.createElement('p');
+                    nameP.className = 'text-xs text-text-secondary mb-2';
+                    nameP.textContent = acc.name;
+                    card.appendChild(nameP);
+                }
+
+                if (acc.quota) {
+                    const modelsGrid = document.createElement('div');
+                    modelsGrid.className = 'grid grid-cols-2 md:grid-cols-3 gap-2 mb-3';
+                    acc.quota.models.forEach(m => {
+                        const modelDiv = document.createElement('div');
+                        modelDiv.className = 'bg-bg-secondary p-2 rounded text-xs';
+                        const modelName = document.createElement('p');
+                        modelName.className = 'text-text-secondary truncate';
+                        modelName.textContent = m.name;
+                        modelDiv.appendChild(modelName);
+                        const modelPct = document.createElement('p');
+                        modelPct.className = 'font-semibold text-text-primary';
+                        modelPct.textContent = `${m.percentage}%`;
+                        modelDiv.appendChild(modelPct);
+                        const progress = document.createElement('div');
+                        progress.className = 'quota-progress';
+                        const progressBar = document.createElement('div');
+                        progressBar.className = `quota-progress-bar ${m.percentage < 20 ? 'low' : m.percentage < 50 ? 'medium' : ''}`;
+                        progressBar.style.width = `${m.percentage}%`;
+                        progress.appendChild(progressBar);
+                        modelDiv.appendChild(progress);
+                        modelsGrid.appendChild(modelDiv);
+                    });
+                    card.appendChild(modelsGrid);
+                    if (acc.quota.is_forbidden) {
+                        const forbiddenP = document.createElement('p');
+                        forbiddenP.className = 'text-xs text-danger mb-2';
+                        const icon = document.createElement('i');
+                        icon.className = 'fas fa-ban mr-1';
+                        icon.setAttribute('aria-hidden', 'true');
+                        forbiddenP.appendChild(icon);
+                        forbiddenP.appendChild(document.createTextNode(t('accounts.forbidden')));
+                        card.appendChild(forbiddenP);
+                    }
+                }
+
+                const buttonsDiv = document.createElement('div');
+                buttonsDiv.className = 'flex gap-2';
+                if (!acc.is_active) {
+                    const switchBtn = document.createElement('button');
+                    switchBtn.className = 'btn btn-success text-xs py-1.5 px-3';
+                    switchBtn.textContent = t('accounts.switch');
+                    switchBtn.addEventListener('click', () => switchAccount(acc.id));
+                    buttonsDiv.appendChild(switchBtn);
+                }
+                const refreshBtn = document.createElement('button');
+                refreshBtn.className = 'btn btn-secondary text-xs py-1.5 px-3';
+                const refreshIcon = document.createElement('i');
+                refreshIcon.className = 'fas fa-sync-alt mr-1';
+                refreshIcon.setAttribute('aria-hidden', 'true');
+                refreshBtn.appendChild(refreshIcon);
+                refreshBtn.appendChild(document.createTextNode(t('accounts.refreshQuota')));
+                refreshBtn.addEventListener('click', () => refreshQuota(acc.id));
+                buttonsDiv.appendChild(refreshBtn);
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-danger text-xs py-1.5 px-3';
+                deleteBtn.setAttribute('aria-label', `${t('common.delete')} ${acc.email}`);
+                const deleteIcon = document.createElement('i');
+                deleteIcon.className = 'fas fa-trash';
+                deleteIcon.setAttribute('aria-hidden', 'true');
+                deleteBtn.appendChild(deleteIcon);
+                deleteBtn.addEventListener('click', () => deleteAccount(acc.id, acc.email));
+                buttonsDiv.appendChild(deleteBtn);
+                card.appendChild(buttonsDiv);
+                fragment.appendChild(card);
+            });
+            container.appendChild(fragment);
+        }
+
+        async function addAccount() {
+            const refreshToken = document.getElementById('refreshToken').value.trim();
+            if (!refreshToken) return showAlert(t('accounts.enterToken'), 'error');
+            const addBtn = document.querySelector('#accounts-panel .btn-success');
+            const originalHtml = addBtn.innerHTML;
+            addBtn.disabled = true;
+            addBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2" aria-hidden="true"></i>Adding...';
+            try {
+                await fetchWithError('/api/admin/accounts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: refreshToken })
+                });
+                document.getElementById('refreshToken').value = '';
+                showAlert(t('accounts.added'), 'success');
+                await loadAccounts();
+            } catch (e) {
+            } finally {
+                addBtn.disabled = false;
+                addBtn.innerHTML = originalHtml;
+            }
+        }
+
+        async function deleteAccount(id, email) {
+            if (!confirm(`${t('common.delete')} ${email}?`)) return;
+            await fetchWithError(`/api/admin/accounts/${id}`, { method: 'DELETE' });
+            showAlert(t('accounts.deleted'), 'success');
+            await loadAccounts();
+        }
+
+        async function switchAccount(id) {
+            await fetchWithError(`/api/admin/accounts/${id}/switch`, { method: 'POST' });
+            showAlert(t('accounts.switched'), 'success');
+            await loadAccounts();
+        }
+
+        async function refreshQuota(id) {
+            try {
+                await fetchWithError(`/api/admin/accounts/${id}/refresh-quota`, { method: 'POST' });
+                showAlert(t('accounts.quotaRefreshed'), 'success');
+                await loadAccounts();
+            } catch (e) {}
+        }
+
+        async function refreshAllQuotas() {
+            if (accounts.length === 0) return;
+            const btn = document.querySelector('#accounts-panel .btn-secondary');
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i>${t('accounts.refreshingAll')}`;
+            try {
+                for (const acc of accounts) {
+                    await fetchWithError(`/api/admin/accounts/${acc.id}/refresh-quota`, { method: 'POST' }).catch(() => {});
+                }
+                showAlert(t('accounts.allRefreshed'), 'success');
+                await loadAccounts();
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('statTotalAccounts').textContent = accounts.length;
+            document.getElementById('statActiveAccounts').textContent = accounts.filter(a => a.is_active).length;
+            document.getElementById('statForbiddenAccounts').textContent = accounts.filter(a => a.quota?.is_forbidden).length;
+        }
+
+        // ==================== Stats ====================
+        async function loadStats() {
+            try {
+                const stats = await fetchWithError('/api/admin/stats');
+                document.getElementById('statReqTotal').textContent = stats.requests_total || 0;
+                document.getElementById('statSuccessRate').textContent = stats.success_rate !== undefined ? (stats.success_rate * 100).toFixed(1) + '%' : '-';
+                document.getElementById('statAvgLatency').textContent = stats.latency_ms_avg !== undefined ? stats.latency_ms_avg.toFixed(0) + 'ms' : '-';
+                document.getElementById('statP95Latency').textContent = stats.latency_ms_p95 !== undefined ? stats.latency_ms_p95.toFixed(0) + 'ms' : '-';
+                document.getElementById('statRps').textContent = stats.rps !== undefined ? stats.rps.toFixed(1) : '0';
+                if (stats.hourly_counts) updateChart(stats.hourly_counts);
+            } catch (e) {}
+        }
+
+        function updateChart(counts) {
+            const bars = document.querySelectorAll('#requestChart .chart-bar');
+            const max = Math.max(...counts, 1);
+            bars.forEach((bar, i) => {
+                bar.style.height = ((counts[i] || 0) / max * 100) + '%';
+            });
+        }
+
+        // ==================== Logs ====================
+        function connectLogSSE() {
+            const token = getToken();
+            if (!token) return;
+            const url = `/api/admin/logs/stream?token=${encodeURIComponent(token)}`;
+            logSSE = new EventSource(url);
+            logSSE.onopen = () => {
+                document.getElementById('logConnDot').classList.add('bg-success');
+                document.getElementById('logConnDot').classList.remove('bg-danger');
+                document.getElementById('logConnStatus').textContent = t('logs.connected');
+            };
+            logSSE.onmessage = (event) => {
+                try {
+                    const log = JSON.parse(event.data);
+                    logBuffer.push(log);
+                    if (logBuffer.length > LOG_BUFFER_CAP) logBuffer.shift();
+                    if (!logPaused && passesLogFilters(log)) {
+                        appendLogEntry(log);
+                        trimLogDom();
+                    }
+                    document.getElementById('logCount').textContent = `${logBuffer.length} logs`;
+                } catch (e) {}
+            };
+            logSSE.onerror = () => {
+                document.getElementById('logConnDot').classList.remove('bg-success');
+                document.getElementById('logConnDot').classList.add('bg-danger');
+                document.getElementById('logConnStatus').textContent = t('logs.reconnecting');
+                logSSE.close();
+                setTimeout(connectLogSSE, 3000);
+            };
+        }
+
+        function passesLogFilters(log) {
+            const level = document.getElementById('logLevelFilter').value;
+            const status = document.getElementById('logStatusFilter').value;
+            const text = document.getElementById('logTextFilter').value.toLowerCase();
+            if (level !== 'all' && log.kind !== level && log.level?.toLowerCase() !== level) return false;
+            if (status !== 'all' && log.status) {
+                if (status !== Math.floor(log.status / 100) + 'xx') return false;
+            }
+            if (text) {
+                const searchText = [log.path, log.message, log.upstream, log.method].join(' ').toLowerCase();
+                if (!searchText.includes(text)) return false;
+            }
+            return true;
+        }
+
+        function appendLogEntry(log) {
+            const logArea = document.getElementById('logArea');
+            if (logArea.querySelector('.text-center')) logArea.innerHTML = '';
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const ts = new Date(log.ts_ms || Date.now()).toLocaleTimeString();
+            const level = log.kind === 'proxy' ? 'PROXY' : (log.level || 'INFO').toUpperCase();
+            const tsSpan = document.createElement('span');
+            tsSpan.className = 'log-timestamp';
+            tsSpan.textContent = `[${ts}]`;
+            const levelSpan = document.createElement('span');
+            levelSpan.className = `log-level log-level-${level}`;
+            levelSpan.textContent = `[${level}]`;
+            const msgSpan = document.createElement('span');
+            msgSpan.className = 'flex-1';
+            if (log.kind === 'proxy') {
+                const statusClass = log.status ? `log-status-${Math.floor(log.status / 100)}xx` : '';
+                const statusSpan = document.createElement('span');
+                statusSpan.className = statusClass;
+                statusSpan.textContent = log.status || '-';
+                msgSpan.appendChild(statusSpan);
+                msgSpan.appendChild(document.createTextNode(` ${log.method || ''} ${log.path || ''} ${log.duration_ms ? `(${log.duration_ms}ms)` : ''}`));
+            } else {
+                msgSpan.textContent = log.message || '';
+            }
+            entry.appendChild(tsSpan);
+            entry.appendChild(levelSpan);
+            entry.appendChild(msgSpan);
+            logArea.appendChild(entry);
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        function trimLogDom() {
+            const logArea = document.getElementById('logArea');
+            while (logArea.children.length > LOG_DOM_CAP) logArea.removeChild(logArea.firstChild);
+        }
+
+        function toggleLogPause() {
+            logPaused = !logPaused;
+            const btn = document.getElementById('logPauseBtn');
+            btn.innerHTML = logPaused
+                ? `<i class="fas fa-play mr-1"></i>${t('logs.resume')}`
+                : `<i class="fas fa-pause mr-1"></i>${t('logs.pause')}`;
+            if (!logPaused) renderFilteredLogs();
+        }
+
+        function clearLogs() {
+            logBuffer = [];
+            document.getElementById('logArea').innerHTML = `<div class="text-center text-text-secondary py-8">${t('logs.cleared')}</div>`;
+            document.getElementById('logCount').textContent = '0 logs';
+        }
+
+        function renderFilteredLogs() {
+            const logArea = document.getElementById('logArea');
+            logArea.innerHTML = '';
+            logBuffer.filter(passesLogFilters).slice(-LOG_DOM_CAP).forEach(appendLogEntry);
+        }
+
+        document.getElementById('logLevelFilter')?.addEventListener('change', renderFilteredLogs);
+        document.getElementById('logStatusFilter')?.addEventListener('change', renderFilteredLogs);
+        document.getElementById('logTextFilter')?.addEventListener('input', renderFilteredLogs);
+
+        // ==================== Config Backup ====================
+        async function exportConfig() {
+            try {
+                const data = await fetchWithError('/api/admin/config/export');
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `antigravity-config-${new Date().toISOString().slice(0, 10)}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showAlert(t('backup.exported'), 'success');
+            } catch (e) {}
+        }
+
+        function handleConfigImport(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    importedConfig = JSON.parse(e.target.result);
+                    document.getElementById('configPreview').textContent = JSON.stringify(importedConfig, null, 2);
+                    document.getElementById('configPreviewContainer').classList.remove('hidden');
+                    document.getElementById('configValidationResult').innerHTML = '';
+                    document.getElementById('applyConfigBtn').disabled = true;
+                } catch (err) {
+                    showAlert(currentLang === 'zh' ? 'JSON文件无效' : 'Invalid JSON file', 'error');
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        async function validateImportConfig() {
+            if (!importedConfig) return;
+            try {
+                const result = await fetchWithError('/api/admin/config/import?mode=validate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(importedConfig)
+                });
+                const div = document.getElementById('configValidationResult');
+                div.innerHTML = '';
+                const span = document.createElement('span');
+                const icon = document.createElement('i');
+                icon.setAttribute('aria-hidden', 'true');
+                if (result.valid) {
+                    span.className = 'text-success';
+                    icon.className = 'fas fa-check-circle mr-1';
+                    span.appendChild(icon);
+                    span.appendChild(document.createTextNode(t('backup.valid')));
+                    document.getElementById('applyConfigBtn').disabled = false;
+                } else {
+                    span.className = 'text-danger';
+                    icon.className = 'fas fa-times-circle mr-1';
+                    span.appendChild(icon);
+                    const errMsg = (result.errors || []).map(e => e.message).join(', ');
+                    span.appendChild(document.createTextNode(`${currentLang === 'zh' ? '无效: ' : 'Invalid: '}${errMsg}`));
+                }
+                div.appendChild(span);
+            } catch (e) {}
+        }
+
+        async function applyImportConfig() {
+            if (!importedConfig || !confirm(currentLang === 'zh' ? '应用导入的配置?' : 'Apply imported configuration?')) return;
+            try {
+                await fetchWithError('/api/admin/config/import?mode=apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(importedConfig)
+                });
+                showAlert(t('backup.applied'), 'success');
+                cancelConfigImport();
+                await loadConfig();
+            } catch (e) {}
+        }
+
+        function cancelConfigImport() {
+            importedConfig = null;
+            document.getElementById('configPreviewContainer').classList.add('hidden');
+            document.getElementById('configFileInput').value = '';
+        }
+
+        // ==================== Batch Import ====================
+        function parseBatchTokens() {
+            const raw = document.getElementById('batchTokens').value.trim();
+            const dedupe = document.getElementById('batchDedupe').checked;
+            const trim = document.getElementById('batchTrim').checked;
+            let tokens = [];
+
+            // 尝试解析为JSON格式 (GUI导出的账号格式)
+            if (raw.startsWith('[')) {
+                try {
+                    const jsonArr = JSON.parse(raw);
+                    if (Array.isArray(jsonArr)) {
+                        tokens = jsonArr
+                            .filter(item => item && item.refresh_token)
+                            .map(item => item.refresh_token);
+                    }
+                } catch (e) {
+                    // JSON解析失败，回退到逐行解析
+                    tokens = raw.split(/\r?\n/).map(t => trim ? t.trim() : t).filter(t => t);
+                }
+            } else {
+                // 逐行解析纯文本格式
+                tokens = raw.split(/\r?\n/).map(t => trim ? t.trim() : t).filter(t => t);
+            }
+
+            if (dedupe) tokens = [...new Set(tokens)];
+            parsedTokens = tokens;
+            document.getElementById('batchParseInfo').textContent = `${tokens.length} ${t('backup.tokensParsed')}`;
+            document.getElementById('batchImportBtn').disabled = tokens.length === 0;
+        }
+
+        async function executeBatchImport() {
+            if (parsedTokens.length === 0) return;
+            document.getElementById('batchImportBtn').disabled = true;
+            document.getElementById('batchProgress').classList.remove('hidden');
+            document.getElementById('batchResults').classList.add('hidden');
+            const bar = document.getElementById('batchProgressBar');
+            const text = document.getElementById('batchProgressText');
+            let succeeded = 0, failed = 0;
+            const details = [];
+            for (let i = 0; i < parsedTokens.length; i++) {
+                const token = parsedTokens[i];
+                const preview = token.length > 12 ? token.slice(0, 6) + '...' + token.slice(-6) : token;
+                try {
+                    await fetchWithError('/api/admin/accounts', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ refresh_token: token })
+                    });
+                    succeeded++;
+                    details.push({ preview, ok: true });
+                } catch (e) {
+                    failed++;
+                    details.push({ preview, ok: false, error: e.message });
+                }
+                bar.style.width = ((i + 1) / parsedTokens.length * 100) + '%';
+                text.textContent = `${t('backup.importing')} ${i + 1}/${parsedTokens.length}`;
+            }
+            document.getElementById('batchProgress').classList.add('hidden');
+            document.getElementById('batchResults').classList.remove('hidden');
+            document.getElementById('batchSuccessCount').textContent = succeeded;
+            document.getElementById('batchFailCount').textContent = failed;
+            const detailsDiv = document.getElementById('batchDetailResults');
+            detailsDiv.innerHTML = '';
+            details.forEach(d => {
+                const div = document.createElement('div');
+                div.className = d.ok ? 'text-success' : 'text-danger';
+                div.textContent = `${d.ok ? '✓' : '✗'} ${d.preview}${d.error ? ` - ${d.error}` : ''}`;
+                detailsDiv.appendChild(div);
+            });
+            document.getElementById('batchTokens').value = '';
+            parsedTokens = [];
+            document.getElementById('batchParseInfo').textContent = '';
+            if (succeeded > 0) await loadAccounts();
+        }
+
+        // ==================== Status ====================
+        async function loadStatus() {
+            try {
+                const status = await fetchWithError('/api/admin/status');
+                document.getElementById('sidebarVersion').textContent = `v${status.version}`;
+            } catch (e) {}
+        }
+
+        // ==================== Auto Refresh ====================
+        let statsRefreshInterval = null;
+
+        function startStatsAutoRefresh() {
+            if (statsRefreshInterval) clearInterval(statsRefreshInterval);
+            statsRefreshInterval = setInterval(async () => {
+                // 仅在仪表盘面板激活时刷新
+                if (document.getElementById('dashboard-panel').classList.contains('active')) {
+                    await loadStats();
+                }
+            }, 5000); // 每5秒刷新
+        }
+
+        function stopStatsAutoRefresh() {
+            if (statsRefreshInterval) {
+                clearInterval(statsRefreshInterval);
+                statsRefreshInterval = null;
+            }
+        }
+
+        // ==================== Init ====================
+        async function init() {
+            if (!checkAuth()) return;
+            try {
+                await loadConfig();
+                await loadAccounts();
+                await loadStatus();
+                await loadStats();
+                connectLogSSE();
+                startStatsAutoRefresh();
+            } catch (e) {
+                console.error('Init failed:', e);
+            }
+        }
+
+        // ==================== Event Listeners ====================
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const apiKey = document.getElementById('apiKey').value;
+            try {
+                const response = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey })
+                });
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    setToken(data.token);
+                    document.getElementById('loginOverlay').classList.remove('show');
+                    showAlert(t('login.success'), 'success');
+                    init();
+                } else {
+                    showAlert(data.message || t('login.invalid'), 'error');
+                }
+            } catch (e) {
+                showAlert(`${t('common.requestFailed')} ${e.message}`, 'error');
+            }
+        });
+
+        document.getElementById('menuToggle').addEventListener('click', toggleSidebar);
+        document.getElementById('sidebarOverlay').addEventListener('click', closeSidebar);
+
+        document.querySelectorAll('.sidebar-link').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const hash = e.currentTarget.getAttribute('href');
+                history.pushState(null, null, hash);
+                handleNavigation(hash);
+            });
+        });
+
+        window.addEventListener('popstate', () => handleNavigation(window.location.hash));
+        window.addEventListener('beforeunload', () => { if (logSSE) logSSE.close(); });
+
+        // Start
+        document.getElementById('langLabel').textContent = currentLang.toUpperCase();
+        document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+        applyI18n();
+        handleNavigation(window.location.hash);
+        init();
+    </script>
+</body>
+</html>

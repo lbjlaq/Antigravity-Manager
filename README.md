@@ -17,11 +17,12 @@
   </p>
 
   <p>
-    <a href="#-核心功能">核心功能</a> • 
-    <a href="#-界面导览">界面导览</a> • 
-    <a href="#-技术架构">技术架构</a> • 
-    <a href="#-安装指南">安装指南</a> • 
-    <a href="#-快速接入">快速接入</a>
+    <a href="#-核心功能">核心功能</a> •
+    <a href="#-界面导览">界面导览</a> •
+    <a href="#-技术架构">技术架构</a> •
+    <a href="#-安装指南">安装指南</a> •
+    <a href="#-快速接入">快速接入</a> •
+    <a href="./HEADLESS_DEPLOYMENT.md">🖥️ 无GUI服务器部署</a>
   </p>
 
   <p>
@@ -112,6 +113,57 @@ brew install --cask --no-quarantine antigravity
 *   **macOS**: `.dmg` (支持 Apple Silicon & Intel)
 *   **Windows**: `.msi` 或 便携版 `.zip`
 *   **Linux**: `.deb` 或 `AppImage`
+
+### 选项 C: 从源码编译
+
+#### 桌面版 (带GUI)
+```bash
+# 克隆仓库
+git clone https://github.com/lbjlaq/Antigravity-Manager.git
+cd Antigravity-Manager
+
+# 安装前端依赖
+npm install
+
+# 构建桌面应用
+npm run tauri build
+```
+
+#### Headless服务器版 (无GUI) 🖥️
+```bash
+# 方式1: 使用自动化脚本 (推荐)
+chmod +x build-headless.sh
+./build-headless.sh
+
+# 方式2: 手动编译
+cd src-tauri
+cargo build --release --bin headless-proxy --features headless --no-default-features
+
+# 编译产物位置
+# target/release/headless-proxy
+```
+
+**技术特点**:
+- ✅ 使用 **rustls** 静态链接，无需系统OpenSSL库
+- ✅ 完全排除GUI依赖（GTK/webkit）
+- ✅ 二进制体积减少67%，内存占用降低75%
+- ✅ **内置Web管理界面**，可通过浏览器完成所有配置
+
+**快速使用**:
+```bash
+# 启动服务
+./src-tauri/target/release/headless-proxy
+
+# 浏览器访问管理界面
+# http://localhost:8045/admin
+```
+
+**Web管理界面功能**:
+- 📊 配置管理：端口、LAN访问、超时等
+- 🔀 模型映射：Anthropic/OpenAI/Custom映射配置
+- 👤 账号管理：添加、删除、切换账号
+- 📈 配额监控：实时查看各账号配额状态
+
 
 ### 🛠️ 常见问题排查 (Troubleshooting)
 

@@ -110,7 +110,7 @@ pub fn create_openai_sse_stream(
                                                 content_out.push_str(text);
                                             }
                                             // Capture thought (Thinking Models)
-                                            if let Some(thought) = part.get("thought").and_then(|t| t.as_bool()) {
+                                            if let Some(_thought) = part.get("thought").and_then(|t| t.as_bool()) {
                                                 // Currently gemini-2.0-flash-thinking-exp returns thought in "text" but with "thought": true metadata? 
                                                 // Or is it a separate part?
                                                 // The official docs say: parts: [{ text: "..." }, { thought: "..." }] for some; 
@@ -299,7 +299,7 @@ pub fn create_legacy_sse_stream(
 
 pub fn create_codex_sse_stream(
     mut gemini_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
-    model: String,
+    _model: String,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     let mut buffer = BytesMut::new();
     
@@ -387,7 +387,7 @@ pub fn create_codex_sse_stream(
                                                         emitted_tool_calls.insert(call_key);
 
                                                         let name = func_call.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                                        let args = func_call.get("args").unwrap_or(&json!({})).to_string();
+                                                        let _args = func_call.get("args").unwrap_or(&json!({})).to_string();
                                                         
                                                         // Stable ID generation based on hashed content to be consistent
                                                         let mut hasher = std::collections::hash_map::DefaultHasher::new();
