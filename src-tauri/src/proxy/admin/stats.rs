@@ -3,17 +3,31 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
+/// 时间桶数据
+#[derive(Debug, Clone, Default)]
+struct TimeBucket {
+    count: u64,
+    success: u64,
+    error: u64,
+    total_latency: u64,
+}
+
 /// 全局请求统计追踪器
+/// 使用1分钟粒度的时间桶，保留最近12小时（720个桶）的数据
 #[derive(Debug)]
 pub struct StatsTracker {
     requests_total: AtomicU64,
     requests_ok: AtomicU64,
     requests_err: AtomicU64,
     latencies: RwLock<Vec<u64>>,
-    hourly_counts: RwLock<[u64; 6]>,
     start_time: Instant,
-    last_hour_slot: RwLock<usize>,
+    /// 时间桶数组，每分钟一个桶，共720个（12小时）
+    time_buckets: RwLock<Vec<TimeBucket>>,
+    /// 当前分钟索引
+    current_minute: RwLock<u64>,
 }
+
+const BUCKET_COUNT: usize = 720; // 12小时 * 60分钟
 
 impl Default for StatsTracker {
     fn default() -> Self {
@@ -28,9 +42,9 @@ impl StatsTracker {
             requests_ok: AtomicU64::new(0),
             requests_err: AtomicU64::new(0),
             latencies: RwLock::new(Vec::with_capacity(1000)),
-            hourly_counts: RwLock::new([0; 6]),
             start_time: Instant::now(),
-            last_hour_slot: RwLock::new(0),
+            time_buckets: RwLock::new(vec![TimeBucket::default(); BUCKET_COUNT]),
+            current_minute: RwLock::new(0),
         }
     }
 
@@ -52,23 +66,92 @@ impl StatsTracker {
             latencies.push(latency_ms);
         }
 
-        // 更新小时统计
-        self.update_hourly_count().await;
+        // 更新时间桶
+        self.update_time_bucket(success, latency_ms).await;
     }
 
-    async fn update_hourly_count(&self) {
-        let elapsed_hours = self.start_time.elapsed().as_secs() / 3600;
-        let current_slot = (elapsed_hours % 6) as usize;
+    async fn update_time_bucket(&self, success: bool, latency_ms: u64) {
+        let elapsed_minutes = self.start_time.elapsed().as_secs() / 60;
+        let bucket_index = (elapsed_minutes as usize) % BUCKET_COUNT;
 
-        let mut last_slot = self.last_hour_slot.write().await;
-        let mut hourly = self.hourly_counts.write().await;
+        let mut current_minute = self.current_minute.write().await;
+        let mut buckets = self.time_buckets.write().await;
 
-        if current_slot != *last_slot {
-            // 清零新的时间槽
-            hourly[current_slot] = 0;
-            *last_slot = current_slot;
+        // 如果进入新的分钟，清理过期的桶
+        if elapsed_minutes > *current_minute {
+            // 清理从上次记录到当前时间之间的所有桶
+            let start = ((*current_minute + 1) as usize) % BUCKET_COUNT;
+            let end = bucket_index;
+
+            if start <= end {
+                for i in start..=end {
+                    buckets[i] = TimeBucket::default();
+                }
+            } else {
+                // 跨越数组边界
+                for i in start..BUCKET_COUNT {
+                    buckets[i] = TimeBucket::default();
+                }
+                for i in 0..=end {
+                    buckets[i] = TimeBucket::default();
+                }
+            }
+            *current_minute = elapsed_minutes;
         }
-        hourly[current_slot] += 1;
+
+        // 更新当前桶
+        buckets[bucket_index].count += 1;
+        buckets[bucket_index].total_latency += latency_ms;
+        if success {
+            buckets[bucket_index].success += 1;
+        } else {
+            buckets[bucket_index].error += 1;
+        }
+    }
+
+    /// 获取指定时间窗口的数据点
+    /// window_minutes: 时间窗口大小（分钟）
+    /// points: 返回的数据点数量
+    async fn get_time_series(&self, window_minutes: usize, points: usize) -> Vec<TimeSeriesPoint> {
+        let elapsed_minutes = self.start_time.elapsed().as_secs() / 60;
+        let current_bucket = (elapsed_minutes as usize) % BUCKET_COUNT;
+        let buckets = self.time_buckets.read().await;
+
+        let mut result = Vec::with_capacity(points);
+        let bucket_per_point = window_minutes.max(points) / points;
+
+        for i in 0..points {
+            let mut point = TimeSeriesPoint::default();
+
+            // 聚合每个点对应的桶
+            for j in 0..bucket_per_point {
+                let offset = (points - 1 - i) * bucket_per_point + j;
+                if offset >= window_minutes || offset >= BUCKET_COUNT {
+                    continue;
+                }
+
+                let bucket_idx = if current_bucket >= offset {
+                    current_bucket - offset
+                } else {
+                    BUCKET_COUNT - (offset - current_bucket)
+                };
+
+                let bucket = &buckets[bucket_idx];
+                point.count += bucket.count;
+                point.success += bucket.success;
+                point.error += bucket.error;
+                point.total_latency += bucket.total_latency;
+            }
+
+            if point.count > 0 {
+                point.avg_latency = point.total_latency as f64 / point.count as f64;
+                point.success_rate = point.success as f64 / point.count as f64;
+            }
+
+            result.push(point);
+        }
+
+        result
     }
 
     /// 获取统计快照
@@ -97,21 +180,24 @@ impl StatsTracker {
             }
         };
 
-        // 计算RPS (基于最近1分钟)
-        let elapsed_secs = self.start_time.elapsed().as_secs().max(1);
-        let rps = if elapsed_secs <= 60 {
-            total as f64 / elapsed_secs as f64
-        } else {
-            // 使用最近一小时的数据估算
-            let hourly = self.hourly_counts.read().await;
-            let recent = hourly[0]; // 当前小时
-            recent as f64 / 3600.0
+        // 计算最近1分钟的 RPS
+        let rps = {
+            let elapsed_minutes = self.start_time.elapsed().as_secs() / 60;
+            let current_bucket = (elapsed_minutes as usize) % BUCKET_COUNT;
+            let buckets = self.time_buckets.read().await;
+            let current_count = buckets[current_bucket].count;
+            let elapsed_in_minute = self.start_time.elapsed().as_secs() % 60;
+            if elapsed_in_minute > 0 {
+                current_count as f64 / elapsed_in_minute as f64
+            } else {
+                current_count as f64
+            }
         };
 
-        let hourly_counts = {
-            let hourly = self.hourly_counts.read().await;
-            hourly.to_vec()
-        };
+        // 生成3个时间维度的数据（统一12个点）
+        let time_series_10m = self.get_time_series(10, 12).await;
+        let time_series_1h = self.get_time_series(60, 12).await;
+        let time_series_4h = self.get_time_series(240, 12).await;
 
         StatsSnapshot {
             requests_total: total,
@@ -121,12 +207,39 @@ impl StatsTracker {
             latency_ms_avg: avg_latency,
             latency_ms_p95: p95_latency,
             rps,
-            hourly_counts,
+            time_series: TimeSeriesData {
+                m10: time_series_10m,
+                h1: time_series_1h,
+                h4: time_series_4h,
+            },
         }
     }
 }
 
-#[derive(Debug, Clone)]
+/// 时间序列数据点
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct TimeSeriesPoint {
+    pub count: u64,
+    pub success: u64,
+    pub error: u64,
+    #[serde(skip)]
+    pub total_latency: u64,
+    pub avg_latency: f64,
+    pub success_rate: f64,
+}
+
+/// 多时间维度的时间序列数据
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TimeSeriesData {
+    #[serde(rename = "10m")]
+    pub m10: Vec<TimeSeriesPoint>,
+    #[serde(rename = "1h")]
+    pub h1: Vec<TimeSeriesPoint>,
+    #[serde(rename = "4h")]
+    pub h4: Vec<TimeSeriesPoint>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StatsSnapshot {
     pub requests_total: u64,
     pub requests_ok: u64,
@@ -135,7 +248,7 @@ pub struct StatsSnapshot {
     pub latency_ms_avg: f64,
     pub latency_ms_p95: f64,
     pub rps: f64,
-    pub hourly_counts: Vec<u64>,
+    pub time_series: TimeSeriesData,
 }
 
 /// 全局统计实例

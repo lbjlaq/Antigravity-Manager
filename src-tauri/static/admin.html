@@ -129,48 +129,6 @@
             box-shadow: 0 0 0 2px rgba(122, 162, 247, 0.2);
         }
 
-        .log-area {
-            background: var(--bg-primary);
-            border-radius: 0.5rem;
-            height: 400px;
-            overflow-y: auto;
-            padding: 1rem;
-            font-family: 'Courier New', monospace;
-            font-size: 0.8125rem;
-            border: 1px solid var(--border-color);
-        }
-        .log-entry {
-            display: flex;
-            gap: 0.5rem;
-            padding: 0.25rem 0;
-            border-bottom: 1px solid rgba(65, 72, 104, 0.3);
-        }
-        .log-timestamp { color: var(--text-secondary); white-space: nowrap; }
-        .log-level { font-weight: 600; min-width: 50px; }
-        .log-level-INFO { color: var(--accent); }
-        .log-level-WARN { color: var(--warning); }
-        .log-level-ERROR { color: var(--danger); }
-        .log-level-PROXY { color: var(--success); }
-        .log-status-2xx { color: var(--success); }
-        .log-status-4xx { color: var(--warning); }
-        .log-status-5xx { color: var(--danger); }
-
-        .quota-progress {
-            width: 100%;
-            height: 6px;
-            background: var(--bg-primary);
-            border-radius: 3px;
-            overflow: hidden;
-            margin-top: 0.25rem;
-        }
-        .quota-progress-bar {
-            height: 100%;
-            background: var(--accent);
-            transition: width 0.3s ease;
-        }
-        .quota-progress-bar.low { background: var(--danger); }
-        .quota-progress-bar.medium { background: var(--warning); }
-
         .alert {
             padding: 0.875rem 1rem;
             border-radius: 0.5rem;
@@ -193,6 +151,101 @@
             background: var(--accent);
             border-radius: 4px 4px 0 0;
             transition: height 0.3s ease;
+            position: relative;
+        }
+        .chart-bar:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: calc(100% + 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            z-index: 10;
+        }
+
+        .time-range-btn {
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .time-range-btn:hover { color: var(--text-primary); }
+        .time-range-btn.active {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        .chart-container {
+            display: flex;
+            gap: 8px;
+            height: 140px;
+        }
+        .chart-y-axis {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 0 4px;
+            font-size: 10px;
+            color: var(--text-secondary);
+            text-align: right;
+            min-width: 32px;
+        }
+        .chart-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .chart-svg {
+            flex: 1;
+            width: 100%;
+            border-left: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--border-color);
+        }
+        .chart-line {
+            fill: none;
+            stroke: var(--accent);
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .chart-area-fill {
+            fill: url(#chartGradient);
+            opacity: 0.3;
+        }
+        .chart-dot {
+            fill: var(--accent);
+            cursor: pointer;
+        }
+        .chart-dot:hover {
+            r: 5;
+        }
+        .chart-tooltip {
+            position: absolute;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            pointer-events: none;
+            z-index: 100;
+            white-space: nowrap;
+        }
+        .chart-x-axis {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0 0 0;
+            font-size: 10px;
+            color: var(--text-secondary);
         }
 
         .toggle-switch {
@@ -300,10 +353,6 @@
                     <i class="fas fa-users w-5 text-center"></i>
                     <span class="ml-3 text-sm font-medium" data-i18n="nav.accounts">Accounts</span>
                 </a>
-                <a href="#logs" class="sidebar-link flex items-center px-4 py-2.5 rounded-lg text-text-secondary hover:bg-accent hover:text-bg-primary transition-all duration-200">
-                    <i class="fas fa-terminal w-5 text-center"></i>
-                    <span class="ml-3 text-sm font-medium" data-i18n="nav.logs">Logs</span>
-                </a>
                 <a href="#settings" class="sidebar-link flex items-center px-4 py-2.5 rounded-lg text-text-secondary hover:bg-accent hover:text-bg-primary transition-all duration-200">
                     <i class="fas fa-cog w-5 text-center"></i>
                     <span class="ml-3 text-sm font-medium" data-i18n="nav.settings">Settings</span>
@@ -388,36 +437,34 @@
 
                         <!-- Chart -->
                         <div class="card">
-                            <div class="flex items-center justify-between mb-4">
-                                <h3 class="text-sm font-semibold text-text-primary" data-i18n="dashboard.chartTitle">Request Volume (6h)</h3>
-                                <button onclick="loadStats()" class="text-text-secondary hover:text-accent text-sm">
-                                    <i class="fas fa-sync-alt mr-1"></i><span data-i18n="dashboard.refresh">Refresh</span>
-                                </button>
+                            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                                <h3 class="text-sm font-semibold text-text-primary" data-i18n="dashboard.chartTitle">Request Volume</h3>
+                                <div class="flex items-center gap-2">
+                                    <div class="flex bg-bg-primary rounded-lg p-0.5" role="tablist" aria-label="Time range selector">
+                                        <button onclick="setChartTimeRange('10m')" class="time-range-btn active" data-range="10m">10m</button>
+                                        <button onclick="setChartTimeRange('1h')" class="time-range-btn" data-range="1h">1h</button>
+                                        <button onclick="setChartTimeRange('4h')" class="time-range-btn" data-range="4h">4h</button>
+                                    </div>
+                                    <button onclick="loadStats()" class="text-text-secondary hover:text-accent text-sm ml-2" title="Refresh">
+                                        <i class="fas fa-sync-alt"></i>
+                                    </button>
+                                </div>
                             </div>
-                            <div class="flex items-end justify-around h-32 gap-2" id="requestChart">
-                                <div class="flex flex-col items-center flex-1">
-                                    <div class="chart-bar" style="height: 0%"></div>
-                                    <span class="text-xs text-text-secondary mt-2">-5h</span>
+                            <div class="chart-container">
+                                <div class="chart-y-axis">
+                                    <span id="chartYMax">0</span>
+                                    <span id="chartYMid">0</span>
+                                    <span>0</span>
                                 </div>
-                                <div class="flex flex-col items-center flex-1">
-                                    <div class="chart-bar" style="height: 0%"></div>
-                                    <span class="text-xs text-text-secondary mt-2">-4h</span>
+                                <div class="chart-area">
+                                    <svg class="chart-svg" id="requestChart" preserveAspectRatio="none"></svg>
+                                    <div class="chart-x-axis" id="chartXAxis"></div>
                                 </div>
-                                <div class="flex flex-col items-center flex-1">
-                                    <div class="chart-bar" style="height: 0%"></div>
-                                    <span class="text-xs text-text-secondary mt-2">-3h</span>
-                                </div>
-                                <div class="flex flex-col items-center flex-1">
-                                    <div class="chart-bar" style="height: 0%"></div>
-                                    <span class="text-xs text-text-secondary mt-2">-2h</span>
-                                </div>
-                                <div class="flex flex-col items-center flex-1">
-                                    <div class="chart-bar" style="height: 0%"></div>
-                                    <span class="text-xs text-text-secondary mt-2">-1h</span>
-                                </div>
-                                <div class="flex flex-col items-center flex-1">
-                                    <div class="chart-bar" style="height: 0%"></div>
-                                    <span class="text-xs text-text-secondary mt-2">Now</span>
+                            </div>
+                            <div class="flex items-center justify-center gap-6 mt-3 text-xs">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="w-3 h-0.5 bg-accent"></span>
+                                    <span class="text-text-secondary" data-i18n="dashboard.requests">Requests</span>
                                 </div>
                             </div>
                         </div>
@@ -486,49 +533,6 @@
                             </div>
                             <div id="accountsContainer" class="space-y-3">
                                 <p class="text-text-secondary text-sm text-center py-8" data-i18n="accounts.loading">Loading accounts...</p>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- Logs Panel -->
-                    <section id="logs-panel" class="content-panel">
-                        <div class="card">
-                            <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
-                                <h3 class="text-sm font-semibold text-text-primary">
-                                    <i class="fas fa-terminal text-accent mr-2"></i><span data-i18n="logs.title">Real-time Logs</span>
-                                </h3>
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <select id="logLevelFilter" class="form-input py-1.5 px-3 text-sm w-auto">
-                                        <option value="all" data-i18n="logs.allLevels">All Levels</option>
-                                        <option value="proxy">Proxy</option>
-                                        <option value="error">Error</option>
-                                        <option value="warn">Warning</option>
-                                        <option value="info">Info</option>
-                                    </select>
-                                    <select id="logStatusFilter" class="form-input py-1.5 px-3 text-sm w-auto">
-                                        <option value="all" data-i18n="logs.allStatus">All Status</option>
-                                        <option value="2xx">2xx</option>
-                                        <option value="4xx">4xx</option>
-                                        <option value="5xx">5xx</option>
-                                    </select>
-                                    <input type="text" id="logTextFilter" class="form-input py-1.5 px-3 text-sm w-40" data-i18n-placeholder="logs.search" placeholder="Search...">
-                                    <button id="logPauseBtn" onclick="toggleLogPause()" class="btn btn-secondary py-1.5 px-3 text-sm">
-                                        <i class="fas fa-pause mr-1"></i><span data-i18n="logs.pause">Pause</span>
-                                    </button>
-                                    <button onclick="clearLogs()" class="btn btn-secondary py-1.5 px-3 text-sm">
-                                        <i class="fas fa-trash mr-1"></i><span data-i18n="logs.clear">Clear</span>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="log-area" id="logArea">
-                                <div class="text-center text-text-secondary py-8" data-i18n="logs.connecting">Connecting to log stream...</div>
-                            </div>
-                            <div class="flex items-center justify-between mt-3 text-xs text-text-secondary">
-                                <div class="flex items-center gap-2">
-                                    <span class="w-2 h-2 rounded-full bg-danger" id="logConnDot"></span>
-                                    <span id="logConnStatus" data-i18n="logs.disconnected">Disconnected</span>
-                                </div>
-                                <span id="logCount">0 logs</span>
                             </div>
                         </div>
                     </section>
@@ -692,14 +696,9 @@
         let config = null;
         let accounts = [];
         let authToken = null;
-        let logBuffer = [];
-        let logPaused = false;
-        let logSSE = null;
         let importedConfig = null;
         let parsedTokens = [];
         let currentLang = localStorage.getItem('lang') || 'en';
-        const LOG_DOM_CAP = 200;
-        const LOG_BUFFER_CAP = 1000;
 
         // ==================== i18n ====================
         const i18n = {
@@ -715,14 +714,12 @@
                 // Navigation
                 'nav.dashboard': 'Dashboard',
                 'nav.accounts': 'Accounts',
-                'nav.logs': 'Logs',
                 'nav.settings': 'Settings',
                 'nav.mapping': 'Model Mapping',
                 'nav.backup': 'Backup',
                 // Page Titles
                 'page.dashboard': 'Dashboard',
                 'page.accounts': 'Account Management',
-                'page.logs': 'Real-time Logs',
                 'page.settings': 'Settings',
                 'page.mapping': 'Model Mapping',
                 'page.backup': 'Backup & Import',
@@ -735,8 +732,9 @@
                 'dashboard.avgLatency': 'Avg Latency',
                 'dashboard.p95Latency': 'P95 Latency',
                 'dashboard.rps': 'RPS',
-                'dashboard.chartTitle': 'Request Volume (6h)',
+                'dashboard.chartTitle': 'Request Volume',
                 'dashboard.refresh': 'Refresh',
+                'dashboard.requests': 'Requests',
                 'dashboard.totalAccounts': 'Total Accounts',
                 'dashboard.activeAccounts': 'Active Accounts',
                 'dashboard.forbidden': 'Forbidden',
@@ -759,19 +757,6 @@
                 'accounts.switched': 'Account switched',
                 'accounts.quotaRefreshed': 'Quota refreshed',
                 'accounts.enterToken': 'Please enter Refresh Token',
-                // Logs
-                'logs.title': 'Real-time Logs',
-                'logs.allLevels': 'All Levels',
-                'logs.allStatus': 'All Status',
-                'logs.search': 'Search...',
-                'logs.pause': 'Pause',
-                'logs.resume': 'Resume',
-                'logs.clear': 'Clear',
-                'logs.connecting': 'Connecting to log stream...',
-                'logs.connected': 'Connected',
-                'logs.disconnected': 'Disconnected',
-                'logs.reconnecting': 'Reconnecting...',
-                'logs.cleared': 'Logs cleared',
                 // Settings
                 'settings.title': 'Basic Configuration',
                 'settings.port': 'Server Port',
@@ -830,14 +815,12 @@
                 // Navigation
                 'nav.dashboard': '仪表盘',
                 'nav.accounts': '账号管理',
-                'nav.logs': '日志',
                 'nav.settings': '设置',
                 'nav.mapping': '模型映射',
                 'nav.backup': '备份',
                 // Page Titles
                 'page.dashboard': '仪表盘',
                 'page.accounts': '账号管理',
-                'page.logs': '实时日志',
                 'page.settings': '设置',
                 'page.mapping': '模型映射',
                 'page.backup': '备份与导入',
@@ -850,8 +833,9 @@
                 'dashboard.avgLatency': '平均延迟',
                 'dashboard.p95Latency': 'P95 延迟',
                 'dashboard.rps': 'RPS',
-                'dashboard.chartTitle': '请求量 (6小时)',
+                'dashboard.chartTitle': '请求量',
                 'dashboard.refresh': '刷新',
+                'dashboard.requests': '请求数',
                 'dashboard.totalAccounts': '总账号数',
                 'dashboard.activeAccounts': '活跃账号',
                 'dashboard.forbidden': '已禁用',
@@ -874,19 +858,6 @@
                 'accounts.refreshAll': '全部刷新',
                 'accounts.refreshingAll': '正在刷新所有配额...',
                 'accounts.allRefreshed': '所有配额已刷新',
-                // Logs
-                'logs.title': '实时日志',
-                'logs.allLevels': '所有级别',
-                'logs.allStatus': '所有状态',
-                'logs.search': '搜索...',
-                'logs.pause': '暂停',
-                'logs.resume': '继续',
-                'logs.clear': '清空',
-                'logs.connecting': '连接日志流...',
-                'logs.connected': '已连接',
-                'logs.disconnected': '已断开',
-                'logs.reconnecting': '重连中...',
-                'logs.cleared': '日志已清空',
                 // Settings
                 'settings.title': '基础配置',
                 'settings.port': '服务端口',
@@ -964,7 +935,6 @@
             const titles = {
                 '#dashboard': t('page.dashboard'),
                 '#accounts': t('page.accounts'),
-                '#logs': t('page.logs'),
                 '#settings': t('page.settings'),
                 '#mapping': t('page.mapping'),
                 '#backup': t('page.backup')
@@ -1224,25 +1194,29 @@
 
                 if (acc.quota) {
                     const modelsGrid = document.createElement('div');
-                    modelsGrid.className = 'grid grid-cols-2 md:grid-cols-3 gap-2 mb-3';
-                    acc.quota.models.forEach(m => {
+                    modelsGrid.className = 'flex flex-wrap gap-2 mb-3';
+
+                    // 模型简称映射
+                    const modelShortNames = {
+                        'gemini-3-pro-high': 'Pro',
+                        'gemini-3-flash': 'Flash',
+                        'claude-sonnet-4-5-thinking': 'Claude'
+                    };
+
+                    // 按优先级筛选和排序模型
+                    const priorityModels = ['gemini-3-pro-high', 'gemini-3-flash', 'claude-sonnet-4-5-thinking'];
+                    const sortedModels = acc.quota.models
+                        .filter(m => priorityModels.includes(m.name))
+                        .sort((a, b) => priorityModels.indexOf(a.name) - priorityModels.indexOf(b.name));
+
+                    sortedModels.forEach(m => {
                         const modelDiv = document.createElement('div');
-                        modelDiv.className = 'bg-bg-secondary p-2 rounded text-xs';
-                        const modelName = document.createElement('p');
-                        modelName.className = 'text-text-secondary truncate';
-                        modelName.textContent = m.name;
-                        modelDiv.appendChild(modelName);
-                        const modelPct = document.createElement('p');
-                        modelPct.className = 'font-semibold text-text-primary';
-                        modelPct.textContent = `${m.percentage}%`;
-                        modelDiv.appendChild(modelPct);
-                        const progress = document.createElement('div');
-                        progress.className = 'quota-progress';
-                        const progressBar = document.createElement('div');
-                        progressBar.className = `quota-progress-bar ${m.percentage < 20 ? 'low' : m.percentage < 50 ? 'medium' : ''}`;
-                        progressBar.style.width = `${m.percentage}%`;
-                        progress.appendChild(progressBar);
-                        modelDiv.appendChild(progress);
+                        const shortName = modelShortNames[m.name] || m.name;
+                        const colorClass = m.percentage >= 50 ? 'bg-success/20 text-success border-success/30'
+                            : m.percentage >= 20 ? 'bg-warning/20 text-warning border-warning/30'
+                            : 'bg-danger/20 text-danger border-danger/30';
+                        modelDiv.className = `flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium border ${colorClass}`;
+                        modelDiv.innerHTML = `<span class="opacity-70">${shortName}</span><span class="font-bold">${m.percentage}%</span>`;
                         modelsGrid.appendChild(modelDiv);
                     });
                     card.appendChild(modelsGrid);
@@ -1360,6 +1334,9 @@
         }
 
         // ==================== Stats ====================
+        let currentTimeRange = '10m';
+        let cachedTimeSeries = null;
+
         async function loadStats() {
             try {
                 const stats = await fetchWithError('/api/admin/stats');
@@ -1368,126 +1345,119 @@
                 document.getElementById('statAvgLatency').textContent = stats.latency_ms_avg !== undefined ? stats.latency_ms_avg.toFixed(0) + 'ms' : '-';
                 document.getElementById('statP95Latency').textContent = stats.latency_ms_p95 !== undefined ? stats.latency_ms_p95.toFixed(0) + 'ms' : '-';
                 document.getElementById('statRps').textContent = stats.rps !== undefined ? stats.rps.toFixed(1) : '0';
-                if (stats.hourly_counts) updateChart(stats.hourly_counts);
+                if (stats.time_series) {
+                    cachedTimeSeries = stats.time_series;
+                    renderChart(currentTimeRange);
+                }
             } catch (e) {}
         }
 
-        function updateChart(counts) {
-            const bars = document.querySelectorAll('#requestChart .chart-bar');
-            const max = Math.max(...counts, 1);
-            bars.forEach((bar, i) => {
-                bar.style.height = ((counts[i] || 0) / max * 100) + '%';
+        function setChartTimeRange(range) {
+            currentTimeRange = range;
+            document.querySelectorAll('.time-range-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.range === range);
+            });
+            if (cachedTimeSeries) {
+                renderChart(range);
+            }
+        }
+
+        function renderChart(range) {
+            const data = cachedTimeSeries[range] || [];
+            const svgEl = document.getElementById('requestChart');
+            const xAxisEl = document.getElementById('chartXAxis');
+            xAxisEl.innerHTML = '';
+
+            if (data.length === 0) {
+                svgEl.innerHTML = '';
+                return;
+            }
+
+            const maxCount = Math.max(...data.map(d => d.count), 1);
+            document.getElementById('chartYMax').textContent = maxCount;
+            document.getElementById('chartYMid').textContent = Math.round(maxCount / 2);
+
+            const rect = svgEl.getBoundingClientRect();
+            const width = rect.width || 400;
+            const height = rect.height || 100;
+            const padding = { left: 10, right: 10, top: 10, bottom: 5 };
+            const chartWidth = width - padding.left - padding.right;
+            const chartHeight = height - padding.top - padding.bottom;
+
+            const points = data.map((d, i) => {
+                const x = padding.left + (i / (data.length - 1 || 1)) * chartWidth;
+                const y = padding.top + chartHeight - (d.count / maxCount) * chartHeight;
+                return { x, y, data: d };
+            });
+
+            const linePoints = points.map(p => `${p.x},${p.y}`).join(' ');
+            const areaPoints = `${padding.left},${height - padding.bottom} ${linePoints} ${width - padding.right},${height - padding.bottom}`;
+
+            svgEl.innerHTML = `
+                <defs>
+                    <linearGradient id="chartGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" style="stop-color:var(--accent);stop-opacity:0.4"/>
+                        <stop offset="100%" style="stop-color:var(--accent);stop-opacity:0"/>
+                    </linearGradient>
+                </defs>
+                <polygon class="chart-area-fill" points="${areaPoints}"/>
+                <polyline class="chart-line" points="${linePoints}"/>
+                ${points.map((p, i) => `
+                    <circle class="chart-dot" cx="${p.x}" cy="${p.y}" r="3"
+                        data-count="${p.data.count}"
+                        data-rate="${(p.data.success_rate * 100).toFixed(0)}"
+                        onmouseenter="showChartTooltip(event, ${p.data.count}, ${(p.data.success_rate * 100).toFixed(0)})"
+                        onmouseleave="hideChartTooltip()"/>
+                `).join('')}
+            `;
+
+            const timeLabels = getTimeLabels(range, data.length);
+            [0, Math.floor(data.length / 2), data.length - 1].forEach(i => {
+                const span = document.createElement('span');
+                span.textContent = timeLabels[i];
+                xAxisEl.appendChild(span);
             });
         }
 
-        // ==================== Logs ====================
-        function connectLogSSE() {
-            const token = getToken();
-            if (!token) return;
-            const url = `/api/admin/logs/stream?token=${encodeURIComponent(token)}`;
-            logSSE = new EventSource(url);
-            logSSE.onopen = () => {
-                document.getElementById('logConnDot').classList.add('bg-success');
-                document.getElementById('logConnDot').classList.remove('bg-danger');
-                document.getElementById('logConnStatus').textContent = t('logs.connected');
-            };
-            logSSE.onmessage = (event) => {
-                try {
-                    const log = JSON.parse(event.data);
-                    logBuffer.push(log);
-                    if (logBuffer.length > LOG_BUFFER_CAP) logBuffer.shift();
-                    if (!logPaused && passesLogFilters(log)) {
-                        appendLogEntry(log);
-                        trimLogDom();
-                    }
-                    document.getElementById('logCount').textContent = `${logBuffer.length} logs`;
-                } catch (e) {}
-            };
-            logSSE.onerror = () => {
-                document.getElementById('logConnDot').classList.remove('bg-success');
-                document.getElementById('logConnDot').classList.add('bg-danger');
-                document.getElementById('logConnStatus').textContent = t('logs.reconnecting');
-                logSSE.close();
-                setTimeout(connectLogSSE, 3000);
-            };
-        }
-
-        function passesLogFilters(log) {
-            const level = document.getElementById('logLevelFilter').value;
-            const status = document.getElementById('logStatusFilter').value;
-            const text = document.getElementById('logTextFilter').value.toLowerCase();
-            if (level !== 'all' && log.kind !== level && log.level?.toLowerCase() !== level) return false;
-            if (status !== 'all' && log.status) {
-                if (status !== Math.floor(log.status / 100) + 'xx') return false;
+        function showChartTooltip(event, count, rate) {
+            let tooltip = document.getElementById('chartTooltip');
+            if (!tooltip) {
+                tooltip = document.createElement('div');
+                tooltip.id = 'chartTooltip';
+                tooltip.className = 'chart-tooltip';
+                document.body.appendChild(tooltip);
             }
-            if (text) {
-                const searchText = [log.path, log.message, log.upstream, log.method].join(' ').toLowerCase();
-                if (!searchText.includes(text)) return false;
+            tooltip.textContent = `${count} req, ${rate}% ok`;
+            tooltip.style.left = (event.pageX + 10) + 'px';
+            tooltip.style.top = (event.pageY - 25) + 'px';
+            tooltip.style.display = 'block';
+        }
+
+        function hideChartTooltip() {
+            const tooltip = document.getElementById('chartTooltip');
+            if (tooltip) tooltip.style.display = 'none';
+        }
+
+        function getTimeLabels(range, count) {
+            const labels = [];
+            const cfg = {
+                '10m': { interval: 50, unit: 's' },
+                '1h': { interval: 5, unit: 'm' },
+                '4h': { interval: 20, unit: 'm' }
+            };
+            const { interval, unit } = cfg[range] || cfg['1h'];
+            for (let i = count - 1; i >= 0; i--) {
+                const val = i * interval;
+                if (i === 0) {
+                    labels.push('Now');
+                } else if (unit === 'm' && val >= 60) {
+                    labels.push(`-${Math.floor(val / 60)}h`);
+                } else {
+                    labels.push(`-${val}${unit}`);
+                }
             }
-            return true;
+            return labels.reverse();
         }
-
-        function appendLogEntry(log) {
-            const logArea = document.getElementById('logArea');
-            if (logArea.querySelector('.text-center')) logArea.innerHTML = '';
-            const entry = document.createElement('div');
-            entry.className = 'log-entry';
-            const ts = new Date(log.ts_ms || Date.now()).toLocaleTimeString();
-            const level = log.kind === 'proxy' ? 'PROXY' : (log.level || 'INFO').toUpperCase();
-            const tsSpan = document.createElement('span');
-            tsSpan.className = 'log-timestamp';
-            tsSpan.textContent = `[${ts}]`;
-            const levelSpan = document.createElement('span');
-            levelSpan.className = `log-level log-level-${level}`;
-            levelSpan.textContent = `[${level}]`;
-            const msgSpan = document.createElement('span');
-            msgSpan.className = 'flex-1';
-            if (log.kind === 'proxy') {
-                const statusClass = log.status ? `log-status-${Math.floor(log.status / 100)}xx` : '';
-                const statusSpan = document.createElement('span');
-                statusSpan.className = statusClass;
-                statusSpan.textContent = log.status || '-';
-                msgSpan.appendChild(statusSpan);
-                msgSpan.appendChild(document.createTextNode(` ${log.method || ''} ${log.path || ''} ${log.duration_ms ? `(${log.duration_ms}ms)` : ''}`));
-            } else {
-                msgSpan.textContent = log.message || '';
-            }
-            entry.appendChild(tsSpan);
-            entry.appendChild(levelSpan);
-            entry.appendChild(msgSpan);
-            logArea.appendChild(entry);
-            logArea.scrollTop = logArea.scrollHeight;
-        }
-
-        function trimLogDom() {
-            const logArea = document.getElementById('logArea');
-            while (logArea.children.length > LOG_DOM_CAP) logArea.removeChild(logArea.firstChild);
-        }
-
-        function toggleLogPause() {
-            logPaused = !logPaused;
-            const btn = document.getElementById('logPauseBtn');
-            btn.innerHTML = logPaused
-                ? `<i class="fas fa-play mr-1"></i>${t('logs.resume')}`
-                : `<i class="fas fa-pause mr-1"></i>${t('logs.pause')}`;
-            if (!logPaused) renderFilteredLogs();
-        }
-
-        function clearLogs() {
-            logBuffer = [];
-            document.getElementById('logArea').innerHTML = `<div class="text-center text-text-secondary py-8">${t('logs.cleared')}</div>`;
-            document.getElementById('logCount').textContent = '0 logs';
-        }
-
-        function renderFilteredLogs() {
-            const logArea = document.getElementById('logArea');
-            logArea.innerHTML = '';
-            logBuffer.filter(passesLogFilters).slice(-LOG_DOM_CAP).forEach(appendLogEntry);
-        }
-
-        document.getElementById('logLevelFilter')?.addEventListener('change', renderFilteredLogs);
-        document.getElementById('logStatusFilter')?.addEventListener('change', renderFilteredLogs);
-        document.getElementById('logTextFilter')?.addEventListener('input', renderFilteredLogs);
 
         // ==================== Config Backup ====================
         async function exportConfig() {
@@ -1686,7 +1656,6 @@
                 await loadAccounts();
                 await loadStatus();
                 await loadStats();
-                connectLogSSE();
                 startStatsAutoRefresh();
             } catch (e) {
                 console.error('Init failed:', e);

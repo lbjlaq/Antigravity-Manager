@@ -106,7 +106,6 @@ impl AxumServer {
             .route("/api/admin/config/export", get(handlers::admin::export_config))
             .route("/api/admin/config/import", post(handlers::admin::import_config))
             .route("/api/admin/stats", get(handlers::admin::get_stats))
-            .route("/api/admin/logs/stream", get(handlers::admin::logs_stream))
             .route("/api/admin/accounts", get(handlers::admin::list_accounts))
             .route("/api/admin/accounts", post(handlers::admin::add_account))
             .route("/api/admin/accounts/:id", axum::routing::delete(handlers::admin::delete_account))

@@ -318,6 +318,8 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusDto> {
 
 // ==================== 请求统计API ====================
 
+use crate::proxy::admin::stats::TimeSeriesData;
+
 #[derive(Serialize)]
 pub struct StatsResponse {
     requests_total: u64,
@@ -327,7 +329,7 @@ pub struct StatsResponse {
     latency_ms_avg: f64,
     latency_ms_p95: f64,
     rps: f64,
-    hourly_counts: Vec<u64>,
+    time_series: TimeSeriesData,
 }
 
 pub async fn get_stats() -> Json<StatsResponse> {
@@ -340,7 +342,7 @@ pub async fn get_stats() -> Json<StatsResponse> {
         latency_ms_avg: snapshot.latency_ms_avg,
         latency_ms_p95: snapshot.latency_ms_p95,
         rps: snapshot.rps,
-        hourly_counts: snapshot.hourly_counts,
+        time_series: snapshot.time_series,
     })
 }
 
@@ -530,52 +532,4 @@ pub async fn import_config(
         "restart_required": true,
         "message": "Configuration applied successfully"
     })))
-}
-
-// ==================== 日志流API ====================
-
-use axum::response::sse::{Event, Sse};
-use std::convert::Infallible;
-use std::time::Duration;
-
-pub async fn logs_stream(
-    axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-) -> Sse<impl futures::stream::Stream<Item = Result<Event, Infallible>>> {
-    let _token = params.get("token").cloned().unwrap_or_default();
-
-    // 订阅日志广播
-    let mut rx = crate::proxy::admin::global_log_broadcaster().subscribe();
-
-    let stream = async_stream::stream! {
-        loop {
-            tokio::select! {
-                result = rx.recv() => {
-                    match result {
-                        Ok(entry) => {
-                            if let Ok(json) = serde_json::to_string(&entry) {
-                                yield Ok(Event::default().data(json));
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            // 跳过落后的消息
-                            continue;
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            break;
-                        }
-                    }
-                }
-                _ = tokio::time::sleep(Duration::from_secs(30)) => {
-                    // 心跳
-                    yield Ok(Event::default().comment("heartbeat"));
-                }
-            }
-        }
-    };
-
-    Sse::new(stream).keep_alive(
-        axum::response::sse::KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("ping")
-    )
 }
