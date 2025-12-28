@@ -44,12 +44,12 @@ By leveraging this app, you can transform common Web Sessions (Google/Anthropic)
 *   **Smart Recommendation**: The system uses a real-time algorithm to filter and recommend the "Best Account" based on quota redundancy, supporting **one-click switching**.
 *   **Active Account Snapshot**: Visually displays the specific quota percentage and the last synchronization time of the currently active account.
 
-### 2. 🔐 Professional AI Account Management & Proxy System (v3.3.1)
-*   **OAuth 2.0 Authorization (Auto/Manual)**: Pre-generates a copyable authorization URL so you can finish auth in any browser; after the callback, the app auto-completes and saves the account (use “I already authorized, continue” if needed).
+### 2. 🔐 Powerful Account Manager
+*   **OAuth 2.0 Authorization (Auto/Manual)**: Pre-generates a copyable authorization URL so you can finish auth in any browser; after the callback, the app auto-completes and saves the account (use "I already authorized, continue" if needed).
 *   **Multi-dimensional Import**: Supports single token entry, JSON batch import, and automatic hot migration from V1 legacy databases.
 *   **Gateway-level Views**: Supports switching between "List" and "Grid" views. Provides 403 Forbidden detection, automatically marking and skipping accounts with permission anomalies.
 
-### 3.  Protocol Conversion & Relay (API Proxy)
+### 3. 🔌 Protocol Conversion & Relay (API Proxy)
 *   **Multi-Protocol Adaptation (Multi-Sink)**:
     *   **OpenAI Format**: Provides `/v1/chat/completions` endpoint, compatible with 99% of existing AI apps.
     *   **Anthropic Format**: Provides native `/v1/messages` interface, supporting all features of **Claude Code CLI** (e.g., chain-of-thought, system prompts).
@@ -64,7 +64,7 @@ By leveraging this app, you can transform common Web Sessions (Google/Anthropic)
 *   **Advanced Image Control**: Supports precise control over image generation tasks via OpenAI `size` (e.g., `1024x1024`, `16:9`) parameters or model name suffixes.
 *   **Enhanced Payload Support**: The backend supports payloads up to **100MB**, more than enough for 4K HD image recognition and processing.
 
-##  GUI Overview
+## 📸 GUI Overview
 
 ````carousel
 ![Dashboard - Global Quota Monitoring & One-click Switch](docs/images/dashboard-light.png)
@@ -103,7 +103,9 @@ brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manage
 
 # 2. Install the app
 brew install --cask antigravity-tools
-# If you encounter permission issues
+```
+# If you encounter permission issues, use --no-quarantine
+```bash
 brew install --cask --no-quarantine antigravity
 ```
 
@@ -158,6 +160,7 @@ print(response.choices[0].message.content)
 
 ## 📝 Developer & Community
 
+*   **Version History (Changelog)**:
     *   **v3.3.1 (2025-12-28)**:
         - **Critical Fixes**:
             - **Deep Fix for Claude Protocol 400 Errors (Claude Code Optimization)**:
