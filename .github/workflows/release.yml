@@ -30,6 +30,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install dependencies (macOS)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          brew install create-dmg
+
       - name: Install dependencies (Linux x86_64)
         if: matrix.platform == 'ubuntu-22.04' && matrix.args == ''
         run: |
