@@ -13,6 +13,7 @@ This is a working note capturing findings, constraints, and a proposed implement
   - **z.ai participates in the shared rotation/queue** with other accounts and only gets requests when it is selected (pooled mode), OR
   - (optional) **fallback-only** (only when the rest of the pool is unavailable).
 - z.ai MCP servers should be provided via Antigravity’s proxy as optional toggles (enable/disable) and be usable by apps **without requiring users to configure z.ai keys** in the apps.
+- Proxy authorization (if enabled) applies to the **entire proxy** (no per-route bypass).
 
 ## 1) Key docs / entry points
 - Anthropic-compatible endpoint (Coding plan usage with existing clients): `https://docs.z.ai/devpack/tool/claude.md`
