@@ -4,6 +4,16 @@ Goal: integrate z.ai as an upstream provider into Antigravity’s proxy/service,
 
 This is a working note capturing findings, constraints, and a proposed implementation path. It intentionally does **not** copy full upstream documentation; it extracts what matters for implementation and corner cases.
 
+## 0) Product decisions / requirements (confirmed)
+- z.ai is configured and controlled from the **API Proxy** UI as an optional provider (enable/disable).
+- z.ai is used **inside Antigravity** (not via Google OAuth), but it must be able to serve **API Proxy** traffic alongside the existing account pool.
+- Storage: z.ai config/credentials are stored in the same **data directory** as the existing accounts and GUI config (same folder where Google account JSON lives). No Keychain/Vault.
+- Dispatch strategy is user-configurable:
+  - **z.ai handles all proxy requests** (exclusive mode), OR
+  - **z.ai participates in the shared rotation/queue** with other accounts and only gets requests when it is selected (pooled mode), OR
+  - (optional) **fallback-only** (only when the rest of the pool is unavailable).
+- z.ai MCP servers should be provided via Antigravity’s proxy as optional toggles (enable/disable) and be usable by apps **without requiring users to configure z.ai keys** in the apps.
+
 ## 1) Key docs / entry points
 - Anthropic-compatible endpoint (Coding plan usage with existing clients): `https://docs.z.ai/devpack/tool/claude.md`
 - Scenario example (same content, shorter): `https://docs.z.ai/scenario-example/develop-tools/claude.md`
@@ -170,4 +180,3 @@ Because it is a local process (`npx @z_ai/mcp-server`, Node>=22), phase 1 is:
 2) Do we want multi-key support for z.ai (rotation) or a single key per installation initially?
 3) Fallback policy when z.ai quota is near/at limit: error vs automatic fallback to other provider.
 4) Should the UI expose MCP helper endpoints/config snippets for clients?
-
