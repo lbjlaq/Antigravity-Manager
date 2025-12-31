@@ -45,6 +45,8 @@ Config lives under `proxy.zai` (`src-tauri/src/proxy/config.rs`):
   - `opus` default `glm-4.7`
   - `sonnet` default `glm-4.7`
   - `haiku` default `glm-4.5-air`
+- `model_mapping`: optional exact-match overrides (`{ "<incoming_model>": "<glm-model-id>" }`)
+  - When a key matches the incoming `model` string, it is replaced with the mapped z.ai model id before forwarding upstream.
 - `mcp` toggles:
   - `enabled`
   - `web_search_enabled`
@@ -70,6 +72,7 @@ Flow:
 3. If z.ai is selected:
    - The raw JSON is forwarded to z.ai as-is (streaming is supported by byte passthrough).
    - The request `model` may be rewritten:
+     - if `proxy.zai.model_mapping` contains an exact match, that mapping wins
      - `glm-*` stays unchanged
      - `claude-*` becomes one of `proxy.zai.models.{opus,sonnet,haiku}` based on name match
 4. Otherwise:
@@ -160,6 +163,10 @@ Added controls:
   - base_url
   - dispatch mode
   - api key input (stored locally)
+  - model mapping UI:
+    - fetch available model ids from the z.ai upstream (`GET <base_url>/v1/models`)
+    - configure default `opus/sonnet/haiku` mapping
+    - configure optional exact-match overrides
   - MCP toggles + display of local MCP endpoints
 
 Translations:

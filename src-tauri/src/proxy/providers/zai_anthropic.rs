@@ -12,6 +12,15 @@ use crate::proxy::server::AppState;
 
 fn map_model_for_zai(original: &str, state: &crate::proxy::ZaiConfig) -> String {
     let m = original.to_lowercase();
+    if let Some(mapped) = state.model_mapping.get(original) {
+        return mapped.clone();
+    }
+    if let Some(mapped) = state.model_mapping.get(&m) {
+        return mapped.clone();
+    }
+    if m.starts_with("zai:") {
+        return original[4..].to_string();
+    }
     if m.starts_with("glm-") {
         return original.to_string();
     }

@@ -116,6 +116,7 @@ pub fn run() {
             commands::proxy::generate_api_key,
             commands::proxy::reload_proxy_accounts,
             commands::proxy::update_model_mapping,
+            commands::proxy::fetch_zai_models,
             // Autostart 命令
             commands::autostart::toggle_auto_launch,
             commands::autostart::is_auto_launch_enabled,

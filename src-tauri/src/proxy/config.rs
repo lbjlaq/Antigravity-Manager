@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 // use std::path::PathBuf;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -91,6 +92,10 @@ pub struct ZaiConfig {
     pub api_key: String,
     #[serde(default)]
     pub dispatch_mode: ZaiDispatchMode,
+    /// Optional per-model mapping overrides for Anthropic/Claude model ids.
+    /// Key: incoming `model` string, Value: upstream z.ai model id (e.g. `glm-4.7`).
+    #[serde(default)]
+    pub model_mapping: HashMap<String, String>,
     #[serde(default)]
     pub models: ZaiModelDefaults,
     #[serde(default)]
@@ -104,6 +109,7 @@ impl Default for ZaiConfig {
             base_url: default_zai_base_url(),
             api_key: String::new(),
             dispatch_mode: ZaiDispatchMode::Off,
+            model_mapping: HashMap::new(),
             models: ZaiModelDefaults::default(),
             mcp: ZaiMcpConfig::default(),
         }

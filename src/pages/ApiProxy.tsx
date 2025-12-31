@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -122,6 +122,11 @@ export default function ApiProxy() {
     const [copied, setCopied] = useState<string | null>(null);
     const [selectedProtocol, setSelectedProtocol] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
     const [selectedModelId, setSelectedModelId] = useState('gemini-3-flash');
+    const [zaiAvailableModels, setZaiAvailableModels] = useState<string[]>([]);
+    const [zaiModelsLoading, setZaiModelsLoading] = useState(false);
+    const [zaiModelsError, setZaiModelsError] = useState<string | null>(null);
+    const [zaiNewMappingFrom, setZaiNewMappingFrom] = useState('');
+    const [zaiNewMappingTo, setZaiNewMappingTo] = useState('');
 
     // 初始化加载
     useEffect(() => {
@@ -230,6 +235,7 @@ export default function ApiProxy() {
             base_url: 'https://api.z.ai/api/anthropic',
             api_key: '',
             dispatch_mode: 'off' as const,
+            model_mapping: {},
             models: { opus: 'glm-4.7', sonnet: 'glm-4.7', haiku: 'glm-4.5-air' },
             mcp: { enabled: false, web_search_enabled: false, web_reader_enabled: false, vision_enabled: false },
         };
@@ -239,6 +245,90 @@ export default function ApiProxy() {
                 ...updates,
             },
         });
+    };
+
+    const refreshZaiModels = async () => {
+        if (!appConfig?.proxy.zai) return;
+        setZaiModelsLoading(true);
+        setZaiModelsError(null);
+        try {
+            const models = await invoke<string[]>('fetch_zai_models', {
+                zai: appConfig.proxy.zai,
+                upstream_proxy: appConfig.proxy.upstream_proxy,
+                request_timeout: appConfig.proxy.request_timeout,
+            });
+            setZaiAvailableModels(models);
+        } catch (error: any) {
+            setZaiAvailableModels([]);
+            setZaiModelsError(String(error));
+        } finally {
+            setZaiModelsLoading(false);
+        }
+    };
+
+    const zaiModelOptions = useMemo(() => {
+        const list = (zaiAvailableModels || []).filter(Boolean);
+        return list.length ? list : [];
+    }, [zaiAvailableModels]);
+
+    const updateZaiDefaultModels = (updates: Partial<NonNullable<ProxyConfig['zai']>['models']>) => {
+        if (!appConfig) return;
+        const existing = appConfig.proxy.zai || {
+            enabled: false,
+            base_url: 'https://api.z.ai/api/anthropic',
+            api_key: '',
+            dispatch_mode: 'off' as const,
+            model_mapping: {},
+            models: { opus: 'glm-4.7', sonnet: 'glm-4.7', haiku: 'glm-4.5-air' },
+            mcp: { enabled: false, web_search_enabled: false, web_reader_enabled: false, vision_enabled: false },
+        };
+        updateZaiConfig({
+            models: {
+                ...existing.models,
+                ...updates,
+            },
+        });
+    };
+
+    const zaiModelMapping = useMemo(() => {
+        return appConfig?.proxy.zai?.model_mapping || {};
+    }, [appConfig?.proxy.zai?.model_mapping]);
+
+    const upsertZaiModelMapping = (fromModel: string, toModel: string) => {
+        if (!appConfig) return;
+        const existing = appConfig.proxy.zai || {
+            enabled: false,
+            base_url: 'https://api.z.ai/api/anthropic',
+            api_key: '',
+            dispatch_mode: 'off' as const,
+            model_mapping: {},
+            models: { opus: 'glm-4.7', sonnet: 'glm-4.7', haiku: 'glm-4.5-air' },
+            mcp: { enabled: false, web_search_enabled: false, web_reader_enabled: false, vision_enabled: false },
+        };
+        const next = { ...(existing.model_mapping || {}) };
+        if (!fromModel.trim()) return;
+        if (toModel.trim()) {
+            next[fromModel] = toModel.trim();
+        } else {
+            delete next[fromModel];
+        }
+        updateZaiConfig({ model_mapping: next });
+    };
+
+    const removeZaiModelMapping = (fromModel: string) => {
+        if (!appConfig) return;
+        const existing = appConfig.proxy.zai || {
+            enabled: false,
+            base_url: 'https://api.z.ai/api/anthropic',
+            api_key: '',
+            dispatch_mode: 'off' as const,
+            model_mapping: {},
+            models: { opus: 'glm-4.7', sonnet: 'glm-4.7', haiku: 'glm-4.5-air' },
+            mcp: { enabled: false, web_search_enabled: false, web_reader_enabled: false, vision_enabled: false },
+        };
+        const next = { ...(existing.model_mapping || {}) };
+        delete next[fromModel];
+        updateZaiConfig({ model_mapping: next });
     };
 
     const handleToggle = async () => {
@@ -745,22 +835,230 @@ print(response.text)`;
 	                                            </span>
 	                                        </label>
 	                                        <input
-                                            type="password"
-                                            value={appConfig.proxy.zai?.api_key || ''}
-                                            onChange={(e) => updateZaiConfig({ api_key: e.target.value })}
-                                            placeholder={t('proxy.config.zai.api_key_placeholder')}
-                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                        />
-                                        <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-500">
-                                            {t('proxy.config.zai.warning')}
-                                        </p>
-                                    </div>
-                                </div>
+	                                            type="password"
+	                                            value={appConfig.proxy.zai?.api_key || ''}
+	                                            onChange={(e) => updateZaiConfig({ api_key: e.target.value })}
+	                                            placeholder={t('proxy.config.zai.api_key_placeholder')}
+	                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+	                                        />
+	                                        <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-500">
+	                                            {t('proxy.config.zai.warning')}
+	                                        </p>
+	                                    </div>
+	                                </div>
 
-	                                <div className="mt-3">
-	                                    <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-2">
-	                                        <span className="inline-flex items-center gap-1">
-	                                            {t('proxy.config.zai.mcp.title')}
+	                                {/* z.ai models + mapping */}
+	                                <div className="mt-3 pt-3 border-t border-gray-100 dark:border-base-200">
+	                                    <div className="flex items-center justify-between">
+	                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400">
+	                                            <span className="inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.models.title')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.models.title_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.models.title')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                        <button
+	                                            type="button"
+	                                            className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors text-xs flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+	                                            onClick={refreshZaiModels}
+	                                            disabled={zaiModelsLoading || !(appConfig.proxy.zai?.api_key || '').trim()}
+	                                            title={t('proxy.config.zai.models.refresh')}
+	                                        >
+	                                            <RefreshCw size={14} className={zaiModelsLoading ? 'animate-spin' : ''} />
+	                                            {zaiModelsLoading ? t('proxy.config.zai.models.refreshing') : t('proxy.config.zai.models.refresh')}
+	                                        </button>
+	                                    </div>
+	                                    <p className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
+	                                        {t('proxy.config.zai.models.hint', { count: zaiModelOptions.length })}
+	                                    </p>
+	                                    {zaiModelsError && (
+	                                        <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-500">
+	                                            {t('proxy.config.zai.models.error', { error: zaiModelsError })}
+	                                        </p>
+	                                    )}
+
+	                                    <datalist id="zai-models-datalist">
+	                                        {zaiModelOptions.map((id) => (
+	                                            <option key={id} value={id} />
+	                                        ))}
+	                                    </datalist>
+
+	                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+	                                        <div>
+	                                            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+	                                                <span className="inline-flex items-center gap-1">
+	                                                    {t('proxy.config.zai.models.opus')}
+	                                                    <HelpTooltip
+	                                                        text={t('proxy.config.zai.models.opus_tooltip')}
+	                                                        ariaLabel={t('proxy.config.zai.models.opus')}
+	                                                        placement="right"
+	                                                    />
+	                                                </span>
+	                                            </label>
+	                                            <input
+	                                                type="text"
+	                                                list="zai-models-datalist"
+	                                                value={appConfig.proxy.zai?.models?.opus || ''}
+	                                                onChange={(e) => updateZaiDefaultModels({ opus: e.target.value })}
+	                                                placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                            />
+	                                        </div>
+	                                        <div>
+	                                            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+	                                                <span className="inline-flex items-center gap-1">
+	                                                    {t('proxy.config.zai.models.sonnet')}
+	                                                    <HelpTooltip
+	                                                        text={t('proxy.config.zai.models.sonnet_tooltip')}
+	                                                        ariaLabel={t('proxy.config.zai.models.sonnet')}
+	                                                        placement="right"
+	                                                    />
+	                                                </span>
+	                                            </label>
+	                                            <input
+	                                                type="text"
+	                                                list="zai-models-datalist"
+	                                                value={appConfig.proxy.zai?.models?.sonnet || ''}
+	                                                onChange={(e) => updateZaiDefaultModels({ sonnet: e.target.value })}
+	                                                placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                            />
+	                                        </div>
+	                                        <div>
+	                                            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+	                                                <span className="inline-flex items-center gap-1">
+	                                                    {t('proxy.config.zai.models.haiku')}
+	                                                    <HelpTooltip
+	                                                        text={t('proxy.config.zai.models.haiku_tooltip')}
+	                                                        ariaLabel={t('proxy.config.zai.models.haiku')}
+	                                                        placement="right"
+	                                                    />
+	                                                </span>
+	                                            </label>
+	                                            <input
+	                                                type="text"
+	                                                list="zai-models-datalist"
+	                                                value={appConfig.proxy.zai?.models?.haiku || ''}
+	                                                onChange={(e) => updateZaiDefaultModels({ haiku: e.target.value })}
+	                                                placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                            />
+	                                        </div>
+	                                    </div>
+
+	                                    <details className="mt-3">
+	                                        <summary className="cursor-pointer text-[11px] text-gray-600 dark:text-gray-400 inline-flex items-center gap-1">
+	                                            {t('proxy.config.zai.models.advanced_title')}
+	                                            <HelpTooltip
+	                                                text={t('proxy.config.zai.models.advanced_tooltip')}
+	                                                ariaLabel={t('proxy.config.zai.models.advanced_title')}
+	                                                placement="right"
+	                                            />
+	                                        </summary>
+
+	                                        <div className="mt-2 space-y-2">
+	                                            {Object.keys(zaiModelMapping).length === 0 ? (
+	                                                <p className="text-[10px] text-gray-500 dark:text-gray-400">
+	                                                    {t('proxy.config.zai.models.empty')}
+	                                                </p>
+	                                            ) : (
+	                                                <div className="space-y-2">
+	                                                    {Object.entries(zaiModelMapping)
+	                                                        .sort(([a], [b]) => a.localeCompare(b))
+	                                                        .map(([from, to]) => (
+	                                                            <div key={from} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
+	                                                                <div className="md:col-span-5">
+	                                                                    <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-1">
+	                                                                        {t('proxy.config.zai.models.from_label')}
+	                                                                    </label>
+	                                                                    <input
+	                                                                        type="text"
+	                                                                        value={from}
+	                                                                        readOnly
+	                                                                        className="w-full px-2.5 py-1.5 border border-gray-200 dark:border-base-200 rounded-lg bg-gray-50 dark:bg-base-300 text-[11px] text-gray-700 dark:text-gray-300 font-mono"
+	                                                                    />
+	                                                                </div>
+	                                                                <div className="md:col-span-6">
+	                                                                    <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-1">
+	                                                                        {t('proxy.config.zai.models.to_label')}
+	                                                                    </label>
+	                                                                    <input
+	                                                                        type="text"
+	                                                                        list="zai-models-datalist"
+	                                                                        value={to}
+	                                                                        onChange={(e) => upsertZaiModelMapping(from, e.target.value)}
+	                                                                        className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                                    />
+	                                                                </div>
+	                                                                <div className="md:col-span-1 flex md:justify-end">
+	                                                                    <button
+	                                                                        type="button"
+	                                                                        className="px-2 py-1 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
+	                                                                        onClick={() => removeZaiModelMapping(from)}
+	                                                                        title={t('common.delete', 'Delete')}
+	                                                                    >
+	                                                                        <Trash2 size={14} />
+	                                                                    </button>
+	                                                                </div>
+	                                                            </div>
+	                                                        ))}
+	                                                </div>
+	                                            )}
+
+	                                            <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+	                                                <div className="md:col-span-5">
+	                                                    <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-1">
+	                                                        {t('proxy.config.zai.models.from_label')}
+	                                                    </label>
+	                                                    <input
+	                                                        type="text"
+	                                                        value={zaiNewMappingFrom}
+	                                                        onChange={(e) => setZaiNewMappingFrom(e.target.value)}
+	                                                        placeholder={t('proxy.config.zai.models.from_placeholder')}
+	                                                        className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                    />
+	                                                </div>
+	                                                <div className="md:col-span-6">
+	                                                    <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-1">
+	                                                        {t('proxy.config.zai.models.to_label')}
+	                                                    </label>
+	                                                    <input
+	                                                        type="text"
+	                                                        list="zai-models-datalist"
+	                                                        value={zaiNewMappingTo}
+	                                                        onChange={(e) => setZaiNewMappingTo(e.target.value)}
+	                                                        placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                        className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                    />
+	                                                </div>
+	                                                <div className="md:col-span-1 flex md:justify-end">
+	                                                    <button
+	                                                        type="button"
+	                                                        className="px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors text-xs"
+	                                                        onClick={() => {
+	                                                            const from = zaiNewMappingFrom.trim();
+	                                                            const to = zaiNewMappingTo.trim();
+	                                                            if (!from || !to) return;
+	                                                            upsertZaiModelMapping(from, to);
+	                                                            setZaiNewMappingFrom('');
+	                                                            setZaiNewMappingTo('');
+	                                                        }}
+	                                                    >
+	                                                        {t('proxy.config.zai.models.add_rule')}
+	                                                    </button>
+	                                                </div>
+	                                            </div>
+	                                        </div>
+	                                    </details>
+	                                </div>
+
+		                                <div className="mt-3">
+		                                    <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-2">
+		                                        <span className="inline-flex items-center gap-1">
+		                                            {t('proxy.config.zai.mcp.title')}
 	                                            <HelpTooltip
 	                                                text={t('proxy.config.zai.mcp.title_tooltip')}
 	                                                ariaLabel={t('proxy.config.zai.mcp.title')}

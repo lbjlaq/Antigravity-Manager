@@ -38,6 +38,7 @@ export interface ZaiConfig {
     base_url: string;
     api_key: string;
     dispatch_mode: ZaiDispatchMode;
+    model_mapping?: Record<string, string>;
     models: ZaiModelDefaults;
     mcp: ZaiMcpConfig;
 }
