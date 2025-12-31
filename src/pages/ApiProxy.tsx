@@ -998,7 +998,7 @@ print(response.text)`;
 	                                                                        type="button"
 	                                                                        className="px-2 py-1 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 hover:bg-gray-50 dark:hover:bg-base-300 transition-colors"
 	                                                                        onClick={() => removeZaiModelMapping(from)}
-	                                                                        title={t('common.delete', 'Delete')}
+	                                                                        title={t('common.delete', { defaultValue: 'Delete' })}
 	                                                                    >
 	                                                                        <Trash2 size={14} />
 	                                                                    </button>
