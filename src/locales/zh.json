@@ -274,6 +274,8 @@
             "warning_key": "注意：请妥善保管您的 API 密钥，不要泄露给他人。",
             "request_timeout": "请求超时",
             "request_timeout_hint": "默认 120 秒，范围 30-600 秒。修改后需重启服务生效。",
+            "enable_logging": "启用请求日志",
+            "enable_logging_hint": "记录历史记录以便调试 (微小性能损耗)",
             "upstream_proxy": {
                 "title": "全局上游代理 (Global Proxy)",
                 "desc": "开启后，应用内所有外部请求（API 反代、Token 刷新、配额查询、更新检测）都将通过此代理。",
@@ -391,6 +393,53 @@
             "model_id": "模型 ID",
             "description": "描述",
             "action": "操作"
+        }
+    },
+            "monitor": {
+                "page_title": "API 监控看板",
+                "page_subtitle": "实时请求日志与分析",
+                "open_monitor": "打开监控",
+                "logging_status": {
+                    "active": "正在录制",
+                    "paused": "已暂停"
+                },
+                "stats": {            "total": "总计",
+            "ok": "正常",
+            "err": "错误"
+        },
+        "filters": {
+            "placeholder": "搜索模型 (gemini, claude)、路径 (chat, images) 或状态码...",
+            "quick_filters": "快速过滤:",
+            "all": "全部",
+            "error": "仅错误",
+            "chat": "聊天",
+            "gemini": "Gemini",
+            "claude": "Claude",
+            "images": "绘图",
+            "reset": "重置"
+        },
+        "table": {
+            "status": "状态",
+            "method": "方法",
+                            "model": "模型",
+                            "path": "路径",
+                            "usage": "Token 消耗",
+                            "duration": "耗时",
+                            "time": "时间",
+                            "empty": "暂无请求记录"
+                        },
+                        "details": {
+                            "title": "请求详情",
+                            "request_payload": "请求报文 (Request)",
+                            "response_payload": "响应报文 (Response)",
+                            "duration": "耗时",
+                            "tokens": "Token 消耗 (输入/输出)",
+                            "time": "请求时间",            "model": "使用模型",
+            "id": "请求 ID"
+        },
+        "dialog": {
+            "clear_title": "清除监控日志",
+            "clear_msg": "确定要清除所有监控记录吗？此操作无法撤销。"
         }
     }
 }

@@ -59,3 +59,4 @@ tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
 tracing-appender = "0.2.4"
 tracing-log = "0.2.0"
 tauri-plugin-autostart = "2.5.1"
+tokio-stream = { version = "0.1.17", features = ["sync"] }

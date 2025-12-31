@@ -5,7 +5,7 @@ import { useAccountStore } from '../../stores/useAccountStore';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { request as invoke } from '../../utils/request';
 
 interface AddAccountDialogProps {
     onAdd: (email: string, refreshToken: string) => Promise<void>;
@@ -130,7 +130,7 @@ function AddAccountDialog({ onAdd }: AddAccountDialogProps) {
         if (activeTab === 'oauth') return;
         if (!oauthUrl) return;
 
-        cancelOAuthLogin().catch(() => {});
+        cancelOAuthLogin().catch(() => { });
         setOauthUrl('');
         setOauthUrlCopied(false);
     }, [isOpen, activeTab]);

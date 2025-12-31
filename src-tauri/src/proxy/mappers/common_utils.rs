@@ -36,13 +36,13 @@ pub fn resolve_request_config(
     // 检测是否有联网工具定义 (内置功能调用)
     let has_networking_tool = detects_networking_tool(tools);
     // 检测是否包含非联网工具 (如 MCP 本地工具)
-    let has_non_networking = contains_non_networking_tool(tools);
+    let _has_non_networking = contains_non_networking_tool(tools);
 
     // Strip -online suffix from original model if present (to detect networking intent)
     let is_online_suffix = original_model.ends_with("-online");
     
     // High-quality grounding allowlist (Only for models known to support search and be relatively 'safe')
-    let is_high_quality_model = mapped_model == "gemini-2.5-flash"
+    let _is_high_quality_model = mapped_model == "gemini-2.5-flash"
         || mapped_model == "gemini-1.5-pro"
         || mapped_model.starts_with("gemini-1.5-pro-")
         || mapped_model.starts_with("gemini-2.5-flash-")

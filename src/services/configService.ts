@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { request as invoke } from '../utils/request';
 import { AppConfig } from '../types/config';
 
 export async function loadConfig(): Promise<AppConfig> {

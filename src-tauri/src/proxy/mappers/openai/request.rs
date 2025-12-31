@@ -156,7 +156,7 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
 
             // Handle tool calls (assistant message)
             if let Some(tool_calls) = &msg.tool_calls {
-                for (index, tc) in tool_calls.iter().enumerate() {
+                for (_index, tc) in tool_calls.iter().enumerate() {
                     /* 暂时移除：防止 Codex CLI 界面碎片化
                     if index == 0 && parts.is_empty() {
                          if mapped_model.contains("gemini-3") {

@@ -273,6 +273,8 @@
             "warning_key": "Note: Keep your API key secure. Do not share it.",
             "request_timeout": "Request Timeout",
             "request_timeout_hint": "Default 120s, range 30-600s. Restart service to apply changes.",
+            "enable_logging": "Enable Request Logging",
+            "enable_logging_hint": "Record history for debugging (Minor perf cost)",
             "upstream_proxy": {
                 "title": "Global Upstream Proxy (Global Proxy)",
                 "desc": "When enabled, all external requests (API Proxy, Token Refresh, Quota Check, Update Check) will be routed through this proxy.",
@@ -387,6 +389,53 @@
             "model_id": "Model ID",
             "description": "Description",
             "action": "Action"
+        }
+    },
+            "monitor": {
+                "page_title": "API Monitor Dashboard",
+                "page_subtitle": "Real-time request logging and analysis",
+                "open_monitor": "Open Monitor",
+                "logging_status": {
+                    "active": "Recording",
+                    "paused": "Paused"
+                },
+                "stats": {            "total": "Total",
+            "ok": "OK",
+            "err": "ERR"
+        },
+        "filters": {
+            "placeholder": "Filter by model, path, or status...",
+            "quick_filters": "Quick Filters:",
+            "all": "All",
+            "error": "Error",
+            "chat": "Chat",
+            "gemini": "Gemini",
+            "claude": "Claude",
+            "images": "Images",
+            "reset": "Reset"
+        },
+        "table": {
+            "status": "Status",
+            "method": "Method",
+                            "model": "Model",
+                            "path": "Path",
+                            "usage": "Tokens",
+                            "duration": "Duration",
+                            "time": "Time",
+                            "empty": "No requests recorded"
+                        },
+                        "details": {
+                            "title": "Request Details",
+                            "request_payload": "Request Payload",
+                            "response_payload": "Response Payload",
+                            "duration": "Duration",
+                            "tokens": "Tokens (I/O)",
+                            "time": "Time",            "model": "Model",
+            "id": "Request ID"
+        },
+        "dialog": {
+            "clear_title": "Clear Proxy Logs",
+            "clear_msg": "Are you sure you want to clear all proxy logs? This action cannot be undone."
         }
     }
 }

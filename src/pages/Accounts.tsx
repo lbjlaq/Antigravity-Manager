@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { request as invoke } from '../utils/request';
 import { join } from '@tauri-apps/api/path';
 import { Search, RefreshCw, Download, Trash2, LayoutGrid, List } from 'lucide-react';
 import { useAccountStore } from '../stores/useAccountStore';

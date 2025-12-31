@@ -7,7 +7,7 @@ import CurrentAccount from '../components/dashboard/CurrentAccount';
 import BestAccounts from '../components/dashboard/BestAccounts';
 import AddAccountDialog from '../components/accounts/AddAccountDialog';
 import { save } from '@tauri-apps/plugin-dialog';
-import { invoke } from '@tauri-apps/api/core';
+import { request as invoke } from '../utils/request';
 import { showToast } from '../components/common/ToastContainer';
 import { Account } from '../types/account';
 

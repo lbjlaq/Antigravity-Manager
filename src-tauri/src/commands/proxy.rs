@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use serde::{Serialize, Deserialize};
 use crate::proxy::{ProxyConfig, TokenManager};
+use crate::proxy::monitor::{ProxyMonitor, ProxyRequestLog, ProxyStats};
 
 /// 反代服务状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,17 +14,10 @@ pub struct ProxyStatus {
     pub active_accounts: usize,
 }
 
-/// 反代服务统计
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProxyStats {
-    pub total_requests: u64,
-    pub success_count: u64,
-    pub error_count: u64,
-}
-
 /// 反代服务全局状态
 pub struct ProxyServiceState {
     pub instance: Arc<RwLock<Option<ProxyServiceInstance>>>,
+    pub monitor: Arc<RwLock<Option<Arc<ProxyMonitor>>>>,
 }
 
 /// 反代服务实例
@@ -38,6 +32,7 @@ impl ProxyServiceState {
     pub fn new() -> Self {
         Self {
             instance: Arc::new(RwLock::new(None)),
+            monitor: Arc::new(RwLock::new(None)),
         }
     }
 }
@@ -47,7 +42,7 @@ impl ProxyServiceState {
 pub async fn start_proxy_service(
     config: ProxyConfig,
     state: State<'_, ProxyServiceState>,
-    _app_handle: tauri::AppHandle,
+    app_handle: tauri::AppHandle,
 ) -> Result<ProxyStatus, String> {
     let mut instance_lock = state.instance.write().await;
     
@@ -55,6 +50,20 @@ pub async fn start_proxy_service(
     if instance_lock.is_some() {
         return Err("服务已在运行中".to_string());
     }
+
+    // Ensure monitor exists
+    {
+        let mut monitor_lock = state.monitor.write().await;
+        if monitor_lock.is_none() {
+            *monitor_lock = Some(Arc::new(ProxyMonitor::new(1000, Some(app_handle.clone()))));
+        }
+        // Sync enabled state from config
+        if let Some(monitor) = monitor_lock.as_ref() {
+            monitor.set_enabled(config.enable_logging);
+        }
+    }
+    
+    let monitor = state.monitor.read().await.as_ref().unwrap().clone();
     
     // 2. 初始化 Token 管理器
     let app_data_dir = crate::modules::account::get_data_dir()?;
@@ -81,6 +90,7 @@ pub async fn start_proxy_service(
             config.custom_mapping.clone(),
             config.request_timeout,
             config.upstream_proxy.clone(),
+            monitor.clone(),
         ).await {
             Ok((server, handle)) => (server, handle),
             Err(e) => return Err(format!("启动 Axum 服务器失败: {}", e)),
@@ -157,10 +167,53 @@ pub async fn get_proxy_status(
 /// 获取反代服务统计
 #[tauri::command]
 pub async fn get_proxy_stats(
-    _state: State<'_, ProxyServiceState>,
+    state: State<'_, ProxyServiceState>,
 ) -> Result<ProxyStats, String> {
-    // TODO: 实现统计收集
-    Ok(ProxyStats::default())
+    let monitor_lock = state.monitor.read().await;
+    if let Some(monitor) = monitor_lock.as_ref() {
+        Ok(monitor.get_stats().await)
+    } else {
+        Ok(ProxyStats::default())
+    }
+}
+
+/// 获取反代请求日志
+#[tauri::command]
+pub async fn get_proxy_logs(
+    state: State<'_, ProxyServiceState>,
+    limit: Option<usize>,
+) -> Result<Vec<ProxyRequestLog>, String> {
+    let monitor_lock = state.monitor.read().await;
+    if let Some(monitor) = monitor_lock.as_ref() {
+        Ok(monitor.get_logs(limit.unwrap_or(100)).await)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+/// 设置监控开启状态
+#[tauri::command]
+pub async fn set_proxy_monitor_enabled(
+    state: State<'_, ProxyServiceState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let monitor_lock = state.monitor.read().await;
+    if let Some(monitor) = monitor_lock.as_ref() {
+        monitor.set_enabled(enabled);
+    }
+    Ok(())
+}
+
+/// 清除反代请求日志
+#[tauri::command]
+pub async fn clear_proxy_logs(
+    state: State<'_, ProxyServiceState>,
+) -> Result<(), String> {
+    let monitor_lock = state.monitor.read().await;
+    if let Some(monitor) = monitor_lock.as_ref() {
+        monitor.clear().await;
+    }
+    Ok(())
 }
 
 /// 生成 API Key

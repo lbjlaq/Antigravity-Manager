@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { request as invoke } from '../utils/request';
 import { Account, QuotaData } from '../types/account';
 
 // 检查 Tauri 环境

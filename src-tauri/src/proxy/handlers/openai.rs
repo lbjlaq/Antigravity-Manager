@@ -508,7 +508,7 @@ pub async fn handle_completions(
 
     let mut last_error = String::new();
 
-    for attempt in 0..max_attempts {
+    for _attempt in 0..max_attempts {
         let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
             &openai_req.model,
             &*state.custom_mapping.read().await,
@@ -750,7 +750,7 @@ pub async fn handle_images_generations(
         let project_id = project_id.clone();
         let final_prompt = final_prompt.clone();
         let aspect_ratio = aspect_ratio.to_string();
-        let response_format = response_format.to_string();
+        let _response_format = response_format.to_string();
 
         tasks.push(tokio::spawn(async move {
             let gemini_body = json!({

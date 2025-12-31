@@ -209,8 +209,8 @@ fn build_contents(
     let mut contents = Vec::new();
     let mut last_thought_signature: Option<String> = None;
 
-    let msg_count = messages.len();
-    for (i, msg) in messages.iter().enumerate() {
+    let _msg_count = messages.len();
+    for (_i, msg) in messages.iter().enumerate() {
         let role = if msg.role == "assistant" {
             "model"
         } else {

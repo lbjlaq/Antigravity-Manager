@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Sparkles } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { request as invoke } from '../utils/request';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useConfigStore } from '../stores/useConfigStore';
 import { AppConfig } from '../types/config';
@@ -26,6 +26,7 @@ function Settings() {
             api_key: '',
             auto_start: false,
             request_timeout: 120,
+            enable_logging: false,
             upstream_proxy: {
                 enabled: false,
                 url: ''

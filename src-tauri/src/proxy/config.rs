@@ -39,6 +39,10 @@ pub struct ProxyConfig {
     #[serde(default = "default_request_timeout")]
     pub request_timeout: u64,
 
+    /// 是否开启请求日志记录 (监控)
+    #[serde(default)]
+    pub enable_logging: bool,
+
     /// 上游代理配置
     #[serde(default)]
     pub upstream_proxy: UpstreamProxyConfig,
@@ -65,6 +69,7 @@ impl Default for ProxyConfig {
             openai_mapping: std::collections::HashMap::new(),
             custom_mapping: std::collections::HashMap::new(),
             request_timeout: default_request_timeout(),
+            enable_logging: false, // 默认关闭，节省性能
             upstream_proxy: UpstreamProxyConfig::default(),
         }
     }

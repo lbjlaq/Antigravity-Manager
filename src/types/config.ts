@@ -13,6 +13,7 @@ export interface ProxyConfig {
     openai_mapping?: Record<string, string>;
     custom_mapping?: Record<string, string>;
     request_timeout: number;
+    enable_logging: boolean;
     upstream_proxy: UpstreamProxyConfig;
 }
 

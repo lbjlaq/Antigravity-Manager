@@ -110,7 +110,7 @@ pub fn create_openai_sse_stream(
                                                 content_out.push_str(text);
                                             }
                                             // Capture thought (Thinking Models)
-                                            if let Some(thought_text) = part.get("thought").and_then(|t| t.as_str()) {
+                                            if let Some(_thought_text) = part.get("thought").and_then(|t| t.as_str()) {
                                                  // content_out.push_str(thought_text);
                                             }
                                             // 捕获 thoughtSignature (Gemini 3 工具调用必需)
@@ -319,7 +319,7 @@ pub fn create_legacy_sse_stream(
 
 pub fn create_codex_sse_stream(
     mut gemini_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
-    model: String,
+    _model: String,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     let mut buffer = BytesMut::new();
     
@@ -407,9 +407,8 @@ pub fn create_codex_sse_stream(
                                                     if !emitted_tool_calls.contains(&call_key) {
                                                         emitted_tool_calls.insert(call_key);
 
-                                                        let name = func_call.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                                        let args = func_call.get("args").unwrap_or(&json!({})).to_string();
-                                                        
+                                                                                let name = func_call.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                                                                                let _args = func_call.get("args").unwrap_or(&json!({})).to_string();                                                        
                                                         // Stable ID generation based on hashed content to be consistent
                                                         let mut hasher = std::collections::hash_map::DefaultHasher::new();
                                                         use std::hash::{Hash, Hasher};
