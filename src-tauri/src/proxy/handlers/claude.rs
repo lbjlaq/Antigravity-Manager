@@ -13,7 +13,8 @@ use tokio::time::{sleep, Duration};
 use tracing::{debug, error};
 
 use crate::proxy::mappers::claude::{
-    transform_claude_request_in, transform_response, create_claude_sse_stream, ClaudeRequest,
+    derive_session_id_for_request, transform_claude_request_in, transform_response,
+    create_claude_sse_stream, ClaudeRequest, Metadata,
 };
 use crate::proxy::server::AppState;
 use axum::http::HeaderMap;
@@ -78,6 +79,24 @@ pub async fn handle_messages(
                 .into_response();
         }
     };
+
+    // Derive a stable session id to keep the conversation on the same account.
+    // Also inject it into metadata so the upstream request uses the same sessionId.
+    let mut request = request;
+    let derived_session_id = derive_session_id_for_request(&request);
+    if let Some(sid) = derived_session_id.as_ref() {
+        let has_user_id = request
+            .metadata
+            .as_ref()
+            .and_then(|m| m.user_id.as_ref())
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        if !has_user_id {
+            let mut md = request.metadata.take().unwrap_or(Metadata { user_id: None });
+            md.user_id = Some(sid.clone());
+            request.metadata = Some(md);
+        }
+    }
 
     // 生成随机 Trace ID 用户追踪
     let trace_id: String = rand::Rng::sample_iter(rand::thread_rng(), &rand::distributions::Alphanumeric)
@@ -208,7 +227,10 @@ pub async fn handle_messages(
         // 关键：在重试尝试 (attempt > 0) 时，必须根据错误类型决定是否强制轮换账号
         let force_rotate_token = attempt > 0; 
         
-        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token).await {
+        let (access_token, project_id, email) = match token_manager
+            .get_token(&config.request_type, force_rotate_token, derived_session_id.as_deref())
+            .await
+        {
             Ok(t) => t,
             Err(e) => {
                 let safe_message = if e.contains("invalid_grant") {

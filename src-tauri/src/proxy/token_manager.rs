@@ -22,16 +22,20 @@ pub struct TokenManager {
     tokens: Arc<DashMap<String, ProxyToken>>,  // account_id -> ProxyToken
     current_index: Arc<AtomicUsize>,
     last_used_account: Arc<tokio::sync::Mutex<Option<(String, std::time::Instant)>>>,
+    session_pins: Arc<DashMap<String, (String, std::time::Instant)>>, // key -> (account_id, last_seen)
     data_dir: PathBuf,
 }
 
 impl TokenManager {
+    const SESSION_PIN_TTL_SECS: u64 = 30 * 60; // 30 minutes
+
     /// 创建新的 TokenManager
     pub fn new(data_dir: PathBuf) -> Self {
         Self {
             tokens: Arc::new(DashMap::new()),
             current_index: Arc::new(AtomicUsize::new(0)),
             last_used_account: Arc::new(tokio::sync::Mutex::new(None)),
+            session_pins: Arc::new(DashMap::new()),
             data_dir,
         }
     }
@@ -46,6 +50,7 @@ impl TokenManager {
 
         // Reload should reflect current on-disk state (accounts can be added/removed/disabled).
         self.tokens.clear();
+        self.session_pins.clear();
         self.current_index.store(0, Ordering::SeqCst);
         {
             let mut last_used = self.last_used_account.lock().await;
@@ -157,7 +162,12 @@ impl TokenManager {
     /// 获取当前可用的 Token（带 60s 时间窗口锁定机制）
     /// 参数 `_quota_group` 用于区分 "claude" vs "gemini" 组
     /// 参数 `force_rotate` 为 true 时将忽略锁定，强制切换账号
-    pub async fn get_token(&self, quota_group: &str, force_rotate: bool) -> Result<(String, String, String), String> {
+    pub async fn get_token(
+        &self,
+        quota_group: &str,
+        force_rotate: bool,
+        session_key: Option<&str>,
+    ) -> Result<(String, String, String), String> {
         let mut tokens_snapshot: Vec<ProxyToken> = self.tokens.iter().map(|e| e.value().clone()).collect();
         let total = tokens_snapshot.len();
         if total == 0 {
@@ -179,13 +189,85 @@ impl TokenManager {
         let mut attempted: HashSet<String> = HashSet::new();
         let mut last_error: Option<String> = None;
 
+        let session_pin_key = session_key
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("{}:{}", quota_group, s));
+
         for attempt in 0..total {
             let rotate = force_rotate || attempt > 0;
 
             // ===== 【优化】原子化锁定检查与选择 =====
             let mut target_token: Option<ProxyToken> = None;
             
-            if !rotate && quota_group != "image_gen" {
+            // Prefer per-session pinning when a session key is available (keeps conversations on the same account).
+            // Otherwise fall back to the legacy global 60s "last_used" lock.
+            if quota_group != "image_gen" {
+                if let Some(pin_key) = session_pin_key.as_deref() {
+                    if !rotate {
+                        if let Some((pinned_account_id, last_seen)) =
+                            self.session_pins.get(pin_key).map(|p| p.value().clone())
+                        {
+                            if last_seen.elapsed().as_secs() <= Self::SESSION_PIN_TTL_SECS
+                                && !attempted.contains(&pinned_account_id)
+                            {
+                                if let Some(found) = tokens_snapshot
+                                    .iter()
+                                    .find(|t| t.account_id == pinned_account_id)
+                                {
+                                    tracing::info!(
+                                        "Session pin hit ({}), reusing account: {}",
+                                        pin_key,
+                                        found.email
+                                    );
+                                    target_token = Some(found.clone());
+                                    // Touch pin
+                                    self.session_pins.insert(
+                                        pin_key.to_string(),
+                                        (pinned_account_id, std::time::Instant::now()),
+                                    );
+                                } else {
+                                    // Account no longer exists; drop pin.
+                                    self.session_pins.remove(pin_key);
+                                }
+                            } else if last_seen.elapsed().as_secs() > Self::SESSION_PIN_TTL_SECS {
+                                self.session_pins.remove(pin_key);
+                            }
+                        }
+                    }
+
+                    if target_token.is_none() {
+                        // Session-aware selection (round-robin, no global lock).
+                        let start_idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
+                        for offset in 0..total {
+                            let idx = (start_idx + offset) % total;
+                            let candidate = &tokens_snapshot[idx];
+                            if attempted.contains(&candidate.account_id) {
+                                continue;
+                            }
+                            target_token = Some(candidate.clone());
+                            // Always (re)bind the session to the chosen account for cache continuity.
+                            self.session_pins.insert(
+                                pin_key.to_string(),
+                                (candidate.account_id.clone(), std::time::Instant::now()),
+                            );
+                            if rotate {
+                                tracing::info!(
+                                    "Session pin rotated ({}), switching to account: {}",
+                                    pin_key,
+                                    candidate.email
+                                );
+                            } else {
+                                tracing::info!(
+                                    "Session pin created ({}), using account: {}",
+                                    pin_key,
+                                    candidate.email
+                                );
+                            }
+                            break;
+                        }
+                    }
+                } else if !rotate {
                 // 在锁内一站式完成：1. 检查锁定 2. 选择新账号 3. 更新锁定
                 let mut last_used = self.last_used_account.lock().await;
                 
@@ -216,6 +298,7 @@ impl TokenManager {
                     }
                 }
                 // 锁在此处自动释放
+                }
             } else {
                 // 画图请求或强制轮换，不使用 session 锁定
                 let start_idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
@@ -329,6 +412,25 @@ impl TokenManager {
         Err(last_error.unwrap_or_else(|| "All accounts failed".to_string()))
     }
 
+    fn clear_session_pins_for_account(&self, account_id: &str) {
+        let keys: Vec<String> = self
+            .session_pins
+            .iter()
+            .filter_map(|entry| {
+                let (pinned_account_id, _) = entry.value();
+                if pinned_account_id == account_id {
+                    Some(entry.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for k in keys {
+            self.session_pins.remove(&k);
+        }
+    }
+
     async fn disable_account(&self, account_id: &str, reason: &str) -> Result<(), String> {
         let path = if let Some(entry) = self.tokens.get(account_id) {
             entry.account_path.clone()
@@ -352,6 +454,7 @@ impl TokenManager {
             .map_err(|e| format!("写入文件失败: {}", e))?;
 
         tracing::warn!("Account disabled: {} ({:?})", account_id, path);
+        self.clear_session_pins_for_account(account_id);
         Ok(())
     }
 
@@ -411,4 +514,53 @@ fn truncate_reason(reason: &str, max_len: usize) -> String {
     let mut s: String = reason.chars().take(max_len).collect();
     s.push('…');
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_token(account_id: &str, email: &str) -> ProxyToken {
+        ProxyToken {
+            account_id: account_id.to_string(),
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            expires_in: 3600,
+            // Far future expiry_timestamp to avoid refresh paths in tests.
+            timestamp: chrono::Utc::now().timestamp() + 3600 * 24,
+            email: email.to_string(),
+            account_path: std::env::temp_dir().join(format!("{account_id}.json")),
+            project_id: Some("test-project".to_string()),
+            subscription_tier: Some("PRO".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_pins_keep_conversations_on_same_account() {
+        let manager = TokenManager::new(std::env::temp_dir());
+        manager.tokens.insert("a".to_string(), make_token("a", "a@example.com"));
+        manager.tokens.insert("b".to_string(), make_token("b", "b@example.com"));
+
+        let (_, _, email_s1_first) = manager.get_token("claude", false, Some("s1")).await.unwrap();
+        let (_, _, email_s2_first) = manager.get_token("claude", false, Some("s2")).await.unwrap();
+        let (_, _, email_s1_again) = manager.get_token("claude", false, Some("s1")).await.unwrap();
+
+        assert_eq!(email_s1_first, email_s1_again);
+        assert_ne!(email_s1_first, email_s2_first);
+    }
+
+    #[tokio::test]
+    async fn test_clear_session_pins_for_account() {
+        let manager = TokenManager::new(std::env::temp_dir());
+        manager
+            .session_pins
+            .insert("claude:s1".to_string(), ("a".to_string(), std::time::Instant::now()));
+        manager
+            .session_pins
+            .insert("claude:s2".to_string(), ("b".to_string(), std::time::Instant::now()));
+
+        manager.clear_session_pins_for_account("a");
+        assert!(manager.session_pins.get("claude:s1").is_none());
+        assert!(manager.session_pins.get("claude:s2").is_some());
+    }
 }

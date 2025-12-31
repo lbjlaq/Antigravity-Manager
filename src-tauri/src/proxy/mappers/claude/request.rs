@@ -45,7 +45,7 @@ fn fnv1a64(data: &[u8], seed: u64) -> u64 {
     hash
 }
 
-fn derive_session_id_from_messages(messages: &[Message]) -> Option<String> {
+pub(crate) fn derive_session_id_from_messages(messages: &[Message]) -> Option<String> {
     let text = extract_first_user_text(messages)?;
     let bytes = text.as_bytes();
     let slice = if bytes.len() > SESSION_ID_MAX_BYTES {
@@ -60,6 +60,16 @@ fn derive_session_id_from_messages(messages: &[Message]) -> Option<String> {
     let h1 = fnv1a64(slice, OFFSET1);
     let h2 = fnv1a64(slice, OFFSET2);
     Some(format!("{:016x}{:016x}", h1, h2))
+}
+
+pub fn derive_session_id_for_request(claude_req: &ClaudeRequest) -> Option<String> {
+    claude_req
+        .metadata
+        .as_ref()
+        .and_then(|m| m.user_id.as_ref())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| derive_session_id_from_messages(&claude_req.messages))
 }
 
 /// 转换 Claude 请求为 Gemini v1internal 格式

@@ -63,7 +63,8 @@ pub async fn handle_generate(
 
         // 4. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, attempt > 0).await {
+        let (access_token, project_id, email) =
+            match token_manager.get_token(&config.request_type, attempt > 0, None).await {
             Ok(t) => t,
             Err(e) => {
                 return Err((StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)));
@@ -201,7 +202,7 @@ pub async fn handle_generate(
 
 pub async fn handle_list_models(State(state): State<AppState>) -> Result<impl IntoResponse, (StatusCode, String)> {
     let model_group = "gemini";
-    let (access_token, _, _) = state.token_manager.get_token(model_group, false).await
+    let (access_token, _, _) = state.token_manager.get_token(model_group, false, None).await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)))?;
 
     // Fetch from upstream
@@ -252,7 +253,7 @@ pub async fn handle_get_model(Path(model_name): Path<String>) -> impl IntoRespon
 
 pub async fn handle_count_tokens(State(state): State<AppState>, Path(_model_name): Path<String>, Json(_body): Json<Value>) -> Result<impl IntoResponse, (StatusCode, String)> {
     let model_group = "gemini";
-    let (_access_token, _project_id, _) = state.token_manager.get_token(model_group, false).await
+    let (_access_token, _project_id, _) = state.token_manager.get_token(model_group, false, None).await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)))?;
     
     Ok(Json(json!({"totalTokens": 0})))
