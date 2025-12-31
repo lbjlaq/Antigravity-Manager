@@ -173,6 +173,11 @@ Translations:
 - `src/locales/en.json`
 - `src/locales/zh.json`
 
+Reliability note:
+- Switches are implemented as `button[role="switch"]` to avoid WebView edge cases where a hidden checkbox inside a label may not toggle reliably.
+  - Component: `src/components/common/Switch.tsx`
+  - Usage: `src/pages/ApiProxy.tsx`
+
 ## Validation checklist
 Build:
 - Frontend: `npm run build`

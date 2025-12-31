@@ -42,3 +42,6 @@ Notes:
 3) Verify:
    - `GET /healthz` succeeds without auth.
    - Other endpoints (e.g. `POST /v1/messages`) return 401 without auth and succeed with the header.
+
+UI implementation detail:
+- The auth “Enabled” switch uses a `button[role="switch"]` control (`src/components/common/Switch.tsx`) to keep toggling reliable in embedded WebViews.

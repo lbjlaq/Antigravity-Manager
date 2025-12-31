@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { AppConfig, ProxyConfig } from '../types/config';
 import HelpTooltip from '../components/common/HelpTooltip';
+import Switch from '../components/common/Switch';
 
 interface ProxyStatus {
     running: boolean;
@@ -596,50 +597,42 @@ print(response.text)`;
                                         {t('proxy.config.request_timeout_hint')}
                                     </p>
                                 </div>
-	                                <div className="flex items-center">
-	                                    <label className="flex items-center cursor-pointer gap-3">
-                                        <div className="relative">
-                                            <input
-                                                type="checkbox"
-                                                className="sr-only"
-                                                checked={appConfig.proxy.auto_start}
-                                                onChange={(e) => updateProxyConfig({ auto_start: e.target.checked })}
-                                            />
-                                            <div className={`block w-10 h-6 rounded-full transition-colors ${appConfig.proxy.auto_start ? 'bg-blue-500' : 'bg-gray-300 dark:bg-base-300'}`}></div>
-                                            <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${appConfig.proxy.auto_start ? 'transform translate-x-4' : ''}`}></div>
-                                        </div>
-	                                        <span className="text-xs font-medium text-gray-900 dark:text-base-content inline-flex items-center gap-1">
-	                                            {t('proxy.config.auto_start')}
-	                                            <HelpTooltip
-	                                                text={t('proxy.config.auto_start_tooltip')}
-	                                                ariaLabel={t('proxy.config.auto_start')}
-	                                                placement="right"
-	                                            />
-	                                        </span>
-	                                    </label>
-	                                </div>
+		                                <div className="flex items-center">
+		                                    <div className="flex items-center gap-3">
+		                                        <Switch
+		                                            checked={appConfig.proxy.auto_start}
+		                                            onCheckedChange={(next) => updateProxyConfig({ auto_start: next })}
+		                                            ariaLabel={t('proxy.config.auto_start')}
+		                                        />
+		                                        <span className="text-xs font-medium text-gray-900 dark:text-base-content inline-flex items-center gap-1 cursor-default">
+		                                            {t('proxy.config.auto_start')}
+		                                            <HelpTooltip
+		                                                text={t('proxy.config.auto_start_tooltip')}
+		                                                ariaLabel={t('proxy.config.auto_start')}
+		                                                placement="right"
+		                                            />
+		                                        </span>
+		                                    </div>
+		                                </div>
 	                            </div>
 
                             {/* 局域网访问开关 */}
-	                            <div className="border-t border-gray-200 dark:border-base-300 pt-3 mt-3">
-	                                <label className="flex items-start gap-3 cursor-pointer">
-                                    <div className="relative flex-shrink-0 mt-0.5">
-                                        <input
-                                            type="checkbox"
-                                            className="sr-only"
-                                            checked={appConfig.proxy.allow_lan_access || false}
-                                            onChange={(e) => updateProxyConfig({ allow_lan_access: e.target.checked })}
-                                            disabled={status.running}
-                                        />
-                                        <div className={`block w-10 h-6 rounded-full transition-colors ${(appConfig.proxy.allow_lan_access || false) ? 'bg-blue-500' : 'bg-gray-300 dark:bg-base-300'}`}></div>
-                                        <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${(appConfig.proxy.allow_lan_access || false) ? 'transform translate-x-4' : ''}`}></div>
-                                    </div>
-	                                    <div className="flex-1">
-	                                        <span className="text-xs font-medium text-gray-900 dark:text-base-content inline-flex items-center gap-1">
-	                                            {t('proxy.config.allow_lan_access')}
-	                                            <HelpTooltip
-	                                                text={t('proxy.config.allow_lan_access_tooltip')}
-	                                                ariaLabel={t('proxy.config.allow_lan_access')}
+		                            <div className="border-t border-gray-200 dark:border-base-300 pt-3 mt-3">
+		                                <div className="flex items-start gap-3">
+		                                    <div className="flex-shrink-0 mt-0.5">
+		                                        <Switch
+		                                            checked={appConfig.proxy.allow_lan_access || false}
+		                                            onCheckedChange={(next) => updateProxyConfig({ allow_lan_access: next })}
+		                                            disabled={status.running}
+		                                            ariaLabel={t('proxy.config.allow_lan_access')}
+		                                        />
+		                                    </div>
+		                                    <div className="flex-1">
+		                                        <span className="text-xs font-medium text-gray-900 dark:text-base-content inline-flex items-center gap-1 cursor-default">
+		                                            {t('proxy.config.allow_lan_access')}
+		                                            <HelpTooltip
+		                                                text={t('proxy.config.allow_lan_access_tooltip')}
+		                                                ariaLabel={t('proxy.config.allow_lan_access')}
 	                                                placement="right"
 	                                            />
 	                                        </span>
@@ -653,14 +646,14 @@ print(response.text)`;
                                                 {t('proxy.config.allow_lan_access_warning')}
                                             </p>
                                         )}
-                                        {status.running && (
-                                            <p className="mt-1 text-[10px] text-blue-600 dark:text-blue-400">
-                                                {t('proxy.config.allow_lan_access_restart_hint')}
-                                            </p>
-                                        )}
-                                    </div>
-                                </label>
-                            </div>
+		                                        {status.running && (
+		                                            <p className="mt-1 text-[10px] text-blue-600 dark:text-blue-400">
+		                                                {t('proxy.config.allow_lan_access_restart_hint')}
+		                                            </p>
+		                                        )}
+		                                    </div>
+		                                </div>
+		                            </div>
 
                             {/* API 密钥 */}
                             {/* API 密钥 */}
@@ -719,30 +712,25 @@ print(response.text)`;
 	                                            />
 	                                        </span>
 	                                    </label>
-	                                    <label className="flex items-center cursor-pointer gap-2">
-	                                        <span className="text-[11px] text-gray-600 dark:text-gray-400 inline-flex items-center gap-1">
-	                                            {t('proxy.config.auth.enabled')}
-	                                            <HelpTooltip
+		                                    <label className="flex items-center cursor-pointer gap-2">
+		                                        <span className="text-[11px] text-gray-600 dark:text-gray-400 inline-flex items-center gap-1">
+		                                            {t('proxy.config.auth.enabled')}
+		                                            <HelpTooltip
 	                                                text={t('proxy.config.auth.enabled_tooltip')}
 	                                                ariaLabel={t('proxy.config.auth.enabled')}
 	                                                placement="right"
 	                                            />
-	                                        </span>
-	                                        <div className="relative">
-                                            <input
-                                                type="checkbox"
-                                                className="sr-only"
-                                                checked={(appConfig.proxy.auth_mode || 'off') !== 'off'}
-                                                onChange={(e) => {
-                                                    const nextMode = e.target.checked ? 'all_except_health' : 'off';
-                                                    updateProxyConfig({ auth_mode: nextMode });
-                                                }}
-                                            />
-                                            <div className={`block w-10 h-6 rounded-full transition-colors ${((appConfig.proxy.auth_mode || 'off') !== 'off') ? 'bg-blue-500' : 'bg-gray-300 dark:bg-base-300'}`}></div>
-                                            <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${((appConfig.proxy.auth_mode || 'off') !== 'off') ? 'transform translate-x-4' : ''}`}></div>
-                                        </div>
-                                    </label>
-                                </div>
+		                                        </span>
+		                                        <Switch
+		                                            checked={(appConfig.proxy.auth_mode || 'off') !== 'off'}
+		                                            onCheckedChange={(next) => {
+		                                                const nextMode = next ? 'all_except_health' : 'off';
+		                                                updateProxyConfig({ auth_mode: nextMode });
+		                                            }}
+		                                            ariaLabel={t('proxy.config.auth.enabled')}
+		                                        />
+		                                    </label>
+		                                </div>
 
 	                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 	                                    <div>
@@ -800,27 +788,22 @@ print(response.text)`;
 	                                            {t('proxy.config.zai.subtitle')}
 	                                        </p>
 	                                    </div>
-	                                    <label className="flex items-center cursor-pointer gap-2">
-	                                        <span className="text-[11px] text-gray-600 dark:text-gray-400 inline-flex items-center gap-1">
-	                                            {t('proxy.config.zai.enabled')}
+		                                    <label className="flex items-center cursor-pointer gap-2">
+		                                        <span className="text-[11px] text-gray-600 dark:text-gray-400 inline-flex items-center gap-1">
+		                                            {t('proxy.config.zai.enabled')}
 	                                            <HelpTooltip
 	                                                text={t('proxy.config.zai.enabled_tooltip')}
 	                                                ariaLabel={t('proxy.config.zai.enabled')}
 	                                                placement="right"
 	                                            />
-	                                        </span>
-	                                        <div className="relative">
-                                            <input
-                                                type="checkbox"
-                                                className="sr-only"
-                                                checked={!!appConfig.proxy.zai?.enabled}
-                                                onChange={(e) => updateZaiConfig({ enabled: e.target.checked })}
-                                            />
-                                            <div className={`block w-10 h-6 rounded-full transition-colors ${(appConfig.proxy.zai?.enabled) ? 'bg-blue-500' : 'bg-gray-300 dark:bg-base-300'}`}></div>
-                                            <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${(appConfig.proxy.zai?.enabled) ? 'transform translate-x-4' : ''}`}></div>
-                                        </div>
-                                    </label>
-                                </div>
+		                                        </span>
+		                                        <Switch
+		                                            checked={!!appConfig.proxy.zai?.enabled}
+		                                            onCheckedChange={(next) => updateZaiConfig({ enabled: next })}
+		                                            ariaLabel={t('proxy.config.zai.enabled')}
+		                                        />
+		                                    </label>
+		                                </div>
 
 	                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 	                                    <div className="md:col-span-2">
