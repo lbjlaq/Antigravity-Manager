@@ -76,6 +76,12 @@ async fn forward_mcp(
     };
 
     let mut headers = copy_passthrough_headers(&incoming_headers);
+    // z.ai MCP server requires Accept to include both application/json and text/event-stream.
+    // We set it here to be resilient to clients that send only application/json or */*.
+    headers.insert(
+        header::ACCEPT,
+        HeaderValue::from_static("application/json, text/event-stream"),
+    );
     if let Ok(v) = HeaderValue::from_str(&format!("Bearer {}", zai.api_key)) {
         headers.insert(header::AUTHORIZATION, v);
     }
@@ -394,10 +400,13 @@ pub async fn handle_zai_mcp_server(
     }
     drop(zai);
 
-    match method {
+    let mut resp = match method {
         Method::GET => handle_vision_get(state, headers).await,
         Method::DELETE => handle_vision_delete(state, headers).await,
         Method::POST => handle_vision_post(state, headers, body).await,
         _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
-    }
+    };
+    resp.extensions_mut()
+        .insert(crate::proxy::observability::UpstreamRoute("zai_vision_mcp"));
+    resp
 }
