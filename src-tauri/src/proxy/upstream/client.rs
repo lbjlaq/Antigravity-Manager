@@ -17,6 +17,11 @@ pub struct UpstreamClient {
 impl UpstreamClient {
     pub fn new(proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>) -> Self {
         let mut builder = Client::builder()
+            // Connection settings (WSL/Windows benefit from stable keepalive + connection reuse).
+            .connect_timeout(Duration::from_secs(20))
+            .pool_max_idle_per_host(16)
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_keepalive(Duration::from_secs(60))
             .timeout(Duration::from_secs(600))
             .user_agent("antigravity/1.11.9 windows/amd64");
 

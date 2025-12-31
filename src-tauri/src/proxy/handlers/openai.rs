@@ -1,7 +1,11 @@
 // OpenAI Handler
 use axum::{extract::Json, extract::State, http::StatusCode, response::IntoResponse};
 use base64::Engine as _;
+use bytes::Bytes;
+use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
+use std::pin::Pin;
+use std::time::Instant;
 use tracing::{debug, error}; // Import Engine trait for encode method
 
 use crate::proxy::mappers::openai::{
@@ -88,10 +92,32 @@ fn derive_openai_session_id(openai_req: &OpenAIRequest) -> Option<String> {
     None
 }
 
+fn instrument_upstream_ttft(
+    mut stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    started_at: Instant,
+    label: String,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>> {
+    Box::pin(async_stream::stream! {
+        let mut first = true;
+        while let Some(item) = stream.next().await {
+            if first {
+                first = false;
+                debug!(
+                    "{} upstream first byte after {}ms",
+                    label,
+                    started_at.elapsed().as_millis()
+                );
+            }
+            yield item;
+        }
+    })
+}
+
 pub async fn handle_chat_completions(
     State(state): State<AppState>,
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let trace_id = crate::proxy::common::utils::generate_random_id();
     let mut openai_req: OpenAIRequest = serde_json::from_value(body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Invalid request: {}", e)))?;
 
@@ -182,18 +208,19 @@ pub async fn handle_chat_completions(
 
         // 5. 发送请求
         let list_response = openai_req.stream;
-        let method = if list_response {
-            "streamGenerateContent"
-        } else {
-            "generateContent"
-        };
-        let query_string = if list_response { Some("alt=sse") } else { None };
+	        let method = if list_response {
+	            "streamGenerateContent"
+	        } else {
+	            "generateContent"
+	        };
+	        let query_string = if list_response { Some("alt=sse") } else { None };
 
-        let response = match upstream
-            .call_v1_internal(method, &access_token, gemini_body, query_string)
-            .await
-        {
-            Ok(r) => r,
+	        let attempt_started = Instant::now();
+	        let response = match upstream
+	            .call_v1_internal(method, &access_token, gemini_body, query_string)
+	            .await
+	        {
+	            Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
                 tracing::warn!(
@@ -203,26 +230,38 @@ pub async fn handle_chat_completions(
                     e
                 );
                 continue;
-            }
-        };
+	            }
+	        };
 
-        let status = response.status();
-        if status.is_success() {
-            // 5. 处理流式 vs 非流式
-            if list_response {
+	        debug!(
+	            "[openai:{}] upstream headers in {}ms (attempt {}/{})",
+	            trace_id,
+	            attempt_started.elapsed().as_millis(),
+	            attempt + 1,
+	            max_attempts
+	        );
+
+	        let status = response.status();
+	        if status.is_success() {
+	            // 5. 处理流式 vs 非流式
+	            if list_response {
                 use crate::proxy::mappers::openai::streaming::create_openai_sse_stream;
                 use axum::body::Body;
                 use axum::response::Response;
                 // Removed redundant StreamExt
 
-                let gemini_stream = response.bytes_stream();
-                let openai_stream =
-                    create_openai_sse_stream(
-                        Box::pin(gemini_stream),
-                        openai_req.model.clone(),
-                        derived_session_id.clone(),
-                    );
-                let body = Body::from_stream(openai_stream);
+	                let gemini_stream = instrument_upstream_ttft(
+	                    Box::pin(response.bytes_stream()),
+	                    attempt_started,
+	                    format!("[openai:{}]", trace_id),
+	                );
+	                let openai_stream =
+	                    create_openai_sse_stream(
+	                        gemini_stream,
+	                        openai_req.model.clone(),
+	                        derived_session_id.clone(),
+	                    );
+	                let body = Body::from_stream(openai_stream);
 
                 return Ok(Response::builder()
                     .header("Content-Type", "text/event-stream")
@@ -233,10 +272,18 @@ pub async fn handle_chat_completions(
                     .into_response());
             }
 
-            let gemini_resp: Value = response
-                .json()
-                .await
-                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
+	            let parse_started = Instant::now();
+	            let gemini_resp: Value = response
+	                .json()
+	                .await
+	                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
+	            debug!(
+	                "[openai:{}] non-stream parse {}ms (attempt {}/{})",
+	                trace_id,
+	                parse_started.elapsed().as_millis(),
+	                attempt + 1,
+	                max_attempts
+	            );
 
             let openai_response = transform_openai_response(&gemini_resp, derived_session_id.as_deref());
             return Ok(Json(openai_response).into_response());
@@ -321,6 +368,7 @@ pub async fn handle_completions(
     State(state): State<AppState>,
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let trace_id = crate::proxy::common::utils::generate_random_id();
     tracing::info!("Received /v1/completions or /v1/responses payload");
     if tracing::enabled!(tracing::Level::DEBUG) {
         tracing::debug!(
@@ -660,50 +708,63 @@ pub async fn handle_completions(
         }
 
         let list_response = openai_req.stream;
-        let method = if list_response {
-            "streamGenerateContent"
-        } else {
-            "generateContent"
-        };
-        let query_string = if list_response { Some("alt=sse") } else { None };
+	        let method = if list_response {
+	            "streamGenerateContent"
+	        } else {
+	            "generateContent"
+	        };
+	        let query_string = if list_response { Some("alt=sse") } else { None };
 
-        let response = match upstream
-            .call_v1_internal(method, &access_token, gemini_body, query_string)
-            .await
-        {
-            Ok(r) => r,
+	        let attempt_started = Instant::now();
+	        let response = match upstream
+	            .call_v1_internal(method, &access_token, gemini_body, query_string)
+	            .await
+	        {
+	            Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
                 continue;
-            }
-        };
+	            }
+	        };
 
-        let status = response.status();
-        if status.is_success() {
-            if list_response {
+	        debug!(
+	            "[openai:{}] upstream headers in {}ms (attempt {}/{})",
+	            trace_id,
+	            attempt_started.elapsed().as_millis(),
+	            attempt + 1,
+	            max_attempts
+	        );
+
+	        let status = response.status();
+	        if status.is_success() {
+	            if list_response {
                 use axum::body::Body;
                 use axum::response::Response;
 
-                let gemini_stream = response.bytes_stream();
-                let body = if is_codex_style {
-                    use crate::proxy::mappers::openai::streaming::create_codex_sse_stream;
-                    let s =
-                        create_codex_sse_stream(
-                            Box::pin(gemini_stream),
-                            openai_req.model.clone(),
-                            derived_session_id.clone(),
-                        );
-                    Body::from_stream(s)
-                } else {
-                    use crate::proxy::mappers::openai::streaming::create_legacy_sse_stream;
-                    let s =
-                        create_legacy_sse_stream(
-                            Box::pin(gemini_stream),
-                            openai_req.model.clone(),
-                            derived_session_id.clone(),
-                        );
-                    Body::from_stream(s)
-                };
+	                let gemini_stream = instrument_upstream_ttft(
+	                    Box::pin(response.bytes_stream()),
+	                    attempt_started,
+	                    format!("[openai:{}]", trace_id),
+	                );
+	                let body = if is_codex_style {
+	                    use crate::proxy::mappers::openai::streaming::create_codex_sse_stream;
+	                    let s =
+	                        create_codex_sse_stream(
+	                            gemini_stream,
+	                            openai_req.model.clone(),
+	                            derived_session_id.clone(),
+	                        );
+	                    Body::from_stream(s)
+	                } else {
+	                    use crate::proxy::mappers::openai::streaming::create_legacy_sse_stream;
+	                    let s =
+	                        create_legacy_sse_stream(
+	                            gemini_stream,
+	                            openai_req.model.clone(),
+	                            derived_session_id.clone(),
+	                        );
+	                    Body::from_stream(s)
+	                };
 
                 return Ok(Response::builder()
                     .header("Content-Type", "text/event-stream")
@@ -714,10 +775,18 @@ pub async fn handle_completions(
                     .into_response());
             }
 
-            let gemini_resp: Value = response
-                .json()
-                .await
-                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
+	            let parse_started = Instant::now();
+	            let gemini_resp: Value = response
+	                .json()
+	                .await
+	                .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
+	            debug!(
+	                "[openai:{}] non-stream parse {}ms (attempt {}/{})",
+	                trace_id,
+	                parse_started.elapsed().as_millis(),
+	                attempt + 1,
+	                max_attempts
+	            );
 
             let chat_resp = transform_openai_response(&gemini_resp, derived_session_id.as_deref());
 

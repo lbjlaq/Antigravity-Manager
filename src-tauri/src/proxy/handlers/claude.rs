@@ -7,8 +7,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use serde_json::{json, Value};
+use std::pin::Pin;
+use std::time::Instant;
 use tracing::{debug, error};
 
 use crate::proxy::mappers::claude::{
@@ -20,6 +22,27 @@ use axum::http::HeaderMap;
 use std::sync::atomic::Ordering;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
+
+fn instrument_upstream_ttft(
+    mut stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
+    started_at: Instant,
+    label: String,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>> {
+    Box::pin(async_stream::stream! {
+        let mut first = true;
+        while let Some(item) = stream.next().await {
+            if first {
+                first = false;
+                debug!(
+                    "{} upstream first byte after {}ms",
+                    label,
+                    started_at.elapsed().as_millis()
+                );
+            }
+            yield item;
+        }
+    })
+}
 
 /// 处理 Claude messages 请求
 /// 
@@ -334,6 +357,7 @@ pub async fn handle_messages(
     let method = if is_stream { "streamGenerateContent" } else { "generateContent" };
     let query = if is_stream { Some("alt=sse") } else { None };
 
+    let attempt_started = Instant::now();
     let response = match upstream.call_v1_internal(
         method,
         &access_token,
@@ -347,6 +371,14 @@ pub async fn handle_messages(
                 continue;
             }
         };
+
+        debug!(
+            "[{}] upstream headers in {}ms (attempt {}/{})",
+            trace_id,
+            attempt_started.elapsed().as_millis(),
+            attempt + 1,
+            max_attempts
+        );
         
         let status = response.status();
         
@@ -354,8 +386,11 @@ pub async fn handle_messages(
         if status.is_success() {
             // 处理流式响应
             if request.stream {
-                let stream = response.bytes_stream();
-                let gemini_stream = Box::pin(stream);
+                let gemini_stream = instrument_upstream_ttft(
+                    Box::pin(response.bytes_stream()),
+                    attempt_started,
+                    format!("[{}]", trace_id),
+                );
                 let claude_stream =
                     create_claude_sse_stream(gemini_stream, trace_id, derived_session_id.clone());
 
@@ -376,20 +411,36 @@ pub async fn handle_messages(
                     .unwrap();
             } else {
                 // 处理非流式响应
+                let read_started = Instant::now();
                 let bytes = match response.bytes().await {
                     Ok(b) => b,
                     Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to read body: {}", e)).into_response(),
                 };
+                debug!(
+                    "[{}] upstream body read {}ms (attempt {}/{})",
+                    trace_id,
+                    read_started.elapsed().as_millis(),
+                    attempt + 1,
+                    max_attempts
+                );
                 
                 // Debug print
                 if let Ok(text) = String::from_utf8(bytes.to_vec()) {
                     debug!("Upstream Response for Claude request: {}", text);
                 }
 
+                let parse_started = Instant::now();
                 let gemini_resp: Value = match serde_json::from_slice(&bytes) {
                     Ok(v) => v,
                     Err(e) => return (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)).into_response(),
                 };
+                debug!(
+                    "[{}] upstream json parse {}ms (attempt {}/{})",
+                    trace_id,
+                    parse_started.elapsed().as_millis(),
+                    attempt + 1,
+                    max_attempts
+                );
 
                 // 解包 response 字段（v1internal 格式）
                 let raw = gemini_resp.get("response").unwrap_or(&gemini_resp);
