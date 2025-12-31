@@ -158,6 +158,7 @@ Page: `src/pages/ApiProxy.tsx`
 
 Added controls:
 - Authorization toggle + mode selector (`off/strict/all_except_health/auto`)
+- Optional request logging toggle (`proxy.access_log_enabled`)
 - z.ai block:
   - enable toggle
   - base_url

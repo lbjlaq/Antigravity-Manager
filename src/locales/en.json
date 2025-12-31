@@ -293,6 +293,13 @@
                     "auto": "Auto (Recommended)"
                 }
             },
+            "access_log": {
+                "title": "Request Logging",
+                "title_tooltip": "Logs request method/path/status and latency to the local app log file. Does not log query strings, headers, or bodies.",
+                "enabled": "Enabled",
+                "enabled_tooltip": "When enabled, each request is logged with method, path, status code, latency, and a best-effort upstream label (e.g. z.ai).",
+                "hint": "Useful for debugging clients and routing. Logs are written to the app data directory under logs/."
+            },
             "zai": {
                 "title": "z.ai (GLM) Provider",
                 "title_tooltip": "Optional Anthropic-compatible upstream for Claude protocol. Only affects Anthropic endpoints; Google account routing remains unchanged.",

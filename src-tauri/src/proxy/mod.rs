@@ -6,6 +6,7 @@ pub mod token_manager;
 pub mod project_resolver;
 pub mod server;
 pub mod security;
+pub mod observability;
 
 // 新架构模块
 pub mod mappers;           // 协议转换器

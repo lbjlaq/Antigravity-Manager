@@ -867,6 +867,40 @@ print(response.text)`;
                                 </p>
                             </div>
 
+                            {/* Request Logging (access log) */}
+                            <div className="pt-2">
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                                        <span className="inline-flex items-center gap-1">
+                                            {t('proxy.config.access_log.title')}
+                                            <HelpTooltip
+                                                text={t('proxy.config.access_log.title_tooltip')}
+                                                ariaLabel={t('proxy.config.access_log.title')}
+                                                placement="right"
+                                            />
+                                        </span>
+                                    </label>
+                                    <label className="flex items-center cursor-pointer gap-2">
+                                        <span className="text-[11px] text-gray-600 dark:text-gray-400 inline-flex items-center gap-1">
+                                            {t('proxy.config.access_log.enabled')}
+                                            <HelpTooltip
+                                                text={t('proxy.config.access_log.enabled_tooltip')}
+                                                ariaLabel={t('proxy.config.access_log.enabled')}
+                                                placement="right"
+                                            />
+                                        </span>
+                                        <Switch
+                                            checked={!!appConfig.proxy.access_log_enabled}
+                                            onCheckedChange={(next) => updateProxyConfig({ access_log_enabled: next })}
+                                            ariaLabel={t('proxy.config.access_log.enabled')}
+                                        />
+                                    </label>
+                                </div>
+                                <p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
+                                    {t('proxy.config.access_log.hint')}
+                                </p>
+                            </div>
+
                         </div>
                     </div>
                 )}

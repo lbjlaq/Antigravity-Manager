@@ -135,6 +135,10 @@ pub struct ProxyConfig {
     /// - auto: recommended defaults (currently: allow_lan_access => all_except_health, else off)
     #[serde(default)]
     pub auth_mode: ProxyAuthMode,
+
+    /// When enabled, logs request method/path/status and latency (no query strings or bodies).
+    #[serde(default)]
+    pub access_log_enabled: bool,
     
     /// 监听端口
     pub port: u16,
@@ -190,6 +194,7 @@ impl Default for ProxyConfig {
             enabled: false,
             allow_lan_access: false, // 默认仅本机访问，隐私优先
             auth_mode: ProxyAuthMode::default(),
+            access_log_enabled: false,
             port: 8045,
             api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),
             auto_start: false,

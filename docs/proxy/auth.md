@@ -22,6 +22,7 @@ Implementation:
   - `auth_middleware(...)` validates `Authorization: Bearer <proxy.api_key>`
   - `OPTIONS` requests are allowed (CORS preflight)
   - In `all_except_health`, `GET /healthz` bypasses auth
+- Optional request logging (debug): [`docs/proxy/logging.md`](logging.md)
 
 Hot reload:
 - Config save triggers running server updates in [`src-tauri/src/commands/mod.rs`](../../src-tauri/src/commands/mod.rs)

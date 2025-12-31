@@ -294,6 +294,13 @@
                     "auto": "自动（推荐）"
                 }
             },
+            "access_log": {
+                "title": "请求日志",
+                "title_tooltip": "将请求的 method/path/status 和耗时写入本地日志文件。不会记录 query 参数、请求头或请求体（避免泄露敏感信息）。",
+                "enabled": "已启用",
+                "enabled_tooltip": "开启后，每个请求都会记录 method、path、状态码、耗时，以及尽力提供的上游标记（例如 z.ai）。",
+                "hint": "用于排查客户端/路由问题。日志保存在应用数据目录的 logs/ 下。"
+            },
             "zai": {
                 "title": "z.ai（GLM）提供商",
                 "title_tooltip": "为 Claude 协议提供可选的 Anthropic 兼容上游（z.ai）。只影响 Claude 协议请求，Google 账号池仍按原逻辑工作。",

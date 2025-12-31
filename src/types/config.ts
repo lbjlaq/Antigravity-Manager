@@ -7,6 +7,7 @@ export interface ProxyConfig {
     enabled: boolean;
     allow_lan_access?: boolean;
     auth_mode?: 'off' | 'strict' | 'all_except_health' | 'auto';
+    access_log_enabled?: boolean;
     port: number;
     api_key: string;
     auto_start: boolean;

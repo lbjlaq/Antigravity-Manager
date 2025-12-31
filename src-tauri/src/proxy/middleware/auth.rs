@@ -20,9 +20,6 @@ pub async fn auth_middleware(
     let method = request.method().clone();
     let path = request.uri().path().to_string();
 
-    // Avoid logging query strings (can contain secrets for some integrations).
-    tracing::info!("Request: {} {}", method, path);
-
     // Allow CORS preflight regardless of auth policy.
     if method == axum::http::Method::OPTIONS {
         return Ok(next.run(request).await);

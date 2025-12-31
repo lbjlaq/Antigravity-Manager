@@ -124,14 +124,17 @@ pub async fn handle_web_search_prime(
     }
     drop(zai);
 
-    forward_mcp(
+    let mut resp = forward_mcp(
         &state,
         headers,
         method,
         "https://api.z.ai/api/mcp/web_search_prime/mcp",
         body,
     )
-    .await
+    .await;
+    resp.extensions_mut()
+        .insert(crate::proxy::observability::UpstreamRoute("zai_mcp"));
+    resp
 }
 
 pub async fn handle_web_reader(
@@ -146,14 +149,17 @@ pub async fn handle_web_reader(
     }
     drop(zai);
 
-    forward_mcp(
+    let mut resp = forward_mcp(
         &state,
         headers,
         method,
         "https://api.z.ai/api/mcp/web_reader/mcp",
         body,
     )
-    .await
+    .await;
+    resp.extensions_mut()
+        .insert(crate::proxy::observability::UpstreamRoute("zai_mcp"));
+    resp
 }
 
 fn mcp_session_id(headers: &HeaderMap) -> Option<String> {

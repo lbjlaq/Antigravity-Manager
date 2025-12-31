@@ -233,6 +233,8 @@ pub async fn save_config(
         instance.axum_server.update_security(&config.proxy).await;
         // 更新 z.ai 配置
         instance.axum_server.update_zai(&config.proxy).await;
+        // 更新访问日志开关
+        instance.axum_server.update_access_log(&config.proxy).await;
         tracing::info!("已同步热更新反代服务配置");
     }
     
