@@ -315,6 +315,7 @@
                     "hint": "可用模型：{{count}}。可从建议中选择，或手动输入自定义模型 ID。",
                     "error": "拉取模型失败：{{error}}",
                     "select_placeholder": "选择模型...",
+                    "custom_option": "自定义模型 ID…",
                     "opus": "Opus 家族 → z.ai 模型",
                     "opus_tooltip": "当请求的 model 包含“opus”（如 claude-opus-*）时默认使用的 z.ai 模型 ID。",
                     "sonnet": "Sonnet 家族 → z.ai 模型",

@@ -127,6 +127,13 @@ export default function ApiProxy() {
     const [zaiModelsError, setZaiModelsError] = useState<string | null>(null);
     const [zaiNewMappingFrom, setZaiNewMappingFrom] = useState('');
     const [zaiNewMappingTo, setZaiNewMappingTo] = useState('');
+    const [zaiNewMappingToIsCustom, setZaiNewMappingToIsCustom] = useState(false);
+    const [zaiDefaultModelIsCustom, setZaiDefaultModelIsCustom] = useState({
+        opus: false,
+        sonnet: false,
+        haiku: false,
+    });
+    const [zaiOverrideToIsCustom, setZaiOverrideToIsCustom] = useState<Record<string, boolean>>({});
 
     // 初始化加载
     useEffect(() => {
@@ -270,6 +277,19 @@ export default function ApiProxy() {
         const list = (zaiAvailableModels || []).filter(Boolean);
         return list.length ? list : [];
     }, [zaiAvailableModels]);
+
+    useEffect(() => {
+        if (!appConfig?.proxy?.zai) return;
+        if (zaiModelOptions.length === 0) return;
+
+        const next = {
+            opus: !!appConfig.proxy.zai.models?.opus && !zaiModelOptions.includes(appConfig.proxy.zai.models.opus),
+            sonnet: !!appConfig.proxy.zai.models?.sonnet && !zaiModelOptions.includes(appConfig.proxy.zai.models.sonnet),
+            haiku: !!appConfig.proxy.zai.models?.haiku && !zaiModelOptions.includes(appConfig.proxy.zai.models.haiku),
+        };
+        setZaiDefaultModelIsCustom(next);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [zaiModelOptions.length]);
 
     const updateZaiDefaultModels = (updates: Partial<NonNullable<ProxyConfig['zai']>['models']>) => {
         if (!appConfig) return;
@@ -880,12 +900,6 @@ print(response.text)`;
 	                                        </p>
 	                                    )}
 
-	                                    <datalist id="zai-models-datalist">
-	                                        {zaiModelOptions.map((id) => (
-	                                            <option key={id} value={id} />
-	                                        ))}
-	                                    </datalist>
-
 	                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
 	                                        <div>
 	                                            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
@@ -898,18 +912,21 @@ print(response.text)`;
 	                                                    />
 	                                                </span>
 	                                            </label>
-	                                            <div className="flex gap-2">
-	                                                {zaiModelOptions.length > 0 && (
+	                                            {zaiModelOptions.length > 0 ? (
+	                                                <div className="space-y-2">
 	                                                    <select
-	                                                        className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                                        defaultValue=""
+	                                                        className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        value={zaiDefaultModelIsCustom.opus ? '__custom__' : (appConfig.proxy.zai?.models?.opus || '')}
 	                                                        onChange={(e) => {
 	                                                            const next = e.target.value;
-	                                                            if (next) updateZaiDefaultModels({ opus: next });
-	                                                            e.currentTarget.value = '';
+	                                                            if (next === '__custom__') {
+	                                                                setZaiDefaultModelIsCustom(prev => ({ ...prev, opus: true }));
+	                                                                return;
+	                                                            }
+	                                                            setZaiDefaultModelIsCustom(prev => ({ ...prev, opus: false }));
+	                                                            updateZaiDefaultModels({ opus: next });
 	                                                        }}
 	                                                        disabled={zaiModelsLoading}
-	                                                        title={t('proxy.config.zai.models.select_placeholder')}
 	                                                    >
 	                                                        <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
 	                                                        {zaiModelOptions.map((id) => (
@@ -917,8 +934,19 @@ print(response.text)`;
 	                                                                {id}
 	                                                            </option>
 	                                                        ))}
+	                                                        <option value="__custom__">{t('proxy.config.zai.models.custom_option')}</option>
 	                                                    </select>
-	                                                )}
+	                                                    {zaiDefaultModelIsCustom.opus && (
+	                                                        <input
+	                                                            type="text"
+	                                                            value={appConfig.proxy.zai?.models?.opus || ''}
+	                                                            onChange={(e) => updateZaiDefaultModels({ opus: e.target.value })}
+	                                                            placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        />
+	                                                    )}
+	                                                </div>
+	                                            ) : (
 	                                                <input
 	                                                    type="text"
 	                                                    value={appConfig.proxy.zai?.models?.opus || ''}
@@ -926,7 +954,7 @@ print(response.text)`;
 	                                                    placeholder={t('proxy.config.zai.models.to_placeholder')}
 	                                                    className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
 	                                                />
-	                                            </div>
+	                                            )}
 	                                        </div>
 	                                        <div>
 	                                            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
@@ -939,18 +967,21 @@ print(response.text)`;
 	                                                    />
 	                                                </span>
 	                                            </label>
-	                                            <div className="flex gap-2">
-	                                                {zaiModelOptions.length > 0 && (
+	                                            {zaiModelOptions.length > 0 ? (
+	                                                <div className="space-y-2">
 	                                                    <select
-	                                                        className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                                        defaultValue=""
+	                                                        className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        value={zaiDefaultModelIsCustom.sonnet ? '__custom__' : (appConfig.proxy.zai?.models?.sonnet || '')}
 	                                                        onChange={(e) => {
 	                                                            const next = e.target.value;
-	                                                            if (next) updateZaiDefaultModels({ sonnet: next });
-	                                                            e.currentTarget.value = '';
+	                                                            if (next === '__custom__') {
+	                                                                setZaiDefaultModelIsCustom(prev => ({ ...prev, sonnet: true }));
+	                                                                return;
+	                                                            }
+	                                                            setZaiDefaultModelIsCustom(prev => ({ ...prev, sonnet: false }));
+	                                                            updateZaiDefaultModels({ sonnet: next });
 	                                                        }}
 	                                                        disabled={zaiModelsLoading}
-	                                                        title={t('proxy.config.zai.models.select_placeholder')}
 	                                                    >
 	                                                        <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
 	                                                        {zaiModelOptions.map((id) => (
@@ -958,8 +989,19 @@ print(response.text)`;
 	                                                                {id}
 	                                                            </option>
 	                                                        ))}
+	                                                        <option value="__custom__">{t('proxy.config.zai.models.custom_option')}</option>
 	                                                    </select>
-	                                                )}
+	                                                    {zaiDefaultModelIsCustom.sonnet && (
+	                                                        <input
+	                                                            type="text"
+	                                                            value={appConfig.proxy.zai?.models?.sonnet || ''}
+	                                                            onChange={(e) => updateZaiDefaultModels({ sonnet: e.target.value })}
+	                                                            placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        />
+	                                                    )}
+	                                                </div>
+	                                            ) : (
 	                                                <input
 	                                                    type="text"
 	                                                    value={appConfig.proxy.zai?.models?.sonnet || ''}
@@ -967,7 +1009,7 @@ print(response.text)`;
 	                                                    placeholder={t('proxy.config.zai.models.to_placeholder')}
 	                                                    className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
 	                                                />
-	                                            </div>
+	                                            )}
 	                                        </div>
 	                                        <div>
 	                                            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
@@ -980,18 +1022,21 @@ print(response.text)`;
 	                                                    />
 	                                                </span>
 	                                            </label>
-	                                            <div className="flex gap-2">
-	                                                {zaiModelOptions.length > 0 && (
+	                                            {zaiModelOptions.length > 0 ? (
+	                                                <div className="space-y-2">
 	                                                    <select
-	                                                        className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                                        defaultValue=""
+	                                                        className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        value={zaiDefaultModelIsCustom.haiku ? '__custom__' : (appConfig.proxy.zai?.models?.haiku || '')}
 	                                                        onChange={(e) => {
 	                                                            const next = e.target.value;
-	                                                            if (next) updateZaiDefaultModels({ haiku: next });
-	                                                            e.currentTarget.value = '';
+	                                                            if (next === '__custom__') {
+	                                                                setZaiDefaultModelIsCustom(prev => ({ ...prev, haiku: true }));
+	                                                                return;
+	                                                            }
+	                                                            setZaiDefaultModelIsCustom(prev => ({ ...prev, haiku: false }));
+	                                                            updateZaiDefaultModels({ haiku: next });
 	                                                        }}
 	                                                        disabled={zaiModelsLoading}
-	                                                        title={t('proxy.config.zai.models.select_placeholder')}
 	                                                    >
 	                                                        <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
 	                                                        {zaiModelOptions.map((id) => (
@@ -999,8 +1044,19 @@ print(response.text)`;
 	                                                                {id}
 	                                                            </option>
 	                                                        ))}
+	                                                        <option value="__custom__">{t('proxy.config.zai.models.custom_option')}</option>
 	                                                    </select>
-	                                                )}
+	                                                    {zaiDefaultModelIsCustom.haiku && (
+	                                                        <input
+	                                                            type="text"
+	                                                            value={appConfig.proxy.zai?.models?.haiku || ''}
+	                                                            onChange={(e) => updateZaiDefaultModels({ haiku: e.target.value })}
+	                                                            placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        />
+	                                                    )}
+	                                                </div>
+	                                            ) : (
 	                                                <input
 	                                                    type="text"
 	                                                    value={appConfig.proxy.zai?.models?.haiku || ''}
@@ -1008,7 +1064,7 @@ print(response.text)`;
 	                                                    placeholder={t('proxy.config.zai.models.to_placeholder')}
 	                                                    className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
 	                                                />
-	                                            </div>
+	                                            )}
 	                                        </div>
 	                                    </div>
 
@@ -1048,18 +1104,21 @@ print(response.text)`;
 	                                                                    <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-1">
 	                                                                        {t('proxy.config.zai.models.to_label')}
 	                                                                    </label>
-	                                                                    <div className="flex gap-2">
-	                                                                        {zaiModelOptions.length > 0 && (
+	                                                                    {zaiModelOptions.length > 0 ? (
+	                                                                        <div className="space-y-2">
 	                                                                            <select
-	                                                                                className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                                                                defaultValue=""
+	                                                                                className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                                                value={(zaiOverrideToIsCustom[from] ?? (!to || !zaiModelOptions.includes(to))) ? '__custom__' : to}
 	                                                                                onChange={(e) => {
 	                                                                                    const next = e.target.value;
-	                                                                                    if (next) upsertZaiModelMapping(from, next);
-	                                                                                    e.currentTarget.value = '';
+	                                                                                    if (next === '__custom__') {
+	                                                                                        setZaiOverrideToIsCustom(prev => ({ ...prev, [from]: true }));
+	                                                                                        return;
+	                                                                                    }
+	                                                                                    setZaiOverrideToIsCustom(prev => ({ ...prev, [from]: false }));
+	                                                                                    upsertZaiModelMapping(from, next);
 	                                                                                }}
 	                                                                                disabled={zaiModelsLoading}
-	                                                                                title={t('proxy.config.zai.models.select_placeholder')}
 	                                                                            >
 	                                                                                <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
 	                                                                                {zaiModelOptions.map((id) => (
@@ -1067,15 +1126,25 @@ print(response.text)`;
 	                                                                                        {id}
 	                                                                                    </option>
 	                                                                                ))}
+	                                                                                <option value="__custom__">{t('proxy.config.zai.models.custom_option')}</option>
 	                                                                            </select>
-	                                                                        )}
+	                                                                            {(zaiOverrideToIsCustom[from] ?? (!to || !zaiModelOptions.includes(to))) && (
+	                                                                                <input
+	                                                                                    type="text"
+	                                                                                    value={to}
+	                                                                                    onChange={(e) => upsertZaiModelMapping(from, e.target.value)}
+	                                                                                    className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                                                />
+	                                                                            )}
+	                                                                        </div>
+	                                                                    ) : (
 	                                                                        <input
 	                                                                            type="text"
 	                                                                            value={to}
 	                                                                            onChange={(e) => upsertZaiModelMapping(from, e.target.value)}
 	                                                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
 	                                                                        />
-	                                                                    </div>
+	                                                                    )}
 	                                                                </div>
 	                                                                <div className="md:col-span-1 flex md:justify-end">
 	                                                                    <button
@@ -1109,18 +1178,21 @@ print(response.text)`;
 	                                                    <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-1">
 	                                                        {t('proxy.config.zai.models.to_label')}
 	                                                    </label>
-	                                                    <div className="flex gap-2">
-	                                                        {zaiModelOptions.length > 0 && (
+	                                                    {zaiModelOptions.length > 0 ? (
+	                                                        <div className="space-y-2">
 	                                                            <select
-	                                                                className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                                                defaultValue=""
+	                                                                className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                                value={zaiNewMappingToIsCustom ? '__custom__' : (zaiNewMappingTo || '')}
 	                                                                onChange={(e) => {
 	                                                                    const next = e.target.value;
-	                                                                    if (next) setZaiNewMappingTo(next);
-	                                                                    e.currentTarget.value = '';
+	                                                                    if (next === '__custom__') {
+	                                                                        setZaiNewMappingToIsCustom(true);
+	                                                                        return;
+	                                                                    }
+	                                                                    setZaiNewMappingToIsCustom(false);
+	                                                                    setZaiNewMappingTo(next);
 	                                                                }}
 	                                                                disabled={zaiModelsLoading}
-	                                                                title={t('proxy.config.zai.models.select_placeholder')}
 	                                                            >
 	                                                                <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
 	                                                                {zaiModelOptions.map((id) => (
@@ -1128,8 +1200,19 @@ print(response.text)`;
 	                                                                        {id}
 	                                                                    </option>
 	                                                                ))}
+	                                                                <option value="__custom__">{t('proxy.config.zai.models.custom_option')}</option>
 	                                                            </select>
-	                                                        )}
+	                                                            {zaiNewMappingToIsCustom && (
+	                                                                <input
+	                                                                    type="text"
+	                                                                    value={zaiNewMappingTo}
+	                                                                    onChange={(e) => setZaiNewMappingTo(e.target.value)}
+	                                                                    placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                                    className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                                />
+	                                                            )}
+	                                                        </div>
+	                                                    ) : (
 	                                                        <input
 	                                                            type="text"
 	                                                            value={zaiNewMappingTo}
@@ -1137,7 +1220,7 @@ print(response.text)`;
 	                                                            placeholder={t('proxy.config.zai.models.to_placeholder')}
 	                                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
 	                                                        />
-	                                                    </div>
+	                                                    )}
 	                                                </div>
 	                                                <div className="md:col-span-1 flex md:justify-end">
 	                                                    <button

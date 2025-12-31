@@ -314,6 +314,7 @@
                     "hint": "Available models: {{count}}. Select a suggestion or type a custom model id.",
                     "error": "Failed to fetch models: {{error}}",
                     "select_placeholder": "Select model...",
+                    "custom_option": "Custom model id…",
                     "opus": "Opus family → z.ai model",
                     "opus_tooltip": "Default z.ai model id used when the incoming model contains \"opus\" (e.g. claude-opus-*).",
                     "sonnet": "Sonnet family → z.ai model",
