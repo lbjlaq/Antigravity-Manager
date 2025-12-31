@@ -220,39 +220,39 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setSelectedLog(null)}>
                     <div className="bg-white dark:bg-base-100 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-200 dark:border-base-300" onClick={e => e.stopPropagation()}>
                         {/* Modal Header */}
-                        <div className="px-4 py-3 border-b border-gray-100 dark:border-base-300 flex items-center justify-between bg-gray-50 dark:bg-base-200">
+                        <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between bg-gray-50 dark:bg-slate-900">
                             <div className="flex items-center gap-3">
                                 <span className={`badge badge-sm text-white border-none ${selectedLog.status >= 200 && selectedLog.status < 400 ? 'badge-success' : 'badge-error'}`}>{selectedLog.status}</span>
-                                <span className="font-mono font-bold text-gray-900 dark:text-base-content">{selectedLog.method}</span>
-                                <span className="text-xs text-gray-500 dark:text-gray-400 font-mono truncate max-w-md hidden sm:inline">{selectedLog.url}</span>
+                                <span className="font-mono font-bold text-gray-900 dark:text-white text-sm">{selectedLog.method}</span>
+                                <span className="text-xs text-gray-500 dark:text-slate-400 font-mono truncate max-w-md hidden sm:inline">{selectedLog.url}</span>
                             </div>
-                            <button onClick={() => setSelectedLog(null)} className="btn btn-ghost btn-sm btn-circle dark:text-gray-400"><X size={18} /></button>
+                            <button onClick={() => setSelectedLog(null)} className="btn btn-ghost btn-sm btn-circle text-gray-500 dark:text-slate-400 hover:dark:bg-slate-800"><X size={18} /></button>
                         </div>
 
                         {/* Modal Content */}
-                        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                        <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-white dark:bg-slate-900">
                             {/* Metadata Section */}
-                            <div className="bg-gray-50 dark:bg-base-300/50 p-4 rounded-xl border border-gray-100 dark:border-base-300/30">
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-y-4 gap-x-8 text-xs">
-                                    <div className="space-y-1">
-                                        <span className="block text-gray-400 uppercase font-bold text-[10px] tracking-wider">{t('monitor.details.time')}</span>
-                                        <span className="font-mono text-gray-700 dark:text-gray-200">{new Date(selectedLog.timestamp).toLocaleString()}</span>
+                            <div className="bg-gray-50 dark:bg-slate-800 p-5 rounded-xl border border-gray-200 dark:border-slate-700 shadow-inner">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-y-5 gap-x-10">
+                                    <div className="space-y-1.5">
+                                        <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.time')}</span>
+                                        <span className="font-mono font-semibold text-gray-900 dark:text-white text-xs">{new Date(selectedLog.timestamp).toLocaleString()}</span>
                                     </div>
-                                    <div className="space-y-1">
-                                        <span className="block text-gray-400 uppercase font-bold text-[10px] tracking-wider">{t('monitor.details.duration')}</span>
-                                        <span className="font-mono text-gray-700 dark:text-gray-200">{selectedLog.duration}ms</span>
+                                    <div className="space-y-1.5">
+                                        <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.duration')}</span>
+                                        <span className="font-mono font-semibold text-gray-900 dark:text-white text-xs">{selectedLog.duration}ms</span>
                                     </div>
-                                    <div className="space-y-1">
-                                        <span className="block text-gray-400 uppercase font-bold text-[10px] tracking-wider">{t('monitor.details.tokens')}</span>
+                                    <div className="space-y-1.5">
+                                        <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.tokens')}</span>
                                         <div className="font-mono text-[11px] flex gap-2">
-                                            <span className="text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded border border-blue-100 dark:border-blue-800/50">In: {selectedLog.input_tokens ?? 0}</span>
-                                            <span className="text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30 px-2 py-0.5 rounded border border-green-100 dark:border-green-800/50">Out: {selectedLog.output_tokens ?? 0}</span>
+                                            <span className="text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 px-2.5 py-1 rounded-md border border-blue-200 dark:border-blue-800/50 font-bold">In: {selectedLog.input_tokens ?? 0}</span>
+                                            <span className="text-green-700 dark:text-green-300 bg-green-100 dark:bg-green-900/40 px-2.5 py-1 rounded-md border border-green-200 dark:border-green-800/50 font-bold">Out: {selectedLog.output_tokens ?? 0}</span>
                                         </div>
                                     </div>
                                 </div>
-                                <div className="mt-4 pt-4 border-t border-gray-200/50 dark:border-base-300/50">
-                                    <span className="block text-gray-400 uppercase font-bold text-[10px] tracking-wider mb-1">{t('monitor.details.model')}</span>
-                                    <span className="font-mono font-bold text-blue-600 dark:text-blue-400 break-all">{selectedLog.model || '-'}</span>
+                                <div className="mt-5 pt-5 border-t border-gray-200 dark:border-slate-700">
+                                    <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest mb-2">{t('monitor.details.model')}</span>
+                                    <span className="font-mono font-black text-blue-600 dark:text-blue-400 break-all text-sm">{selectedLog.model || '-'}</span>
                                 </div>
                             </div>
 
