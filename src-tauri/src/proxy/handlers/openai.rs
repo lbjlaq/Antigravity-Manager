@@ -11,6 +11,82 @@ use crate::proxy::mappers::openai::{
 use crate::proxy::server::AppState;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
+const SESSION_ID_MAX_BYTES: usize = 16 * 1024;
+
+fn fnv1a64(data: &[u8], seed: u64) -> u64 {
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
+    let mut hash = seed;
+    for b in data {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn stable_session_id_from_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let bytes = trimmed.as_bytes();
+    let slice = if bytes.len() > SESSION_ID_MAX_BYTES {
+        &bytes[..SESSION_ID_MAX_BYTES]
+    } else {
+        bytes
+    };
+
+    // Stable 128-bit-ish id rendered as 32 hex chars.
+    const OFFSET1: u64 = 0xcbf2_9ce4_8422_2325;
+    const OFFSET2: u64 = 0xcbf2_9ce4_8422_2325 ^ 0x9e37_79b9_7f4a_7c15;
+    let h1 = fnv1a64(slice, OFFSET1);
+    let h2 = fnv1a64(slice, OFFSET2);
+    Some(format!("{:016x}{:016x}", h1, h2))
+}
+
+fn derive_openai_session_id(openai_req: &OpenAIRequest) -> Option<String> {
+    // Prefer the first user message's text content for stability across turns.
+    for msg in &openai_req.messages {
+        if msg.role != "user" {
+            continue;
+        }
+        let Some(content) = &msg.content else {
+            continue;
+        };
+
+        let text = match content {
+            crate::proxy::mappers::openai::OpenAIContent::String(s) => s.clone(),
+            crate::proxy::mappers::openai::OpenAIContent::Array(blocks) => blocks
+                .iter()
+                .filter_map(|b| match b {
+                    crate::proxy::mappers::openai::OpenAIContentBlock::Text { text } => {
+                        Some(text.as_str())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+
+        if let Some(sid) = stable_session_id_from_text(&text) {
+            return Some(sid);
+        }
+    }
+
+    // Fallbacks for non-standard payloads (e.g. /v1/responses converted shapes).
+    if let Some(p) = openai_req.prompt.as_deref() {
+        if let Some(sid) = stable_session_id_from_text(p) {
+            return Some(sid);
+        }
+    }
+    if let Some(i) = openai_req.instructions.as_deref() {
+        if let Some(sid) = stable_session_id_from_text(i) {
+            return Some(sid);
+        }
+    }
+
+    None
+}
 
 pub async fn handle_chat_completions(
     State(state): State<AppState>,
@@ -40,6 +116,7 @@ pub async fn handle_chat_completions(
     // 1. 获取 UpstreamClient (Clone handle)
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
+    let derived_session_id = derive_openai_session_id(&openai_req);
     let pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
 
@@ -67,7 +144,11 @@ pub async fn handle_chat_completions(
         // 3. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
         let (access_token, project_id, email) = match token_manager
-            .get_token(&config.request_type, attempt > 0, None)
+            .get_token(
+                &config.request_type,
+                attempt > 0,
+                derived_session_id.as_deref(),
+            )
             .await
         {
             Ok(t) => t,
@@ -86,7 +167,10 @@ pub async fn handle_chat_completions(
         );
 
         // 4. 转换请求
-        let gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
+        let mut gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
+        if let Some(sid) = derived_session_id.as_ref() {
+            gemini_body["request"]["sessionId"] = json!(sid);
+        }
 
         // 打印转换后的报文仅用于调试（默认关闭，避免影响性能）
         if tracing::enabled!(tracing::Level::DEBUG) {
@@ -232,10 +316,13 @@ pub async fn handle_completions(
     State(state): State<AppState>,
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    tracing::info!(
-        "Received /v1/completions or /v1/responses payload: {:?}",
-        body
-    );
+    tracing::info!("Received /v1/completions or /v1/responses payload");
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        tracing::debug!(
+            "Received /v1/completions or /v1/responses payload: {:?}",
+            body
+        );
+    }
 
     let is_codex_style = body.get("input").is_some() && body.get("instructions").is_some();
 
@@ -506,12 +593,13 @@ pub async fn handle_completions(
 
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
+    let derived_session_id = derive_openai_session_id(&openai_req);
     let pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
 
     let mut last_error = String::new();
 
-    for _attempt in 0..max_attempts {
+    for attempt in 0..max_attempts {
         let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
             &openai_req.model,
             &*state.custom_mapping.read().await,
@@ -530,7 +618,14 @@ pub async fn handle_completions(
         );
 
         let (access_token, project_id, email) =
-            match token_manager.get_token(&config.request_type, false, None).await {
+            match token_manager
+                .get_token(
+                    &config.request_type,
+                    attempt > 0,
+                    derived_session_id.as_deref(),
+                )
+                .await
+            {
                 Ok(t) => t,
                 Err(e) => {
                     return Err((
@@ -546,7 +641,10 @@ pub async fn handle_completions(
             config.request_type
         );
 
-        let gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
+        let mut gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
+        if let Some(sid) = derived_session_id.as_ref() {
+            gemini_body["request"]["sessionId"] = json!(sid);
+        }
 
         // 打印转换后的报文仅用于调试（默认关闭，避免影响性能）
         if tracing::enabled!(tracing::Level::DEBUG) {
@@ -638,9 +736,48 @@ pub async fn handle_completions(
         let error_text = response.text().await.unwrap_or_default();
         last_error = format!("HTTP {}: {}", status_code, error_text);
 
-        if status_code == 429 || status_code == 403 || status_code == 401 {
+        // 429 智能处理（与 /v1/chat/completions 对齐）
+        if status_code == 429 {
+            if error_text.contains("QUOTA_EXHAUSTED") {
+                error!(
+                    "OpenAI Quota exhausted (429) on attempt {}/{}, stopping to protect pool.",
+                    attempt + 1,
+                    max_attempts
+                );
+                return Err((status, error_text));
+            }
+
+            if let Some(delay_ms) = crate::proxy::upstream::retry::parse_retry_delay(&error_text) {
+                let actual_delay = delay_ms.saturating_add(200);
+                token_manager.mark_rate_limited_by_email(&config.request_type, &email, actual_delay);
+                tracing::warn!(
+                    "OpenAI Upstream 429 on attempt {}/{}, cooling down account {} for {}ms",
+                    attempt + 1,
+                    max_attempts,
+                    email,
+                    actual_delay
+                );
+                continue;
+            }
+
+            tracing::warn!(
+                "OpenAI Upstream 429 on attempt {}/{}, rotating account",
+                attempt + 1,
+                max_attempts
+            );
             continue;
         }
+
+        if status_code == 403 || status_code == 401 {
+            tracing::warn!(
+                "OpenAI Upstream {} on attempt {}/{}, rotating account",
+                status_code,
+                attempt + 1,
+                max_attempts
+            );
+            continue;
+        }
+
         return Err((status, error_text));
     }
 
@@ -1175,4 +1312,64 @@ pub async fn handle_images_edits(
     });
 
     Ok(Json(openai_response))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proxy::mappers::openai::{OpenAIContent, OpenAIMessage};
+
+    #[test]
+    fn test_derive_openai_session_id_from_first_user_message() {
+        let req = OpenAIRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![
+                OpenAIMessage {
+                    role: "system".to_string(),
+                    content: Some(OpenAIContent::String("sys".to_string())),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                },
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("Hello".to_string())),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                },
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    content: Some(OpenAIContent::String("Hi".to_string())),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                },
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("Second turn".to_string())),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                },
+            ],
+            prompt: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            stop: None,
+            response_format: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            instructions: None,
+            input: None,
+        };
+
+        let sid1 = derive_openai_session_id(&req).unwrap();
+        let sid2 = derive_openai_session_id(&req).unwrap();
+        assert_eq!(sid1, sid2);
+        assert_eq!(sid1.len(), 32);
+    }
 }
