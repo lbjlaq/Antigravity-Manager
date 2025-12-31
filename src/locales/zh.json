@@ -277,7 +277,7 @@
             "btn_regenerate": "重新生成密钥",
             "btn_copy": "复制",
             "btn_copied": "已复制",
-            "warning_key": "注意：请妥善保管您的 API 密钥，不要泄露给他人。",
+            "warning_key": "注意：请妥善保管您的 API 密钥。仅在开启鉴权时才会被要求提供。",
             "auth": {
                 "title": "访问授权",
                 "title_tooltip": "控制代理是否需要鉴权，以及哪些路由需要提供 API 密钥。",
@@ -285,7 +285,8 @@
                 "enabled_tooltip": "快速开关鉴权（通过切换鉴权模式实现）。开启后客户端需在请求头提供 Authorization: Bearer <API_KEY> 或 x-api-key。",
                 "mode": "模式",
                 "mode_tooltip": "选择鉴权覆盖范围：关闭=不鉴权；全局=所有接口都需密钥；除健康检查外=/healthz 不鉴权；自动=本机模式默认关闭，局域网模式默认“除健康检查外”。",
-                "hint": "开启后客户端需通过 Authorization: Bearer ... 传入 API 密钥（如选择“除健康检查外”则 /healthz 免鉴权）。",
+                "hint": "客户端需通过 Authorization: Bearer <API_KEY> 或 x-api-key 传入 API 密钥；具体哪些路由需要鉴权由所选模式决定。",
+                "effective": "实际生效模式：{{mode}}",
                 "modes": {
                     "off": "关闭（开放）",
                     "strict": "全局（严格）",

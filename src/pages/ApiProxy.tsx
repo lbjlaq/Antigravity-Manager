@@ -135,6 +135,13 @@ export default function ApiProxy() {
     });
     const [zaiOverrideToIsCustom, setZaiOverrideToIsCustom] = useState<Record<string, boolean>>({});
 
+    const effectiveAuthMode = useMemo(() => {
+        if (!appConfig) return 'off' as const;
+        const mode = (appConfig.proxy.auth_mode || 'off') as NonNullable<ProxyConfig['auth_mode']>;
+        if (mode !== 'auto') return mode;
+        return appConfig.proxy.allow_lan_access ? 'all_except_health' : 'off';
+    }, [appConfig]);
+
     // 初始化加载
     useEffect(() => {
         loadConfig();
@@ -754,12 +761,17 @@ print(response.text)`;
                                             <option value="all_except_health">{t('proxy.config.auth.modes.all_except_health')}</option>
                                             <option value="auto">{t('proxy.config.auth.modes.auto')}</option>
                                         </select>
-                                        <p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
-                                            {t('proxy.config.auth.hint')}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
+	                                        <p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
+	                                            {t('proxy.config.auth.hint')}
+	                                        </p>
+	                                        <p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
+	                                            {t('proxy.config.auth.effective', {
+	                                                mode: t(`proxy.config.auth.modes.${effectiveAuthMode}`),
+	                                            })}
+	                                        </p>
+	                                    </div>
+	                                </div>
+	                            </div>
 
                             {/* z.ai (GLM) provider */}
 	                            <div className="pt-3 border-t border-gray-100 dark:border-base-200">

@@ -276,7 +276,7 @@
             "btn_regenerate": "Regenerate Key",
             "btn_copy": "Copy",
             "btn_copied": "Copied",
-            "warning_key": "Note: Keep your API key secure. Do not share it.",
+            "warning_key": "Note: Keep your API key secure. It is only required when authorization is enabled.",
             "auth": {
                 "title": "Authorization",
                 "title_tooltip": "Controls whether incoming requests must be authenticated, and which routes are protected.",
@@ -284,7 +284,8 @@
                 "enabled_tooltip": "Turns authorization on/off by switching the authorization mode. When enabled, clients must include the API key via Authorization: Bearer <API_KEY> or x-api-key.",
                 "mode": "Mode",
                 "mode_tooltip": "Selects which routes require the API key: Off = no auth; All = protect everything; All except Health = /healthz stays open; Auto = Off for localhost-only, otherwise All except Health.",
-                "hint": "When enabled, clients must send the API key via Authorization: Bearer ... (except health if selected).",
+                "hint": "Clients must send the API key via Authorization: Bearer <API_KEY> or x-api-key. Route coverage depends on the selected mode.",
+                "effective": "Effective mode: {{mode}}",
                 "modes": {
                     "off": "Off (Open)",
                     "strict": "All (Strict)",
