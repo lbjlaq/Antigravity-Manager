@@ -108,6 +108,8 @@ pub fn run() {
             commands::show_main_window,
             commands::get_antigravity_path,
             commands::check_for_updates,
+            // Frontend logging bridge
+            commands::frontend_log,
             // 反代服务命令
             commands::proxy::start_proxy_service,
             commands::proxy::stop_proxy_service,
