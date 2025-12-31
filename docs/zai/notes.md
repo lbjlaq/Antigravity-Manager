@@ -25,6 +25,9 @@ This is a working note capturing findings, constraints, and a proposed implement
 - Chat completions (OpenAI-like): `https://docs.z.ai/api-reference/llm/chat-completion.md`
 - Usage query plugin (reveals monitor endpoints + auth quirks): `https://docs.z.ai/devpack/extension/usage-query-plugin.md`
 
+## Implementation status
+Developer-facing implementation details for what is already built live in `docs/zai/implementation.md`.
+
 ## 2) What z.ai provides (relevant to our integration)
 ### 2.1 Anthropic-compatible upstream (what we’ll passthrough to)
 Docs show clients can be configured with:
