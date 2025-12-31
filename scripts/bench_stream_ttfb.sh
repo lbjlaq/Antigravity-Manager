@@ -7,37 +7,38 @@ set -euo pipefail
 # - client-side TTFB (curl time_starttransfer): includes connect + TLS + server + upstream-to-first-byte
 # - total time (curl time_total): for SSE this ends when the stream completes
 #
-# Usage examples:
-#   API_KEY="..." ./scripts/bench_stream_ttfb.sh --base-url http://127.0.0.1:8080 --n 20
-#   ./scripts/bench_stream_ttfb.sh --base-url http://127.0.0.1:8080 --auth off
-#   ./scripts/bench_stream_ttfb.sh --base-url http://127.0.0.1:8080 --model claude-3-5-sonnet-20241022 --prompt "Hello"
+# Usage examples (run from Antigravity-Manager/):
+#   API_KEY="..." ./scripts/bench_stream_ttfb.sh --base-url http://127.0.0.1:8045 --n 50 --warmup 5
+#   ./scripts/bench_stream_ttfb.sh --base-url http://127.0.0.1:8045 --auth off
+#   ./scripts/bench_stream_ttfb.sh --base-url http://127.0.0.1:8045 --model claude-3-5-sonnet-20241022 --prompt "Hello"
 
-BASE_URL="http://127.0.0.1:8080"
+BASE_URL="http://127.0.0.1:8045"
 ENDPOINT="/v1/messages"
 MODEL="claude-3-5-sonnet-20241022"
 PROMPT="Say 'pong' and nothing else."
-N=20
-WARMUP=1
-MAX_TOKENS=64
-AUTH_MODE="auto" # auto|off|bearer|x-api-key
+N=50
+WARMUP=5
+MAX_TOKENS=1024
+TEMPERATURE=0
+AUTH_MODE="bearer" # auto|off|bearer|x-api-key
 TIMEOUT_S=120
-OUT_DIR="./benchmarks"
+OUT_DIR="../benchmarks"
 
 usage() {
   cat <<'EOF'
 bench_stream_ttfb.sh
 
 Options:
-  --base-url URL         Base URL for the proxy (default: http://127.0.0.1:8080)
+  --base-url URL         Base URL for the proxy (default: http://127.0.0.1:8045)
   --endpoint PATH        Endpoint path (default: /v1/messages)
   --model MODEL          Model name (default: claude-3-5-sonnet-20241022)
   --prompt TEXT          Prompt text (default: "Say 'pong' and nothing else.")
-  --n N                  Number of measured runs (default: 20)
-  --warmup N             Warmup runs excluded from stats (default: 1)
-  --max-tokens N         max_tokens (default: 64)
+  --n N                  Number of measured runs (default: 50)
+  --warmup N             Warmup runs excluded from stats (default: 5)
+  --max-tokens N         max_tokens (default: 1024)
   --timeout-s N          curl --max-time (default: 120)
-  --out-dir DIR          Output dir (default: ./benchmarks)
-  --auth MODE            auto|off|bearer|x-api-key (default: auto)
+  --out-dir DIR          Output dir (default: ../benchmarks)
+  --auth MODE            auto|off|bearer|x-api-key (default: bearer)
 
 Env:
   API_KEY                Proxy API key (Bearer or x-api-key depending on --auth)
@@ -81,10 +82,7 @@ case "$AUTH_MODE" in
     if [[ -n "${API_KEY:-}" ]]; then auth_header=(-H "x-api-key: ${API_KEY}"); fi
     ;;
   auto)
-    if [[ -n "${API_KEY:-}" ]]; then
-      # Antigravity-Manager accepts either Authorization or x-api-key.
-      auth_header=(-H "Authorization: Bearer ${API_KEY}")
-    fi
+    if [[ -n "${API_KEY:-}" ]]; then auth_header=(-H "Authorization: Bearer ${API_KEY}"); fi
     ;;
   *)
     echo "Invalid --auth: ${AUTH_MODE}" >&2
@@ -92,9 +90,10 @@ case "$AUTH_MODE" in
     ;;
 esac
 
-body="$(jq -nc --arg model "$MODEL" --arg prompt "$PROMPT" --argjson max_tokens "$MAX_TOKENS" '{
+body="$(jq -nc --arg model "$MODEL" --arg prompt "$PROMPT" --argjson max_tokens "$MAX_TOKENS" --argjson temperature "$TEMPERATURE" '{
   model: $model,
   max_tokens: $max_tokens,
+  temperature: $temperature,
   stream: true,
   messages: [{role:"user", content:$prompt}]
 }')"

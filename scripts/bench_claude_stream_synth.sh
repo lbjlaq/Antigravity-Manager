@@ -15,28 +15,30 @@ set -euo pipefail
 #
 # Requires: curl, jq, python3
 
-BASE_URL_A="http://127.0.0.1:8080"
+BASE_URL_A="http://127.0.0.1:8045"
 BASE_URL_B=""
 MODEL="claude-3-5-sonnet-20241022"
-N=20
-WARMUP=1
+N=50
+WARMUP=5
 TIMEOUT_S=120
-OUT_DIR="./benchmarks"
-AUTH_MODE="auto" # auto|off|bearer|x-api-key (applies to both; can override via AUTH_MODE_A/B env)
+OUT_DIR="../benchmarks"
+AUTH_MODE="bearer" # auto|off|bearer|x-api-key (applies to both; can override via AUTH_MODE_A/B env)
+TEMPERATURE="0"
+MAX_TOKENS="1024"
 
 usage() {
   cat <<'EOF'
 bench_claude_stream_synth.sh
 
 Options:
-  --base-url-a URL         Proxy A base URL (default: http://127.0.0.1:8080)
+  --base-url-a URL         Proxy A base URL (default: http://127.0.0.1:8045)
   --base-url-b URL         Proxy B base URL (optional; if set, runs comparison)
   --model MODEL            Claude model string (default: claude-3-5-sonnet-20241022)
-  --n N                    Number of measured runs (default: 20)
-  --warmup N               Warmup runs excluded from stats (default: 1)
+  --n N                    Number of measured runs (default: 50)
+  --warmup N               Warmup runs excluded from stats (default: 5)
   --timeout-s N            curl --max-time (default: 120)
-  --out-dir DIR            Output dir (default: ./benchmarks)
-  --auth MODE              auto|off|bearer|x-api-key (default: auto)
+  --out-dir DIR            Output dir (default: ../benchmarks)
+  --auth MODE              auto|off|bearer|x-api-key (default: bearer)
 
 Env (shared or per-proxy):
   API_KEY                  Default API key (used for both A and B if per-proxy not set)
@@ -77,9 +79,7 @@ build_auth_header() {
     off) hdr=();;
     bearer) [[ -n "$key" ]] && hdr=(-H "Authorization: Bearer ${key}");;
     x-api-key) [[ -n "$key" ]] && hdr=(-H "x-api-key: ${key}");;
-    auto)
-      [[ -n "$key" ]] && hdr=(-H "Authorization: Bearer ${key}")
-      ;;
+    auto) [[ -n "$key" ]] && hdr=(-H "Authorization: Bearer ${key}");;
     *)
       echo "Invalid auth mode: $mode" >&2
       exit 2
@@ -224,10 +224,11 @@ run_scenario_for_proxy() {
 
   # Turn 1: baseline response (no tools)
   local body1
-  body1="$(jq -nc --arg model "$MODEL" --arg sid "$session_id" '{
+  body1="$(jq -nc --arg model "$MODEL" --arg sid "$session_id" --argjson temperature "$TEMPERATURE" --argjson max_tokens "$MAX_TOKENS" '{
     model: $model,
     stream: true,
-    max_tokens: 128,
+    temperature: $temperature,
+    max_tokens: $max_tokens,
     metadata: { user_id: $sid },
     messages: [{ role:"user", content:"Reply with exactly: OK" }]
   }')"
@@ -254,10 +255,11 @@ run_scenario_for_proxy() {
     }
   }')"
   local body2
-  body2="$(jq -nc --arg model "$MODEL" --arg sid "$session_id" --argjson tool "$shell_tool" '{
+  body2="$(jq -nc --arg model "$MODEL" --arg sid "$session_id" --argjson tool "$shell_tool" --argjson temperature "$TEMPERATURE" --argjson max_tokens "$MAX_TOKENS" '{
     model: $model,
     stream: true,
-    max_tokens: 256,
+    temperature: $temperature,
+    max_tokens: $max_tokens,
     metadata: { user_id: $sid },
     tools: [$tool],
     messages: [{
@@ -292,10 +294,11 @@ run_scenario_for_proxy() {
   web_search_tool="$(jq -nc '{ type: "web_search_20250305" }')"
 
   local body3
-  body3="$(jq -nc --arg model "$MODEL" --arg sid "$session_id" --argjson tr "$tool_result_block" --argjson ws "$web_search_tool" '{
+  body3="$(jq -nc --arg model "$MODEL" --arg sid "$session_id" --argjson tr "$tool_result_block" --argjson ws "$web_search_tool" --argjson temperature "$TEMPERATURE" --argjson max_tokens "$MAX_TOKENS" '{
     model: $model,
     stream: true,
-    max_tokens: 512,
+    temperature: $temperature,
+    max_tokens: $max_tokens,
     metadata: { user_id: $sid },
     tools: [$ws],
     messages: [{
