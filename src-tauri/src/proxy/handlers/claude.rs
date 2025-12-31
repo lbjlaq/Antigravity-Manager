@@ -16,6 +16,8 @@ use crate::proxy::mappers::claude::{
     transform_claude_request_in, transform_response, create_claude_sse_stream, ClaudeRequest,
 };
 use crate::proxy::server::AppState;
+use axum::http::HeaderMap;
+use std::sync::atomic::Ordering;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 
@@ -24,8 +26,59 @@ const MAX_RETRY_ATTEMPTS: usize = 3;
 /// 处理 Chat 消息请求流程
 pub async fn handle_messages(
     State(state): State<AppState>,
-    Json(request): Json<ClaudeRequest>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
 ) -> Response {
+    // Decide whether this request should be handled by z.ai (Anthropic passthrough) or the existing Google flow.
+    let zai = state.zai.read().await.clone();
+    let zai_enabled = zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
+    let google_accounts = state.token_manager.len();
+
+    let use_zai = if !zai_enabled {
+        false
+    } else {
+        match zai.dispatch_mode {
+            crate::proxy::ZaiDispatchMode::Off => false,
+            crate::proxy::ZaiDispatchMode::Exclusive => true,
+            crate::proxy::ZaiDispatchMode::Fallback => google_accounts == 0,
+            crate::proxy::ZaiDispatchMode::Pooled => {
+                // Treat z.ai as exactly one extra slot in the pool.
+                // No strict guarantees: it may get 0 requests if selection never hits.
+                let total = google_accounts.saturating_add(1).max(1);
+                let slot = state.provider_rr.fetch_add(1, Ordering::Relaxed) % total;
+                slot == 0
+            }
+        }
+    };
+
+    if use_zai {
+        return crate::proxy::providers::zai_anthropic::forward_anthropic_json(
+            &state,
+            axum::http::Method::POST,
+            "/v1/messages",
+            &headers,
+            body,
+        )
+        .await;
+    }
+
+    let request: ClaudeRequest = match serde_json::from_value(body) {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": format!("Invalid request body: {}", e)
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
+
     // 生成随机 Trace ID 用户追踪
     let trace_id: String = rand::Rng::sample_iter(rand::thread_rng(), &rand::distributions::Alphanumeric)
         .take(6)
@@ -469,11 +522,30 @@ pub async fn handle_list_models() -> impl IntoResponse {
 }
 
 /// 计算 tokens (占位符)
-pub async fn handle_count_tokens(Json(_body): Json<Value>) -> impl IntoResponse {
+pub async fn handle_count_tokens(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let zai = state.zai.read().await.clone();
+    let zai_enabled = zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
+
+    if zai_enabled {
+        return crate::proxy::providers::zai_anthropic::forward_anthropic_json(
+            &state,
+            axum::http::Method::POST,
+            "/v1/messages/count_tokens",
+            &headers,
+            body,
+        )
+        .await;
+    }
+
     Json(json!({
         "input_tokens": 0,
         "output_tokens": 0
     }))
+    .into_response()
 }
 
 #[cfg(test)]

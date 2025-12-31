@@ -58,6 +58,8 @@ pub async fn start_proxy_service(
     
     // 2. 初始化 Token 管理器
     let app_data_dir = crate::modules::account::get_data_dir()?;
+    // Ensure accounts dir exists even if the user will only use non-Google providers (e.g. z.ai).
+    let _ = crate::modules::account::get_accounts_dir()?;
     let accounts_dir = app_data_dir.clone();
     
     let token_manager = Arc::new(TokenManager::new(accounts_dir));
@@ -67,7 +69,11 @@ pub async fn start_proxy_service(
         .map_err(|e| format!("加载账号失败: {}", e))?;
     
     if active_accounts == 0 {
-        return Err("没有可用账号，请先添加账号".to_string());
+        let zai_enabled = config.zai.enabled
+            && !matches!(config.zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
+        if !zai_enabled {
+            return Err("没有可用账号，请先添加账号".to_string());
+        }
     }
     
     // 启动 Axum 服务器
@@ -82,6 +88,7 @@ pub async fn start_proxy_service(
             config.request_timeout,
             config.upstream_proxy.clone(),
             crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
+            config.zai.clone(),
         ).await {
             Ok((server, handle)) => (server, handle),
             Err(e) => return Err(format!("启动 Axum 服务器失败: {}", e)),

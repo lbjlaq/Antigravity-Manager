@@ -283,6 +283,30 @@
                     "auto": "Auto (Recommended)"
                 }
             },
+            "zai": {
+                "title": "z.ai (GLM) Provider",
+                "subtitle": "Optional Anthropic-compatible upstream for Claude protocol only.",
+                "enabled": "Enabled",
+                "base_url": "Base URL",
+                "dispatch_mode": "Dispatch Mode",
+                "api_key": "API Key",
+                "api_key_placeholder": "Paste your z.ai API key here",
+                "warning": "Note: This key is stored locally in the app data directory.",
+                "modes": {
+                    "off": "Off",
+                    "exclusive": "All Anthropic requests",
+                    "pooled": "Pooled (one slot)",
+                    "fallback": "Fallback only"
+                },
+                "mcp": {
+                    "title": "MCP Servers (via local proxy)",
+                    "enabled": "Enable MCP proxy",
+                    "web_search": "Web Search",
+                    "web_reader": "Web Reader",
+                    "vision": "Vision (planned)",
+                    "local_endpoints": "Local endpoints (configure your MCP client to use these URLs):"
+                }
+            },
             "request_timeout": "Request Timeout",
             "request_timeout_hint": "Default 120s, range 30-600s. Restart service to apply changes.",
             "upstream_proxy": {

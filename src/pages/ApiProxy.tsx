@@ -222,6 +222,24 @@ export default function ApiProxy() {
         saveConfig(newConfig);
     };
 
+    const updateZaiConfig = (updates: Partial<NonNullable<ProxyConfig['zai']>>) => {
+        if (!appConfig) return;
+        const existing = appConfig.proxy.zai || {
+            enabled: false,
+            base_url: 'https://api.z.ai/api/anthropic',
+            api_key: '',
+            dispatch_mode: 'off' as const,
+            models: { opus: 'glm-4.7', sonnet: 'glm-4.7', haiku: 'glm-4.5-air' },
+            mcp: { enabled: false, web_search_enabled: false, web_reader_enabled: false, vision_enabled: false },
+        };
+        updateProxyConfig({
+            zai: {
+                ...existing,
+                ...updates,
+            },
+        });
+    };
+
     const handleToggle = async () => {
         if (!appConfig) return;
         setLoading(true);
@@ -579,6 +597,167 @@ print(response.text)`;
                                             {t('proxy.config.auth.hint')}
                                         </p>
                                     </div>
+                                </div>
+                            </div>
+
+                            {/* z.ai (GLM) provider */}
+                            <div className="pt-3 border-t border-gray-100 dark:border-base-200">
+                                <div className="flex items-center justify-between mb-2">
+                                    <div>
+                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                                            {t('proxy.config.zai.title')}
+                                        </label>
+                                        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                                            {t('proxy.config.zai.subtitle')}
+                                        </p>
+                                    </div>
+                                    <label className="flex items-center cursor-pointer gap-2">
+                                        <span className="text-[11px] text-gray-600 dark:text-gray-400">
+                                            {t('proxy.config.zai.enabled')}
+                                        </span>
+                                        <div className="relative">
+                                            <input
+                                                type="checkbox"
+                                                className="sr-only"
+                                                checked={!!appConfig.proxy.zai?.enabled}
+                                                onChange={(e) => updateZaiConfig({ enabled: e.target.checked })}
+                                            />
+                                            <div className={`block w-10 h-6 rounded-full transition-colors ${(appConfig.proxy.zai?.enabled) ? 'bg-blue-500' : 'bg-gray-300 dark:bg-base-300'}`}></div>
+                                            <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${(appConfig.proxy.zai?.enabled) ? 'transform translate-x-4' : ''}`}></div>
+                                        </div>
+                                    </label>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div className="md:col-span-2">
+                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+                                            {t('proxy.config.zai.base_url')}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={appConfig.proxy.zai?.base_url || 'https://api.z.ai/api/anthropic'}
+                                            onChange={(e) => updateZaiConfig({ base_url: e.target.value })}
+                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+                                            {t('proxy.config.zai.dispatch_mode')}
+                                        </label>
+                                        <select
+                                            value={appConfig.proxy.zai?.dispatch_mode || 'off'}
+                                            onChange={(e) => updateZaiConfig({ dispatch_mode: e.target.value as any })}
+                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        >
+                                            <option value="off">{t('proxy.config.zai.modes.off')}</option>
+                                            <option value="exclusive">{t('proxy.config.zai.modes.exclusive')}</option>
+                                            <option value="pooled">{t('proxy.config.zai.modes.pooled')}</option>
+                                            <option value="fallback">{t('proxy.config.zai.modes.fallback')}</option>
+                                        </select>
+                                    </div>
+
+                                    <div className="md:col-span-3">
+                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+                                            {t('proxy.config.zai.api_key')}
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={appConfig.proxy.zai?.api_key || ''}
+                                            onChange={(e) => updateZaiConfig({ api_key: e.target.value })}
+                                            placeholder={t('proxy.config.zai.api_key_placeholder')}
+                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        />
+                                        <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-500">
+                                            {t('proxy.config.zai.warning')}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-3">
+                                    <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-2">
+                                        {t('proxy.config.zai.mcp.title')}
+                                    </label>
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                        <label className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={!!appConfig.proxy.zai?.mcp?.enabled}
+                                                onChange={(e) =>
+                                                    updateZaiConfig({
+                                                        mcp: { ...(appConfig.proxy.zai?.mcp || {}), enabled: e.target.checked } as any,
+                                                    })
+                                                }
+                                            />
+                                            <span className="text-xs text-gray-700 dark:text-gray-300">
+                                                {t('proxy.config.zai.mcp.enabled')}
+                                            </span>
+                                        </label>
+                                        <label className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={!!appConfig.proxy.zai?.mcp?.web_search_enabled}
+                                                onChange={(e) =>
+                                                    updateZaiConfig({
+                                                        mcp: {
+                                                            ...(appConfig.proxy.zai?.mcp || {}),
+                                                            web_search_enabled: e.target.checked,
+                                                        } as any,
+                                                    })
+                                                }
+                                            />
+                                            <span className="text-xs text-gray-700 dark:text-gray-300">
+                                                {t('proxy.config.zai.mcp.web_search')}
+                                            </span>
+                                        </label>
+                                        <label className="flex items-center gap-2">
+                                            <input
+                                                type="checkbox"
+                                                checked={!!appConfig.proxy.zai?.mcp?.web_reader_enabled}
+                                                onChange={(e) =>
+                                                    updateZaiConfig({
+                                                        mcp: {
+                                                            ...(appConfig.proxy.zai?.mcp || {}),
+                                                            web_reader_enabled: e.target.checked,
+                                                        } as any,
+                                                    })
+                                                }
+                                            />
+                                            <span className="text-xs text-gray-700 dark:text-gray-300">
+                                                {t('proxy.config.zai.mcp.web_reader')}
+                                            </span>
+                                        </label>
+                                        <label className="flex items-center gap-2 opacity-60">
+                                            <input
+                                                type="checkbox"
+                                                checked={!!appConfig.proxy.zai?.mcp?.vision_enabled}
+                                                onChange={(e) =>
+                                                    updateZaiConfig({
+                                                        mcp: {
+                                                            ...(appConfig.proxy.zai?.mcp || {}),
+                                                            vision_enabled: e.target.checked,
+                                                        } as any,
+                                                    })
+                                                }
+                                            />
+                                            <span className="text-xs text-gray-700 dark:text-gray-300">
+                                                {t('proxy.config.zai.mcp.vision')}
+                                            </span>
+                                        </label>
+                                    </div>
+
+                                    {(appConfig.proxy.zai?.mcp?.enabled && (appConfig.proxy.zai?.mcp?.web_search_enabled || appConfig.proxy.zai?.mcp?.web_reader_enabled)) && (
+                                        <div className="mt-2 text-[11px] text-gray-600 dark:text-gray-400">
+                                            <div>{t('proxy.config.zai.mcp.local_endpoints')}</div>
+                                            <div className="font-mono">
+                                                {appConfig.proxy.zai?.mcp?.web_search_enabled && (
+                                                    <div>{`http://127.0.0.1:${status.running ? status.port : (appConfig.proxy.port || 8045)}/mcp/web_search_prime/mcp`}</div>
+                                                )}
+                                                {appConfig.proxy.zai?.mcp?.web_reader_enabled && (
+                                                    <div>{`http://127.0.0.1:${status.running ? status.port : (appConfig.proxy.port || 8045)}/mcp/web_reader/mcp`}</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>

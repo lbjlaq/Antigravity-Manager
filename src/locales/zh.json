@@ -284,6 +284,30 @@
                     "auto": "自动（推荐）"
                 }
             },
+            "zai": {
+                "title": "z.ai（GLM）提供商",
+                "subtitle": "可选的 Anthropic 兼容上游，仅用于 Claude 协议请求。",
+                "enabled": "已启用",
+                "base_url": "Base URL",
+                "dispatch_mode": "分发模式",
+                "api_key": "API Key",
+                "api_key_placeholder": "在此粘贴 z.ai API Key",
+                "warning": "提示：该 Key 将保存在本机应用数据目录中。",
+                "modes": {
+                    "off": "关闭",
+                    "exclusive": "全部 Claude 请求走 z.ai",
+                    "pooled": "加入队列（占 1 个槽位）",
+                    "fallback": "仅兜底"
+                },
+                "mcp": {
+                    "title": "MCP 服务（通过本地代理）",
+                    "enabled": "启用 MCP 反代",
+                    "web_search": "网页搜索",
+                    "web_reader": "网页阅读",
+                    "vision": "视觉（规划中）",
+                    "local_endpoints": "本地地址（在 MCP 客户端中配置以下 URL）："
+                }
+            },
             "request_timeout": "请求超时",
             "request_timeout_hint": "默认 120 秒，范围 30-600 秒。修改后需重启服务生效。",
             "upstream_proxy": {
