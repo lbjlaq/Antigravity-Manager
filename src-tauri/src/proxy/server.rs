@@ -9,6 +9,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error};
+use tokio::sync::RwLock;
 
 /// Axum 应用状态
 #[derive(Clone)]
@@ -33,6 +34,7 @@ pub struct AxumServer {
     openai_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
     custom_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
     proxy_state: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
+    security_state: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,
 }
 
 impl AxumServer {
@@ -58,6 +60,12 @@ impl AxumServer {
         *proxy = new_config;
         tracing::info!("上游代理配置已热更新");
     }
+
+    pub async fn update_security(&self, config: &crate::proxy::config::ProxyConfig) {
+        let mut sec = self.security_state.write().await;
+        *sec = crate::proxy::ProxySecurityConfig::from_proxy_config(config);
+        tracing::info!("反代服务安全配置已热更新");
+    }
     /// 启动 Axum 服务器
     pub async fn start(
         host: String,
@@ -68,11 +76,13 @@ impl AxumServer {
         custom_mapping: std::collections::HashMap<String, String>,
         _request_timeout: u64,
         upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
+        security_config: crate::proxy::ProxySecurityConfig,
     ) -> Result<(Self, tokio::task::JoinHandle<()>), String> {
         let mapping_state = Arc::new(tokio::sync::RwLock::new(anthropic_mapping));
         let openai_mapping_state = Arc::new(tokio::sync::RwLock::new(openai_mapping));
         let custom_mapping_state = Arc::new(tokio::sync::RwLock::new(custom_mapping));
         let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
+        let security_state = Arc::new(RwLock::new(security_config));
 
         let state = AppState {
             token_manager: token_manager.clone(),
@@ -136,7 +146,8 @@ impl AxumServer {
             .route("/healthz", get(health_check_handler))
             .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
             .layer(TraceLayer::new_for_http())
-            .layer(axum::middleware::from_fn(
+            .layer(axum::middleware::from_fn_with_state(
+                security_state.clone(),
                 crate::proxy::middleware::auth_middleware,
             ))
             .layer(crate::proxy::middleware::cors_layer())
@@ -159,6 +170,7 @@ impl AxumServer {
             openai_mapping: openai_mapping_state.clone(),
             custom_mapping: custom_mapping_state.clone(),
             proxy_state,
+            security_state,
         };
 
         // 在新任务中启动服务器

@@ -272,6 +272,18 @@
             "btn_copy": "复制",
             "btn_copied": "已复制",
             "warning_key": "注意：请妥善保管您的 API 密钥，不要泄露给他人。",
+            "auth": {
+                "title": "访问授权",
+                "enabled": "已启用",
+                "mode": "模式",
+                "hint": "开启后客户端需通过 Authorization: Bearer ... 传入 API 密钥（如选择“除健康检查外”则 /healthz 免鉴权）。",
+                "modes": {
+                    "off": "关闭（开放）",
+                    "strict": "全局（严格）",
+                    "all_except_health": "全局（除健康检查外）",
+                    "auto": "自动（推荐）"
+                }
+            },
             "request_timeout": "请求超时",
             "request_timeout_hint": "默认 120 秒，范围 30-600 秒。修改后需重启服务生效。",
             "upstream_proxy": {

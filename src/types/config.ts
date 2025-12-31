@@ -6,6 +6,7 @@ export interface UpstreamProxyConfig {
 export interface ProxyConfig {
     enabled: boolean;
     allow_lan_access?: boolean;
+    auth_mode?: 'off' | 'strict' | 'all_except_health' | 'auto';
     port: number;
     api_key: string;
     auto_start: boolean;
@@ -29,4 +30,3 @@ export interface AppConfig {
     accounts_page_size?: number; // 账号列表每页显示数量,默认 0 表示自动计算
     proxy: ProxyConfig;
 }
-

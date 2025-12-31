@@ -1,6 +1,21 @@
 use serde::{Deserialize, Serialize};
 // use std::path::PathBuf;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxyAuthMode {
+    Off,
+    Strict,
+    AllExceptHealth,
+    Auto,
+}
+
+impl Default for ProxyAuthMode {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
 /// 反代服务配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyConfig {
@@ -12,6 +27,14 @@ pub struct ProxyConfig {
     /// - true: 允许局域网访问 0.0.0.0
     #[serde(default)]
     pub allow_lan_access: bool,
+
+    /// Authorization policy for the proxy.
+    /// - off: no auth required
+    /// - strict: auth required for all routes
+    /// - all_except_health: auth required for all routes except `/healthz`
+    /// - auto: recommended defaults (currently: allow_lan_access => all_except_health, else off)
+    #[serde(default)]
+    pub auth_mode: ProxyAuthMode,
     
     /// 监听端口
     pub port: u16,
@@ -58,6 +81,7 @@ impl Default for ProxyConfig {
         Self {
             enabled: false,
             allow_lan_access: false, // 默认仅本机访问，隐私优先
+            auth_mode: ProxyAuthMode::default(),
             port: 8045,
             api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),
             auto_start: false,

@@ -529,6 +529,58 @@ print(response.text)`;
                                     {t('proxy.config.warning_key')}
                                 </p>
                             </div>
+
+                            {/* Proxy Authorization */}
+                            <div className="pt-2">
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                                        {t('proxy.config.auth.title')}
+                                    </label>
+                                    <label className="flex items-center cursor-pointer gap-2">
+                                        <span className="text-[11px] text-gray-600 dark:text-gray-400">
+                                            {t('proxy.config.auth.enabled')}
+                                        </span>
+                                        <div className="relative">
+                                            <input
+                                                type="checkbox"
+                                                className="sr-only"
+                                                checked={(appConfig.proxy.auth_mode || 'off') !== 'off'}
+                                                onChange={(e) => {
+                                                    const nextMode = e.target.checked ? 'all_except_health' : 'off';
+                                                    updateProxyConfig({ auth_mode: nextMode });
+                                                }}
+                                            />
+                                            <div className={`block w-10 h-6 rounded-full transition-colors ${((appConfig.proxy.auth_mode || 'off') !== 'off') ? 'bg-blue-500' : 'bg-gray-300 dark:bg-base-300'}`}></div>
+                                            <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${((appConfig.proxy.auth_mode || 'off') !== 'off') ? 'transform translate-x-4' : ''}`}></div>
+                                        </div>
+                                    </label>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div>
+                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+                                            {t('proxy.config.auth.mode')}
+                                        </label>
+                                        <select
+                                            value={appConfig.proxy.auth_mode || 'off'}
+                                            onChange={(e) =>
+                                                updateProxyConfig({
+                                                    auth_mode: e.target.value as ProxyConfig['auth_mode'],
+                                                })
+                                            }
+                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        >
+                                            <option value="off">{t('proxy.config.auth.modes.off')}</option>
+                                            <option value="strict">{t('proxy.config.auth.modes.strict')}</option>
+                                            <option value="all_except_health">{t('proxy.config.auth.modes.all_except_health')}</option>
+                                            <option value="auto">{t('proxy.config.auth.modes.auto')}</option>
+                                        </select>
+                                        <p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
+                                            {t('proxy.config.auth.hint')}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}

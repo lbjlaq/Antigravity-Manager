@@ -222,6 +222,8 @@ pub async fn save_config(
         instance.axum_server.update_mapping(&config.proxy).await;
         // 更新上游代理
         instance.axum_server.update_proxy(config.proxy.upstream_proxy.clone()).await;
+        // 更新安全策略 (auth)
+        instance.axum_server.update_security(&config.proxy).await;
         tracing::info!("已同步热更新反代服务配置");
     }
     

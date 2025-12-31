@@ -81,6 +81,7 @@ pub async fn start_proxy_service(
             config.custom_mapping.clone(),
             config.request_timeout,
             config.upstream_proxy.clone(),
+            crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
         ).await {
             Ok((server, handle)) => (server, handle),
             Err(e) => return Err(format!("启动 Axum 服务器失败: {}", e)),

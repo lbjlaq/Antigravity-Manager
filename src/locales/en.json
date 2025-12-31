@@ -271,6 +271,18 @@
             "btn_copy": "Copy",
             "btn_copied": "Copied",
             "warning_key": "Note: Keep your API key secure. Do not share it.",
+            "auth": {
+                "title": "Authorization",
+                "enabled": "Enabled",
+                "mode": "Mode",
+                "hint": "When enabled, clients must send the API key via Authorization: Bearer ... (except health if selected).",
+                "modes": {
+                    "off": "Off (Open)",
+                    "strict": "All (Strict)",
+                    "all_except_health": "All except Health",
+                    "auto": "Auto (Recommended)"
+                }
+            },
             "request_timeout": "Request Timeout",
             "request_timeout_hint": "Default 120s, range 30-600s. Restart service to apply changes.",
             "upstream_proxy": {
