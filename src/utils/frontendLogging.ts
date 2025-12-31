@@ -31,6 +31,28 @@ async function send(level: FrontendLogLevel, message: string, stack?: string) {
 }
 
 export function initFrontendLogging() {
+  const originalError = console.error.bind(console);
+  const originalWarn = console.warn.bind(console);
+  const originalInfo = console.info.bind(console);
+
+  console.error = (...args: unknown[]) => {
+    originalError(...args);
+    const msg = args.map(safeStringify).join(" ");
+    void send("error", msg);
+  };
+
+  console.warn = (...args: unknown[]) => {
+    originalWarn(...args);
+    const msg = args.map(safeStringify).join(" ");
+    void send("warn", msg);
+  };
+
+  console.info = (...args: unknown[]) => {
+    originalInfo(...args);
+    const msg = args.map(safeStringify).join(" ");
+    void send("info", msg);
+  };
+
   window.addEventListener("error", (event) => {
     const message = event.message || safeStringify(event.error) || "Unknown window error";
     const stack = (event.error as Error | undefined)?.stack;
@@ -48,4 +70,3 @@ export function initFrontendLogging() {
   // Keep a light breadcrumb in case the UI is blank with no further events.
   void send("info", "Frontend initialized");
 }
-
