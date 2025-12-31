@@ -54,3 +54,15 @@ The MCP toggles and local endpoints are shown in:
    - `proxy.zai.mcp.enabled=true`
    - any subset of `{web_search_enabled, web_reader_enabled, vision_enabled}`
 3) Start the proxy and point an MCP client at the corresponding local endpoint(s).
+
+## Troubleshooting notes (observed)
+- **Upstream expects Streamable HTTP semantics**:
+  - For the remote z.ai MCP endpoints, upstream responses are typically `text/event-stream` (SSE).
+  - Some upstreams require the request `Accept` header to include both `application/json` and `text/event-stream`.
+- **Web Reader URL quirks**:
+  - Some URLs with percent-encoded characters in the query string (e.g. `%20`) may be rejected by upstream as “URL format” errors.
+  - Some sites may fail to fetch/convert upstream and return “missing data” errors (site-specific; can be due to bot protection, redirects, or dynamic rendering).
+- **Search entitlements**:
+  - `webSearchPrime` may return auth/entitlement errors depending on the upstream account/plan.
+- **Vision MCP quota**:
+  - Vision tool calls can return quota/balance errors (HTTP 429) depending on the upstream account balance.
