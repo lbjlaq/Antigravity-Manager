@@ -22,7 +22,7 @@ MAX_TOKENS=1024
 TEMPERATURE=0
 AUTH_MODE="bearer" # auto|off|bearer|x-api-key
 TIMEOUT_S=120
-OUT_DIR="../benchmarks"
+OUT_DIR="./benchmarks"
 
 usage() {
   cat <<'EOF'
@@ -37,7 +37,7 @@ Options:
   --warmup N             Warmup runs excluded from stats (default: 5)
   --max-tokens N         max_tokens (default: 1024)
   --timeout-s N          curl --max-time (default: 120)
-  --out-dir DIR          Output dir (default: ../benchmarks)
+  --out-dir DIR          Output dir (default: ./benchmarks)
   --auth MODE            auto|off|bearer|x-api-key (default: bearer)
 
 Env:

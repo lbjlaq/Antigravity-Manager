@@ -21,7 +21,7 @@ MODEL="claude-3-5-sonnet-20241022"
 N=50
 WARMUP=5
 TIMEOUT_S=120
-OUT_DIR="../benchmarks"
+OUT_DIR="./benchmarks"
 AUTH_MODE="bearer" # auto|off|bearer|x-api-key (applies to both; can override via AUTH_MODE_A/B env)
 TEMPERATURE="0"
 MAX_TOKENS="1024"
@@ -37,7 +37,7 @@ Options:
   --n N                    Number of measured runs (default: 50)
   --warmup N               Warmup runs excluded from stats (default: 5)
   --timeout-s N            curl --max-time (default: 120)
-  --out-dir DIR            Output dir (default: ../benchmarks)
+  --out-dir DIR            Output dir (default: ./benchmarks)
   --auth MODE              auto|off|bearer|x-api-key (default: bearer)
 
 Env (shared or per-proxy):

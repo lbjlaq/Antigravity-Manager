@@ -33,3 +33,9 @@ src-tauri/.env
 .env
 .env.*
 environment/
+
+# Benchmarks output (keep runner sources tracked)
+benchmarks/raw/
+benchmarks/*.csv
+benchmarks/*.json
+benchmarks/*.log
