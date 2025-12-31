@@ -28,6 +28,7 @@ dist-ssr
 src-tauri/target/
 src-tauri/gen/
 src-tauri/.env
+src-tauri/test_output.txt
 
 # Environment
 .env

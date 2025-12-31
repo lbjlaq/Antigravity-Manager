@@ -2,6 +2,9 @@
 
 This folder contains developer-focused documentation (architecture, implementation details, and validation steps).
 
+中文索引：
+- [`docs/README.zh.md`](README.zh.md)
+
 ## Proxy
 - [`docs/proxy/routing.md`](proxy/routing.md) — protocol surfaces, routing rules, and multi-client behavior (OpenAI / Claude / Gemini / MCP).
 - [`docs/proxy/config.md`](proxy/config.md) — persisted configuration keys (`gui_config.json`) and what they control.
