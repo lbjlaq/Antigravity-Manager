@@ -133,36 +133,45 @@ pub async fn handle_messages(
     
     crate::modules::logger::log_info(&format!("[{}] Received Claude request for model: {}, content_preview: {:.100}...", trace_id, request.model, latest_msg));
     
-    // ===== 增强调试日志：输出完整请求详情 =====
-    tracing::warn!("========== [{}] CLAUDE REQUEST DEBUG START ==========", trace_id);
-    tracing::warn!("[{}] Model: {}", trace_id, request.model);
-    tracing::warn!("[{}] Stream: {}", trace_id, request.stream);
-    tracing::warn!("[{}] Max Tokens: {:?}", trace_id, request.max_tokens);
-    tracing::warn!("[{}] Temperature: {:?}", trace_id, request.temperature);
-    tracing::warn!("[{}] Message Count: {}", trace_id, request.messages.len());
-    tracing::warn!("[{}] Has Tools: {}", trace_id, request.tools.is_some());
-    tracing::warn!("[{}] Has Thinking Config: {}", trace_id, request.thinking.is_some());
-    
-    // 输出每一条消息的详细信息
-    for (idx, msg) in request.messages.iter().enumerate() {
-        let content_preview = match &msg.content {
-            crate::proxy::mappers::claude::models::MessageContent::String(s) => {
-                if s.len() > 200 {
-                    format!("{}... (total {} chars)", &s[..200], s.len())
-                } else {
-                    s.clone()
+    // ===== 调试日志（默认关闭，避免影响性能） =====
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        tracing::debug!("========== [{}] CLAUDE REQUEST DEBUG START ==========", trace_id);
+        tracing::debug!("[{}] Model: {}", trace_id, request.model);
+        tracing::debug!("[{}] Stream: {}", trace_id, request.stream);
+        tracing::debug!("[{}] Max Tokens: {:?}", trace_id, request.max_tokens);
+        tracing::debug!("[{}] Temperature: {:?}", trace_id, request.temperature);
+        tracing::debug!("[{}] Message Count: {}", trace_id, request.messages.len());
+        tracing::debug!("[{}] Has Tools: {}", trace_id, request.tools.is_some());
+        tracing::debug!("[{}] Has Thinking Config: {}", trace_id, request.thinking.is_some());
+
+        // 输出每一条消息的简要信息（避免打印完整内容）
+        for (idx, msg) in request.messages.iter().enumerate() {
+            let content_preview = match &msg.content {
+                crate::proxy::mappers::claude::models::MessageContent::String(s) => {
+                    if s.len() > 200 {
+                        format!("{}... (total {} chars)", &s[..200], s.len())
+                    } else {
+                        s.clone()
+                    }
+                },
+                crate::proxy::mappers::claude::models::MessageContent::Array(arr) => {
+                    format!("[Array with {} blocks]", arr.len())
                 }
-            },
-            crate::proxy::mappers::claude::models::MessageContent::Array(arr) => {
-                format!("[Array with {} blocks]", arr.len())
-            }
-        };
-        tracing::warn!("[{}] Message[{}] - Role: {}, Content: {}", 
-            trace_id, idx, msg.role, content_preview);
+            };
+            tracing::debug!(
+                "[{}] Message[{}] - Role: {}, Content: {}",
+                trace_id,
+                idx,
+                msg.role,
+                content_preview
+            );
+        }
+
+        if let Ok(full_json) = serde_json::to_string_pretty(&request) {
+            tracing::debug!("[{}] Full Claude Request JSON: {}", trace_id, full_json);
+        }
+        tracing::debug!("========== [{}] CLAUDE REQUEST DEBUG END ==========", trace_id);
     }
-    
-    tracing::warn!("[{}] Full Claude Request JSON: {}", trace_id, serde_json::to_string_pretty(&request).unwrap_or_default());
-    tracing::warn!("========== [{}] CLAUDE REQUEST DEBUG END ==========", trace_id);
 
     // 1. 获取 会话 ID (已废弃基于内容的哈希，改用 TokenManager 内部的时间窗口锁定)
     let _session_id: Option<&str> = None;
@@ -278,7 +287,11 @@ pub async fn handle_messages(
 
         let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id) {
             Ok(b) => {
-                tracing::info!("[{}] Transformed Gemini Body: {}", trace_id, serde_json::to_string_pretty(&b).unwrap_or_default());
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    if let Ok(pretty) = serde_json::to_string_pretty(&b) {
+                        tracing::debug!("[{}] Transformed Gemini Body: {}", trace_id, pretty);
+                    }
+                }
                 b
             },
             Err(e) => {

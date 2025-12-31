@@ -88,9 +88,11 @@ pub async fn handle_chat_completions(
         // 4. 转换请求
         let gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
 
-        // [New] 打印转换后的报文 (Gemini Body) 供调试
-        if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {
-            tracing::info!("[OpenAI-Request] Transformed Gemini Body:\n{}", body_json);
+        // 打印转换后的报文仅用于调试（默认关闭，避免影响性能）
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {
+                tracing::debug!("[OpenAI-Request] Transformed Gemini Body:\n{}", body_json);
+            }
         }
 
         // 5. 发送请求
@@ -545,9 +547,11 @@ pub async fn handle_completions(
 
         let gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
 
-        // [New] 打印转换后的报文 (Gemini Body) 供调试 (Codex 路径)
-        if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {
-            tracing::info!("[Codex-Request] Transformed Gemini Body:\n{}", body_json);
+        // 打印转换后的报文仅用于调试（默认关闭，避免影响性能）
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {
+                tracing::debug!("[Codex-Request] Transformed Gemini Body:\n{}", body_json);
+            }
         }
 
         let list_response = openai_req.stream;
