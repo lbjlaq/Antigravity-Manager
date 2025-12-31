@@ -86,7 +86,7 @@ impl AxumServer {
             upstream: Arc::new(crate::proxy::upstream::client::UpstreamClient::new(Some(upstream_proxy.clone()))),
         };
         
-        // 构建路由 - 使用新架构的 handlers！
+        // 构建路由 - 使用新架构的 handlers!
         use crate::proxy::handlers;
         // 构建路由
         let app = Router::new()
@@ -95,12 +95,12 @@ impl AxumServer {
             .route("/v1/chat/completions", post(handlers::openai::handle_chat_completions))
             .route("/v1/completions", post(handlers::openai::handle_completions))
             .route("/v1/responses", post(handlers::openai::handle_completions)) // 兼容 Codex CLI
-            
+
             // Claude Protocol
             .route("/v1/messages", post(handlers::claude::handle_messages))
             .route("/v1/messages/count_tokens", post(handlers::claude::handle_count_tokens))
             .route("/v1/models/claude", get(handlers::claude::handle_list_models))
-            
+
             // Gemini Protocol (Native)
             .route("/v1beta/models", get(handlers::gemini::handle_list_models))
             // Handle both GET (get info) and POST (generateContent with colon) at the same route
@@ -108,9 +108,9 @@ impl AxumServer {
             .route("/v1beta/models/:model/countTokens", post(handlers::gemini::handle_count_tokens)) // Specific route priority
             .route("/healthz", get(health_check_handler))
             .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
+            .layer(crate::proxy::middleware::cors_layer())
             .layer(TraceLayer::new_for_http())
             .layer(axum::middleware::from_fn(crate::proxy::middleware::auth_middleware))
-            .layer(crate::proxy::middleware::cors_layer())
             .with_state(state);
         
         // 绑定地址

@@ -1,7 +1,7 @@
 // API Key 认证中间件
 use axum::{
     extract::Request,
-    http::{header, StatusCode},
+    http::{header, StatusCode, Method},
     middleware::Next,
     response::Response,
 };
@@ -10,7 +10,12 @@ use axum::{
 pub async fn auth_middleware(request: Request, next: Next) -> Result<Response, StatusCode> {
     // Log the request method and URI
     tracing::info!("Request: {} {}", request.method(), request.uri());
-    
+
+    // 允许 OPTIONS 预检请求直接通过(用于CORS)
+    if request.method() == Method::OPTIONS {
+        return Ok(next.run(request).await);
+    }
+
     // 从 header 中提取 API key
     let api_key = request
         .headers()
