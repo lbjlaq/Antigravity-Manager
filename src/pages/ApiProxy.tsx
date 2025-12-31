@@ -23,6 +23,7 @@ import {
     Layers
 } from 'lucide-react';
 import { AppConfig, ProxyConfig } from '../types/config';
+import HelpTooltip from '../components/common/HelpTooltip';
 
 interface ProxyStatus {
     running: boolean;
@@ -416,13 +417,20 @@ print(response.text)`;
                         </div>
                         <div className="p-3 space-y-3">
                             {/* 监听端口、超时和自启动 */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                        {t('proxy.config.port')}
-                                    </label>
-                                    <input
-                                        type="number"
+	                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+	                                <div>
+	                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+	                                        <span className="inline-flex items-center gap-1">
+	                                            {t('proxy.config.port')}
+	                                            <HelpTooltip
+	                                                text={t('proxy.config.port_tooltip')}
+	                                                ariaLabel={t('proxy.config.port')}
+	                                                placement="right"
+	                                            />
+	                                        </span>
+	                                    </label>
+	                                    <input
+	                                        type="number"
                                         value={appConfig.proxy.port}
                                         onChange={(e) => updateProxyConfig({ port: parseInt(e.target.value) })}
                                         min={8000}
@@ -434,12 +442,19 @@ print(response.text)`;
                                         {t('proxy.config.port_hint')}
                                     </p>
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                        {t('proxy.config.request_timeout')}
-                                    </label>
-                                    <input
-                                        type="number"
+	                                <div>
+	                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+	                                        <span className="inline-flex items-center gap-1">
+	                                            {t('proxy.config.request_timeout')}
+	                                            <HelpTooltip
+	                                                text={t('proxy.config.request_timeout_tooltip')}
+	                                                ariaLabel={t('proxy.config.request_timeout')}
+	                                                placement="right"
+	                                            />
+	                                        </span>
+	                                    </label>
+	                                    <input
+	                                        type="number"
                                         value={appConfig.proxy.request_timeout || 120}
                                         onChange={(e) => {
                                             const value = parseInt(e.target.value);
@@ -455,8 +470,8 @@ print(response.text)`;
                                         {t('proxy.config.request_timeout_hint')}
                                     </p>
                                 </div>
-                                <div className="flex items-center">
-                                    <label className="flex items-center cursor-pointer gap-3">
+	                                <div className="flex items-center">
+	                                    <label className="flex items-center cursor-pointer gap-3">
                                         <div className="relative">
                                             <input
                                                 type="checkbox"
@@ -467,16 +482,21 @@ print(response.text)`;
                                             <div className={`block w-10 h-6 rounded-full transition-colors ${appConfig.proxy.auto_start ? 'bg-blue-500' : 'bg-gray-300 dark:bg-base-300'}`}></div>
                                             <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${appConfig.proxy.auto_start ? 'transform translate-x-4' : ''}`}></div>
                                         </div>
-                                        <span className="text-xs font-medium text-gray-900 dark:text-base-content">
-                                            {t('proxy.config.auto_start')}
-                                        </span>
-                                    </label>
-                                </div>
-                            </div>
+	                                        <span className="text-xs font-medium text-gray-900 dark:text-base-content inline-flex items-center gap-1">
+	                                            {t('proxy.config.auto_start')}
+	                                            <HelpTooltip
+	                                                text={t('proxy.config.auto_start_tooltip')}
+	                                                ariaLabel={t('proxy.config.auto_start')}
+	                                                placement="right"
+	                                            />
+	                                        </span>
+	                                    </label>
+	                                </div>
+	                            </div>
 
                             {/* 局域网访问开关 */}
-                            <div className="border-t border-gray-200 dark:border-base-300 pt-3 mt-3">
-                                <label className="flex items-start gap-3 cursor-pointer">
+	                            <div className="border-t border-gray-200 dark:border-base-300 pt-3 mt-3">
+	                                <label className="flex items-start gap-3 cursor-pointer">
                                     <div className="relative flex-shrink-0 mt-0.5">
                                         <input
                                             type="checkbox"
@@ -488,12 +508,17 @@ print(response.text)`;
                                         <div className={`block w-10 h-6 rounded-full transition-colors ${(appConfig.proxy.allow_lan_access || false) ? 'bg-blue-500' : 'bg-gray-300 dark:bg-base-300'}`}></div>
                                         <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${(appConfig.proxy.allow_lan_access || false) ? 'transform translate-x-4' : ''}`}></div>
                                     </div>
-                                    <div className="flex-1">
-                                        <span className="text-xs font-medium text-gray-900 dark:text-base-content">
-                                            {t('proxy.config.allow_lan_access')}
-                                        </span>
-                                        <p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
-                                            {(appConfig.proxy.allow_lan_access || false)
+	                                    <div className="flex-1">
+	                                        <span className="text-xs font-medium text-gray-900 dark:text-base-content inline-flex items-center gap-1">
+	                                            {t('proxy.config.allow_lan_access')}
+	                                            <HelpTooltip
+	                                                text={t('proxy.config.allow_lan_access_tooltip')}
+	                                                ariaLabel={t('proxy.config.allow_lan_access')}
+	                                                placement="right"
+	                                            />
+	                                        </span>
+	                                        <p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
+	                                            {(appConfig.proxy.allow_lan_access || false)
                                                 ? t('proxy.config.allow_lan_access_hint_enabled')
                                                 : t('proxy.config.allow_lan_access_hint_disabled')}
                                         </p>
@@ -513,11 +538,18 @@ print(response.text)`;
 
                             {/* API 密钥 */}
                             {/* API 密钥 */}
-                            <div>
-                                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    {t('proxy.config.api_key')}
-                                </label>
-                                <div className="flex gap-2">
+	                            <div>
+	                                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+	                                    <span className="inline-flex items-center gap-1">
+	                                        {t('proxy.config.api_key')}
+	                                        <HelpTooltip
+	                                            text={t('proxy.config.api_key_tooltip')}
+	                                            ariaLabel={t('proxy.config.api_key')}
+	                                            placement="right"
+	                                        />
+	                                    </span>
+	                                </label>
+	                                <div className="flex gap-2">
                                     <input
                                         type="text"
                                         value={appConfig.proxy.api_key}
@@ -549,16 +581,28 @@ print(response.text)`;
                             </div>
 
                             {/* Proxy Authorization */}
-                            <div className="pt-2">
-                                <div className="flex items-center justify-between mb-1">
-                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                                        {t('proxy.config.auth.title')}
-                                    </label>
-                                    <label className="flex items-center cursor-pointer gap-2">
-                                        <span className="text-[11px] text-gray-600 dark:text-gray-400">
-                                            {t('proxy.config.auth.enabled')}
-                                        </span>
-                                        <div className="relative">
+	                            <div className="pt-2">
+	                                <div className="flex items-center justify-between mb-1">
+	                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+	                                        <span className="inline-flex items-center gap-1">
+	                                            {t('proxy.config.auth.title')}
+	                                            <HelpTooltip
+	                                                text={t('proxy.config.auth.title_tooltip')}
+	                                                ariaLabel={t('proxy.config.auth.title')}
+	                                                placement="right"
+	                                            />
+	                                        </span>
+	                                    </label>
+	                                    <label className="flex items-center cursor-pointer gap-2">
+	                                        <span className="text-[11px] text-gray-600 dark:text-gray-400 inline-flex items-center gap-1">
+	                                            {t('proxy.config.auth.enabled')}
+	                                            <HelpTooltip
+	                                                text={t('proxy.config.auth.enabled_tooltip')}
+	                                                ariaLabel={t('proxy.config.auth.enabled')}
+	                                                placement="right"
+	                                            />
+	                                        </span>
+	                                        <div className="relative">
                                             <input
                                                 type="checkbox"
                                                 className="sr-only"
@@ -574,12 +618,19 @@ print(response.text)`;
                                     </label>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                    <div>
-                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
-                                            {t('proxy.config.auth.mode')}
-                                        </label>
-                                        <select
+	                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+	                                    <div>
+	                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+	                                            <span className="inline-flex items-center gap-1">
+	                                                {t('proxy.config.auth.mode')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.auth.mode_tooltip')}
+	                                                    ariaLabel={t('proxy.config.auth.mode')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                        <select
                                             value={appConfig.proxy.auth_mode || 'off'}
                                             onChange={(e) =>
                                                 updateProxyConfig({
@@ -601,21 +652,33 @@ print(response.text)`;
                             </div>
 
                             {/* z.ai (GLM) provider */}
-                            <div className="pt-3 border-t border-gray-100 dark:border-base-200">
-                                <div className="flex items-center justify-between mb-2">
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                                            {t('proxy.config.zai.title')}
-                                        </label>
-                                        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                                            {t('proxy.config.zai.subtitle')}
-                                        </p>
-                                    </div>
-                                    <label className="flex items-center cursor-pointer gap-2">
-                                        <span className="text-[11px] text-gray-600 dark:text-gray-400">
-                                            {t('proxy.config.zai.enabled')}
-                                        </span>
-                                        <div className="relative">
+	                            <div className="pt-3 border-t border-gray-100 dark:border-base-200">
+	                                <div className="flex items-center justify-between mb-2">
+	                                    <div>
+	                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+	                                            <span className="inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.title')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.title_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.title')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+	                                            {t('proxy.config.zai.subtitle')}
+	                                        </p>
+	                                    </div>
+	                                    <label className="flex items-center cursor-pointer gap-2">
+	                                        <span className="text-[11px] text-gray-600 dark:text-gray-400 inline-flex items-center gap-1">
+	                                            {t('proxy.config.zai.enabled')}
+	                                            <HelpTooltip
+	                                                text={t('proxy.config.zai.enabled_tooltip')}
+	                                                ariaLabel={t('proxy.config.zai.enabled')}
+	                                                placement="right"
+	                                            />
+	                                        </span>
+	                                        <div className="relative">
                                             <input
                                                 type="checkbox"
                                                 className="sr-only"
@@ -628,23 +691,37 @@ print(response.text)`;
                                     </label>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                    <div className="md:col-span-2">
-                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
-                                            {t('proxy.config.zai.base_url')}
-                                        </label>
-                                        <input
+	                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+	                                    <div className="md:col-span-2">
+	                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+	                                            <span className="inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.base_url')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.base_url_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.base_url')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                        <input
                                             type="text"
                                             value={appConfig.proxy.zai?.base_url || 'https://api.z.ai/api/anthropic'}
                                             onChange={(e) => updateZaiConfig({ base_url: e.target.value })}
                                             className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                         />
                                     </div>
-                                    <div>
-                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
-                                            {t('proxy.config.zai.dispatch_mode')}
-                                        </label>
-                                        <select
+	                                    <div>
+	                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+	                                            <span className="inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.dispatch_mode')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.dispatch_mode_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.dispatch_mode')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                        <select
                                             value={appConfig.proxy.zai?.dispatch_mode || 'off'}
                                             onChange={(e) => updateZaiConfig({ dispatch_mode: e.target.value as any })}
                                             className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -656,11 +733,18 @@ print(response.text)`;
                                         </select>
                                     </div>
 
-                                    <div className="md:col-span-3">
-                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
-                                            {t('proxy.config.zai.api_key')}
-                                        </label>
-                                        <input
+	                                    <div className="md:col-span-3">
+	                                        <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
+	                                            <span className="inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.api_key')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.api_key_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.api_key')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                        <input
                                             type="password"
                                             value={appConfig.proxy.zai?.api_key || ''}
                                             onChange={(e) => updateZaiConfig({ api_key: e.target.value })}
@@ -673,12 +757,19 @@ print(response.text)`;
                                     </div>
                                 </div>
 
-                                <div className="mt-3">
-                                    <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-2">
-                                        {t('proxy.config.zai.mcp.title')}
-                                    </label>
-                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                                        <label className="flex items-center gap-2">
+	                                <div className="mt-3">
+	                                    <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-2">
+	                                        <span className="inline-flex items-center gap-1">
+	                                            {t('proxy.config.zai.mcp.title')}
+	                                            <HelpTooltip
+	                                                text={t('proxy.config.zai.mcp.title_tooltip')}
+	                                                ariaLabel={t('proxy.config.zai.mcp.title')}
+	                                                placement="right"
+	                                            />
+	                                        </span>
+	                                    </label>
+	                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+	                                        <label className="flex items-center gap-2">
                                             <input
                                                 type="checkbox"
                                                 checked={!!appConfig.proxy.zai?.mcp?.enabled}
@@ -688,11 +779,16 @@ print(response.text)`;
                                                     })
                                                 }
                                             />
-                                            <span className="text-xs text-gray-700 dark:text-gray-300">
-                                                {t('proxy.config.zai.mcp.enabled')}
-                                            </span>
-                                        </label>
-                                        <label className="flex items-center gap-2">
+	                                            <span className="text-xs text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.mcp.enabled')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.mcp.enabled_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.mcp.enabled')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                        <label className="flex items-center gap-2">
                                             <input
                                                 type="checkbox"
                                                 checked={!!appConfig.proxy.zai?.mcp?.web_search_enabled}
@@ -705,11 +801,16 @@ print(response.text)`;
                                                     })
                                                 }
                                             />
-                                            <span className="text-xs text-gray-700 dark:text-gray-300">
-                                                {t('proxy.config.zai.mcp.web_search')}
-                                            </span>
-                                        </label>
-                                        <label className="flex items-center gap-2">
+	                                            <span className="text-xs text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.mcp.web_search')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.mcp.web_search_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.mcp.web_search')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                        <label className="flex items-center gap-2">
                                             <input
                                                 type="checkbox"
                                                 checked={!!appConfig.proxy.zai?.mcp?.web_reader_enabled}
@@ -722,11 +823,16 @@ print(response.text)`;
                                                     })
                                                 }
                                             />
-                                            <span className="text-xs text-gray-700 dark:text-gray-300">
-                                                {t('proxy.config.zai.mcp.web_reader')}
-                                            </span>
-                                        </label>
-                                        <label className="flex items-center gap-2">
+	                                            <span className="text-xs text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.mcp.web_reader')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.mcp.web_reader_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.mcp.web_reader')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                        <label className="flex items-center gap-2">
                                             <input
                                                 type="checkbox"
                                                 checked={!!appConfig.proxy.zai?.mcp?.vision_enabled}
@@ -739,17 +845,29 @@ print(response.text)`;
                                                     })
                                                 }
                                             />
-                                            <span className="text-xs text-gray-700 dark:text-gray-300">
-                                                {t('proxy.config.zai.mcp.vision')}
-                                            </span>
-                                        </label>
-                                    </div>
+	                                            <span className="text-xs text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.mcp.vision')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.mcp.vision_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.mcp.vision')}
+	                                                    placement="right"
+	                                                />
+	                                            </span>
+	                                        </label>
+	                                    </div>
 
-                                    {(appConfig.proxy.zai?.mcp?.enabled && (appConfig.proxy.zai?.mcp?.web_search_enabled || appConfig.proxy.zai?.mcp?.web_reader_enabled || appConfig.proxy.zai?.mcp?.vision_enabled)) && (
-                                        <div className="mt-2 text-[11px] text-gray-600 dark:text-gray-400">
-                                            <div>{t('proxy.config.zai.mcp.local_endpoints')}</div>
-                                            <div className="font-mono">
-                                                {appConfig.proxy.zai?.mcp?.web_search_enabled && (
+	                                    {(appConfig.proxy.zai?.mcp?.enabled && (appConfig.proxy.zai?.mcp?.web_search_enabled || appConfig.proxy.zai?.mcp?.web_reader_enabled || appConfig.proxy.zai?.mcp?.vision_enabled)) && (
+	                                        <div className="mt-2 text-[11px] text-gray-600 dark:text-gray-400">
+	                                            <div className="inline-flex items-center gap-1">
+	                                                {t('proxy.config.zai.mcp.local_endpoints')}
+	                                                <HelpTooltip
+	                                                    text={t('proxy.config.zai.mcp.local_endpoints_tooltip')}
+	                                                    ariaLabel={t('proxy.config.zai.mcp.local_endpoints')}
+	                                                    placement="right"
+	                                                />
+	                                            </div>
+	                                            <div className="font-mono">
+	                                                {appConfig.proxy.zai?.mcp?.web_search_enabled && (
                                                     <div>{`http://127.0.0.1:${status.running ? status.port : (appConfig.proxy.port || 8045)}/mcp/web_search_prime/mcp`}</div>
                                                 )}
                                                 {appConfig.proxy.zai?.mcp?.web_reader_enabled && (
