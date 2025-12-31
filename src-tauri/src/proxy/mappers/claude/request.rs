@@ -5,6 +5,7 @@ use super::models::*;
 use crate::proxy::mappers::signature_store::{
     get_thought_signature_for_session, get_thought_signature_for_tool,
 };
+use crate::proxy::mappers::constants::GEMINI_SKIP_SIGNATURE;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -114,6 +115,7 @@ pub fn transform_claude_request_in(
 
     // Resolve grounding config
     let config = crate::proxy::mappers::common_utils::resolve_request_config(&claude_req.model, &mapped_model, &tools_val);
+    let is_gemini_model = config.final_model.starts_with("gemini-");
     // Only Gemini models support our "dummy thought" workaround.
     // Claude models routed via Vertex/Google API often require valid thought signatures.
     // [FIX] Whenever thinking is enabled, we MUST allow dummy thought injection to satisfy 
@@ -141,6 +143,7 @@ pub fn transform_claude_request_in(
         &claude_req.messages,
         &mut tool_id_to_name,
         session_id.as_deref(),
+        is_gemini_model,
         is_thinking_enabled,
         allow_dummy_thought,
     )?;
@@ -282,6 +285,7 @@ fn build_contents(
     messages: &[Message],
     tool_id_to_name: &mut HashMap<String, String>,
     session_id: Option<&str>,
+    is_gemini_model: bool,
     is_thinking_enabled: bool,
     allow_dummy_thought: bool,
 ) -> Result<Value, String> {
@@ -387,6 +391,8 @@ fn build_contents(
 
                             if let Some(sig) = final_sig {
                                 part["thoughtSignature"] = json!(sig);
+                            } else if is_gemini_model {
+                                part["thoughtSignature"] = json!(GEMINI_SKIP_SIGNATURE);
                             }
                             parts.push(part);
                         }
@@ -763,6 +769,61 @@ mod tests {
 
         let body = transform_claude_request_in(&req, "test-project").unwrap();
         assert_eq!(body["request"]["sessionId"], "my-user-id");
+    }
+
+    #[test]
+    fn test_tool_use_uses_gemini_skip_signature_when_missing_and_no_session_id() {
+        let req = ClaudeRequest {
+            model: "gemini-3-flash".to_string(),
+            messages: vec![
+                Message {
+                    role: "user".to_string(),
+                    // Intentionally empty/whitespace so sessionId derivation returns None.
+                    content: MessageContent::String("   ".to_string()),
+                },
+                Message {
+                    role: "assistant".to_string(),
+                    content: MessageContent::Array(vec![ContentBlock::ToolUse {
+                        id: "t1".to_string(),
+                        name: "get_weather".to_string(),
+                        input: json!({"location":"Paris"}),
+                        signature: None,
+                        cache_control: None,
+                    }]),
+                },
+            ],
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+        };
+
+        let body = transform_claude_request_in(&req, "test-project").unwrap();
+        assert!(body["request"].get("sessionId").is_none());
+
+        let contents = body["request"]["contents"].as_array().unwrap();
+        let mut found = false;
+        for msg in contents {
+            let Some(parts) = msg.get("parts").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            for part in parts {
+                let id = part
+                    .get("functionCall")
+                    .and_then(|fc| fc.get("id"))
+                    .and_then(|v| v.as_str());
+                if id == Some("t1") {
+                    assert_eq!(part["thoughtSignature"], GEMINI_SKIP_SIGNATURE);
+                    found = true;
+                }
+            }
+        }
+        assert!(found);
     }
 
     #[test]

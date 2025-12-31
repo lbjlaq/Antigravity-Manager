@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use crate::proxy::mappers::signature_store::{
     get_thought_signature_for_session, get_thought_signature_for_tool,
 };
+use crate::proxy::mappers::constants::GEMINI_SKIP_SIGNATURE;
 
 pub fn transform_openai_request(
     request: &OpenAIRequest,
@@ -18,6 +19,7 @@ pub fn transform_openai_request(
 
     // Resolve grounding config
     let config = crate::proxy::mappers::common_utils::resolve_request_config(&request.model, mapped_model, &tools_val);
+    let is_gemini_model = config.final_model.starts_with("gemini-");
 
     tracing::debug!("[Debug] OpenAI Request: original='{}', mapped='{}', type='{}', has_image_config={}", 
         request.model, mapped_model, config.request_type, config.image_config.is_some());
@@ -199,6 +201,8 @@ pub fn transform_openai_request(
                         .or_else(|| global_thought_sig.clone());
                     if let Some(sig) = tool_sig {
                         func_call_part["thoughtSignature"] = json!(sig);
+                    } else if is_gemini_model {
+                        func_call_part["thoughtSignature"] = json!(GEMINI_SKIP_SIGNATURE);
                     }
 
                     parts.push(func_call_part);
@@ -436,5 +440,54 @@ mod tests {
         assert_eq!(parts.as_array().unwrap().len(), 2);
         assert_eq!(parts[0]["text"].as_str().unwrap(), "What is in this image?");
         assert_eq!(parts[1]["inlineData"]["mimeType"].as_str().unwrap(), "image/png");
+    }
+
+    #[test]
+    fn test_tool_call_uses_gemini_skip_signature_when_missing() {
+        let req = OpenAIRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("Hi".to_string())),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                },
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "tc1".to_string(),
+                        r#type: "function".to_string(),
+                        function: ToolFunction {
+                            name: "read_file".to_string(),
+                            arguments: "{}".to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                    name: None,
+                },
+            ],
+            prompt: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            stop: None,
+            response_format: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            instructions: None,
+            input: None,
+        };
+
+        let result = transform_openai_request(&req, "test-p", "gemini-3-flash", None);
+        let contents = result["request"]["contents"].as_array().unwrap();
+        let model_msg = contents.iter().find(|m| m["role"] == "model").unwrap();
+        let parts = model_msg["parts"].as_array().unwrap();
+        let call_part = parts.iter().find(|p| p.get("functionCall").is_some()).unwrap();
+        assert_eq!(call_part["thoughtSignature"], GEMINI_SKIP_SIGNATURE);
     }
 }
