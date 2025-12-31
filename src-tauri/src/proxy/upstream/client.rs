@@ -1,12 +1,14 @@
 // 上游客户端实现
 // 基于高性能通讯接口封装
 
-use reqwest::{header, Client, Response};
+use reqwest::{header, Client, Response, StatusCode};
 use serde_json::Value;
 use tokio::time::Duration;
 
-// 生产环境端点
-const V1_INTERNAL_BASE_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal";
+// Cloud Code v1internal endpoints (fallback order: daily -> prod)
+const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
+const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
+const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 2] = [V1_INTERNAL_BASE_URL_DAILY, V1_INTERNAL_BASE_URL_PROD];
 
 pub struct UpstreamClient {
     http_client: Client,
@@ -35,12 +37,18 @@ impl UpstreamClient {
     /// 构建 v1internal URL
     /// 
     /// 构建 API 请求地址
-    fn build_url(method: &str, query_string: Option<&str>) -> String {
+    fn build_url(base_url: &str, method: &str, query_string: Option<&str>) -> String {
         if let Some(qs) = query_string {
-            format!("{}:{}?{}", V1_INTERNAL_BASE_URL, method, qs)
+            format!("{}:{}?{}", base_url, method, qs)
         } else {
-            format!("{}:{}", V1_INTERNAL_BASE_URL, method)
+            format!("{}:{}", base_url, method)
         }
+    }
+
+    fn should_try_next_endpoint(status: StatusCode) -> bool {
+        status == StatusCode::TOO_MANY_REQUESTS
+            || status == StatusCode::REQUEST_TIMEOUT
+            || status.is_server_error()
     }
 
     /// 调用 v1internal API（基础方法）
@@ -53,26 +61,74 @@ impl UpstreamClient {
         body: Value,
         query_string: Option<&str>,
     ) -> Result<Response, String> {
-        let url = Self::build_url(method, query_string);
-
-        // 构建 Headers
+        // 构建 Headers (reused across endpoint attempts)
         let mut headers = header::HeaderMap::new();
-        headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static("application/json"));
-        headers.insert(header::AUTHORIZATION, header::HeaderValue::from_str(&format!("Bearer {}", access_token)).map_err(|e| e.to_string())?);
+        headers.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            header::AUTHORIZATION,
+            header::HeaderValue::from_str(&format!("Bearer {}", access_token))
+                .map_err(|e| e.to_string())?,
+        );
         // 设置自定义 User-Agent
-        headers.insert(header::USER_AGENT, header::HeaderValue::from_static("antigravity/1.11.9 windows/amd64"));
+        headers.insert(
+            header::USER_AGENT,
+            header::HeaderValue::from_static("antigravity/1.11.9 windows/amd64"),
+        );
 
-        // 记录请求详情以便调试 404
-        let response = self
-            .http_client
-            .post(&url)
-            .headers(headers) // Apply all headers at once
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| format!("HTTP request failed: {}", e))?;
+        let mut last_err: Option<String> = None;
 
-        Ok(response)
+        for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
+            let url = Self::build_url(base_url, method, query_string);
+
+            let response = self
+                .http_client
+                .post(&url)
+                .headers(headers.clone())
+                .json(&body)
+                .send()
+                .await;
+
+            match response {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() || !Self::should_try_next_endpoint(status) {
+                        if idx > 0 {
+                            tracing::info!(
+                                "Upstream endpoint fallback succeeded: {} (status={})",
+                                base_url,
+                                status
+                            );
+                        }
+                        return Ok(resp);
+                    }
+
+                    tracing::warn!(
+                        "Upstream endpoint returned {} at {} (method={}), trying next if available",
+                        status,
+                        base_url,
+                        method
+                    );
+                    last_err = Some(format!("Upstream {} returned {}", base_url, status));
+                    continue;
+                }
+                Err(e) => {
+                    let msg = format!("HTTP request failed at {}: {}", base_url, e);
+                    tracing::warn!("{}", msg);
+                    last_err = Some(msg);
+
+                    // On the last endpoint, surface the error.
+                    if idx + 1 >= V1_INTERNAL_BASE_URL_FALLBACKS.len() {
+                        break;
+                    }
+                    continue;
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| "All endpoints failed".to_string()))
     }
 
     /// 调用 v1internal API（带 429 重试,支持闭包）
@@ -98,27 +154,66 @@ impl UpstreamClient {
     /// 
     /// 获取远端模型列表
     pub async fn fetch_available_models(&self, access_token: &str) -> Result<Value, String> {
-        let url = Self::build_url("fetchAvailableModels", None);
-
         let mut headers = header::HeaderMap::new();
         headers.insert(header::CONTENT_TYPE, header::HeaderValue::from_static("application/json"));
         headers.insert(header::AUTHORIZATION, header::HeaderValue::from_str(&format!("Bearer {}", access_token)).map_err(|e| e.to_string())?);
         headers.insert(header::USER_AGENT, header::HeaderValue::from_static("antigravity/1.11.9 windows/amd64"));
 
-        let response = self.http_client
-            .post(&url)
-            .headers(headers)
-            .json(&serde_json::json!({}))
-            .send()
-            .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+        let mut last_err: Option<String> = None;
 
-        if !response.status().is_success() {
-             return Err(format!("Upstream error: {}", response.status()));
+        for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
+            let url = Self::build_url(base_url, "fetchAvailableModels", None);
+
+            let response = self
+                .http_client
+                .post(&url)
+                .headers(headers.clone())
+                .json(&serde_json::json!({}))
+                .send()
+                .await;
+
+            match response {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        if idx > 0 {
+                            tracing::info!(
+                                "Upstream endpoint fallback succeeded for fetchAvailableModels: {}",
+                                base_url
+                            );
+                        }
+                        let json: Value = resp
+                            .json()
+                            .await
+                            .map_err(|e| format!("Parse json failed: {}", e))?;
+                        return Ok(json);
+                    }
+
+                    if Self::should_try_next_endpoint(status) {
+                        tracing::warn!(
+                            "fetchAvailableModels failed at {} (status={}); trying next",
+                            base_url,
+                            status
+                        );
+                        last_err = Some(format!("Upstream {} returned {}", base_url, status));
+                        continue;
+                    }
+
+                    return Err(format!("Upstream error: {}", status));
+                }
+                Err(e) => {
+                    let msg = format!("Request failed at {}: {}", base_url, e);
+                    tracing::warn!("{}", msg);
+                    last_err = Some(msg);
+                    if idx + 1 >= V1_INTERNAL_BASE_URL_FALLBACKS.len() {
+                        break;
+                    }
+                    continue;
+                }
+            }
         }
 
-        let json: Value = response.json().await.map_err(|e| format!("Parse json failed: {}", e))?;
-        Ok(json)
+        Err(last_err.unwrap_or_else(|| "All endpoints failed".to_string()))
     }
 }
 
@@ -128,17 +223,36 @@ mod tests {
 
     #[test]
     fn test_build_url() {
-        let url1 = UpstreamClient::build_url("generateContent", None);
+        let url1 = UpstreamClient::build_url(V1_INTERNAL_BASE_URL_PROD, "generateContent", None);
         assert_eq!(
             url1,
             "https://cloudcode-pa.googleapis.com/v1internal:generateContent"
         );
 
-        let url2 = UpstreamClient::build_url("streamGenerateContent", Some("alt=sse"));
+        let url2 = UpstreamClient::build_url(
+            V1_INTERNAL_BASE_URL_PROD,
+            "streamGenerateContent",
+            Some("alt=sse"),
+        );
         assert_eq!(
             url2,
             "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
         );
+    }
+
+    #[test]
+    fn test_should_try_next_endpoint() {
+        assert!(UpstreamClient::should_try_next_endpoint(
+            StatusCode::TOO_MANY_REQUESTS
+        ));
+        assert!(UpstreamClient::should_try_next_endpoint(StatusCode::BAD_GATEWAY));
+        assert!(UpstreamClient::should_try_next_endpoint(
+            StatusCode::SERVICE_UNAVAILABLE
+        ));
+        assert!(!UpstreamClient::should_try_next_endpoint(StatusCode::BAD_REQUEST));
+        assert!(!UpstreamClient::should_try_next_endpoint(StatusCode::UNAUTHORIZED));
+        assert!(!UpstreamClient::should_try_next_endpoint(StatusCode::FORBIDDEN));
+        assert!(!UpstreamClient::should_try_next_endpoint(StatusCode::NOT_FOUND));
     }
 
 }
