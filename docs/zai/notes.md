@@ -26,7 +26,11 @@ This is a working note capturing findings, constraints, and a proposed implement
 - Usage query plugin (reveals monitor endpoints + auth quirks): `https://docs.z.ai/devpack/extension/usage-query-plugin.md`
 
 ## Implementation status
-Developer-facing implementation details for what is already built live in `docs/zai/implementation.md`.
+Developer-facing implementation details for what is already built live in:
+- [`docs/zai/implementation.md`](implementation.md)
+- [`docs/zai/mcp.md`](mcp.md)
+- [`docs/zai/provider.md`](provider.md)
+- [`docs/zai/vision-mcp.md`](vision-mcp.md)
 
 ## 2) What z.ai provides (relevant to our integration)
 ### 2.1 Anthropic-compatible upstream (what we’ll passthrough to)
@@ -70,8 +74,7 @@ Doc highlights:
 - Installed as a local stdio MCP server via an MCP-compatible client.
 
 Implication:
-- This is a local process that clients spawn. Antigravity can’t “automatically” provide it unless we implement a wrapper or manage a local child-process and expose it as a local MCP endpoint.
-- Recommended for phase 1: provide UI guidance (“setup helper”) instead of embedding the server.
+- This is a local process that clients spawn. Instead of requiring an extra runtime, the proxy now exposes a built-in Vision MCP endpoint (see `docs/zai/vision-mcp.md`), while still keeping compatibility with upstream behavior.
 
 ### 3.2 Web Search MCP server (remote)
 Endpoints:
@@ -155,9 +158,9 @@ Explicitly avoid:
 - exposing SSE endpoints that require key-in-query.
 
 ### 6.3 Vision MCP (local stdio) “setup helper” only (phase 1)
-Because it is a local process (`npx @z_ai/mcp-server`, Node>=22), phase 1 is:
-- Add docs/UI instructions (checklist, commands, pitfalls around cached older versions).
-- Do not embed/ship it inside Antigravity yet.
+Status update:
+- Vision MCP is implemented directly inside the proxy and exposed at `/mcp/zai-mcp-server/mcp`.
+- Implementation details: `docs/zai/vision-mcp.md`.
 
 ## 7) Corner cases checklist (must handle)
 - Auth header rewriting:

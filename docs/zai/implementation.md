@@ -2,6 +2,13 @@
 
 This document describes the z.ai integration that is implemented on the `feat/zai-passthrough-mcp` branch: what was added, how it works internally, and how to validate it.
 
+Related deep dives:
+- [`docs/zai/provider.md`](provider.md)
+- [`docs/zai/mcp.md`](mcp.md)
+- [`docs/zai/vision-mcp.md`](vision-mcp.md)
+- [`docs/proxy/auth.md`](../proxy/auth.md)
+- [`docs/proxy/accounts.md`](../proxy/accounts.md)
+
 ## Scope (current)
 - z.ai is integrated as an **optional upstream** for **Anthropic/Claude protocol only** (`/v1/messages`, `/v1/messages/count_tokens`).
 - OpenAI and Gemini protocol handlers are unchanged and continue to use the existing Google-backed pool.
@@ -20,9 +27,9 @@ All settings are persisted in the existing data directory (same place as Google 
 - `proxy.api_key`: required when auth is enabled
 
 Implementation:
-- Backend enum: `src-tauri/src/proxy/config.rs` (`ProxyAuthMode`)
-- Effective policy resolver: `src-tauri/src/proxy/security.rs`
-- Middleware enforcement: `src-tauri/src/proxy/middleware/auth.rs`
+- Backend enum: [`src-tauri/src/proxy/config.rs`](../../src-tauri/src/proxy/config.rs) (`ProxyAuthMode`)
+- Effective policy resolver: [`src-tauri/src/proxy/security.rs`](../../src-tauri/src/proxy/security.rs)
+- Middleware enforcement: [`src-tauri/src/proxy/middleware/auth.rs`](../../src-tauri/src/proxy/middleware/auth.rs)
 
 ### z.ai provider
 Config lives under `proxy.zai` (`src-tauri/src/proxy/config.rs`):
@@ -108,8 +115,8 @@ Note:
 
 ## Vision MCP (built-in server)
 Handlers:
-- `src-tauri/src/proxy/handlers/mcp.rs` (`handle_zai_mcp_server`)
-- `src-tauri/src/proxy/zai_vision_tools.rs` (tool registry + z.ai vision API client)
+- [`src-tauri/src/proxy/handlers/mcp.rs`](../../src-tauri/src/proxy/handlers/mcp.rs) (`handle_zai_mcp_server`)
+- [`src-tauri/src/proxy/zai_vision_tools.rs`](../../src-tauri/src/proxy/zai_vision_tools.rs) (tool registry + z.ai vision API client)
 
 Local endpoint:
 - `/mcp/zai-mcp-server/mcp`
