@@ -898,14 +898,35 @@ print(response.text)`;
 	                                                    />
 	                                                </span>
 	                                            </label>
-	                                            <input
-	                                                type="text"
-	                                                list="zai-models-datalist"
-	                                                value={appConfig.proxy.zai?.models?.opus || ''}
-	                                                onChange={(e) => updateZaiDefaultModels({ opus: e.target.value })}
-	                                                placeholder={t('proxy.config.zai.models.to_placeholder')}
-	                                                className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                            />
+	                                            <div className="flex gap-2">
+	                                                {zaiModelOptions.length > 0 && (
+	                                                    <select
+	                                                        className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        defaultValue=""
+	                                                        onChange={(e) => {
+	                                                            const next = e.target.value;
+	                                                            if (next) updateZaiDefaultModels({ opus: next });
+	                                                            e.currentTarget.value = '';
+	                                                        }}
+	                                                        disabled={zaiModelsLoading}
+	                                                        title={t('proxy.config.zai.models.select_placeholder')}
+	                                                    >
+	                                                        <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
+	                                                        {zaiModelOptions.map((id) => (
+	                                                            <option key={id} value={id}>
+	                                                                {id}
+	                                                            </option>
+	                                                        ))}
+	                                                    </select>
+	                                                )}
+	                                                <input
+	                                                    type="text"
+	                                                    value={appConfig.proxy.zai?.models?.opus || ''}
+	                                                    onChange={(e) => updateZaiDefaultModels({ opus: e.target.value })}
+	                                                    placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                    className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                />
+	                                            </div>
 	                                        </div>
 	                                        <div>
 	                                            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
@@ -918,14 +939,35 @@ print(response.text)`;
 	                                                    />
 	                                                </span>
 	                                            </label>
-	                                            <input
-	                                                type="text"
-	                                                list="zai-models-datalist"
-	                                                value={appConfig.proxy.zai?.models?.sonnet || ''}
-	                                                onChange={(e) => updateZaiDefaultModels({ sonnet: e.target.value })}
-	                                                placeholder={t('proxy.config.zai.models.to_placeholder')}
-	                                                className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                            />
+	                                            <div className="flex gap-2">
+	                                                {zaiModelOptions.length > 0 && (
+	                                                    <select
+	                                                        className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        defaultValue=""
+	                                                        onChange={(e) => {
+	                                                            const next = e.target.value;
+	                                                            if (next) updateZaiDefaultModels({ sonnet: next });
+	                                                            e.currentTarget.value = '';
+	                                                        }}
+	                                                        disabled={zaiModelsLoading}
+	                                                        title={t('proxy.config.zai.models.select_placeholder')}
+	                                                    >
+	                                                        <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
+	                                                        {zaiModelOptions.map((id) => (
+	                                                            <option key={id} value={id}>
+	                                                                {id}
+	                                                            </option>
+	                                                        ))}
+	                                                    </select>
+	                                                )}
+	                                                <input
+	                                                    type="text"
+	                                                    value={appConfig.proxy.zai?.models?.sonnet || ''}
+	                                                    onChange={(e) => updateZaiDefaultModels({ sonnet: e.target.value })}
+	                                                    placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                    className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                />
+	                                            </div>
 	                                        </div>
 	                                        <div>
 	                                            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-1">
@@ -938,14 +980,35 @@ print(response.text)`;
 	                                                    />
 	                                                </span>
 	                                            </label>
-	                                            <input
-	                                                type="text"
-	                                                list="zai-models-datalist"
-	                                                value={appConfig.proxy.zai?.models?.haiku || ''}
-	                                                onChange={(e) => updateZaiDefaultModels({ haiku: e.target.value })}
-	                                                placeholder={t('proxy.config.zai.models.to_placeholder')}
-	                                                className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                            />
+	                                            <div className="flex gap-2">
+	                                                {zaiModelOptions.length > 0 && (
+	                                                    <select
+	                                                        className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        defaultValue=""
+	                                                        onChange={(e) => {
+	                                                            const next = e.target.value;
+	                                                            if (next) updateZaiDefaultModels({ haiku: next });
+	                                                            e.currentTarget.value = '';
+	                                                        }}
+	                                                        disabled={zaiModelsLoading}
+	                                                        title={t('proxy.config.zai.models.select_placeholder')}
+	                                                    >
+	                                                        <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
+	                                                        {zaiModelOptions.map((id) => (
+	                                                            <option key={id} value={id}>
+	                                                                {id}
+	                                                            </option>
+	                                                        ))}
+	                                                    </select>
+	                                                )}
+	                                                <input
+	                                                    type="text"
+	                                                    value={appConfig.proxy.zai?.models?.haiku || ''}
+	                                                    onChange={(e) => updateZaiDefaultModels({ haiku: e.target.value })}
+	                                                    placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                    className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-xs text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                />
+	                                            </div>
 	                                        </div>
 	                                    </div>
 
@@ -985,13 +1048,34 @@ print(response.text)`;
 	                                                                    <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-1">
 	                                                                        {t('proxy.config.zai.models.to_label')}
 	                                                                    </label>
-	                                                                    <input
-	                                                                        type="text"
-	                                                                        list="zai-models-datalist"
-	                                                                        value={to}
-	                                                                        onChange={(e) => upsertZaiModelMapping(from, e.target.value)}
-	                                                                        className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                                                    />
+	                                                                    <div className="flex gap-2">
+	                                                                        {zaiModelOptions.length > 0 && (
+	                                                                            <select
+	                                                                                className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                                                defaultValue=""
+	                                                                                onChange={(e) => {
+	                                                                                    const next = e.target.value;
+	                                                                                    if (next) upsertZaiModelMapping(from, next);
+	                                                                                    e.currentTarget.value = '';
+	                                                                                }}
+	                                                                                disabled={zaiModelsLoading}
+	                                                                                title={t('proxy.config.zai.models.select_placeholder')}
+	                                                                            >
+	                                                                                <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
+	                                                                                {zaiModelOptions.map((id) => (
+	                                                                                    <option key={id} value={id}>
+	                                                                                        {id}
+	                                                                                    </option>
+	                                                                                ))}
+	                                                                            </select>
+	                                                                        )}
+	                                                                        <input
+	                                                                            type="text"
+	                                                                            value={to}
+	                                                                            onChange={(e) => upsertZaiModelMapping(from, e.target.value)}
+	                                                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                                        />
+	                                                                    </div>
 	                                                                </div>
 	                                                                <div className="md:col-span-1 flex md:justify-end">
 	                                                                    <button
@@ -1025,14 +1109,35 @@ print(response.text)`;
 	                                                    <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-1">
 	                                                        {t('proxy.config.zai.models.to_label')}
 	                                                    </label>
-	                                                    <input
-	                                                        type="text"
-	                                                        list="zai-models-datalist"
-	                                                        value={zaiNewMappingTo}
-	                                                        onChange={(e) => setZaiNewMappingTo(e.target.value)}
-	                                                        placeholder={t('proxy.config.zai.models.to_placeholder')}
-	                                                        className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
-	                                                    />
+	                                                    <div className="flex gap-2">
+	                                                        {zaiModelOptions.length > 0 && (
+	                                                            <select
+	                                                                className="min-w-40 px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                                defaultValue=""
+	                                                                onChange={(e) => {
+	                                                                    const next = e.target.value;
+	                                                                    if (next) setZaiNewMappingTo(next);
+	                                                                    e.currentTarget.value = '';
+	                                                                }}
+	                                                                disabled={zaiModelsLoading}
+	                                                                title={t('proxy.config.zai.models.select_placeholder')}
+	                                                            >
+	                                                                <option value="">{t('proxy.config.zai.models.select_placeholder')}</option>
+	                                                                {zaiModelOptions.map((id) => (
+	                                                                    <option key={id} value={id}>
+	                                                                        {id}
+	                                                                    </option>
+	                                                                ))}
+	                                                            </select>
+	                                                        )}
+	                                                        <input
+	                                                            type="text"
+	                                                            value={zaiNewMappingTo}
+	                                                            onChange={(e) => setZaiNewMappingTo(e.target.value)}
+	                                                            placeholder={t('proxy.config.zai.models.to_placeholder')}
+	                                                            className="w-full px-2.5 py-1.5 border border-gray-300 dark:border-base-200 rounded-lg bg-white dark:bg-base-200 text-[11px] text-gray-900 dark:text-base-content focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+	                                                        />
+	                                                    </div>
 	                                                </div>
 	                                                <div className="md:col-span-1 flex md:justify-end">
 	                                                    <button
