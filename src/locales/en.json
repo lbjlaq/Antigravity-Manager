@@ -80,6 +80,8 @@
         "delete_selected": "Delete ({{count}})",
         "current": "Current",
         "current_badge": "Current",
+        "disabled": "Disabled",
+        "disabled_tooltip": "Account is disabled (e.g. refresh_token revoked/expired). Reauthorize or update token to re-enable.",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "API returned 403 Forbidden, account has no permission for Gemini Code Assist",
@@ -303,7 +305,7 @@
                     "enabled": "Enable MCP proxy",
                     "web_search": "Web Search",
                     "web_reader": "Web Reader",
-                    "vision": "Vision (planned)",
+                    "vision": "Vision",
                     "local_endpoints": "Local endpoints (configure your MCP client to use these URLs):"
                 }
             },

@@ -4,6 +4,9 @@ export interface Account {
     name?: string;
     token: TokenData;
     quota?: QuotaData;
+    disabled?: boolean;
+    disabled_reason?: string;
+    disabled_at?: number;
     created_at: number;
     last_used: number;
 }

@@ -6,7 +6,7 @@ This document describes the z.ai integration that is implemented on the `feat/za
 - z.ai is integrated as an **optional upstream** for **Anthropic/Claude protocol only** (`/v1/messages`, `/v1/messages/count_tokens`).
 - OpenAI and Gemini protocol handlers are unchanged and continue to use the existing Google-backed pool.
 - z.ai MCP (Search + Reader) is exposed via local proxy endpoints (reverse proxy) and injects the z.ai API key upstream.
-- Vision MCP is **not implemented yet** (UI toggle exists, but no backend bridge).
+- Vision MCP is exposed via a **built-in MCP server** (local endpoint) and uses the stored z.ai API key to call the z.ai vision API.
 
 ## Configuration
 All settings are persisted in the existing data directory (same place as Google accounts and `gui_config.json`).
@@ -42,7 +42,7 @@ Config lives under `proxy.zai` (`src-tauri/src/proxy/config.rs`):
   - `enabled`
   - `web_search_enabled`
   - `web_reader_enabled`
-  - `vision_enabled` (UI only; not implemented yet)
+  - `vision_enabled`
 
 Runtime hot update:
 - `save_config` hot-updates `auth`, `upstream_proxy`, `model mappings`, and `z.ai` without restart.
@@ -106,6 +106,43 @@ Behavior:
 Note:
 - These endpoints are still subject to the proxy’s auth middleware depending on `proxy.auth_mode`.
 
+## Vision MCP (built-in server)
+Handlers:
+- `src-tauri/src/proxy/handlers/mcp.rs` (`handle_zai_mcp_server`)
+- `src-tauri/src/proxy/zai_vision_tools.rs` (tool registry + z.ai vision API client)
+
+Local endpoint:
+- `/mcp/zai-mcp-server/mcp`
+
+Behavior:
+- Controlled by `proxy.zai.mcp.enabled` and `proxy.zai.mcp.vision_enabled`.
+  - If `mcp.enabled=false` -> returns 404.
+  - If `vision_enabled=false` -> returns 404.
+- No z.ai key is required from MCP clients:
+  - the proxy injects the stored `proxy.zai.api_key` when calling the z.ai vision API.
+- Implements a minimal Streamable HTTP MCP flow:
+  - `POST /mcp` supports `initialize`, `tools/list`, `tools/call`
+  - `GET /mcp` returns an SSE stream with keep-alive events for an initialized session
+  - `DELETE /mcp` terminates a session
+
+Upstream calls:
+- z.ai vision endpoint: `https://api.z.ai/api/paas/v4/chat/completions`
+- Uses `Authorization: Bearer <zai_key>`
+- Default model: `glm-4.6v` (hardcoded for now)
+
+Tool input and limits:
+- Images: `.png`, `.jpg`, `.jpeg` up to 5 MB (local files are encoded as `data:<mime>;base64,...`).
+- Videos: `.mp4`, `.mov`, `.m4v` up to 8 MB.
+- Supported tools:
+  - `ui_to_artifact`
+  - `extract_text_from_screenshot`
+  - `diagnose_error_screenshot`
+  - `understand_technical_diagram`
+  - `analyze_data_visualization`
+  - `ui_diff_check`
+  - `analyze_image`
+  - `analyze_video`
+
 ## UI
 Page: `src/pages/ApiProxy.tsx`
 
@@ -136,9 +173,11 @@ Manual (example):
    - `GET http://127.0.0.1:<port>/healthz` (should work without auth in all-except-health; always works in off)
    - `POST http://127.0.0.1:<port>/v1/messages` with `Authorization: Bearer <proxy.api_key>` and a normal Anthropic request body.
 4) Enable MCP Search and call local `/mcp/web_search_prime/mcp` via an MCP client (the proxy injects z.ai auth upstream).
+5) Enable Vision MCP and verify the tool list:
+   - `POST http://127.0.0.1:<port>/mcp/zai-mcp-server/mcp` with a JSON-RPC `initialize`
+   - then `POST ...` with `tools/list` using the returned `Mcp-Session-Id` header.
 
 ## Known limitations / follow-ups
-- Vision MCP bridge is not implemented yet (only a UI placeholder toggle).
+- Vision MCP currently implements the core methods needed for tool calls but is not yet a full feature-complete MCP server (prompts/resources, resumability, streaming tool output).
 - z.ai usage/budget (monitor endpoints) is not implemented yet.
 - Claude model list endpoint remains a static stub (`/v1/models/claude`) and is not yet provider-aware.
-

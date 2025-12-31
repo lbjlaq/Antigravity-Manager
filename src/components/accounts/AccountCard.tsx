@@ -24,6 +24,7 @@ function AccountCard({ account, selected, onSelect, isCurrent, isRefreshing, isS
     const geminiFlashModel = account.quota?.models.find(m => m.name === 'gemini-3-flash');
     const geminiImageModel = account.quota?.models.find(m => m.name === 'gemini-3-pro-image');
     const claudeModel = account.quota?.models.find(m => m.name === 'claude-sonnet-4-5-thinking');
+    const isDisabled = Boolean(account.disabled);
 
     const getColorClass = (percentage: number) => {
         const color = getQuotaColor(percentage);
@@ -50,7 +51,7 @@ function AccountCard({ account, selected, onSelect, isCurrent, isRefreshing, isS
             isCurrent
                 ? "bg-blue-50/30 border-blue-200 dark:bg-blue-900/10 dark:border-blue-900/30"
                 : "bg-white dark:bg-base-100 border-gray-200 dark:border-base-300",
-            isRefreshing && "opacity-70"
+            (isRefreshing || isDisabled) && "opacity-70"
         )}>
 
             {/* Header: Checkbox + Email + Badges */}
@@ -74,6 +75,15 @@ function AccountCard({ account, selected, onSelect, isCurrent, isRefreshing, isS
                             {isCurrent && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[9px] font-bold shadow-sm border border-blue-200/50">
                                     {t('accounts.current').toUpperCase()}
+                                </span>
+                            )}
+                            {isDisabled && (
+                                <span
+                                    className="px-1.5 py-0.5 rounded-md bg-rose-100 dark:bg-rose-900/40 text-rose-700 dark:text-rose-300 text-[9px] font-bold flex items-center gap-1 shadow-sm border border-rose-200/50"
+                                    title={account.disabled_reason || t('accounts.disabled_tooltip')}
+                                >
+                                    <Ban className="w-2.5 h-2.5" />
+                                    {t('accounts.disabled').toUpperCase()}
                                 </span>
                             )}
                             {account.quota?.is_forbidden && (
@@ -258,10 +268,10 @@ function AccountCard({ account, selected, onSelect, isCurrent, isRefreshing, isS
                         <Info className="w-3.5 h-3.5" />
                     </button>
                     <button
-                        className={`p-1.5 rounded-lg transition-all ${isSwitching ? 'text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-900/10 cursor-not-allowed' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}
+                        className={`p-1.5 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-900/10 cursor-not-allowed' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}
                         onClick={(e) => { e.stopPropagation(); onSwitch(); }}
-                        title={isSwitching ? t('common.loading') : t('common.switch')}
-                        disabled={isSwitching}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('common.switch'))}
+                        disabled={isSwitching || isDisabled}
                     >
                         <ArrowRightLeft className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
                     </button>
@@ -270,8 +280,8 @@ function AccountCard({ account, selected, onSelect, isCurrent, isRefreshing, isS
                             ? 'text-green-600 bg-green-50'
                             : 'text-gray-400 hover:text-green-600 hover:bg-green-50'}`}
                         onClick={(e) => { e.stopPropagation(); onRefresh(); }}
-                        disabled={isRefreshing}
-                        title={t('common.refresh')}
+                        disabled={isRefreshing || isDisabled}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : t('common.refresh')}
                     >
                         <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                     </button>

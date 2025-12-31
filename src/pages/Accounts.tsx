@@ -119,8 +119,9 @@ function Accounts() {
     const filterCounts = useMemo(() => {
         return {
             all: searchedAccounts.length,
-            available: searchedAccounts.filter(a => !a.quota?.is_forbidden).length,
+            available: searchedAccounts.filter(a => !a.disabled && !a.quota?.is_forbidden).length,
             low: searchedAccounts.filter(a =>
+                a.disabled ||
                 (a.quota?.is_forbidden) ||
                 (a.quota?.models.some(m => m.percentage < 10))
             ).length,
@@ -138,9 +139,10 @@ function Accounts() {
         let result = searchedAccounts;
 
         if (filter === 'available') {
-            result = result.filter(a => !a.quota?.is_forbidden);
+            result = result.filter(a => !a.disabled && !a.quota?.is_forbidden);
         } else if (filter === 'low') {
             result = result.filter(a =>
+                a.disabled ||
                 (a.quota?.is_forbidden) ||
                 (a.quota?.models.some(m => m.percentage < 10))
             );

@@ -172,13 +172,18 @@ pub async fn handle_messages(
         let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token).await {
             Ok(t) => t,
             Err(e) => {
+                let safe_message = if e.contains("invalid_grant") {
+                    "OAuth refresh failed (invalid_grant): refresh_token likely revoked/expired; reauthorize account(s) to restore service.".to_string()
+                } else {
+                    e
+                };
                  return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(json!({
                         "type": "error",
                         "error": {
                             "type": "overloaded_error",
-                            "message": format!("No available accounts: {}", e)
+                            "message": format!("No available accounts: {}", safe_message)
                         }
                     }))
                 ).into_response();

@@ -41,6 +41,7 @@ thiserror = "2.0.17"
 
 # 反代服务依赖
 axum = { version = "0.7", features = ["multipart"] }
+tokio-stream = "0.1"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 tower = "0.4"

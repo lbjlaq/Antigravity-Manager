@@ -28,6 +28,7 @@ pub struct AppState {
     pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     pub zai: Arc<RwLock<crate::proxy::ZaiConfig>>,
     pub provider_rr: Arc<AtomicUsize>,
+    pub zai_vision_mcp: Arc<crate::proxy::zai_vision_mcp::ZaiVisionMcpState>,
 }
 
 /// Axum 服务器实例
@@ -92,27 +93,30 @@ impl AxumServer {
         let mapping_state = Arc::new(tokio::sync::RwLock::new(anthropic_mapping));
         let openai_mapping_state = Arc::new(tokio::sync::RwLock::new(openai_mapping));
         let custom_mapping_state = Arc::new(tokio::sync::RwLock::new(custom_mapping));
-        let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
-        let security_state = Arc::new(RwLock::new(security_config));
-        let zai_state = Arc::new(RwLock::new(zai_config));
-        let provider_rr = Arc::new(AtomicUsize::new(0));
+	        let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
+	        let security_state = Arc::new(RwLock::new(security_config));
+	        let zai_state = Arc::new(RwLock::new(zai_config));
+	        let provider_rr = Arc::new(AtomicUsize::new(0));
+	        let zai_vision_mcp_state =
+	            Arc::new(crate::proxy::zai_vision_mcp::ZaiVisionMcpState::new());
 
-        let state = AppState {
-            token_manager: token_manager.clone(),
-            anthropic_mapping: mapping_state.clone(),
-            openai_mapping: openai_mapping_state.clone(),
-            custom_mapping: custom_mapping_state.clone(),
-            request_timeout: 300, // 5分钟超时
+	        let state = AppState {
+	            token_manager: token_manager.clone(),
+	            anthropic_mapping: mapping_state.clone(),
+	            openai_mapping: openai_mapping_state.clone(),
+	            custom_mapping: custom_mapping_state.clone(),
+	            request_timeout: 300, // 5分钟超时
             thought_signature_map: Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
             upstream_proxy: proxy_state.clone(),
             upstream: Arc::new(crate::proxy::upstream::client::UpstreamClient::new(Some(
                 upstream_proxy.clone(),
-            ))),
-            zai: zai_state.clone(),
-            provider_rr: provider_rr.clone(),
-        };
+	            ))),
+	            zai: zai_state.clone(),
+	            provider_rr: provider_rr.clone(),
+	            zai_vision_mcp: zai_vision_mcp_state,
+	        };
 
         // 构建路由 - 使用新架构的 handlers！
         use crate::proxy::handlers;
@@ -152,12 +156,16 @@ impl AxumServer {
                 "/mcp/web_search_prime/mcp",
                 any(handlers::mcp::handle_web_search_prime),
             )
-            .route(
-                "/mcp/web_reader/mcp",
-                any(handlers::mcp::handle_web_reader),
-            )
-            // Gemini Protocol (Native)
-            .route("/v1beta/models", get(handlers::gemini::handle_list_models))
+	            .route(
+	                "/mcp/web_reader/mcp",
+	                any(handlers::mcp::handle_web_reader),
+	            )
+	            .route(
+	                "/mcp/zai-mcp-server/mcp",
+	                any(handlers::mcp::handle_zai_mcp_server),
+	            )
+	            // Gemini Protocol (Native)
+	            .route("/v1beta/models", get(handlers::gemini::handle_list_models))
             // Handle both GET (get info) and POST (generateContent with colon) at the same route
             .route(
                 "/v1beta/models/:model",

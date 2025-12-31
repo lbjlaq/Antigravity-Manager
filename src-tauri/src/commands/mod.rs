@@ -161,6 +161,10 @@ pub async fn refresh_all_quotas() -> Result<RefreshStats, String> {
 
     // 串行处理以确保持久化安全 (SQLite)
     for mut account in accounts {
+        if account.disabled {
+            modules::logger::log_info(&format!("  - Skipping {} (Disabled)", account.email));
+            continue;
+        }
         if let Some(ref q) = account.quota {
             if q.is_forbidden {
                 modules::logger::log_info(&format!("  - Skipping {} (Forbidden)", account.email));

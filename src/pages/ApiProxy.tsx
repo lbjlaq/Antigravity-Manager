@@ -726,7 +726,7 @@ print(response.text)`;
                                                 {t('proxy.config.zai.mcp.web_reader')}
                                             </span>
                                         </label>
-                                        <label className="flex items-center gap-2 opacity-60">
+                                        <label className="flex items-center gap-2">
                                             <input
                                                 type="checkbox"
                                                 checked={!!appConfig.proxy.zai?.mcp?.vision_enabled}
@@ -745,7 +745,7 @@ print(response.text)`;
                                         </label>
                                     </div>
 
-                                    {(appConfig.proxy.zai?.mcp?.enabled && (appConfig.proxy.zai?.mcp?.web_search_enabled || appConfig.proxy.zai?.mcp?.web_reader_enabled)) && (
+                                    {(appConfig.proxy.zai?.mcp?.enabled && (appConfig.proxy.zai?.mcp?.web_search_enabled || appConfig.proxy.zai?.mcp?.web_reader_enabled || appConfig.proxy.zai?.mcp?.vision_enabled)) && (
                                         <div className="mt-2 text-[11px] text-gray-600 dark:text-gray-400">
                                             <div>{t('proxy.config.zai.mcp.local_endpoints')}</div>
                                             <div className="font-mono">
@@ -754,6 +754,9 @@ print(response.text)`;
                                                 )}
                                                 {appConfig.proxy.zai?.mcp?.web_reader_enabled && (
                                                     <div>{`http://127.0.0.1:${status.running ? status.port : (appConfig.proxy.port || 8045)}/mcp/web_reader/mcp`}</div>
+                                                )}
+                                                {appConfig.proxy.zai?.mcp?.vision_enabled && (
+                                                    <div>{`http://127.0.0.1:${status.running ? status.port : (appConfig.proxy.port || 8045)}/mcp/zai-mcp-server/mcp`}</div>
                                                 )}
                                             </div>
                                         </div>

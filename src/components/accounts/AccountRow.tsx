@@ -24,6 +24,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
     const geminiFlashModel = account.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-flash');
     const geminiImageModel = account.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-pro-image');
     const claudeModel = account.quota?.models.find(m => m.name.toLowerCase() === 'claude-sonnet-4-5-thinking');
+    const isDisabled = Boolean(account.disabled);
 
     // 颜色映射，避免动态类名被 Tailwind purge
     const getColorClass = (percentage: number) => {
@@ -49,7 +50,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
         <tr className={cn(
             "group hover:bg-gray-50 dark:hover:bg-base-200 transition-colors border-b border-gray-100 dark:border-base-200",
             isCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
-            isRefreshing && "opacity-70"
+            (isRefreshing || isDisabled) && "opacity-70"
         )}>
             {/* 序号 */}
             <td className="pl-6 py-1 w-12">
@@ -76,6 +77,16 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                         {isCurrent && (
                             <span className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-bold shadow-sm border border-blue-200/50 dark:border-blue-800/50">
                                 {t('accounts.current').toUpperCase()}
+                            </span>
+                        )}
+
+                        {isDisabled && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-rose-200/50"
+                                title={account.disabled_reason || t('accounts.disabled_tooltip')}
+                            >
+                                <Ban className="w-2.5 h-2.5" />
+                                <span>{t('accounts.disabled')}</span>
                             </span>
                         )}
 
@@ -267,18 +278,18 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                         <Info className="w-3.5 h-3.5" />
                     </button>
                     <button
-                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${isSwitching ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}
+                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}
                         onClick={(e) => { e.stopPropagation(); onSwitch(); }}
-                        title={isSwitching ? t('common.loading') : t('accounts.switch_to')}
-                        disabled={isSwitching}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to'))}
+                        disabled={isSwitching || isDisabled}
                     >
                         <ArrowRightLeft className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
                     </button>
                     <button
-                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${isRefreshing ? 'bg-green-50 dark:bg-green-900/10 text-green-600 dark:text-green-400 cursor-not-allowed' : 'hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'}`}
+                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isRefreshing || isDisabled) ? 'bg-green-50 dark:bg-green-900/10 text-green-600 dark:text-green-400 cursor-not-allowed' : 'hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'}`}
                         onClick={(e) => { e.stopPropagation(); onRefresh(); }}
-                        title={isRefreshing ? t('common.refreshing') : t('common.refresh')}
-                        disabled={isRefreshing}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isRefreshing ? t('common.refreshing') : t('common.refresh'))}
+                        disabled={isRefreshing || isDisabled}
                     >
                         <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                     </button>

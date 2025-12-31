@@ -81,6 +81,8 @@
         "delete_selected": "删除 ({{count}})",
         "current": "当前",
         "current_badge": "当前",
+        "disabled": "已禁用",
+        "disabled_tooltip": "账号已被禁用（例如 refresh_token 被撤销/过期）。重新授权或更新 Token 后可恢复。",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "API 返回 403 Forbidden，账号无权使用 Gemini Code Assist",
@@ -304,7 +306,7 @@
                     "enabled": "启用 MCP 反代",
                     "web_search": "网页搜索",
                     "web_reader": "网页阅读",
-                    "vision": "视觉（规划中）",
+                    "vision": "视觉",
                     "local_endpoints": "本地地址（在 MCP 客户端中配置以下 URL）："
                 }
             },

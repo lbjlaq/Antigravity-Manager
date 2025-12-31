@@ -1,5 +1,6 @@
 // 移除冗余的顶层导入，因为这些在代码中已由 full path 或局部导入处理
 use dashmap::DashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -41,6 +42,14 @@ impl TokenManager {
         if !accounts_dir.exists() {
             return Err(format!("账号目录不存在: {:?}", accounts_dir));
         }
+
+        // Reload should reflect current on-disk state (accounts can be added/removed/disabled).
+        self.tokens.clear();
+        self.current_index.store(0, Ordering::SeqCst);
+        {
+            let mut last_used = self.last_used_account.lock().await;
+            *last_used = None;
+        }
         
         let entries = std::fs::read_dir(&accounts_dir)
             .map_err(|e| format!("读取账号目录失败: {}", e))?;
@@ -81,7 +90,20 @@ impl TokenManager {
         
         let account: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| format!("解析 JSON 失败: {}", e))?;
-        
+
+        if account
+            .get("disabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            tracing::warn!(
+                "Skipping disabled account file: {:?} (email={})",
+                path,
+                account.get("email").and_then(|v| v.as_str()).unwrap_or("<unknown>")
+            );
+            return Ok(None);
+        }
+
         let account_id = account["id"].as_str()
             .ok_or("缺少 id 字段")?
             .to_string();
@@ -128,100 +150,181 @@ impl TokenManager {
     /// 参数 `_quota_group` 用于区分 "claude" vs "gemini" 组
     /// 参数 `force_rotate` 为 true 时将忽略锁定，强制切换账号
     pub async fn get_token(&self, quota_group: &str, force_rotate: bool) -> Result<(String, String, String), String> {
-        let total = self.tokens.len();
+        let tokens_snapshot: Vec<ProxyToken> = self.tokens.iter().map(|e| e.value().clone()).collect();
+        let total = tokens_snapshot.len();
         if total == 0 {
             return Err("Token pool is empty".to_string());
         }
 
-        // 1. 检查时间窗口锁定 (60秒内强制复用上一个账号)
-        // 优化策略: 画图请求 (image_gen) 默认不锁定，以最大化并发能力
-        let mut target_token = None;
-        if !force_rotate && quota_group != "image_gen" {
-            let last_used = self.last_used_account.lock().await;
-            if let Some((account_id, last_time)) = &*last_used {
-                if last_time.elapsed().as_secs() < 60 {
-                    if let Some(entry) = self.tokens.get(account_id) {
-                        tracing::info!("60s 时间窗口内，强制复用上一个账号: {}", entry.email);
-                        target_token = Some(entry.value().clone());
+        let mut attempted: HashSet<String> = HashSet::new();
+        let mut last_error: Option<String> = None;
+
+        for attempt in 0..total {
+            let rotate = force_rotate || attempt > 0;
+
+            // 1. 检查时间窗口锁定 (60秒内强制复用上一个账号)
+            // 优化策略: 画图请求 (image_gen) 默认不锁定，以最大化并发能力
+            let mut target_token: Option<ProxyToken> = None;
+            if !rotate && quota_group != "image_gen" {
+                let last_used = self.last_used_account.lock().await;
+                if let Some((account_id, last_time)) = &*last_used {
+                    if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
+                        if let Some(found) = tokens_snapshot.iter().find(|t| &t.account_id == account_id) {
+                            tracing::info!("60s 时间窗口内，强制复用上一个账号: {}", found.email);
+                            target_token = Some(found.clone());
+                        }
                     }
                 }
             }
-        }
 
-        // 2. 如果没有锁定、锁定失效或强制轮换，则进行轮询记录并更新锁定信息
-        let mut token = if let Some(t) = target_token {
-            t
-        } else {
-            // 简单轮换策略 (Round Robin)
-            let idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
-            let selected_token = self.tokens.iter()
-                .nth(idx)
-                .map(|entry| entry.value().clone())
-                .ok_or("Failed to retrieve token from pool")?;
-            
-            // 更新最后使用的账号及时间 (如果是普通对话请求)
-            if quota_group != "image_gen" {
-                let mut last_used = self.last_used_account.lock().await;
-                *last_used = Some((selected_token.account_id.clone(), std::time::Instant::now()));
-            }
-            
-            let action_msg = if force_rotate { "强制切换" } else { "切换" };
-            tracing::info!("{}到账号: {}", action_msg, selected_token.email);
-            selected_token
-        };
+            // 2. 如果没有锁定、锁定失效或强制轮换，则进行轮询记录并更新锁定信息
+            let mut token = if let Some(t) = target_token {
+                t
+            } else {
+                let start_idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
+                let mut selected: Option<ProxyToken> = None;
+                for offset in 0..total {
+                    let idx = (start_idx + offset) % total;
+                    let candidate = &tokens_snapshot[idx];
+                    if attempted.contains(&candidate.account_id) {
+                        continue;
+                    }
+                    selected = Some(candidate.clone());
+                    break;
+                }
+                let selected_token = selected.ok_or_else(|| {
+                    last_error
+                        .clone()
+                        .unwrap_or_else(|| "All accounts exhausted".to_string())
+                })?;
+
+                // 更新最后使用的账号及时间 (如果是普通对话请求)
+                if quota_group != "image_gen" {
+                    let mut last_used = self.last_used_account.lock().await;
+                    *last_used = Some((selected_token.account_id.clone(), std::time::Instant::now()));
+                }
+
+                let action_msg = if rotate { "强制切换" } else { "切换" };
+                tracing::info!("{}到账号: {}", action_msg, selected_token.email);
+                selected_token
+            };
         
-        // 3. 检查 token 是否过期（提前5分钟刷新）
-        let now = chrono::Utc::now().timestamp();
-        if now >= token.timestamp - 300 {
-            tracing::info!("账号 {} 的 token 即将过期，正在刷新...", token.email);
-            
-            // 调用 OAuth 刷新 token
-            match crate::modules::oauth::refresh_access_token(&token.refresh_token).await {
-                Ok(token_response) => {
-                    tracing::info!("Token 刷新成功！");
-                    
-                    // 更新本地内存对象供后续使用
-                    token.access_token = token_response.access_token.clone();
-                    token.expires_in = token_response.expires_in;
-                    token.timestamp = now + token_response.expires_in;
-                    
-                    // 同步更新跨线程共享的 DashMap
-                    if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                        entry.access_token = token.access_token.clone();
-                        entry.expires_in = token.expires_in;
-                        entry.timestamp = token.timestamp;
+            // 3. 检查 token 是否过期（提前5分钟刷新）
+            let now = chrono::Utc::now().timestamp();
+            if now >= token.timestamp - 300 {
+                tracing::info!("账号 {} 的 token 即将过期，正在刷新...", token.email);
+
+                // 调用 OAuth 刷新 token
+                match crate::modules::oauth::refresh_access_token(&token.refresh_token).await {
+                    Ok(token_response) => {
+                        tracing::info!("Token 刷新成功！");
+
+                        // 更新本地内存对象供后续使用
+                        token.access_token = token_response.access_token.clone();
+                        token.expires_in = token_response.expires_in;
+                        token.timestamp = now + token_response.expires_in;
+
+                        // 同步更新跨线程共享的 DashMap
+                        if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
+                            entry.access_token = token.access_token.clone();
+                            entry.expires_in = token.expires_in;
+                            entry.timestamp = token.timestamp;
+                        }
+
+                        // 同步落盘（避免重启后继续使用过期 timestamp 导致频繁刷新）
+                        if let Err(e) = self.save_refreshed_token(&token.account_id, &token_response).await {
+                            tracing::warn!("保存刷新后的 token 失败 ({}): {}", token.email, e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Token 刷新失败 ({}): {}，尝试下一个账号", token.email, e);
+                        if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
+                            tracing::error!(
+                                "Disabling account due to invalid_grant ({}): refresh_token likely revoked/expired",
+                                token.email
+                            );
+                            let _ = self
+                                .disable_account(&token.account_id, &format!("invalid_grant: {}", e))
+                                .await;
+                            self.tokens.remove(&token.account_id);
+                        }
+                        // Avoid leaking account emails to API clients; details are still in logs.
+                        last_error = Some(format!("Token refresh failed: {}", e));
+                        attempted.insert(token.account_id.clone());
+
+                        // 如果当前账号被锁定复用，刷新失败后必须解除锁定，避免下一次仍选中同一账号
+                        if quota_group != "image_gen" {
+                            let mut last_used = self.last_used_account.lock().await;
+                            if matches!(&*last_used, Some((id, _)) if id == &token.account_id) {
+                                *last_used = None;
+                            }
+                        }
+                        continue;
                     }
                 }
-                Err(e) => {
-                    tracing::error!("Token 刷新失败: {}，尝试下一个账号", e);
-                    return Err(format!("Token refresh failed: {}", e));
-                }
             }
+
+            // 4. 确保有 project_id
+            let project_id = if let Some(pid) = &token.project_id {
+                pid.clone()
+            } else {
+                tracing::info!("账号 {} 缺少 project_id，尝试获取...", token.email);
+                match crate::proxy::project_resolver::fetch_project_id(&token.access_token).await {
+                    Ok(pid) => {
+                        if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
+                            entry.project_id = Some(pid.clone());
+                        }
+                        let _ = self.save_project_id(&token.account_id, &pid).await;
+                        pid
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to fetch project_id for {}: {}", token.email, e);
+                        last_error = Some(format!("Failed to fetch project_id for {}: {}", token.email, e));
+                        attempted.insert(token.account_id.clone());
+
+                        if quota_group != "image_gen" {
+                            let mut last_used = self.last_used_account.lock().await;
+                            if matches!(&*last_used, Some((id, _)) if id == &token.account_id) {
+                                *last_used = None;
+                            }
+                        }
+                        continue;
+                    }
+                }
+            };
+
+            return Ok((token.access_token, project_id, token.email));
         }
 
-        // 4. 确保有 project_id
-        let project_id = if let Some(pid) = &token.project_id {
-            pid.clone()
+        Err(last_error.unwrap_or_else(|| "All accounts failed".to_string()))
+    }
+
+    async fn disable_account(&self, account_id: &str, reason: &str) -> Result<(), String> {
+        let path = if let Some(entry) = self.tokens.get(account_id) {
+            entry.account_path.clone()
         } else {
-            tracing::info!("账号 {} 缺少 project_id，尝试获取...", token.email);
-            match crate::proxy::project_resolver::fetch_project_id(&token.access_token).await {
-                Ok(pid) => {
-                    if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
-                        entry.project_id = Some(pid.clone());
-                    }
-                    let _ = self.save_project_id(&token.account_id, &pid).await;
-                    pid
-                }
-                Err(e) => {
-                    tracing::error!("Failed to fetch project_id for {}: {}", token.email, e);
-                    return Err(format!("Failed to fetch project_id: {}", e));
-                }
-            }
+            self.data_dir
+                .join("accounts")
+                .join(format!("{}.json", account_id))
         };
 
-        Ok((token.access_token, project_id, token.email))
+        let mut content: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?,
+        )
+        .map_err(|e| format!("解析 JSON 失败: {}", e))?;
+
+        let now = chrono::Utc::now().timestamp();
+        content["disabled"] = serde_json::Value::Bool(true);
+        content["disabled_at"] = serde_json::Value::Number(now.into());
+        content["disabled_reason"] = serde_json::Value::String(truncate_reason(reason, 800));
+
+        std::fs::write(&path, serde_json::to_string_pretty(&content).unwrap())
+            .map_err(|e| format!("写入文件失败: {}", e))?;
+
+        tracing::warn!("Account disabled: {} ({:?})", account_id, path);
+        Ok(())
     }
-    
+
     /// 保存 project_id 到账号文件
     async fn save_project_id(&self, account_id: &str, project_id: &str) -> Result<(), String> {
         let entry = self.tokens.get(account_id)
@@ -243,7 +346,6 @@ impl TokenManager {
     }
     
     /// 保存刷新后的 token 到账号文件
-    #[allow(dead_code)]
     async fn save_refreshed_token(&self, account_id: &str, token_response: &crate::modules::oauth::TokenResponse) -> Result<(), String> {
         let entry = self.tokens.get(account_id)
             .ok_or("账号不存在")?;
@@ -270,4 +372,13 @@ impl TokenManager {
     pub fn len(&self) -> usize {
         self.tokens.len()
     }
+}
+
+fn truncate_reason(reason: &str, max_len: usize) -> String {
+    if reason.chars().count() <= max_len {
+        return reason.to_string();
+    }
+    let mut s: String = reason.chars().take(max_len).collect();
+    s.push('…');
+    s
 }

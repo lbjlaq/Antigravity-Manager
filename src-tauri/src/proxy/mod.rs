@@ -14,6 +14,8 @@ pub mod middleware;        // Axum 中间件
 pub mod upstream;          // 上游客户端
 pub mod common;            // 公共工具
 pub mod providers;         // Extra upstream providers (z.ai, etc.)
+pub mod zai_vision_mcp;    // Built-in Vision MCP server state
+pub mod zai_vision_tools;  // Built-in Vision MCP tools (z.ai vision API)
 
 pub use config::ProxyConfig;
 pub use config::ProxyAuthMode;
