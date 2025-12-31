@@ -540,10 +540,31 @@ pub async fn handle_count_tokens(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_handle_list_models() {
-        let response = handle_list_models().await.into_response();
+        let token_manager = Arc::new(crate::proxy::TokenManager::new(std::env::temp_dir()));
+
+        let state = AppState {
+            token_manager,
+            anthropic_mapping: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            openai_mapping: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            custom_mapping: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            request_timeout: 0,
+            thought_signature_map: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            upstream_proxy: Arc::new(tokio::sync::RwLock::new(
+                crate::proxy::config::UpstreamProxyConfig::default(),
+            )),
+            upstream: Arc::new(crate::proxy::upstream::client::UpstreamClient::new(None)),
+            zai: Arc::new(tokio::sync::RwLock::new(crate::proxy::ZaiConfig::default())),
+            provider_rr: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            zai_vision_mcp: Arc::new(crate::proxy::zai_vision_mcp::ZaiVisionMcpState::new()),
+            monitor: Arc::new(crate::proxy::monitor::ProxyMonitor::new(10, None)),
+        };
+
+        let response = handle_list_models(State(state)).await.into_response();
         assert_eq!(response.status(), StatusCode::OK);
     }
 }
