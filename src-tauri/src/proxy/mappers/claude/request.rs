@@ -116,17 +116,6 @@ pub fn transform_claude_request_in(
     // Resolve grounding config
     let config = crate::proxy::mappers::common_utils::resolve_request_config(&claude_req.model, &mapped_model, &tools_val);
     let is_gemini_model = config.final_model.starts_with("gemini-");
-    // Only Gemini models support our "dummy thought" workaround.
-    // Claude models routed via Vertex/Google API often require valid thought signatures.
-    // [FIX] Whenever thinking is enabled, we MUST allow dummy thought injection to satisfy 
-    // Google's strict validation of historical messages, even for non-agent (e.g. search) tasks.
-    let is_thinking_enabled = claude_req
-        .thinking
-        .as_ref()
-        .map(|t| t.type_ == "enabled")
-        .unwrap_or(false);
-
-    let allow_dummy_thought = is_thinking_enabled;
 
     // 4. Generation Config & Thinking
     let generation_config = build_generation_config(claude_req, has_web_search_tool);
@@ -137,6 +126,10 @@ pub fn transform_claude_request_in(
         .as_ref()
         .map(|t| t.type_ == "enabled")
         .unwrap_or(false);
+
+    // Only Gemini models support our "dummy thought" workaround.
+    // Keep it off for non-Gemini models to reduce protocol divergence and validation risk.
+    let allow_dummy_thought = is_thinking_enabled && is_gemini_model;
 
     // 2. Contents (Messages)
     let contents = build_contents(
@@ -635,7 +628,9 @@ fn build_generation_config(claude_req: &ClaudeRequest, has_web_search: bool) -> 
     }*/
 
     // max_tokens 映射为 maxOutputTokens
-    config["maxOutputTokens"] = json!(64000);
+    // Keep legacy default (64000) when client didn't specify.
+    let max_output_tokens = claude_req.max_tokens.unwrap_or(64000);
+    config["maxOutputTokens"] = json!(max_output_tokens);
 
     // [优化] 设置全局停止序列，防止流式输出冗余 (参考 done-hub)
     config["stopSequences"] = json!([

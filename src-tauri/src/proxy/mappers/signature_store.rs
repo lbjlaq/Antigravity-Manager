@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 const THOUGHT_SIG_TTL: Duration = Duration::from_secs(2 * 60 * 60); // 2 hours
+const MIN_THOUGHT_SIGNATURE_LEN: usize = 50;
 
 #[derive(Clone)]
 struct ThoughtSigEntry {
@@ -56,7 +57,8 @@ pub fn store_thought_signature_for_session(session_id: &str, sig: &str) {
     let now = Instant::now();
     cleanup_expired_in_store(session_store(), now);
 
-    if sig.trim().is_empty() {
+    let sig = sig.trim();
+    if sig.is_empty() || sig.len() < MIN_THOUGHT_SIGNATURE_LEN {
         return;
     }
 
@@ -142,7 +144,8 @@ pub fn store_thought_signature_for_tool(session_id: &str, tool_use_id: &str, sig
         return;
     };
 
-    if sig.trim().is_empty() {
+    let sig = sig.trim();
+    if sig.is_empty() || sig.len() < MIN_THOUGHT_SIGNATURE_LEN {
         return;
     }
 
@@ -208,6 +211,10 @@ pub fn get_thought_signature_for_tool(session_id: &str, tool_use_id: &str) -> Op
 mod tests {
     use super::*;
 
+    fn sig(len: usize, ch: char) -> String {
+        std::iter::repeat(ch).take(len).collect()
+    }
+
     #[test]
     fn test_signature_storage_scoped_by_session() {
         let s1 = "test_signature_storage_scoped_by_session:s1";
@@ -215,23 +222,25 @@ mod tests {
         clear_thought_signature_for_session(s1);
         clear_thought_signature_for_session(s2);
 
-        store_thought_signature_for_session(s1, "sig_session_1");
-        store_thought_signature_for_session(s2, "sig_session_2");
+        let sig1 = sig(60, 'a');
+        let sig2 = sig(60, 'b');
+        store_thought_signature_for_session(s1, &sig1);
+        store_thought_signature_for_session(s2, &sig2);
 
         assert_eq!(
             get_thought_signature_for_session(s1),
-            Some("sig_session_1".to_string())
+            Some(sig1.clone())
         );
         assert_eq!(
             get_thought_signature_for_session(s2),
-            Some("sig_session_2".to_string())
+            Some(sig2.clone())
         );
 
         // Shorter signature should not overwrite within the same session.
         store_thought_signature_for_session(s1, "x");
         assert_eq!(
             get_thought_signature_for_session(s1),
-            Some("sig_session_1".to_string())
+            Some(sig1.clone())
         );
     }
 
@@ -262,32 +271,36 @@ mod tests {
     fn test_tool_signature_scoped_by_session_and_tool_id() {
         let s1 = "test_tool_signature_scoped_by_session_and_tool_id:s1";
         let s2 = "test_tool_signature_scoped_by_session_and_tool_id:s2";
-        store_thought_signature_for_tool(s1, "t1", "sig1");
-        store_thought_signature_for_tool(s1, "t2", "sig2");
-        store_thought_signature_for_tool(s2, "t1", "sig3");
+        let sig1 = sig(60, 'c');
+        let sig2 = sig(60, 'd');
+        let sig3 = sig(60, 'e');
+        store_thought_signature_for_tool(s1, "t1", &sig1);
+        store_thought_signature_for_tool(s1, "t2", &sig2);
+        store_thought_signature_for_tool(s2, "t1", &sig3);
 
         assert_eq!(
             get_thought_signature_for_tool(s1, "t1"),
-            Some("sig1".to_string())
+            Some(sig1.clone())
         );
         assert_eq!(
             get_thought_signature_for_tool(s1, "t2"),
-            Some("sig2".to_string())
+            Some(sig2.clone())
         );
         assert_eq!(
             get_thought_signature_for_tool(s2, "t1"),
-            Some("sig3".to_string())
+            Some(sig3.clone())
         );
     }
 
     #[test]
     fn test_tool_signature_prefers_longer_value() {
         let s1 = "test_tool_signature_prefers_longer_value:s1";
-        store_thought_signature_for_tool(s1, "t1", "long_signature");
+        let long_sig = sig(80, 'f');
+        store_thought_signature_for_tool(s1, "t1", &long_sig);
         store_thought_signature_for_tool(s1, "t1", "x");
         assert_eq!(
             get_thought_signature_for_tool(s1, "t1"),
-            Some("long_signature".to_string())
+            Some(long_sig.clone())
         );
     }
 

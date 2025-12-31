@@ -222,11 +222,21 @@ pub fn transform_openai_request(
                     None => "".to_string()
                 };
 
-                parts.push(json!({
-                    "functionResponse": {
-                       "name": final_name,
-                       "response": { "result": content_val }
+                let mut fr = json!({
+                    "name": final_name,
+                    "response": { "result": content_val }
+                });
+
+                // For Claude models, the id field must match the tool_call_id/tool_use_id.
+                // (Gemini models don't require it.)
+                if !is_gemini_model {
+                    if let Some(id) = &msg.tool_call_id {
+                        fr["id"] = json!(id);
                     }
+                }
+
+                parts.push(json!({
+                    "functionResponse": fr
                 }));
             }
 
@@ -489,5 +499,54 @@ mod tests {
         let parts = model_msg["parts"].as_array().unwrap();
         let call_part = parts.iter().find(|p| p.get("functionCall").is_some()).unwrap();
         assert_eq!(call_part["thoughtSignature"], GEMINI_SKIP_SIGNATURE);
+    }
+
+    #[test]
+    fn test_tool_response_sets_function_response_id_for_claude_models() {
+        let req = OpenAIRequest {
+            model: "custom-model".to_string(),
+            messages: vec![
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "tc1".to_string(),
+                        r#type: "function".to_string(),
+                        function: ToolFunction {
+                            name: "do_thing".to_string(),
+                            arguments: "{}".to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                    name: None,
+                },
+                OpenAIMessage {
+                    role: "tool".to_string(),
+                    content: Some(OpenAIContent::String("ok".to_string())),
+                    tool_calls: None,
+                    tool_call_id: Some("tc1".to_string()),
+                    name: Some("do_thing".to_string()),
+                },
+            ],
+            prompt: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            stop: None,
+            response_format: None,
+            tools: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            instructions: None,
+            input: None,
+        };
+
+        let result = transform_openai_request(&req, "test-p", "claude-sonnet-4-5", None);
+        let contents = result["request"]["contents"].as_array().unwrap();
+        let tool_msg = contents.iter().find(|m| m["role"] == "user").unwrap();
+        let parts = tool_msg["parts"].as_array().unwrap();
+        let fr_part = parts.iter().find(|p| p.get("functionResponse").is_some()).unwrap();
+        assert_eq!(fr_part["functionResponse"]["id"], "tc1");
     }
 }
