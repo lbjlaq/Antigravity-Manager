@@ -78,6 +78,9 @@ The MCP toggles and local endpoints are shown in:
    - any subset of `{web_search_enabled, web_reader_enabled, vision_enabled}`
 3) Start the proxy and point an MCP client at the corresponding local endpoint(s).
 
+For a repeatable smoke-test procedure and recorded outcomes, see:
+- [`docs/zai/mcp-testing.md`](mcp-testing.md)
+
 ## Troubleshooting notes (observed)
 - **Upstream expects Streamable HTTP semantics**:
   - For the remote z.ai MCP endpoints, upstream responses are typically `text/event-stream` (SSE).
