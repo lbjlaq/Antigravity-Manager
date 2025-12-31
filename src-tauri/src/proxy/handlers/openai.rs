@@ -167,20 +167,7 @@ pub async fn handle_chat_completions(
 
         // 429 智能处理
         if status_code == 429 {
-            // 1. 优先尝试解析 RetryInfo (由 Google Cloud 直接下发)
-            if let Some(delay_ms) = crate::proxy::upstream::retry::parse_retry_delay(&error_text) {
-                let actual_delay = delay_ms.saturating_add(200).min(10_000);
-                tracing::warn!(
-                    "OpenAI Upstream 429 on attempt {}/{}, waiting {}ms then retrying",
-                    attempt + 1,
-                    max_attempts,
-                    actual_delay
-                );
-                tokio::time::sleep(tokio::time::Duration::from_millis(actual_delay)).await;
-                continue;
-            }
-
-            // 2. 只有明确包含 "QUOTA_EXHAUSTED" 才停止，避免误判频率提示 (如 "check quota")
+            // 1. 只有明确包含 "QUOTA_EXHAUSTED" 才停止，避免误判频率提示 (如 "check quota")
             if error_text.contains("QUOTA_EXHAUSTED") {
                 error!(
                     "OpenAI Quota exhausted (429) on attempt {}/{}, stopping to protect pool.",
@@ -188,6 +175,20 @@ pub async fn handle_chat_completions(
                     max_attempts
                 );
                 return Err((status, error_text));
+            }
+
+            // 1. 优先尝试解析 RetryInfo (由 Google Cloud 直接下发)
+            if let Some(delay_ms) = crate::proxy::upstream::retry::parse_retry_delay(&error_text) {
+                let actual_delay = delay_ms.saturating_add(200);
+                token_manager.mark_rate_limited_by_email(&config.request_type, &email, actual_delay);
+                tracing::warn!(
+                    "OpenAI Upstream 429 on attempt {}/{}, cooling down account {} for {}ms",
+                    attempt + 1,
+                    max_attempts,
+                    email,
+                    actual_delay
+                );
+                continue;
             }
 
             // 3. 其他 429 情况（如无重试指示的频率限制），轮换账号

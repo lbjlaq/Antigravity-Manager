@@ -181,6 +181,25 @@ pub async fn handle_generate(
         last_error = format!("HTTP {}: {}", status_code, error_text);
  
         // 只有 429 (限流), 403 (权限/地区限制) 和 401 (认证失效) 触发账号轮换
+        if status_code == 429 {
+            if error_text.contains("QUOTA_EXHAUSTED") {
+                error!("Gemini Quota exhausted (429) on attempt {}/{}, stopping to protect pool.", attempt + 1, max_attempts);
+                return Err((status, error_text));
+            }
+            if let Some(delay_ms) = crate::proxy::upstream::retry::parse_retry_delay(&error_text) {
+                let actual_delay = delay_ms.saturating_add(200);
+                token_manager.mark_rate_limited_by_email(&config.request_type, &email, actual_delay);
+                tracing::warn!(
+                    "Gemini Upstream 429 on attempt {}/{}, cooling down account {} for {}ms",
+                    attempt + 1,
+                    max_attempts,
+                    email,
+                    actual_delay
+                );
+                continue;
+            }
+        }
+
         if status_code == 429 || status_code == 403 || status_code == 401 {
             // 只有明确包含 "QUOTA_EXHAUSTED" 才停止，避免误判上游的频率限制提示 (如 "check quota")
             if status_code == 429 && error_text.contains("QUOTA_EXHAUSTED") {

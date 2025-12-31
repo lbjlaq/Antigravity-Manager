@@ -9,7 +9,6 @@ use axum::{
 use bytes::Bytes;
 use futures::StreamExt;
 use serde_json::{json, Value};
-use tokio::time::{sleep, Duration};
 use tracing::{debug, error};
 
 use crate::proxy::mappers::claude::{
@@ -426,17 +425,27 @@ pub async fn handle_messages(
         
         let status_code = status.as_u16();
         
-        // Handle transient 429s using upstream-provided retry delay (avoid surfacing errors to clients).
+        // 429 handling: mark the current account as temporarily unavailable and retry.
+        // TokenManager will skip cooled-down accounts and will wait (up to a limit) when all accounts are limited.
         if status_code == 429 {
+            if error_text.contains("QUOTA_EXHAUSTED") {
+                error!(
+                    "Claude Quota exhausted (429) on attempt {}/{}, stopping to protect pool.",
+                    attempt + 1,
+                    max_attempts
+                );
+                return (status, error_text).into_response();
+            }
             if let Some(delay_ms) = crate::proxy::upstream::retry::parse_retry_delay(&error_text) {
-                let actual_delay = delay_ms.saturating_add(200).min(10_000);
+                let actual_delay = delay_ms.saturating_add(200);
+                token_manager.mark_rate_limited_by_email(&config.request_type, &email, actual_delay);
                 tracing::warn!(
-                    "Claude Upstream 429 on attempt {}/{}, waiting {}ms then retrying",
+                    "Claude Upstream 429 on attempt {}/{}, cooling down account {} for {}ms",
                     attempt + 1,
                     max_attempts,
+                    email,
                     actual_delay
                 );
-                sleep(Duration::from_millis(actual_delay)).await;
                 continue;
             }
         }

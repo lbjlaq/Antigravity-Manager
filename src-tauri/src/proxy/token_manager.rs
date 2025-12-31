@@ -23,11 +23,13 @@ pub struct TokenManager {
     current_index: Arc<AtomicUsize>,
     last_used_account: Arc<tokio::sync::Mutex<Option<(String, std::time::Instant)>>>,
     session_pins: Arc<DashMap<String, (String, std::time::Instant)>>, // key -> (account_id, last_seen)
+    cooldowns: Arc<DashMap<String, std::time::Instant>>,              // "<quota_group>:<account_id>" -> available_at
     data_dir: PathBuf,
 }
 
 impl TokenManager {
     const SESSION_PIN_TTL_SECS: u64 = 30 * 60; // 30 minutes
+    const MAX_RATE_LIMIT_WAIT_MS: u64 = 120_000; // 2 minutes
 
     /// 创建新的 TokenManager
     pub fn new(data_dir: PathBuf) -> Self {
@@ -36,6 +38,7 @@ impl TokenManager {
             current_index: Arc::new(AtomicUsize::new(0)),
             last_used_account: Arc::new(tokio::sync::Mutex::new(None)),
             session_pins: Arc::new(DashMap::new()),
+            cooldowns: Arc::new(DashMap::new()),
             data_dir,
         }
     }
@@ -51,6 +54,7 @@ impl TokenManager {
         // Reload should reflect current on-disk state (accounts can be added/removed/disabled).
         self.tokens.clear();
         self.session_pins.clear();
+        self.cooldowns.clear();
         self.current_index.store(0, Ordering::SeqCst);
         {
             let mut last_used = self.last_used_account.lock().await;
@@ -174,6 +178,8 @@ impl TokenManager {
             return Err("Token pool is empty".to_string());
         }
 
+        self.cleanup_expired_cooldowns();
+
         // ===== 【优化】根据订阅等级排序 (优先级: ULTRA > PRO > FREE) =====
         // 理由: ULTRA/PRO 重置快，优先消耗；FREE 重置慢，用于兜底
         tokens_snapshot.sort_by(|a, b| {
@@ -210,6 +216,7 @@ impl TokenManager {
                         {
                             if last_seen.elapsed().as_secs() <= Self::SESSION_PIN_TTL_SECS
                                 && !attempted.contains(&pinned_account_id)
+                                && !self.is_in_cooldown(quota_group, &pinned_account_id)
                             {
                                 if let Some(found) = tokens_snapshot
                                     .iter()
@@ -245,6 +252,9 @@ impl TokenManager {
                             if attempted.contains(&candidate.account_id) {
                                 continue;
                             }
+                            if self.is_in_cooldown(quota_group, &candidate.account_id) {
+                                continue;
+                            }
                             target_token = Some(candidate.clone());
                             // Always (re)bind the session to the chosen account for cache continuity.
                             self.session_pins.insert(
@@ -274,7 +284,11 @@ impl TokenManager {
                 // A. 尝试复用锁定账号
                 if let Some((account_id, last_time)) = &*last_used {
                     if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
-                        if let Some(found) = tokens_snapshot.iter().find(|t| &t.account_id == account_id) {
+                        if self.is_in_cooldown(quota_group, account_id) {
+                            // Don't reuse a globally locked account if it is rate-limited.
+                        } else if let Some(found) =
+                            tokens_snapshot.iter().find(|t| &t.account_id == account_id)
+                        {
                             tracing::info!("60s 时间窗口内，强制复用上一个账号: {}", found.email);
                             target_token = Some(found.clone());
                         }
@@ -288,6 +302,9 @@ impl TokenManager {
                         let idx = (start_idx + offset) % total;
                         let candidate = &tokens_snapshot[idx];
                         if attempted.contains(&candidate.account_id) {
+                            continue;
+                        }
+                        if self.is_in_cooldown(quota_group, &candidate.account_id) {
                             continue;
                         }
                         target_token = Some(candidate.clone());
@@ -308,6 +325,9 @@ impl TokenManager {
                     if attempted.contains(&candidate.account_id) {
                         continue;
                     }
+                    if self.is_in_cooldown(quota_group, &candidate.account_id) {
+                        continue;
+                    }
                     target_token = Some(candidate.clone());
                     
                     if rotate {
@@ -317,9 +337,30 @@ impl TokenManager {
                 }
             }
             
-            let mut token = target_token.ok_or_else(|| {
-                last_error.clone().unwrap_or_else(|| "All accounts exhausted".to_string())
-            })?;
+            let mut token = if let Some(t) = target_token {
+                t
+            } else if let Some(wait_ms) =
+                self.min_cooldown_wait_ms(quota_group, &tokens_snapshot, &attempted)
+            {
+                if wait_ms > Self::MAX_RATE_LIMIT_WAIT_MS {
+                    return Err(format!(
+                        "RESOURCE_EXHAUSTED: All accounts rate-limited. Min wait {}ms exceeds {}ms.",
+                        wait_ms,
+                        Self::MAX_RATE_LIMIT_WAIT_MS
+                    ));
+                }
+
+                tracing::warn!(
+                    "All accounts rate-limited; waiting {}ms then retrying selection",
+                    wait_ms
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                self.cleanup_expired_cooldowns();
+                attempted.clear();
+                continue;
+            } else {
+                return Err(last_error.clone().unwrap_or_else(|| "All accounts exhausted".to_string()));
+            };
 
         
             // 3. 检查 token 是否过期（提前5分钟刷新）
@@ -431,6 +472,85 @@ impl TokenManager {
         }
     }
 
+    fn cleanup_expired_cooldowns(&self) {
+        let now = std::time::Instant::now();
+        let expired: Vec<String> = self
+            .cooldowns
+            .iter()
+            .filter_map(|e| {
+                if *e.value() <= now {
+                    Some(e.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for k in expired {
+            self.cooldowns.remove(&k);
+        }
+    }
+
+    fn cooldown_key(quota_group: &str, account_id: &str) -> String {
+        format!("{}:{}", quota_group, account_id)
+    }
+
+    fn is_in_cooldown(&self, quota_group: &str, account_id: &str) -> bool {
+        let key = Self::cooldown_key(quota_group, account_id);
+        if let Some(entry) = self.cooldowns.get(&key) {
+            if *entry.value() > std::time::Instant::now() {
+                return true;
+            }
+            self.cooldowns.remove(&key);
+        }
+        false
+    }
+
+    fn min_cooldown_wait_ms(
+        &self,
+        quota_group: &str,
+        tokens_snapshot: &[ProxyToken],
+        attempted: &HashSet<String>,
+    ) -> Option<u64> {
+        let now = std::time::Instant::now();
+        let mut min_ms: Option<u64> = None;
+
+        for token in tokens_snapshot {
+            if attempted.contains(&token.account_id) {
+                continue;
+            }
+            let key = Self::cooldown_key(quota_group, &token.account_id);
+            if let Some(entry) = self.cooldowns.get(&key) {
+                let until = *entry.value();
+                if until > now {
+                    let ms = until.duration_since(now).as_millis() as u64;
+                    min_ms = Some(min_ms.map(|m| m.min(ms)).unwrap_or(ms));
+                }
+            }
+        }
+
+        min_ms
+    }
+
+    pub fn mark_rate_limited_by_email(&self, quota_group: &str, email: &str, delay_ms: u64) {
+        if email.trim().is_empty() {
+            return;
+        }
+
+        // Emails should be unique; scan is OK (small pool).
+        for entry in self.tokens.iter() {
+            if entry.value().email == email {
+                let account_id = entry.value().account_id.clone();
+                let until = std::time::Instant::now()
+                    .checked_add(std::time::Duration::from_millis(delay_ms))
+                    .unwrap_or_else(|| std::time::Instant::now() + std::time::Duration::from_secs(3600));
+                let key = Self::cooldown_key(quota_group, &account_id);
+                self.cooldowns.insert(key, until);
+                return;
+            }
+        }
+    }
+
     async fn disable_account(&self, account_id: &str, reason: &str) -> Result<(), String> {
         let path = if let Some(entry) = self.tokens.get(account_id) {
             entry.account_path.clone()
@@ -455,6 +575,21 @@ impl TokenManager {
 
         tracing::warn!("Account disabled: {} ({:?})", account_id, path);
         self.clear_session_pins_for_account(account_id);
+        // Remove any cooldown entries for this account across all quota groups.
+        let keys: Vec<String> = self
+            .cooldowns
+            .iter()
+            .filter_map(|e| {
+                if e.key().ends_with(&format!(":{}", account_id)) {
+                    Some(e.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for k in keys {
+            self.cooldowns.remove(&k);
+        }
         Ok(())
     }
 
