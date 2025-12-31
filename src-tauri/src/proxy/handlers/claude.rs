@@ -208,8 +208,10 @@ pub async fn handle_messages(
             );
         }
 
-        if let Ok(full_json) = serde_json::to_string_pretty(&request) {
-            tracing::debug!("[{}] Full Claude Request JSON: {}", trace_id, full_json);
+        if crate::proxy::common::debug_flags::debug_body_enabled() {
+            if let Ok(full_json) = serde_json::to_string_pretty(&request) {
+                tracing::debug!("[{}] Full Claude Request JSON: {}", trace_id, full_json);
+            }
         }
         tracing::debug!("========== [{}] CLAUDE REQUEST DEBUG END ==========", trace_id);
     }
@@ -331,7 +333,9 @@ pub async fn handle_messages(
 
         let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id) {
             Ok(b) => {
-                if tracing::enabled!(tracing::Level::DEBUG) {
+                if crate::proxy::common::debug_flags::debug_body_enabled()
+                    && tracing::enabled!(tracing::Level::DEBUG)
+                {
                     if let Ok(pretty) = serde_json::to_string_pretty(&b) {
                         tracing::debug!("[{}] Transformed Gemini Body: {}", trace_id, pretty);
                     }

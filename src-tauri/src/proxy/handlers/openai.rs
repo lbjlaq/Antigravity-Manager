@@ -200,7 +200,9 @@ pub async fn handle_chat_completions(
         }
 
         // 打印转换后的报文仅用于调试（默认关闭，避免影响性能）
-        if tracing::enabled!(tracing::Level::DEBUG) {
+        if crate::proxy::common::debug_flags::debug_body_enabled()
+            && tracing::enabled!(tracing::Level::DEBUG)
+        {
             if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {
                 tracing::debug!("[OpenAI-Request] Transformed Gemini Body:\n{}", body_json);
             }
@@ -701,7 +703,9 @@ pub async fn handle_completions(
         }
 
         // 打印转换后的报文仅用于调试（默认关闭，避免影响性能）
-        if tracing::enabled!(tracing::Level::DEBUG) {
+        if crate::proxy::common::debug_flags::debug_body_enabled()
+            && tracing::enabled!(tracing::Level::DEBUG)
+        {
             if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {
                 tracing::debug!("[Codex-Request] Transformed Gemini Body:\n{}", body_json);
             }

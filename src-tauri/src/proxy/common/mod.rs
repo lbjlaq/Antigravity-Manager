@@ -5,3 +5,4 @@
 pub mod model_mapping;
 pub mod utils;
 pub mod json_schema;
+pub mod debug_flags;
