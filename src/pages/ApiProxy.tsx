@@ -254,8 +254,8 @@ export default function ApiProxy() {
         try {
             const models = await invoke<string[]>('fetch_zai_models', {
                 zai: appConfig.proxy.zai,
-                upstream_proxy: appConfig.proxy.upstream_proxy,
-                request_timeout: appConfig.proxy.request_timeout,
+                upstreamProxy: appConfig.proxy.upstream_proxy,
+                requestTimeout: appConfig.proxy.request_timeout,
             });
             setZaiAvailableModels(models);
         } catch (error: any) {
