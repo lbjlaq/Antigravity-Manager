@@ -358,7 +358,7 @@ fn build_contents(
                                 .or_else(|| {
                                     let scoped_sig = get_thought_signature_for_session(session_id);
                                     if scoped_sig.is_some() {
-                                        tracing::info!(
+                                        tracing::debug!(
                                             "[Claude-Request] Using session thought_signature fallback (session: '{}', length: {})",
                                             session_id,
                                             scoped_sig.as_ref().unwrap().len()

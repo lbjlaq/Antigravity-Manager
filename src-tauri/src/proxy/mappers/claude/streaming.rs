@@ -564,7 +564,7 @@ impl<'a> PartProcessor<'a> {
             tool_use["signature"] = json!(sig);
             // Store signature to global storage for replay in subsequent requests
             store_thought_signature_for_session(session_id.unwrap_or("global"), sig);
-            tracing::info!(
+            tracing::debug!(
                 "[Claude-SSE] Captured thought_signature for function call (length: {})",
                 sig.len()
             );
