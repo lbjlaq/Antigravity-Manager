@@ -114,6 +114,26 @@ brew install --cask --no-quarantine antigravity
 *   **Windows**: `.msi` 或 便携版 `.zip`
 *   **Linux**: `.deb` 或 `AppImage`
 
+### 选项 C: Arch Linux (AUR)
+
+AUR 包 `antigravity-tools-bin`。
+
+**使用 AUR Helper (推荐):**
+```bash
+# 使用 yay
+yay -S antigravity-tools-bin
+
+# 使用 paru
+paru -S antigravity-tools-bin
+```
+
+**手动编译:**
+```bash
+git clone https://aur.archlinux.org/antigravity-tools-bin.git
+cd antigravity-tools-bin
+makepkg -si
+```
+
 ### 🛠️ 常见问题排查 (Troubleshooting)
 
 #### macOS 提示“应用已损坏，无法打开”？
