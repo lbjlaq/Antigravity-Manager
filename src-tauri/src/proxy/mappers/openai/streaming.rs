@@ -7,7 +7,9 @@ use chrono::Utc;
 use uuid::Uuid;
 use tracing::debug;
 use rand::Rng;
-use crate::proxy::mappers::signature_store::store_thought_signature_for_session;
+use crate::proxy::mappers::signature_store::{
+    store_thought_signature_for_session, store_thought_signature_for_tool,
+};
 
 pub fn create_openai_sse_stream(
     mut gemini_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
@@ -15,7 +17,9 @@ pub fn create_openai_sse_stream(
     session_id: Option<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     let mut buffer = BytesMut::new();
-    let session_id = session_id.unwrap_or_else(|| "global".to_string());
+    let session_id = session_id
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     
     let stream = async_stream::stream! {
         while let Some(item) = gemini_stream.next().await {
@@ -66,8 +70,14 @@ pub fn create_openai_sse_stream(
                                                  // content_out.push_str(thought_text);
                                             }
                                             // 捕获 thoughtSignature (Gemini 3 工具调用必需)
-                                            if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
-                                                store_thought_signature_for_session(&session_id, sig);
+                                            if let Some(sig) = part
+                                                .get("thoughtSignature")
+                                                .or(part.get("thought_signature"))
+                                                .and_then(|s| s.as_str())
+                                            {
+                                                if let Some(sid) = session_id.as_deref() {
+                                                    store_thought_signature_for_session(sid, sig);
+                                                }
                                             }
 
                                             if let Some(img) = part.get("inlineData") {
@@ -169,7 +179,9 @@ pub fn create_legacy_sse_stream(
     session_id: Option<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     let mut buffer = BytesMut::new();
-    let session_id = session_id.unwrap_or_else(|| "global".to_string());
+    let session_id = session_id
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     
     // Generate constant alphanumeric ID (mimics OpenAI base62 format)
     let charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -215,8 +227,14 @@ pub fn create_legacy_sse_stream(
                                                 */
                                                 // 捕获 thoughtSignature
                                                 // 捕获 thoughtSignature 到全局存储
-                                                if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
-                                                    store_thought_signature_for_session(&session_id, sig);
+                                                if let Some(sig) = part
+                                                    .get("thoughtSignature")
+                                                    .or(part.get("thought_signature"))
+                                                    .and_then(|s| s.as_str())
+                                                {
+                                                    if let Some(sid) = session_id.as_deref() {
+                                                        store_thought_signature_for_session(sid, sig);
+                                                    }
                                                 }
                                             }
                                         }
@@ -277,7 +295,9 @@ pub fn create_codex_sse_stream(
     session_id: Option<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     let mut buffer = BytesMut::new();
-    let session_id = session_id.unwrap_or_else(|| "global".to_string());
+    let session_id = session_id
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     
     // Generate alphanumeric ID
     let charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -351,12 +371,10 @@ pub fn create_codex_sse_stream(
                                                     // delta_text.push_str(&clean_thought);
                                                 }
                                                 */
-                                                // 捕获 thoughtSignature (Gemini 3 工具调用必需)
-                                                // 存储到全局状态，不再嵌入到用户可见的文本中
-                                                if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
-                                                    debug!("[Codex-SSE] 捕获 thoughtSignature (长度: {})", sig.len());
-                                                    store_thought_signature_for_session(&session_id, sig);
-                                                }
+                                                let part_sig = part
+                                                    .get("thoughtSignature")
+                                                    .or(part.get("thought_signature"))
+                                                    .and_then(|s| s.as_str());
                                                 // Handle function call in chunk with deduplication
                                                 if let Some(func_call) = part.get("functionCall") {
                                                     let call_key = serde_json::to_string(func_call).unwrap_or_default();
@@ -370,6 +388,16 @@ pub fn create_codex_sse_stream(
                                                         use std::hash::{Hash, Hasher};
                                                         serde_json::to_string(func_call).unwrap_or_default().hash(&mut hasher);
                                                         let call_id = format!("call_{:x}", hasher.finish());
+
+                                                        if let (Some(sid), Some(sig)) = (session_id.as_deref(), part_sig) {
+                                                            debug!(
+                                                                "[Codex-SSE] Captured thoughtSignature for tool_call (id={}, len={})",
+                                                                call_id,
+                                                                sig.len()
+                                                            );
+                                                            store_thought_signature_for_session(sid, sig);
+                                                            store_thought_signature_for_tool(sid, &call_id, sig);
+                                                        }
                                                         
                                                         // Parse args once
                                                         let fallback_args = json!({});

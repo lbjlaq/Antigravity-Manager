@@ -27,16 +27,12 @@ pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&st
             }
             */
 
-            // 捕获 thoughtSignature (Gemini 3 工具调用必需)
-            if let Some(sig) = part
+            let part_sig = part
                 .get("thoughtSignature")
                 .or(part.get("thought_signature"))
-                .and_then(|s| s.as_str())
-            {
-                crate::proxy::mappers::signature_store::store_thought_signature_for_session(
-                    session_id.unwrap_or("global"),
-                    sig,
-                );
+                .and_then(|s| s.as_str());
+            if let (Some(sid), Some(sig)) = (session_id, part_sig) {
+                crate::proxy::mappers::signature_store::store_thought_signature_for_session(sid, sig);
             }
 
             // 文本部分
@@ -56,6 +52,15 @@ pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&st
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("{}-{}", name, uuid::Uuid::new_v4()));
+
+                // If a signature is present, cache it for this specific tool call id (sessionId:tool_use_id).
+                if let (Some(sid), Some(sig)) = (session_id, part_sig) {
+                    crate::proxy::mappers::signature_store::store_thought_signature_for_tool(
+                        sid,
+                        &id,
+                        sig,
+                    );
+                }
 
                 tool_calls.push(ToolCall {
                     id,

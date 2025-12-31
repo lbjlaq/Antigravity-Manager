@@ -2,7 +2,9 @@
 // 对应 transformClaudeRequestIn
 
 use super::models::*;
-use crate::proxy::mappers::signature_store::get_thought_signature_for_session;
+use crate::proxy::mappers::signature_store::{
+    get_thought_signature_for_session, get_thought_signature_for_tool,
+};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -93,7 +95,7 @@ pub fn transform_claude_request_in(
     // 用于存储 tool_use id -> name 映射
     let mut tool_id_to_name: HashMap<String, String> = HashMap::new();
 
-    let session_id = derive_session_id_for_request(claude_req).unwrap_or_else(|| "global".to_string());
+    let session_id = derive_session_id_for_request(claude_req);
 
     // 1. System Instruction (注入动态身份防护)
     let system_instruction = build_system_instruction(&claude_req.system, &claude_req.model);
@@ -138,7 +140,7 @@ pub fn transform_claude_request_in(
     let contents = build_contents(
         &claude_req.messages,
         &mut tool_id_to_name,
-        &session_id,
+        session_id.as_deref(),
         is_thinking_enabled,
         allow_dummy_thought,
     )?;
@@ -279,7 +281,7 @@ fn build_system_instruction(system: &Option<SystemPrompt>, model_name: &str) -> 
 fn build_contents(
     messages: &[Message],
     tool_id_to_name: &mut HashMap<String, String>,
-    session_id: &str,
+    session_id: Option<&str>,
     is_thinking_enabled: bool,
     allow_dummy_thought: bool,
 ) -> Result<Value, String> {
@@ -351,21 +353,37 @@ fn build_contents(
                             // 存储 id -> name 映射
                             tool_id_to_name.insert(id.clone(), name.clone());
 
-                            // Signature resolution logic (Priority: Client -> Context -> Global Store)
-                            let final_sig = signature.as_ref()
-                                .or(last_thought_signature.as_ref())
-                                .cloned()
-                                .or_else(|| {
-                                    let scoped_sig = get_thought_signature_for_session(session_id);
+                            // Signature resolution (Priority: Client -> Context -> Cache(sessionId:tool_use_id) -> Session fallback)
+                            let mut final_sig = signature.as_ref().cloned().or_else(|| last_thought_signature.clone());
+
+                            if final_sig.is_none() {
+                                if let Some(sid) = session_id {
+                                    let cached = get_thought_signature_for_tool(sid, id.as_str());
+                                    if cached.is_some() {
+                                        tracing::debug!(
+                                            "[Claude-Request] Restored tool thoughtSignature from cache (session: '{}', tool: '{}', length: {})",
+                                            sid,
+                                            id,
+                                            cached.as_ref().unwrap().len()
+                                        );
+                                    }
+                                    final_sig = cached;
+                                }
+                            }
+
+                            if final_sig.is_none() {
+                                if let Some(sid) = session_id {
+                                    let scoped_sig = get_thought_signature_for_session(sid);
                                     if scoped_sig.is_some() {
                                         tracing::debug!(
-                                            "[Claude-Request] Using session thought_signature fallback (session: '{}', length: {})",
-                                            session_id,
+                                            "[Claude-Request] Using session thoughtSignature fallback (session: '{}', length: {})",
+                                            sid,
                                             scoped_sig.as_ref().unwrap().len()
                                         );
                                     }
-                                    scoped_sig
-                                });
+                                    final_sig = scoped_sig;
+                                }
+                            }
 
                             if let Some(sig) = final_sig {
                                 part["thoughtSignature"] = json!(sig);

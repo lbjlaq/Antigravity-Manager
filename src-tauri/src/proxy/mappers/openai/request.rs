@@ -1,7 +1,9 @@
 // OpenAI → Gemini 请求转换
 use super::models::*;
 use serde_json::{json, Value};
-use crate::proxy::mappers::signature_store::get_thought_signature_for_session;
+use crate::proxy::mappers::signature_store::{
+    get_thought_signature_for_session, get_thought_signature_for_tool,
+};
 
 pub fn transform_openai_request(
     request: &OpenAIRequest,
@@ -56,11 +58,10 @@ pub fn transform_openai_request(
 
     let session_key = session_id
         .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("global");
+        .filter(|s| !s.is_empty());
 
-    // 从 session 存储获取 thoughtSignature (避免跨会话串扰)
-    let global_thought_sig = get_thought_signature_for_session(session_key);
+    // 从 session 存储获取 thoughtSignature (避免跨会话串扰；无 sessionId 时 graceful degradation 为 None)
+    let global_thought_sig = session_key.and_then(get_thought_signature_for_session);
     if global_thought_sig.is_some() {
         tracing::debug!(
             "从 session 存储获取到 thoughtSignature (长度: {})",
@@ -186,12 +187,17 @@ pub fn transform_openai_request(
                     let mut func_call_part = json!({
                         "functionCall": {
                             "name": if tc.function.name == "local_shell_call" { "shell" } else { &tc.function.name },
-                            "args": args
+                            "args": args,
+                            "id": tc.id
                         }
                     });
 
-                    // [修复] 为该消息内的所有工具调用注入 thoughtSignature (PR #114 优化)
-                    if let Some(ref sig) = global_thought_sig {
+                    // Gemini 3+ tool calls: restore per-tool signature when available (sessionId:tool_call_id).
+                    // Fallback: last known session signature. No sessionId => No-Op.
+                    let tool_sig = session_key
+                        .and_then(|sid| get_thought_signature_for_tool(sid, &tc.id))
+                        .or_else(|| global_thought_sig.clone());
+                    if let Some(sig) = tool_sig {
                         func_call_part["thoughtSignature"] = json!(sig);
                     }
 

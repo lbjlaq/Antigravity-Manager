@@ -3,7 +3,9 @@
 
 use super::models::*;
 use super::utils::to_claude_usage;
-use crate::proxy::mappers::signature_store::store_thought_signature_for_session;
+use crate::proxy::mappers::signature_store::{
+    store_thought_signature_for_session, store_thought_signature_for_tool,
+};
 use bytes::Bytes;
 use serde_json::json;
 
@@ -562,8 +564,11 @@ impl<'a> PartProcessor<'a> {
 
         if let Some(ref sig) = signature {
             tool_use["signature"] = json!(sig);
-            // Store signature to global storage for replay in subsequent requests
-            store_thought_signature_for_session(session_id.unwrap_or("global"), sig);
+            // Store signature for replay in subsequent requests (graceful degradation: skip if no sessionId).
+            if let Some(sid) = session_id {
+                store_thought_signature_for_session(sid, sig);
+                store_thought_signature_for_tool(sid, &tool_id, sig);
+            }
             tracing::debug!(
                 "[Claude-SSE] Captured thought_signature for function call (length: {})",
                 sig.len()
