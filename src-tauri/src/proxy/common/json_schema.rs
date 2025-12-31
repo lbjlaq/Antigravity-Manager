@@ -69,9 +69,22 @@ fn flatten_refs(map: &mut serde_json::Map<String, Value>, defs: &serde_json::Map
 fn clean_json_schema_recursive(value: &mut Value) {
     match value {
         Value::Object(map) => {
-            // 1. [CRITICAL] 深度递归处理：必须遍历当前对象的所有字段名对应的 Value
-            // 解决 properties/items 之外的 definitions、anyOf、allOf 等结构的清理
-            for v in map.values_mut() {
+            // 1. [CRITICAL] Key-aware recursion.
+            // `properties` is a map of propertyName -> schema. The map itself is NOT a schema,
+            // so we must NOT apply schema-key cleanup to it (otherwise property names like
+            // "pattern" would be removed). We only recurse into its values.
+            for (k, v) in map.iter_mut() {
+                if k == "properties" {
+                    if let Value::Object(props) = v {
+                        for child in props.values_mut() {
+                            clean_json_schema_recursive(child);
+                        }
+                    } else {
+                        clean_json_schema_recursive(v);
+                    }
+                    continue;
+                }
+
                 clean_json_schema_recursive(v);
             }
 
@@ -97,7 +110,11 @@ fn clean_json_schema_recursive(value: &mut Value) {
                 if let Some(val) = map.remove(field) {
                     // 仅当值是简单类型时才迁移
                     if val.is_string() || val.is_number() || val.is_boolean() {
-                        constraints.push(format!("{}: {}", label, val));
+                        let rendered = match &val {
+                            Value::String(s) => s.clone(),
+                            _ => val.to_string(),
+                        };
+                        constraints.push(format!("{}: {}", label, rendered));
                     }
                 }
             }

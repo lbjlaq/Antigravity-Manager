@@ -36,13 +36,13 @@ pub fn resolve_request_config(
     // 检测是否有联网工具定义 (内置功能调用)
     let has_networking_tool = detects_networking_tool(tools);
     // 检测是否包含非联网工具 (如 MCP 本地工具)
-    let _has_non_networking = contains_non_networking_tool(tools);
+    let has_non_networking = contains_non_networking_tool(tools);
 
     // Strip -online suffix from original model if present (to detect networking intent)
     let is_online_suffix = original_model.ends_with("-online");
     
     // High-quality grounding allowlist (Only for models known to support search and be relatively 'safe')
-    let _is_high_quality_model = mapped_model == "gemini-2.5-flash"
+    let is_high_quality_model = mapped_model == "gemini-2.5-flash"
         || mapped_model == "gemini-1.5-pro"
         || mapped_model.starts_with("gemini-1.5-pro-")
         || mapped_model.starts_with("gemini-2.5-flash-")
@@ -54,10 +54,19 @@ pub fn resolve_request_config(
         || mapped_model.contains("claude-opus")
         || mapped_model.contains("claude-4");
 
+    // Heuristic: treat OpenAI-style models as "auto-grounding eligible" (Claude-style should remain opt-in).
+    let original_lower = original_model.to_lowercase();
+    let is_openai_like = original_lower.starts_with("gpt-")
+        || original_lower.starts_with("o1")
+        || original_lower.starts_with("o3");
+
     // Determine if we should enable networking
-    // [FIX] 禁用基于模型的自动联网逻辑，防止图像请求被联网搜索结果覆盖。
-    // 仅在用户显式请求联网时启用：1) -online 后缀 2) 携带联网工具定义
-    let enable_networking = is_online_suffix || has_networking_tool;
+    // Enable networking when:
+    // 1) Explicit intent: -online suffix, or explicit networking tools
+    // 2) Auto-grounding for OpenAI-like models on high-quality mapped models (unless local tools exist)
+    let enable_networking = is_online_suffix
+        || has_networking_tool
+        || (is_openai_like && is_high_quality_model && !has_non_networking);
 
     // The final model to send upstream should be the MAPPED model, 
     // but if searching, we MUST ensure the model name is one the backend associates with search.

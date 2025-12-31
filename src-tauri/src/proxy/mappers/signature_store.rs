@@ -210,48 +210,48 @@ mod tests {
 
     #[test]
     fn test_signature_storage_scoped_by_session() {
-        session_store().clear();
-        clear_thought_signature_for_session("s1");
-        clear_thought_signature_for_session("s2");
+        let s1 = "test_signature_storage_scoped_by_session:s1";
+        let s2 = "test_signature_storage_scoped_by_session:s2";
+        clear_thought_signature_for_session(s1);
+        clear_thought_signature_for_session(s2);
 
-        store_thought_signature_for_session("s1", "sig_session_1");
-        store_thought_signature_for_session("s2", "sig_session_2");
+        store_thought_signature_for_session(s1, "sig_session_1");
+        store_thought_signature_for_session(s2, "sig_session_2");
 
         assert_eq!(
-            get_thought_signature_for_session("s1"),
+            get_thought_signature_for_session(s1),
             Some("sig_session_1".to_string())
         );
         assert_eq!(
-            get_thought_signature_for_session("s2"),
+            get_thought_signature_for_session(s2),
             Some("sig_session_2".to_string())
         );
 
         // Shorter signature should not overwrite within the same session.
-        store_thought_signature_for_session("s1", "x");
+        store_thought_signature_for_session(s1, "x");
         assert_eq!(
-            get_thought_signature_for_session("s1"),
+            get_thought_signature_for_session(s1),
             Some("sig_session_1".to_string())
         );
     }
 
     #[test]
     fn test_signature_session_ttl_cleanup() {
-        session_store().clear();
         let now = Instant::now();
+        let key = "test_signature_session_ttl_cleanup:expired_session";
         session_store().insert(
-            "expired_session".to_string(),
+            key.to_string(),
             ThoughtSigEntry {
                 sig: "expired_sig".to_string(),
                 updated_at: now - THOUGHT_SIG_TTL - Duration::from_secs(1),
             },
         );
 
-        assert!(get_thought_signature_for_session("expired_session").is_none());
+        assert!(get_thought_signature_for_session(key).is_none());
     }
 
     #[test]
     fn test_tool_signature_no_op_without_session_or_tool_id() {
-        tool_store().clear();
         store_thought_signature_for_tool("", "t1", "sig");
         store_thought_signature_for_tool("s1", "", "sig");
         assert!(get_thought_signature_for_tool("", "t1").is_none());
@@ -260,48 +260,51 @@ mod tests {
 
     #[test]
     fn test_tool_signature_scoped_by_session_and_tool_id() {
-        tool_store().clear();
-        store_thought_signature_for_tool("s1", "t1", "sig1");
-        store_thought_signature_for_tool("s1", "t2", "sig2");
-        store_thought_signature_for_tool("s2", "t1", "sig3");
+        let s1 = "test_tool_signature_scoped_by_session_and_tool_id:s1";
+        let s2 = "test_tool_signature_scoped_by_session_and_tool_id:s2";
+        store_thought_signature_for_tool(s1, "t1", "sig1");
+        store_thought_signature_for_tool(s1, "t2", "sig2");
+        store_thought_signature_for_tool(s2, "t1", "sig3");
 
         assert_eq!(
-            get_thought_signature_for_tool("s1", "t1"),
+            get_thought_signature_for_tool(s1, "t1"),
             Some("sig1".to_string())
         );
         assert_eq!(
-            get_thought_signature_for_tool("s1", "t2"),
+            get_thought_signature_for_tool(s1, "t2"),
             Some("sig2".to_string())
         );
         assert_eq!(
-            get_thought_signature_for_tool("s2", "t1"),
+            get_thought_signature_for_tool(s2, "t1"),
             Some("sig3".to_string())
         );
     }
 
     #[test]
     fn test_tool_signature_prefers_longer_value() {
-        tool_store().clear();
-        store_thought_signature_for_tool("s1", "t1", "long_signature");
-        store_thought_signature_for_tool("s1", "t1", "x");
+        let s1 = "test_tool_signature_prefers_longer_value:s1";
+        store_thought_signature_for_tool(s1, "t1", "long_signature");
+        store_thought_signature_for_tool(s1, "t1", "x");
         assert_eq!(
-            get_thought_signature_for_tool("s1", "t1"),
+            get_thought_signature_for_tool(s1, "t1"),
             Some("long_signature".to_string())
         );
     }
 
     #[test]
     fn test_tool_signature_ttl_cleanup() {
-        tool_store().clear();
         let now = Instant::now();
+        let sid = "test_tool_signature_ttl_cleanup:s1";
+        let tid = "t1";
+        let key = format!("{}:{}", sid, tid);
         tool_store().insert(
-            "s1:t1".to_string(),
+            key,
             ThoughtSigEntry {
                 sig: "expired_sig".to_string(),
                 updated_at: now - THOUGHT_SIG_TTL - Duration::from_secs(1),
             },
         );
 
-        assert!(get_thought_signature_for_tool("s1", "t1").is_none());
+        assert!(get_thought_signature_for_tool(sid, tid).is_none());
     }
 }
