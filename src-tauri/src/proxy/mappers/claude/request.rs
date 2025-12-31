@@ -6,6 +6,62 @@ use crate::proxy::mappers::signature_store::get_thought_signature;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+const SESSION_ID_MAX_BYTES: usize = 16 * 1024; // Bound hashing work for very large prompts.
+
+fn extract_first_user_text(messages: &[Message]) -> Option<String> {
+    for msg in messages {
+        if msg.role != "user" {
+            continue;
+        }
+
+        let text = match &msg.content {
+            MessageContent::String(s) => s.clone(),
+            MessageContent::Array(blocks) => blocks
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    None
+}
+
+fn fnv1a64(data: &[u8], seed: u64) -> u64 {
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
+    let mut hash = seed;
+    for b in data {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
+fn derive_session_id_from_messages(messages: &[Message]) -> Option<String> {
+    let text = extract_first_user_text(messages)?;
+    let bytes = text.as_bytes();
+    let slice = if bytes.len() > SESSION_ID_MAX_BYTES {
+        &bytes[..SESSION_ID_MAX_BYTES]
+    } else {
+        bytes
+    };
+
+    // Stable 128-bit-ish id rendered as 32 hex chars.
+    const OFFSET1: u64 = 0xcbf2_9ce4_8422_2325;
+    const OFFSET2: u64 = 0xcbf2_9ce4_8422_2325 ^ 0x9e37_79b9_7f4a_7c15;
+    let h1 = fnv1a64(slice, OFFSET1);
+    let h2 = fnv1a64(slice, OFFSET2);
+    Some(format!("{:016x}{:016x}", h1, h2))
+}
+
 /// 转换 Claude 请求为 Gemini v1internal 格式
 pub fn transform_claude_request_in(
     claude_req: &ClaudeRequest,
@@ -151,11 +207,18 @@ pub fn transform_claude_request_in(
         "requestType": config.request_type,
     });
 
-    // 如果提供了 metadata.user_id，则复用为 sessionId
-    if let Some(metadata) = &claude_req.metadata {
-        if let Some(user_id) = &metadata.user_id {
-            body["request"]["sessionId"] = json!(user_id);
-        }
+    // Prefer explicit metadata.user_id (if provided), otherwise derive a stable sessionId
+    // from the first user message to enable upstream prompt caching across turns.
+    let session_id = claude_req
+        .metadata
+        .as_ref()
+        .and_then(|m| m.user_id.as_ref())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| derive_session_id_from_messages(&claude_req.messages));
+
+    if let Some(sid) = session_id {
+        body["request"]["sessionId"] = json!(sid);
     }
 
 
@@ -575,6 +638,96 @@ mod tests {
         let body = result.unwrap();
         assert_eq!(body["project"], "test-project");
         assert!(body["requestId"].as_str().unwrap().starts_with("agent-"));
+        // Session id should be derived from first user message by default.
+        let sid = body["request"]["sessionId"].as_str().unwrap();
+        assert_eq!(sid.len(), 32);
+    }
+
+    #[test]
+    fn test_session_id_stable_for_same_first_user_message() {
+        let req1 = ClaudeRequest {
+            model: "claude-sonnet-4-5".to_string(),
+            messages: vec![
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::String("Hello".to_string()),
+                },
+                Message {
+                    role: "assistant".to_string(),
+                    content: MessageContent::String("Hi".to_string()),
+                },
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::String("Second turn".to_string()),
+                },
+            ],
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+        };
+
+        let req2 = ClaudeRequest {
+            model: "claude-sonnet-4-5".to_string(),
+            messages: vec![
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::String("Hello".to_string()),
+                },
+                Message {
+                    role: "assistant".to_string(),
+                    content: MessageContent::String("Different assistant text".to_string()),
+                },
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::String("Different second turn".to_string()),
+                },
+            ],
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+        };
+
+        let b1 = transform_claude_request_in(&req1, "test-project").unwrap();
+        let b2 = transform_claude_request_in(&req2, "test-project").unwrap();
+
+        assert_eq!(b1["request"]["sessionId"], b2["request"]["sessionId"]);
+    }
+
+    #[test]
+    fn test_session_id_uses_metadata_user_id_if_present() {
+        let req = ClaudeRequest {
+            model: "claude-sonnet-4-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Hello".to_string()),
+            }],
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: Some(Metadata {
+                user_id: Some("my-user-id".to_string()),
+            }),
+        };
+
+        let body = transform_claude_request_in(&req, "test-project").unwrap();
+        assert_eq!(body["request"]["sessionId"], "my-user-id");
     }
 
     #[test]
