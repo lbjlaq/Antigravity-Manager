@@ -25,17 +25,16 @@ Key properties:
 Routing rule:
 - If `proxy.zai.mcp.enabled=false`, all `/mcp/*` routes return 404 (even if individual MCP toggles are on).
 
-### 1) Web Search (built-in server)
+### 1) Web Search (remote reverse-proxy)
 Local endpoint:
 - `/mcp/web_search_prime/mcp`
 
-Upstream API (Tools API):
-- `POST https://api.z.ai/api/coding/paas/v4/web_search` (preferred for Coding Plan keys)
-- `POST https://api.z.ai/api/paas/v4/web_search` (fallback)
+Upstream remote MCP (Streamable HTTP):
+- `https://api.z.ai/api/mcp/web_search_prime/mcp`
 
 Behavior:
-- This is a local MCP server hosted by the proxy.
-- Implements the `webSearchPrime` tool backed by the z.ai Web Search Tools API.
+- This endpoint is a Streamable HTTP reverse-proxy to the upstream z.ai MCP server.
+- The proxy injects upstream auth using the stored z.ai key and streams the upstream response back as-is.
 - Session is required:
   - Call `initialize` first.
   - Read the `mcp-session-id` response header.
@@ -43,15 +42,13 @@ Behavior:
 
 Implementation:
 - Handler: [`src-tauri/src/proxy/handlers/mcp.rs`](../../src-tauri/src/proxy/handlers/mcp.rs) (`handle_web_search_prime`)
-- Tool execution: [`src-tauri/src/proxy/zai_web_tools.rs`](../../src-tauri/src/proxy/zai_web_tools.rs) (`call_web_search_prime`)
 
-### 2) Web Reader (built-in server)
+### 2) Web Reader (remote reverse-proxy)
 Local endpoint:
 - `/mcp/web_reader/mcp`
 
-Upstream API (Tools API):
-- `POST https://api.z.ai/api/coding/paas/v4/reader` (preferred for Coding Plan keys)
-- `POST https://api.z.ai/api/paas/v4/reader` (fallback)
+Upstream remote MCP (Streamable HTTP):
+- `https://api.z.ai/api/mcp/web_reader/mcp`
 
 Optional URL normalization:
 - Config: `proxy.zai.mcp.web_reader_url_normalization`
@@ -59,18 +56,17 @@ Optional URL normalization:
   - `strip_tracking_query`: removes common tracking params (e.g. `utm_*`, `hsa_*`, `gclid`, `fbclid`, `gbraid`, `wbraid`, `msclkid`)
   - `strip_query`: removes the entire query string (`?…`)
 Behavior:
-- This is a local MCP server hosted by the proxy.
-- Implements the `webReader` tool backed by the z.ai Web Reader Tools API.
+- This endpoint is a Streamable HTTP reverse-proxy to the upstream z.ai MCP server.
+- The upstream Web Reader MCP server is strict about URL formats; normalization can improve compatibility for URLs with long tracking query strings.
 - Session is required:
   - Call `initialize` first.
   - Read the `mcp-session-id` response header.
   - Include `mcp-session-id` in subsequent requests (e.g. `tools/list`, `tools/call`).
 - URL normalization applies only to JSON-RPC `tools/call` where `params.name == "webReader"` and `params.arguments.url` is an `http(s)` URL.
-- Intended to improve compatibility with URLs that include long tracking query strings.
 
 Implementation:
 - Handler: [`src-tauri/src/proxy/handlers/mcp.rs`](../../src-tauri/src/proxy/handlers/mcp.rs) (`handle_web_reader`)
-- Tool execution: [`src-tauri/src/proxy/zai_web_tools.rs`](../../src-tauri/src/proxy/zai_web_tools.rs) (`call_web_reader`)
+- URL normalization helper: [`src-tauri/src/proxy/zai_web_tools.rs`](../../src-tauri/src/proxy/zai_web_tools.rs) (`normalize_web_reader_url`)
 
 ### 3) zread (remote reverse-proxy)
 Local endpoint:
@@ -111,7 +107,7 @@ Implementation:
 - Local proxy authorization (if enabled) applies to `/mcp/*` like any other proxy route:
   - Middleware: [`src-tauri/src/proxy/middleware/auth.rs`](../../src-tauri/src/proxy/middleware/auth.rs)
 - z.ai upstream authorization is always injected by the proxy.
-- Optional: MCP endpoints can use a separate key via `proxy.zai.mcp.api_key_override` (when set, it overrides `proxy.zai.api_key` for MCP upstream calls; Web Search/Web Reader tools API + zread remote MCP).
+- Optional: MCP endpoints can use a separate key via `proxy.zai.mcp.api_key_override` (when set, it overrides `proxy.zai.api_key` for all remote MCP upstream calls: Web Search, Web Reader, zread).
 - MCP clients should only authenticate to the local proxy (if proxy auth is enabled); they should not embed any z.ai key.
 
 ## Streaming / content-type specifics

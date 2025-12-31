@@ -104,8 +104,9 @@ Handlers: `src-tauri/src/proxy/handlers/mcp.rs`
 Routes: `src-tauri/src/proxy/server.rs`
 
 Local endpoints:
-- `/mcp/web_search_prime/mcp` → local MCP server → z.ai Tools API (`/api/coding/paas/v4/web_search`, fallback to `/api/paas/v4/web_search`)
-- `/mcp/web_reader/mcp` → local MCP server → z.ai Tools API (`/api/coding/paas/v4/reader`, fallback to `/api/paas/v4/reader`)
+- `/mcp/web_search_prime/mcp` → `https://api.z.ai/api/mcp/web_search_prime/mcp` (remote MCP reverse-proxy)
+- `/mcp/web_reader/mcp` → `https://api.z.ai/api/mcp/web_reader/mcp` (remote MCP reverse-proxy)
+  - On `tools/call` for `webReader`, the proxy can normalize `arguments.url` (per `proxy.zai.mcp.web_reader_url_normalization`) to improve upstream compatibility with tracking-heavy query strings.
 - `/mcp/zread/mcp` → `https://api.z.ai/api/mcp/zread/mcp` (remote MCP reverse-proxy)
 
 Behavior:
@@ -114,7 +115,7 @@ Behavior:
   - If per-server flag is false -> returns 404 for that endpoint.
 - No z.ai key is required from MCP clients:
   - the proxy injects the stored `proxy.zai.api_key` when calling z.ai.
-- Remote MCP routes are streamed back to the client; local MCP routes return JSON-RPC responses directly.
+- Remote MCP routes are streamed back to the client (typically `text/event-stream`), and the proxy forwards `mcp-session-id` response headers so clients can continue the session.
 
 Note:
 - These endpoints are still subject to the proxy’s auth middleware depending on `proxy.auth_mode`.

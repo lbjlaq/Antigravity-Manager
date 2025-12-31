@@ -44,12 +44,12 @@ fn copy_passthrough_headers(incoming: &HeaderMap) -> HeaderMap {
     out
 }
 
-async fn forward_mcp(
+async fn forward_mcp_collected(
     state: &AppState,
     incoming_headers: HeaderMap,
     method: Method,
     upstream_url: &str,
-    body: Body,
+    collected: Bytes,
 ) -> Response {
     let zai = state.zai.read().await.clone();
     if !zai.enabled || zai.api_key.trim().is_empty() {
@@ -65,20 +65,6 @@ async fn forward_mcp(
         Ok(c) => c,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     };
-
-    let collected = match to_bytes(body, 100 * 1024 * 1024).await {
-        Ok(b) => b,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                format!("Failed to read request body: {}", e),
-            )
-                .into_response();
-        }
-    };
-
-    // Optional normalization for Web Reader tool calls to improve upstream compatibility.
-    // (Used only for remote MCP reverse-proxy; local webReader implementation does its own normalization.)
 
     let mut headers = copy_passthrough_headers(&incoming_headers);
     // z.ai MCP server requires Accept to include both application/json and text/event-stream.
@@ -117,6 +103,11 @@ async fn forward_mcp(
     if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
         out = out.header(header::CONTENT_TYPE, ct.clone());
     }
+    // StreamableHttp MCP uses `mcp-session-id` to bind subsequent JSON-RPC calls to a session.
+    // Without forwarding it, clients cannot proceed past `initialize`.
+    if let Some(session_id) = resp.headers().get("mcp-session-id") {
+        out = out.header("mcp-session-id", session_id.clone());
+    }
 
     let stream = resp.bytes_stream().map(|chunk| match chunk {
         Ok(b) => Ok::<Bytes, std::io::Error>(b),
@@ -130,6 +121,26 @@ async fn forward_mcp(
         )
             .into_response()
     })
+}
+
+async fn forward_mcp(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    method: Method,
+    upstream_url: &str,
+    body: Body,
+) -> Response {
+    let collected = match to_bytes(body, 100 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to read request body: {}", e),
+            )
+                .into_response();
+        }
+    };
+    forward_mcp_collected(state, incoming_headers, method, upstream_url, collected).await
 }
 
 pub async fn handle_web_search_prime(
@@ -148,9 +159,16 @@ pub async fn handle_web_search_prime(
     drop(zai);
 
     let mut resp = match method {
-        Method::GET => handle_vision_get(state.clone(), headers).await,
-        Method::DELETE => handle_vision_delete(state.clone(), headers).await,
-        Method::POST => handle_web_search_post(state, headers, body).await,
+        Method::GET | Method::DELETE | Method::POST => {
+            forward_mcp(
+                &state,
+                headers,
+                method,
+                "https://api.z.ai/api/mcp/web_search_prime/mcp",
+                body,
+            )
+            .await
+        }
         _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
     };
     resp.extensions_mut()
@@ -176,9 +194,87 @@ pub async fn handle_web_reader(
     drop(zai);
 
     let mut resp = match method {
-        Method::GET => handle_vision_get(state.clone(), headers).await,
-        Method::DELETE => handle_vision_delete(state.clone(), headers).await,
-        Method::POST => handle_web_reader_post(state, headers, body).await,
+        Method::GET | Method::DELETE => {
+            forward_mcp(
+                &state,
+                headers,
+                method,
+                "https://api.z.ai/api/mcp/web_reader/mcp",
+                body,
+            )
+            .await
+        }
+        Method::POST => {
+            let collected = match to_bytes(body, 100 * 1024 * 1024).await {
+                Ok(b) => b,
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        format!("Failed to read request body: {}", e),
+                    )
+                        .into_response();
+                }
+            };
+
+            let url_normalization = {
+                let zai = state.zai.read().await.clone();
+                zai.mcp.web_reader_url_normalization.clone()
+            };
+
+            let normalized = match serde_json::from_slice::<Value>(&collected) {
+                Ok(mut v) => {
+                    let is_tool_call =
+                        v.get("method").and_then(|m| m.as_str()) == Some("tools/call");
+                    let tool_name = v
+                        .get("params")
+                        .and_then(|p| p.get("name"))
+                        .and_then(|n| n.as_str());
+                    let maybe_url = v
+                        .get("params")
+                        .and_then(|p| p.get("arguments"))
+                        .and_then(|a| a.get("url"))
+                        .and_then(|u| u.as_str());
+
+                    if is_tool_call
+                        && tool_name == Some("webReader")
+                        && maybe_url.is_some()
+                        && !matches!(
+                            url_normalization,
+                            crate::proxy::config::ZaiWebReaderUrlNormalizationMode::Off
+                        )
+                    {
+                        let url = maybe_url.unwrap_or_default();
+                        if let Some(new_url) = crate::proxy::zai_web_tools::normalize_web_reader_url(
+                            url,
+                            url_normalization,
+                        ) {
+                            if let Some(args) = v
+                                .get_mut("params")
+                                .and_then(|p| p.get_mut("arguments"))
+                                .and_then(|a| a.as_object_mut())
+                            {
+                                args.insert("url".to_string(), Value::String(new_url));
+                            }
+                        }
+                    }
+
+                    match serde_json::to_vec(&v) {
+                        Ok(bytes) => Bytes::from(bytes),
+                        Err(_) => collected,
+                    }
+                }
+                Err(_) => collected,
+            };
+
+            forward_mcp_collected(
+                &state,
+                headers,
+                Method::POST,
+                "https://api.z.ai/api/mcp/web_reader/mcp",
+                normalized,
+            )
+            .await
+        }
         _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
     };
     resp.extensions_mut()

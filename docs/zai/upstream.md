@@ -15,18 +15,10 @@ Upstream remote MCP (reference):
 - Streamable HTTP endpoint: `https://api.z.ai/api/mcp/web_search_prime/mcp`
 - SSE endpoint: `https://api.z.ai/api/mcp/web_search_prime/sse?Authorization=your_api_key`
 
-Upstream Tools API (used by this project via a local MCP server):
-- `POST https://api.z.ai/api/coding/paas/v4/web_search` (preferred for Coding Plan keys)
-- `POST https://api.z.ai/api/paas/v4/web_search` (fallback)
-
 ## Reader MCP (web_reader)
 Upstream remote MCP (reference):
 - Streamable HTTP endpoint: `https://api.z.ai/api/mcp/web_reader/mcp`
 - SSE endpoint: `https://api.z.ai/api/mcp/web_reader/sse?Authorization=your_api_key`
-
-Upstream Tools API (used by this project via a local MCP server):
-- `POST https://api.z.ai/api/coding/paas/v4/reader` (preferred for Coding Plan keys)
-- `POST https://api.z.ai/api/paas/v4/reader` (fallback)
 
 ## zread MCP
 - Streamable HTTP endpoint: `https://api.z.ai/api/mcp/zread/mcp`

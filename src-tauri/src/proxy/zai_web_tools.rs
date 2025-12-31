@@ -37,7 +37,7 @@ fn should_strip_tracking_param(key: &str) -> bool {
         )
 }
 
-fn normalize_web_reader_url(
+pub(crate) fn normalize_web_reader_url(
     url_str: &str,
     mode: ZaiWebReaderUrlNormalizationMode,
 ) -> Option<String> {
