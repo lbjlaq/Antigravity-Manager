@@ -2,7 +2,7 @@
 // 对应 transformClaudeRequestIn
 
 use super::models::*;
-use crate::proxy::mappers::signature_store::get_thought_signature;
+use crate::proxy::mappers::signature_store::get_thought_signature_for_session;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -93,6 +93,8 @@ pub fn transform_claude_request_in(
     // 用于存储 tool_use id -> name 映射
     let mut tool_id_to_name: HashMap<String, String> = HashMap::new();
 
+    let session_id = derive_session_id_for_request(claude_req).unwrap_or_else(|| "global".to_string());
+
     // 1. System Instruction (注入动态身份防护)
     let system_instruction = build_system_instruction(&claude_req.system, &claude_req.model);
 
@@ -136,6 +138,7 @@ pub fn transform_claude_request_in(
     let contents = build_contents(
         &claude_req.messages,
         &mut tool_id_to_name,
+        &session_id,
         is_thinking_enabled,
         allow_dummy_thought,
     )?;
@@ -276,6 +279,7 @@ fn build_system_instruction(system: &Option<SystemPrompt>, model_name: &str) -> 
 fn build_contents(
     messages: &[Message],
     tool_id_to_name: &mut HashMap<String, String>,
+    session_id: &str,
     is_thinking_enabled: bool,
     allow_dummy_thought: bool,
 ) -> Result<Value, String> {
@@ -352,12 +356,15 @@ fn build_contents(
                                 .or(last_thought_signature.as_ref())
                                 .cloned()
                                 .or_else(|| {
-                                    let global_sig = get_thought_signature();
-                                    if global_sig.is_some() {
-                                        tracing::info!("[Claude-Request] Using global thought_signature fallback (length: {})", 
-                                            global_sig.as_ref().unwrap().len());
+                                    let scoped_sig = get_thought_signature_for_session(session_id);
+                                    if scoped_sig.is_some() {
+                                        tracing::info!(
+                                            "[Claude-Request] Using session thought_signature fallback (session: '{}', length: {})",
+                                            session_id,
+                                            scoped_sig.as_ref().unwrap().len()
+                                        );
                                     }
-                                    global_sig
+                                    scoped_sig
                                 });
 
                             if let Some(sig) = final_sig {

@@ -3,7 +3,7 @@
 
 use super::models::*;
 use super::utils::to_claude_usage;
-use crate::proxy::mappers::signature_store::store_thought_signature;
+use crate::proxy::mappers::signature_store::store_thought_signature_for_session;
 use bytes::Bytes;
 use serde_json::json;
 
@@ -345,7 +345,7 @@ impl<'a> PartProcessor<'a> {
     }
 
     /// 处理单个 part
-    pub fn process(&mut self, part: &GeminiPart) -> Vec<Bytes> {
+    pub fn process(&mut self, part: &GeminiPart, session_id: Option<&str>) -> Vec<Bytes> {
         let mut chunks = Vec::new();
         let signature = part.thought_signature.clone();
 
@@ -375,7 +375,7 @@ impl<'a> PartProcessor<'a> {
                 }
             }
 
-            chunks.extend(self.process_function_call(fc, signature));
+            chunks.extend(self.process_function_call(fc, signature, session_id));
             return chunks;
         }
 
@@ -538,6 +538,7 @@ impl<'a> PartProcessor<'a> {
         &mut self,
         fc: &FunctionCall,
         signature: Option<String>,
+        session_id: Option<&str>,
     ) -> Vec<Bytes> {
         let mut chunks = Vec::new();
 
@@ -562,7 +563,7 @@ impl<'a> PartProcessor<'a> {
         if let Some(ref sig) = signature {
             tool_use["signature"] = json!(sig);
             // Store signature to global storage for replay in subsequent requests
-            store_thought_signature(sig);
+            store_thought_signature_for_session(session_id.unwrap_or("global"), sig);
             tracing::info!(
                 "[Claude-SSE] Captured thought_signature for function call (length: {})",
                 sig.len()
@@ -635,7 +636,7 @@ mod tests {
             function_response: None,
         };
 
-        let chunks = processor.process(&part);
+        let chunks = processor.process(&part, None);
         let output = chunks
             .iter()
             .map(|b| String::from_utf8(b.to_vec()).unwrap())

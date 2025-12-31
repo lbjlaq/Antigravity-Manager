@@ -1,9 +1,14 @@
 // OpenAI → Gemini 请求转换
 use super::models::*;
 use serde_json::{json, Value};
-use super::streaming::get_thought_signature;
+use crate::proxy::mappers::signature_store::get_thought_signature_for_session;
 
-pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mapped_model: &str) -> Value {
+pub fn transform_openai_request(
+    request: &OpenAIRequest,
+    project_id: &str,
+    mapped_model: &str,
+    session_id: Option<&str>,
+) -> Value {
     // 将 OpenAI 工具转为 Value 数组以便探测
     let tools_val = request.tools.as_ref().map(|list| {
         list.iter().map(|v| v.clone()).collect::<Vec<_>>()
@@ -49,8 +54,13 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
         }
     }
 
-    // 从全局存储获取 thoughtSignature (PR #93 支持)
-    let global_thought_sig = get_thought_signature();
+    let session_key = session_id
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("global");
+
+    // 从 session 存储获取 thoughtSignature (避免跨会话串扰)
+    let global_thought_sig = get_thought_signature_for_session(session_key);
     if global_thought_sig.is_some() {
         tracing::info!("从全局存储获取到 thoughtSignature (长度: {})", global_thought_sig.as_ref().unwrap().len());
     }
@@ -408,7 +418,7 @@ mod tests {
             prompt: None,
         };
 
-        let result = transform_openai_request(&req, "test-v", "gemini-1.5-flash");
+        let result = transform_openai_request(&req, "test-v", "gemini-1.5-flash", None);
         let parts = &result["request"]["contents"][0]["parts"];
         assert_eq!(parts.as_array().unwrap().len(), 2);
         assert_eq!(parts[0]["text"].as_str().unwrap(), "What is in this image?");

@@ -1,7 +1,7 @@
 use super::models::*;
 use serde_json::Value;
 
-pub fn transform_openai_response(gemini_response: &Value) -> OpenAIResponse {
+pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&str>) -> OpenAIResponse {
     // 解包 response 字段
     let raw = gemini_response.get("response").unwrap_or(gemini_response);
 
@@ -33,7 +33,10 @@ pub fn transform_openai_response(gemini_response: &Value) -> OpenAIResponse {
                 .or(part.get("thought_signature"))
                 .and_then(|s| s.as_str())
             {
-                super::streaming::store_thought_signature(sig);
+                crate::proxy::mappers::signature_store::store_thought_signature_for_session(
+                    session_id.unwrap_or("global"),
+                    sig,
+                );
             }
 
             // 文本部分
@@ -188,7 +191,7 @@ mod tests {
             "responseId": "resp_123"
         });
 
-        let result = transform_openai_response(&gemini_resp);
+        let result = transform_openai_response(&gemini_resp, None);
         assert_eq!(result.object, "chat.completion");
 
         let content = match result.choices[0].message.content.as_ref().unwrap() {

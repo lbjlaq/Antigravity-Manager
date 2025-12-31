@@ -356,7 +356,8 @@ pub async fn handle_messages(
             if request.stream {
                 let stream = response.bytes_stream();
                 let gemini_stream = Box::pin(stream);
-                let claude_stream = create_claude_sse_stream(gemini_stream, trace_id);
+                let claude_stream =
+                    create_claude_sse_stream(gemini_stream, trace_id, derived_session_id.clone());
 
                 // 转换为 Bytes stream
                 let sse_stream = claude_stream.map(|result| -> Result<Bytes, std::io::Error> {

@@ -21,6 +21,7 @@ use std::pin::Pin;
 pub fn create_claude_sse_stream(
     mut gemini_stream: Pin<Box<dyn Stream<Item = Result<Bytes, reqwest::Error>> + Send>>,
     trace_id: String,
+    session_id: Option<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     use async_stream::stream;
     use bytes::BytesMut;
@@ -29,6 +30,7 @@ pub fn create_claude_sse_stream(
     Box::pin(stream! {
         let mut state = StreamingState::new();
         let mut buffer = BytesMut::new();
+        let session_id = session_id;
 
         while let Some(chunk_result) = gemini_stream.next().await {
             match chunk_result {
@@ -42,7 +44,7 @@ pub fn create_claude_sse_stream(
                             let line = line_str.trim();
                             if line.is_empty() { continue; }
 
-                            if let Some(sse_chunks) = process_sse_line(line, &mut state, &trace_id) {
+                            if let Some(sse_chunks) = process_sse_line(line, &mut state, &trace_id, session_id.as_deref()) {
                                 for sse_chunk in sse_chunks {
                                     yield Ok(sse_chunk);
                                 }
@@ -65,7 +67,12 @@ pub fn create_claude_sse_stream(
 }
 
 /// 处理单行 SSE 数据
-fn process_sse_line(line: &str, state: &mut StreamingState, trace_id: &str) -> Option<Vec<Bytes>> {
+fn process_sse_line(
+    line: &str,
+    state: &mut StreamingState,
+    trace_id: &str,
+    session_id: Option<&str>,
+) -> Option<Vec<Bytes>> {
     if !line.starts_with("data: ") {
         return None;
     }
@@ -131,7 +138,7 @@ fn process_sse_line(line: &str, state: &mut StreamingState, trace_id: &str) -> O
         for part_value in parts {
             if let Ok(part) = serde_json::from_value::<GeminiPart>(part_value.clone()) {
                 let mut processor = PartProcessor::new(state);
-                chunks.extend(processor.process(&part));
+                chunks.extend(processor.process(&part, session_id));
             }
         }
     }
@@ -320,7 +327,7 @@ mod tests {
     #[test]
     fn test_process_sse_line_done() {
         let mut state = StreamingState::new();
-        let result = process_sse_line("data: [DONE]", &mut state, "test_id");
+        let result = process_sse_line("data: [DONE]", &mut state, "test_id", None);
         assert!(result.is_some());
         let chunks = result.unwrap();
         assert!(!chunks.is_empty());
@@ -338,7 +345,7 @@ mod tests {
 
         let test_data = r#"data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{},"modelVersion":"test","responseId":"123"}"#;
         
-        let result = process_sse_line(test_data, &mut state, "test_id");
+        let result = process_sse_line(test_data, &mut state, "test_id", None);
         assert!(result.is_some());
 
         let chunks = result.unwrap();

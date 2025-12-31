@@ -167,7 +167,8 @@ pub async fn handle_chat_completions(
         );
 
         // 4. 转换请求
-        let mut gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
+        let mut gemini_body =
+            transform_openai_request(&openai_req, &project_id, &mapped_model, derived_session_id.as_deref());
         if let Some(sid) = derived_session_id.as_ref() {
             gemini_body["request"]["sessionId"] = json!(sid);
         }
@@ -216,7 +217,11 @@ pub async fn handle_chat_completions(
 
                 let gemini_stream = response.bytes_stream();
                 let openai_stream =
-                    create_openai_sse_stream(Box::pin(gemini_stream), openai_req.model.clone());
+                    create_openai_sse_stream(
+                        Box::pin(gemini_stream),
+                        openai_req.model.clone(),
+                        derived_session_id.clone(),
+                    );
                 let body = Body::from_stream(openai_stream);
 
                 return Ok(Response::builder()
@@ -233,7 +238,7 @@ pub async fn handle_chat_completions(
                 .await
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
-            let openai_response = transform_openai_response(&gemini_resp);
+            let openai_response = transform_openai_response(&gemini_resp, derived_session_id.as_deref());
             return Ok(Json(openai_response).into_response());
         }
 
@@ -641,7 +646,8 @@ pub async fn handle_completions(
             config.request_type
         );
 
-        let mut gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
+        let mut gemini_body =
+            transform_openai_request(&openai_req, &project_id, &mapped_model, derived_session_id.as_deref());
         if let Some(sid) = derived_session_id.as_ref() {
             gemini_body["request"]["sessionId"] = json!(sid);
         }
@@ -682,12 +688,20 @@ pub async fn handle_completions(
                 let body = if is_codex_style {
                     use crate::proxy::mappers::openai::streaming::create_codex_sse_stream;
                     let s =
-                        create_codex_sse_stream(Box::pin(gemini_stream), openai_req.model.clone());
+                        create_codex_sse_stream(
+                            Box::pin(gemini_stream),
+                            openai_req.model.clone(),
+                            derived_session_id.clone(),
+                        );
                     Body::from_stream(s)
                 } else {
                     use crate::proxy::mappers::openai::streaming::create_legacy_sse_stream;
                     let s =
-                        create_legacy_sse_stream(Box::pin(gemini_stream), openai_req.model.clone());
+                        create_legacy_sse_stream(
+                            Box::pin(gemini_stream),
+                            openai_req.model.clone(),
+                            derived_session_id.clone(),
+                        );
                     Body::from_stream(s)
                 };
 
@@ -705,7 +719,7 @@ pub async fn handle_completions(
                 .await
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
-            let chat_resp = transform_openai_response(&gemini_resp);
+            let chat_resp = transform_openai_response(&gemini_resp, derived_session_id.as_deref());
 
             // Map Chat Response -> Legacy Completions Response
             let choices = chat_resp.choices.iter().map(|c| {
