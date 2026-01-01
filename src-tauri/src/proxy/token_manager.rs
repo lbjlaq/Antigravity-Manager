@@ -420,7 +420,26 @@ impl TokenManager {
 
             // 4. 确保有 project_id
             let project_id = if let Some(pid) = &token.project_id {
-                pid.clone()
+                if Self::is_legacy_mock_project_id(pid) {
+                    tracing::warn!(
+                        "账号 {} 存在历史 mock project_id '{}'，将重新获取/回退默认 project_id",
+                        token.email,
+                        pid
+                    );
+                    // Force refetch path below.
+                    if let Some(mut entry) = self.tokens.get_mut(&token.account_id) {
+                        entry.project_id = None;
+                    }
+                    String::new()
+                } else {
+                    pid.clone()
+                }
+            } else {
+                String::new()
+            };
+
+            let project_id = if !project_id.is_empty() {
+                project_id
             } else {
                 tracing::info!("账号 {} 缺少 project_id，尝试获取...", token.email);
                 match crate::proxy::project_resolver::fetch_project_id(&token.access_token).await {
@@ -433,7 +452,10 @@ impl TokenManager {
                     }
                     Err(e) => {
                         tracing::error!("Failed to fetch project_id for {}: {}", token.email, e);
-                        last_error = Some(format!("Failed to fetch project_id for {}: {}", token.email, e));
+                        last_error = Some(format!(
+                            "Failed to fetch project_id for {}: {}",
+                            token.email, e
+                        ));
                         attempted.insert(token.account_id.clone());
 
                         if quota_group != "image_gen" {
@@ -611,6 +633,21 @@ impl TokenManager {
         
         tracing::info!("已保存 project_id 到账号 {}", account_id);
         Ok(())
+    }
+
+    fn is_legacy_mock_project_id(project_id: &str) -> bool {
+        let mut it = project_id.splitn(4, '-');
+        let Some(adj) = it.next() else { return false; };
+        let Some(noun) = it.next() else { return false; };
+        let Some(rest) = it.next() else { return false; };
+        if it.next().is_some() {
+            return false;
+        }
+        if rest.len() != 5 || !rest.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) {
+            return false;
+        }
+        matches!(adj, "useful" | "bright" | "swift" | "calm" | "bold")
+            && matches!(noun, "fuze" | "wave" | "spark" | "flow" | "core")
     }
     
     /// 保存刷新后的 token 到账号文件

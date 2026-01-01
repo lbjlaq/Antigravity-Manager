@@ -795,11 +795,11 @@ fn extract_last_user_message_for_detection(request: &ClaudeRequest) -> Option<St
 /// 根据后台任务类型选择合适的模型
 fn select_background_model(task_type: BackgroundTaskType) -> &'static str {
     match task_type {
-        BackgroundTaskType::TitleGeneration => "gemini-2.0-flash-exp",  // 极简任务
-        BackgroundTaskType::SimpleSummary => "gemini-2.0-flash-exp",    // 简单摘要
-        BackgroundTaskType::SystemMessage => "gemini-2.0-flash-exp",    // 系统消息
-        BackgroundTaskType::PromptSuggestion => "gemini-2.0-flash-exp", // 建议生成
-        BackgroundTaskType::EnvironmentProbe => "gemini-2.0-flash-exp", // 环境探测
+        BackgroundTaskType::TitleGeneration => "gemini-2.5-flash",  // 极简任务
+        BackgroundTaskType::SimpleSummary => "gemini-2.5-flash",    // 简单摘要
+        BackgroundTaskType::SystemMessage => "gemini-2.5-flash",    // 系统消息
+        BackgroundTaskType::PromptSuggestion => "gemini-2.5-flash", // 建议生成
+        BackgroundTaskType::EnvironmentProbe => "gemini-2.5-flash", // 环境探测
         BackgroundTaskType::ContextCompression => "gemini-2.5-flash",   // 复杂压缩
     }
 }

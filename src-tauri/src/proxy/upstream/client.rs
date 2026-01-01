@@ -53,6 +53,7 @@ impl UpstreamClient {
     fn should_try_next_endpoint(status: StatusCode) -> bool {
         status == StatusCode::TOO_MANY_REQUESTS
             || status == StatusCode::REQUEST_TIMEOUT
+            || status == StatusCode::NOT_FOUND
             || status.is_server_error()
     }
 
@@ -87,6 +88,7 @@ impl UpstreamClient {
 
         for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
             let url = Self::build_url(base_url, method, query_string);
+            let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
 
             let response = self
                 .http_client
@@ -99,7 +101,7 @@ impl UpstreamClient {
             match response {
                 Ok(resp) => {
                     let status = resp.status();
-                    if status.is_success() || !Self::should_try_next_endpoint(status) {
+                    if status.is_success() {
                         if idx > 0 {
                             tracing::info!(
                                 "Upstream endpoint fallback succeeded: {} (status={})",
@@ -110,14 +112,18 @@ impl UpstreamClient {
                         return Ok(resp);
                     }
 
-                    tracing::warn!(
-                        "Upstream endpoint returned {} at {} (method={}), trying next if available",
-                        status,
-                        base_url,
-                        method
-                    );
-                    last_err = Some(format!("Upstream {} returned {}", base_url, status));
-                    continue;
+                    if has_next && Self::should_try_next_endpoint(status) {
+                        tracing::warn!(
+                            "Upstream endpoint returned {} at {} (method={}), trying next if available",
+                            status,
+                            base_url,
+                            method
+                        );
+                        last_err = Some(format!("Upstream {} returned {}", base_url, status));
+                        continue;
+                    }
+
+                    return Ok(resp);
                 }
                 Err(e) => {
                     let msg = format!("HTTP request failed at {}: {}", base_url, e);
@@ -257,7 +263,7 @@ mod tests {
         assert!(!UpstreamClient::should_try_next_endpoint(StatusCode::BAD_REQUEST));
         assert!(!UpstreamClient::should_try_next_endpoint(StatusCode::UNAUTHORIZED));
         assert!(!UpstreamClient::should_try_next_endpoint(StatusCode::FORBIDDEN));
-        assert!(!UpstreamClient::should_try_next_endpoint(StatusCode::NOT_FOUND));
+        assert!(UpstreamClient::should_try_next_endpoint(StatusCode::NOT_FOUND));
     }
 
 }
