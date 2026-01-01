@@ -277,7 +277,7 @@
             "btn_regenerate": "重新生成密钥",
             "btn_copy": "复制",
             "btn_copied": "已复制",
-            "warning_key": "注意：请妥善保管您的 API 密钥，不要泄露给他人。",
+            "warning_key": "注意：请妥善保管您的 API 密钥。仅在开启鉴权时才会被要求提供。",
             "auth": {
                 "title": "访问授权",
                 "title_tooltip": "控制代理是否需要鉴权，以及哪些路由需要提供 API 密钥。",
@@ -285,13 +285,21 @@
                 "enabled_tooltip": "快速开关鉴权（通过切换鉴权模式实现）。开启后客户端需在请求头提供 Authorization: Bearer <API_KEY> 或 x-api-key。",
                 "mode": "模式",
                 "mode_tooltip": "选择鉴权覆盖范围：关闭=不鉴权；全局=所有接口都需密钥；除健康检查外=/healthz 不鉴权；自动=本机模式默认关闭，局域网模式默认“除健康检查外”。",
-                "hint": "开启后客户端需通过 Authorization: Bearer ... 传入 API 密钥（如选择“除健康检查外”则 /healthz 免鉴权）。",
+                "hint": "客户端需通过 Authorization: Bearer <API_KEY> 或 x-api-key 传入 API 密钥；具体哪些路由需要鉴权由所选模式决定。",
+                "effective": "实际生效模式：{{mode}}",
                 "modes": {
                     "off": "关闭（开放）",
                     "strict": "全局（严格）",
                     "all_except_health": "全局（除健康检查外）",
                     "auto": "自动（推荐）"
                 }
+            },
+            "access_log": {
+                "title": "请求日志",
+                "title_tooltip": "将请求的 method/path/status 和耗时写入本地日志文件。不会记录 query 参数、请求头或请求体（避免泄露敏感信息）。",
+                "enabled": "已启用",
+                "enabled_tooltip": "开启后，每个请求都会记录 method、path、状态码、耗时，以及尽力提供的上游标记（例如 z.ai）。",
+                "hint": "用于排查客户端/路由问题。日志保存在应用数据目录的 logs/ 下。"
             },
             "zai": {
                 "title": "z.ai（GLM）提供商",
@@ -315,6 +323,7 @@
                     "hint": "可用模型：{{count}}。可从建议中选择，或手动输入自定义模型 ID。",
                     "error": "拉取模型失败：{{error}}",
                     "select_placeholder": "选择模型...",
+                    "custom_option": "自定义模型 ID…",
                     "opus": "Opus 家族 → z.ai 模型",
                     "opus_tooltip": "当请求的 model 包含“opus”（如 claude-opus-*）时默认使用的 z.ai 模型 ID。",
                     "sonnet": "Sonnet 家族 → z.ai 模型",
@@ -336,18 +345,32 @@
                     "pooled": "加入队列（占 1 个槽位）",
                     "fallback": "仅兜底"
                 },
-                "mcp": {
-                    "title": "MCP 服务（通过本地代理）",
-                    "title_tooltip": "在本地代理上暴露可选的 /mcp/* 端点，供 MCP 客户端直连。仅在服务运行、z.ai 配置完成且对应开关开启时可用。",
-                    "enabled": "启用 MCP 反代",
-                    "enabled_tooltip": "MCP 端点总开关；关闭时所有 /mcp/* 路由将返回 404。",
-                    "web_search": "网页搜索",
-                    "web_search_tooltip": "启用后开放 /mcp/web_search_prime/mcp，并转发到 z.ai 的 Web Search MCP 上游。",
-                    "web_reader": "网页阅读",
-                    "web_reader_tooltip": "启用后开放 /mcp/web_reader/mcp，并转发到 z.ai 的 Web Reader MCP 上游。",
-                    "vision": "视觉",
-                    "vision_tooltip": "启用后开放 /mcp/zai-mcp-server/mcp（本地 MCP 服务），提供视觉相关工具能力，并通过 z.ai 执行。",
-                    "local_endpoints": "本地地址（在 MCP 客户端中配置以下 URL）：",
+	                "mcp": {
+	                    "title": "MCP 服务（通过本地代理）",
+	                    "title_tooltip": "在本地代理上暴露可选的 /mcp/* 端点，供 MCP 客户端直连。仅在服务运行、z.ai 配置完成且对应开关开启时可用。",
+	                    "enabled": "启用 MCP 反代",
+	                    "enabled_tooltip": "MCP 端点总开关；关闭时所有 /mcp/* 路由将返回 404。",
+	                    "api_key_override": "MCP API Key 覆盖（可选）",
+	                    "api_key_override_tooltip": "可选的单独 API Key，用于 z.ai MCP 上游调用（网页搜索/网页阅读/zread）。留空则使用主 z.ai API Key。",
+	                    "api_key_override_placeholder": "留空则使用主 z.ai API Key",
+	                    "api_key_override_hint": "当 MCP 端点需要与模型 API 不同的 Key/权限时使用。",
+	                    "web_search": "网页搜索",
+	                    "web_search_tooltip": "启用后开放 /mcp/web_search_prime/mcp（本地 MCP 服务），并通过 z.ai Web Search Tools API 执行。",
+	                    "web_reader": "网页阅读",
+	                    "web_reader_tooltip": "启用后开放 /mcp/web_reader/mcp（本地 MCP 服务），并通过 z.ai Web Reader Tools API 执行。",
+	                    "web_reader_url_normalization": "网页阅读 URL 规范化",
+	                    "web_reader_url_normalization_tooltip": "可选地在调用上游 Reader API 前，对 webReader 工具调用的 URL 做重写/清理。适用于某些站点因追踪参数过长导致解析失败的情况。",
+	                    "web_reader_url_normalization_hint": "仅对 tools/call 且工具名为 webReader 的请求生效；其他 MCP 工具与端点不做修改。",
+	                    "web_reader_url_normalization_options": {
+	                        "off": "关闭（不修改）",
+	                        "strip_tracking_query": "移除常见追踪参数（utm_*、hsa_*、gclid、fbclid、gbraid、wbraid、msclkid）",
+	                        "strip_query": "移除整个 query（?…）"
+	                    },
+	                    "zread": "zread",
+	                    "zread_tooltip": "启用后开放 /mcp/zread/mcp，并转发到 z.ai 的 zread MCP 上游（偏文档/仓库阅读工具，不是网页阅读器）。",
+	                    "vision": "视觉",
+	                    "vision_tooltip": "启用后开放 /mcp/zai-mcp-server/mcp（本地 MCP 服务），提供视觉相关工具能力，并通过 z.ai 执行。",
+	                    "local_endpoints": "本地地址（在 MCP 客户端中配置以下 URL）：",
                     "local_endpoints_tooltip": "把这些 URL 填到你的 MCP 客户端里即可。它们使用同一个代理端口，并遵循当前的鉴权策略。"
                 }
             },

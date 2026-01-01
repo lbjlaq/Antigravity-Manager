@@ -1,6 +1,7 @@
 use crate::models::{Account, TokenData, QuotaData, AppConfig};
 use crate::modules;
 use tauri::{Emitter, Manager};
+use regex::Regex;
 
 // 导出 proxy 命令
 pub mod proxy;
@@ -204,6 +205,43 @@ pub async fn refresh_all_quotas() -> Result<RefreshStats, String> {
     Ok(RefreshStats { total: success + failed, success, failed, details })
 }
 
+fn redact_secrets(input: &str) -> String {
+    // Best-effort: do not allow obvious API keys to end up in persistent logs.
+    let mut out = input.to_string();
+
+    // Authorization: Bearer <token>
+    let bearer_re = Regex::new(r"(?i)\bBearer\s+([A-Za-z0-9._\\-]{10,})").unwrap();
+    out = bearer_re.replace_all(&out, "Bearer ***").to_string();
+
+    // sk-... style tokens
+    let sk_re = Regex::new(r"\bsk-[A-Za-z0-9]{10,}\b").unwrap();
+    out = sk_re.replace_all(&out, "sk-***").to_string();
+
+    out
+}
+
+/// Frontend -> backend logging bridge.
+/// Useful for diagnosing UI issues (e.g. white screen) where errors happen inside the webview.
+#[tauri::command]
+pub async fn frontend_log(level: String, message: String, stack: Option<String>) -> Result<(), String> {
+    let msg = redact_secrets(&message);
+    let stack = stack.map(|s| redact_secrets(&s));
+
+    let line = match stack {
+        Some(s) if !s.trim().is_empty() => format!("[frontend] {} | {}", msg, s),
+        _ => format!("[frontend] {}", msg),
+    };
+
+    match level.to_ascii_lowercase().as_str() {
+        "error" => modules::logger::log_error(&line),
+        "warn" | "warning" => modules::logger::log_warn(&line),
+        "info" => modules::logger::log_info(&line),
+        _ => modules::logger::log_info(&line),
+    }
+
+    Ok(())
+}
+
 /// 加载配置
 #[tauri::command]
 pub async fn load_config() -> Result<AppConfig, String> {
@@ -233,6 +271,8 @@ pub async fn save_config(
         instance.axum_server.update_security(&config.proxy).await;
         // 更新 z.ai 配置
         instance.axum_server.update_zai(&config.proxy).await;
+        // 更新访问日志开关
+        instance.axum_server.update_access_log(&config.proxy).await;
         tracing::info!("已同步热更新反代服务配置");
     }
     

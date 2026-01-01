@@ -5,7 +5,8 @@ use tokio::time::Duration;
 use crate::proxy::config::UpstreamProxyConfig;
 use crate::proxy::ZaiConfig;
 
-const ZAI_PAAZ_CHAT_COMPLETIONS_URL: &str = "https://api.z.ai/api/paas/v4/chat/completions";
+const ZAI_CHAT_COMPLETIONS_GENERAL_URL: &str = "https://api.z.ai/api/paas/v4/chat/completions";
+const ZAI_CHAT_COMPLETIONS_CODING_URL: &str = "https://api.z.ai/api/coding/paas/v4/chat/completions";
 
 fn build_client(upstream_proxy: UpstreamProxyConfig, timeout_secs: u64) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
@@ -135,32 +136,51 @@ async fn vision_chat_completion(
         "max_tokens": 32768
     });
 
-    let resp = client
-        .post(ZAI_PAAZ_CHAT_COMPLETIONS_URL)
-        .bearer_auth(api_key)
-        .header("X-Title", "Vision MCP Local")
-        .header("Accept-Language", "en-US,en")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Upstream request failed: {}", e))?;
+    // For GLM Coding Plan users, z.ai requires the dedicated `/coding/paas/v4` endpoint.
+    // We try it first, and fall back to the general endpoint only for cases that indicate
+    // the coding endpoint is unavailable for this key/environment (401/403/404).
+    let candidates = [
+        ("coding", ZAI_CHAT_COMPLETIONS_CODING_URL),
+        ("general", ZAI_CHAT_COMPLETIONS_GENERAL_URL),
+    ];
 
-    if !resp.status().is_success() {
-        let status = resp.status().as_u16();
-        let text = resp.text().await.unwrap_or_default();
-        return Err(format!("HTTP {}: {}", status, text));
+    let mut last_err: Option<String> = None;
+    for (label, url) in candidates {
+        let resp = client
+            .post(url)
+            .bearer_auth(api_key)
+            .header("X-Title", "Vision MCP Local")
+            .header("Accept-Language", "en-US,en")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Upstream request failed ({}): {}", label, e))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            let err = format!("HTTP {} ({}): {}", status, label, text);
+            last_err = Some(err);
+
+            if label == "coding" && matches!(status, 401 | 403 | 404) {
+                continue;
+            }
+            return Err(last_err.unwrap_or_else(|| "Vision request failed".to_string()));
+        }
+
+        let v: Value = resp.json().await.map_err(|e| format!("Invalid JSON response ({}): {}", label, e))?;
+        let content = v
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .ok_or_else(|| "Invalid API response: missing choices[0].message.content".to_string())?;
+
+        return Ok(content.to_string());
     }
 
-    let v: Value = resp.json().await.map_err(|e| format!("Invalid JSON response: {}", e))?;
-    let content = v
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .ok_or_else(|| "Invalid API response: missing choices[0].message.content".to_string())?;
-
-    Ok(content.to_string())
+    Err(last_err.unwrap_or_else(|| "Vision request failed".to_string()))
 }
 
 pub fn tool_specs() -> Vec<Value> {
@@ -244,7 +264,7 @@ pub fn tool_specs() -> Vec<Value> {
             }
         }),
         json!({
-            "name": "analyze_image",
+            "name": "image_analysis",
             "description": "General-purpose image analysis.",
             "inputSchema": {
                 "type": "object",
@@ -256,7 +276,7 @@ pub fn tool_specs() -> Vec<Value> {
             }
         }),
         json!({
-            "name": "analyze_video",
+            "name": "video_analysis",
             "description": "Analyze video content.",
             "inputSchema": {
                 "type": "object",
@@ -390,7 +410,7 @@ pub async fn call_tool(
             )
             .await?
         }
-        "analyze_image" => {
+        "analyze_image" | "image_analysis" => {
             let image_source = arguments
                 .get("image_source")
                 .and_then(|v| v.as_str())
@@ -400,7 +420,7 @@ pub async fn call_tool(
             let system_prompt = "Analyze the image. Be precise and include relevant details.";
             vision_chat_completion(&client, api_key, system_prompt, vec![image], prompt).await?
         }
-        "analyze_video" => {
+        "analyze_video" | "video_analysis" => {
             let video_source = arguments
                 .get("video_source")
                 .and_then(|v| v.as_str())

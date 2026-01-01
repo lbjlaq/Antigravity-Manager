@@ -22,10 +22,15 @@ Implementation:
   - `auth_middleware(...)` validates `Authorization: Bearer <proxy.api_key>`
   - `OPTIONS` requests are allowed (CORS preflight)
   - In `all_except_health`, `GET /healthz` bypasses auth
+- Optional request logging (debug): [`docs/proxy/logging.md`](logging.md)
 
 Hot reload:
 - Config save triggers running server updates in [`src-tauri/src/commands/mod.rs`](../../src-tauri/src/commands/mod.rs)
   - `save_config(...)` calls `axum_server.update_security(&config.proxy).await`
+
+Routing context:
+- Auth applies equally to all protocol surfaces served by the proxy (OpenAI / Claude / Gemini / MCP).
+- Routing overview: [`docs/proxy/routing.md`](routing.md)
 
 ## Client contract
 When auth is enabled, clients should send:
@@ -42,3 +47,6 @@ Notes:
 3) Verify:
    - `GET /healthz` succeeds without auth.
    - Other endpoints (e.g. `POST /v1/messages`) return 401 without auth and succeed with the header.
+
+UI implementation detail:
+- The auth “Enabled” switch uses a `button[role="switch"]` control (`src/components/common/Switch.tsx`) to keep toggling reliable in embedded WebViews.

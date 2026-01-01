@@ -2,9 +2,18 @@
 
 This folder contains developer-focused documentation (architecture, implementation details, and validation steps).
 
+中文索引：
+- [`docs/README.zh.md`](README.zh.md)
+
 ## Proxy
+- [`docs/proxy/routing.md`](proxy/routing.md) — protocol surfaces, routing rules, and multi-client behavior (OpenAI / Claude / Gemini / MCP).
+- [`docs/proxy/config.md`](proxy/config.md) — persisted configuration keys (`gui_config.json`) and what they control.
 - [`docs/proxy/auth.md`](proxy/auth.md) — proxy authorization modes, expected client behavior, and implementation pointers.
 - [`docs/proxy/accounts.md`](proxy/accounts.md) — account lifecycle in the proxy pool (including auto-disable on `invalid_grant`) and UI behavior.
+- [`docs/proxy/logging.md`](proxy/logging.md) — request access logging (safe-by-default, no secrets).
+
+## App troubleshooting
+- [`docs/app/frontend-logging.md`](app/frontend-logging.md) — UI error capture to help debug “white screen” failures.
 
 ## z.ai (GLM) integration
 - [`docs/zai/implementation.md`](zai/implementation.md) — end-to-end “what’s implemented” and how to validate it.

@@ -46,6 +46,11 @@ Token refresh failures returned to API clients no longer include account emails:
 - If an account becomes disabled due to `invalid_grant`, it usually means the `refresh_token` was revoked or expired.
 - Re-authorize the account (or update the stored token) to restore it.
 
+Routing context:
+- These accounts are used by the Google-backed flows (Gemini protocol, OpenAI protocol, and the non-z.ai Claude flow).
+- z.ai (when enabled) does not use Google account OAuth tokens.
+- Overview: [`docs/proxy/routing.md`](routing.md)
+
 ## Validation
 1) Ensure at least one account file has `disabled: true`.
 2) Start the proxy and verify:

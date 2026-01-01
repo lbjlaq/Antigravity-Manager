@@ -8,6 +8,8 @@ Related deep dives:
 - [`docs/zai/vision-mcp.md`](vision-mcp.md)
 - [`docs/proxy/auth.md`](../proxy/auth.md)
 - [`docs/proxy/accounts.md`](../proxy/accounts.md)
+- [`docs/proxy/routing.md`](../proxy/routing.md)
+- [`docs/proxy/config.md`](../proxy/config.md)
 
 ## Scope (current)
 - z.ai is integrated as an **optional upstream** for **Anthropic/Claude protocol only** (`/v1/messages`, `/v1/messages/count_tokens`).
@@ -52,6 +54,7 @@ Config lives under `proxy.zai` (`src-tauri/src/proxy/config.rs`):
   - `web_search_enabled`
   - `web_reader_enabled`
   - `vision_enabled`
+  - `api_key_override` (optional; used only for remote MCP endpoints)
 
 Runtime hot update:
 - `save_config` hot-updates `auth`, `upstream_proxy`, `model mappings`, and `z.ai` without restart.
@@ -98,20 +101,23 @@ Security / header handling:
 Networking:
 - Respects the global upstream proxy config (`proxy.upstream_proxy`) for outbound HTTP calls.
 
-## MCP reverse proxy (Search + Reader)
+## MCP servers (Search + Reader + zread)
 Handlers: `src-tauri/src/proxy/handlers/mcp.rs`
 Routes: `src-tauri/src/proxy/server.rs`
 
 Local endpoints:
-- `/mcp/web_search_prime/mcp` → `https://api.z.ai/api/mcp/web_search_prime/mcp`
-- `/mcp/web_reader/mcp` → `https://api.z.ai/api/mcp/web_reader/mcp`
+- `/mcp/web_search_prime/mcp` → `https://api.z.ai/api/mcp/web_search_prime/mcp` (remote MCP reverse-proxy)
+- `/mcp/web_reader/mcp` → `https://api.z.ai/api/mcp/web_reader/mcp` (remote MCP reverse-proxy)
+  - On `tools/call` for `webReader`, the proxy can normalize `arguments.url` (per `proxy.zai.mcp.web_reader_url_normalization`) to improve upstream compatibility with tracking-heavy query strings.
+- `/mcp/zread/mcp` → `https://api.z.ai/api/mcp/zread/mcp` (remote MCP reverse-proxy)
 
 Behavior:
 - Controlled by `proxy.zai.mcp.*` flags:
   - If `mcp.enabled=false` -> endpoints return 404.
   - If per-server flag is false -> returns 404 for that endpoint.
-- z.ai key is injected upstream as `Authorization: Bearer <zai_key>`.
-- Response body is streamed back to the client.
+- No z.ai key is required from MCP clients:
+  - the proxy injects the stored `proxy.zai.api_key` when calling z.ai.
+- Remote MCP routes are streamed back to the client (typically `text/event-stream`), and the proxy forwards `mcp-session-id` response headers so clients can continue the session.
 
 Note:
 - These endpoints are still subject to the proxy’s auth middleware depending on `proxy.auth_mode`.
@@ -136,7 +142,8 @@ Behavior:
   - `DELETE /mcp` terminates a session
 
 Upstream calls:
-- z.ai vision endpoint: `https://api.z.ai/api/paas/v4/chat/completions`
+- z.ai vision endpoint (preferred for GLM Coding Plan): `https://api.z.ai/api/coding/paas/v4/chat/completions`
+- fallback: `https://api.z.ai/api/paas/v4/chat/completions`
 - Uses `Authorization: Bearer <zai_key>`
 - Default model: `glm-4.6v` (hardcoded for now)
 
@@ -150,14 +157,15 @@ Tool input and limits:
   - `understand_technical_diagram`
   - `analyze_data_visualization`
   - `ui_diff_check`
-  - `analyze_image`
-  - `analyze_video`
+  - `image_analysis` (alias: `analyze_image`)
+  - `video_analysis` (alias: `analyze_video`)
 
 ## UI
 Page: `src/pages/ApiProxy.tsx`
 
 Added controls:
 - Authorization toggle + mode selector (`off/strict/all_except_health/auto`)
+- Optional request logging toggle (`proxy.access_log_enabled`)
 - z.ai block:
   - enable toggle
   - base_url
@@ -172,6 +180,11 @@ Added controls:
 Translations:
 - `src/locales/en.json`
 - `src/locales/zh.json`
+
+Reliability note:
+- Switches are implemented as `button[role="switch"]` to avoid WebView edge cases where a hidden checkbox inside a label may not toggle reliably.
+  - Component: `src/components/common/Switch.tsx`
+  - Usage: `src/pages/ApiProxy.tsx`
 
 ## Validation checklist
 Build:

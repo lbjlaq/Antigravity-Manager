@@ -49,12 +49,13 @@ Supported tools (mirrors the upstream package at a high level):
 - `understand_technical_diagram`
 - `analyze_data_visualization`
 - `ui_diff_check`
-- `analyze_image`
-- `analyze_video`
+- `image_analysis` (alias: `analyze_image`)
+- `video_analysis` (alias: `analyze_video`)
 
 ## Upstream calls
-Vision tools call the z.ai vision chat completions endpoint:
-- `https://api.z.ai/api/paas/v4/chat/completions`
+Vision tools call the z.ai chat completions endpoint for the vision model:
+- Primary (GLM Coding Plan): `https://api.z.ai/api/coding/paas/v4/chat/completions`
+- Fallback: `https://api.z.ai/api/paas/v4/chat/completions`
 
 Implementation:
 - `vision_chat_completion(...)` in [`src-tauri/src/proxy/zai_vision_tools.rs`](../../src-tauri/src/proxy/zai_vision_tools.rs)
@@ -79,8 +80,8 @@ Implementation:
 ## Quick validation (raw JSON-RPC)
 1) Initialize:
    - `POST /mcp/zai-mcp-server/mcp` with `{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{}}}`
-   - capture `Mcp-Session-Id` response header
+   - capture `mcp-session-id` response header
 2) List tools:
-   - `POST /mcp/zai-mcp-server/mcp` with `Mcp-Session-Id: <id>` and `{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}`
+   - `POST /mcp/zai-mcp-server/mcp` with `mcp-session-id: <id>` and `{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}`
 3) Call tool:
-   - `POST /mcp/zai-mcp-server/mcp` with `Mcp-Session-Id: <id>` and `{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"analyze_image\",\"arguments\":{\"image_source\":\"/path/to/file.png\",\"prompt\":\"Describe this image\"}}}`
+   - `POST /mcp/zai-mcp-server/mcp` with `mcp-session-id: <id>` and `{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"image_analysis\",\"arguments\":{\"image_source\":\"/path/to/file.png\",\"prompt\":\"Describe this image\"}}}`

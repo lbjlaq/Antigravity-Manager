@@ -276,7 +276,7 @@
             "btn_regenerate": "Regenerate Key",
             "btn_copy": "Copy",
             "btn_copied": "Copied",
-            "warning_key": "Note: Keep your API key secure. Do not share it.",
+            "warning_key": "Note: Keep your API key secure. It is only required when authorization is enabled.",
             "auth": {
                 "title": "Authorization",
                 "title_tooltip": "Controls whether incoming requests must be authenticated, and which routes are protected.",
@@ -284,13 +284,21 @@
                 "enabled_tooltip": "Turns authorization on/off by switching the authorization mode. When enabled, clients must include the API key via Authorization: Bearer <API_KEY> or x-api-key.",
                 "mode": "Mode",
                 "mode_tooltip": "Selects which routes require the API key: Off = no auth; All = protect everything; All except Health = /healthz stays open; Auto = Off for localhost-only, otherwise All except Health.",
-                "hint": "When enabled, clients must send the API key via Authorization: Bearer ... (except health if selected).",
+                "hint": "Clients must send the API key via Authorization: Bearer <API_KEY> or x-api-key. Route coverage depends on the selected mode.",
+                "effective": "Effective mode: {{mode}}",
                 "modes": {
                     "off": "Off (Open)",
                     "strict": "All (Strict)",
                     "all_except_health": "All except Health",
                     "auto": "Auto (Recommended)"
                 }
+            },
+            "access_log": {
+                "title": "Request Logging",
+                "title_tooltip": "Logs request method/path/status and latency to the local app log file. Does not log query strings, headers, or bodies.",
+                "enabled": "Enabled",
+                "enabled_tooltip": "When enabled, each request is logged with method, path, status code, latency, and a best-effort upstream label (e.g. z.ai).",
+                "hint": "Useful for debugging clients and routing. Logs are written to the app data directory under logs/."
             },
             "zai": {
                 "title": "z.ai (GLM) Provider",
@@ -314,6 +322,7 @@
                     "hint": "Available models: {{count}}. Select a suggestion or type a custom model id.",
                     "error": "Failed to fetch models: {{error}}",
                     "select_placeholder": "Select model...",
+                    "custom_option": "Custom model id…",
                     "opus": "Opus family → z.ai model",
                     "opus_tooltip": "Default z.ai model id used when the incoming model contains \"opus\" (e.g. claude-opus-*).",
                     "sonnet": "Sonnet family → z.ai model",
@@ -335,18 +344,32 @@
                     "pooled": "Pooled (one slot)",
                     "fallback": "Fallback only"
                 },
-                "mcp": {
-                    "title": "MCP Servers (via local proxy)",
-                    "title_tooltip": "Exposes optional /mcp/* endpoints on this local proxy so MCP clients can connect. Available only when the service is running, z.ai is configured, and the corresponding toggles are enabled.",
-                    "enabled": "Enable MCP proxy",
-                    "enabled_tooltip": "Master switch for MCP endpoints. When off, all /mcp/* routes return 404.",
-                    "web_search": "Web Search",
-                    "web_search_tooltip": "Exposes /mcp/web_search_prime/mcp and forwards requests to the z.ai Web Search MCP upstream.",
-                    "web_reader": "Web Reader",
-                    "web_reader_tooltip": "Exposes /mcp/web_reader/mcp and forwards requests to the z.ai Web Reader MCP upstream.",
-                    "vision": "Vision",
-                    "vision_tooltip": "Exposes /mcp/zai-mcp-server/mcp (local MCP server) that provides vision tools backed by z.ai.",
-                    "local_endpoints": "Local endpoints (configure your MCP client to use these URLs):",
+	                "mcp": {
+	                    "title": "MCP Servers (via local proxy)",
+	                    "title_tooltip": "Exposes optional /mcp/* endpoints on this local proxy so MCP clients can connect. Available only when the service is running, z.ai is configured, and the corresponding toggles are enabled.",
+	                    "enabled": "Enable MCP proxy",
+	                    "enabled_tooltip": "Master switch for MCP endpoints. When off, all /mcp/* routes return 404.",
+	                    "api_key_override": "MCP API key override (optional)",
+	                    "api_key_override_tooltip": "Optional separate API key used for z.ai MCP upstream calls (Web Search/Web Reader/zread). If empty, the main z.ai API key is used.",
+	                    "api_key_override_placeholder": "Leave empty to use the main z.ai API key",
+	                    "api_key_override_hint": "Use this if MCP endpoints require a different key/entitlement than the model API.",
+	                    "web_search": "Web Search",
+	                    "web_search_tooltip": "Exposes /mcp/web_search_prime/mcp (local MCP server) backed by the z.ai Web Search Tools API.",
+	                    "web_reader": "Web Reader",
+	                    "web_reader_tooltip": "Exposes /mcp/web_reader/mcp (local MCP server) backed by the z.ai Web Reader Tools API.",
+	                    "web_reader_url_normalization": "Web Reader URL normalization",
+	                    "web_reader_url_normalization_tooltip": "Optionally rewrites webReader tool call URLs before calling the upstream reader API. Useful when sites break due to long tracking query strings.",
+	                    "web_reader_url_normalization_hint": "Applies only to tools/call for the webReader tool; other MCP tools and endpoints are not modified.",
+	                    "web_reader_url_normalization_options": {
+	                        "off": "Off (no changes)",
+	                        "strip_tracking_query": "Strip tracking query params (utm_*, hsa_*, gclid, fbclid, gbraid, wbraid, msclkid)",
+	                        "strip_query": "Strip full query string (?...)"
+	                    },
+	                    "zread": "zread",
+	                    "zread_tooltip": "Exposes /mcp/zread/mcp and forwards requests to the z.ai zread MCP upstream (document/repo reading tools, not the web reader).",
+	                    "vision": "Vision",
+	                    "vision_tooltip": "Exposes /mcp/zai-mcp-server/mcp (local MCP server) that provides vision tools backed by z.ai.",
+	                    "local_endpoints": "Local endpoints (configure your MCP client to use these URLs):",
                     "local_endpoints_tooltip": "Use these URLs in your MCP client. They share the same host/port as the API Proxy and follow the proxy authorization policy."
                 }
             },

@@ -52,7 +52,7 @@ pub async fn handle_messages(
     };
 
     if use_zai {
-        return crate::proxy::providers::zai_anthropic::forward_anthropic_json(
+        let mut resp = crate::proxy::providers::zai_anthropic::forward_anthropic_json(
             &state,
             axum::http::Method::POST,
             "/v1/messages",
@@ -60,6 +60,9 @@ pub async fn handle_messages(
             body,
         )
         .await;
+        resp.extensions_mut()
+            .insert(crate::proxy::observability::UpstreamRoute("zai"));
+        return resp;
     }
 
     let request: ClaudeRequest = match serde_json::from_value(body) {
@@ -507,7 +510,7 @@ pub async fn handle_count_tokens(
     let zai_enabled = zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
 
     if zai_enabled {
-        return crate::proxy::providers::zai_anthropic::forward_anthropic_json(
+        let mut resp = crate::proxy::providers::zai_anthropic::forward_anthropic_json(
             &state,
             axum::http::Method::POST,
             "/v1/messages/count_tokens",
@@ -515,6 +518,9 @@ pub async fn handle_count_tokens(
             body,
         )
         .await;
+        resp.extensions_mut()
+            .insert(crate::proxy::observability::UpstreamRoute("zai"));
+        return resp;
     }
 
     Json(json!({

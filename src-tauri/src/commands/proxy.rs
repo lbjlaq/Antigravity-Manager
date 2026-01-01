@@ -101,7 +101,7 @@ pub async fn start_proxy_service(
             crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
             config.zai.clone(),
             monitor.clone(),
-
+            config.access_log_enabled,
         ).await {
             Ok((server, handle)) => (server, handle),
             Err(e) => return Err(format!("启动 Axum 服务器失败: {}", e)),
@@ -385,4 +385,3 @@ pub async fn fetch_zai_models(
     models.dedup();
     Ok(models)
 }
-

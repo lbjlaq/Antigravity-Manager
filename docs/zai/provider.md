@@ -11,6 +11,7 @@ We added an optional “z.ai provider” that:
 - Can be enabled/disabled and used via dispatch modes.
 - Forwards `/v1/messages` and `/v1/messages/count_tokens` to a z.ai Anthropic-compatible base URL.
 - Streams responses back without parsing SSE.
+ - Does not affect Gemini (`/v1beta/*`) or OpenAI (`/v1/*`) protocol routes.
 
 ## Configuration
 Schema: `src-tauri/src/proxy/config.rs`
