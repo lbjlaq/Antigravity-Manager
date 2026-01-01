@@ -143,7 +143,11 @@ export ANTHROPIC_BASE_URL="http://127.0.0.1:8045"
 claude
 ```
 
-### How to use in Python?
+### How to use SDKs?
+
+> **💡 Pro Tip:** Antigravity provides full protocol translation. Even for Gemini or Claude models, we highly recommend using the **OpenAI SDK** (Compatibility Mode) for the most stable and unified experience. Native SDKs (like `@google/generative-ai`) may fail due to path mismatches (e.g., 404 errors).
+
+#### Python (OpenAI SDK)
 ```python
 import openai
 
@@ -154,10 +158,60 @@ client = openai.OpenAI(
 
 response = client.chat.completions.create(
     model="gemini-3-flash",
-    messages=[{"role": "user", "content": "Hello, please introduce yourself"}]
+    messages=[{"role": "user", "content": "Hello!"}]
 )
 print(response.choices[0].message.content)
 ```
+
+#### Node.js (OpenAI SDK)
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  apiKey: 'sk-antigravity',
+  baseURL: 'http://127.0.0.1:8045/v1',
+});
+
+async function main() {
+  const chatCompletion = await client.chat.completions.create({
+    messages: [{ role: 'user', content: 'Hello!' }],
+    model: 'gemini-3-flash',
+  });
+  console.log(chatCompletion.choices[0].message.content);
+}
+main();
+```
+
+#### Go (sashabaranov/go-openai)
+```go
+config := openai.DefaultConfig("sk-antigravity")
+config.BaseURL = "http://127.0.0.1:8045/v1"
+client := openai.NewClientWithConfig(config)
+
+resp, _ := client.CreateChatCompletion(
+    context.Background(),
+    openai.ChatCompletionRequest{
+        Model: "gemini-3-flash",
+        Messages: []openai.ChatCompletionMessage{
+            {Role: openai.ChatMessageRoleUser, Content: "Hello!"},
+        },
+    },
+)
+fmt.Println(resp.Choices[0].Message.Content)
+```
+
+#### cURL
+```bash
+curl http://127.0.0.1:8045/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-antigravity" \
+  -d '{
+    "model": "gemini-3-flash",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+> 💡 **Note:** More integration examples (Node.js, Go, Rust, etc.) are available directly in the **API Proxy** tab of the Antigravity Manager app.
 
 ## 📝 Developer & Community
 

@@ -158,7 +158,14 @@ claude
     - **OpenAI 协议限制**: Kilo Code 在使用 OpenAI 模式时，其请求路径会叠加产生 `/v1/chat/completions/responses` 这种非标准路径，导致 Antigravity 返回 404。因此请务必填入 Base URL 后选择 Gemini 模式。
     - **模型映射**: Kilo Code 中的模型名称可能与 Antigravity 默认设置不一致，如遇到无法连接，请在“模型映射”页面设置自定义映射，并查看**日志文件**进行调试。
 
-### 如何在 Python 中使用?
+### 如何使用 SDK?
+
+> **💡 最佳实践：** Antigravity 提供了强大的协议转换能力。即使是调用 Gemini 或 Claude 模型，我们也强烈推荐直接使用 **OpenAI SDK**（兼容模式）。
+> 
+> *   **统一代码**：一套代码调用所有模型。
+> *   **避免报错**：官方原生 SDK（如 Google GenAI）常因请求路径不匹配而导致 404 错误。
+
+#### Python (OpenAI SDK)
 ```python
 import openai
 
@@ -169,10 +176,60 @@ client = openai.OpenAI(
 
 response = client.chat.completions.create(
     model="gemini-3-flash",
-    messages=[{"role": "user", "content": "你好，请自我介绍"}]
+    messages=[{"role": "user", "content": "你好！"}]
 )
 print(response.choices[0].message.content)
 ```
+
+#### Node.js (OpenAI SDK)
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  apiKey: 'sk-antigravity',
+  baseURL: 'http://127.0.0.1:8045/v1',
+});
+
+async function main() {
+  const chatCompletion = await client.chat.completions.create({
+    messages: [{ role: 'user', content: '你好！' }],
+    model: 'gemini-3-flash',
+  });
+  console.log(chatCompletion.choices[0].message.content);
+}
+main();
+```
+
+#### Go (sashabaranov/go-openai)
+```go
+config := openai.DefaultConfig("sk-antigravity")
+config.BaseURL = "http://127.0.0.1:8045/v1"
+client := openai.NewClientWithConfig(config)
+
+resp, _ := client.CreateChatCompletion(
+    context.Background(),
+    openai.ChatCompletionRequest{
+        Model: "gemini-3-flash",
+        Messages: []openai.ChatCompletionMessage{
+            {Role: openai.ChatMessageRoleUser, Content: "你好！"},
+        },
+    },
+)
+fmt.Println(resp.Choices[0].Message.Content)
+```
+
+#### cURL
+```bash
+curl http://127.0.0.1:8045/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-antigravity" \
+  -d '{
+    "model": "gemini-3-flash",
+    "messages": [{"role": "user", "content": "你好！"}]
+  }'
+```
+
+> 💡 **提示：** 更多集成示例（Node.js、Go、Rust 等）可以直接在 Antigravity Manager 应用的 **“API 反代”** 页面中查看。
 
 ## 📝 开发者与社区
 
