@@ -465,6 +465,10 @@
             "gemini_label": "Gemini 协议",
             "gemini_tools": "Google AI SDK, LangChain",
             "quick_integration": "快速集成 (Quick Integration)",
+            "lang_python": "Python",
+            "lang_node": "Node.js",
+            "lang_go": "Go",
+            "lang_curl": "cURL",
             "click_tip": "👆 点击左侧任意模型以更新代码"
         },
         "supported_models": {

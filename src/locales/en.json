@@ -461,6 +461,10 @@
             "gemini_label": "Gemini Protocol",
             "gemini_tools": "Google AI SDK, LangChain",
             "quick_integration": "Quick Integration",
+            "lang_python": "Python",
+            "lang_node": "Node.js",
+            "lang_go": "Go",
+            "lang_curl": "cURL",
             "click_tip": "👆 Click any model on the left to update this code."
         },
         "supported_models": {

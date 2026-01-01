@@ -25,6 +25,7 @@ import {
     Activity
 } from 'lucide-react';
 import { AppConfig, ProxyConfig } from '../types/config';
+import { getPythonExample, getNodeJSExample, getGoExample, getCurLExample } from '../utils/sdkExamples';
 import HelpTooltip from '../components/common/HelpTooltip';
 
 interface ProxyStatus {
@@ -124,7 +125,7 @@ function CollapsibleCard({
 }
 
 export default function ApiProxy() {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const navigate = useNavigate();
 
     const models = [
@@ -213,6 +214,7 @@ export default function ApiProxy() {
     const [copied, setCopied] = useState<string | null>(null);
     const [selectedProtocol, setSelectedProtocol] = useState<'openai' | 'anthropic' | 'gemini'>('openai');
     const [selectedModelId, setSelectedModelId] = useState('gemini-3-flash');
+    const [selectedLang, setSelectedLang] = useState<'python' | 'node' | 'go' | 'curl'>('python');
     const [zaiAvailableModels, setZaiAvailableModels] = useState<string[]>([]);
     const [zaiModelsLoading, setZaiModelsLoading] = useState(false);
     const [, setZaiModelsError] = useState<string | null>(null);
@@ -452,91 +454,8 @@ export default function ApiProxy() {
     };
 
 
-    const getPythonExample = (modelId: string) => {
-        const port = status.running ? status.port : (appConfig?.proxy.port || 8045);
-        // 推荐使用 127.0.0.1 以避免部分环境 IPv6 解析延迟问题
-        const baseUrl = `http://127.0.0.1:${port}/v1`;
-        const apiKey = appConfig?.proxy.api_key || 'YOUR_API_KEY';
-
-        // 1. Anthropic Protocol
-        if (selectedProtocol === 'anthropic') {
-            return `from anthropic import Anthropic
- 
- client = Anthropic(
-     # 推荐使用 127.0.0.1
-     base_url="${`http://127.0.0.1:${port}`}",
-     api_key="${apiKey}"
- )
- 
- # 注意: Antigravity 支持使用 Anthropic SDK 调用任意模型
- response = client.messages.create(
-     model="${modelId}",
-     max_tokens=1024,
-     messages=[{"role": "user", "content": "Hello"}]
- )
- 
- print(response.content[0].text)`;
-        }
-
-        // 2. Gemini Protocol (Native)
-        if (selectedProtocol === 'gemini') {
-            const rawBaseUrl = `http://127.0.0.1:${port}`;
-            return `# 需要安装: pip install google-generativeai
-import google.generativeai as genai
-
-# 使用 Antigravity 代理地址 (推荐 127.0.0.1)
-genai.configure(
-    api_key="${apiKey}",
-    transport='rest',
-    client_options={'api_endpoint': '${rawBaseUrl}'}
-)
-
-model = genai.GenerativeModel('${modelId}')
-response = model.generate_content("Hello")
-print(response.text)`;
-        }
-
-        // 3. OpenAI Protocol
-        if (modelId.startsWith('gemini-3-pro-image')) {
-            return `from openai import OpenAI
- 
- client = OpenAI(
-     base_url="${baseUrl}",
-     api_key="${apiKey}"
- )
- 
- response = client.chat.completions.create(
-     model="${modelId}",
-     # 方式 1: 使用 size 参数 (推荐)
-     # 支持: "1024x1024" (1:1), "1280x720" (16:9), "720x1280" (9:16), "1216x896" (4:3)
-     extra_body={ "size": "1024x1024" },
-     
-     # 方式 2: 使用模型后缀
-     # 例如: gemini-3-pro-image-16-9, gemini-3-pro-image-4-3
-     # model="gemini-3-pro-image-16-9",
-     messages=[{
-         "role": "user",
-         "content": "Draw a futuristic city"
-     }]
- )
- 
- print(response.choices[0].message.content)`;
-        }
-
-        return `from openai import OpenAI
- 
- client = OpenAI(
-     base_url="${baseUrl}",
-     api_key="${apiKey}"
- )
- 
- response = client.chat.completions.create(
-     model="${modelId}",
-     messages=[{"role": "user", "content": "Hello"}]
- )
- 
- print(response.choices[0].message.content)`;
-    };
+    const port = status.running ? status.port : (appConfig?.proxy.port || 8045);
+    const apiKey = appConfig?.proxy.api_key || 'YOUR_API_KEY';
 
     // 在 filter 逻辑中，当选择 openai 协议时，允许显示所有模型
     const filteredModels = models.filter(model => {
@@ -1491,20 +1410,51 @@ print(response.text)`;
                                     <div className="p-3 border-b border-gray-800 flex items-center justify-between">
                                         <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{t('proxy.multi_protocol.quick_integration')}</span>
                                         <div className="flex gap-2">
-                                            {/* 这里可以放 cURL/Python 切换，或者直接默认显示 Python，根据 selectedProtocol 决定 */}
-                                            <span className="text-[10px] px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                                                {selectedProtocol === 'anthropic' ? 'Python (Anthropic SDK)' : (selectedProtocol === 'gemini' ? 'Python (Google GenAI)' : 'Python (OpenAI SDK)')}
-                                            </span>
+                                            <div className="flex bg-gray-800 rounded-lg p-0.5">
+                                                <button
+                                                    onClick={() => setSelectedLang('python')}
+                                                    className={`px-2 py-0.5 rounded text-[10px] transition-all ${selectedLang === 'python' ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+                                                >
+                                                    {t('proxy.multi_protocol.lang_python')}
+                                                </button>
+                                                <button
+                                                    onClick={() => setSelectedLang('node')}
+                                                    className={`px-2 py-0.5 rounded text-[10px] transition-all ${selectedLang === 'node' ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+                                                >
+                                                    {t('proxy.multi_protocol.lang_node')}
+                                                </button>
+                                                <button
+                                                    onClick={() => setSelectedLang('go')}
+                                                    className={`px-2 py-0.5 rounded text-[10px] transition-all ${selectedLang === 'go' ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+                                                >
+                                                    {t('proxy.multi_protocol.lang_go')}
+                                                </button>
+                                                <button
+                                                    onClick={() => setSelectedLang('curl')}
+                                                    className={`px-2 py-0.5 rounded text-[10px] transition-all ${selectedLang === 'curl' ? 'bg-blue-500/20 text-blue-400' : 'text-gray-400 hover:text-gray-300'}`}
+                                                >
+                                                    {t('proxy.multi_protocol.lang_curl')}
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div className="flex-1 relative overflow-hidden group">
                                         <div className="absolute inset-0 overflow-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
                                             <pre className="p-4 text-[10px] font-mono leading-relaxed">
-                                                {getPythonExample(selectedModelId)}
+                                                {selectedLang === 'python' ? getPythonExample(selectedModelId, selectedProtocol, port, apiKey, i18n.language) :
+                                                 selectedLang === 'node' ? getNodeJSExample(selectedModelId, selectedProtocol, port, apiKey, i18n.language) :
+                                                 selectedLang === 'go' ? getGoExample(selectedModelId, selectedProtocol, port, apiKey, i18n.language) :
+                                                 getCurLExample(selectedModelId, selectedProtocol, port, apiKey)}
                                             </pre>
                                         </div>
                                         <button
-                                            onClick={() => copyToClipboard(getPythonExample(selectedModelId), 'example-code')}
+                                            onClick={() => {
+                                                const code = selectedLang === 'python' ? getPythonExample(selectedModelId, selectedProtocol, port, apiKey, i18n.language) :
+                                                             selectedLang === 'node' ? getNodeJSExample(selectedModelId, selectedProtocol, port, apiKey, i18n.language) :
+                                                             selectedLang === 'go' ? getGoExample(selectedModelId, selectedProtocol, port, apiKey, i18n.language) :
+                                                             getCurLExample(selectedModelId, selectedProtocol, port, apiKey);
+                                                copyToClipboard(code, 'example-code');
+                                            }}
                                             className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-white opacity-0 group-hover:opacity-100"
                                         >
                                             {copied === 'example-code' ? <CheckCircle size={16} /> : <Copy size={16} />}
