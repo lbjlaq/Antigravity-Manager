@@ -107,7 +107,7 @@ brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manage
 # 2. Install the app
 brew install --cask antigravity-tools
 # If you encounter permission issues
-brew install --cask --no-quarantine antigravity
+brew install --cask --no-quarantine antigravity-tools
 ```
 
 ### Option B: Manual Download
@@ -318,7 +318,7 @@ print(response.choices[0].message.content)
         - **Core Architecture Refactor**:
             - **Proxy Engine Rewrite**: Completely modularized `proxy` subsystem with decoupled `mappers`, `handlers`, and `middleware` for superior maintainability.
             - **Linux Process Management**: Implemented smart process identification to distinguish Main/Helper processes, ensuring graceful exit via `SIGTERM` with `SIGKILL` fallback.
-        - **Homebrew Support**: Official support for macOS one-click installation via `brew install --cask antigravity`.
+        - **Homebrew Support**: Official support for macOS one-click installation via `brew install --cask antigravity-tools`.
         - **GUI UX Revolution**: Revamped Dashboard with average quota monitoring and "Best Account Recommendation" algorithm.
         - **Protocol & Router Expansion**: Native support for OpenAI, Anthropic (Claude Code), and Gemini protocols with high-precision Model Router.
         - **Multimodal Optimization**: Deep adaptation for Imagen 3 with 100MB payload capacity and aspect ratio controls.

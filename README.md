@@ -105,9 +105,8 @@ brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manage
 
 # 2. 安装应用
 brew install --cask antigravity-tools
-```
 # 如果遇到权限问题，建议使用 --no-quarantine
-brew install --cask --no-quarantine antigravity
+brew install --cask --no-quarantine antigravity-tools
 ```
 
 ### 选项 B: 手动下载
@@ -129,7 +128,7 @@ brew install --cask --no-quarantine antigravity
 2.  **Homebrew 安装技巧**:
     如果您使用 brew 安装，可以添加 `--no-quarantine` 参数来规避此问题：
     ```bash
-    brew install --cask --no-quarantine antigravity
+    brew install --cask --no-quarantine antigravity-tools
     ```
 
 ## 🔌 快速接入示例
