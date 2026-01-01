@@ -25,6 +25,43 @@
 路由规则：
 - 若 `proxy.zai.mcp.enabled=false`，所有 `/mcp/*` 均返回 404（即使单项开关为 true）。
 
+## 在 MCP 客户端中使用（Claude Code）
+Claude Code 支持通过 Streamable HTTP 连接 MCP server。推荐配置为指向本地代理的 `/mcp/*` 端点，从而自动继承代理的鉴权策略与 z.ai 配置。
+
+编辑 `~/.claude/.claude.json`，在 `mcpServers` 下添加：
+
+```json
+{
+  "mcpServers": {
+    "zai-web-search": {
+      "type": "http",
+      "url": "http://127.0.0.1:8045/mcp/web_search_prime/mcp",
+      "headers": { "Authorization": "Bearer <PROXY_API_KEY>" }
+    },
+    "zai-web-reader": {
+      "type": "http",
+      "url": "http://127.0.0.1:8045/mcp/web_reader/mcp",
+      "headers": { "Authorization": "Bearer <PROXY_API_KEY>" }
+    },
+    "zai-zread": {
+      "type": "http",
+      "url": "http://127.0.0.1:8045/mcp/zread/mcp",
+      "headers": { "Authorization": "Bearer <PROXY_API_KEY>" }
+    },
+    "zai-vision": {
+      "type": "http",
+      "url": "http://127.0.0.1:8045/mcp/zai-mcp-server/mcp",
+      "headers": { "Authorization": "Bearer <PROXY_API_KEY>" }
+    }
+  }
+}
+```
+
+说明：
+- 若代理鉴权关闭（`proxy.auth_mode=off`），可直接去掉 `headers`。
+- 也可以使用 `x-api-key` 代替 `Authorization`（代理支持两种方式）。
+- Claude Code 不需要 z.ai key；代理会使用本地配置为上游注入鉴权。
+
 ### 1) Web Search（远程反代）
 本地端点：
 - `/mcp/web_search_prime/mcp`
@@ -120,4 +157,3 @@
 - Web Reader 的可用性与站点强相关（反爬、重定向、动态渲染等），上游可能对部分 URL 解析失败。
 - Web Search / zread / vision 会受到上游套餐/额度/限流影响，可能返回 4xx/5xx。
 - 部分上游 tool 失败会以 JSON-RPC `result` 形式返回（`result.isError=true` 且 `result.content[0].text` 为错误文本），而非 JSON-RPC `error` 对象；客户端应按数据处理。
-

@@ -25,6 +25,43 @@ Key properties:
 Routing rule:
 - If `proxy.zai.mcp.enabled=false`, all `/mcp/*` routes return 404 (even if individual MCP toggles are on).
 
+## Using with MCP clients (Claude Code)
+Claude Code can connect to MCP servers via Streamable HTTP. Configure it to point to the local proxy endpoints so it inherits the proxy’s auth policy and z.ai configuration.
+
+Edit `~/.claude/.claude.json` and add entries under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "zai-web-search": {
+      "type": "http",
+      "url": "http://127.0.0.1:8045/mcp/web_search_prime/mcp",
+      "headers": { "Authorization": "Bearer <PROXY_API_KEY>" }
+    },
+    "zai-web-reader": {
+      "type": "http",
+      "url": "http://127.0.0.1:8045/mcp/web_reader/mcp",
+      "headers": { "Authorization": "Bearer <PROXY_API_KEY>" }
+    },
+    "zai-zread": {
+      "type": "http",
+      "url": "http://127.0.0.1:8045/mcp/zread/mcp",
+      "headers": { "Authorization": "Bearer <PROXY_API_KEY>" }
+    },
+    "zai-vision": {
+      "type": "http",
+      "url": "http://127.0.0.1:8045/mcp/zai-mcp-server/mcp",
+      "headers": { "Authorization": "Bearer <PROXY_API_KEY>" }
+    }
+  }
+}
+```
+
+Notes:
+- If proxy authorization is disabled (`proxy.auth_mode=off`), omit the `headers` section entirely.
+- You can also use `x-api-key` instead of `Authorization` (supported by the proxy).
+- Claude Code does not need the z.ai key; the proxy injects upstream auth using the locally stored config.
+
 ### 1) Web Search (remote reverse-proxy)
 Local endpoint:
 - `/mcp/web_search_prime/mcp`
