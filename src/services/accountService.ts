@@ -105,3 +105,8 @@ export async function importFromCustomDb(path: string): Promise<Account> {
 export async function syncAccountFromDb(): Promise<Account | null> {
     return await invoke('sync_account_from_db');
 }
+
+// 一键预热
+export async function warmUpAccounts(): Promise<string> {
+    return await invoke('warm_up_accounts');
+}

@@ -44,6 +44,8 @@ pub async fn handle_chat_completions(
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
 
     let mut last_error = String::new();
+    let mut last_email = String::new();
+    let mut last_mapped_model = String::new();
 
     for attempt in 0..max_attempts {
         // 2. 预解析模型路由与配置
@@ -84,6 +86,8 @@ pub async fn handle_chat_completions(
             email,
             config.request_type
         );
+        last_email = email.clone(); // Track for response header
+        last_mapped_model = mapped_model.clone(); // Track actual model used
 
         // 4. 转换请求
         let gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
@@ -137,6 +141,8 @@ pub async fn handle_chat_completions(
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
+                    .header("X-Account-Email", &email)
+                    .header("X-Mapped-Model", &mapped_model)
                     .body(body)
                     .unwrap()
                     .into_response());
@@ -148,7 +154,15 @@ pub async fn handle_chat_completions(
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
             let openai_response = transform_openai_response(&gemini_resp);
-            return Ok(Json(openai_response).into_response());
+            return Ok(axum::response::Response::builder()
+                .header("Content-Type", "application/json")
+                .header("X-Account-Email", &email)
+                .header("X-Mapped-Model", &mapped_model)
+                .body(axum::body::Body::from(
+                    serde_json::to_string(&openai_response).unwrap_or_default(),
+                ))
+                .unwrap()
+                .into_response());
         }
 
         // 处理特定错误并重试
@@ -507,8 +521,10 @@ pub async fn handle_completions(
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
 
     let mut last_error = String::new();
+    let mut last_email = String::new();
+    let mut last_mapped_model = String::new();
 
-    for _attempt in 0..max_attempts {
+    for attempt in 0..max_attempts {
         let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
             &openai_req.model,
             &*state.custom_mapping.read().await,
@@ -526,22 +542,27 @@ pub async fn handle_completions(
             &tools_val,
         );
 
-        let (access_token, project_id, email) =
-            match token_manager.get_token(&config.request_type, false).await {
-                Ok(t) => t,
-                Err(e) => {
-                    return Err((
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        format!("Token error: {}", e),
-                    ))
-                }
-            };
+        // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
+        let (access_token, project_id, email) = match token_manager
+            .get_token(&config.request_type, attempt > 0)
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("Token error: {}", e),
+                ))
+            }
+        };
 
         tracing::info!(
             "Using account: {} for completions request (type: {})",
             email,
             config.request_type
         );
+        last_email = email.clone();
+        last_mapped_model = mapped_model.clone();
 
         let gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
 
@@ -592,6 +613,8 @@ pub async fn handle_completions(
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
+                    .header("X-Account-Email", &email)
+                    .header("X-Mapped-Model", &mapped_model)
                     .body(body)
                     .unwrap()
                     .into_response());
@@ -625,7 +648,15 @@ pub async fn handle_completions(
                 "choices": choices
             });
 
-            return Ok(axum::Json(legacy_resp).into_response());
+            return Ok(axum::response::Response::builder()
+                .header("Content-Type", "application/json")
+                .header("X-Account-Email", &email)
+                .header("X-Mapped-Model", &mapped_model)
+                .body(axum::body::Body::from(
+                    serde_json::to_string(&legacy_resp).unwrap_or_default(),
+                ))
+                .unwrap()
+                .into_response());
         }
 
         // Handle errors and retry
@@ -652,16 +683,20 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
         &state.openai_mapping,
         &state.custom_mapping,
         &state.anthropic_mapping,
-    ).await;
+    )
+    .await;
 
-    let data: Vec<_> = model_ids.into_iter().map(|id| {
-        json!({
-            "id": id,
-            "object": "model",
-            "created": 1706745600,
-            "owned_by": "antigravity"
+    let data: Vec<_> = model_ids
+        .into_iter()
+        .map(|id| {
+            json!({
+                "id": id,
+                "object": "model",
+                "created": 1706745600,
+                "owned_by": "antigravity"
+            })
         })
-    }).collect();
+        .collect();
 
     Json(json!({
         "object": "list",
@@ -897,7 +932,14 @@ pub async fn handle_images_generations(
         "data": images
     });
 
-    Ok(Json(openai_response))
+    Ok(axum::response::Response::builder()
+        .header("Content-Type", "application/json")
+        .header("X-Account-Email", &email)
+        .body(axum::body::Body::from(
+            serde_json::to_string(&openai_response).unwrap_or_default(),
+        ))
+        .unwrap()
+        .into_response())
 }
 
 pub async fn handle_images_edits(
@@ -991,7 +1033,7 @@ pub async fn handle_images_edits(
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
     // Fix: Proper get_token call with correct signature and unwrap (using image_gen quota)
-    let (access_token, project_id, _email) = match token_manager.get_token("image_gen", false).await
+    let (access_token, project_id, email) = match token_manager.get_token("image_gen", false).await
     {
         Ok(t) => t,
         Err(e) => {
@@ -1169,5 +1211,12 @@ pub async fn handle_images_edits(
         "data": images
     });
 
-    Ok(Json(openai_response))
+    Ok(axum::response::Response::builder()
+        .header("Content-Type", "application/json")
+        .header("X-Account-Email", &email)
+        .body(axum::body::Body::from(
+            serde_json::to_string(&openai_response).unwrap_or_default(),
+        ))
+        .unwrap()
+        .into_response())
 }

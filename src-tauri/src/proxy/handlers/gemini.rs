@@ -1,19 +1,24 @@
 // Gemini Handler
-use axum::{extract::State, extract::{Json, Path}, http::StatusCode, response::IntoResponse};
+use axum::{
+    extract::State,
+    extract::{Json, Path},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use serde_json::{json, Value};
 use tracing::{debug, error};
 
-use crate::proxy::mappers::gemini::{wrap_request, unwrap_response};
+use crate::proxy::mappers::gemini::{unwrap_response, wrap_request};
 use crate::proxy::server::AppState;
- 
+
 const MAX_RETRY_ATTEMPTS: usize = 3;
- 
+
 /// 处理 generateContent 和 streamGenerateContent
 /// 路径参数: model_name, method (e.g. "gemini-pro", "generateContent")
 pub async fn handle_generate(
     State(state): State<AppState>,
     Path(model_action): Path<String>,
-    Json(body): Json<Value>
+    Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // 解析 model:method
     let (model_name, method) = if let Some((m, action)) = model_action.rsplit_once(':') {
@@ -22,11 +27,17 @@ pub async fn handle_generate(
         (model_action, "generateContent".to_string())
     };
 
-    crate::modules::logger::log_info(&format!("Received Gemini request: {}/{}", model_name, method));
+    crate::modules::logger::log_info(&format!(
+        "Received Gemini request: {}/{}",
+        model_name, method
+    ));
 
     // 1. 验证方法
     if method != "generateContent" && method != "streamGenerateContent" {
-        return Err((StatusCode::BAD_REQUEST, format!("Unsupported method: {}", method)));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Unsupported method: {}", method),
+        ));
     }
     let is_stream = method == "streamGenerateContent";
 
@@ -35,8 +46,10 @@ pub async fn handle_generate(
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
-    
+
     let mut last_error = String::new();
+    let mut last_email = String::new();
+    let mut last_mapped_model = String::new();
 
     for attempt in 0..max_attempts {
         // 3. 模型路由与配置解析
@@ -47,48 +60,78 @@ pub async fn handle_generate(
             &*state.anthropic_mapping.read().await,
         );
         // 提取 tools 列表以进行联网探测 (Gemini 风格可能是嵌套的)
-        let tools_val: Option<Vec<Value>> = body.get("tools").and_then(|t| t.as_array()).map(|arr| {
-            let mut flattened = Vec::new();
-            for tool_entry in arr {
-                if let Some(decls) = tool_entry.get("functionDeclarations").and_then(|v| v.as_array()) {
-                    flattened.extend(decls.iter().cloned());
-                } else {
-                    flattened.push(tool_entry.clone());
+        let tools_val: Option<Vec<Value>> =
+            body.get("tools").and_then(|t| t.as_array()).map(|arr| {
+                let mut flattened = Vec::new();
+                for tool_entry in arr {
+                    if let Some(decls) = tool_entry
+                        .get("functionDeclarations")
+                        .and_then(|v| v.as_array())
+                    {
+                        flattened.extend(decls.iter().cloned());
+                    } else {
+                        flattened.push(tool_entry.clone());
+                    }
                 }
-            }
-            flattened
-        });
+                flattened
+            });
 
-        let config = crate::proxy::mappers::common_utils::resolve_request_config(&model_name, &mapped_model, &tools_val);
+        let config = crate::proxy::mappers::common_utils::resolve_request_config(
+            &model_name,
+            &mapped_model,
+            &tools_val,
+        );
 
         // 4. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, attempt > 0).await {
+        let (access_token, project_id, email) = match token_manager
+            .get_token(&config.request_type, attempt > 0)
+            .await
+        {
             Ok(t) => t,
             Err(e) => {
-                return Err((StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)));
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("Token error: {}", e),
+                ));
             }
         };
 
-        tracing::info!("Using account: {} for request (type: {})", email, config.request_type);
+        tracing::info!(
+            "Using account: {} for request (type: {})",
+            email,
+            config.request_type
+        );
+        last_email = email.clone();
+        last_mapped_model = mapped_model.clone();
 
         // 5. 包装请求 (project injection)
         let wrapped_body = wrap_request(&body, &project_id, &mapped_model);
 
         // 5. 上游调用
         let query_string = if is_stream { Some("alt=sse") } else { None };
-        let upstream_method = if is_stream { "streamGenerateContent" } else { "generateContent" };
+        let upstream_method = if is_stream {
+            "streamGenerateContent"
+        } else {
+            "generateContent"
+        };
 
         let response = match upstream
             .call_v1_internal(upstream_method, &access_token, wrapped_body, query_string)
-            .await {
-                Ok(r) => r,
-                Err(e) => {
-                    last_error = e.clone();
-                    tracing::warn!("Gemini Request failed on attempt {}/{}: {}", attempt + 1, max_attempts, e);
-                    continue;
-                }
-            };
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                last_error = e.clone();
+                tracing::warn!(
+                    "Gemini Request failed on attempt {}/{}: {}",
+                    attempt + 1,
+                    max_attempts,
+                    e
+                );
+                continue;
+            }
+        };
 
         let status = response.status();
         if status.is_success() {
@@ -98,7 +141,7 @@ pub async fn handle_generate(
                 use axum::response::Response;
                 use bytes::{Bytes, BytesMut};
                 use futures::StreamExt;
-                
+
                 let mut response_stream = response.bytes_stream();
                 let mut buffer = BytesMut::new();
 
@@ -113,14 +156,14 @@ pub async fn handle_generate(
                                     if let Ok(line_str) = std::str::from_utf8(&line_raw) {
                                         let line = line_str.trim();
                                         if line.is_empty() { continue; }
-                                        
+
                                         if line.starts_with("data: ") {
                                             let json_part = line.trim_start_matches("data: ").trim();
                                             if json_part == "[DONE]" {
                                                 yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
                                                 continue;
                                             }
-                                            
+
                                             match serde_json::from_str::<Value>(json_part) {
                                                 Ok(mut json) => {
                                                     // Unwrap v1internal response wrapper
@@ -154,12 +197,14 @@ pub async fn handle_generate(
                         }
                     }
                 };
-                
+
                 let body = Body::from_stream(stream);
                 return Ok(Response::builder()
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
+                    .header("X-Account-Email", &email)
+                    .header("X-Mapped-Model", &mapped_model)
                     .body(body)
                     .unwrap()
                     .into_response());
@@ -171,41 +216,78 @@ pub async fn handle_generate(
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
             let unwrapped = unwrap_response(&gemini_resp);
-            return Ok(Json(unwrapped).into_response());
+            return Ok(axum::response::Response::builder()
+                .header("Content-Type", "application/json")
+                .header("X-Account-Email", &email)
+                .header("X-Mapped-Model", &mapped_model)
+                .body(axum::body::Body::from(
+                    serde_json::to_string(&unwrapped).unwrap_or_default(),
+                ))
+                .unwrap()
+                .into_response());
         }
 
         // 处理错误并重试
         let status_code = status.as_u16();
         let error_text = response.text().await.unwrap_or_default();
         last_error = format!("HTTP {}: {}", status_code, error_text);
- 
+
         // 只有 429 (限流), 403 (权限/地区限制) 和 401 (认证失效) 触发账号轮换
         if status_code == 429 || status_code == 403 || status_code == 401 {
             // 只有明确包含 "QUOTA_EXHAUSTED" 才停止，避免误判上游的频率限制提示 (如 "check quota")
             if status_code == 429 && error_text.contains("QUOTA_EXHAUSTED") {
-                error!("Gemini Quota exhausted (429) on attempt {}/{}, stopping to protect pool.", attempt + 1, max_attempts);
+                error!(
+                    "Gemini Quota exhausted (429) on attempt {}/{}, stopping to protect pool.",
+                    attempt + 1,
+                    max_attempts
+                );
                 return Err((status, error_text));
             }
 
-            tracing::warn!("Gemini Upstream {} on attempt {}/{}, rotating account", status_code, attempt + 1, max_attempts);
+            tracing::warn!(
+                "Gemini Upstream {} on attempt {}/{}, rotating account",
+                status_code,
+                attempt + 1,
+                max_attempts
+            );
             continue;
         }
- 
+
         // 404 等由于模型配置或路径错误的 HTTP 异常，直接报错，不进行无效轮换
-        error!("Gemini Upstream non-retryable error {}: {}", status_code, error_text);
+        error!(
+            "Gemini Upstream non-retryable error {}: {}",
+            status_code, error_text
+        );
         return Err((status, error_text));
     }
 
-    Ok((StatusCode::TOO_MANY_REQUESTS, format!("All accounts exhausted. Last error: {}", last_error)).into_response())
+    Ok((
+        StatusCode::TOO_MANY_REQUESTS,
+        format!("All accounts exhausted. Last error: {}", last_error),
+    )
+        .into_response())
 }
 
-pub async fn handle_list_models(State(state): State<AppState>) -> Result<impl IntoResponse, (StatusCode, String)> {
+pub async fn handle_list_models(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     let model_group = "gemini";
-    let (access_token, _, _) = state.token_manager.get_token(model_group, false).await
-        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)))?;
+    let (access_token, _, _) = state
+        .token_manager
+        .get_token(model_group, false)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("Token error: {}", e),
+            )
+        })?;
 
     // Fetch from upstream
-    let upstream_models = state.upstream.fetch_available_models(&access_token).await
+    let upstream_models = state
+        .upstream
+        .fetch_available_models(&access_token)
+        .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     // Transform map to Gemini list format
@@ -213,31 +295,37 @@ pub async fn handle_list_models(State(state): State<AppState>) -> Result<impl In
     if let Some(obj) = upstream_models.as_object() {
         tracing::info!("Upstream models keys: {:?}", obj.keys());
         for (key, value) in obj {
-             let description = value.get("description").and_then(|v| v.as_str()).unwrap_or("");
-             let display_name = value.get("displayName").and_then(|v| v.as_str()).unwrap_or(key);
-             
-             models.push(json!({
-                 "name": format!("models/{}", key),
-                 "version": "001",
-                 "displayName": display_name,
-                 "description": description,
-                 "inputTokenLimit": 128000,
-                 "outputTokenLimit": 8192,
-                 "supportedGenerationMethods": ["generateContent", "countTokens"],
-                 "temperature": 1.0,
-                 "topP": 0.95,
-                 "topK": 64
-             }));
+            let description = value
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let display_name = value
+                .get("displayName")
+                .and_then(|v| v.as_str())
+                .unwrap_or(key);
+
+            models.push(json!({
+                "name": format!("models/{}", key),
+                "version": "001",
+                "displayName": display_name,
+                "description": description,
+                "inputTokenLimit": 128000,
+                "outputTokenLimit": 8192,
+                "supportedGenerationMethods": ["generateContent", "countTokens"],
+                "temperature": 1.0,
+                "topP": 0.95,
+                "topK": 64
+            }));
         }
     }
-    
+
     // Fallback
     if models.is_empty() {
-         models.push(json!({
-             "name": "models/gemini-2.5-pro", 
-             "displayName": "Gemini 2.5 Pro", 
-             "supportedGenerationMethods": ["generateContent", "countTokens"]
-         }));
+        models.push(json!({
+            "name": "models/gemini-2.5-pro",
+            "displayName": "Gemini 2.5 Pro",
+            "supportedGenerationMethods": ["generateContent", "countTokens"]
+        }));
     }
 
     Ok(Json(json!({ "models": models })))
@@ -250,10 +338,22 @@ pub async fn handle_get_model(Path(model_name): Path<String>) -> impl IntoRespon
     }))
 }
 
-pub async fn handle_count_tokens(State(state): State<AppState>, Path(_model_name): Path<String>, Json(_body): Json<Value>) -> Result<impl IntoResponse, (StatusCode, String)> {
+pub async fn handle_count_tokens(
+    State(state): State<AppState>,
+    Path(_model_name): Path<String>,
+    Json(_body): Json<Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     let model_group = "gemini";
-    let (_access_token, _project_id, _) = state.token_manager.get_token(model_group, false).await
-        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)))?;
-    
+    let (_access_token, _project_id, _) = state
+        .token_manager
+        .get_token(model_group, false)
+        .await
+        .map_err(|e| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("Token error: {}", e),
+        )
+    })?;
+
     Ok(Json(json!({"totalTokens": 0})))
 }

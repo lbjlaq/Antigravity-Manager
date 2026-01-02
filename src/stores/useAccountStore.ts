@@ -26,6 +26,7 @@ interface AccountState {
     importFromDb: () => Promise<void>;
     importFromCustomDb: (path: string) => Promise<void>;
     syncAccountFromDb: () => Promise<void>;
+    warmUpAccounts: () => Promise<string>;
 }
 
 export const useAccountStore = create<AccountState>((set, get) => ({
@@ -220,6 +221,17 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             }
         } catch (error) {
             console.error('[AccountStore] Sync from DB failed:', error);
+        }
+    },
+
+    warmUpAccounts: async () => {
+        try {
+            const result = await accountService.warmUpAccounts();
+            console.log('[AccountStore] Warm-up started:', result);
+            return result;
+        } catch (error) {
+            console.error('[AccountStore] Warm-up failed:', error);
+            throw error;
         }
     },
 }));

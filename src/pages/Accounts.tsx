@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { request as invoke } from '../utils/request';
 import { join } from '@tauri-apps/api/path';
-import { Search, RefreshCw, Download, Trash2, LayoutGrid, List } from 'lucide-react';
+import { Search, RefreshCw, Download, Trash2, LayoutGrid, List, Zap } from 'lucide-react';
 import { useAccountStore } from '../stores/useAccountStore';
 import { useConfigStore } from '../stores/useConfigStore';
 import AccountTable from '../components/accounts/AccountTable';
@@ -32,6 +32,7 @@ function Accounts() {
         switchAccount,
         loading,
         refreshQuota,
+        warmUpAccounts,
     } = useAccountStore();
     const { config } = useConfigStore();
 
@@ -291,9 +292,28 @@ function Accounts() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
     const [isRefreshConfirmOpen, setIsRefreshConfirmOpen] = useState(false);
+    const [isWarmupConfirmOpen, setIsWarmupConfirmOpen] = useState(false);
+    const [isWarming, setIsWarming] = useState(false);
 
     const handleRefreshClick = () => {
         setIsRefreshConfirmOpen(true);
+    };
+
+    const handleWarmupClick = () => {
+        setIsWarmupConfirmOpen(true);
+    };
+
+    const executeWarmup = async () => {
+        setIsWarmupConfirmOpen(false);
+        setIsWarming(true);
+        try {
+            await warmUpAccounts();
+            showToast(t('accounts.warmup_started'), 'success');
+        } catch (error) {
+            showToast(`${t('common.error')}: ${error}`, 'error');
+        } finally {
+            setIsWarming(false);
+        }
     };
 
     const executeRefresh = async () => {
@@ -605,6 +625,16 @@ function Accounts() {
                     )}
 
                     <button
+                        className={`px-2.5 py-2 bg-amber-500 text-white text-xs font-medium rounded-lg hover:bg-amber-600 transition-colors flex items-center gap-1.5 shadow-sm ${isWarming ? 'opacity-70 cursor-not-allowed' : ''}`}
+                        onClick={handleWarmupClick}
+                        disabled={isWarming}
+                        title={t('accounts.warm_up_desc')}
+                    >
+                        <Zap className={`w-3.5 h-3.5 ${isWarming ? 'animate-pulse' : ''}`} />
+                        <span className="hidden xl:inline">{isWarming ? t('common.loading') : t('accounts.warm_up')}</span>
+                    </button>
+
+                    <button
                         className={`px-2.5 py-2 bg-blue-500 text-white text-xs font-medium rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-1.5 shadow-sm ${isRefreshing ? 'opacity-70 cursor-not-allowed' : ''}`}
                         onClick={handleRefreshClick}
                         disabled={isRefreshing}
@@ -720,6 +750,17 @@ function Accounts() {
                 isDestructive={false}
                 onConfirm={executeRefresh}
                 onCancel={() => setIsRefreshConfirmOpen(false)}
+            />
+
+            <ModalDialog
+                isOpen={isWarmupConfirmOpen}
+                title={t('accounts.dialog.warmup_title')}
+                message={t('accounts.dialog.warmup_msg')}
+                type="confirm"
+                confirmText={t('accounts.warm_up')}
+                isDestructive={false}
+                onConfirm={executeWarmup}
+                onCancel={() => setIsWarmupConfirmOpen(false)}
             />
         </div >
     );

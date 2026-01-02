@@ -178,6 +178,7 @@ pub async fn handle_messages(
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
 
     let mut last_error = String::new();
+    let mut last_email = String::new();  // Track last used account for error responses
     let mut retried_without_thinking = false;
     
     for attempt in 0..max_attempts {
@@ -221,7 +222,7 @@ pub async fn handle_messages(
         };
 
         tracing::info!("Using account: {} for request (type: {})", email, config.request_type);
-        
+        last_email = email.clone();  // Track for error responses
         
         // ===== 【优化】后台任务智能检测与降级 =====
         // 使用新的检测系统，支持 5 大类关键词和多 Flash 模型策略
@@ -271,7 +272,7 @@ pub async fn handle_messages(
         }
 
         
-        request_with_mapped.model = mapped_model;
+        request_with_mapped.model = mapped_model.clone();
 
         // 生成 Trace ID (简单用时间戳后缀)
         // let _trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
@@ -337,6 +338,8 @@ pub async fn handle_messages(
                     .header(header::CONTENT_TYPE, "text/event-stream")
                     .header(header::CACHE_CONTROL, "no-cache")
                     .header(header::CONNECTION, "keep-alive")
+                    .header("X-Account-Email", &email)
+                    .header("X-Mapped-Model", &mapped_model)
                     .body(Body::from_stream(sse_stream))
                     .unwrap();
             } else {
@@ -380,7 +383,13 @@ pub async fn handle_messages(
                     claude_response.usage.output_tokens
                 );
 
-                return Json(claude_response).into_response();
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header("Content-Type", "application/json")
+                    .header("X-Account-Email", &email)
+                    .header("X-Mapped-Model", &mapped_model)
+                    .body(Body::from(serde_json::to_string(&claude_response).unwrap_or_default()))
+                    .unwrap();
             }
         }
         
@@ -451,7 +460,12 @@ pub async fn handle_messages(
             // 如果是 429 且标记为配额耗尽（明确），直接报错，避免穿透整个账号池
             if status_code == 429 && error_text.contains("QUOTA_EXHAUSTED") {
                 error!("Claude Quota exhausted (429) on attempt {}/{}, stopping to protect pool.", attempt + 1, max_attempts);
-                return (status, error_text).into_response();
+                return Response::builder()
+                    .status(status)
+                    .header("Content-Type", "text/plain")
+                    .header("X-Account-Email", &email)
+                    .body(Body::from(error_text))
+                    .unwrap();
             }
 
             tracing::warn!("Claude Upstream {} on attempt {}/{}, rotating account", status, attempt + 1, max_attempts);
@@ -460,16 +474,28 @@ pub async fn handle_messages(
         
         // 404 等由于模型配置或路径错误的 HTTP 异常，直接报错，不进行无效轮换
         error!("Claude Upstream non-retryable error {}: {}", status_code, error_text);
-        return (status, error_text).into_response();
+        return Response::builder()
+            .status(status)
+            .header("Content-Type", "text/plain")
+            .header("X-Account-Email", &email)
+            .body(Body::from(error_text))
+            .unwrap();
     }
     
-    (StatusCode::TOO_MANY_REQUESTS, Json(json!({
+    let error_body = serde_json::to_string(&json!({
         "type": "error",
         "error": {
             "type": "overloaded_error",
             "message": format!("All {} attempts failed. Last error: {}", max_attempts, last_error)
         }
-    }))).into_response()
+    })).unwrap_or_default();
+    
+    Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .header("Content-Type", "application/json")
+        .header("X-Account-Email", &last_email)
+        .body(Body::from(error_body))
+        .unwrap()
 }
 
 /// 列出可用模型

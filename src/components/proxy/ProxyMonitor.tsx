@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import ModalDialog from '../common/ModalDialog';
 import { useTranslation } from 'react-i18next';
@@ -14,7 +14,9 @@ interface ProxyRequestLog {
     url: string;
     status: number;
     duration: number;
-    model?: string;
+    model?: string;           // 客户端请求的模型
+    mapped_model?: string;    // 实际路由后使用的模型
+    account_email?: string;
     error?: string;
     request_body?: string;
     response_body?: string;
@@ -40,6 +42,35 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const [selectedLog, setSelectedLog] = useState<ProxyRequestLog | null>(null);
     const [isLoggingEnabled, setIsLoggingEnabled] = useState(false);
     const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+    const [showAccountStats, setShowAccountStats] = useState(false);
+    const [showAccountFilter, setShowAccountFilter] = useState(false);
+    const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set()); // Empty = all selected
+
+    // Calculate per-account statistics from logs
+    const accountStats = useMemo(() => {
+        const statsMap: Record<string, { success: number; error: number; total: number }> = {};
+
+        logs.forEach(log => {
+            const email = log.account_email || t('monitor.unknown_account');
+            if (!statsMap[email]) {
+                statsMap[email] = { success: 0, error: 0, total: 0 };
+            }
+            statsMap[email].total++;
+            if (log.status >= 200 && log.status < 400) {
+                statsMap[email].success++;
+            } else {
+                statsMap[email].error++;
+            }
+        });
+
+        return Object.entries(statsMap)
+            .map(([email, data]) => ({
+                email,
+                ...data,
+                successRate: data.total > 0 ? Math.round((data.success / data.total) * 100) : 0
+            }))
+            .sort((a, b) => b.total - a.total);
+    }, [logs, t]);
 
     const loadData = async () => {
         try {
@@ -95,22 +126,87 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         return () => { if (unlistenFn) unlistenFn(); };
     }, []);
 
-    const filteredLogs = logs
-        .filter(log =>
-            log.url.toLowerCase().includes(filter.toLowerCase()) ||
-            log.method.toLowerCase().includes(filter.toLowerCase()) ||
-            (log.model && log.model.toLowerCase().includes(filter.toLowerCase())) ||
-            log.status.toString().includes(filter)
-        )
-        .sort((a, b) => b.timestamp - a.timestamp);
+    // Extract unique accounts from logs for filter dropdown
+    const uniqueAccounts = useMemo(() => {
+        const accounts = new Set<string>();
+        logs.forEach(log => {
+            if (log.account_email) {
+                accounts.add(log.account_email);
+            }
+        });
+        return Array.from(accounts).sort();
+    }, [logs]);
 
+    // 筛选函数 - 不使用 useMemo，直接计算
+    const getFilteredLogs = (): ProxyRequestLog[] => {
+        let result = [...logs];
+
+        // Apply account filter (if any accounts are selected)
+        if (selectedAccounts.size > 0) {
+            result = result.filter(log =>
+                log.account_email && selectedAccounts.has(log.account_email)
+            );
+        }
+
+        // Apply text filter
+        const filterTrimmed = filter.trim();
+        if (filterTrimmed) {
+            const lowerFilter = filterTrimmed.toLowerCase();
+
+            if (lowerFilter === '__chat__') {
+                result = result.filter(log => {
+                    const url = log.url.toLowerCase();
+                    return url.includes('/chat') || url.includes('/messages') ||
+                        url.includes('/responses') || url.includes('/completions');
+                });
+            } else if (lowerFilter === '__gemini__') {
+                result = result.filter(log => {
+                    const model = (log.model || '').toLowerCase();
+                    return (model.startsWith('gpt') || model.startsWith('gemini')) && !model.startsWith('claude');
+                });
+            } else if (lowerFilter === '__claude__') {
+                result = result.filter(log => {
+                    const model = (log.model || '').toLowerCase();
+                    return model.startsWith('claude');
+                });
+            } else if (lowerFilter === '__images__') {
+                result = result.filter(log => {
+                    const url = log.url.toLowerCase();
+                    return url.includes('/images');
+                });
+            } else if (lowerFilter === '__error__') {
+                // 仅错误 - 匹配 4xx 状态码
+                result = result.filter(log => log.status >= 400 && log.status < 500);
+            } else {
+                // Regular text search
+                result = result.filter(log => {
+                    const urlMatch = log.url.toLowerCase().includes(lowerFilter);
+                    const methodMatch = log.method.toLowerCase().includes(lowerFilter);
+                    const modelMatch = log.model?.toLowerCase().includes(lowerFilter) ?? false;
+                    const accountMatch = log.account_email?.toLowerCase().includes(lowerFilter) ?? false;
+                    const statusMatch = log.status.toString().includes(lowerFilter);
+                    return urlMatch || methodMatch || modelMatch || accountMatch || statusMatch;
+                });
+            }
+        }
+
+        return result.sort((a, b) => b.timestamp - a.timestamp);
+    };
+
+    // 直接调用函数获取筛选结果
+    const filteredLogs = getFilteredLogs();
+
+    // Quick filter definitions with special matching logic
+    // 'chat' matches any chat-related endpoints
+    // 'gemini'/'claude' match model names (gpt-* routes through gemini)
+    // 'images' matches image generation endpoints
     const quickFilters = [
         { label: t('monitor.filters.all'), value: '' },
-        { label: t('monitor.filters.error'), value: '40' },
-        { label: t('monitor.filters.chat'), value: 'completions' },
-        { label: t('monitor.filters.gemini'), value: 'gemini' },
-        { label: t('monitor.filters.claude'), value: 'claude' },
-        { label: t('monitor.filters.images'), value: 'images' }
+        { label: t('monitor.filters.error'), value: '__error__' },
+        { label: t('monitor.filters.chat'), value: '__chat__' }, // Special marker for chat endpoints
+        { label: t('monitor.filters.gemini'), value: '__gemini__' }, // Match gpt-* models (routes through Gemini)
+        { label: t('monitor.filters.claude'), value: '__claude__' }, // Match claude-* models
+        { label: t('monitor.filters.images'), value: '__images__' }
     ];
 
     const clearLogs = () => {
@@ -121,8 +217,11 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         setIsClearConfirmOpen(false);
         try {
             await invoke('clear_proxy_logs');
+            // Immediately clear local state
             setLogs([]);
             setStats({ total_requests: 0, success_count: 0, error_count: 0 });
+            // Also reload from backend to ensure sync
+            await loadData();
         } catch (e) {
             console.error("Failed to clear logs", e);
         }
@@ -164,10 +263,40 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                         />
                     </div>
 
-                    <div className="hidden lg:flex gap-4 text-[10px] font-bold uppercase">
-                        <span className="text-blue-500">{formatCompactNumber(stats.total_requests)} REQS</span>
-                        <span className="text-green-500">{formatCompactNumber(stats.success_count)} OK</span>
-                        <span className="text-red-500">{formatCompactNumber(stats.error_count)} ERR</span>
+                    <div className="relative hidden lg:block">
+                        <button
+                            onClick={() => setShowAccountStats(!showAccountStats)}
+                            className="flex gap-4 text-[10px] font-bold uppercase cursor-pointer hover:opacity-80 transition-opacity"
+                        >
+                            <span className="text-blue-500">{formatCompactNumber(stats.total_requests)} REQS</span>
+                            <span className="text-green-500">{formatCompactNumber(stats.success_count)} OK</span>
+                            <span className="text-red-500">{formatCompactNumber(stats.error_count)} ERR</span>
+                        </button>
+
+                        {/* Account Stats Dropdown */}
+                        {showAccountStats && accountStats.length > 0 && (
+                            <div className="absolute right-0 top-6 z-50 bg-white dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-lg shadow-lg p-3 min-w-[280px]">
+                                <div className="text-xs font-bold text-gray-600 dark:text-gray-300 mb-2 border-b pb-2">
+                                    {t('monitor.account_stats.title')}
+                                </div>
+                                <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                                    {accountStats.map(stat => (
+                                        <div key={stat.email} className="flex items-center justify-between text-xs">
+                                            <span className="truncate max-w-[120px] text-gray-700 dark:text-gray-300" title={stat.email}>
+                                                {stat.email.split('@')[0]}
+                                            </span>
+                                            <div className="flex gap-2 text-[10px]">
+                                                <span className="text-green-600">{stat.success}✓</span>
+                                                <span className="text-red-500">{stat.error}✗</span>
+                                                <span className={`font-bold ${stat.successRate >= 90 ? 'text-green-600' : stat.successRate >= 70 ? 'text-yellow-600' : 'text-red-500'}`}>
+                                                    {stat.successRate}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <button onClick={clearLogs} className="btn btn-sm btn-ghost text-gray-400">
@@ -182,7 +311,65 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                             {q.label}
                         </button>
                     ))}
-                    {filter && <button onClick={() => setFilter('')} className="text-[10px] text-blue-500"> {t('monitor.filters.reset')} </button>}
+
+                    {/* Account Filter Dropdown */}
+                    {uniqueAccounts.length > 0 && (
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowAccountFilter(!showAccountFilter)}
+                                className={`px-2 py-0.5 rounded-full text-[10px] border flex items-center gap-1 ${selectedAccounts.size > 0 ? 'bg-purple-500 text-white' : 'bg-white dark:bg-base-200 text-gray-500'}`}
+                            >
+                                {t('monitor.filters.account')} {selectedAccounts.size > 0 && `(${selectedAccounts.size})`}
+                            </button>
+
+                            {showAccountFilter && (
+                                <div className="absolute left-0 top-6 z-50 bg-white dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-lg shadow-lg p-2 min-w-[200px]">
+                                    <div className="text-xs font-bold text-gray-600 dark:text-gray-300 mb-2 pb-1 border-b flex justify-between">
+                                        <span>{t('monitor.filters.select_accounts')}</span>
+                                        <button
+                                            onClick={() => setSelectedAccounts(new Set())}
+                                            className="text-blue-500 text-[10px]"
+                                        >
+                                            {t('monitor.filters.select_all')}
+                                        </button>
+                                    </div>
+                                    <div className="space-y-1 max-h-[150px] overflow-y-auto">
+                                        {uniqueAccounts.map(account => (
+                                            <label key={account} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-base-300 p-1 rounded">
+                                                <input
+                                                    type="checkbox"
+                                                    className="checkbox checkbox-xs checkbox-primary"
+                                                    checked={selectedAccounts.size === 0 || selectedAccounts.has(account)}
+                                                    onChange={(e) => {
+                                                        const newSet = new Set(selectedAccounts);
+                                                        if (e.target.checked) {
+                                                            if (selectedAccounts.size === 0) {
+                                                                // First selection from "all" state
+                                                                newSet.add(account);
+                                                            } else {
+                                                                newSet.add(account);
+                                                            }
+                                                        } else {
+                                                            if (selectedAccounts.size === 0) {
+                                                                // Deselecting from "all" - select all except this one
+                                                                uniqueAccounts.forEach(a => { if (a !== account) newSet.add(a); });
+                                                            } else {
+                                                                newSet.delete(account);
+                                                            }
+                                                        }
+                                                        setSelectedAccounts(newSet);
+                                                    }}
+                                                />
+                                                <span className="truncate">{account.split('@')[0]}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {(filter || selectedAccounts.size > 0) && <button onClick={() => { setFilter(''); setSelectedAccounts(new Set()); }} className="text-[10px] text-blue-500"> {t('monitor.filters.reset')} </button>}
                 </div>
             </div>
 
@@ -193,6 +380,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                             <th>{t('monitor.table.status')}</th>
                             <th>{t('monitor.table.method')}</th>
                             <th>{t('monitor.table.model')}</th>
+                            <th>{t('monitor.table.account')}</th>
                             <th>{t('monitor.table.path')}</th>
                             <th className="text-right">{t('monitor.table.usage')}</th>
                             <th className="text-right">{t('monitor.table.duration')}</th>
@@ -204,8 +392,14 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                             <tr key={log.id} className="hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer" onClick={() => setSelectedLog(log)}>
                                 <td><span className={`badge badge-xs text-white border-none ${log.status >= 200 && log.status < 400 ? 'badge-success' : 'badge-error'}`}>{log.status}</span></td>
                                 <td className="font-bold">{log.method}</td>
-                                <td className="text-blue-600 truncate max-w-[180px]">{log.model || '-'}</td>
-                                <td className="truncate max-w-[240px]">{log.url}</td>
+                                <td className="text-blue-600 truncate max-w-[150px]" title={log.mapped_model ? `实际: ${log.mapped_model}` : undefined}>
+                                    {log.model || '-'}
+                                    {log.mapped_model && log.mapped_model !== log.model && (
+                                        <span className="text-[9px] text-gray-400 ml-1">→{log.mapped_model.replace('gemini-', 'g-').replace('-latest', '')}</span>
+                                    )}
+                                </td>
+                                <td className="text-gray-500 truncate max-w-[160px] text-[10px]" title={log.account_email}>{log.account_email ? log.account_email.split('@')[0] : '-'}</td>
+                                <td className="truncate max-w-[200px]">{log.url}</td>
                                 <td className="text-right text-[9px]">
                                     {log.input_tokens != null && <div>I: {formatCompactNumber(log.input_tokens)}</div>}
                                     {log.output_tokens != null && <div>O: {formatCompactNumber(log.output_tokens)}</div>}

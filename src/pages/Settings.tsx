@@ -20,6 +20,16 @@ function Settings() {
         refresh_interval: 15,
         auto_sync: false,
         sync_interval: 5,
+        scheduled_warmup: {
+            enabled: false,
+            schedules: {
+                'default': [
+                    { start: '10:00', end: '10:00', enabled: true },
+                    { start: '15:00', end: '15:00', enabled: true },
+                    { start: '21:00', end: '21:00', enabled: true }
+                ]
+            }
+        },
         proxy: {
             enabled: false,
             port: 8080,
@@ -352,6 +362,148 @@ function Settings() {
                                     />
                                 </div>
                             )}
+
+                            {/* 智能高峰期预热调度器 */}
+                            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-base-300">
+                                <h3 className="text-md font-semibold text-gray-900 dark:text-base-content mb-4 flex items-center gap-2">
+                                    <Sparkles className="w-5 h-5 text-amber-500" />
+                                    {t('settings.account.scheduled_warmup.title')}
+                                </h3>
+
+                                {/* 启用开关 */}
+                                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300 mb-4">
+                                    <div>
+                                        <div className="font-medium text-gray-900 dark:text-base-content">{t('settings.account.scheduled_warmup.enable')}</div>
+                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{t('settings.account.scheduled_warmup.enable_desc')}</p>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={formData.scheduled_warmup?.enabled || false}
+                                            onChange={(e) => {
+                                                const defaultSchedules = {
+                                                    'default': [
+                                                        { start: '10:00', end: '10:00', enabled: true },
+                                                        { start: '15:00', end: '15:00', enabled: true },
+                                                        { start: '21:00', end: '21:00', enabled: true }
+                                                    ]
+                                                };
+                                                const existingSchedules = formData.scheduled_warmup?.schedules;
+                                                const hasExistingSchedules = existingSchedules &&
+                                                    existingSchedules['default'] &&
+                                                    existingSchedules['default'].length > 0 &&
+                                                    existingSchedules['default'].some(s => s.start);
+                                                setFormData({
+                                                    ...formData,
+                                                    scheduled_warmup: {
+                                                        ...formData.scheduled_warmup,
+                                                        enabled: e.target.checked,
+                                                        schedules: hasExistingSchedules ? existingSchedules : defaultSchedules
+                                                    }
+                                                });
+                                            }}
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                                    </label>
+                                </div>
+
+                                {/* 时间点配置 */}
+                                {formData.scheduled_warmup?.enabled && (
+                                    <div className="ml-4 space-y-4">
+                                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                                            {t('settings.account.scheduled_warmup.schedule_desc')}
+                                        </p>
+
+                                        {/* 3个时间点输入 */}
+                                        <div className="space-y-3">
+                                            {[0, 1, 2].map((idx) => {
+                                                // 获取当前时间点 (使用schedules的第一天作为通用配置)
+                                                const times = formData.scheduled_warmup?.schedules?.['default'] || [];
+                                                const currentTimeRange = times[idx];
+                                                const currentTime = currentTimeRange?.start || '';
+                                                const isTimeEnabled = currentTimeRange?.enabled !== false; // 默认为 true
+
+                                                // 计算预热触发时间（高峰时间前5小时）
+                                                const getWarmupTime = (peakTime: string) => {
+                                                    if (!peakTime) return '--:--';
+                                                    const [h, m] = peakTime.split(':').map(Number);
+                                                    let warmupHour = h - 5;
+                                                    if (warmupHour < 0) warmupHour += 24;
+                                                    return `${warmupHour.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+                                                };
+
+                                                // 更新时间点配置
+                                                const updateTimePoint = (updates: { start?: string; enabled?: boolean }) => {
+                                                    const newTimes = [...(formData.scheduled_warmup?.schedules?.['default'] || [
+                                                        { start: '10:00', end: '10:00', enabled: true },
+                                                        { start: '15:00', end: '15:00', enabled: true },
+                                                        { start: '21:00', end: '21:00', enabled: true }
+                                                    ])];
+                                                    newTimes[idx] = {
+                                                        ...newTimes[idx],
+                                                        start: updates.start ?? newTimes[idx]?.start ?? '',
+                                                        end: updates.start ?? newTimes[idx]?.end ?? '',
+                                                        enabled: updates.enabled ?? newTimes[idx]?.enabled ?? true
+                                                    };
+                                                    setFormData({
+                                                        ...formData,
+                                                        scheduled_warmup: {
+                                                            enabled: true,
+                                                            schedules: { 'default': newTimes }
+                                                        }
+                                                    });
+                                                };
+
+                                                return (
+                                                    <div key={idx} className={`flex items-center gap-4 p-3 rounded-lg transition-all ${isTimeEnabled ? 'bg-gray-50 dark:bg-base-200' : 'bg-gray-100/50 dark:bg-base-300/50 opacity-60'}`}>
+                                                        {/* 独立开关 */}
+                                                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                                            <input
+                                                                type="checkbox"
+                                                                className="sr-only peer"
+                                                                checked={isTimeEnabled}
+                                                                onChange={(e) => updateTimePoint({ enabled: e.target.checked })}
+                                                            />
+                                                            <div className="w-9 h-5 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                                                        </label>
+                                                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300 w-20">
+                                                            {t('settings.account.scheduled_warmup.peak_time')} {idx + 1}
+                                                        </span>
+                                                        <input
+                                                            type="time"
+                                                            className={`px-3 py-2 border border-gray-300 dark:border-base-300 rounded-lg bg-white dark:bg-base-100 text-sm ${!isTimeEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                            value={currentTime}
+                                                            disabled={!isTimeEnabled}
+                                                            onChange={(e) => updateTimePoint({ start: e.target.value })}
+                                                        />
+                                                        {currentTime && isTimeEnabled && (
+                                                            <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                                                                ⚡ {t('settings.account.scheduled_warmup.warmup_at')} <strong>{getWarmupTime(currentTime)}</strong> {t('settings.account.scheduled_warmup.warmup_suffix')}
+                                                            </span>
+                                                        )}
+                                                        {(!currentTime || !isTimeEnabled) && (
+                                                            <span className="text-xs text-gray-400">
+                                                                {!isTimeEnabled ? t('common.disabled') : t('settings.account.scheduled_warmup.not_set')}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+
+                                        <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800/50">
+                                            <p className="text-xs text-amber-700 dark:text-amber-400">
+                                                ⚠️ {t('settings.account.scheduled_warmup.quota_hint')}
+                                            </p>
+                                        </div>
+
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                                            💡 {t('settings.account.scheduled_warmup.hint')}
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
 

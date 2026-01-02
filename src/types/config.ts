@@ -44,6 +44,17 @@ export interface ZaiConfig {
     mcp: ZaiMcpConfig;
 }
 
+export interface TimeRange {
+    start: string;
+    end: string;
+    enabled?: boolean;  // 独立开关，默认 true
+}
+
+export interface ScheduledWarmupConfig {
+    enabled: boolean;
+    schedules: Record<string, TimeRange[]>;
+}
+
 export interface AppConfig {
     language: string;
     theme: string;
@@ -56,4 +67,5 @@ export interface AppConfig {
     auto_launch?: boolean; // 开机自动启动
     accounts_page_size?: number; // 账号列表每页显示数量,默认 0 表示自动计算
     proxy: ProxyConfig;
+    scheduled_warmup?: ScheduledWarmupConfig;
 }

@@ -24,7 +24,17 @@
         "next_page": "Next",
         "pagination_info": "Showing {{start}} to {{end}} of {{total}} entries",
         "per_page": "Per page",
-        "items": "items"
+        "items": "items",
+        "weekday": {
+            "mon": "Mon",
+            "tue": "Tue",
+            "wed": "Wed",
+            "thu": "Thu",
+            "fri": "Fri",
+            "sat": "Sat",
+            "sun": "Sun"
+        },
+        "disabled": "Disabled"
     },
     "nav": {
         "dashboard": "Dashboard",
@@ -75,6 +85,9 @@
         "free": "FREE",
         "add_account": "Add Account",
         "refresh_all": "Refresh All",
+        "warm_up": "Warm Up",
+        "warm_up_desc": "Trigger 5-hour reset cycle for all models",
+        "warmup_started": "Warm-up process started in background",
         "refresh_selected": "Refresh ({{count}})",
         "export_selected": "Export ({{count}})",
         "delete_selected": "Delete ({{count}})",
@@ -86,6 +99,8 @@
         "forbidden_badge": "403",
         "forbidden_tooltip": "API returned 403 Forbidden, account has no permission for Gemini Code Assist",
         "forbidden_msg": "Forbidden, skip auto-refresh",
+        "cooling": "Cooling",
+        "cooling_tooltip": "Account is in 5-hour cooldown, quota will be restored when timer ends",
         "no_data": "No Data",
         "last_used": "Last Used",
         "reset_time": "Reset Time",
@@ -161,7 +176,9 @@
             "refresh_title": "Refresh Quota",
             "batch_refresh_title": "Batch Refresh",
             "refresh_msg": "Are you sure you want to refresh the quota for the current account?",
-            "batch_refresh_msg": "Are you sure you want to refresh quotas for the selected {{count}} accounts? This may take some time."
+            "batch_refresh_msg": "Are you sure you want to refresh quotas for the selected {{count}} accounts? This may take some time.",
+            "warmup_title": "Warm-up Confirmation",
+            "warmup_msg": "This action will send a lightweight request to all Pro/Ultra accounts to trigger their 5-hour quota reset cycle.\n\n💡 Tip: You can configure 'Smart Peak Scheduler' in Settings to automatically run warm-up before your peak usage hours."
         }
     },
     "settings": {
@@ -192,7 +209,19 @@
             "refresh_interval": "Refresh Interval (minutes)",
             "auto_sync": "Auto Sync Current Account",
             "auto_sync_desc": "Automatically sync current active account information periodically",
-            "sync_interval": "Sync Interval (seconds)"
+            "sync_interval": "Sync Interval (seconds)",
+            "scheduled_warmup": {
+                "title": "Smart Peak Scheduler",
+                "enable": "Enable Scheduled Warmup",
+                "enable_desc": "Automatically warm up accounts 5 hours before your peak usage periods",
+                "schedule_desc": "Set up to 3 peak usage times per day. Warmup triggers 5 hours before each time.",
+                "peak_time": "Peak Time",
+                "warmup_at": "Warmup at",
+                "warmup_suffix": "auto cooldown refresh",
+                "not_set": "Not set",
+                "quota_hint": "Auto warmup only triggers when quota is full. Accounts with used quota will be skipped.",
+                "hint": "Warmup uses minimal quota to start the 5-hour cooldown, ensuring quota is restored by peak time"
+            }
         },
         "advanced": {
             "title": "Advanced Settings",
@@ -471,15 +500,16 @@
             "action": "Action"
         }
     },
-            "monitor": {
-                "page_title": "API Monitor Dashboard",
-                "page_subtitle": "Real-time request logging and analysis",
-                "open_monitor": "Open Monitor",
-                "logging_status": {
-                    "active": "Recording",
-                    "paused": "Paused"
-                },
-                "stats": {            "total": "Total",
+    "monitor": {
+        "page_title": "API Monitor Dashboard",
+        "page_subtitle": "Real-time request logging and analysis",
+        "open_monitor": "Open Monitor",
+        "logging_status": {
+            "active": "Recording",
+            "paused": "Paused"
+        },
+        "stats": {
+            "total": "Total",
             "ok": "OK",
             "err": "ERR"
         },
@@ -492,30 +522,39 @@
             "gemini": "Gemini",
             "claude": "Claude",
             "images": "Images",
+            "account": "Account",
+            "select_accounts": "Select Accounts",
+            "select_all": "Select All",
             "reset": "Reset"
         },
         "table": {
             "status": "Status",
             "method": "Method",
-                            "model": "Model",
-                            "path": "Path",
-                            "usage": "Tokens",
-                            "duration": "Duration",
-                            "time": "Time",
-                            "empty": "No requests recorded"
-                        },
-                        "details": {
-                            "title": "Request Details",
-                            "request_payload": "Request Payload",
-                            "response_payload": "Response Payload",
-                            "duration": "Duration",
-                            "tokens": "Tokens (I/O)",
-                            "time": "Time",            "model": "Model",
+            "model": "Model",
+            "account": "Account",
+            "path": "Path",
+            "usage": "Tokens",
+            "duration": "Duration",
+            "time": "Time",
+            "empty": "No requests recorded"
+        },
+        "details": {
+            "title": "Request Details",
+            "request_payload": "Request Payload",
+            "response_payload": "Response Payload",
+            "duration": "Duration",
+            "tokens": "Tokens (I/O)",
+            "time": "Time",
+            "model": "Model",
             "id": "Request ID"
         },
         "dialog": {
             "clear_title": "Clear Proxy Logs",
             "clear_msg": "Are you sure you want to clear all proxy logs? This action cannot be undone."
-        }
+        },
+        "account_stats": {
+            "title": "Account Success Rate"
+        },
+        "unknown_account": "Unknown Account"
     }
 }

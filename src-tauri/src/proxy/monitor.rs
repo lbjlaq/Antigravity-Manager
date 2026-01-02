@@ -1,8 +1,8 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use tokio::sync::RwLock;
-use tauri::Emitter;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::Emitter;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyRequestLog {
@@ -11,8 +11,10 @@ pub struct ProxyRequestLog {
     pub method: String,
     pub url: String,
     pub status: u16,
-    pub duration: u64, // ms
-    pub model: Option<String>,
+    pub duration: u64,                // ms
+    pub model: Option<String>,        // 客户端请求的模型名
+    pub mapped_model: Option<String>, // 实际路由后使用的模型名
+    pub account_email: Option<String>,
     pub error: Option<String>,
     pub request_body: Option<String>,
     pub response_body: Option<String>,
@@ -94,7 +96,7 @@ impl ProxyMonitor {
 
         // Emit event
         if let Some(app) = &self.app_handle {
-             let _ = app.emit("proxy://request", &log);
+            let _ = app.emit("proxy://request", &log);
         }
     }
 
@@ -120,7 +122,7 @@ impl ProxyMonitor {
             }
         }
     }
-    
+
     pub async fn clear(&self) {
         let mut logs = self.logs.write().await;
         logs.clear();

@@ -1,4 +1,4 @@
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, Snowflake } from 'lucide-react';
 import { Account } from '../../types/account';
 import { getQuotaColor, formatTimeRemaining, getTimeRemainingColor } from '../../utils/format';
 import { cn } from '../../utils/cn';
@@ -156,10 +156,13 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                         <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
                                     )}
                                 </div>
-                                <span className={cn("w-[36px] text-right font-bold transition-colors",
+                                <span className={cn("w-[36px] text-right font-bold transition-colors flex items-center justify-end gap-0.5",
                                     getQuotaColor(geminiProModel?.percentage || 0) === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
                                         getQuotaColor(geminiProModel?.percentage || 0) === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'
                                 )}>
+                                    {geminiProModel && geminiProModel.percentage < 100 && (
+                                        <span title="冷却中，需要预热"><Snowflake className="w-2.5 h-2.5 text-blue-400 animate-pulse" /></span>
+                                    )}
                                     {geminiProModel ? `${geminiProModel.percentage}%` : '-'}
                                 </span>
                             </div>
@@ -185,10 +188,13 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                         <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
                                     )}
                                 </div>
-                                <span className={cn("w-[36px] text-right font-bold transition-colors",
+                                <span className={cn("w-[36px] text-right font-bold transition-colors flex items-center justify-end gap-0.5",
                                     getQuotaColor(geminiFlashModel?.percentage || 0) === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
                                         getQuotaColor(geminiFlashModel?.percentage || 0) === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'
                                 )}>
+                                    {geminiFlashModel && geminiFlashModel.percentage < 100 && (
+                                        <span title="冷却中，需要预热"><Snowflake className="w-2.5 h-2.5 text-blue-400 animate-pulse" /></span>
+                                    )}
                                     {geminiFlashModel ? `${geminiFlashModel.percentage}%` : '-'}
                                 </span>
                             </div>
@@ -214,10 +220,13 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                         <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
                                     )}
                                 </div>
-                                <span className={cn("w-[36px] text-right font-bold transition-colors",
+                                <span className={cn("w-[36px] text-right font-bold transition-colors flex items-center justify-end gap-0.5",
                                     getQuotaColor(geminiImageModel?.percentage || 0) === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
                                         getQuotaColor(geminiImageModel?.percentage || 0) === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'
                                 )}>
+                                    {geminiImageModel && geminiImageModel.percentage < 100 && (
+                                        <span title="冷却中，需要预热"><Snowflake className="w-2.5 h-2.5 text-blue-400 animate-pulse" /></span>
+                                    )}
                                     {geminiImageModel ? `${geminiImageModel.percentage}%` : '-'}
                                 </span>
                             </div>
@@ -243,10 +252,13 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                         <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
                                     )}
                                 </div>
-                                <span className={cn("w-[36px] text-right font-bold transition-colors",
+                                <span className={cn("w-[36px] text-right font-bold transition-colors flex items-center justify-end gap-0.5",
                                     getQuotaColor(claudeModel?.percentage || 0) === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
                                         getQuotaColor(claudeModel?.percentage || 0) === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'
                                 )}>
+                                    {claudeModel && claudeModel.percentage < 100 && (
+                                        <span title="冷却中，需要预热"><Snowflake className="w-2.5 h-2.5 text-blue-400 animate-pulse" /></span>
+                                    )}
                                     {claudeModel ? `${claudeModel.percentage}%` : '-'}
                                 </span>
                             </div>

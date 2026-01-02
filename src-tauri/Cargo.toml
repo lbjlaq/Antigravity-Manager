@@ -61,3 +61,4 @@ tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
 tracing-appender = "0.2.4"
 tracing-log = "0.2.0"
 tauri-plugin-autostart = "2.5.1"
+socket2 = "0.5"  # Socket options for SO_REUSEADDR

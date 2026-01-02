@@ -1,14 +1,14 @@
+use crate::proxy::monitor::ProxyRequestLog;
+use crate::proxy::server::AppState;
 use axum::{
+    body::Body,
     extract::{Request, State},
     middleware::Next,
     response::Response,
-    body::Body,
 };
-use std::time::Instant;
-use crate::proxy::server::AppState;
-use crate::proxy::monitor::ProxyRequestLog;
-use serde_json::Value;
 use futures::StreamExt;
+use serde_json::Value;
+use std::time::Instant;
 
 pub async fn monitor_middleware(
     State(state): State<AppState>,
@@ -22,11 +22,11 @@ pub async fn monitor_middleware(
     let start = Instant::now();
     let method = request.method().to_string();
     let uri = request.uri().to_string();
-    
+
     if uri.contains("event_logging") {
         return next.run(request).await;
     }
-    
+
     let mut model = if uri.contains("/v1beta/models/") {
         uri.split("/v1beta/models/")
             .nth(1)
@@ -42,9 +42,11 @@ pub async fn monitor_middleware(
         match axum::body::to_bytes(body, 1024 * 1024).await {
             Ok(bytes) => {
                 if model.is_none() {
-                    model = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v|
-                        v.get("model").and_then(|m| m.as_str()).map(|s| s.to_string())
-                    );
+                    model = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v| {
+                        v.get("model")
+                            .and_then(|m| m.as_str())
+                            .map(|s| s.to_string())
+                    });
                 }
                 request_body_str = if let Ok(s) = std::str::from_utf8(&bytes) {
                     Some(s.to_string())
@@ -62,16 +64,32 @@ pub async fn monitor_middleware(
         request_body_str = None;
         request
     };
-    
+
     let response = next.run(request).await;
-    
+
     let duration = start.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
-    
-    let content_type = response.headers().get("content-type")
+
+    let content_type = response
+        .headers()
+        .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+
+    // Extract account email from X-Account-Email header if present
+    let account_email = response
+        .headers()
+        .get("X-Account-Email")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Extract mapped model from X-Mapped-Model header if present
+    let mapped_model = response
+        .headers()
+        .get("X-Mapped-Model")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     let monitor = state.monitor.clone();
     let mut log = ProxyRequestLog {
@@ -81,7 +99,9 @@ pub async fn monitor_middleware(
         url: uri,
         status,
         duration,
-        model, 
+        model,
+        mapped_model,
+        account_email,
         error: None,
         request_body: request_body_str,
         response_body: None,
@@ -94,17 +114,17 @@ pub async fn monitor_middleware(
         let (parts, body) = response.into_parts();
         let mut stream = body.into_data_stream();
         let (tx, rx) = tokio::sync::mpsc::channel(64);
-        
+
         tokio::spawn(async move {
             let mut last_few_bytes = Vec::new();
             while let Some(chunk_res) = stream.next().await {
                 if let Ok(chunk) = chunk_res {
                     if chunk.len() > 8192 {
-                        last_few_bytes = chunk.slice(chunk.len()-8192..).to_vec();
+                        last_few_bytes = chunk.slice(chunk.len() - 8192..).to_vec();
                     } else {
                         last_few_bytes.extend_from_slice(&chunk);
                         if last_few_bytes.len() > 8192 {
-                            last_few_bytes.drain(0..last_few_bytes.len()-8192);
+                            last_few_bytes.drain(0..last_few_bytes.len() - 8192);
                         }
                     }
                     let _ = tx.send(Ok::<_, axum::Error>(chunk)).await;
@@ -112,17 +132,28 @@ pub async fn monitor_middleware(
                     let _ = tx.send(Err(axum::Error::new(e))).await;
                 }
             }
-            
+
             if let Ok(full_tail) = std::str::from_utf8(&last_few_bytes) {
                 for line in full_tail.lines().rev() {
                     if line.starts_with("data: ") && line.contains("\"usage\"") {
                         let json_str = line.trim_start_matches("data: ").trim();
                         if let Ok(json) = serde_json::from_str::<Value>(json_str) {
                             if let Some(usage) = json.get("usage") {
-                                log.input_tokens = usage.get("prompt_tokens").or(usage.get("input_tokens")).and_then(|v| v.as_u64()).map(|v| v as u32);
-                                log.output_tokens = usage.get("completion_tokens").or(usage.get("output_tokens")).and_then(|v| v.as_u64()).map(|v| v as u32);
+                                log.input_tokens = usage
+                                    .get("prompt_tokens")
+                                    .or(usage.get("input_tokens"))
+                                    .and_then(|v| v.as_u64())
+                                    .map(|v| v as u32);
+                                log.output_tokens = usage
+                                    .get("completion_tokens")
+                                    .or(usage.get("output_tokens"))
+                                    .and_then(|v| v.as_u64())
+                                    .map(|v| v as u32);
                                 if log.input_tokens.is_none() && log.output_tokens.is_none() {
-                                    log.output_tokens = usage.get("total_tokens").and_then(|v| v.as_u64()).map(|v| v as u32);
+                                    log.output_tokens = usage
+                                        .get("total_tokens")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|v| v as u32);
                                 }
                                 break;
                             }
@@ -130,14 +161,17 @@ pub async fn monitor_middleware(
                     }
                 }
             }
-            
+
             if log.status >= 400 {
                 log.error = Some("Stream Error or Failed".to_string());
             }
             monitor.log_request(log).await;
         });
 
-        Response::from_parts(parts, Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Response::from_parts(
+            parts,
+            Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)),
+        )
     } else if content_type.contains("application/json") || content_type.contains("text/") {
         let (parts, body) = response.into_parts();
         match axum::body::to_bytes(body, 512 * 1024).await {
@@ -145,10 +179,21 @@ pub async fn monitor_middleware(
                 if let Ok(s) = std::str::from_utf8(&bytes) {
                     if let Ok(json) = serde_json::from_str::<Value>(&s) {
                         if let Some(usage) = json.get("usage") {
-                            log.input_tokens = usage.get("prompt_tokens").or(usage.get("input_tokens")).and_then(|v| v.as_u64()).map(|v| v as u32);
-                            log.output_tokens = usage.get("completion_tokens").or(usage.get("output_tokens")).and_then(|v| v.as_u64()).map(|v| v as u32);
+                            log.input_tokens = usage
+                                .get("prompt_tokens")
+                                .or(usage.get("input_tokens"))
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
+                            log.output_tokens = usage
+                                .get("completion_tokens")
+                                .or(usage.get("output_tokens"))
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as u32);
                             if log.input_tokens.is_none() && log.output_tokens.is_none() {
-                                log.output_tokens = usage.get("total_tokens").and_then(|v| v.as_u64()).map(|v| v as u32);
+                                log.output_tokens = usage
+                                    .get("total_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .map(|v| v as u32);
                             }
                         }
                     }
@@ -156,7 +201,7 @@ pub async fn monitor_middleware(
                 } else {
                     log.response_body = Some("[Binary Response Data]".to_string());
                 }
-                
+
                 if log.status >= 400 {
                     log.error = log.response_body.clone();
                 }
