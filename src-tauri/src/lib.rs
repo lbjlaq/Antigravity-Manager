@@ -98,7 +98,6 @@ pub fn run() {
             // 配额命令
             commands::fetch_account_quota,
             commands::refresh_all_quotas,
-            commands::warm_up_accounts,
             // 配置命令
             commands::load_config,
             commands::save_config,
