@@ -76,6 +76,9 @@
         "add_account": "Add Account",
         "refresh_all": "Refresh All",
         "refresh_selected": "Refresh ({{count}})",
+        "warm_up": "Warm Up",
+        "warm_up_desc": "Send requests to activate cooling accounts and restore quota",
+        "warmup_started": "Warmup started, please wait...",
         "export_selected": "Export ({{count}})",
         "delete_selected": "Delete ({{count}})",
         "current": "Current",
@@ -162,7 +165,9 @@
             "refresh_title": "Refresh Quota",
             "batch_refresh_title": "Batch Refresh",
             "refresh_msg": "Are you sure you want to refresh the quota for the current account?",
-            "batch_refresh_msg": "Are you sure you want to refresh quotas for the selected {{count}} accounts? This may take some time."
+            "batch_refresh_msg": "Are you sure you want to refresh quotas for the selected {{count}} accounts? This may take some time.",
+            "warmup_title": "Warm Up All",
+            "warmup_msg": "This will send requests to all cooling accounts to activate their quota. Continue?"
         }
     },
     "settings": {

@@ -77,6 +77,9 @@
         "add_account": "添加账号",
         "refresh_all": "刷新所有",
         "refresh_selected": "刷新 ({{count}})",
+        "warm_up": "一键预热",
+        "warm_up_desc": "发送少量请求激活冷却中的账号，恢复配额",
+        "warmup_started": "预热已启动，请稍候...",
         "export_selected": "导出 ({{count}})",
         "delete_selected": "删除 ({{count}})",
         "current": "当前",
@@ -171,7 +174,9 @@
             "disable_proxy_title": "禁用反代",
             "disable_proxy_msg": "确定要禁用此账号的反代功能吗？账号仍可在应用中使用。",
             "enable_proxy_title": "启用反代",
-            "enable_proxy_msg": "确定要重新启用此账号的反代功能吗？"
+            "enable_proxy_msg": "确定要重新启用此账号的反代功能吗？",
+            "warmup_title": "一键预热",
+            "warmup_msg": "将对所有冷却中的账号发送少量请求以激活配额。确定继续吗？"
         }
     },
     "settings": {

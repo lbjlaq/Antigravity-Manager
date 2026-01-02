@@ -49,6 +49,10 @@ export async function refreshAllQuotas(): Promise<RefreshStats> {
     return await invoke('refresh_all_quotas');
 }
 
+export async function warmUpAccounts(): Promise<string> {
+    return await invoke('warm_up_accounts');
+}
+
 // OAuth
 export async function startOAuthLogin(): Promise<Account> {
     ensureTauriEnvironment();
