@@ -1,4 +1,4 @@
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Snowflake } from 'lucide-react';
 import { Account } from '../../types/account';
 import { getQuotaColor, formatTimeRemaining, getTimeRemainingColor } from '../../utils/format';
 import { cn } from '../../utils/cn';
@@ -175,6 +175,9 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                 )}>
                                     {geminiProModel ? `${geminiProModel.percentage}%` : '-'}
                                 </span>
+                                {geminiProModel && geminiProModel.percentage < 100 && (
+                                    <Snowflake className="w-3 h-3 text-cyan-400 animate-pulse ml-0.5" title="冷却中，需要预热" />
+                                )}
                             </div>
                         </div>
 
@@ -204,6 +207,9 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                 )}>
                                     {geminiFlashModel ? `${geminiFlashModel.percentage}%` : '-'}
                                 </span>
+                                {geminiFlashModel && geminiFlashModel.percentage < 100 && (
+                                    <Snowflake className="w-3 h-3 text-cyan-400 animate-pulse ml-0.5" title="冷却中，需要预热" />
+                                )}
                             </div>
                         </div>
 
@@ -233,6 +239,9 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                 )}>
                                     {geminiImageModel ? `${geminiImageModel.percentage}%` : '-'}
                                 </span>
+                                {geminiImageModel && geminiImageModel.percentage < 100 && (
+                                    <Snowflake className="w-3 h-3 text-cyan-400 animate-pulse ml-0.5" title="冷却中，需要预热" />
+                                )}
                             </div>
                         </div>
 
@@ -262,6 +271,9 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                 )}>
                                     {claudeModel ? `${claudeModel.percentage}%` : '-'}
                                 </span>
+                                {claudeModel && claudeModel.percentage < 100 && (
+                                    <Snowflake className="w-3 h-3 text-cyan-400 animate-pulse ml-0.5" title="冷却中，需要预热" />
+                                )}
                             </div>
                         </div>
                     </div>

@@ -193,7 +193,19 @@
             "refresh_interval": "Refresh Interval (minutes)",
             "auto_sync": "Auto Sync Current Account",
             "auto_sync_desc": "Automatically sync current active account information periodically",
-            "sync_interval": "Sync Interval (seconds)"
+            "sync_interval": "Sync Interval (seconds)",
+            "scheduled_warmup": {
+                "title": "🔧 Scheduled Warmup",
+                "enable": "Enable Scheduled Warmup",
+                "enable_desc": "Automatically refresh quota before peak hours to ensure accounts are ready",
+                "schedule_desc": "Set peak usage times. System will warm up accounts 5 hours before",
+                "peak_time": "Peak Time",
+                "warmup_at": "Warmup at",
+                "warmup_suffix": "automatically",
+                "not_set": "Time not set",
+                "quota_hint": "Warmup consumes a small amount of quota to activate accounts",
+                "hint": "Recommend setting 2-3 peak times to cover your main usage scenarios"
+            }
         },
         "proxy": {
             "title": "Proxy Settings"

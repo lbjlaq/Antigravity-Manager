@@ -202,7 +202,19 @@
             "refresh_interval": "刷新间隔（分钟）",
             "auto_sync": "自动获取当前账号",
             "auto_sync_desc": "定期自动同步当前活跃账号信息",
-            "sync_interval": "同步间隔（秒）"
+            "sync_interval": "同步间隔（秒）",
+            "scheduled_warmup": {
+                "title": "🔧 定时预热",
+                "enable": "启用定时预热",
+                "enable_desc": "在高峰期前自动刷新配额，确保账号处于可用状态",
+                "schedule_desc": "设置高峰使用时段，系统将在该时间前 5 小时自动预热账号",
+                "peak_time": "高峰时段",
+                "warmup_at": "将于",
+                "warmup_suffix": "自动预热",
+                "not_set": "未设置时间",
+                "quota_hint": "预热时会消耗少量配额用于激活账号",
+                "hint": "建议设置 2-3 个高峰时段，覆盖您的主要使用场景"
+            }
         },
         "proxy": {
             "title": "反代设置"
