@@ -35,6 +35,7 @@ function Accounts() {
         toggleProxyStatus,
         reorderAccounts,
         warmUpAccounts,
+        warmUpAccount,
     } = useAccountStore();
     const { config } = useConfigStore();
 
@@ -237,6 +238,29 @@ function Accounts() {
             });
         }
     };
+
+    const [warmingIds, setWarmingIds] = useState<Set<string>>(new Set());
+
+    const handleWarmUp = async (accountId: string) => {
+        setWarmingIds(prev => {
+            const next = new Set(prev);
+            next.add(accountId);
+            return next;
+        });
+        try {
+            await warmUpAccount(accountId);
+            showToast(t('accounts.warmup_started'), 'success');
+        } catch (error) {
+            showToast(`${t('common.error')}: ${error}`, 'error');
+        } finally {
+            setWarmingIds(prev => {
+                const next = new Set(prev);
+                next.delete(accountId);
+                return next;
+            });
+        }
+    };
+
 
     const handleBatchDelete = () => {
         if (selectedIds.size === 0) return;
@@ -681,12 +705,14 @@ function Accounts() {
                                 accounts={paginatedAccounts}
                                 selectedIds={selectedIds}
                                 refreshingIds={refreshingIds}
+                                warmingIds={warmingIds}
                                 onToggleSelect={handleToggleSelect}
                                 onToggleAll={handleToggleAll}
                                 currentAccountId={currentAccount?.id || null}
                                 switchingAccountId={switchingAccountId}
                                 onSwitch={handleSwitch}
                                 onRefresh={handleRefresh}
+                                onWarmUp={handleWarmUp}
                                 onViewDetails={handleViewDetails}
                                 onExport={handleExportOne}
                                 onDelete={handleDelete}
@@ -701,11 +727,13 @@ function Accounts() {
                             accounts={paginatedAccounts}
                             selectedIds={selectedIds}
                             refreshingIds={refreshingIds}
+                            warmingIds={warmingIds}
                             onToggleSelect={handleToggleSelect}
                             currentAccountId={currentAccount?.id || null}
                             switchingAccountId={switchingAccountId}
                             onSwitch={handleSwitch}
                             onRefresh={handleRefresh}
+                            onWarmUp={handleWarmUp}
                             onViewDetails={handleViewDetails}
                             onExport={handleExportOne}
                             onDelete={handleDelete}

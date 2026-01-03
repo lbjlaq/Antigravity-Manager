@@ -51,12 +51,14 @@ interface AccountTableProps {
     accounts: Account[];
     selectedIds: Set<string>;
     refreshingIds: Set<string>;
+    warmingIds?: Set<string>;
     onToggleSelect: (id: string) => void;
     onToggleAll: () => void;
     currentAccountId: string | null;
     switchingAccountId: string | null;
     onSwitch: (accountId: string) => void;
     onRefresh: (accountId: string) => void;
+    onWarmUp?: (accountId: string) => void;
     onViewDetails: (accountId: string) => void;
     onExport: (accountId: string) => void;
     onDelete: (accountId: string) => void;
@@ -69,12 +71,14 @@ interface SortableRowProps {
     account: Account;
     selected: boolean;
     isRefreshing: boolean;
+    isWarming?: boolean;
     isCurrent: boolean;
     isSwitching: boolean;
     isDragging?: boolean;
     onSelect: () => void;
     onSwitch: () => void;
     onRefresh: () => void;
+    onWarmUp?: () => void;
     onViewDetails: () => void;
     onExport: () => void;
     onDelete: () => void;
@@ -85,9 +89,11 @@ interface AccountRowContentProps {
     account: Account;
     isCurrent: boolean;
     isRefreshing: boolean;
+    isWarming?: boolean;
     isSwitching: boolean;
     onSwitch: () => void;
     onRefresh: () => void;
+    onWarmUp?: () => void;
     onViewDetails: () => void;
     onExport: () => void;
     onDelete: () => void;
@@ -339,11 +345,12 @@ function AccountRowContent({
                                         <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
                                     )}
                                 </div>
-                                <span className={cn("w-[36px] text-right font-bold transition-colors",
+                                <span className={cn("w-[44px] text-right font-bold transition-colors",
                                     getQuotaColor(geminiProModel?.percentage || 0) === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
                                         getQuotaColor(geminiProModel?.percentage || 0) === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'
-                                )}>
+                                )} title={geminiProModel && geminiProModel.percentage < 100 ? "冷却中，需要预热" : undefined}>
                                     {geminiProModel ? `${geminiProModel.percentage}%` : '-'}
+                                    {geminiProModel && geminiProModel.percentage < 100 && <span className="text-blue-400 ml-0.5">*</span>}
                                 </span>
                             </div>
                         </div>
@@ -368,11 +375,12 @@ function AccountRowContent({
                                         <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
                                     )}
                                 </div>
-                                <span className={cn("w-[36px] text-right font-bold transition-colors",
+                                <span className={cn("w-[44px] text-right font-bold transition-colors",
                                     getQuotaColor(geminiFlashModel?.percentage || 0) === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
                                         getQuotaColor(geminiFlashModel?.percentage || 0) === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'
-                                )}>
+                                )} title={geminiFlashModel && geminiFlashModel.percentage < 100 ? "冷却中，需要预热" : undefined}>
                                     {geminiFlashModel ? `${geminiFlashModel.percentage}%` : '-'}
+                                    {geminiFlashModel && geminiFlashModel.percentage < 100 && <span className="text-blue-400 ml-0.5">*</span>}
                                 </span>
                             </div>
                         </div>
@@ -397,11 +405,12 @@ function AccountRowContent({
                                         <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
                                     )}
                                 </div>
-                                <span className={cn("w-[36px] text-right font-bold transition-colors",
+                                <span className={cn("w-[44px] text-right font-bold transition-colors",
                                     getQuotaColor(geminiImageModel?.percentage || 0) === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
                                         getQuotaColor(geminiImageModel?.percentage || 0) === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'
-                                )}>
+                                )} title={geminiImageModel && geminiImageModel.percentage < 100 ? "冷却中，需要预热" : undefined}>
                                     {geminiImageModel ? `${geminiImageModel.percentage}%` : '-'}
+                                    {geminiImageModel && geminiImageModel.percentage < 100 && <span className="text-blue-400 ml-0.5">*</span>}
                                 </span>
                             </div>
                         </div>
@@ -426,11 +435,12 @@ function AccountRowContent({
                                         <span className="text-gray-300 dark:text-gray-600 italic scale-90">N/A</span>
                                     )}
                                 </div>
-                                <span className={cn("w-[36px] text-right font-bold transition-colors",
+                                <span className={cn("w-[44px] text-right font-bold transition-colors",
                                     getQuotaColor(claudeModel?.percentage || 0) === 'success' ? 'text-emerald-600 dark:text-emerald-400' :
                                         getQuotaColor(claudeModel?.percentage || 0) === 'warning' ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400'
-                                )}>
+                                )} title={claudeModel && claudeModel.percentage < 100 ? "冷却中，需要预热" : undefined}>
                                     {claudeModel ? `${claudeModel.percentage}%` : '-'}
+                                    {claudeModel && claudeModel.percentage < 100 && <span className="text-blue-400 ml-0.5">*</span>}
                                 </span>
                             </div>
                         </div>

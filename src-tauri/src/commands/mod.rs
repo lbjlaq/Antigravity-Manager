@@ -185,6 +185,13 @@ pub async fn warm_up_accounts() -> Result<String, String> {
     modules::quota::warm_up_all_accounts().await
 }
 
+/// 单账号预热
+#[tauri::command]
+pub async fn warm_up_account(account_id: String) -> Result<String, String> {
+    modules::logger::log_info(&format!("收到单账号预热请求: {}", account_id));
+    modules::quota::warm_up_account(&account_id).await
+}
+
 #[derive(serde::Serialize)]
 pub struct RefreshStats {
     total: usize,

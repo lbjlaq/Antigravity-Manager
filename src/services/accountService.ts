@@ -53,6 +53,10 @@ export async function warmUpAccounts(): Promise<string> {
     return await invoke('warm_up_accounts');
 }
 
+export async function warmUpAccount(accountId: string): Promise<string> {
+    return await invoke('warm_up_account', { accountId });
+}
+
 // OAuth
 export async function startOAuthLogin(): Promise<Account> {
     ensureTauriEnvironment();

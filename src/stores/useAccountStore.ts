@@ -29,6 +29,7 @@ interface AccountState {
     syncAccountFromDb: () => Promise<void>;
     toggleProxyStatus: (accountId: string, enable: boolean, reason?: string) => Promise<void>;
     warmUpAccounts: () => Promise<string>;
+    warmUpAccount: (accountId: string) => Promise<string>;
 }
 
 export const useAccountStore = create<AccountState>((set, get) => ({
@@ -275,6 +276,17 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             return result;
         } catch (error) {
             console.error('[AccountStore] Warm-up failed:', error);
+            throw error;
+        }
+    },
+
+    warmUpAccount: async (accountId: string) => {
+        try {
+            const result = await accountService.warmUpAccount(accountId);
+            console.log('[AccountStore] Account warm-up started:', result);
+            return result;
+        } catch (error) {
+            console.error('[AccountStore] Account warm-up failed:', error);
             throw error;
         }
     },

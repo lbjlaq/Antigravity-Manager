@@ -354,3 +354,81 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 
     Ok(format!("已启动智能预热任务"))
 }
+
+/// 单账号预热 - 触发指定账号的5小时配额恢复周期
+pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
+    let accounts =
+        crate::modules::account::list_accounts().map_err(|e| format!("加载账号失败: {}", e))?;
+
+    let account = accounts
+        .into_iter()
+        .find(|a| a.id == account_id)
+        .ok_or_else(|| "账号不存在".to_string())?;
+
+    let upstream = std::sync::Arc::new(crate::proxy::upstream::client::UpstreamClient::new(None));
+    let access_token = account.token.access_token.clone();
+    let project_id = "bamboo-precept-lgxtn";
+
+    // Dynamic Warm-up: Iterate over available models in quota
+    let mut models_to_warm = Vec::new();
+    if let Some(quota) = &account.quota {
+        for m in &quota.models {
+            models_to_warm.push(m.name.clone());
+        }
+    }
+
+    if models_to_warm.is_empty() {
+        models_to_warm = vec![
+            "gemini-3-pro-high".to_string(),
+            "gemini-3-flash".to_string(),
+            "gemini-3-pro-image".to_string(),
+            "claude-sonnet-4-5-thinking".to_string(),
+        ];
+    }
+
+    for model_name in models_to_warm {
+        let at = access_token.clone();
+        let up = upstream.clone();
+        let m_name = model_name.clone();
+
+        tokio::spawn(async move {
+            let is_image = m_name.to_lowercase().contains("image");
+
+            let body = if is_image {
+                serde_json::json!({
+                    "project": project_id,
+                    "model": m_name,
+                    "request": {
+                        "contents": [{ "role": "user", "parts": [{ "text": "a single white pixel" }] }],
+                        "generationConfig": {
+                            "candidateCount": 1,
+                            "imageConfig": { "aspectRatio": "1:1" }
+                        },
+                        "safetySettings": [
+                            { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
+                            { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
+                            { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
+                            { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
+                            { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" }
+                        ]
+                    }
+                })
+            } else {
+                serde_json::json!({
+                    "project": project_id,
+                    "model": m_name,
+                    "request": {
+                        "contents": [{ "role": "user", "parts": [{ "text": "." }] }],
+                        "generationConfig": { "maxOutputTokens": 1 }
+                    }
+                })
+            };
+
+            let _ = up
+                .call_v1_internal("generateContent", &at, body, None)
+                .await;
+        });
+    }
+
+    Ok(format!("已启动账号预热"))
+}
