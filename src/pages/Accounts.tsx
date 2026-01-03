@@ -250,6 +250,10 @@ function Accounts() {
         try {
             await warmUpAccount(accountId);
             showToast(t('accounts.warmup_started'), 'success');
+            // Auto-refresh after warmup to show updated status
+            setTimeout(async () => {
+                await refreshQuota(accountId);
+            }, 3000);
         } catch (error) {
             showToast(`${t('common.error')}: ${error}`, 'error');
         } finally {

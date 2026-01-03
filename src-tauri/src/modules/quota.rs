@@ -303,6 +303,15 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
         }
 
         for model_name in models_to_warm {
+            // Skip image models - warmup consumes too much quota (10%+)
+            if model_name.to_lowercase().contains("image") {
+                tracing::info!(
+                    "[Warmup] Skipping image model {} (quota-expensive)",
+                    model_name
+                );
+                continue;
+            }
+
             let at = access_token.clone();
             let up = upstream.clone();
             let txc = tx.clone();
@@ -387,6 +396,15 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
     }
 
     for model_name in models_to_warm {
+        // Skip image models - warmup consumes too much quota (10%+)
+        if model_name.to_lowercase().contains("image") {
+            tracing::info!(
+                "[Warmup] Skipping image model {} (quota-expensive)",
+                model_name
+            );
+            continue;
+        }
+
         let at = access_token.clone();
         let up = upstream.clone();
         let m_name = model_name.clone();
