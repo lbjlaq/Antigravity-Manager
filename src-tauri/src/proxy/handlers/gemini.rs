@@ -6,8 +6,29 @@ use tracing::{debug, error, info};
 use crate::proxy::mappers::gemini::{wrap_request, unwrap_response};
 use crate::proxy::server::AppState;
 use crate::proxy::session_manager::SessionManager;
+use crate::proxy::observability::RequestAttribution;
+use crate::proxy::privacy::{mask_email, stable_hash_hex};
  
 const MAX_RETRY_ATTEMPTS: usize = 3;
+
+fn attach_attribution(
+    response: &mut axum::response::Response,
+    provider: &str,
+    resolved_model: Option<String>,
+    account_email: Option<&str>,
+) {
+    let (account_id, account_email_masked) = match account_email {
+        Some(email) => (Some(stable_hash_hex(email)), Some(mask_email(email))),
+        None => (None, None),
+    };
+
+    response.extensions_mut().insert(RequestAttribution {
+        provider: provider.to_string(),
+        resolved_model,
+        account_id,
+        account_email_masked,
+    });
+}
  
 /// 处理 generateContent 和 streamGenerateContent
 /// 路径参数: model_name, method (e.g. "gemini-pro", "generateContent")
@@ -161,13 +182,15 @@ pub async fn handle_generate(
                 };
                 
                 let body = Body::from_stream(stream);
-                return Ok(Response::builder()
+                let mut resp = Response::builder()
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
                     .body(body)
                     .unwrap()
-                    .into_response());
+                    .into_response();
+                attach_attribution(&mut resp, "google", Some(mapped_model.clone()), Some(&email));
+                return Ok(resp);
             }
 
             let gemini_resp: Value = response
@@ -176,7 +199,9 @@ pub async fn handle_generate(
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
             let unwrapped = unwrap_response(&gemini_resp);
-            return Ok(Json(unwrapped).into_response());
+            let mut resp = Json(unwrapped).into_response();
+            attach_attribution(&mut resp, "google", Some(mapped_model.clone()), Some(&email));
+            return Ok(resp);
         }
 
         // 处理错误并重试

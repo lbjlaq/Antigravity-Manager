@@ -60,7 +60,10 @@ Implementation:
 - `vision_chat_completion(...)` in [`src-tauri/src/proxy/zai_vision_tools.rs`](../../src-tauri/src/proxy/zai_vision_tools.rs)
 
 Auth:
-- Uses `Authorization: Bearer <proxy.zai.api_key>`
+- Uses `Authorization: Bearer <zai_key>` where:
+  - default: `proxy.zai.api_key`
+  - override (MCP only): `proxy.zai.mcp.api_key_override` when set
+  - the key is normalized if the user pasted `Bearer ...`
 
 Payload:
 - `model: glm-4.6v` (currently hardcoded)

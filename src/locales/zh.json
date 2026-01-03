@@ -83,10 +83,6 @@
         "current_badge": "当前",
         "disabled": "已禁用",
         "disabled_tooltip": "账号已被禁用（例如 refresh_token 被撤销/过期）。重新授权或更新 Token 后可恢复。",
-        "proxy_disabled": "反代已禁用",
-        "proxy_disabled_tooltip": "此账号已被手动禁用反代功能,不参与 API 请求,但仍可在应用中使用",
-        "enable_proxy": "启用反代",
-        "disable_proxy": "禁用反代",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "API 返回 403 Forbidden，账号无权使用 Gemini Code Assist",
@@ -149,7 +145,6 @@
             "last_used": "最后使用",
             "actions": "操作"
         },
-        "drag_to_reorder": "拖拽排序",
         "empty": {
             "title": "暂无账号",
             "desc": "点击上方\"添加账号\"按钮添加第一个账号"
@@ -167,11 +162,7 @@
             "refresh_title": "刷新配额",
             "batch_refresh_title": "批量刷新",
             "refresh_msg": "确定要刷新当前账号的配额吗？",
-            "batch_refresh_msg": "确定要刷新选中的 {{count}} 个账号的配额吗？这可能需要一些时间。",
-            "disable_proxy_title": "禁用反代",
-            "disable_proxy_msg": "确定要禁用此账号的反代功能吗？账号仍可在应用中使用。",
-            "enable_proxy_title": "启用反代",
-            "enable_proxy_msg": "确定要重新启用此账号的反代功能吗？"
+            "batch_refresh_msg": "确定要刷新选中的 {{count}} 个账号的配额吗？这可能需要一些时间。"
         }
     },
     "settings": {
@@ -204,9 +195,6 @@
             "auto_sync_desc": "定期自动同步当前活跃账号信息",
             "sync_interval": "同步间隔（秒）"
         },
-        "proxy": {
-            "title": "代理设置"
-        },
         "advanced": {
             "title": "高级设置",
             "export_path": "默认导出路径",
@@ -222,12 +210,6 @@
             "antigravity_path_select": "选择反重力程序可执行文件",
             "antigravity_path_detected": "已更新探测到的路径",
             "detect_btn": "探测",
-            "antigravity_args": "反重力程序启动参数",
-            "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",
-            "antigravity_args_desc": "为 Antigravity 程序指定启动参数，例如 --user-data-dir 用于指定用户数据目录",
-            "detect_args_btn": "检测",
-            "antigravity_args_detected": "启动参数已更新",
-            "antigravity_args_detect_error": "检测启动参数失败",
             "accounts_page_size": "账号列表分页大小",
             "page_size_auto": "自动计算 (推荐)",
             "page_size_desc": "设置每页显示的账号数量。选择自动计算将根据窗口大小动态调整。",
@@ -245,8 +227,7 @@
             "author": "作者",
             "wechat": "微信公众号",
             "github": "开源地址",
-            "view_code": "查看代码",
-            "copyright": "Copyright © 2025-2026 Antigravity. All rights reserved.",
+            "copyright": "Copyright © 2025 Antigravity. All rights reserved.",
             "check_update": "检测更新",
             "checking_update": "检测中...",
             "latest_version": "已是最新版本",
@@ -274,6 +255,26 @@
             "accounts_available": "{{count}} 个账号可用",
             "processing": "处理中..."
         },
+        "runtime": {
+            "title": "路由 / 使用情况",
+            "subtitle": "展示最近请求由哪个提供方/模型/账号服务（安全遥测，不包含提示词）。",
+            "provider": "提供方",
+            "model": "实际模型",
+            "account": "账号",
+            "lock": "账号锁定",
+            "lock_hint": "为减少频繁切换，账号池会在约 60 秒内优先复用同一账号。这里显示锁定的 account_id 与剩余秒数。",
+            "recent_usage": "最近使用",
+            "recent_usage_hint": "最近 200 条请求（尽力统计）",
+            "empty": "暂无最近流量。",
+            "columns": {
+                "provider": "提供方",
+                "account": "账号",
+                "requests": "请求",
+                "errors": "错误",
+                "tokens": "Tokens (入/出)",
+                "last_seen": "最近"
+            }
+        },
         "action": {
             "start": "启动服务",
             "stop": "停止服务"
@@ -296,7 +297,7 @@
             "btn_regenerate": "重新生成密钥",
             "btn_copy": "复制",
             "btn_copied": "已复制",
-            "warning_key": "注意：请妥善保管您的 API 密钥，不要泄露给他人。",
+            "warning_key": "注意：请妥善保管您的 API 密钥。仅在开启鉴权时才会被要求提供。",
             "auth": {
                 "title": "访问授权",
                 "title_tooltip": "控制代理是否需要鉴权，以及哪些路由需要提供 API 密钥。",
@@ -304,13 +305,28 @@
                 "enabled_tooltip": "快速开关鉴权（通过切换鉴权模式实现）。开启后客户端需在请求头提供 Authorization: Bearer <API_KEY> 或 x-api-key。",
                 "mode": "模式",
                 "mode_tooltip": "选择鉴权覆盖范围：关闭=不鉴权；全局=所有接口都需密钥；除健康检查外=/healthz 不鉴权；自动=本机模式默认关闭，局域网模式默认“除健康检查外”。",
-                "hint": "开启后客户端需通过 Authorization: Bearer ... 传入 API 密钥（如选择“除健康检查外”则 /healthz 免鉴权）。",
+                "hint": "客户端需通过 Authorization: Bearer <API_KEY> 或 x-api-key 传入 API 密钥；具体哪些路由需要鉴权由所选模式决定。",
+                "effective": "实际生效模式：{{mode}}",
                 "modes": {
                     "off": "关闭（开放）",
                     "strict": "全局（严格）",
                     "all_except_health": "全局（除健康检查外）",
                     "auto": "自动（推荐）"
                 }
+            },
+            "access_log": {
+                "title": "请求日志",
+                "title_tooltip": "将请求的 method/path/status 和耗时写入本地日志文件。不会记录 query 参数、请求头或请求体（避免泄露敏感信息）。",
+                "enabled": "已启用",
+                "enabled_tooltip": "开启后，每个请求都会记录 method、path、状态码、耗时，以及尽力提供的上游标记（例如 z.ai）。",
+                "hint": "用于排查客户端/路由问题。日志保存在应用数据目录的 logs/ 下。"
+            },
+            "response_headers": {
+                "title": "响应归因头",
+                "title_tooltip": "可选地将“由谁提供/哪个模型/哪个账号”以脱敏的 HTTP Header 形式写入响应，便于外部工具调试。",
+                "enabled": "已启用",
+                "enabled_tooltip": "添加 x-antigravity-provider、x-antigravity-model、x-antigravity-account（已匿名）。不会包含邮箱或任何密钥。",
+                "hint": "适合多客户端并行使用时定位问题。默认关闭。"
             },
             "zai": {
                 "title": "z.ai（GLM）提供商",
@@ -334,6 +350,7 @@
                     "hint": "可用模型：{{count}}。可从建议中选择，或手动输入自定义模型 ID。",
                     "error": "拉取模型失败：{{error}}",
                     "select_placeholder": "选择模型...",
+                    "custom_option": "自定义模型 ID…",
                     "opus": "Opus 家族 → z.ai 模型",
                     "opus_tooltip": "当请求的 model 包含“opus”（如 claude-opus-*）时默认使用的 z.ai 模型 ID。",
                     "sonnet": "Sonnet 家族 → z.ai 模型",
@@ -355,18 +372,32 @@
                     "pooled": "加入队列（占 1 个槽位）",
                     "fallback": "仅兜底"
                 },
-                "mcp": {
-                    "title": "MCP 服务（通过本地代理）",
-                    "title_tooltip": "在本地代理上暴露可选的 /mcp/* 端点，供 MCP 客户端直连。仅在服务运行、z.ai 配置完成且对应开关开启时可用。",
-                    "enabled": "启用 MCP 反代",
-                    "enabled_tooltip": "MCP 端点总开关；关闭时所有 /mcp/* 路由将返回 404。",
-                    "web_search": "网页搜索",
-                    "web_search_tooltip": "启用后开放 /mcp/web_search_prime/mcp，并转发到 z.ai 的 Web Search MCP 上游。",
-                    "web_reader": "网页阅读",
-                    "web_reader_tooltip": "启用后开放 /mcp/web_reader/mcp，并转发到 z.ai 的 Web Reader MCP 上游。",
-                    "vision": "视觉",
-                    "vision_tooltip": "启用后开放 /mcp/zai-mcp-server/mcp（本地 MCP 服务），提供视觉相关工具能力，并通过 z.ai 执行。",
-                    "local_endpoints": "本地地址（在 MCP 客户端中配置以下 URL）：",
+	                "mcp": {
+	                    "title": "MCP 服务（通过本地代理）",
+	                    "title_tooltip": "在本地代理上暴露可选的 /mcp/* 端点，供 MCP 客户端直连。仅在服务运行、z.ai 配置完成且对应开关开启时可用。",
+	                    "enabled": "启用 MCP 反代",
+	                    "enabled_tooltip": "MCP 端点总开关；关闭时所有 /mcp/* 路由将返回 404。",
+	                    "api_key_override": "MCP API Key 覆盖（可选）",
+	                    "api_key_override_tooltip": "可选的单独 API Key，用于 z.ai MCP 上游调用（网页搜索/网页阅读/zread）。留空则使用主 z.ai API Key。",
+	                    "api_key_override_placeholder": "留空则使用主 z.ai API Key",
+	                    "api_key_override_hint": "当 MCP 端点需要与模型 API 不同的 Key/权限时使用。",
+	                    "web_search": "网页搜索",
+	                    "web_search_tooltip": "启用后开放 /mcp/web_search_prime/mcp（本地 MCP 服务），并通过 z.ai Web Search Tools API 执行。",
+	                    "web_reader": "网页阅读",
+	                    "web_reader_tooltip": "启用后开放 /mcp/web_reader/mcp（本地 MCP 服务），并通过 z.ai Web Reader Tools API 执行。",
+	                    "web_reader_url_normalization": "网页阅读 URL 规范化",
+	                    "web_reader_url_normalization_tooltip": "可选地在调用上游 Reader API 前，对 webReader 工具调用的 URL 做重写/清理。适用于某些站点因追踪参数过长导致解析失败的情况。",
+	                    "web_reader_url_normalization_hint": "仅对 tools/call 且工具名为 webReader 的请求生效；其他 MCP 工具与端点不做修改。",
+	                    "web_reader_url_normalization_options": {
+	                        "off": "关闭（不修改）",
+	                        "strip_tracking_query": "移除常见追踪参数（utm_*、hsa_*、gclid、fbclid、gbraid、wbraid、msclkid）",
+	                        "strip_query": "移除整个 query（?…）"
+	                    },
+	                    "zread": "zread",
+	                    "zread_tooltip": "启用后开放 /mcp/zread/mcp，并转发到 z.ai 的 zread MCP 上游（偏文档/仓库阅读工具，不是网页阅读器）。",
+	                    "vision": "视觉",
+	                    "vision_tooltip": "启用后开放 /mcp/zai-mcp-server/mcp（本地 MCP 服务），提供视觉相关工具能力，并通过 z.ai 执行。",
+	                    "local_endpoints": "本地地址（在 MCP 客户端中配置以下 URL）：",
                     "local_endpoints_tooltip": "把这些 URL 填到你的 MCP 客户端里即可。它们使用同一个代理端口，并遵循当前的鉴权策略。"
                 }
             },
@@ -382,27 +413,6 @@
                 "url": "代理地址",
                 "url_placeholder": "例如: http://127.0.0.1:7890 或 socks5://127.0.0.1:7890",
                 "tip": "支持 HTTP、HTTPS 和 SOCKS5 协议。"
-            },
-            "scheduling": {
-                "title": "账号轮换与会话调度",
-                "title_tooltip": "控制会话如何绑定到账号，以及触发限流时的行为。",
-                "subtitle": "针对全协议客户端优化 Prompt Caching 和限流处理 (OpenAI/Gemini/Claude)。",
-                "mode": "调度模式",
-                "mode_tooltip": "缓存优先：绑定账号，限流时强制等待（最大化缓存）；平衡：绑定账号，限流时自动热切；性能优先：不绑定，全自动轮换。",
-                "modes": {
-                    "CacheFirst": "缓存优先 (Cache First)",
-                    "Balance": "平衡轮换 (Balance)",
-                    "PerformanceFirst": "性能优先 (Performance)"
-                },
-                "modes_desc": {
-                    "CacheFirst": "绑定会话与账号，限流时精准等待（最大化 Prompt Cache 命中率）。",
-                    "Balance": "绑定会话，限流时自动热切换至可用账号（兼顾缓存与可用性）。",
-                    "PerformanceFirst": "无会话绑定，纯随机轮换（适合高并发，不考虑缓存）。"
-                },
-                "max_wait": "最大等待时长 (秒)",
-                "max_wait_tooltip": "仅在“缓存优先”模式下生效：如果账号限流重置时间小于此值，则原地等待而非切换账号。",
-                "clear_bindings": "清除会话绑定",
-                "clear_bindings_tooltip": "立即断开所有会话与账号的绑定关系，强制下一次请求重新分配账号。"
             }
         },
         "example": {
@@ -412,13 +422,7 @@
         },
         "dialog": {
             "confirm_regenerate": "确定要生成新的 API Key 吗？旧的 Key 将立即失效。",
-            "operate_failed": "操作失败: {{error}}",
-            "reset_mapping_title": "重置模型映射",
-            "reset_mapping_msg": "确定要重置所有模型映射为系统默认吗？此操作无法撤销。",
-            "regenerate_key_title": "重新生成 API Key",
-            "regenerate_key_msg": "确定要重新生成 API Key 吗？旧的 Key 将立即失效。",
-            "clear_bindings_title": "清除会话绑定",
-            "clear_bindings_msg": "确定要清除所有会话与账号的绑定映射吗？"
+            "operate_failed": "操作失败: {{error}}"
         },
         "model": {
             "flash": "极速响应",
@@ -465,26 +469,60 @@
             "original_id": "原始模型 ID",
             "route_to": "路由目标",
             "group_title": "模型家族分组 (Series Groups)",
+            "group_tooltip": "分组规则会把“传入的模型名”映射到 Google 账号池实际使用的目标模型。优先级：精确映射 → Claude 家族（opus/sonnet/haiku）→ 系列分组 → 内置默认。除非请求被路由到 z.ai，否则这些规则不会影响 z.ai passthrough。",
+            "no_override": "不覆盖",
+            "buckets": {
+                "anthropic": {
+                    "title": "Claude / Anthropic 分组",
+                    "subtitle": "影响走 Google 账号池的 Claude 协议请求（model 以 claude-* 开头）。",
+                    "tooltip": "这些设置会写入 proxy.anthropic_mapping，仅影响 Google 路径的 Claude 转换链路。若请求被路由到 z.ai passthrough，则使用 z.ai 自己的模型映射规则。"
+                },
+                "openai": {
+                    "title": "OpenAI 兼容分组",
+                    "subtitle": "影响 OpenAI 风格的模型名（gpt-*），用于 OpenAI 兼容协议在 Google 账号池上的路由。",
+                    "tooltip": "这些设置会写入 proxy.openai_mapping，仅影响 OpenAI 兼容协议端点（如 /v1/chat/completions）走 Google 账号池时的路由。"
+                }
+            },
             "groups": {
+                "claude_opus_family": {
+                    "name": "Opus 家族（大模型）",
+                    "desc": "匹配：claude-* 包含 \"opus\"",
+                    "tooltip": "当传入 model 字符串包含 \"opus\"（例如 claude-opus-*）时，将 Google 路径请求路由到这里选择的目标模型。该家族规则优先于下方 Claude 系列分组；选择“不覆盖”则使用系列/默认路由。"
+                },
+                "claude_sonnet_family": {
+                    "name": "Sonnet 家族（中模型）",
+                    "desc": "匹配：claude-* 包含 \"sonnet\"",
+                    "tooltip": "当传入 model 字符串包含 \"sonnet\"（例如 claude-sonnet-*）时，将 Google 路径请求路由到这里选择的目标模型。该家族规则优先于下方 Claude 系列分组；选择“不覆盖”则使用系列/默认路由。"
+                },
+                "claude_haiku_family": {
+                    "name": "Haiku 家族（小模型）",
+                    "desc": "匹配：claude-* 包含 \"haiku\"",
+                    "tooltip": "当传入 model 字符串包含 \"haiku\"（例如 claude-haiku-*）时，将 Google 路径请求路由到这里选择的目标模型。该家族规则优先于下方 Claude 系列分组；选择“不覆盖”则使用系列/默认路由。"
+                },
                 "claude_45": {
                     "name": "Claude 4.5 系列",
-                    "desc": "Opus 4.5, Sonnet 4.5 (推理)"
+                    "desc": "匹配：4.5 / 4-5 系列",
+                    "tooltip": "适用于 Claude 4.5 系列的 model 字符串（包含 \"4-5\" 或 \"4.5\"）。仅当未命中上方 Opus/Sonnet/Haiku 家族规则时才会使用。用于将 Claude 协议（Google 路径）路由到所选目标模型。"
                 },
                 "claude_35": {
                     "name": "Claude 3.5 系列",
-                    "desc": "Sonnet 3.5, Haiku 3.5"
+                    "desc": "匹配：3.5 / 3-5 系列",
+                    "tooltip": "适用于 Claude 3.5 系列的 model 字符串（包含 \"3-5\" 或 \"3.5\"）。仅当未命中上方 Opus/Sonnet/Haiku 家族规则时才会使用。用于将 Claude 协议（Google 路径）路由到所选目标模型。"
                 },
                 "gpt_4": {
                     "name": "GPT-4 / o1 系列",
-                    "desc": "GPT-4, Turbo, o1-preview"
+                    "desc": "匹配：GPT-4 / o1 / o3",
+                    "tooltip": "适用于 OpenAI 风格的 GPT-4 / o1 / o3 系列模型名（不含 4o/mini/turbo 风格）。用于将 OpenAI 兼容协议请求路由到 Google 账号池所选目标模型。"
                 },
                 "gpt_4o": {
                     "name": "GPT-4o / 3.5 系列",
-                    "desc": "GPT-4o, Mini, 3.5 Turbo"
+                    "desc": "匹配：4o/mini/turbo/3.5",
+                    "tooltip": "适用于 OpenAI 风格的 gpt-4o、gpt-4o-mini、gpt-3.5-turbo 以及多数包含 \"turbo\"/\"mini\" 的变体。用于将 OpenAI 兼容协议请求路由到 Google 账号池所选目标模型。"
                 },
                 "gpt_5": {
                     "name": "GPT-5 系列",
-                    "desc": "GPT-5.1, GPT-5.2 xhigh"
+                    "desc": "匹配：GPT-5*",
+                    "tooltip": "适用于以 \"gpt-5\" 开头的 OpenAI 风格模型名。若未配置，系统可能按规则回退到 GPT-4 分组映射。用于将 OpenAI 兼容协议请求路由到 Google 账号池所选目标模型。"
                 }
             },
             "expert_title": "专家精确映射 (Expert Custom Routing)",
@@ -521,16 +559,15 @@
             "action": "操作"
         }
     },
-    "monitor": {
-        "page_title": "API 监控看板",
-        "page_subtitle": "实时请求日志与分析",
-        "open_monitor": "打开监控",
-        "logging_status": {
-            "active": "正在录制",
-            "paused": "已暂停"
-        },
-        "stats": {
-            "total": "总计",
+            "monitor": {
+                "page_title": "API 监控看板",
+                "page_subtitle": "实时请求日志与分析",
+                "open_monitor": "打开监控",
+                "logging_status": {
+                    "active": "正在录制",
+                    "paused": "已暂停"
+                },
+                "stats": {            "total": "总计",
             "ok": "正常",
             "err": "错误"
         },
@@ -548,21 +585,20 @@
         "table": {
             "status": "状态",
             "method": "方法",
-            "model": "模型",
-            "path": "路径",
-            "usage": "Token 消耗",
-            "duration": "耗时",
-            "time": "时间",
-            "empty": "暂无请求记录"
-        },
-        "details": {
-            "title": "请求详情",
-            "request_payload": "请求报文 (Request)",
-            "response_payload": "响应报文 (Response)",
-            "duration": "耗时",
-            "tokens": "Token 消耗 (输入/输出)",
-            "time": "请求时间",
-            "model": "使用模型",
+                            "model": "模型",
+                            "path": "路径",
+                            "usage": "Token 消耗",
+                            "duration": "耗时",
+                            "time": "时间",
+                            "empty": "暂无请求记录"
+                        },
+                        "details": {
+                            "title": "请求详情",
+                            "request_payload": "请求报文 (Request)",
+                            "response_payload": "响应报文 (Response)",
+                            "duration": "耗时",
+                            "tokens": "Token 消耗 (输入/输出)",
+                            "time": "请求时间",            "model": "使用模型",
             "id": "请求 ID"
         },
         "dialog": {

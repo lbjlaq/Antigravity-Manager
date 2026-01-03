@@ -1,7 +1,7 @@
 
 import { useEffect } from 'react';
 import { useConfigStore } from '../../stores/useConfigStore';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { isTauriEnvironment } from '../../utils/tauriEnv';
 
 export default function ThemeManager() {
     const { config, loadConfig } = useConfigStore();
@@ -12,7 +12,13 @@ export default function ThemeManager() {
             await loadConfig();
             // Show window after a short delay to ensure React has painted
             setTimeout(async () => {
-                await getCurrentWindow().show();
+                if (!isTauriEnvironment()) return;
+                try {
+                    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+                    await getCurrentWindow().show();
+                } catch {
+                    // ignore
+                }
             }, 100);
         };
         init();
@@ -27,11 +33,14 @@ export default function ThemeManager() {
             const isDark = theme === 'dark';
 
             // Set Tauri window background color
-            try {
-                const bgColor = isDark ? '#1d232a' : '#FAFBFC';
-                await getCurrentWindow().setBackgroundColor(bgColor);
-            } catch (e) {
-                console.error('Failed to set window background color:', e);
+            if (isTauriEnvironment()) {
+                try {
+                    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+                    const bgColor = isDark ? '#1d232a' : '#FAFBFC';
+                    await getCurrentWindow().setBackgroundColor(bgColor);
+                } catch (e) {
+                    console.error('Failed to set window background color:', e);
+                }
             }
 
             // Set DaisyUI theme

@@ -1,6 +1,6 @@
 # z.ai provider + MCP proxy (implemented)
 
-This document describes the z.ai integration that is implemented on the `feat/zai-passthrough-mcp` branch: what was added, how it works internally, and how to validate it.
+This document describes the z.ai integration that is implemented in this project: what was added, how it works internally, and how to validate it.
 
 Related deep dives:
 - [`docs/zai/provider.md`](provider.md)
@@ -51,7 +51,10 @@ Config lives under `proxy.zai` (`src-tauri/src/proxy/config.rs`):
   - `enabled`
   - `web_search_enabled`
   - `web_reader_enabled`
+  - `zread_enabled`
   - `vision_enabled`
+  - optional `api_key_override` (for MCP only)
+  - optional `web_reader_url_normalization` (remote Web Reader MCP only)
 
 Runtime hot update:
 - `save_config` hot-updates `auth`, `upstream_proxy`, `model mappings`, and `z.ai` without restart.
@@ -105,13 +108,19 @@ Routes: `src-tauri/src/proxy/server.rs`
 Local endpoints:
 - `/mcp/web_search_prime/mcp` → `https://api.z.ai/api/mcp/web_search_prime/mcp`
 - `/mcp/web_reader/mcp` → `https://api.z.ai/api/mcp/web_reader/mcp`
+- `/mcp/zread/mcp` → `https://api.z.ai/api/mcp/zread/mcp`
 
 Behavior:
 - Controlled by `proxy.zai.mcp.*` flags:
   - If `mcp.enabled=false` -> endpoints return 404.
   - If per-server flag is false -> returns 404 for that endpoint.
-- z.ai key is injected upstream as `Authorization: Bearer <zai_key>`.
+- z.ai key is injected upstream (token is normalized if the user pasted `Bearer ...`):
+  - `Authorization: Bearer <zai_key>`
+  - `x-api-key: <zai_key>`
 - Response body is streamed back to the client.
+
+Remote Web Reader URL normalization:
+- If `proxy.zai.mcp.web_reader_url_normalization != off`, the proxy rewrites the JSON-RPC request body for `tools/call` where `params.name == "webReader"` and normalizes `params.arguments.url` before forwarding upstream.
 
 Note:
 - These endpoints are still subject to the proxy’s auth middleware depending on `proxy.auth_mode`.
@@ -129,7 +138,7 @@ Behavior:
   - If `mcp.enabled=false` -> returns 404.
   - If `vision_enabled=false` -> returns 404.
 - No z.ai key is required from MCP clients:
-  - the proxy injects the stored `proxy.zai.api_key` when calling the z.ai vision API.
+  - the proxy injects the stored `proxy.zai.api_key` (or `proxy.zai.mcp.api_key_override` when set) when calling the z.ai vision API.
 - Implements a minimal Streamable HTTP MCP flow:
   - `POST /mcp` supports `initialize`, `tools/list`, `tools/call`
   - `GET /mcp` returns an SSE stream with keep-alive events for an initialized session
@@ -137,7 +146,7 @@ Behavior:
 
 Upstream calls:
 - z.ai vision endpoint: `https://api.z.ai/api/paas/v4/chat/completions`
-- Uses `Authorization: Bearer <zai_key>`
+- Uses `Authorization: Bearer <zai_key>` (normalized if needed)
 - Default model: `glm-4.6v` (hardcoded for now)
 
 Tool input and limits:

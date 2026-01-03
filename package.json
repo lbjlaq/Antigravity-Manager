@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "security:scan": "node scripts/scan_secrets.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

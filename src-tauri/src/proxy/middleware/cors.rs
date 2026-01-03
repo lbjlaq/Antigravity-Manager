@@ -1,6 +1,7 @@
 // CORS 中间件
 use tower_http::cors::{CorsLayer, Any};
 use axum::http::Method;
+use axum::http::header::HeaderName;
 
 /// 创建 CORS layer
 pub fn cors_layer() -> CorsLayer {
@@ -16,6 +17,11 @@ pub fn cors_layer() -> CorsLayer {
             Method::PATCH,
         ])
         .allow_headers(Any)
+        .expose_headers([
+            HeaderName::from_static("x-antigravity-provider"),
+            HeaderName::from_static("x-antigravity-model"),
+            HeaderName::from_static("x-antigravity-account"),
+        ])
         .allow_credentials(false)
         .max_age(std::time::Duration::from_secs(3600))
 }

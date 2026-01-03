@@ -1,6 +1,8 @@
 // Middleware 模块 - Axum 中间件
 
 pub mod auth;
+pub mod access_log;
+pub mod attribution_headers;
 pub mod cors;
 pub mod logging;
 pub mod monitor;

@@ -67,12 +67,31 @@ fn flatten_refs(map: &mut serde_json::Map<String, Value>, defs: &serde_json::Map
 }
 
 fn clean_json_schema_recursive(value: &mut Value) {
+    clean_json_schema_recursive_ctx(value, None);
+}
+
+fn clean_json_schema_recursive_ctx<'a>(value: &mut Value, parent_key: Option<&'a str>) {
     match value {
         Value::Object(map) => {
+            // Special case: containers like `properties` / `$defs` / `definitions` are maps of
+            // user-defined keys → schema objects. Do not treat container keys as schema keywords.
+            if matches!(parent_key, Some("properties" | "$defs" | "definitions")) {
+                let keys: Vec<String> = map.keys().cloned().collect();
+                for k in keys {
+                    if let Some(v) = map.get_mut(&k) {
+                        clean_json_schema_recursive_ctx(v, Some("schema"));
+                    }
+                }
+                return;
+            }
+
             // 1. [CRITICAL] 深度递归处理：必须遍历当前对象的所有字段名对应的 Value
             // 解决 properties/items 之外的 definitions、anyOf、allOf 等结构的清理
-            for v in map.values_mut() {
-                clean_json_schema_recursive(v);
+            let keys: Vec<String> = map.keys().cloned().collect();
+            for k in keys {
+                if let Some(v) = map.get_mut(&k) {
+                    clean_json_schema_recursive_ctx(v, Some(k.as_str()));
+                }
             }
 
             // 2. 收集并处理校验字段 (Migration logic: 将约束降级为描述中的 Hint)
@@ -97,7 +116,11 @@ fn clean_json_schema_recursive(value: &mut Value) {
                 if let Some(val) = map.remove(field) {
                     // 仅当值是简单类型时才迁移
                     if val.is_string() || val.is_number() || val.is_boolean() {
-                        constraints.push(format!("{}: {}", label, val));
+                        let rendered = match &val {
+                            Value::String(s) => s.clone(),
+                            _ => val.to_string(),
+                        };
+                        constraints.push(format!("{}: {}", label, rendered));
                     }
                 }
             }
@@ -189,7 +212,7 @@ fn clean_json_schema_recursive(value: &mut Value) {
         }
         Value::Array(arr) => {
             for v in arr.iter_mut() {
-                clean_json_schema_recursive(v);
+                clean_json_schema_recursive_ctx(v, parent_key);
             }
         }
         _ => {}

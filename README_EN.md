@@ -143,7 +143,7 @@ sudo xattr -rd com.apple.quarantine "/Applications/Antigravity Tools.app"
 1. Start Antigravity service in the "API Proxy" tab.
 2. In your terminal:
 ```bash
-export ANTHROPIC_API_KEY="sk-antigravity"
+export ANTHROPIC_API_KEY="<your_api_key>"
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8045"
 claude
 ```
@@ -153,7 +153,7 @@ claude
 import openai
 
 client = openai.OpenAI(
-    api_key="sk-antigravity",
+    api_key="<your_api_key>",
     base_url="http://127.0.0.1:8045/v1"
 )
 

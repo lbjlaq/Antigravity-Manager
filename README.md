@@ -151,7 +151,7 @@ brew install --cask --no-quarantine antigravity-tools
 1.  启动 Antigravity，并在“API 反代”页面开启服务。
 2.  在终端执行：
 ```bash
-export ANTHROPIC_API_KEY="sk-antigravity"
+export ANTHROPIC_API_KEY="<your_api_key>"
 export ANTHROPIC_BASE_URL="http://127.0.0.1:8045"
 claude
 ```
@@ -168,7 +168,7 @@ claude
 import openai
 
 client = openai.OpenAI(
-    api_key="sk-antigravity",
+    api_key="<your_api_key>",
     base_url="http://127.0.0.1:8045/v1"
 )
 

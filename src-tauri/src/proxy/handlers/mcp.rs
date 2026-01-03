@@ -42,6 +42,15 @@ fn copy_passthrough_headers(incoming: &HeaderMap) -> HeaderMap {
     out
 }
 
+fn zai_mcp_api_key(zai: &crate::proxy::ZaiConfig) -> String {
+    let api_key_raw = if !zai.mcp.api_key_override.trim().is_empty() {
+        zai.mcp.api_key_override.trim()
+    } else {
+        zai.api_key.trim()
+    };
+    crate::proxy::zai_auth::normalize_api_key(api_key_raw)
+}
+
 async fn forward_mcp(
     state: &AppState,
     incoming_headers: HeaderMap,
@@ -49,21 +58,6 @@ async fn forward_mcp(
     upstream_url: &str,
     body: Body,
 ) -> Response {
-    let zai = state.zai.read().await.clone();
-    if !zai.enabled || zai.api_key.trim().is_empty() {
-        return (StatusCode::BAD_REQUEST, "z.ai is not configured").into_response();
-    }
-
-    if !zai.mcp.enabled {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-
-    let upstream_proxy = state.upstream_proxy.read().await.clone();
-    let client = match build_client(upstream_proxy, state.request_timeout) {
-        Ok(c) => c,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-    };
-
     let collected = match to_bytes(body, 100 * 1024 * 1024).await {
         Ok(b) => b,
         Err(e) => {
@@ -75,9 +69,45 @@ async fn forward_mcp(
         }
     };
 
+    forward_mcp_bytes(state, incoming_headers, method, upstream_url, collected).await
+}
+
+async fn forward_mcp_bytes(
+    state: &AppState,
+    incoming_headers: HeaderMap,
+    method: Method,
+    upstream_url: &str,
+    collected: Bytes,
+) -> Response {
+    let zai = state.zai.read().await.clone();
+    if !zai.mcp.enabled {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let api_key = zai_mcp_api_key(&zai);
+    if api_key.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "z.ai is not configured (missing api key)",
+        )
+            .into_response();
+    }
+
+    let upstream_proxy = state.upstream_proxy.read().await.clone();
+    let client = match build_client(upstream_proxy, state.request_timeout) {
+        Ok(c) => c,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    };
+
     let mut headers = copy_passthrough_headers(&incoming_headers);
-    if let Ok(v) = HeaderValue::from_str(&format!("Bearer {}", zai.api_key)) {
+    headers.entry(header::ACCEPT).or_insert(
+        HeaderValue::from_static("application/json, text/event-stream"),
+    );
+    if let Ok(v) = HeaderValue::from_str(&format!("Bearer {}", api_key)) {
         headers.insert(header::AUTHORIZATION, v);
+    }
+    if let Ok(v) = HeaderValue::from_str(&api_key) {
+        headers.insert("x-api-key", v);
     }
 
     let req = client
@@ -144,16 +174,96 @@ pub async fn handle_web_reader(
     if !zai.mcp.web_reader_enabled {
         return StatusCode::NOT_FOUND.into_response();
     }
+    let normalization_mode = zai.mcp.web_reader_url_normalization.clone();
+    drop(zai);
+
+    let collected = match to_bytes(body, 100 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to read request body: {}", e),
+            )
+                .into_response();
+        }
+    };
+
+    let collected = maybe_normalize_web_reader_mcp_body(collected, normalization_mode);
+    forward_mcp_bytes(
+        &state,
+        headers,
+        method,
+        "https://api.z.ai/api/mcp/web_reader/mcp",
+        collected,
+    )
+    .await
+}
+
+pub async fn handle_zread(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    body: Body,
+) -> Response {
+    let zai = state.zai.read().await.clone();
+    if !zai.mcp.zread_enabled {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     drop(zai);
 
     forward_mcp(
         &state,
         headers,
         method,
-        "https://api.z.ai/api/mcp/web_reader/mcp",
+        "https://api.z.ai/api/mcp/zread/mcp",
         body,
     )
     .await
+}
+
+fn maybe_normalize_web_reader_mcp_body(
+    collected: Bytes,
+    normalization_mode: crate::proxy::config::ZaiWebReaderUrlNormalizationMode,
+) -> Bytes {
+    if normalization_mode == crate::proxy::config::ZaiWebReaderUrlNormalizationMode::Off {
+        return collected;
+    }
+
+    let mut v: Value = match serde_json::from_slice(&collected) {
+        Ok(v) => v,
+        Err(_) => return collected,
+    };
+
+    if v.get("method").and_then(|m| m.as_str()) != Some("tools/call") {
+        return collected;
+    }
+    if v.get("params").and_then(|p| p.get("name")).and_then(|n| n.as_str()) != Some("webReader")
+    {
+        return collected;
+    }
+
+    let Some(url) = v
+        .get("params")
+        .and_then(|p| p.get("arguments"))
+        .and_then(|a| a.get("url"))
+        .and_then(|u| u.as_str())
+    else {
+        return collected;
+    };
+
+    let Some(normalized) = crate::proxy::zai_web_tools::normalize_web_reader_url(url, normalization_mode) else {
+        return collected;
+    };
+
+    if let Some(obj) = v
+        .get_mut("params")
+        .and_then(|p| p.get_mut("arguments"))
+        .and_then(|a| a.as_object_mut())
+    {
+        obj.insert("url".to_string(), Value::String(normalized));
+    }
+
+    serde_json::to_vec(&v).map(Bytes::from).unwrap_or(collected)
 }
 
 fn mcp_session_id(headers: &HeaderMap) -> Option<String> {
@@ -380,7 +490,8 @@ pub async fn handle_zai_mcp_server(
     body: Body,
 ) -> Response {
     let zai = state.zai.read().await.clone();
-    if !zai.enabled || zai.api_key.trim().is_empty() {
+    let api_key = zai_mcp_api_key(&zai);
+    if api_key.is_empty() {
         return (StatusCode::BAD_REQUEST, "z.ai is not configured").into_response();
     }
     if !zai.mcp.enabled || !zai.mcp.vision_enabled {

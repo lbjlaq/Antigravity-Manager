@@ -18,9 +18,30 @@ use crate::proxy::mappers::claude::{
 use crate::proxy::server::AppState;
 use axum::http::HeaderMap;
 use std::sync::atomic::Ordering;
+use crate::proxy::observability::RequestAttribution;
+use crate::proxy::privacy::{mask_email, stable_hash_hex};
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 const MIN_SIGNATURE_LENGTH: usize = 10;  // 最小有效签名长度
+
+fn attach_attribution(
+    response: &mut Response,
+    provider: &str,
+    resolved_model: Option<String>,
+    account_email: Option<&str>,
+) {
+    let (account_id, account_email_masked) = match account_email {
+        Some(email) => (Some(stable_hash_hex(email)), Some(mask_email(email))),
+        None => (None, None),
+    };
+
+    response.extensions_mut().insert(RequestAttribution {
+        provider: provider.to_string(),
+        resolved_model,
+        account_id,
+        account_email_masked,
+    });
+}
 
 // ===== Thinking 块处理辅助函数 =====
 
@@ -355,7 +376,7 @@ pub async fn handle_messages(
             }
         };
 
-        return crate::proxy::providers::zai_anthropic::forward_anthropic_json(
+        let mut resp = crate::proxy::providers::zai_anthropic::forward_anthropic_json(
             &state,
             axum::http::Method::POST,
             "/v1/messages",
@@ -363,6 +384,8 @@ pub async fn handle_messages(
             new_body,
         )
         .await;
+        attach_attribution(&mut resp, "zai", None, None);
+        return resp;
     }
     
     // Google Flow 继续使用 request 对象
@@ -649,7 +672,7 @@ pub async fn handle_messages(
             if request.stream {
                 let stream = response.bytes_stream();
                 let gemini_stream = Box::pin(stream);
-                let claude_stream = create_claude_sse_stream(gemini_stream, trace_id, email);
+	                let claude_stream = create_claude_sse_stream(gemini_stream, trace_id, email.clone());
 
                 // 转换为 Bytes stream
                 let sse_stream = claude_stream.map(|result| -> Result<Bytes, std::io::Error> {
@@ -659,14 +682,16 @@ pub async fn handle_messages(
                     }
                 });
 
-                return Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "text/event-stream")
-                    .header(header::CACHE_CONTROL, "no-cache")
-                    .header(header::CONNECTION, "keep-alive")
-                    .body(Body::from_stream(sse_stream))
-                    .unwrap();
-            } else {
+	                let mut resp = Response::builder()
+	                    .status(StatusCode::OK)
+	                    .header(header::CONTENT_TYPE, "text/event-stream")
+	                    .header(header::CACHE_CONTROL, "no-cache")
+	                    .header(header::CONNECTION, "keep-alive")
+	                    .body(Body::from_stream(sse_stream))
+	                    .unwrap();
+                    attach_attribution(&mut resp, "google", Some(request_with_mapped.model.clone()), Some(&email));
+                    return resp;
+	            } else {
                 // 处理非流式响应
                 let bytes = match response.bytes().await {
                     Ok(b) => b,
@@ -714,9 +739,11 @@ pub async fn handle_messages(
                     cache_info
                 );
 
-                return Json(claude_response).into_response();
-            }
-        }
+	                let mut resp = Json(claude_response).into_response();
+                    attach_attribution(&mut resp, "google", Some(request_with_mapped.model.clone()), Some(&email));
+	                return resp;
+	            }
+	        }
         
         // 1. 立即提取状态码和 headers（防止 response 被 move）
         let status_code = status.as_u16();

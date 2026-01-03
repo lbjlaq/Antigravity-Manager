@@ -144,7 +144,6 @@
             "last_used": "Last Used",
             "actions": "Actions"
         },
-        "drag_to_reorder": "Drag to reorder",
         "empty": {
             "title": "No Accounts",
             "desc": "Click the \"Add Account\" button above to add your first account"
@@ -170,7 +169,7 @@
         "tabs": {
             "general": "General",
             "account": "Account",
-            "proxy": "Proxy Settings",
+            "proxy": "Proxy",
             "advanced": "Advanced",
             "about": "About"
         },
@@ -195,9 +194,6 @@
             "auto_sync_desc": "Automatically sync current active account information periodically",
             "sync_interval": "Sync Interval (seconds)"
         },
-        "proxy": {
-            "title": "Proxy Settings"
-        },
         "advanced": {
             "title": "Advanced Settings",
             "export_path": "Default Export Path",
@@ -213,12 +209,6 @@
             "antigravity_path_select": "Select Antigravity Executable",
             "antigravity_path_detected": "Detected path updated",
             "detect_btn": "Detect",
-            "antigravity_args": "Antigravity Startup Arguments",
-            "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",
-            "antigravity_args_desc": "Specify startup arguments for Antigravity, e.g. --user-data-dir to specify user data directory",
-            "detect_args_btn": "Detect",
-            "antigravity_args_detected": "Startup arguments updated",
-            "antigravity_args_detect_error": "Failed to detect startup arguments",
             "accounts_page_size": "Accounts Page Size",
             "page_size_auto": "Auto Calculate (Recommended)",
             "page_size_desc": "Set the number of accounts displayed per page. Select 'Auto Calculate' to dynamically adjust based on window size.",
@@ -236,8 +226,7 @@
             "author": "Author",
             "wechat": "WeChat",
             "github": "GitHub",
-            "view_code": "View Code",
-            "copyright": "Copyright © 2025-2026 Antigravity. All rights reserved.",
+            "copyright": "Copyright © 2025 Antigravity. All rights reserved.",
             "check_update": "Check for Updates",
             "checking_update": "Checking...",
             "latest_version": "You're up to date",
@@ -265,6 +254,26 @@
             "accounts_available": "{{count}} Accounts Available",
             "processing": "Processing..."
         },
+        "runtime": {
+            "title": "Routing / Active Usage",
+            "subtitle": "Shows which provider/model/account served recent requests (safe telemetry, no prompts).",
+            "provider": "Provider",
+            "model": "Resolved model",
+            "account": "Account",
+            "lock": "Pool lock",
+            "lock_hint": "The pool keeps using the same account for ~60s to reduce thrashing. Displays the current lock account_id and remaining seconds.",
+            "recent_usage": "Recent usage",
+            "recent_usage_hint": "Last 200 requests (best effort)",
+            "empty": "No recent traffic yet.",
+            "columns": {
+                "provider": "Provider",
+                "account": "Account",
+                "requests": "Req",
+                "errors": "Err",
+                "tokens": "Tokens (in/out)",
+                "last_seen": "Last"
+            }
+        },
         "action": {
             "start": "Start Service",
             "stop": "Stop Service"
@@ -287,7 +296,7 @@
             "btn_regenerate": "Regenerate Key",
             "btn_copy": "Copy",
             "btn_copied": "Copied",
-            "warning_key": "Note: Keep your API key secure. Do not share it.",
+            "warning_key": "Note: Keep your API key secure. It is only required when authorization is enabled.",
             "auth": {
                 "title": "Authorization",
                 "title_tooltip": "Controls whether incoming requests must be authenticated, and which routes are protected.",
@@ -295,13 +304,28 @@
                 "enabled_tooltip": "Turns authorization on/off by switching the authorization mode. When enabled, clients must include the API key via Authorization: Bearer <API_KEY> or x-api-key.",
                 "mode": "Mode",
                 "mode_tooltip": "Selects which routes require the API key: Off = no auth; All = protect everything; All except Health = /healthz stays open; Auto = Off for localhost-only, otherwise All except Health.",
-                "hint": "When enabled, clients must send the API key via Authorization: Bearer ... (except health if selected).",
+                "hint": "Clients must send the API key via Authorization: Bearer <API_KEY> or x-api-key. Route coverage depends on the selected mode.",
+                "effective": "Effective mode: {{mode}}",
                 "modes": {
                     "off": "Off (Open)",
                     "strict": "All (Strict)",
                     "all_except_health": "All except Health",
                     "auto": "Auto (Recommended)"
                 }
+            },
+            "access_log": {
+                "title": "Request Logging",
+                "title_tooltip": "Logs request method/path/status and latency to the local app log file. Does not log query strings, headers, or bodies.",
+                "enabled": "Enabled",
+                "enabled_tooltip": "When enabled, each request is logged with method, path, status code, latency, and a best-effort upstream label (e.g. z.ai).",
+                "hint": "Useful for debugging clients and routing. Logs are written to the app data directory under logs/."
+            },
+            "response_headers": {
+                "title": "Response Attribution Headers",
+                "title_tooltip": "Optionally injects redacted attribution info into HTTP response headers so external tools can see which provider/model served a request.",
+                "enabled": "Enabled",
+                "enabled_tooltip": "Adds x-antigravity-provider, x-antigravity-model, and x-antigravity-account (anonymized). No emails or API keys are included.",
+                "hint": "Useful for debugging multi-client setups. Disabled by default."
             },
             "zai": {
                 "title": "z.ai (GLM) Provider",
@@ -325,6 +349,7 @@
                     "hint": "Available models: {{count}}. Select a suggestion or type a custom model id.",
                     "error": "Failed to fetch models: {{error}}",
                     "select_placeholder": "Select model...",
+                    "custom_option": "Custom model id…",
                     "opus": "Opus family → z.ai model",
                     "opus_tooltip": "Default z.ai model id used when the incoming model contains \"opus\" (e.g. claude-opus-*).",
                     "sonnet": "Sonnet family → z.ai model",
@@ -346,18 +371,32 @@
                     "pooled": "Pooled (one slot)",
                     "fallback": "Fallback only"
                 },
-                "mcp": {
-                    "title": "MCP Servers (via local proxy)",
-                    "title_tooltip": "Exposes optional /mcp/* endpoints on this local proxy so MCP clients can connect. Available only when the service is running, z.ai is configured, and the corresponding toggles are enabled.",
-                    "enabled": "Enable MCP proxy",
-                    "enabled_tooltip": "Master switch for MCP endpoints. When off, all /mcp/* routes return 404.",
-                    "web_search": "Web Search",
-                    "web_search_tooltip": "Exposes /mcp/web_search_prime/mcp and forwards requests to the z.ai Web Search MCP upstream.",
-                    "web_reader": "Web Reader",
-                    "web_reader_tooltip": "Exposes /mcp/web_reader/mcp and forwards requests to the z.ai Web Reader MCP upstream.",
-                    "vision": "Vision",
-                    "vision_tooltip": "Exposes /mcp/zai-mcp-server/mcp (local MCP server) that provides vision tools backed by z.ai.",
-                    "local_endpoints": "Local endpoints (configure your MCP client to use these URLs):",
+	                "mcp": {
+	                    "title": "MCP Servers (via local proxy)",
+	                    "title_tooltip": "Exposes optional /mcp/* endpoints on this local proxy so MCP clients can connect. Available only when the service is running, z.ai is configured, and the corresponding toggles are enabled.",
+	                    "enabled": "Enable MCP proxy",
+	                    "enabled_tooltip": "Master switch for MCP endpoints. When off, all /mcp/* routes return 404.",
+	                    "api_key_override": "MCP API key override (optional)",
+	                    "api_key_override_tooltip": "Optional separate API key used for z.ai MCP upstream calls (Web Search/Web Reader/zread). If empty, the main z.ai API key is used.",
+	                    "api_key_override_placeholder": "Leave empty to use the main z.ai API key",
+	                    "api_key_override_hint": "Use this if MCP endpoints require a different key/entitlement than the model API.",
+	                    "web_search": "Web Search",
+	                    "web_search_tooltip": "Exposes /mcp/web_search_prime/mcp (local MCP server) backed by the z.ai Web Search Tools API.",
+	                    "web_reader": "Web Reader",
+	                    "web_reader_tooltip": "Exposes /mcp/web_reader/mcp (local MCP server) backed by the z.ai Web Reader Tools API.",
+	                    "web_reader_url_normalization": "Web Reader URL normalization",
+	                    "web_reader_url_normalization_tooltip": "Optionally rewrites webReader tool call URLs before calling the upstream reader API. Useful when sites break due to long tracking query strings.",
+	                    "web_reader_url_normalization_hint": "Applies only to tools/call for the webReader tool; other MCP tools and endpoints are not modified.",
+	                    "web_reader_url_normalization_options": {
+	                        "off": "Off (no changes)",
+	                        "strip_tracking_query": "Strip tracking query params (utm_*, hsa_*, gclid, fbclid, gbraid, wbraid, msclkid)",
+	                        "strip_query": "Strip full query string (?...)"
+	                    },
+	                    "zread": "zread",
+	                    "zread_tooltip": "Exposes /mcp/zread/mcp and forwards requests to the z.ai zread MCP upstream (document/repo reading tools, not the web reader).",
+	                    "vision": "Vision",
+	                    "vision_tooltip": "Exposes /mcp/zai-mcp-server/mcp (local MCP server) that provides vision tools backed by z.ai.",
+	                    "local_endpoints": "Local endpoints (configure your MCP client to use these URLs):",
                     "local_endpoints_tooltip": "Use these URLs in your MCP client. They share the same host/port as the API Proxy and follow the proxy authorization policy."
                 }
             },
@@ -373,27 +412,6 @@
                 "url": "Proxy URL",
                 "url_placeholder": "e.g. http://127.0.0.1:7890 or socks5://127.0.0.1:7890",
                 "tip": "Supports HTTP, HTTPS and SOCKS5."
-            },
-            "scheduling": {
-                "title": "Account Rotation & Scheduling",
-                "title_tooltip": "Controls how sessions are bound to accounts and how rate limits are handled.",
-                "subtitle": "Optimizes Prompt Caching and rate limit handling for all protocols (OpenAI/Gemini/Claude).",
-                "mode": "Scheduling Mode",
-                "mode_tooltip": "Cache-First: Bind session to account, wait on rate limit (maximize cache utility); Balance: Bind session, switch account on rate limit; Performance: Standard Round-robin.",
-                "modes": {
-                    "CacheFirst": "Cache First",
-                    "Balance": "Balance",
-                    "PerformanceFirst": "Performance"
-                },
-                "modes_desc": {
-                    "CacheFirst": "Binds session to account, waits precisely if limited (Maximizes Prompt Cache hits).",
-                    "Balance": "Binds session, auto-switches to available account if limited (Balanced cache & availability).",
-                    "PerformanceFirst": "No session binding, pure round-robin rotation (Best for high concurrency)."
-                },
-                "max_wait": "Max Wait (sec)",
-                "max_wait_tooltip": "Only used in 'Cache First' mode: wait instead of switching if the rate limit reset time is below this value.",
-                "clear_bindings": "Clear Session Bindings",
-                "clear_bindings_tooltip": "Hard reset all session-account bindings, forcing accounts to be re-assigned on next request."
             }
         },
         "example": {
@@ -403,13 +421,7 @@
         },
         "dialog": {
             "confirm_regenerate": "Are you sure to regenerate API Key? The old key will be invalid immediately.",
-            "operate_failed": "Operation failed: {{error}}",
-            "reset_mapping_title": "Reset Model Mapping",
-            "reset_mapping_msg": "Are you sure you want to reset all model mappings to system defaults? This action cannot be undone.",
-            "regenerate_key_title": "Regenerate API Key",
-            "regenerate_key_msg": "Are you sure you want to regenerate the API Key? The old key will be invalidated immediately.",
-            "clear_bindings_title": "Clear Session Bindings",
-            "clear_bindings_msg": "Are you sure you want to clear all session-account bindings?"
+            "operate_failed": "Operation failed: {{error}}"
         },
         "model": {
             "flash": "Fast Response",
@@ -454,26 +466,60 @@
             "title": "Model Router",
             "subtitle": "Route models by series or add custom exact mappings.",
             "group_title": "Series Groups",
+            "group_tooltip": "Group rules map incoming model names to a target model for Google-backed requests. Precedence: Custom exact mapping → Claude family (opus/sonnet/haiku) → Series groups → Built-in defaults. These rules do not affect z.ai passthrough unless the request is routed to z.ai.",
+            "no_override": "No override",
+            "buckets": {
+                "anthropic": {
+                    "title": "Claude / Anthropic Groups",
+                    "subtitle": "Applies to Claude protocol requests served by the Google pool (model name starts with claude-*).",
+                    "tooltip": "These settings write to proxy.anthropic_mapping. They affect the Google-backed Claude pipeline only. If z.ai passthrough is used for a request, z.ai mapping rules apply instead."
+                },
+                "openai": {
+                    "title": "OpenAI-Compatible Groups",
+                    "subtitle": "Applies to OpenAI-style model names (gpt-*). Used by OpenAI-compat routes served by the Google pool.",
+                    "tooltip": "These settings write to proxy.openai_mapping. They affect only OpenAI-compat endpoints (e.g. /v1/chat/completions) served by the Google pool."
+                }
+            },
             "groups": {
+                "claude_opus_family": {
+                    "name": "Opus Family (Large)",
+                    "desc": "Matches: claude-* with \"opus\"",
+                    "tooltip": "If the incoming model string contains \"opus\" (e.g. claude-opus-*), route it to this target model on the Google pool. This family rule overrides the Claude series groups below. Leave \"No override\" to use series/default routing."
+                },
+                "claude_sonnet_family": {
+                    "name": "Sonnet Family (Medium)",
+                    "desc": "Matches: claude-* with \"sonnet\"",
+                    "tooltip": "If the incoming model string contains \"sonnet\" (e.g. claude-sonnet-*), route it to this target model on the Google pool. This family rule overrides the Claude series groups below. Leave \"No override\" to use series/default routing."
+                },
+                "claude_haiku_family": {
+                    "name": "Haiku Family (Small)",
+                    "desc": "Matches: claude-* with \"haiku\"",
+                    "tooltip": "If the incoming model string contains \"haiku\" (e.g. claude-haiku-*), route it to this target model on the Google pool. This family rule overrides the Claude series groups below. Leave \"No override\" to use series/default routing."
+                },
                 "claude_45": {
                     "name": "Claude 4.5 Series",
-                    "desc": "Opus 4.5, Sonnet 4.5"
+                    "desc": "Matches: 4.5/4-5 series",
+                    "tooltip": "Applies to Claude 4.5 family model strings (contains \"4-5\" or \"4.5\"). Used only when no Claude family rule (opus/sonnet/haiku) matched. Routes Google-backed Claude protocol requests to the selected target model."
                 },
                 "claude_35": {
                     "name": "Claude 3.5 Series",
-                    "desc": "Sonnet 3.5, Haiku 3.5"
+                    "desc": "Matches: 3.5/3-5 series",
+                    "tooltip": "Applies to Claude 3.5 family model strings (contains \"3-5\" or \"3.5\"). Used only when no Claude family rule (opus/sonnet/haiku) matched. Routes Google-backed Claude protocol requests to the selected target model."
                 },
                 "gpt_4": {
                     "name": "GPT-4 / o1 Series",
-                    "desc": "GPT-4, Turbo, o1-preview"
+                    "desc": "Matches: GPT-4, o1, o3",
+                    "tooltip": "Applies to OpenAI-style model strings in the GPT-4 / o1 / o3 family (excluding 4o/mini/turbo-style). Routes OpenAI-compat requests to the selected target model on the Google pool."
                 },
                 "gpt_4o": {
                     "name": "GPT-4o / 3.5 Series",
-                    "desc": "GPT-4o, Mini, 3.5 Turbo"
+                    "desc": "Matches: 4o/mini/turbo/3.5",
+                    "tooltip": "Applies to OpenAI-style model strings like gpt-4o, gpt-4o-mini, gpt-3.5-turbo, and many \"turbo\"/\"mini\" variants. Routes OpenAI-compat requests to the selected target model on the Google pool."
                 },
                 "gpt_5": {
                     "name": "GPT-5 Series",
-                    "desc": "GPT-5.1, GPT-5.2 xhigh"
+                    "desc": "Matches: GPT-5*",
+                    "tooltip": "Applies to OpenAI-style model strings starting with \"gpt-5\". If unset, the system may fall back to the GPT-4 group mapping, depending on your configuration. Routes OpenAI-compat requests to the selected target model on the Google pool."
                 }
             },
             "expert_title": "Expert Custom Routing",
@@ -509,16 +555,15 @@
             "action": "Action"
         }
     },
-    "monitor": {
-        "page_title": "API Monitor Dashboard",
-        "page_subtitle": "Real-time request logging and analysis",
-        "open_monitor": "Open Monitor",
-        "logging_status": {
-            "active": "Recording",
-            "paused": "Paused"
-        },
-        "stats": {
-            "total": "Total",
+            "monitor": {
+                "page_title": "API Monitor Dashboard",
+                "page_subtitle": "Real-time request logging and analysis",
+                "open_monitor": "Open Monitor",
+                "logging_status": {
+                    "active": "Recording",
+                    "paused": "Paused"
+                },
+                "stats": {            "total": "Total",
             "ok": "OK",
             "err": "ERR"
         },
@@ -536,21 +581,20 @@
         "table": {
             "status": "Status",
             "method": "Method",
-            "model": "Model",
-            "path": "Path",
-            "usage": "Tokens",
-            "duration": "Duration",
-            "time": "Time",
-            "empty": "No requests recorded"
-        },
-        "details": {
-            "title": "Request Details",
-            "request_payload": "Request Payload",
-            "response_payload": "Response Payload",
-            "duration": "Duration",
-            "tokens": "Tokens (I/O)",
-            "time": "Time",
-            "model": "Model",
+                            "model": "Model",
+                            "path": "Path",
+                            "usage": "Tokens",
+                            "duration": "Duration",
+                            "time": "Time",
+                            "empty": "No requests recorded"
+                        },
+                        "details": {
+                            "title": "Request Details",
+                            "request_payload": "Request Payload",
+                            "response_payload": "Response Payload",
+                            "duration": "Duration",
+                            "tokens": "Tokens (I/O)",
+                            "time": "Time",            "model": "Model",
             "id": "Request ID"
         },
         "dialog": {

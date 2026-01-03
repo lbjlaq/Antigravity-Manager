@@ -7,6 +7,8 @@ export interface ProxyConfig {
     enabled: boolean;
     allow_lan_access?: boolean;
     auth_mode?: 'off' | 'strict' | 'all_except_health' | 'auto';
+    access_log_enabled?: boolean;
+    response_attribution_headers?: boolean;
     port: number;
     api_key: string;
     auto_start: boolean;
@@ -33,6 +35,9 @@ export interface ZaiMcpConfig {
     enabled: boolean;
     web_search_enabled: boolean;
     web_reader_enabled: boolean;
+    zread_enabled: boolean;
+    api_key_override?: string;
+    web_reader_url_normalization?: 'off' | 'strip_tracking_query' | 'strip_query';
     vision_enabled: boolean;
 }
 

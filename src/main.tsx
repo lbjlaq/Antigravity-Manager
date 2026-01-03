@@ -6,9 +6,25 @@ import App from './App';
 import './i18n'; // Import i18n config
 import "./App.css";
 
-// 启动时显式调用 Rust 命令显示窗口
-// 配合 visible:false 使用，解决启动黑屏问题
-invoke("show_main_window").catch(console.error);
+function tryShowMainWindow() {
+  let attempts = 0;
+  const maxAttempts = 80; // ~4s
+
+  const tick = () => {
+    attempts += 1;
+    invoke("show_main_window")
+      .then(() => {})
+      .catch(() => {
+        if (attempts >= maxAttempts) return;
+        setTimeout(tick, 50);
+      });
+  };
+
+  tick();
+}
+
+// Startup: window is configured as visible:false, so we must show it once the IPC bridge is ready.
+tryShowMainWindow();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

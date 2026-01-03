@@ -10,8 +10,26 @@
 The proxy supports `proxy.auth_mode` with four modes:
 - `off` — no auth required.
 - `strict` — auth required for all routes.
-- `all_except_health` — auth required for all routes except `GET /healthz`.
+- `all_except_health` — auth required for all routes except `GET /healthz` (and `GET /health` alias).
 - `auto` — derived policy: if `proxy.allow_lan_access=true` then `all_except_health`, otherwise `off`.
+
+### Policy matrix
+
+| `proxy.allow_lan_access` | `proxy.auth_mode` | Effective mode | `/healthz` requires auth? | Other routes require auth? |
+|---:|---|---|---|---|
+| false | `off` | `off` | No | No |
+| true | `off` | `off` | No | No |
+| false | `strict` | `strict` | Yes | Yes |
+| true | `strict` | `strict` | Yes | Yes |
+| false | `all_except_health` | `all_except_health` | No | Yes |
+| true | `all_except_health` | `all_except_health` | No | Yes |
+| false | `auto` | `off` | No | No |
+| true | `auto` | `all_except_health` | No | Yes |
+
+Notes:
+- When `/healthz` is configured to be open (effective mode `all_except_health`), the auth middleware **bypasses auth entirely** for that route (and the `/health` alias):
+  - it does not require headers,
+  - and it also does **not** reject requests that include an invalid auth header.
 
 Implementation:
 - Config enum and serialization: [`src-tauri/src/proxy/config.rs`](../../src-tauri/src/proxy/config.rs)
@@ -20,8 +38,10 @@ Implementation:
   - `ProxySecurityConfig::from_proxy_config(...)` in [`src-tauri/src/proxy/security.rs`](../../src-tauri/src/proxy/security.rs)
 - Request middleware enforcement: [`src-tauri/src/proxy/middleware/auth.rs`](../../src-tauri/src/proxy/middleware/auth.rs)
   - `auth_middleware(...)` validates `Authorization: Bearer <proxy.api_key>`
+  - Also accepts `x-api-key: <proxy.api_key>`
   - `OPTIONS` requests are allowed (CORS preflight)
-  - In `all_except_health`, `GET /healthz` bypasses auth
+  - In `all_except_health`, `GET /healthz` and `GET /health` bypass auth
+- Optional request logging (debug): [`docs/proxy/logging.md`](logging.md)
 
 Hot reload:
 - Config save triggers running server updates in [`src-tauri/src/commands/mod.rs`](../../src-tauri/src/commands/mod.rs)
@@ -29,7 +49,8 @@ Hot reload:
 
 ## Client contract
 When auth is enabled, clients should send:
-- `Authorization: Bearer <proxy.api_key>`
+- `Authorization: Bearer <proxy.api_key>` (preferred)
+- `x-api-key: <proxy.api_key>` (fallback for some tools)
 
 Notes:
 - The proxy API key is **not** forwarded upstream to providers.

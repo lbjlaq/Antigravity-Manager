@@ -7,6 +7,7 @@ use axum::{
 use std::time::Instant;
 use crate::proxy::server::AppState;
 use crate::proxy::monitor::ProxyRequestLog;
+use crate::proxy::observability::RequestAttribution;
 use serde_json::Value;
 use futures::StreamExt;
 
@@ -67,6 +68,7 @@ pub async fn monitor_middleware(
     
     let duration = start.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
+    let attribution = response.extensions().get::<RequestAttribution>().cloned();
     
     let content_type = response.headers().get("content-type")
         .and_then(|v| v.to_str().ok())
@@ -82,12 +84,23 @@ pub async fn monitor_middleware(
         status,
         duration,
         model, 
+        provider: None,
+        resolved_model: None,
+        account_id: None,
+        account_email_masked: None,
         error: None,
         request_body: request_body_str,
         response_body: None,
         input_tokens: None,
         output_tokens: None,
     };
+
+    if let Some(attr) = attribution {
+        log.provider = Some(attr.provider);
+        log.resolved_model = attr.resolved_model;
+        log.account_id = attr.account_id;
+        log.account_email_masked = attr.account_email_masked;
+    }
 
     if content_type.contains("text/event-stream") {
         log.response_body = Some("[Stream Data]".to_string());

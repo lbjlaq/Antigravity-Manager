@@ -68,7 +68,34 @@ pub struct ZaiMcpConfig {
     #[serde(default)]
     pub web_reader_enabled: bool,
     #[serde(default)]
+    pub zread_enabled: bool,
+    /// Optional API key override for z.ai MCP features.
+    /// If empty, the proxy uses `proxy.zai.api_key`.
+    ///
+    /// Note: users sometimes paste values like `Bearer <token>`; the proxy normalizes this.
+    #[serde(default)]
+    pub api_key_override: String,
+    /// Optional URL normalization for the Web Reader MCP server.
+    /// Helps with upstream quirks around long/tracking query strings.
+    #[serde(default)]
+    pub web_reader_url_normalization: ZaiWebReaderUrlNormalizationMode,
     pub vision_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ZaiWebReaderUrlNormalizationMode {
+    Off,
+    /// Removes common tracking parameters like utm_*, gclid, fbclid, gbraid, wbraid, msclkid, hsa_*.
+    StripTrackingQuery,
+    /// Removes the entire query string (`?…`) from the URL.
+    StripQuery,
+}
+
+impl Default for ZaiWebReaderUrlNormalizationMode {
+    fn default() -> Self {
+        Self::Off
+    }
 }
 
 impl Default for ZaiMcpConfig {
@@ -77,6 +104,9 @@ impl Default for ZaiMcpConfig {
             enabled: false,
             web_search_enabled: false,
             web_reader_enabled: false,
+            zread_enabled: false,
+            api_key_override: String::new(),
+            web_reader_url_normalization: ZaiWebReaderUrlNormalizationMode::Off,
             vision_enabled: false,
         }
     }
@@ -135,6 +165,17 @@ pub struct ProxyConfig {
     /// - auto: recommended defaults (currently: allow_lan_access => all_except_health, else off)
     #[serde(default)]
     pub auth_mode: ProxyAuthMode,
+
+    /// When enabled, logs request method/path/status and latency (no query strings or bodies).
+    #[serde(default)]
+    pub access_log_enabled: bool,
+
+    /// When enabled, injects redacted attribution headers into responses:
+    /// - `x-antigravity-provider`
+    /// - `x-antigravity-model`
+    /// - `x-antigravity-account`
+    #[serde(default)]
+    pub response_attribution_headers: bool,
     
     /// 监听端口
     pub port: u16,
@@ -194,6 +235,8 @@ impl Default for ProxyConfig {
             enabled: false,
             allow_lan_access: false, // 默认仅本机访问，隐私优先
             auth_mode: ProxyAuthMode::default(),
+            access_log_enabled: false,
+            response_attribution_headers: false,
             port: 8045,
             api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),
             auto_start: false,

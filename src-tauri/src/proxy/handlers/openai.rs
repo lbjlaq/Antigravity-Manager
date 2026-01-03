@@ -9,9 +9,30 @@ use crate::proxy::mappers::openai::{
 };
 // use crate::proxy::upstream::client::UpstreamClient; // 通过 state 获取
 use crate::proxy::server::AppState;
+use crate::proxy::observability::RequestAttribution;
+use crate::proxy::privacy::{mask_email, stable_hash_hex};
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 use crate::proxy::session_manager::SessionManager;
+
+fn attach_attribution(
+    response: &mut axum::response::Response,
+    provider: &str,
+    resolved_model: Option<String>,
+    account_email: Option<&str>,
+) {
+    let (account_id, account_email_masked) = match account_email {
+        Some(email) => (Some(stable_hash_hex(email)), Some(mask_email(email))),
+        None => (None, None),
+    };
+
+    response.extensions_mut().insert(RequestAttribution {
+        provider: provider.to_string(),
+        resolved_model,
+        account_id,
+        account_email_masked,
+    });
+}
 
 pub async fn handle_chat_completions(
     State(state): State<AppState>,
@@ -134,13 +155,15 @@ pub async fn handle_chat_completions(
                     create_openai_sse_stream(Box::pin(gemini_stream), openai_req.model.clone());
                 let body = Body::from_stream(openai_stream);
 
-                return Ok(Response::builder()
+                let mut resp = Response::builder()
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
                     .body(body)
                     .unwrap()
-                    .into_response());
+                    .into_response();
+                attach_attribution(&mut resp, "google", Some(mapped_model.clone()), Some(&email));
+                return Ok(resp);
             }
 
             let gemini_resp: Value = response
@@ -149,7 +172,9 @@ pub async fn handle_chat_completions(
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
             let openai_response = transform_openai_response(&gemini_resp);
-            return Ok(Json(openai_response).into_response());
+            let mut resp = Json(openai_response).into_response();
+            attach_attribution(&mut resp, "google", Some(mapped_model.clone()), Some(&email));
+            return Ok(resp);
         }
 
         // 处理特定错误并重试
@@ -596,13 +621,15 @@ pub async fn handle_completions(
                     Body::from_stream(s)
                 };
 
-                return Ok(Response::builder()
+                let mut resp = Response::builder()
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
                     .body(body)
                     .unwrap()
-                    .into_response());
+                    .into_response();
+                attach_attribution(&mut resp, "google", Some(mapped_model.clone()), Some(&email));
+                return Ok(resp);
             }
 
             let gemini_resp: Value = response
@@ -633,7 +660,9 @@ pub async fn handle_completions(
                 "choices": choices
             });
 
-            return Ok(axum::Json(legacy_resp).into_response());
+            let mut resp = axum::Json(legacy_resp).into_response();
+            attach_attribution(&mut resp, "google", Some(mapped_model.clone()), Some(&email));
+            return Ok(resp);
         }
 
         // Handle errors and retry

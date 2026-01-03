@@ -47,7 +47,16 @@ impl RateLimitTracker {
         if let Some(info) = self.limits.get(account_id) {
             let now = SystemTime::now();
             if info.reset_time > now {
-                return info.reset_time.duration_since(now).unwrap_or(Duration::from_secs(0)).as_secs();
+                let dur = info
+                    .reset_time
+                    .duration_since(now)
+                    .unwrap_or(Duration::from_secs(0));
+                // Round up to avoid returning 0/1 when the caller just set a short lock.
+                return if dur.subsec_nanos() > 0 {
+                    dur.as_secs().saturating_add(1)
+                } else {
+                    dur.as_secs()
+                };
             }
         }
         0
@@ -234,8 +243,12 @@ impl RateLimitTracker {
                     .and_then(|e| e.get("details"))
                     .and_then(|d| d.as_array())
                     .and_then(|a| a.get(0))
-                    .and_then(|o| o.get("metadata"))  // 添加 metadata 层级
-                    .and_then(|m| m.get("quotaResetDelay"))
+                    .and_then(|o| {
+                        // Some deployments put it directly on the detail object,
+                        // others nest under `metadata`.
+                        o.get("quotaResetDelay")
+                            .or_else(|| o.get("metadata").and_then(|m| m.get("quotaResetDelay")))
+                    })
                     .and_then(|v| v.as_str()) {
                     
                     tracing::debug!("[JSON解析] 找到 quotaResetDelay: '{}'", delay_str);

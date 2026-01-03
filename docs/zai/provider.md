@@ -20,7 +20,7 @@ Schema: `src-tauri/src/proxy/config.rs`
 Key fields:
 - `proxy.zai.enabled`
 - `proxy.zai.base_url` (default `https://api.z.ai/api/anthropic`)
-- `proxy.zai.api_key`
+- `proxy.zai.api_key` (raw token; a `Bearer ` prefix is also accepted)
 - `proxy.zai.dispatch_mode`:
   - `off`
   - `exclusive`
@@ -32,7 +32,21 @@ Key fields:
 ## Routing logic
 Entry point: [`src-tauri/src/proxy/handlers/claude.rs`](../../src-tauri/src/proxy/handlers/claude.rs)
 - `handle_messages(...)` decides whether to route the request to z.ai or to the existing Google-backed flow.
+- `handle_count_tokens(...)` uses the same dispatch decision rules (so `fallback`/`pooled` behave consistently).
 - `pooled` mode uses round-robin across `(google_accounts + 1)` slots, where slot `0` is z.ai.
+
+### Readiness rules
+z.ai is considered **eligible** for routing only when:
+- `proxy.zai.enabled=true`
+- `proxy.zai.base_url` is non-empty
+- `proxy.zai.api_key` is set (raw token; `Bearer <token>` is also accepted)
+
+If `dispatch_mode=exclusive` but the provider is not eligible, the proxy returns an `invalid_request_error` (configuration error) instead of silently falling back to Google.
+
+### Dispatch mode semantics
+- `exclusive`: always route Anthropic protocol requests to z.ai.
+- `pooled`: z.ai participates as **one extra slot** alongside the Google account pool (roughly `1/(N+1)` selection where `N` is the number of active Google accounts). This is best-effort and not a strict guarantee under retries/concurrency.
+- `fallback`: route to z.ai only when the Google pool is unavailable (no active accounts / no available accounts at runtime).
 
 ## Upstream implementation
 Provider implementation: [`src-tauri/src/proxy/providers/zai_anthropic.rs`](../../src-tauri/src/proxy/providers/zai_anthropic.rs)
