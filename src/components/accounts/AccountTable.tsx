@@ -37,6 +37,7 @@ import {
     Clock,
     ToggleLeft,
     ToggleRight,
+    Flame,
 } from 'lucide-react';
 import { Account } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -141,12 +142,14 @@ function SortableAccountRow({
     account,
     selected,
     isRefreshing,
+    isWarming,
     isCurrent,
     isSwitching,
     isDragging,
     onSelect,
     onSwitch,
     onRefresh,
+    onWarmUp,
     onViewDetails,
     onExport,
     onDelete,
@@ -205,9 +208,11 @@ function SortableAccountRow({
                 account={account}
                 isCurrent={isCurrent}
                 isRefreshing={isRefreshing}
+                isWarming={isWarming}
                 isSwitching={isSwitching}
                 onSwitch={onSwitch}
                 onRefresh={onRefresh}
+                onWarmUp={onWarmUp}
                 onViewDetails={onViewDetails}
                 onExport={onExport}
                 onDelete={onDelete}
@@ -225,9 +230,11 @@ function AccountRowContent({
     account,
     isCurrent,
     isRefreshing,
+    isWarming,
     isSwitching,
     onSwitch,
     onRefresh,
+    onWarmUp,
     onViewDetails,
     onExport,
     onDelete,
@@ -486,6 +493,16 @@ function AccountRowContent({
                     >
                         <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                     </button>
+                    {onWarmUp && (
+                        <button
+                            className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isWarming || isDisabled) ? 'bg-amber-50 dark:bg-amber-900/10 text-amber-600 dark:text-amber-400 cursor-not-allowed' : 'hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/30'}`}
+                            onClick={(e) => { e.stopPropagation(); onWarmUp(); }}
+                            title={isDisabled ? t('accounts.disabled_tooltip') : (isWarming ? t('common.loading') : t('accounts.warm_up'))}
+                            disabled={isWarming || isDisabled}
+                        >
+                            <Flame className={`w-3.5 h-3.5 ${isWarming ? 'animate-pulse' : ''}`} />
+                        </button>
+                    )}
                     <button
                         className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-all"
                         onClick={(e) => { e.stopPropagation(); onExport(); }}
@@ -534,12 +551,14 @@ function AccountTable({
     accounts,
     selectedIds,
     refreshingIds,
+    warmingIds,
     onToggleSelect,
     onToggleAll,
     currentAccountId,
     switchingAccountId,
     onSwitch,
     onRefresh,
+    onWarmUp,
     onViewDetails,
     onExport,
     onDelete,
@@ -625,12 +644,14 @@ function AccountTable({
                                     account={account}
                                     selected={selectedIds.has(account.id)}
                                     isRefreshing={refreshingIds.has(account.id)}
+                                    isWarming={warmingIds?.has(account.id)}
                                     isCurrent={account.id === currentAccountId}
                                     isSwitching={account.id === switchingAccountId}
                                     isDragging={account.id === activeId}
                                     onSelect={() => onToggleSelect(account.id)}
                                     onSwitch={() => onSwitch(account.id)}
                                     onRefresh={() => onRefresh(account.id)}
+                                    onWarmUp={onWarmUp ? () => onWarmUp(account.id) : undefined}
                                     onViewDetails={() => onViewDetails(account.id)}
                                     onExport={() => onExport(account.id)}
                                     onDelete={() => onDelete(account.id)}
