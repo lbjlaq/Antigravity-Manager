@@ -560,6 +560,7 @@
             "gemini": "Gemini",
             "claude": "Claude",
             "images": "绘图",
+            "account": "账号",
             "reset": "重置"
         },
         "table": {
@@ -570,6 +571,7 @@
             "usage": "Token 消耗",
             "duration": "耗时",
             "time": "时间",
+            "account": "账号",
             "empty": "暂无请求记录"
         },
         "details": {
