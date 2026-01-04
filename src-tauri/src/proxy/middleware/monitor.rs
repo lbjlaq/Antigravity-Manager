@@ -10,6 +10,8 @@ use crate::proxy::monitor::ProxyRequestLog;
 use serde_json::Value;
 use futures::StreamExt;
 
+const MAX_RESPONSE_LOG_SIZE: usize = 10 * 1024 * 1024; // 10MB for image responses
+
 pub async fn monitor_middleware(
     State(state): State<AppState>,
     request: Request,
@@ -140,7 +142,7 @@ pub async fn monitor_middleware(
         Response::from_parts(parts, Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)))
     } else if content_type.contains("application/json") || content_type.contains("text/") {
         let (parts, body) = response.into_parts();
-        match axum::body::to_bytes(body, 512 * 1024).await {
+        match axum::body::to_bytes(body, MAX_RESPONSE_LOG_SIZE).await {
             Ok(bytes) => {
                 if let Ok(s) = std::str::from_utf8(&bytes) {
                     if let Ok(json) = serde_json::from_str::<Value>(&s) {
@@ -164,7 +166,7 @@ pub async fn monitor_middleware(
                 Response::from_parts(parts, Body::from(bytes))
             }
             Err(_) => {
-                log.response_body = Some("[Response too large]".to_string());
+                log.response_body = Some("[Response too large (>10MB)]".to_string());
                 monitor.log_request(log).await;
                 Response::from_parts(parts, Body::empty())
             }
