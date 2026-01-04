@@ -1,6 +1,5 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { resolve } from "path";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -8,19 +7,6 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
-
-  // Path aliases matching tsconfig.json
-  resolve: {
-    alias: {
-      "@": resolve(__dirname, "src"),
-      "@components": resolve(__dirname, "src/components"),
-      "@pages": resolve(__dirname, "src/pages"),
-      "@stores": resolve(__dirname, "src/stores"),
-      "@services": resolve(__dirname, "src/services"),
-      "@types": resolve(__dirname, "src/types"),
-      "@utils": resolve(__dirname, "src/utils"),
-    },
-  },
 
   // Build optimizations
   build: {
