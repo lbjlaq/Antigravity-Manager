@@ -110,7 +110,6 @@ brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manage
 
 # 2. 安装应用
 brew install --cask antigravity-tools
-```
 # 如果遇到权限问题，建议使用 --no-quarantine
 brew install --cask --no-quarantine antigravity-tools
 ```
