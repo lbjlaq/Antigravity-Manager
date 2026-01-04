@@ -561,6 +561,8 @@
             "claude": "Claude",
             "images": "绘图",
             "account": "账号",
+            "select_accounts": "筛选账号",
+            "select_all": "全部",
             "reset": "重置"
         },
         "table": {

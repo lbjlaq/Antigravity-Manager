@@ -549,6 +549,8 @@
             "claude": "Claude",
             "images": "Images",
             "account": "Account",
+            "select_accounts": "Filter Accounts",
+            "select_all": "All",
             "reset": "Reset"
         },
         "table": {
