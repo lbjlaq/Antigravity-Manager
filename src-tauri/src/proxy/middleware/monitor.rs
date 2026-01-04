@@ -10,6 +10,9 @@ use crate::proxy::monitor::ProxyRequestLog;
 use serde_json::Value;
 use futures::StreamExt;
 
+/// Internal header name for passing resolved model from handlers to middleware
+pub const X_RESOLVED_MODEL_HEADER: &str = "x-ag-resolved-model";
+
 pub async fn monitor_middleware(
     State(state): State<AppState>,
     request: Request,
@@ -22,11 +25,11 @@ pub async fn monitor_middleware(
     let start = Instant::now();
     let method = request.method().to_string();
     let uri = request.uri().to_string();
-    
+
     if uri.contains("event_logging") {
         return next.run(request).await;
     }
-    
+
     let mut model = if uri.contains("/v1beta/models/") {
         uri.split("/v1beta/models/")
             .nth(1)
@@ -62,12 +65,21 @@ pub async fn monitor_middleware(
         request_body_str = None;
         request
     };
-    
-    let response = next.run(request).await;
-    
+
+    let mut response = next.run(request).await;
+
     let duration = start.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
-    
+
+    // Extract resolved_model from internal header (set by handlers)
+    let resolved_model = response.headers()
+        .get(X_RESOLVED_MODEL_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Remove internal header before sending response to client
+    response.headers_mut().remove(X_RESOLVED_MODEL_HEADER);
+
     let content_type = response.headers().get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
@@ -81,7 +93,8 @@ pub async fn monitor_middleware(
         url: uri,
         status,
         duration,
-        model, 
+        model,
+        resolved_model,
         error: None,
         request_body: request_body_str,
         response_body: None,

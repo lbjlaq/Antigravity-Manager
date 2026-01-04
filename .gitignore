@@ -33,3 +33,6 @@ src-tauri/.env
 .env
 .env.*
 environment/
+
+# Test coverage
+coverage/

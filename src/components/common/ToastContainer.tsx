@@ -25,7 +25,8 @@ const ToastContainer = () => {
 
     const addToast = useCallback((message: string, type: ToastType, duration?: number) => {
         const id = `toast-${Date.now()}-${toastCounter++}`;
-        setToasts(prev => [...prev, { id, message, type, duration }]);
+        const newToast: ToastItem = { id, message, type, ...(duration !== undefined && { duration }) };
+        setToasts(prev => [...prev, newToast]);
     }, []);
 
     const removeToast = useCallback((id: string) => {

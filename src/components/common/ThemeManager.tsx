@@ -69,6 +69,7 @@ export default function ThemeManager() {
             return () => mediaQuery.removeEventListener('change', handleSystemChange);
         } else {
             applyTheme(theme);
+            return; // Explicit return for non-system theme path
         }
     }, [config?.theme]);
 

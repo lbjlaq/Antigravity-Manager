@@ -1,6 +1,22 @@
-use axum::{extract::State, extract::Json, http::StatusCode, response::IntoResponse};
+use axum::{extract::State, extract::Json, http::StatusCode, response::IntoResponse, response::Response};
 use serde_json::{json, Value};
 use crate::proxy::server::AppState;
+use crate::proxy::middleware::monitor::X_RESOLVED_MODEL_HEADER;
+
+/// Helper trait to attach resolved model info to responses for monitoring
+pub trait WithResolvedModel {
+    fn with_resolved_model(self, model: &str) -> Response;
+}
+
+impl<T: IntoResponse> WithResolvedModel for T {
+    fn with_resolved_model(self, model: &str) -> Response {
+        let mut response = self.into_response();
+        if let Ok(header_value) = axum::http::HeaderValue::from_str(model) {
+            response.headers_mut().insert(X_RESOLVED_MODEL_HEADER, header_value);
+        }
+        response
+    }
+}
 
 /// Detects model capabilities and configuration
 /// POST /v1/models/detect

@@ -188,13 +188,21 @@ pub struct UpstreamProxyConfig {
     pub url: String,
 }
 
+/// Get default proxy port from env or use 8045
+fn default_proxy_port() -> u16 {
+    std::env::var("ANTIGRAVITY_PROXY_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8045)
+}
+
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             enabled: false,
             allow_lan_access: false, // 默认仅本机访问，隐私优先
             auth_mode: ProxyAuthMode::default(),
-            port: 8045,
+            port: default_proxy_port(),
             api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),
             auto_start: false,
             anthropic_mapping: std::collections::HashMap::new(),

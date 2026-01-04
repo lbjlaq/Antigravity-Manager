@@ -13,6 +13,8 @@ pub struct ProxyRequestLog {
     pub status: u16,
     pub duration: u64, // ms
     pub model: Option<String>,
+    /// The model after mapping/routing (what actually gets sent to upstream)
+    pub resolved_model: Option<String>,
     pub error: Option<String>,
     pub request_body: Option<String>,
     pub response_body: Option<String>,

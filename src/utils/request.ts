@@ -1,10 +1,17 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, InvokeArgs } from '@tauri-apps/api/core';
 
-export async function request<T>(cmd: string, args?: any): Promise<T> {
+/**
+ * Type-safe wrapper for Tauri invoke commands
+ * Provides consistent error handling and logging for development
+ */
+export async function request<T>(cmd: string, args?: InvokeArgs): Promise<T> {
   try {
     return await invoke<T>(cmd, args);
   } catch (error) {
-    console.error(`API Error [${cmd}]:`, error);
+    // Only log in development mode
+    if (import.meta.env.DEV) {
+      console.error(`[Tauri API Error] Command: ${cmd}`, error);
+    }
     throw error;
   }
 }

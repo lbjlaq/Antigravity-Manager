@@ -234,6 +234,7 @@ function AddAccountDialog({ onAdd }: AddAccountDialogProps) {
 
         for (let i = 0; i < tokens.length; i++) {
             const currentToken = tokens[i];
+            if (!currentToken) continue; // Skip if undefined (type guard for noUncheckedIndexedAccess)
             setMessage(t('accounts.add.token.batch_progress', { current: i + 1, total: tokens.length }));
 
             try {

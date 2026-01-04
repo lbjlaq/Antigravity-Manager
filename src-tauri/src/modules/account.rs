@@ -11,23 +11,27 @@ use std::sync::Mutex;
 /// 全局账号写入锁，防止并发操作导致索引文件损坏
 static ACCOUNT_INDEX_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
-// ... existing constants ...
-const DATA_DIR: &str = ".antigravity_tools";
+// Default data directory, can be overridden via ANTIGRAVITY_DATA_DIR env var
+const DEFAULT_DATA_DIR: &str = ".antigravity_tools";
 const ACCOUNTS_INDEX: &str = "accounts.json";
 const ACCOUNTS_DIR: &str = "accounts";
 
-// ... existing functions get_data_dir, get_accounts_dir, load_account_index, save_account_index ...
+/// Get data directory name from env or use default
+fn get_data_dir_name() -> String {
+    std::env::var("ANTIGRAVITY_DATA_DIR").unwrap_or_else(|_| DEFAULT_DATA_DIR.to_string())
+}
+
 /// 获取数据目录路径
 pub fn get_data_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
-    let data_dir = home.join(DATA_DIR);
-    
+    let data_dir = home.join(get_data_dir_name());
+
     // 确保目录存在
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir)
             .map_err(|e| format!("创建数据目录失败: {}", e))?;
     }
-    
+
     Ok(data_dir)
 }
 

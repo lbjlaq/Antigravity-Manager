@@ -9,6 +9,7 @@ use crate::proxy::mappers::openai::{
 };
 // use crate::proxy::upstream::client::UpstreamClient; // 通过 state 获取
 use crate::proxy::server::AppState;
+use crate::proxy::handlers::common::WithResolvedModel;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 use crate::proxy::session_manager::SessionManager;
@@ -138,6 +139,7 @@ pub async fn handle_chat_completions(
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
+                    .header(crate::proxy::middleware::monitor::X_RESOLVED_MODEL_HEADER, mapped_model.as_str())
                     .body(body)
                     .unwrap()
                     .into_response());
@@ -149,7 +151,7 @@ pub async fn handle_chat_completions(
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
             let openai_response = transform_openai_response(&gemini_resp);
-            return Ok(Json(openai_response).into_response());
+            return Ok(Json(openai_response).with_resolved_model(&mapped_model));
         }
 
         // 处理特定错误并重试
@@ -600,6 +602,7 @@ pub async fn handle_completions(
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
+                    .header(crate::proxy::middleware::monitor::X_RESOLVED_MODEL_HEADER, mapped_model.as_str())
                     .body(body)
                     .unwrap()
                     .into_response());
@@ -633,7 +636,7 @@ pub async fn handle_completions(
                 "choices": choices
             });
 
-            return Ok(axum::Json(legacy_resp).into_response());
+            return Ok(axum::Json(legacy_resp).with_resolved_model(&mapped_model));
         }
 
         // Handle errors and retry

@@ -78,6 +78,10 @@ fn copy_passthrough_headers(incoming: &HeaderMap) -> HeaderMap {
             "accept-encoding" | "cache-control" => {
                 out.insert(k.clone(), v.clone());
             }
+            // [NEW] Pass through anthropic-beta header for features like effort parameter
+            "anthropic-beta" => {
+                out.insert(k.clone(), v.clone());
+            }
             _ => {}
         }
     }
@@ -165,6 +169,33 @@ pub async fn forward_anthropic_json(
     headers
         .entry(header::CONTENT_TYPE)
         .or_insert(HeaderValue::from_static("application/json"));
+
+    // [NEW] Auto-inject anthropic-beta header when output_config.effort is present
+    // This is required for the effort parameter to work with Claude API
+    let has_effort = body.get("output_config")
+        .and_then(|c| c.get("effort"))
+        .is_some();
+
+    if has_effort {
+        // Merge with existing anthropic-beta header if present
+        let existing_beta = headers.get("anthropic-beta")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        let effort_beta = "effort-2025-11-24";
+        let new_beta = if existing_beta.is_empty() {
+            effort_beta.to_string()
+        } else if existing_beta.contains(effort_beta) {
+            existing_beta.to_string()
+        } else {
+            format!("{},{}", existing_beta, effort_beta)
+        };
+
+        if let Ok(v) = HeaderValue::from_str(&new_beta) {
+            headers.insert("anthropic-beta", v);
+            tracing::debug!("[z.ai] Injected anthropic-beta header for effort parameter: {}", new_beta);
+        }
+    }
 
     // [FIX #290] Clean cache_control before sending to Anthropic API
     // This prevents "Extra inputs are not permitted" errors

@@ -25,7 +25,10 @@
         "pagination_info": "显示第 {{start}} 到 {{end}} 条，共 {{total}} 条",
         "per_page": "每页",
         "items": "条",
-        "accounts": "个账号"
+        "accounts": "个账号",
+        "enabled": "已启用",
+        "disabled": "已禁用",
+        "required": "必填"
     },
     "nav": {
         "dashboard": "仪表盘",
@@ -492,6 +495,11 @@
             "reset_confirm": "确定要重置所有模型映射为系统默认吗？",
             "reset_mapping": "重置映射",
             "add_mapping": "添加映射 (Add Mapping)",
+            "haiku_tip": {
+                "title": "💰 省钱提示:",
+                "text": "Claude CLI 默认使用 {{model}} 处理后台任务,建议映射到廉价 Flash 模型可节省约 95% 成本",
+                "btn": "一键优化"
+            },
             "current_list": "当前映射列表 (Custom List)",
             "no_custom_mapping": "暂无自定义精确映射",
             "gemini3_only_warning": "⚠️ 仅支持 Gemini 3 系列",

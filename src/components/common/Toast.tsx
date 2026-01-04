@@ -25,6 +25,7 @@ const Toast = ({ id, message, type, duration = 3000, onClose }: ToastProps) => {
             }, duration);
             return () => clearTimeout(timer);
         }
+        return; // Explicit return when duration <= 0
     }, [duration, id, onClose]);
 
     const getIcon = () => {

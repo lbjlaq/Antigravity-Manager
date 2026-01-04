@@ -3,13 +3,13 @@ import { create } from 'zustand';
 export interface NetworkRequest {
   id: string;
   cmd: string;
-  args?: any;
+  args?: Record<string, unknown>;
   startTime: number;
   endTime?: number;
   duration?: number;
   status: 'pending' | 'success' | 'error';
-  response?: any;
-  error?: any;
+  response?: unknown;
+  error?: unknown;
 }
 
 interface NetworkMonitorState {

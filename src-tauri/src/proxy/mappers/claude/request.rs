@@ -862,19 +862,29 @@ fn build_generation_config(
     }
 
     // Effort level mapping (Claude API v2.0.67+)
-    // Maps Claude's output_config.effort to Gemini's effortLevel
+    // Maps Claude's output_config.effort to Gemini's thinkingConfig.thinkingLevel
+    // Gemini API uses thinkingLevel: "low" | "medium" | "high" (for Gemini 3 Flash also "minimal")
     if let Some(output_config) = &claude_req.output_config {
         if let Some(effort) = &output_config.effort {
-            config["effortLevel"] = json!(match effort.to_lowercase().as_str() {
-                "high" => "HIGH",
-                "medium" => "MEDIUM",
-                "low" => "LOW",
-                _ => "HIGH" // Default to HIGH for unknown values
-            });
+            let thinking_level = match effort.to_lowercase().as_str() {
+                "high" => "high",
+                "medium" => "medium",
+                "low" => "low",
+                _ => "high" // Default to high for unknown values
+            };
+
+            // Ensure thinkingConfig exists
+            if config.get("thinkingConfig").is_none() {
+                config["thinkingConfig"] = json!({"includeThoughts": false});
+            }
+
+            // Set thinkingLevel in thinkingConfig
+            config["thinkingConfig"]["thinkingLevel"] = json!(thinking_level);
+
             tracing::debug!(
-                "[Generation-Config] Effort level set: {} -> {}",
+                "[Generation-Config] Effort level mapped: {} -> thinkingLevel: {}",
                 effort,
-                config["effortLevel"]
+                thinking_level
             );
         }
     }

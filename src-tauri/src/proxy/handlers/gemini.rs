@@ -6,6 +6,7 @@ use tracing::{debug, error, info};
 use crate::proxy::mappers::gemini::{wrap_request, unwrap_response};
 use crate::proxy::server::AppState;
 use crate::proxy::session_manager::SessionManager;
+use crate::proxy::handlers::common::WithResolvedModel;
  
 const MAX_RETRY_ATTEMPTS: usize = 3;
  
@@ -165,6 +166,7 @@ pub async fn handle_generate(
                     .header("Content-Type", "text/event-stream")
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
+                    .header(crate::proxy::middleware::monitor::X_RESOLVED_MODEL_HEADER, mapped_model.as_str())
                     .body(body)
                     .unwrap()
                     .into_response());
@@ -176,7 +178,7 @@ pub async fn handle_generate(
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
             let unwrapped = unwrap_response(&gemini_resp);
-            return Ok(Json(unwrapped).into_response());
+            return Ok(Json(unwrapped).with_resolved_model(&mapped_model));
         }
 
         // 处理错误并重试

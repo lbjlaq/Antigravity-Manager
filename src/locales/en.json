@@ -24,7 +24,11 @@
         "next_page": "Next",
         "pagination_info": "Showing {{start}} to {{end}} of {{total}} entries",
         "per_page": "Per page",
-        "items": "items"
+        "items": "items",
+        "accounts": "accounts",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "required": "Required"
     },
     "nav": {
         "dashboard": "Dashboard",
@@ -86,6 +90,10 @@
         "forbidden_badge": "403",
         "forbidden_tooltip": "API returned 403 Forbidden, account has no permission for Gemini Code Assist",
         "forbidden_msg": "Forbidden, skip auto-refresh",
+        "proxy_disabled": "Proxy Disabled",
+        "proxy_disabled_tooltip": "This account has been manually disabled for proxy, it will not participate in API requests, but can still be used in the app",
+        "enable_proxy": "Enable Proxy",
+        "disable_proxy": "Disable Proxy",
         "no_data": "No Data",
         "last_used": "Last Used",
         "reset_time": "Reset Time",
@@ -162,7 +170,11 @@
             "refresh_title": "Refresh Quota",
             "batch_refresh_title": "Batch Refresh",
             "refresh_msg": "Are you sure you want to refresh the quota for the current account?",
-            "batch_refresh_msg": "Are you sure you want to refresh quotas for the selected {{count}} accounts? This may take some time."
+            "batch_refresh_msg": "Are you sure you want to refresh quotas for the selected {{count}} accounts? This may take some time.",
+            "disable_proxy_title": "Disable Proxy",
+            "disable_proxy_msg": "Are you sure you want to disable proxy for this account? The account can still be used in the app.",
+            "enable_proxy_title": "Enable Proxy",
+            "enable_proxy_msg": "Are you sure you want to re-enable proxy for this account?"
         }
     },
     "settings": {
@@ -401,6 +413,9 @@
             "curl": "cURL",
             "python": "Python"
         },
+        "examples": {
+            "title": "Usage Examples"
+        },
         "dialog": {
             "confirm_regenerate": "Are you sure to regenerate API Key? The old key will be invalid immediately.",
             "operate_failed": "Operation failed: {{error}}",
@@ -481,6 +496,11 @@
             "reset_confirm": "Reset all mappings to system defaults?",
             "reset_mapping": "Reset Mapping",
             "add_mapping": "Add Mapping",
+            "haiku_tip": {
+                "title": "💰 Cost Saving Tip:",
+                "text": "Claude CLI uses {{model}} for background tasks by default. Map it to a cheaper Flash model to save ~95% cost.",
+                "btn": "One-click Optimize"
+            },
             "current_list": "Custom List",
             "no_custom_mapping": "No custom mappings yet",
             "gemini3_only_warning": "⚠️ Gemini 3 series only",

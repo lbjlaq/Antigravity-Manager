@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Antigravity Custom",
+  "productName": "Antigravity Dev",
   "version": "3.3.15",
-  "identifier": "com.lbjlaq.antigravity-tools.custom",
+  "identifier": "dev.stranmor.antigravity-tools-dev",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "Antigravity Tools",
+        "title": "Antigravity Tools (DEV)",
         "width": 1024,
         "height": 700,
         "titleBarStyle": "Overlay",
