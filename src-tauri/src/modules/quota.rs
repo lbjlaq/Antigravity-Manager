@@ -286,15 +286,9 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
         let project_id = "bamboo-precept-lgxtn"; // Hardcoded default
 
         // Smart Warm-up: Only warmup models at 100% (not in cooldown)
-        // Skip image models entirely - any request consumes too much quota (5%+)
         let mut models_to_warm: Vec<(String, i32)> = Vec::new();
         if let Some(quota) = &account.quota {
             for m in &quota.models {
-                // Skip image models - warmup consumes too much quota
-                if m.name.to_lowercase().contains("image") {
-                    tracing::info!("[Warmup] Skipping image model {} (quota-expensive)", m.name);
-                    continue;
-                }
                 if m.percentage >= 100 {
                     models_to_warm.push((m.name.clone(), m.percentage));
                 } else {
@@ -385,23 +379,10 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
     let project_id = "bamboo-precept-lgxtn";
 
     // Smart Warm-up: Only warmup models at 100% (not in cooldown)
-    // Skip image models entirely - any request consumes too much quota (5%+)
     let mut models_to_warm: Vec<(String, i32)> = Vec::new();
-    let mut skipped_image_at_100 = 0; // Track image models at 100% that were skipped
 
     if let Some(quota) = &account.quota {
         for m in &quota.models {
-            // Skip image models - warmup consumes too much quota
-            if m.name.to_lowercase().contains("image") {
-                if m.percentage >= 100 {
-                    skipped_image_at_100 += 1;
-                }
-                tracing::info!(
-                    "[Warmup] Skipping image model {} (any request is quota-expensive)",
-                    m.name
-                );
-                continue;
-            }
             // Only warmup if at 100% (not already in 5h cooldown)
             if m.percentage >= 100 {
                 models_to_warm.push((m.name.clone(), m.percentage));
@@ -416,12 +397,6 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
     }
 
     if models_to_warm.is_empty() {
-        if skipped_image_at_100 > 0 {
-            return Ok(format!(
-                "文本模型已在冷却周期中；{}个图片模型已跳过（预热消耗过大）",
-                skipped_image_at_100
-            ));
-        }
         return Ok("所有模型已在冷却周期中，无需预热".to_string());
     }
 
