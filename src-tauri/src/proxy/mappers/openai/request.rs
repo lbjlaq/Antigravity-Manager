@@ -226,6 +226,20 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
     if let Some(fmt) = &request.response_format {
         if fmt.r#type == "json_object" {
             gen_config["responseMimeType"] = json!("application/json");
+        } else if fmt.r#type == "json_schema" {
+            // OpenAI Structured Outputs support: convert json_schema to Gemini responseSchema
+            gen_config["responseMimeType"] = json!("application/json");
+            if let Some(ref json_schema_format) = fmt.json_schema {
+                if let Some(ref schema) = json_schema_format.schema {
+                    // Clean the schema for Gemini compatibility (remove unsupported fields)
+                    let mut cleaned_schema = schema.clone();
+                    crate::proxy::common::json_schema::clean_json_schema(&mut cleaned_schema);
+                    // Gemini requires uppercase types (OBJECT, STRING, etc.)
+                    enforce_uppercase_types(&mut cleaned_schema);
+                    gen_config["responseSchema"] = cleaned_schema;
+                    tracing::debug!("[OpenAI-Request] Applied json_schema structured output: {}", json_schema_format.name);
+                }
+            }
         }
     }
 

@@ -33,6 +33,21 @@ pub struct OpenAIRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseFormat {
     pub r#type: String,
+    /// OpenAI Structured Outputs: json_schema field for type="json_schema"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<JsonSchemaFormat>,
+}
+
+/// OpenAI Structured Outputs json_schema format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JsonSchemaFormat {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
