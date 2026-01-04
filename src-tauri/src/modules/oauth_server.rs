@@ -23,8 +23,8 @@ fn oauth_success_html() -> &'static str {
     "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
     <html>\
     <body style='font-family: sans-serif; text-align: center; padding: 50px;'>\
-        <h1 style='color: green;'>✅ 授权成功!</h1>\
-        <p>您可以关闭此窗口返回应用。</p>\
+        <h1 style='color: green;'>✅ Authorization Successful!</h1>\
+        <p>You can close this window and return to the app.</p>\
         <script>setTimeout(function() { window.close(); }, 2000);</script>\
     </body>\
     </html>"
@@ -34,8 +34,8 @@ fn oauth_fail_html() -> &'static str {
     "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
     <html>\
     <body style='font-family: sans-serif; text-align: center; padding: 50px;'>\
-        <h1 style='color: red;'>❌ 授权失败</h1>\
-        <p>未能获取授权 Code，请返回应用重试。</p>\
+        <h1 style='color: red;'>❌ Authorization Failed</h1>\
+        <p>Could not obtain authorization code. Please return to the app and try again.</p>\
     </body>\
     </html>"
 }
