@@ -248,8 +248,9 @@ function Accounts() {
             return next;
         });
         try {
-            await warmUpAccount(accountId);
-            showToast(t('accounts.warmup_started'), 'success');
+            const message = await warmUpAccount(accountId);
+            // Show the actual backend message (e.g., "已启动 X 个模型的预热任务" or "所有模型已在冷却周期中，无需预热")
+            showToast(message, 'success');
             // Auto-refresh after warmup to show updated status
             setTimeout(async () => {
                 await refreshQuota(accountId);
