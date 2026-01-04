@@ -735,6 +735,20 @@ pub async fn handle_images_generations(
         _ => "1:1", // 默认 1024x1024
     };
 
+    // 3. 映射 quality 到 imageSize (Gemini API 实际控制分辨率的参数)
+    // "1K" = ~1024px, "2K" = ~2048px, "4K" = ~4096px
+    let image_size = match quality {
+        "hd" => "4K",
+        "medium" => "2K",
+        _ => "1K", // standard 或其它默认值
+    };
+
+    tracing::info!(
+        "[Images] Mapped quality '{}' to imageSize '{}'",
+        quality,
+        image_size
+    );
+
     // Prompt Enhancement
     let mut final_prompt = prompt.to_string();
     if quality == "hd" {
@@ -772,6 +786,7 @@ pub async fn handle_images_generations(
         let project_id = project_id.clone();
         let final_prompt = final_prompt.clone();
         let aspect_ratio = aspect_ratio.to_string();
+        let image_size = image_size.to_string();
         let _response_format = response_format.to_string();
 
         tasks.push(tokio::spawn(async move {
@@ -788,8 +803,10 @@ pub async fn handle_images_generations(
                     }],
                     "generationConfig": {
                         "candidateCount": 1, // 强制单张
+                        "responseModalities": ["IMAGE"],
                         "imageConfig": {
-                            "aspectRatio": aspect_ratio
+                            "aspectRatio": aspect_ratio,
+                            "imageSize": image_size
                         }
                     },
                     "safetySettings": [
@@ -915,11 +932,14 @@ pub async fn handle_images_edits(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     tracing::info!("[Images] Received edit request");
 
-    let mut image_data = None;
+    let mut image_data: Option<String> = None;
+    let mut image2_data: Option<String> = None;
+    let mut image3_data: Option<String> = None;
     let mut mask_data = None;
     let mut prompt = String::new();
     let mut n = 1;
     let mut size = "1024x1024".to_string();
+    let mut quality = "standard".to_string();
     let mut response_format = "b64_json".to_string(); // Default to b64_json for better compatibility with tools handling edits
     let mut model = "gemini-3-pro-image".to_string();
 
@@ -965,6 +985,22 @@ pub async fn handle_images_edits(
                     model = val;
                 }
             }
+        } else if name == "image2" {
+            let data = field
+                .bytes()
+                .await
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Image2 read error: {}", e)))?;
+            image2_data = Some(base64::engine::general_purpose::STANDARD.encode(data));
+        } else if name == "image3" {
+            let data = field
+                .bytes()
+                .await
+                .map_err(|e| (StatusCode::BAD_REQUEST, format!("Image3 read error: {}", e)))?;
+            image3_data = Some(base64::engine::general_purpose::STANDARD.encode(data));
+        } else if name == "quality" {
+            if let Ok(val) = field.text().await {
+                quality = val;
+            }
         }
     }
 
@@ -976,11 +1012,12 @@ pub async fn handle_images_edits(
     }
 
     tracing::info!(
-        "[Images] Edit Request: model={}, prompt={}, n={}, size={}, mask={}, response_format={}",
+        "[Images] Edit Request: model={}, prompt={}, n={}, size={}, images={}, mask={}, response_format={}",
         model,
         prompt,
         n,
         size,
+        1 + image2_data.is_some() as i32 + image3_data.is_some() as i32,
         mask_data.is_some(),
         response_format
     );
@@ -1036,6 +1073,53 @@ pub async fn handle_images_edits(
         }));
     }
 
+    // Add second reference image if provided
+    if let Some(data) = image2_data {
+        contents_parts.push(json!({
+            "inlineData": {
+                "mimeType": "image/png",
+                "data": data
+            }
+        }));
+        tracing::info!("[Images] Added second reference image");
+    }
+
+    // Add third reference image if provided
+    if let Some(data) = image3_data {
+        contents_parts.push(json!({
+            "inlineData": {
+                "mimeType": "image/png",
+                "data": data
+            }
+        }));
+        tracing::info!("[Images] Added third reference image");
+    }
+
+    // 3. 映射 size 到 aspectRatio
+    let aspect_ratio = match size.as_str() {
+        "1792x1024" | "1920x1080" => "16:9",
+        "1024x1792" | "1080x1920" => "9:16",
+        "1024x768" | "1280x960" => "4:3",
+        "768x1024" | "960x1280" => "3:4",
+        _ => "1:1", // 默认 1024x1024
+    };
+
+    // 4. 映射 quality 到 imageSize
+    // "1K" = ~1024px, "2K" = ~2048px, "4K" = ~4096px
+    let image_size = match quality.as_str() {
+        "hd" => "4K",
+        "medium" => "2K",
+        _ => "1K", // standard 或其它默认值
+    };
+
+    tracing::info!(
+        "[Images Edit] Mapped size '{}' to aspectRatio '{}', quality '{}' to imageSize '{}'",
+        size,
+        aspect_ratio,
+        quality,
+        image_size
+    );
+
     // 构造 Gemini 内网 API Body (Envelope Structure)
     let gemini_body = json!({
         "project": project_id,
@@ -1050,11 +1134,11 @@ pub async fn handle_images_edits(
             }],
             "generationConfig": {
                 "candidateCount": 1,
-                "maxOutputTokens": 8192,
-                "stopSequences": [],
-                "temperature": 1.0,
-                "topP": 0.95,
-                "topK": 40
+                "responseModalities": ["IMAGE"],
+                "imageConfig": {
+                    "aspectRatio": aspect_ratio,
+                    "imageSize": image_size
+                }
             },
             "safetySettings": [
                 { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },

@@ -136,6 +136,23 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
                                         }
                                     }
                                 }
+                                OpenAIContentBlock::AudioUrl { audio_url } => {
+                                    // 处理音频 URL (仅支持 data:audio/* Base64 格式)
+                                    if audio_url.url.starts_with("data:audio/") {
+                                        if let Some(pos) = audio_url.url.find(",") {
+                                            let mime_part = &audio_url.url[5..pos];
+                                            let mime_type = mime_part.split(';').next().unwrap_or("audio/mp3");
+                                            let data = &audio_url.url[pos + 1..];
+                                            
+                                            parts.push(json!({
+                                                "inlineData": { "mimeType": mime_type, "data": data }
+                                            }));
+                                            tracing::debug!("[OpenAI-Request] Added audio inline data: {}", mime_type);
+                                        }
+                                    } else {
+                                        tracing::warn!("[OpenAI-Request] Unsupported audio URL format: {}", audio_url.url);
+                                    }
+                                }
                             }
                         }
                     }

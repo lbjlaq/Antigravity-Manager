@@ -46,13 +46,11 @@ pub enum OpenAIContent {
 #[serde(tag = "type")]
 pub enum OpenAIContentBlock {
     #[serde(rename = "text")]
-    Text {
-        text: String,
-    },
+    Text { text: String },
     #[serde(rename = "image_url")]
-    ImageUrl {
-        image_url: OpenAIImageUrl,
-    },
+    ImageUrl { image_url: OpenAIImageUrl },
+    #[serde(rename = "audio_url")]
+    AudioUrl { audio_url: OpenAIAudioUrl },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,6 +58,11 @@ pub struct OpenAIImageUrl {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenAIAudioUrl {
+    pub url: String, // 支持 data:audio/mp3;base64,... 格式
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
