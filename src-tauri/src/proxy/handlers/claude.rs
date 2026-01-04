@@ -22,6 +22,15 @@ use std::sync::atomic::Ordering;
 const MAX_RETRY_ATTEMPTS: usize = 3;
 const MIN_SIGNATURE_LENGTH: usize = 10;  // 最小有效签名长度
 
+// ===== Model Constants for Background Tasks =====
+// These can be adjusted for performance/cost optimization
+const BACKGROUND_MODEL_LITE: &str = "gemini-2.5-flash-lite";  // For simple/lightweight tasks
+const BACKGROUND_MODEL_STANDARD: &str = "gemini-2.5-flash";   // For complex background tasks
+
+// ===== Jitter Configuration =====
+// Jitter helps prevent thundering herd problem in retry scenarios
+const JITTER_FACTOR: f64 = 0.2;  // ±20% jitter
+
 // ===== Thinking 块处理辅助函数 =====
 
 use crate::proxy::mappers::claude::models::{ContentBlock, Message, MessageContent};
@@ -29,7 +38,12 @@ use crate::proxy::mappers::claude::models::{ContentBlock, Message, MessageConten
 /// 检查 thinking 块是否有有效签名
 fn has_valid_signature(block: &ContentBlock) -> bool {
     match block {
-        ContentBlock::Thinking { signature, .. } => {
+        ContentBlock::Thinking { signature, thinking, .. } => {
+            // 空 thinking + 任意 signature = 有效 (trailing signature case)
+            if thinking.is_empty() && signature.is_some() {
+                return true;
+            }
+            // 有内容 + 足够长度的 signature = 有效
             signature.as_ref().map_or(false, |s| s.len() >= MIN_SIGNATURE_LENGTH)
         }
         _ => true  // 非 thinking 块默认有效
@@ -80,8 +94,19 @@ fn filter_invalid_thinking_blocks(messages: &mut Vec<Message>) {
                     if has_valid_signature(&block) {
                         new_blocks.push(sanitize_thinking_block(block));
                     } else {
-                        // 删除无效的 thinking 块
-                        tracing::warn!("[Claude-Handler] Dropping thinking block with invalid/missing signature");
+                        // [IMPROVED] 保留内容转换为 text，而不是直接丢弃
+                        if let ContentBlock::Thinking { thinking, .. } = &block {
+                            if !thinking.is_empty() {
+                                tracing::info!(
+                                    "[Claude-Handler] Converting thinking block with invalid signature to text. \
+                                     Content length: {} chars",
+                                    thinking.len()
+                                );
+                                new_blocks.push(ContentBlock::Text { text: thinking.clone() });
+                            } else {
+                                tracing::debug!("[Claude-Handler] Dropping empty thinking block with invalid signature");
+                            }
+                        }
                     }
                 } else {
                     new_blocks.push(block);
@@ -135,6 +160,15 @@ fn remove_trailing_unsigned_thinking(blocks: &mut Vec<ContentBlock>) {
 }
 
 // ===== 统一退避策略模块 =====
+
+/// Apply jitter to a delay value to prevent thundering herd
+/// Returns delay ± JITTER_FACTOR (e.g., 1000ms ± 20% = 800-1200ms)
+fn apply_jitter(delay_ms: u64) -> u64 {
+    use rand::Rng;
+    let jitter_range = (delay_ms as f64 * JITTER_FACTOR) as i64;
+    let jitter: i64 = rand::thread_rng().gen_range(-jitter_range..=jitter_range);
+    ((delay_ms as i64) + jitter).max(1) as u64
+}
 
 /// 重试策略枚举
 #[derive(Debug, Clone)]
@@ -215,43 +249,51 @@ async fn apply_retry_strategy(
         }
 
         RetryStrategy::FixedDelay(duration) => {
+            // Apply jitter to fixed delays to prevent synchronized retries
+            let base_ms = duration.as_millis() as u64;
+            let jittered_ms = apply_jitter(base_ms);
             info!(
-                "[{}] ⏱️  Retry with fixed delay: status={}, attempt={}/{}, waiting={}ms",
+                "[{}] ⏱️  Retry with fixed delay: status={}, attempt={}/{}, base={}ms, actual={}ms (jitter applied)",
                 trace_id,
                 status_code,
                 attempt + 1,
                 MAX_RETRY_ATTEMPTS,
-                duration.as_millis()
+                base_ms,
+                jittered_ms
             );
-            sleep(duration).await;
+            sleep(Duration::from_millis(jittered_ms)).await;
             true
         }
 
         RetryStrategy::LinearBackoff { base_ms } => {
-            let delay_ms = base_ms * (attempt as u64 + 1);
+            let calculated_ms = base_ms * (attempt as u64 + 1);
+            let jittered_ms = apply_jitter(calculated_ms);
             info!(
-                "[{}] ⏱️  Retry with linear backoff: status={}, attempt={}/{}, waiting={}ms",
+                "[{}] ⏱️  Retry with linear backoff: status={}, attempt={}/{}, base={}ms, actual={}ms (jitter applied)",
                 trace_id,
                 status_code,
                 attempt + 1,
                 MAX_RETRY_ATTEMPTS,
-                delay_ms
+                calculated_ms,
+                jittered_ms
             );
-            sleep(Duration::from_millis(delay_ms)).await;
+            sleep(Duration::from_millis(jittered_ms)).await;
             true
         }
 
         RetryStrategy::ExponentialBackoff { base_ms, max_ms } => {
-            let delay_ms = (base_ms * 2_u64.pow(attempt as u32)).min(max_ms);
+            let calculated_ms = (base_ms * 2_u64.pow(attempt as u32)).min(max_ms);
+            let jittered_ms = apply_jitter(calculated_ms);
             info!(
-                "[{}] ⏱️  Retry with exponential backoff: status={}, attempt={}/{}, waiting={}ms",
+                "[{}] ⏱️  Retry with exponential backoff: status={}, attempt={}/{}, base={}ms, actual={}ms (jitter applied)",
                 trace_id,
                 status_code,
                 attempt + 1,
                 MAX_RETRY_ATTEMPTS,
-                delay_ms
+                calculated_ms,
+                jittered_ms
             );
-            sleep(Duration::from_millis(delay_ms)).await;
+            sleep(Duration::from_millis(jittered_ms)).await;
             true
         }
     }
@@ -1011,11 +1053,11 @@ fn extract_last_user_message_for_detection(request: &ClaudeRequest) -> Option<St
 /// 根据后台任务类型选择合适的模型
 fn select_background_model(task_type: BackgroundTaskType) -> &'static str {
     match task_type {
-        BackgroundTaskType::TitleGeneration => "gemini-2.5-flash-lite",  // 极简任务
-        BackgroundTaskType::SimpleSummary => "gemini-2.5-flash-lite",    // 简单摘要
-        BackgroundTaskType::SystemMessage => "gemini-2.5-flash-lite",    // 系统消息
-        BackgroundTaskType::PromptSuggestion => "gemini-2.5-flash-lite", // 建议生成
-        BackgroundTaskType::EnvironmentProbe => "gemini-2.5-flash-lite", // 环境探测
-        BackgroundTaskType::ContextCompression => "gemini-2.5-flash",   // 复杂压缩
+        BackgroundTaskType::TitleGeneration => BACKGROUND_MODEL_LITE,     // 极简任务
+        BackgroundTaskType::SimpleSummary => BACKGROUND_MODEL_LITE,       // 简单摘要
+        BackgroundTaskType::SystemMessage => BACKGROUND_MODEL_LITE,       // 系统消息
+        BackgroundTaskType::PromptSuggestion => BACKGROUND_MODEL_LITE,    // 建议生成
+        BackgroundTaskType::EnvironmentProbe => BACKGROUND_MODEL_LITE,    // 环境探测
+        BackgroundTaskType::ContextCompression => BACKGROUND_MODEL_STANDARD, // 复杂压缩
     }
 }

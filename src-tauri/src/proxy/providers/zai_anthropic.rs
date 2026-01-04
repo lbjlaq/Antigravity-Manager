@@ -106,6 +106,25 @@ fn set_zai_auth(headers: &mut HeaderMap, incoming: &HeaderMap, api_key: &str) {
     }
 }
 
+/// Recursively remove cache_control from all nested objects/arrays
+/// [FIX #290] This is a defensive fix that works regardless of serde annotations
+pub fn deep_remove_cache_control(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.remove("cache_control");
+            for v in map.values_mut() {
+                deep_remove_cache_control(v);
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr {
+                deep_remove_cache_control(v);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub async fn forward_anthropic_json(
     state: &AppState,
     method: Method,
@@ -146,6 +165,10 @@ pub async fn forward_anthropic_json(
     headers
         .entry(header::CONTENT_TYPE)
         .or_insert(HeaderValue::from_static("application/json"));
+
+    // [FIX #290] Clean cache_control before sending to Anthropic API
+    // This prevents "Extra inputs are not permitted" errors
+    deep_remove_cache_control(&mut body);
 
     let req = client.request(method, &url).headers(headers).json(&body);
 

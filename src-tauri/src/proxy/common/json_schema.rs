@@ -113,9 +113,10 @@ fn clean_json_schema_recursive(value: &mut Value) {
                 }
             }
 
-            // 4. 彻底物理移除干扰生成的“硬项”黑色名单 (Hard Blacklist)
+            // 4. 彻底物理移除干扰生成的"硬项"黑色名单 (Hard Blacklist)
             let hard_remove_fields = [
                 "$schema",
+                "$id", // [NEW] JSON Schema identifier
                 "additionalProperties",
                 "enumCaseInsensitive",
                 "enumNormalizeWhitespace",
@@ -135,6 +136,11 @@ fn clean_json_schema_recursive(value: &mut Value) {
                 "dependentSchemas",
                 "dependentRequired",
                 "cache_control",
+                "contentEncoding",  // [NEW] base64 encoding hint
+                "contentMediaType", // [NEW] MIME type hint
+                "deprecated",       // [NEW] Gemini doesn't understand this
+                "readOnly",         // [NEW]
+                "writeOnly",        // [NEW]
             ];
             for field in hard_remove_fields {
                 map.remove(field);

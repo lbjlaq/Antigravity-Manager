@@ -6,6 +6,63 @@ use crate::proxy::mappers::signature_store::get_thought_signature;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+// ===== Safety Settings Configuration =====
+
+/// Safety threshold levels for Gemini API
+/// Can be configured via GEMINI_SAFETY_THRESHOLD environment variable
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SafetyThreshold {
+    /// Disable all safety filters (default for proxy compatibility)
+    Off,
+    /// Block low probability and above
+    BlockLowAndAbove,
+    /// Block medium probability and above
+    BlockMediumAndAbove,
+    /// Only block high probability content
+    BlockOnlyHigh,
+    /// Don't block anything (BLOCK_NONE)
+    BlockNone,
+}
+
+impl SafetyThreshold {
+    /// Get threshold from environment variable or default to Off
+    pub fn from_env() -> Self {
+        match std::env::var("GEMINI_SAFETY_THRESHOLD").as_deref() {
+            Ok("OFF") | Ok("off") => SafetyThreshold::Off,
+            Ok("LOW") | Ok("low") => SafetyThreshold::BlockLowAndAbove,
+            Ok("MEDIUM") | Ok("medium") => SafetyThreshold::BlockMediumAndAbove,
+            Ok("HIGH") | Ok("high") => SafetyThreshold::BlockOnlyHigh,
+            Ok("NONE") | Ok("none") => SafetyThreshold::BlockNone,
+            _ => SafetyThreshold::Off, // Default: maintain current behavior
+        }
+    }
+
+    /// Convert to Gemini API threshold string
+    pub fn to_gemini_threshold(&self) -> &'static str {
+        match self {
+            SafetyThreshold::Off => "OFF",
+            SafetyThreshold::BlockLowAndAbove => "BLOCK_LOW_AND_ABOVE",
+            SafetyThreshold::BlockMediumAndAbove => "BLOCK_MEDIUM_AND_ABOVE",
+            SafetyThreshold::BlockOnlyHigh => "BLOCK_ONLY_HIGH",
+            SafetyThreshold::BlockNone => "BLOCK_NONE",
+        }
+    }
+}
+
+/// Build safety settings based on configuration
+fn build_safety_settings() -> Value {
+    let threshold = SafetyThreshold::from_env();
+    let threshold_str = threshold.to_gemini_threshold();
+
+    json!([
+        { "category": "HARM_CATEGORY_HARASSMENT", "threshold": threshold_str },
+        { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": threshold_str },
+        { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": threshold_str },
+        { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": threshold_str },
+        { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": threshold_str },
+    ])
+}
+
 /// 清理消息中的 cache_control 字段
 /// 
 /// 这个函数会深度遍历所有消息内容块,移除 cache_control 字段。
@@ -81,8 +138,15 @@ pub fn transform_claude_request_in(
     let system_instruction = build_system_instruction(&claude_req.system, &claude_req.model);
 
     //  Map model name (Use standard mapping)
+    // [IMPROVED] 提取 web search 模型为常量，便于维护
+    const WEB_SEARCH_FALLBACK_MODEL: &str = "gemini-2.5-flash";
+
     let mapped_model = if has_web_search_tool {
-        "gemini-2.5-flash".to_string()
+        tracing::debug!(
+            "[Claude-Request] Web search tool detected, using fallback model: {}",
+            WEB_SEARCH_FALLBACK_MODEL
+        );
+        WEB_SEARCH_FALLBACK_MODEL.to_string()
     } else {
         crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model)
     };
@@ -107,7 +171,11 @@ pub fn transform_claude_request_in(
         .thinking
         .as_ref()
         .map(|t| t.type_ == "enabled")
-        .unwrap_or(false);
+        .unwrap_or_else(|| {
+            // [Claude Code v2.0.67+] Default thinking enabled for Opus 4.5
+            // If no thinking config is provided, enable by default for Opus models
+            should_enable_thinking_by_default(&claude_req.model)
+        });
 
     // [NEW FIX] Check if target model supports thinking
     // Only models with "-thinking" suffix or Claude models support thinking
@@ -133,6 +201,55 @@ pub fn transform_claude_request_in(
         }
     }
 
+    // [FIX #295 & #298] If thinking enabled but no signature available,
+    // disable thinking to prevent Gemini 3 Pro rejection
+    if is_thinking_enabled {
+        let global_sig = get_thought_signature();
+        
+        // Check if there are any thinking blocks in message history
+        let has_thinking_history = claude_req.messages.iter().any(|m| {
+            if m.role == "assistant" {
+                if let MessageContent::Array(blocks) = &m.content {
+                    return blocks.iter().any(|b| matches!(b, ContentBlock::Thinking { .. }));
+                }
+            }
+            false
+        });
+        
+        // Check if there are function calls in the request
+        let has_function_calls = claude_req.messages.iter().any(|m| {
+            if let MessageContent::Array(blocks) = &m.content {
+                blocks
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::ToolUse { .. }))
+            } else {
+                false
+            }
+        });
+
+        // [FIX #298] For first-time thinking requests (no thinking history),
+        // always check for valid signature to prevent API rejection
+        // [FIX #295] For requests with function calls, also require valid signature
+        let needs_signature_check = !has_thinking_history || has_function_calls;
+        
+        if needs_signature_check
+            && !has_valid_signature_for_function_calls(&claude_req.messages, &global_sig)
+        {
+            if !has_thinking_history {
+                tracing::warn!(
+                    "[Thinking-Mode] [FIX #298] First thinking request without valid signature. \
+                     Disabling thinking to prevent API rejection."
+                );
+            } else {
+                tracing::warn!(
+                    "[Thinking-Mode] [FIX #295] No valid signature found for function calls. \
+                     Disabling thinking to prevent Gemini 3 Pro rejection."
+                );
+            }
+            is_thinking_enabled = false;
+        }
+    }
+
     // 4. Generation Config & Thinking (Pass final is_thinking_enabled)
     let generation_config = build_generation_config(claude_req, has_web_search_tool, is_thinking_enabled);
 
@@ -147,14 +264,8 @@ pub fn transform_claude_request_in(
     // 3. Tools
     let tools = build_tools(&claude_req.tools, has_web_search_tool)?;
 
-    // 5. Safety Settings
-    let safety_settings = json!([
-        { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
-        { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
-        { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
-        { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-        { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
-    ]);
+    // 5. Safety Settings (configurable via GEMINI_SAFETY_THRESHOLD env var)
+    let safety_settings = build_safety_settings();
 
     // Build inner request
     let mut inner_request = json!({
@@ -260,6 +371,67 @@ fn should_disable_thinking_due_to_history(messages: &[Message]) -> bool {
     false
 }
 
+/// Check if thinking mode should be enabled by default for a given model
+///
+/// Claude Code v2.0.67+ enables thinking by default for Opus 4.5 models.
+/// This function determines if the model should have thinking enabled
+/// when no explicit thinking configuration is provided.
+fn should_enable_thinking_by_default(model: &str) -> bool {
+    let model_lower = model.to_lowercase();
+
+    // Enable thinking by default for Opus 4.5 variants
+    if model_lower.contains("opus-4-5") || model_lower.contains("opus-4.5") {
+        tracing::debug!(
+            "[Thinking-Mode] Auto-enabling thinking for Opus 4.5 model: {}",
+            model
+        );
+        return true;
+    }
+
+    // Also enable for explicit thinking model variants
+    if model_lower.contains("-thinking") {
+        return true;
+    }
+
+    false
+}
+
+/// Minimum length for a valid thought_signature
+const MIN_SIGNATURE_LENGTH: usize = 10;
+
+/// [FIX #295] Check if we have any valid signature available for function calls
+/// This prevents Gemini 3 Pro from rejecting requests due to missing thought_signature
+fn has_valid_signature_for_function_calls(
+    messages: &[Message],
+    global_sig: &Option<String>,
+) -> bool {
+    // 1. Check global store
+    if let Some(sig) = global_sig {
+        if sig.len() >= MIN_SIGNATURE_LENGTH {
+            return true;
+        }
+    }
+
+    // 2. Check if any message has a thinking block with valid signature
+    for msg in messages.iter().rev() {
+        if msg.role == "assistant" {
+            if let MessageContent::Array(blocks) = &msg.content {
+                for block in blocks {
+                    if let ContentBlock::Thinking {
+                        signature: Some(sig),
+                        ..
+                    } = block
+                    {
+                        if sig.len() >= MIN_SIGNATURE_LENGTH {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
 
 /// 构建 System Instruction (支持动态身份映射与 Prompt 隔离)
 fn build_system_instruction(system: &Option<SystemPrompt>, model_name: &str) -> Option<Value> {
@@ -622,11 +794,20 @@ fn build_tools(tools: &Option<Vec<Tool>>, has_web_search: bool) -> Result<Option
         let mut tool_obj = serde_json::Map::new();
 
         // [修复] 解决 "Multiple tools are supported only when they are all search tools" 400 错误
-        // 原理：Gemini v1internal 接口非常挑剔，通常不允许在同一个工具定义中混用 Google Search 和 Function Declarationsc。
+        // 原理：Gemini v1internal 接口非常挑剔，通常不允许在同一个工具定义中混用 Google Search 和 Function Declarations。
         // 对于 Claude CLI 等携带 MCP 工具的客户端，必须优先保证 Function Declarations 正常工作。
         if !function_declarations.is_empty() {
             // 如果有本地工具，则只使用本地工具，放弃注入的 Google Search
             tool_obj.insert("functionDeclarations".to_string(), json!(function_declarations));
+
+            // [IMPROVED] 记录跳过 googleSearch 注入的原因
+            if has_google_search {
+                tracing::info!(
+                    "[Claude-Request] Skipping googleSearch injection due to {} existing function declarations. \
+                     Gemini v1internal does not support mixed tool types.",
+                    function_declarations.len()
+                );
+            }
         } else if has_google_search {
             // 只有在没有本地工具时，才允许注入 Google Search
             tool_obj.insert("googleSearch".to_string(), json!({}));
@@ -680,6 +861,24 @@ fn build_generation_config(
         config["topK"] = json!(top_k);
     }
 
+    // Effort level mapping (Claude API v2.0.67+)
+    // Maps Claude's output_config.effort to Gemini's effortLevel
+    if let Some(output_config) = &claude_req.output_config {
+        if let Some(effort) = &output_config.effort {
+            config["effortLevel"] = json!(match effort.to_lowercase().as_str() {
+                "high" => "HIGH",
+                "medium" => "MEDIUM",
+                "low" => "LOW",
+                _ => "HIGH" // Default to HIGH for unknown values
+            });
+            tracing::debug!(
+                "[Generation-Config] Effort level set: {} -> {}",
+                effort,
+                config["effortLevel"]
+            );
+        }
+    }
+
     // web_search 强制 candidateCount=1
     /*if has_web_search {
         config["candidateCount"] = json!(1);
@@ -722,6 +921,7 @@ mod tests {
             top_k: None,
             thinking: None,
             metadata: None,
+            output_config: None,
         };
 
         let result = transform_claude_request_in(&req, "test-project");
@@ -818,6 +1018,7 @@ mod tests {
             top_k: None,
             thinking: None,
             metadata: None,
+            output_config: None,
         };
 
         let result = transform_claude_request_in(&req, "test-project");
@@ -887,6 +1088,7 @@ mod tests {
             top_k: None,
             thinking: None,
             metadata: None,
+            output_config: None,
         };
 
         let result = transform_claude_request_in(&req, "test-project");
@@ -961,6 +1163,7 @@ mod tests {
                 budget_tokens: Some(1024),
             }),
             metadata: None,
+            output_config: None,
         };
 
         let result = transform_claude_request_in(&req, "test-project");
@@ -1009,6 +1212,7 @@ mod tests {
             top_k: None,
             thinking: None, // 未启用 thinking
             metadata: None,
+            output_config: None,
         };
 
         let result = transform_claude_request_in(&req, "test-project");
@@ -1061,6 +1265,7 @@ mod tests {
                 budget_tokens: Some(1024),
             }),
             metadata: None,
+            output_config: None,
         };
 
         let result = transform_claude_request_in(&req, "test-project");
@@ -1100,6 +1305,7 @@ mod tests {
             top_k: None,
             thinking: None,
             metadata: None,
+            output_config: None,
         };
 
         let result = transform_claude_request_in(&req, "test-project");
