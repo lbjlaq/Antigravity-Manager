@@ -99,3 +99,16 @@ a {
 .dark::view-transition-new(root) {
   z-index: 1;
 }
+
+/* 暗色模式下 select 下拉菜单样式 */
+.dark select,
+.dark select option,
+.dark select optgroup {
+  background-color: #1e293b;
+  color: #e2e8f0;
+}
+
+.dark select option:checked {
+  background-color: #3b82f6;
+  color: white;
+}

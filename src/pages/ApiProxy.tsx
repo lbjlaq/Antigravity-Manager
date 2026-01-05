@@ -77,7 +77,7 @@ function CollapsibleCard({
                         {title}
                     </span>
                     {enabled !== undefined && (
-                        <div className={`text-xs px-2 py-0.5 rounded-full ${enabled ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'}`}>
+                        <div className={`text-xs px-2 py-0.5 rounded-full font-medium ${enabled ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'}`}>
                             {enabled ? t('common.enabled') : t('common.disabled')}
                         </div>
                     )}
@@ -114,9 +114,9 @@ function CollapsibleCard({
                 <div className="p-5 relative">
                     {/* Overlay when disabled */}
                     {enabled === false && (
-                        <div className="absolute inset-0 bg-white/60 dark:bg-base-100/60 z-10 cursor-not-allowed" />
+                        <div className="absolute inset-0 bg-gray-100/40 dark:bg-black/30 z-10 cursor-not-allowed" />
                     )}
-                    <div className={enabled === false ? 'opacity-50 pointer-events-none select-none filter blur-[0.5px]' : ''}>
+                    <div className={enabled === false ? 'opacity-60 pointer-events-none select-none' : ''}>
                         {children}
                     </div>
                 </div>
@@ -1083,10 +1083,10 @@ print(response.text)`;
                                 enabled={!!appConfig.proxy.zai?.mcp?.enabled}
                                 onToggle={(checked) => updateZaiGeneralConfig({ mcp: { ...(appConfig.proxy.zai?.mcp || {}), enabled: checked } as any })}
                                 rightElement={
-                                    <div className="flex gap-2 text-[10px] text-gray-400">
+                                    <div className="flex gap-2 text-[10px]">
                                         {['web_search', 'web_reader', 'vision'].map(f =>
                                             appConfig.proxy.zai?.mcp?.[(f + '_enabled') as keyof typeof appConfig.proxy.zai.mcp] && (
-                                                <span key={f} className="bg-gray-100 dark:bg-base-200 px-1.5 py-0.5 rounded text-gray-600 dark:text-gray-400">
+                                                <span key={f} className="bg-blue-500 dark:bg-blue-600 px-1.5 py-0.5 rounded text-white font-semibold shadow-sm">
                                                     {t(`proxy.config.zai.mcp.${f}`).split(' ')[0]}
                                                 </span>
                                             )
@@ -1099,7 +1099,7 @@ print(response.text)`;
                                         <label className="flex items-center gap-2 border border-gray-100 dark:border-base-200 p-2 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-base-200/50 transition-colors">
                                             <input
                                                 type="checkbox"
-                                                className="checkbox checkbox-xs checkbox-primary rounded-md"
+                                                className="checkbox checkbox-xs rounded border-2 border-gray-400 dark:border-gray-500 checked:border-blue-600 checked:bg-blue-600 [--chkbg:theme(colors.blue.600)] [--chkfg:white]"
                                                 checked={!!appConfig.proxy.zai?.mcp?.web_search_enabled}
                                                 onChange={(e) => updateZaiGeneralConfig({ mcp: { ...(appConfig.proxy.zai?.mcp || {}), web_search_enabled: e.target.checked } as any })}
                                             />
@@ -1108,7 +1108,7 @@ print(response.text)`;
                                         <label className="flex items-center gap-2 border border-gray-100 dark:border-base-200 p-2 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-base-200/50 transition-colors">
                                             <input
                                                 type="checkbox"
-                                                className="checkbox checkbox-xs checkbox-primary rounded-md"
+                                                className="checkbox checkbox-xs rounded border-2 border-gray-400 dark:border-gray-500 checked:border-blue-600 checked:bg-blue-600 [--chkbg:theme(colors.blue.600)] [--chkfg:white]"
                                                 checked={!!appConfig.proxy.zai?.mcp?.web_reader_enabled}
                                                 onChange={(e) => updateZaiGeneralConfig({ mcp: { ...(appConfig.proxy.zai?.mcp || {}), web_reader_enabled: e.target.checked } as any })}
                                             />
@@ -1117,7 +1117,7 @@ print(response.text)`;
                                         <label className="flex items-center gap-2 border border-gray-100 dark:border-base-200 p-2 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-base-200/50 transition-colors">
                                             <input
                                                 type="checkbox"
-                                                className="checkbox checkbox-xs checkbox-primary rounded-md"
+                                                className="checkbox checkbox-xs rounded border-2 border-gray-400 dark:border-gray-500 checked:border-blue-600 checked:bg-blue-600 [--chkbg:theme(colors.blue.600)] [--chkfg:white]"
                                                 checked={!!appConfig.proxy.zai?.mcp?.vision_enabled}
                                                 onChange={(e) => updateZaiGeneralConfig({ mcp: { ...(appConfig.proxy.zai?.mcp || {}), vision_enabled: e.target.checked } as any })}
                                             />
@@ -1126,7 +1126,7 @@ print(response.text)`;
                                     </div>
 
                                     {appConfig.proxy.zai?.mcp?.enabled && (
-                                        <div className="bg-gray-50 dark:bg-base-200/50 rounded-lg p-3 text-[10px] font-mono text-gray-500">
+                                        <div className="bg-slate-100 dark:bg-slate-800/80 rounded-lg p-3 text-[10px] font-mono text-slate-600 dark:text-slate-400">
                                             <div className="mb-1 font-bold text-gray-400 uppercase tracking-wider">{t('proxy.config.zai.mcp.local_endpoints')}</div>
                                             <div className="space-y-0.5 select-all">
                                                 {appConfig.proxy.zai?.mcp?.web_search_enabled && <div>http://127.0.0.1:{status.running ? status.port : (appConfig.proxy.port || 8045)}/mcp/web_search_prime/mcp</div>}
@@ -1195,7 +1195,7 @@ print(response.text)`;
                                         </div>
 
                                         <div className="space-y-4 pt-1">
-                                            <div className="bg-gray-50 dark:bg-base-200/50 rounded-xl p-4 border border-gray-100 dark:border-base-200">
+                                            <div className="bg-slate-100 dark:bg-slate-800/80 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
                                                 <div className="flex items-center justify-between mb-2">
                                                     <label className="text-xs font-medium text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
                                                         {t('proxy.config.scheduling.max_wait')}
@@ -1211,7 +1211,7 @@ print(response.text)`;
                                                     max="300"
                                                     step="10"
                                                     disabled={(appConfig.proxy.scheduling?.mode || 'Balance') !== 'CacheFirst'}
-                                                    className="range range-indigo range-xs"
+                                                    className="range range-xs w-full accent-indigo-500 [&::-webkit-slider-thumb]:bg-indigo-600 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-moz-range-thumb]:bg-indigo-600"
                                                     value={appConfig.proxy.scheduling?.max_wait_seconds || 60}
                                                     onChange={(e) => updateSchedulingConfig({ max_wait_seconds: parseInt(e.target.value) })}
                                                 />

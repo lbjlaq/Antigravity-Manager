@@ -46,10 +46,10 @@ function Navbar() {
             });
 
             transition.ready.then(() => {
-                const clipPath = [
-                    `circle(0px at ${x}px ${y}px)`,
-                    `circle(${endRadius}px at ${x}px ${y}px)`
-                ];
+                const isDarkMode = newTheme === 'dark';
+                const clipPath = isDarkMode
+                    ? [`circle(${endRadius}px at ${x}px ${y}px)`, `circle(0px at ${x}px ${y}px)`]
+                    : [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`];
 
                 document.documentElement.animate(
                     {
@@ -58,7 +58,8 @@ function Navbar() {
                     {
                         duration: 500,
                         easing: 'ease-in-out',
-                        pseudoElement: '::view-transition-new(root)'
+                        fill: 'forwards',
+                        pseudoElement: isDarkMode ? '::view-transition-old(root)' : '::view-transition-new(root)'
                     }
                 );
             });
