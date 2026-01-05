@@ -39,7 +39,7 @@ pub async fn monitor_middleware(
     let request_body_str;
     let request = if method == "POST" {
         let (parts, body) = request.into_parts();
-        match axum::body::to_bytes(body, 1024 * 1024).await {
+        match axum::body::to_bytes(body, 100 * 1024 * 1024).await {
             Ok(bytes) => {
                 if model.is_none() {
                     model = serde_json::from_slice::<Value>(&bytes).ok().and_then(|v|
