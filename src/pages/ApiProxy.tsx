@@ -28,6 +28,7 @@ import { AppConfig, ProxyConfig, StickySessionConfig } from '../types/config';
 import HelpTooltip from '../components/common/HelpTooltip';
 import ModalDialog from '../components/common/ModalDialog';
 import { showToast } from '../components/common/ToastContainer';
+import { cn } from '../utils/cn';
 
 interface ProxyStatus {
     running: boolean;
@@ -60,9 +61,9 @@ function CollapsibleCard({
     const { t } = useTranslation();
 
     return (
-        <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 overflow-hidden transition-all duration-200 hover:shadow-md">
+        <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700/50 overflow-hidden transition-all duration-200 hover:shadow-md">
             <div
-                className="px-5 py-4 flex items-center justify-between cursor-pointer bg-gray-50/50 dark:bg-base-200/30 hover:bg-gray-50 dark:hover:bg-base-200/50 transition-colors"
+                className="px-5 py-4 flex items-center justify-between cursor-pointer bg-gray-50/50 dark:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
                 onClick={(e) => {
                     // Prevent toggle when clicking the switch or right element
                     if ((e.target as HTMLElement).closest('.no-expand')) return;
@@ -77,7 +78,7 @@ function CollapsibleCard({
                         {title}
                     </span>
                     {enabled !== undefined && (
-                        <div className={`text-xs px-2 py-0.5 rounded-full ${enabled ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'}`}>
+                        <div className={cn('text-xs px-2 py-0.5 rounded-full', enabled ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-600/50 dark:text-gray-300')}>
                             {enabled ? t('common.enabled') : t('common.disabled')}
                         </div>
                     )}
@@ -98,7 +99,7 @@ function CollapsibleCard({
                     )}
 
                     <button
-                        className={`p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-all duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                        className={cn('p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-all duration-200', isExpanded ? 'rotate-180' : '')}
                     >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="m6 9 6 6 6-6" />
@@ -1238,7 +1239,7 @@ print(response.text)`;
                 {
                     appConfig && (
                         <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 overflow-hidden">
-                            <div className="px-4 py-2.5 border-b border-gray-100 dark:border-base-200 bg-gray-50/50 dark:bg-base-200/50">
+                            <div className="px-4 py-2.5 border-b border-gray-100 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50">
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <h2 className="text-base font-bold flex items-center gap-2 text-gray-900 dark:text-base-content">
@@ -1278,7 +1279,7 @@ print(response.text)`;
                                                 </div>
                                             </div>
                                             <select
-                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-base-100/80 backdrop-blur-sm"
+                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm"
                                                 value={appConfig.proxy.anthropic_mapping?.["claude-4.5-series"] || ""}
                                                 onChange={(e) => handleMappingUpdate('anthropic', 'claude-4.5-series', e.target.value)}
                                             >
@@ -1314,7 +1315,7 @@ print(response.text)`;
                                                 </div>
                                             </div>
                                             <select
-                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-base-100/80 backdrop-blur-sm"
+                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm"
                                                 value={appConfig.proxy.anthropic_mapping?.["claude-3.5-series"] || ""}
                                                 onChange={(e) => handleMappingUpdate('anthropic', 'claude-3.5-series', e.target.value)}
                                             >
@@ -1350,7 +1351,7 @@ print(response.text)`;
                                                 </div>
                                             </div>
                                             <select
-                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-base-100/80 backdrop-blur-sm"
+                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm"
                                                 value={appConfig.proxy.openai_mapping?.["gpt-4-series"] || ""}
                                                 onChange={(e) => handleMappingUpdate('openai', 'gpt-4-series', e.target.value)}
                                             >
@@ -1376,7 +1377,7 @@ print(response.text)`;
                                                 </div>
                                             </div>
                                             <select
-                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-base-100/80 backdrop-blur-sm"
+                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm"
                                                 value={appConfig.proxy.openai_mapping?.["gpt-4o-series"] || ""}
                                                 onChange={(e) => handleMappingUpdate('openai', 'gpt-4o-series', e.target.value)}
                                             >
@@ -1402,7 +1403,7 @@ print(response.text)`;
                                                 </div>
                                             </div>
                                             <select
-                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-base-100/80 backdrop-blur-sm"
+                                                className="select select-sm select-bordered w-full font-mono text-[11px] bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm"
                                                 value={appConfig.proxy.openai_mapping?.["gpt-5-series"] || ""}
                                                 onChange={(e) => handleMappingUpdate('openai', 'gpt-5-series', e.target.value)}
                                             >
@@ -1635,7 +1636,7 @@ print(response.text)`;
                                 <div className="col-span-2 p-0">
                                     <div className="overflow-x-auto">
                                         <table className="table w-full">
-                                            <thead className="bg-gray-50/50 dark:bg-base-200/50 text-gray-500 dark:text-gray-400">
+                                            <thead className="bg-gray-50/50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400">
                                                 <tr>
                                                     <th className="w-10 pl-3"></th>
                                                     <th className="text-[11px] font-medium">{t('proxy.supported_models.model_name')}</th>
