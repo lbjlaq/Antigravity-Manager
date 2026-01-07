@@ -1061,8 +1061,10 @@ print(response.text)`;
                                                     <button
                                                         className="btn btn-xs btn-primary"
                                                         onClick={() => {
-                                                            if (zaiNewMappingFrom && zaiNewMappingTo) {
-                                                                upsertZaiModelMapping(zaiNewMappingFrom, zaiNewMappingTo);
+                                                            const from = zaiNewMappingFrom.trim();
+                                                            const to = zaiNewMappingTo.trim();
+                                                            if (from && to) {
+                                                                upsertZaiModelMapping(from, to);
                                                                 setZaiNewMappingFrom('');
                                                                 setZaiNewMappingTo('');
                                                             }
@@ -1470,8 +1472,10 @@ print(response.text)`;
                                             <button
                                                 className="btn btn-xs w-full gap-2 shadow-md hover:shadow-lg transition-all bg-blue-600 hover:bg-blue-700 text-white border-none"
                                                 onClick={() => {
-                                                    const k = (document.getElementById('custom-key') as HTMLInputElement).value;
-                                                    const v = (document.getElementById('custom-val') as HTMLInputElement).value;
+                                                    const kRaw = (document.getElementById('custom-key') as HTMLInputElement).value;
+                                                    const vRaw = (document.getElementById('custom-val') as HTMLInputElement).value;
+                                                    const k = kRaw ? kRaw.trim() : '';
+                                                    const v = vRaw ? vRaw.trim() : '';
                                                     if (k && v) {
                                                         handleMappingUpdate('custom', k, v);
                                                         (document.getElementById('custom-key') as HTMLInputElement).value = '';
