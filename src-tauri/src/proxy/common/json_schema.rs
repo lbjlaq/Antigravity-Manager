@@ -192,6 +192,32 @@ fn clean_json_schema_recursive(value: &mut Value) {
                     _ => {}
                 }
             }
+
+            // 6. [FIX #374] 确保 enum 值全部为字符串
+            // Gemini v1internal 严格要求 enum 数组中的所有元素必须是 TYPE_STRING
+            // MCP 工具定义可能包含数字或布尔值的 enum，需要转换
+            if let Some(enum_val) = map.get_mut("enum") {
+                if let Value::Array(arr) = enum_val {
+                    for item in arr.iter_mut() {
+                        match item {
+                            Value::String(_) => {} // 已经是字符串，保持不变
+                            Value::Number(n) => {
+                                *item = Value::String(n.to_string());
+                            }
+                            Value::Bool(b) => {
+                                *item = Value::String(b.to_string());
+                            }
+                            Value::Null => {
+                                *item = Value::String("null".to_string());
+                            }
+                            _ => {
+                                // 复杂类型转为 JSON 字符串
+                                *item = Value::String(item.to_string());
+                            }
+                        }
+                    }
+                }
+            }
         }
         Value::Array(arr) => {
             for v in arr.iter_mut() {
