@@ -228,6 +228,11 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
         "topP": request.top_p.unwrap_or(1.0), 
     });
 
+    // [NEW] 支持多候选结果数量 (n -> candidateCount)
+    if let Some(n) = request.n {
+        gen_config["candidateCount"] = json!(n);
+    }
+
     // [FIX PR #368] 为 Gemini 3 Pro 注入 thinkingConfig (使用 thinkingBudget 而非 thinkingLevel)
     if is_gemini_3_thinking {
         gen_config["thinkingConfig"] = json!({
