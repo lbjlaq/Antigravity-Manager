@@ -1,3 +1,7 @@
+//! System tray functionality (Tauri desktop app only)
+
+#![cfg(feature = "tauri-app")]
+
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -5,6 +9,7 @@ use tauri::{
     Manager, Runtime, Emitter, Listener,
 };
 use crate::modules;
+
 
 pub fn create_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     // 1. 加载配置获取语言设置

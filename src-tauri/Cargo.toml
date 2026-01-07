@@ -15,12 +15,39 @@ edition = "2021"
 name = "antigravity_tools_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# 独立 Web 服务端入口
+[[bin]]
+name = "antigravity-server"
+path = "src/bin/main_server.rs"
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
+
+[features]
+default = ["tauri-app"]
+# Tauri 桌面应用模式
+tauri-app = [
+    "dep:tauri",
+    "dep:tauri-plugin-opener",
+    "dep:tauri-plugin-dialog",
+    "dep:tauri-plugin-fs",
+    "dep:tauri-plugin-single-instance",
+    "dep:tauri-plugin-autostart",
+    "dep:tauri-build",
+]
+# 独立 Web 服务端模式
+web-server = []
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-opener = "2"
+# Tauri 相关 (可选)
+tauri = { version = "2", features = ["tray-icon", "image-png"], optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2.4.2", optional = true }
+tauri-plugin-fs = { version = "2.4.4", optional = true }
+tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"], optional = true }
+tauri-plugin-autostart = { version = "2.5.1", optional = true }
+
+# 核心依赖 (共享)
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
@@ -34,8 +61,6 @@ base64 = "0.22"
 sysinfo = "0.31"
 tokio = { version = "1", features = ["full"] }
 url = "2.5.7"
-tauri-plugin-dialog = "2.4.2"
-tauri-plugin-fs = "2.4.4"
 image = "0.25.9"
 thiserror = "2.0.17"
 
@@ -46,7 +71,7 @@ tokio-stream = { version = "0.1.17", features = ["sync"] }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 eventsource-stream = "0.2"
 dashmap = "6.1"
 anyhow = "1.0"
@@ -57,8 +82,7 @@ regex = "1.12.2"                    # Duration 解析
 once_cell = "1.19"                  # 静态初始化 (模型映射表)
 pin-project = "1.1"                 # Pin 投影辅助
 bytes = "1.5"                       # SSE 字节操作
-tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
 tracing-appender = "0.2.4"
 tracing-log = "0.2.0"
-tauri-plugin-autostart = "2.5.1"
 sha2 = "0.10"
+

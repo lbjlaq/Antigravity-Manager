@@ -12,6 +12,7 @@ pub enum AppError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[cfg(feature = "tauri-app")]
     #[error("Tauri error: {0}")]
     Tauri(#[from] tauri::Error),
 
@@ -40,3 +41,4 @@ impl Serialize for AppError {
 
 // 为 Result 实现别名，简化使用
 pub type AppResult<T> = Result<T, AppError>;
+

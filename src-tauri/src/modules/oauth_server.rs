@@ -1,3 +1,10 @@
+//! OAuth server functionality (Tauri desktop app only)
+//! 
+//! This module provides OAuth callback server for desktop app.
+//! In web mode, users should use refresh token instead.
+
+#![cfg(feature = "tauri-app")]
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -5,6 +12,7 @@ use tokio::sync::watch;
 use std::sync::{Mutex, OnceLock};
 use tauri::Url;
 use crate::modules::oauth;
+
 
 struct OAuthFlowState {
     auth_url: String,

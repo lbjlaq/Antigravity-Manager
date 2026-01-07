@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { save } from '@tauri-apps/plugin-dialog';
+import { save, join } from '../utils/tauriCompat';
 import { request as invoke } from '../utils/request';
-import { join } from '@tauri-apps/api/path';
+
 import { Search, RefreshCw, Download, Trash2, LayoutGrid, List, ToggleLeft, ToggleRight } from 'lucide-react';
 import { useAccountStore } from '../stores/useAccountStore';
 import { useConfigStore } from '../stores/useConfigStore';

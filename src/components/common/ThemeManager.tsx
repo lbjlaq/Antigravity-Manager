@@ -1,7 +1,8 @@
 
 import { useEffect } from 'react';
 import { useConfigStore } from '../../stores/useConfigStore';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow } from '../../utils/tauriCompat';
+
 
 export default function ThemeManager() {
     const { config, loadConfig } = useConfigStore();
@@ -12,7 +13,8 @@ export default function ThemeManager() {
             await loadConfig();
             // Show window after a short delay to ensure React has painted
             setTimeout(async () => {
-                await getCurrentWindow().show();
+                const win = await getCurrentWindow();
+                await win.show();
             }, 100);
         };
         init();
@@ -29,7 +31,8 @@ export default function ThemeManager() {
             // Set Tauri window background color
             try {
                 const bgColor = isDark ? '#1d232a' : '#FAFBFC';
-                await getCurrentWindow().setBackgroundColor(bgColor);
+                const win = await getCurrentWindow();
+                await win.setBackgroundColor(bgColor);
             } catch (e) {
                 console.error('Failed to set window background color:', e);
             }

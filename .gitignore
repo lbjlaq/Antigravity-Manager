@@ -34,3 +34,4 @@ src-tauri/.env
 .env
 .env.*
 environment/
+build/

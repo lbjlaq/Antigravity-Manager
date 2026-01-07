@@ -3,9 +3,9 @@ import { createPortal } from 'react-dom';
 import { Plus, Database, Globe, FileClock, Loader2, CheckCircle2, XCircle, Copy, Check } from 'lucide-react';
 import { useAccountStore } from '../../stores/useAccountStore';
 import { useTranslation } from 'react-i18next';
-import { listen } from '@tauri-apps/api/event';
-import { open } from '@tauri-apps/plugin-dialog';
+import { listen, open } from '../../utils/tauriCompat';
 import { request as invoke } from '../../utils/request';
+
 
 interface AddAccountDialogProps {
     onAdd: (email: string, refreshToken: string) => Promise<void>;
@@ -20,6 +20,7 @@ function AddAccountDialog({ onAdd }: AddAccountDialogProps) {
     const [refreshToken, setRefreshToken] = useState('');
     const [oauthUrl, setOauthUrl] = useState('');
     const [oauthUrlCopied, setOauthUrlCopied] = useState(false);
+    const [callbackUrl, setCallbackUrl] = useState(''); // 手动粘贴的回调 URL
 
     // UI State
     const [status, setStatus] = useState<Status>('idle');
@@ -141,6 +142,7 @@ function AddAccountDialog({ onAdd }: AddAccountDialogProps) {
         setRefreshToken('');
         setOauthUrl('');
         setOauthUrlCopied(false);
+        setCallbackUrl('');
     };
 
     const handleAction = async (
@@ -287,6 +289,31 @@ function AddAccountDialog({ onAdd }: AddAccountDialogProps) {
             } catch (err) {
                 console.error('Failed to copy: ', err);
             }
+        }
+    };
+
+    // 处理手动粘贴的回调 URL (Web 模式远程部署使用)
+    const handleManualCallback = async () => {
+        if (!callbackUrl.trim()) {
+            setStatus('error');
+            setMessage('请粘贴完整的回调 URL');
+            return;
+        }
+        
+        setStatus('loading');
+        setMessage('正在处理回调...');
+        
+        try {
+            await invoke('process_oauth_callback', { callback_url: callbackUrl });
+            setStatus('success');
+            setMessage('OAuth 登录成功！');
+            setTimeout(() => {
+                setIsOpen(false);
+                resetState();
+            }, 1500);
+        } catch (error) {
+            setStatus('error');
+            setMessage(`OAuth 失败: ${error}`);
         }
     };
 
@@ -452,11 +479,37 @@ function AddAccountDialog({ onAdd }: AddAccountDialogProps) {
                                                     <CheckCircle2 className="w-4 h-4" />
                                                     {t('accounts.add.oauth.btn_finish')}
                                                 </button>
+
+                                                {/* Web 模式：手动粘贴回调 URL */}
+                                                <div className="mt-4 pt-4 border-t border-gray-200 dark:border-base-300">
+                                                    <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-2">
+                                                        远程部署？粘贴浏览器地址栏中的回调 URL：
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <input
+                                                            type="text"
+                                                            className="flex-1 px-3 py-2 text-xs font-mono bg-white dark:bg-base-100 border border-gray-300 dark:border-base-300 rounded-lg focus:outline-none focus:border-blue-500"
+                                                            placeholder="http://localhost:9004/callback?code=..."
+                                                            value={callbackUrl}
+                                                            onChange={(e) => setCallbackUrl(e.target.value)}
+                                                            disabled={status === 'loading' || status === 'success'}
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            onClick={handleManualCallback}
+                                                            disabled={status === 'loading' || status === 'success' || !callbackUrl.trim()}
+                                                        >
+                                                            确认
+                                                        </button>
+                                                    </div>
+                                                </div>
                                             </div>
                                         )}
                                     </div>
                                 </div>
                             )}
+
 
                             {/* Refresh Token */}
                             {activeTab === 'token' && (

@@ -137,6 +137,48 @@ brew install --cask antigravity-tools
     brew install --cask --no-quarantine antigravity-tools
     ```
 
+### 选项 C: Web Server 模式部署 (Linux 服务器)
+
+除了桌面应用，本项目还支持**独立 Web 服务端**模式，可部署到远程服务器通过浏览器访问。
+
+#### 快速部署（本地编译后上传）
+
+```bash
+# 1. 本地打包（生成约 7MB 压缩包）
+./package-server.sh
+
+# 2. 上传到服务器
+scp build/antigravity-server-*.tar.gz user@server:/tmp/
+
+# 3. 服务器端解压并启动
+ssh user@server
+cd /tmp && tar -xzf antigravity-server-*.tar.gz
+sudo mv antigravity-server-* /opt/antigravity
+/opt/antigravity/start.sh
+```
+
+#### 服务器端编译
+
+```bash
+# 安装依赖 (Ubuntu/Debian)
+sudo apt install -y curl build-essential pkg-config libssl-dev
+
+# 安装 Rust & Node.js
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# 构建
+npm install && npm run build
+cd src-tauri
+cargo build --release --bin antigravity-server --no-default-features --features web-server
+
+# 启动
+./target/release/antigravity-server --port 8765 --static-dir ../dist --data-dir ~/.antigravity
+```
+
+> 📖 详细部署文档请参考 [DEPLOYMENT.md](./DEPLOYMENT.md)
+
+
 ## 🔌 快速接入示例
 
 ### 🔐 OAuth 授权流程（添加账号）

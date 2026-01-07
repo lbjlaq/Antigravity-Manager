@@ -11,7 +11,8 @@ import { useEffect } from 'react';
 import { useConfigStore } from './stores/useConfigStore';
 import { useAccountStore } from './stores/useAccountStore';
 import { useTranslation } from 'react-i18next';
-import { listen } from '@tauri-apps/api/event';
+import { listen } from './utils/tauriCompat';
+
 
 const router = createBrowserRouter([
   {

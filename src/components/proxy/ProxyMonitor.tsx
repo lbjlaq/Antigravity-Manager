@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { listen } from '../../utils/tauriCompat';
+
 import ModalDialog from '../common/ModalDialog';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../../utils/request';

@@ -5,8 +5,10 @@ pub mod logger;
 pub mod db;
 pub mod process;
 pub mod oauth;
+#[cfg(feature = "tauri-app")]
 pub mod oauth_server;
 pub mod migration;
+#[cfg(feature = "tauri-app")]
 pub mod tray;
 pub mod i18n;
 pub mod proxy_db;
@@ -24,3 +26,4 @@ pub use logger::*;
 pub async fn fetch_quota(access_token: &str, email: &str) -> crate::error::AppResult<(models::QuotaData, Option<String>)> {
     quota::fetch_quota(access_token, email).await
 }
+

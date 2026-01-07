@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize};
 use std::collections::VecDeque;
 use tokio::sync::RwLock;
+#[cfg(feature = "tauri-app")]
 use tauri::Emitter;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -34,10 +35,15 @@ pub struct ProxyMonitor {
     pub stats: RwLock<ProxyStats>,
     pub max_logs: usize,
     pub enabled: AtomicBool,
+    #[cfg(feature = "tauri-app")]
     app_handle: Option<tauri::AppHandle>,
+    /// SSE broadcast sender for web mode
+    #[cfg(not(feature = "tauri-app"))]
+    _phantom: std::marker::PhantomData<()>,
 }
 
 impl ProxyMonitor {
+    #[cfg(feature = "tauri-app")]
     pub fn new(max_logs: usize, app_handle: Option<tauri::AppHandle>) -> Self {
         // Initialize DB
         if let Err(e) = crate::modules::proxy_db::init_db() {
@@ -48,10 +54,27 @@ impl ProxyMonitor {
             logs: RwLock::new(VecDeque::with_capacity(max_logs)),
             stats: RwLock::new(ProxyStats::default()),
             max_logs,
-            enabled: AtomicBool::new(false), // Default to disabled
+            enabled: AtomicBool::new(false),
             app_handle,
         }
     }
+
+    #[cfg(not(feature = "tauri-app"))]
+    pub fn new(max_logs: usize, _app_handle: Option<()>) -> Self {
+        // Initialize DB
+        if let Err(e) = crate::modules::proxy_db::init_db() {
+            tracing::error!("Failed to initialize proxy DB: {}", e);
+        }
+
+        Self {
+            logs: RwLock::new(VecDeque::with_capacity(max_logs)),
+            stats: RwLock::new(ProxyStats::default()),
+            max_logs,
+            enabled: AtomicBool::new(false),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
 
     pub fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
@@ -94,11 +117,13 @@ impl ProxyMonitor {
             }
         });
 
-        // Emit event
+        // Emit event (Tauri only)
+        #[cfg(feature = "tauri-app")]
         if let Some(app) = &self.app_handle {
              let _ = app.emit("proxy://request", &log);
         }
     }
+
 
     pub async fn get_logs(&self, limit: usize) -> Vec<ProxyRequestLog> {
         // Try to get from DB first for true history
