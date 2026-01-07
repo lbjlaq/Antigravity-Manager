@@ -34,6 +34,26 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
         })
         .collect();
 
+    // [New] Apply system prompt replacements
+    let config_result = crate::modules::config::load_app_config();
+    let replacements = match config_result {
+        Ok(cfg) => cfg.proxy.system_prompt_replacements,
+        Err(e) => {
+            tracing::warn!("Failed to load config for system prompt replacements: {}", e);
+            std::collections::HashMap::new()
+        }
+    };
+
+    let system_instructions: Vec<String> = system_instructions.into_iter().map(|mut s| {
+        for (target, replacement) in &replacements {
+            if s.contains(target) {
+                tracing::debug!("[System-Prompt] Replacing '{}' with '{}'", target, replacement);
+                s = s.replace(target, replacement);
+            }
+        }
+        s
+    }).collect();
+
 
 
     // Pre-scan to map tool_call_id to function name (for Codex)

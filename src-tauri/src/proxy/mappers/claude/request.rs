@@ -449,14 +449,37 @@ fn build_system_instruction(system: &Option<SystemPrompt>, model_name: &str) -> 
     parts.push(json!({"text": identity_patch}));
 
     if let Some(sys) = system {
+        let config_result = crate::modules::config::load_app_config();
+        let replacements = match config_result {
+            Ok(cfg) => cfg.proxy.system_prompt_replacements,
+            Err(e) => {
+                tracing::warn!("Failed to load config for system prompt replacements: {}", e);
+                std::collections::HashMap::new()
+            }
+        };
+        
         match sys {
             SystemPrompt::String(text) => {
-                parts.push(json!({"text": text}));
+                let mut final_text = text.clone();
+                for (target, replacement) in &replacements {
+                    if final_text.contains(target) {
+                        tracing::debug!("[System-Prompt] Replacing '{}' with '{}'", target, replacement);
+                        final_text = final_text.replace(target, replacement);
+                    }
+                }
+                parts.push(json!({"text": final_text}));
             }
             SystemPrompt::Array(blocks) => {
                 for block in blocks {
                     if block.block_type == "text" {
-                        parts.push(json!({"text": block.text}));
+                        let mut final_text = block.text.clone();
+                        for (target, replacement) in &replacements {
+                            if final_text.contains(target) {
+                                tracing::debug!("[System-Prompt] Replacing '{}' with '{}'", target, replacement);
+                                final_text = final_text.replace(target, replacement);
+                            }
+                        }
+                        parts.push(json!({"text": final_text}));
                     }
                 }
             }
