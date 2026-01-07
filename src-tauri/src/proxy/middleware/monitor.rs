@@ -87,6 +87,7 @@ pub async fn monitor_middleware(
         response_body: None,
         input_tokens: None,
         output_tokens: None,
+        account_email: None,  // Set by handlers if available
     };
 
     if content_type.contains("text/event-stream") {

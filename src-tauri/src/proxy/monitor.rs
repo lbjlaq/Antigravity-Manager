@@ -18,6 +18,7 @@ pub struct ProxyRequestLog {
     pub response_body: Option<String>,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
+    pub account_email: Option<String>,  // [NEW] Which account was used for this request
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
