@@ -665,6 +665,9 @@ pub async fn handle_messages(
         
         // 成功
         if status.is_success() {
+            // [智能限流] 请求成功，重置该账号的连续失败计数
+            token_manager.mark_account_success(&email);
+            
             // 处理流式响应
             if request.stream {
                 let stream = response.bytes_stream();
@@ -749,9 +752,9 @@ pub async fn handle_messages(
         last_error = format!("HTTP {}: {}", status_code, error_text);
         debug!("[{}] Upstream Error Response: {}", trace_id, error_text);
         
-        // 3. 标记限流状态（用于 UI 显示）
+        // 3. 标记限流状态（用于 UI 显示）- 使用异步版本以支持实时配额刷新
         if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
-            token_manager.mark_rate_limited(&email, status_code, retry_after.as_deref(), &error_text);
+            token_manager.mark_rate_limited_async(&email, status_code, retry_after.as_deref(), &error_text).await;
         }
 
         // 4. 处理 400 错误 (Thinking 签名失效)

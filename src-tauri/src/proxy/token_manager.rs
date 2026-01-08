@@ -521,6 +521,94 @@ impl TokenManager {
         retry_after_header: Option<&str>,
         error_body: &str,
     ) {
+        // 检查是否有精确的重试时间（来自 API 响应）
+        // 如果有 retry_after_header 或 error_body 中有 quotaResetDelay，直接使用
+        let has_explicit_retry_time = retry_after_header.is_some() || 
+            error_body.contains("quotaResetDelay");
+        
+        if has_explicit_retry_time {
+            // API 返回了精确时间，直接使用
+            self.rate_limit_tracker.parse_from_error(
+                account_id,
+                status,
+                retry_after_header,
+                error_body,
+            );
+        } else {
+            // API 未返回精确时间，尝试使用账号配额刷新时间
+            let reason = if error_body.to_lowercase().contains("model_capacity") {
+                crate::proxy::rate_limit::RateLimitReason::ModelCapacityExhausted
+            } else if error_body.to_lowercase().contains("exhausted") || error_body.to_lowercase().contains("quota") {
+                crate::proxy::rate_limit::RateLimitReason::QuotaExhausted
+            } else {
+                crate::proxy::rate_limit::RateLimitReason::Unknown
+            };
+            
+            // 尝试使用配额刷新时间精确锁定
+            if !self.set_precise_lockout(account_id, reason) {
+                // 无法获取配额刷新时间，回退到指数退避策略
+                tracing::debug!("无法获取配额刷新时间，使用指数退避策略");
+                self.rate_limit_tracker.parse_from_error(
+                    account_id,
+                    status,
+                    retry_after_header,
+                    error_body,
+                );
+            }
+        }
+    }
+    
+    /// 异步版本的限流标记方法（推荐使用）
+    /// 
+    /// 优先实时刷新配额以获取精确的 reset_time，
+    /// 只有在刷新失败时才回退到本地缓存或指数退避策略。
+    pub async fn mark_rate_limited_async(
+        &self,
+        account_id: &str,
+        status: u16,
+        retry_after_header: Option<&str>,
+        error_body: &str,
+    ) {
+        // 检查是否有精确的重试时间（来自 API 响应）
+        let has_explicit_retry_time = retry_after_header.is_some() || 
+            error_body.contains("quotaResetDelay");
+        
+        if has_explicit_retry_time {
+            // API 返回了精确时间（quotaResetDelay），直接使用，无需实时刷新
+            tracing::debug!("账号 {} 的 429 响应包含 quotaResetDelay，直接使用 API 返回的时间", account_id);
+            self.rate_limit_tracker.parse_from_error(
+                account_id,
+                status,
+                retry_after_header,
+                error_body,
+            );
+            return;
+        }
+        
+        // 确定限流原因
+        let reason = if error_body.to_lowercase().contains("model_capacity") {
+            crate::proxy::rate_limit::RateLimitReason::ModelCapacityExhausted
+        } else if error_body.to_lowercase().contains("exhausted") || error_body.to_lowercase().contains("quota") {
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted
+        } else {
+            crate::proxy::rate_limit::RateLimitReason::Unknown
+        };
+        
+        // API 未返回 quotaResetDelay，需要实时刷新配额获取精确锁定时间
+        tracing::info!("账号 {} 的 429 响应未包含 quotaResetDelay，尝试实时刷新配额...", account_id);
+        if self.fetch_and_lock_with_realtime_quota(account_id, reason).await {
+            tracing::info!("账号 {} 已使用实时配额精确锁定", account_id);
+            return;
+        }
+        
+        // 实时刷新失败，尝试使用本地缓存的配额刷新时间
+        if self.set_precise_lockout(account_id, reason) {
+            tracing::info!("账号 {} 已使用本地缓存配额锁定", account_id);
+            return;
+        }
+        
+        // 都失败了，回退到指数退避策略
+        tracing::warn!("账号 {} 无法获取配额刷新时间，使用指数退避策略", account_id);
         self.rate_limit_tracker.parse_from_error(
             account_id,
             status,
@@ -550,6 +638,134 @@ impl TokenManager {
     #[allow(dead_code)]
     pub fn clear_rate_limit(&self, account_id: &str) -> bool {
         self.rate_limit_tracker.clear(account_id)
+    }
+    
+    /// 标记账号请求成功，重置连续失败计数
+    /// 
+    /// 在请求成功完成后调用，将该账号的失败计数归零，
+    /// 下次失败时从最短的锁定时间开始（智能限流）。
+    pub fn mark_account_success(&self, account_id: &str) {
+        self.rate_limit_tracker.mark_success(account_id);
+    }
+    
+    /// 从账号文件获取配额刷新时间
+    /// 
+    /// 返回该账号最近的配额刷新时间字符串（ISO 8601 格式）
+    pub fn get_quota_reset_time(&self, email: &str) -> Option<String> {
+        // 尝试从账号文件读取配额信息
+        let accounts_dir = self.data_dir.join("accounts");
+        
+        // 遍历账号文件查找对应的 email
+        if let Ok(entries) = std::fs::read_dir(&accounts_dir) {
+            for entry in entries.flatten() {
+                if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                    if let Ok(account) = serde_json::from_str::<serde_json::Value>(&content) {
+                        // 检查 email 是否匹配
+                        if account.get("email").and_then(|e| e.as_str()) == Some(email) {
+                            // 获取 quota.models 中最早的 reset_time
+                            if let Some(models) = account
+                                .get("quota")
+                                .and_then(|q| q.get("models"))
+                                .and_then(|m| m.as_array()) 
+                            {
+                                // 找到最早的 reset_time（最保守的锁定策略）
+                                let mut earliest_reset: Option<&str> = None;
+                                for model in models {
+                                    if let Some(reset_time) = model.get("reset_time").and_then(|r| r.as_str()) {
+                                        if !reset_time.is_empty() {
+                                            if earliest_reset.is_none() || reset_time < earliest_reset.unwrap() {
+                                                earliest_reset = Some(reset_time);
+                                            }
+                                        }
+                                    }
+                                }
+                                if let Some(reset) = earliest_reset {
+                                    return Some(reset.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    /// 使用配额刷新时间精确锁定账号
+    /// 
+    /// 当 API 返回 429 但没有 quotaResetDelay 时，尝试使用账号的配额刷新时间
+    pub fn set_precise_lockout(&self, email: &str, reason: crate::proxy::rate_limit::RateLimitReason) -> bool {
+        if let Some(reset_time_str) = self.get_quota_reset_time(email) {
+            tracing::info!("找到账号 {} 的配额刷新时间: {}", email, reset_time_str);
+            self.rate_limit_tracker.set_lockout_until_iso(email, &reset_time_str, reason)
+        } else {
+            tracing::debug!("未找到账号 {} 的配额刷新时间，将使用默认退避策略", email);
+            false
+        }
+    }
+    
+    /// 实时刷新配额并精确锁定账号
+    /// 
+    /// 当 429 发生时调用此方法：
+    /// 1. 实时调用配额刷新 API 获取最新的 reset_time
+    /// 2. 使用最新的 reset_time 精确锁定账号
+    /// 3. 如果获取失败，返回 false 让调用方使用回退策略
+    pub async fn fetch_and_lock_with_realtime_quota(
+        &self,
+        email: &str,
+        reason: crate::proxy::rate_limit::RateLimitReason,
+    ) -> bool {
+        // 1. 从 tokens 中获取该账号的 access_token
+        let access_token = {
+            let mut found_token: Option<String> = None;
+            for entry in self.tokens.iter() {
+                if entry.value().email == email {
+                    found_token = Some(entry.value().access_token.clone());
+                    break;
+                }
+            }
+            found_token
+        };
+        
+        let access_token = match access_token {
+            Some(t) => t,
+            None => {
+                tracing::warn!("无法找到账号 {} 的 access_token，无法实时刷新配额", email);
+                return false;
+            }
+        };
+        
+        // 2. 调用配额刷新 API
+        tracing::info!("账号 {} 正在实时刷新配额...", email);
+        match crate::modules::quota::fetch_quota(&access_token, email).await {
+            Ok((quota_data, _project_id)) => {
+                // 3. 从最新配额中提取 reset_time
+                let earliest_reset = quota_data.models.iter()
+                    .filter_map(|m| {
+                        if !m.reset_time.is_empty() {
+                            Some(m.reset_time.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .min();
+                
+                if let Some(reset_time_str) = earliest_reset {
+                    tracing::info!(
+                        "账号 {} 实时配额刷新成功，reset_time: {}",
+                        email, reset_time_str
+                    );
+                    self.rate_limit_tracker.set_lockout_until_iso(email, reset_time_str, reason)
+                } else {
+                    tracing::warn!("账号 {} 配额刷新成功但未找到 reset_time", email);
+                    false
+                }
+            },
+            Err(e) => {
+                tracing::warn!("账号 {} 实时配额刷新失败: {:?}", email, e);
+                false
+            }
+        }
     }
 
     // ===== 调度配置相关方法 =====
