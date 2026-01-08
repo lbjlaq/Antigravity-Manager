@@ -429,6 +429,7 @@ mod tests {
                 name: None,
             }],
             stream: false,
+            n: None,
             max_tokens: None,
             temperature: None,
             top_p: None,

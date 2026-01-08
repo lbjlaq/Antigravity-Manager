@@ -266,4 +266,38 @@ mod tests {
             "claude-sonnet-4-5"
         );
     }
+
+    #[test]
+    fn test_issue_442_pass_through_bypass_family_mapping() {
+        use std::collections::HashMap;
+        
+        // Setup: Configure family mapping that would normally catch "claude-4.5-series"
+        let mut anthropic_mapping = HashMap::new();
+        anthropic_mapping.insert("claude-4.5-series".to_string(), "gemini-3-pro-high".to_string());
+        
+        let custom_mapping = HashMap::new();
+        let openai_mapping = HashMap::new();
+        
+        // Case 1: Pass-through model (claude-opus-4-5-thinking)
+        // Should bypass family mapping and return itself
+        let result = resolve_model_route(
+            "claude-opus-4-5-thinking",
+            &custom_mapping,
+            &openai_mapping,
+            &anthropic_mapping,
+            true // apply_claude_family_mapping = true (CLI mode)
+        );
+        assert_eq!(result, "claude-opus-4-5-thinking", "Pass-through model should bypass family mapping");
+        
+        // Case 2: Non-pass-through model (claude-sonnet-4-5-20250929)
+        // Should NOT bypass family mapping (maps to gemini-3-pro-high via family rule)
+        let result_normal = resolve_model_route(
+            "claude-sonnet-4-5-20250929",
+            &custom_mapping,
+            &openai_mapping,
+            &anthropic_mapping,
+            true
+        );
+        assert_eq!(result_normal, "gemini-3-pro-high", "Non-pass-through model should follow family mapping");
+    }
 }
