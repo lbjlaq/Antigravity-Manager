@@ -789,7 +789,7 @@ print(response.text)`;
                                             </label>
                                             <label className="flex items-center cursor-pointer gap-2">
                                                 <span className="text-[11px] text-gray-600 dark:text-gray-400 inline-flex items-center gap-1">
-                                                    {t('proxy.config.auth.enabled')}
+                                                    {(appConfig.proxy.auth_mode || 'off') !== 'off' ? t('proxy.config.auth.enabled') : t('common.disabled')}
                                                     <HelpTooltip
                                                         text={t('proxy.config.auth.enabled_tooltip')}
                                                         ariaLabel={t('proxy.config.auth.enabled')}
