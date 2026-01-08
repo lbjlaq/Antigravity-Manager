@@ -279,7 +279,8 @@ impl TokenManager {
                         }
 
                         // 【新增】主动避开限流或 5xx 锁定的账号 (来自 PR #28 的高可用思路)
-                        if self.is_rate_limited(&candidate.account_id) {
+                        // 【修复】使用 email 检查，因为限流记录以 email 为 key 存储
+                        if self.is_rate_limited(&candidate.email) {
                             continue;
                         }
 
@@ -308,7 +309,8 @@ impl TokenManager {
                     }
 
                     // 【新增】主动避开限流或 5xx 锁定的账号
-                    if self.is_rate_limited(&candidate.account_id) {
+                    // 【修复】使用 email 检查，因为限流记录以 email 为 key 存储
+                    if self.is_rate_limited(&candidate.email) {
                         continue;
                     }
 
@@ -594,7 +596,40 @@ impl TokenManager {
             crate::proxy::rate_limit::RateLimitReason::Unknown
         };
         
-        // API 未返回 quotaResetDelay，需要实时刷新配额获取精确锁定时间
+        // 【重要】对于 ModelCapacityExhausted，不应该使用配额刷新时间
+        // 因为这是服务端 GPU 容量问题，不是用户配额问题，账号配额可能是满的
+        // 使用短时间重试（15秒）而不是长时间锁定
+        if reason == crate::proxy::rate_limit::RateLimitReason::ModelCapacityExhausted {
+            tracing::info!(
+                "账号 {} 遇到 MODEL_CAPACITY_EXHAUSTED（服务端容量不足），使用短时间重试 15秒，不锁定配额",
+                account_id
+            );
+            self.rate_limit_tracker.parse_from_error(
+                account_id,
+                status,
+                retry_after_header,
+                error_body,
+            );
+            return;
+        }
+        
+        // 【重要】对于 Unknown 类型（无 quotaResetDelay 且无明确配额关键词）
+        // 很可能是服务端问题或网络问题，使用 60 秒短重试，避免错误长时间锁定有配额的账号
+        if reason == crate::proxy::rate_limit::RateLimitReason::Unknown {
+            tracing::info!(
+                "账号 {} 收到无法识别的 429 错误（可能是服务端问题），使用 60 秒短重试",
+                account_id
+            );
+            self.rate_limit_tracker.parse_from_error(
+                account_id,
+                status,
+                retry_after_header,
+                error_body,
+            );
+            return;
+        }
+        
+        // 只有 QuotaExhausted 才需要实时刷新配额获取精确锁定时间
         tracing::info!("账号 {} 的 429 响应未包含 quotaResetDelay，尝试实时刷新配额...", account_id);
         if self.fetch_and_lock_with_realtime_quota(account_id, reason).await {
             tracing::info!("账号 {} 已使用实时配额精确锁定", account_id);
