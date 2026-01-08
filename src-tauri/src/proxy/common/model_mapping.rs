@@ -202,15 +202,12 @@ pub fn resolve_model_route(
 
     // 3. 检查家族分组映射 (Anthropic 系)
     if lower_model.starts_with("claude-") {
-        // [CRITICAL] 检查是否应用 Claude 家族映射
-        // 如果是非 CLI 请求（如 Cherry Studio），先检查是否为原生支持的直通模型
-        if !apply_claude_family_mapping {
-            if let Some(mapped) = CLAUDE_TO_GEMINI.get(original_model) {
-                if *mapped == original_model {
-                    // 原生支持的直通模型，跳过家族映射
-                    crate::modules::logger::log_info(&format!("[Router] 非 CLI 请求，跳过家族映射: {}", original_model));
-                    return original_model.to_string();
-                }
+        // [FIX Issue #442] 对于内置表中已定义为直通的模型，跳过家族映射，直接返回
+        // 避免 claude-opus-4-5-thinking 等直通模型被家族映射意外重定向到 gemini-3-pro-high
+        if let Some(mapped) = CLAUDE_TO_GEMINI.get(original_model) {
+            if *mapped == original_model {
+                crate::modules::logger::log_info(&format!("[Router] 内置直通模型，跳过家族映射: {}", original_model));
+                return original_model.to_string();
             }
         }
         
