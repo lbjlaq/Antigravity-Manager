@@ -463,7 +463,12 @@ pub async fn handle_messages(
         let content_preview = match &msg.content {
             crate::proxy::mappers::claude::models::MessageContent::String(s) => {
                 if s.len() > 200 {
-                    format!("{}... (total {} chars)", &s[..200], s.len())
+                    // Find safe UTF-8 character boundary
+                    let mut end = 200.min(s.len());
+                    while end > 0 && !s.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}... (total {} chars)", &s[..end], s.len())
                 } else {
                     s.clone()
                 }

@@ -161,7 +161,12 @@ impl UpstreamClient {
             tracing::error!("📄 Full Body (first 500 chars):");
             let body_str = serde_json::to_string_pretty(&body).unwrap_or_default();
             let preview = if body_str.len() > 500 {
-                format!("{}...", &body_str[..500])
+                // Find safe UTF-8 character boundary
+                let mut end = 500.min(body_str.len());
+                while end > 0 && !body_str.is_char_boundary(end) {
+                    end -= 1;
+                }
+                format!("{}[...]", &body_str[..end])
             } else {
                 body_str
             };
