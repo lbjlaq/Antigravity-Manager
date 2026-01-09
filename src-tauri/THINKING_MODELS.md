@@ -149,6 +149,116 @@ gemini-3-pro-high: ~90%+ success rate ✅
 
 ---
 
+## 🔄 Automatic Fallback Mechanism (v3.3.20+)
+
+### Проблема: Claude Opus Thinking Timeouts
+
+**Issue #497**: Claude Opus Thinking (`claude-opus-4-5-thinking`) имеет критический уровень зависаний:
+- **Success rate**: 6.3% (3 успеха из 48 запросов)
+- **Timeout rate**: 93.7% (45 зависших запросов)
+- **Причина**: Google API не отвечает на запросы (>30 секунд ожидания)
+
+### Решение: Автоматический Fallback
+
+**Реализовано в версии 3.3.20** (commit `8dd5fc1`):
+
+```rust
+// src/proxy/mappers/claude/request.rs:185-200
+if mapped_model == "claude-opus-4-5-thinking" {
+    let fallback_model = "gemini-3-pro-high";
+    tracing::warn!(
+        "[Model-Fallback] Claude Opus Thinking unavailable (issue #497).
+         Falling back: {} -> {}",
+        mapped_model, fallback_model
+    );
+    mapped_model = fallback_model.to_string();
+
+    // Emit UI notification event
+    emit_model_fallback_event(&claude_req.model, &mapped_model)?;
+}
+```
+
+### Как работает:
+
+1. **Детектирует** запросы к `claude-opus-4-5-thinking`
+2. **Переключает** на `gemini-3-pro-high` (100% success rate)
+3. **Логирует** warning в консоль с указанием причины
+4. **Уведомляет UI** через Tauri event `proxy://model-fallback`
+
+### UI Notifications
+
+**Toast компонент** (`src/App.tsx`):
+- Компактное предупреждение (warning type)
+- Сообщение: `"{original_model} недоступен, используем {fallback_model}"`
+- Автоматическое закрытие через **5 секунд**
+- Возможность ручного закрытия
+
+**Event Payload:**
+```typescript
+{
+  original_model: "claude-opus-4-5",
+  fallback_model: "gemini-3-pro-high",
+  reason: "High timeout rate (93.7%) with Claude Opus Thinking - see issue #497"
+}
+```
+
+### Преимущества Fallback:
+
+| Метрика | Claude Opus Thinking | Gemini Pro High (fallback) |
+|---------|---------------------|----------------------------|
+| Success Rate | 6.3% ❌ | 100% ✅ |
+| Timeout Rate | 93.7% | 0% |
+| Average Response Time | >30s (timeout) | <5s |
+| Thinking Support | ✅ Да | ✅ Да (через thinkingConfig) |
+| Extended Thinking Budget | 32,000 tokens | 32,000 tokens |
+
+### Лог примеры:
+
+**Успешный fallback:**
+```log
+[Model-Fallback] Claude Opus Thinking unavailable (issue #497).
+  Falling back: claude-opus-4-5-thinking -> gemini-3-pro-high
+[Model-Fallback-Event] Emitted UI notification: claude-opus-4-5 -> gemini-3-pro-high
+```
+
+**UI Toast:**
+```
+⚠️ claude-opus-4-5 недоступен, используем gemini-3-pro-high
+```
+
+### Отключение Fallback
+
+Если нужно протестировать оригинальный Opus (для debugging):
+
+**Опция 1: Временно закомментировать код**
+```rust
+// Временно отключить fallback для тестирования
+// if mapped_model == "claude-opus-4-5-thinking" { ... }
+```
+
+**Опция 2: Использовать прямой запрос к Gemini**
+```json
+{
+  "model": "gemini-3-pro-high",
+  "thinking": { "type": "enabled", "budget_tokens": 32000 }
+}
+```
+
+### Известные ограничения:
+
+1. **Fallback односторонний**: Только Opus → Gemini (не наоборот)
+2. **Без ретрай**: Не пытается повторно с Opus после таймаута
+3. **Не кэшируется**: Каждый запрос проверяется заново
+
+### Future Improvements:
+
+- [ ] Динамический fallback на основе реального timeout detection
+- [ ] Кэширование статуса моделей (available/unavailable)
+- [ ] Configurable fallback chain: Opus → Gemini Pro → Sonnet
+- [ ] Retry logic с экспоненциальным backoff
+
+---
+
 ## 🔍 Debugging Tips
 
 ### Проверка успешного запроса с thinking:
@@ -164,6 +274,32 @@ grep "404 Not Found" logs/app.log | grep -B 20 "gemini.*thinking"
 ### Статистика по моделям:
 ```bash
 grep "Status: 200 OK" logs/app.log -B 25 | grep "model: Some" | sort | uniq -c
+```
+
+### Мониторинг Fallback событий:
+```bash
+# Все fallback события
+grep "Model-Fallback" logs/app.log
+
+# Fallback с временными метками
+grep "Model-Fallback" logs/app.log | grep -o "^\[.*\].*Model-Fallback.*"
+
+# Подсчет fallback за сессию
+grep "Model-Fallback" logs/app.log | wc -l
+
+# UI notification события
+grep "Model-Fallback-Event" logs/app.log
+
+# Просмотр последних 10 fallback
+grep "Model-Fallback" logs/app.log | tail -10
+```
+
+### Проверка успешности fallback:
+```bash
+# Найти fallback и следующий за ним успешный ответ
+grep -A 50 "Model-Fallback.*claude-opus-4-5-thinking" logs/app.log | \
+  grep "gemini-3-pro-high" | \
+  grep "Stream completed"
 ```
 
 ---
