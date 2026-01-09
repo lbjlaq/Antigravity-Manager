@@ -18,10 +18,10 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-opus-4", "claude-opus-4-5-thinking");
     m.insert("claude-opus-4-5-20251101", "claude-opus-4-5-thinking");
     m.insert("claude-opus-4-5-high", "claude-opus-4-5-thinking"); // OpenCode Opus with -high suffix
-    m.insert("claude-haiku-4", "gemini-3-pro-high"); // Haiku → Gemini 3 Pro High
-    m.insert("claude-haiku-4-5", "gemini-3-pro-high"); // OpenCode Haiku → Gemini 3 Pro High
-    m.insert("claude-3-haiku-20240307", "gemini-3-pro-high");
-    m.insert("claude-haiku-4-5-20251001", "gemini-3-pro-high");
+    m.insert("claude-haiku-4", "gemini-3-pro-high-thinking"); // Haiku → Gemini 3 Pro High с Thinking
+    m.insert("claude-haiku-4-5", "gemini-3-pro-high-thinking"); // OpenCode Haiku → Gemini 3 Pro High с Thinking
+    m.insert("claude-3-haiku-20240307", "gemini-3-pro-high-thinking");
+    m.insert("claude-haiku-4-5-20251001", "gemini-3-pro-high-thinking");
     // OpenAI 协议映射表
     m.insert("gpt-4", "gemini-2.5-pro");
     m.insert("gpt-4-turbo", "gemini-2.5-pro");
@@ -46,13 +46,13 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     // Gemini 协议映射表
     m.insert("gemini-2.5-flash-lite", "gemini-2.5-flash-lite");
     m.insert("gemini-2.5-flash-thinking", "gemini-2.5-flash-thinking");
-    m.insert("gemini-3-pro-low", "gemini-3-pro-high");  // 3 Pro Low → High
-    m.insert("gemini-3-pro-high", "gemini-3-pro-high");
-    m.insert("gemini-3-pro-high-thinking", "gemini-3-pro-high");  // Thinking → обычный High
-    m.insert("gemini-3-pro-preview", "gemini-3-pro-high");  // Preview → High
-    m.insert("gemini-3-pro", "gemini-3-pro-high");  // По умолчанию роутим в high
+    m.insert("gemini-3-pro-low", "gemini-3-pro-high-thinking");  // 3 Pro Low → High с Thinking
+    m.insert("gemini-3-pro-high", "gemini-3-pro-high-thinking");  // High → High с Thinking
+    m.insert("gemini-3-pro-high-thinking", "gemini-3-pro-high-thinking");  // Сохраняем Thinking
+    m.insert("gemini-3-pro-preview", "gemini-3-pro-high-thinking");  // Preview → High с Thinking
+    m.insert("gemini-3-pro", "gemini-3-pro-high-thinking");  // По умолчанию роутим в high с thinking
     m.insert("gemini-2.5-flash", "gemini-2.5-flash");
-    m.insert("gemini-3-flash", "gemini-3-pro-high");  // Flash → High
+    m.insert("gemini-3-flash", "gemini-3-pro-high-thinking");  // Flash → High с Thinking
     m.insert("gemini-3-pro-image", "gemini-3-pro-image");
 
 
@@ -208,28 +208,28 @@ mod tests {
             "claude-opus-4-5-thinking"
         );
 
-        // Claude Haiku routing to Gemini 3 Pro High
+        // Claude Haiku routing to Gemini 3 Pro High с Thinking
         assert_eq!(
             map_claude_model_to_gemini("claude-haiku-4-5"),
-            "gemini-3-pro-high"
+            "gemini-3-pro-high-thinking"
         );
 
-        // Gemini 3 Pro routing rules
+        // Gemini 3 Pro routing rules - все с Thinking
         assert_eq!(
             map_claude_model_to_gemini("gemini-3-pro"),
-            "gemini-3-pro-high"  // Default: route to high
+            "gemini-3-pro-high-thinking"  // Default: route to high с thinking
         );
         assert_eq!(
             map_claude_model_to_gemini("gemini-3-pro-high"),
-            "gemini-3-pro-high"
+            "gemini-3-pro-high-thinking"  // High → High с Thinking
         );
         assert_eq!(
             map_claude_model_to_gemini("gemini-3-pro-high-thinking"),
-            "gemini-3-pro-high"  // Thinking → обычный High
+            "gemini-3-pro-high-thinking"  // Сохраняем Thinking
         );
         assert_eq!(
             map_claude_model_to_gemini("gemini-3-flash"),
-            "gemini-3-pro-high"  // Flash → High
+            "gemini-3-pro-high-thinking"  // Flash → High с Thinking
         );
 
         // Test gemini pass-through (should not be caught by "mini" rule)

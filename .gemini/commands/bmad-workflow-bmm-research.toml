@@ -1,0 +1,4 @@
+description = "BMAD BMM Workflow: research"
+prompt = """
+IT IS CRITICAL THAT YOU FOLLOW THIS COMMAND: LOAD the FULL @_bmad/bmm/workflows/1-analysis/research/workflow.md, READ its entire contents and follow its directions exactly!
+"""
