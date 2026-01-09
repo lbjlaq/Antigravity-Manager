@@ -129,6 +129,8 @@ pub fn run() {
             // Autostart 命令
             commands::autostart::toggle_auto_launch,
             commands::autostart::is_auto_launch_enabled,
+            // 测试命令
+            commands::test_model_fallback_notification,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

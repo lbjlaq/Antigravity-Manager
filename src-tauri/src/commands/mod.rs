@@ -803,3 +803,19 @@ pub async fn toggle_proxy_status(
 
     Ok(())
 }
+
+/// 测试 Model Fallback UI 通知
+#[tauri::command]
+pub async fn test_model_fallback_notification(app: tauri::AppHandle) -> Result<(), String> {
+    let payload = serde_json::json!({
+        "original_model": "claude-opus-4-5",
+        "fallback_model": "gemini-3-pro-high",
+        "reason": "Test notification - High timeout rate (93.7%) with Claude Opus Thinking"
+    });
+
+    app.emit("proxy://model-fallback", payload)
+        .map_err(|e| format!("Failed to emit test event: {}", e))?;
+
+    modules::logger::log_info("Test model fallback notification sent to UI");
+    Ok(())
+}

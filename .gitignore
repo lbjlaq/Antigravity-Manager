@@ -45,3 +45,6 @@ __pycache__/
 # Reference projects (for development only)
 
 DOCKER_DEPLOYMENT.md
+
+# Antigravity documentation (reverse engineering artifacts)
+docs/antigravity/
