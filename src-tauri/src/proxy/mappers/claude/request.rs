@@ -957,12 +957,20 @@ fn build_generation_config(
 
             if let Some(budget_tokens) = thinking.budget_tokens {
                 let mut budget = budget_tokens;
-                // gemini-2.5-flash 上限 24576
-                let is_flash_model =
-                    has_web_search || claude_req.model.contains("gemini-2.5-flash");
-                if is_flash_model {
+
+                // [CRITICAL FIX] Apply model-specific thinking budget limits
+                // Different models have different maximum thinking budgets
+                if has_web_search || mapped_model.contains("gemini-2.5-flash") {
+                    // Gemini 2.5 Flash: max 24576
                     budget = budget.min(24576);
+                } else if mapped_model.contains("claude") {
+                    // Claude models (Sonnet, Opus): max 32000
+                    budget = budget.min(32000);
+                } else if mapped_model.contains("gemini") {
+                    // Other Gemini models: max 32000
+                    budget = budget.min(32000);
                 }
+
                 thinking_config["thinkingBudget"] = json!(budget);
             }
 
@@ -1023,9 +1031,12 @@ fn build_generation_config(
         if let Some(thinking) = &claude_req.thinking {
             if let Some(budget) = thinking.budget_tokens {
                 // [CRITICAL] Use same clamping logic as thinkingConfig
-                let is_flash_model = has_web_search || claude_req.model.contains("gemini-2.5-flash");
-                let clamped_budget = if is_flash_model {
+                let clamped_budget = if has_web_search || mapped_model.contains("gemini-2.5-flash") {
                     budget.min(24576)
+                } else if mapped_model.contains("claude") {
+                    budget.min(32000)
+                } else if mapped_model.contains("gemini") {
+                    budget.min(32000)
                 } else {
                     budget
                 };
