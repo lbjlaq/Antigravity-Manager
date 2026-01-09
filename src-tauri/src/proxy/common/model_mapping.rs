@@ -17,9 +17,11 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-3-5-sonnet-20240620", "claude-sonnet-4-5");
     m.insert("claude-opus-4", "claude-opus-4-5-thinking");
     m.insert("claude-opus-4-5-20251101", "claude-opus-4-5-thinking");
-    m.insert("claude-haiku-4", "claude-sonnet-4-5");
-    m.insert("claude-3-haiku-20240307", "claude-sonnet-4-5");
-    m.insert("claude-haiku-4-5-20251001", "claude-sonnet-4-5");
+    m.insert("claude-opus-4-5-high", "claude-opus-4-5-thinking"); // OpenCode Opus with -high suffix
+    m.insert("claude-haiku-4", "gemini-2.5-flash"); // Haiku → Flash (быстрая и дешевая модель)
+    m.insert("claude-haiku-4-5", "gemini-2.5-flash"); // OpenCode Haiku → Flash
+    m.insert("claude-3-haiku-20240307", "gemini-2.5-flash");
+    m.insert("claude-haiku-4-5-20251001", "gemini-2.5-flash");
     // OpenAI 协议映射表
     m.insert("gpt-4", "gemini-2.5-pro");
     m.insert("gpt-4-turbo", "gemini-2.5-pro");
@@ -199,6 +201,17 @@ mod tests {
         assert_eq!(
             map_claude_model_to_gemini("claude-opus-4-5"),
             "claude-opus-4-5-thinking"
+        );
+        // OpenCode Opus with -high suffix
+        assert_eq!(
+            map_claude_model_to_gemini("claude-opus-4-5-high"),
+            "claude-opus-4-5-thinking"
+        );
+
+        // Claude Haiku routing to Gemini Flash (fast & cheap)
+        assert_eq!(
+            map_claude_model_to_gemini("claude-haiku-4-5"),
+            "gemini-2.5-flash"
         );
 
         // Gemini 3 Pro routing rules
