@@ -7,6 +7,7 @@ import Settings from './pages/Settings';
 import ApiProxy from './pages/ApiProxy';
 import Monitor from './pages/Monitor';
 import ThemeManager from './components/common/ThemeManager';
+import ToastContainer, { showToast } from './components/common/ToastContainer';
 import { useEffect } from 'react';
 import { useConfigStore } from './stores/useConfigStore';
 import { useAccountStore } from './stores/useAccountStore';
@@ -80,6 +81,22 @@ function App() {
       })
     );
 
+    // 监听模型 fallback 事件
+    unlistenPromises.push(
+      listen<{ original_model: string; fallback_model: string; reason: string }>(
+        'proxy://model-fallback',
+        (event) => {
+          const { original_model, fallback_model } = event.payload;
+          showToast(
+            `${original_model} недоступен, используем ${fallback_model}`,
+            'warning',
+            5000
+          );
+          console.log('[App] Model fallback:', event.payload);
+        }
+      )
+    );
+
     // Cleanup
     return () => {
       Promise.all(unlistenPromises).then(unlisteners => {
@@ -91,6 +108,7 @@ function App() {
   return (
     <>
       <ThemeManager />
+      <ToastContainer />
       <RouterProvider router={router} />
     </>
   );

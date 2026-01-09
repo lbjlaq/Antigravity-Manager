@@ -88,7 +88,10 @@ pub async fn start_proxy_service(
             return Err("没有可用账号，请先添加账号".to_string());
         }
     }
-    
+
+    // Set global AppHandle for event emission from mappers
+    crate::proxy::mappers::claude::set_app_handle(app_handle.clone());
+
     // 启动 Axum 服务器
     let (axum_server, server_handle) =
         match crate::proxy::AxumServer::start(

@@ -10,7 +10,7 @@ pub mod thinking_utils;
 pub mod collector;
 
 pub use models::*;
-pub use request::transform_claude_request_in;
+pub use request::{transform_claude_request_in, set_app_handle};
 pub use response::transform_response;
 pub use streaming::{PartProcessor, StreamingState};
 pub use thinking_utils::close_tool_loop_for_thinking;
