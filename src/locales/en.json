@@ -391,7 +391,7 @@
             },
             "request_timeout": "Request Timeout",
             "request_timeout_tooltip": "Maximum time (seconds) the proxy waits for an upstream response, including streaming. Increase for long generations; restart required to apply.",
-            "request_timeout_hint": "Default 120s, range 30-3600s. Restart service to apply changes.",
+            "request_timeout_hint": "Default 120s, range 30-600s. Restart service to apply changes.",
             "enable_logging": "Enable Request Logging",
             "enable_logging_hint": "Record history for debugging (Minor perf cost)",
             "upstream_proxy": {
@@ -488,10 +488,6 @@
         "router": {
             "title": "Model Router",
             "subtitle": "Route models by series or add custom exact mappings.\nNote: Native Claude pass-through models (e.g. claude-opus-4-5-thinking) bypass series groups by default. Use \"Expert Custom Routing\" to override.",
-            "subtitle_simple": "Customize model routing with wildcards or exact mappings",
-            "apply_presets": "Apply Presets",
-            "presets_applied": "Presets applied successfully",
-            "custom_mappings": "Custom Mappings",
             "group_title": "Series Groups",
             "gemini3_group_label": "Gemini 3 (Recommended)",
             "gemini3_option_high": "gemini-3-pro-high (High Quality)",

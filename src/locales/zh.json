@@ -391,7 +391,7 @@
             },
             "request_timeout": "请求超时",
             "request_timeout_tooltip": "代理等待上游响应的最大时间（秒），包含流式输出。长文本/长推理可适当调大；修改后需重启生效。",
-            "request_timeout_hint": "默认 120 秒，范围 30-3600 秒。修改后需重启服务生效。",
+            "request_timeout_hint": "默认 120 秒，范围 30-600 秒。修改后需重启服务生效。",
             "enable_logging": "启用请求日志",
             "enable_logging_hint": "记录历史记录以便调试 (微小性能损耗)",
             "upstream_proxy": {
@@ -485,10 +485,6 @@
         "router": {
             "title": "模型路由中心 (Model Router)",
             "subtitle": "按“规格家族”统一路由 OpenAI/Claude 模型，或添加最高优先级的“精确映射”。\n注意：Claude 原生直通模型（claude-opus-4-5-thinking 等 3 个）默认透传，需在“专家精确映射”中添加规则才能修改。",
-            "subtitle_simple": "通过通配符或精确映射自定义模型路由规则",
-            "apply_presets": "应用预设映射",
-            "presets_applied": "预设映射已应用",
-            "custom_mappings": "自定义映射 (Custom Mappings)",
             "original_id": "原始模型 ID",
             "route_to": "路由目标",
             "group_title": "模型家族分组 (Series Groups)",

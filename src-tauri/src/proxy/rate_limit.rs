@@ -30,9 +30,6 @@ pub struct RateLimitInfo {
     pub detected_at: SystemTime,
     /// 限流原因
     pub reason: RateLimitReason,
-    /// 关联的模型 (用于模型级别限流)
-    /// None 表示账号级别限流,Some(model) 表示特定模型限流
-    pub model: Option<String>,
 }
 
 /// 限流跟踪器
@@ -75,62 +72,46 @@ impl RateLimitTracker {
     
     /// 精确锁定账号到指定时间点
     /// 
-    /// 使用账号配额中的 reset_time 来精确锁定账号,
+    /// 使用账号配额中的 reset_time 来精确锁定账号，
     /// 这比指数退避更加精准。
-    /// 
-    /// # 参数
-    /// - `model`: 可选的模型名称,用于模型级别限流。None 表示账号级别限流
-    pub fn set_lockout_until(&self, account_id: &str, reset_time: SystemTime, reason: RateLimitReason, model: Option<String>) {
+    pub fn set_lockout_until(&self, account_id: &str, reset_time: SystemTime, reason: RateLimitReason) {
         let now = SystemTime::now();
         let retry_sec = reset_time
             .duration_since(now)
             .map(|d| d.as_secs())
-            .unwrap_or(60); // 如果时间已过,使用默认 60 秒
+            .unwrap_or(60); // 如果时间已过，使用默认 60 秒
         
         let info = RateLimitInfo {
             reset_time,
             retry_after_sec: retry_sec,
             detected_at: now,
             reason,
-            model: model.clone(),  // 🆕 支持模型级别限流
         };
         
         self.limits.insert(account_id.to_string(), info);
         
-        if let Some(m) = &model {
-            tracing::info!(
-                "账号 {} 的模型 {} 已精确锁定到配额刷新时间,剩余 {} 秒",
-                account_id,
-                m,
-                retry_sec
-            );
-        } else {
-            tracing::info!(
-                "账号 {} 已精确锁定到配额刷新时间,剩余 {} 秒",
-                account_id,
-                retry_sec
-            );
-        }
+        tracing::info!(
+            "账号 {} 已精确锁定到配额刷新时间，剩余 {} 秒",
+            account_id,
+            retry_sec
+        );
     }
     
     /// 使用 ISO 8601 时间字符串精确锁定账号
     /// 
     /// 解析类似 "2026-01-08T17:00:00Z" 格式的时间字符串
-    /// 
-    /// # 参数
-    /// - `model`: 可选的模型名称,用于模型级别限流
-    pub fn set_lockout_until_iso(&self, account_id: &str, reset_time_str: &str, reason: RateLimitReason, model: Option<String>) -> bool {
+    pub fn set_lockout_until_iso(&self, account_id: &str, reset_time_str: &str, reason: RateLimitReason) -> bool {
         // 尝试解析 ISO 8601 格式
         match chrono::DateTime::parse_from_rfc3339(reset_time_str) {
             Ok(dt) => {
                 let reset_time = SystemTime::UNIX_EPOCH + 
                     std::time::Duration::from_secs(dt.timestamp() as u64);
-                self.set_lockout_until(account_id, reset_time, reason, model);
+                self.set_lockout_until(account_id, reset_time, reason);
                 true
             },
             Err(e) => {
                 tracing::warn!(
-                    "无法解析配额刷新时间 '{}': {},将使用默认退避策略",
+                    "无法解析配额刷新时间 '{}': {}，将使用默认退避策略",
                     reset_time_str, e
                 );
                 false
@@ -247,7 +228,6 @@ impl RateLimitTracker {
             retry_after_sec: retry_sec,
             detected_at: SystemTime::now(),
             reason,
-            model: None,  // 默认账号级别限流
         };
         
         // 存储
@@ -488,14 +468,12 @@ impl RateLimitTracker {
         self.limits.remove(account_id).is_some()
     }
     
-    /// 清除所有限流记录 (乐观重置策略)
-    /// 
-    /// 用于乐观重置机制,当所有账号都被限流但等待时间很短时,
-    /// 清除所有限流记录以解决时序竞争条件
+    /// 清除所有限流记录
+    #[allow(dead_code)]
     pub fn clear_all(&self) {
         let count = self.limits.len();
         self.limits.clear();
-        tracing::warn!("🔄 Optimistic reset: Cleared all {} rate limit record(s)", count);
+        tracing::debug!("清除了所有 {} 条限流记录", count);
     }
 }
 

@@ -95,6 +95,8 @@ pub async fn start_proxy_service(
             config.get_bind_address().to_string(),
             config.port,
             token_manager.clone(),
+            config.anthropic_mapping.clone(),
+            config.openai_mapping.clone(),
             config.custom_mapping.clone(),
             config.request_timeout,
             config.upstream_proxy.clone(),
@@ -268,6 +270,8 @@ pub async fn update_model_mapping(
     
     // 2. 无论是否运行，都保存到全局配置持久化
     let mut app_config = crate::modules::config::load_app_config().map_err(|e| e)?;
+    app_config.proxy.anthropic_mapping = config.anthropic_mapping;
+    app_config.proxy.openai_mapping = config.openai_mapping;
     app_config.proxy.custom_mapping = config.custom_mapping;
     crate::modules::config::save_app_config(&app_config).map_err(|e| e)?;
     

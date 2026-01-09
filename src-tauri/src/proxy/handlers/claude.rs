@@ -494,10 +494,14 @@ pub async fn handle_messages(
     let mut retried_without_thinking = false;
     
     for attempt in 0..max_attempts {
-        // 2. 模型路由解析
-        let mut mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
+        // 2. 模型路由与配置解析 (提前解析以确定请求类型)
+        // 先不应用家族映射，获取初步的 mapped_model
+        let initial_mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
             &request_for_body.model,
             &*state.custom_mapping.read().await,
+            &*state.openai_mapping.read().await,
+            &*state.anthropic_mapping.read().await,
+            false,  // 先不应用家族映射
         );
         
         // 将 Claude 工具转为 Value 数组以便探测联网
@@ -505,7 +509,26 @@ pub async fn handle_messages(
             list.iter().map(|t| serde_json::to_value(t).unwrap_or(json!({}))).collect()
         });
 
-        let config = crate::proxy::mappers::common_utils::resolve_request_config(&request_for_body.model, &mapped_model, &tools_val);
+        let config = crate::proxy::mappers::common_utils::resolve_request_config(&request_for_body.model, &initial_mapped_model, &tools_val);
+
+        // 3. 根据 request_type 决定是否应用 Claude 家族映射
+        // request_type == "agent" 表示 CLI 请求，应该应用家族映射
+        // 其他类型（web_search, image_gen）不应用家族映射
+        let is_cli_request = config.request_type == "agent";
+        
+        let mut mapped_model = if is_cli_request {
+            // CLI 请求：重新调用 resolve_model_route，应用家族映射
+            crate::proxy::common::model_mapping::resolve_model_route(
+                &request_for_body.model,
+                &*state.custom_mapping.read().await,
+                &*state.openai_mapping.read().await,
+                &*state.anthropic_mapping.read().await,
+                true,  // CLI 请求应用家族映射
+            )
+        } else {
+            // 非 CLI 请求：使用初步的 mapped_model（已跳过家族映射）
+            initial_mapped_model
+        };
 
         // 0. 尝试提取 session_id 用于粘性调度 (Phase 2/3)
         // 使用 SessionManager 生成稳定的会话指纹
@@ -619,18 +642,10 @@ pub async fn handle_messages(
             }
         };
         
-    // 4. 上游调用 - 自动转换逻辑
-    let client_wants_stream = request.stream;
-    // [AUTO-CONVERSION] 非 Stream 请求自动转换为 Stream 以享受更宽松的配额
-    let force_stream_internally = !client_wants_stream;
-    let actual_stream = client_wants_stream || force_stream_internally;
-    
-    if force_stream_internally {
-        info!("[{}] 🔄 Auto-converting non-stream request to stream for better quota", trace_id);
-    }
-    
-    let method = if actual_stream { "streamGenerateContent" } else { "generateContent" };
-    let query = if actual_stream { Some("alt=sse") } else { None };
+    // 4. 上游调用
+    let is_stream = request.stream;
+    let method = if is_stream { "streamGenerateContent" } else { "generateContent" };
+    let query = if is_stream { Some("alt=sse") } else { None };
 
     let response = match upstream.call_v1_internal(
         method,
@@ -654,10 +669,10 @@ pub async fn handle_messages(
             token_manager.mark_account_success(&email);
             
             // 处理流式响应
-            if actual_stream {
+            if request.stream {
                 let stream = response.bytes_stream();
                 let gemini_stream = Box::pin(stream);
-                let claude_stream = create_claude_sse_stream(gemini_stream, trace_id.clone(), email.clone());
+                let claude_stream = create_claude_sse_stream(gemini_stream, trace_id, email.clone());
 
                 // 转换为 Bytes stream
                 let sse_stream = claude_stream.map(|result| -> Result<Bytes, std::io::Error> {
@@ -667,38 +682,15 @@ pub async fn handle_messages(
                     }
                 });
 
-                // 判断客户端期望的格式
-                if client_wants_stream {
-                    // 客户端本就要 Stream，直接返回 SSE
-                    return Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, "text/event-stream")
-                        .header(header::CACHE_CONTROL, "no-cache")
-                        .header(header::CONNECTION, "keep-alive")
-                        .header("X-Account-Email", &email)
-                        .header("X-Mapped-Model", &request_with_mapped.model)
-                        .body(Body::from_stream(sse_stream))
-                        .unwrap();
-                } else {
-                    // 客户端要非 Stream，需要收集完整响应并转换为 JSON
-                    use crate::proxy::mappers::claude::collect_stream_to_json;
-                    
-                    match collect_stream_to_json(sse_stream).await {
-                        Ok(full_response) => {
-                            info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
-                            return Response::builder()
-                                .status(StatusCode::OK)
-                                .header(header::CONTENT_TYPE, "application/json")
-                                .header("X-Account-Email", &email)
-                                .header("X-Mapped-Model", &request_with_mapped.model)
-                                .body(Body::from(serde_json::to_string(&full_response).unwrap()))
-                                .unwrap();
-                        }
-                        Err(e) => {
-                            return (StatusCode::INTERNAL_SERVER_ERROR, format!("Stream collection error: {}", e)).into_response();
-                        }
-                    }
-                }
+                return Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .header(header::CACHE_CONTROL, "no-cache")
+                    .header(header::CONNECTION, "keep-alive")
+                    .header("X-Account-Email", &email)
+                    .header("X-Mapped-Model", &request_with_mapped.model)
+                    .body(Body::from_stream(sse_stream))
+                    .unwrap();
             } else {
                 // 处理非流式响应
                 let bytes = match response.bytes().await {
@@ -760,10 +752,9 @@ pub async fn handle_messages(
         last_error = format!("HTTP {}: {}", status_code, error_text);
         debug!("[{}] Upstream Error Response: {}", trace_id, error_text);
         
-        // 3. 标记限流状态(用于 UI 显示) - 使用异步版本以支持实时配额刷新
-        // 🆕 传入实际使用的模型,实现模型级别限流,避免不同模型配额互相影响
+        // 3. 标记限流状态（用于 UI 显示）- 使用异步版本以支持实时配额刷新
         if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
-            token_manager.mark_rate_limited_async(&email, status_code, retry_after.as_deref(), &error_text, Some(&request_with_mapped.model)).await;
+            token_manager.mark_rate_limited_async(&email, status_code, retry_after.as_deref(), &error_text).await;
         }
 
         // 4. 处理 400 错误 (Thinking 签名失效)
@@ -857,7 +848,9 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
     use crate::proxy::common::model_mapping::get_all_dynamic_models;
 
     let model_ids = get_all_dynamic_models(
+        &state.openai_mapping,
         &state.custom_mapping,
+        &state.anthropic_mapping,
     ).await;
 
     let data: Vec<_> = model_ids.into_iter().map(|id| {

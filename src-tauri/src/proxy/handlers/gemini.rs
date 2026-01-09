@@ -40,10 +40,13 @@ pub async fn handle_generate(
     let mut last_error = String::new();
 
     for attempt in 0..max_attempts {
-        // 3. 模型路由解析
+        // 3. 模型路由与配置解析
         let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
             &model_name,
             &*state.custom_mapping.read().await,
+            &*state.openai_mapping.read().await,
+            &*state.anthropic_mapping.read().await,
+            false,  // Gemini 请求不应用 Claude 家族映射
         );
         // 提取 tools 列表以进行联网探测 (Gemini 风格可能是嵌套的)
         let tools_val: Option<Vec<Value>> = body.get("tools").and_then(|t| t.as_array()).map(|arr| {
@@ -189,10 +192,11 @@ pub async fn handle_generate(
             // 记录限流信息 (全局同步)
             token_manager.mark_rate_limited(&email, status_code, retry_after.as_deref(), &error_text);
 
-            // 只有明确包含 "QUOTA_EXHAUSTED" 才停止，避免误判上游的频率限制提示 (如 "check quota")
+            // 只有明确包含 "QUOTA_EXHAUSTED" 才停止 -> 【Fix】改为继续尝试下一个账号
             if status_code == 429 && error_text.contains("QUOTA_EXHAUSTED") {
-                error!("Gemini Quota exhausted (429) on account {} attempt {}/{}, stopping to protect pool.", email, attempt + 1, max_attempts);
-                return Err((status, error_text));
+                error!("Gemini Quota exhausted (429) on account {} attempt {}/{}, will rotate to next account.", email, attempt + 1, max_attempts);
+                // return Err((status, error_text)); // Fix: Don't stop, let it rotate
+                continue;
             }
 
             tracing::warn!("Gemini Upstream {} on account {} attempt {}/{}, rotating account", status_code, email, attempt + 1, max_attempts);
@@ -212,7 +216,9 @@ pub async fn handle_list_models(State(state): State<AppState>) -> Result<impl In
 
     // 获取所有动态模型列表（与 /v1/models 一致）
     let model_ids = get_all_dynamic_models(
+        &state.openai_mapping,
         &state.custom_mapping,
+        &state.anthropic_mapping,
     ).await;
 
     // 转换为 Gemini API 格式

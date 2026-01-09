@@ -18,6 +18,9 @@ pub async fn handle_detect_model(
     let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
         model_name,
         &*state.custom_mapping.read().await,
+        &*state.openai_mapping.read().await,
+        &*state.anthropic_mapping.read().await,
+        false,  // Common 请求不应用 Claude 家族映射
     );
 
     // 2. Resolve capabilities

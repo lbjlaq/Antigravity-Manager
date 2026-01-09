@@ -324,64 +324,13 @@ impl TokenManager {
             let mut token = match target_token {
                 Some(t) => t,
                 None => {
-                    // 乐观重置策略: 双层防护机制
-                    // 当所有账号都无法选择时,可能是时序竞争导致的状态不同步
-                    
-                    // 计算最短等待时间
+                    // 如果所有账号都被尝试过或都处于限流中，计算最短等待时间
                     let min_wait = tokens_snapshot.iter()
                         .filter_map(|t| self.rate_limit_tracker.get_reset_seconds(&t.account_id))
-                        .min();
+                        .min()
+                        .unwrap_or(60);
                     
-                    // Layer 1: 如果最短等待时间 <= 2秒,执行缓冲延迟
-                    if let Some(wait_sec) = min_wait {
-                        if wait_sec <= 2 {
-                            tracing::warn!(
-                                "All accounts rate-limited but shortest wait is {}s. Applying 500ms buffer for state sync...",
-                                wait_sec
-                            );
-                            
-                            // 缓冲延迟 500ms
-                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                            
-                            // 重新尝试选择账号
-                            let retry_token = tokens_snapshot.iter()
-                                .find(|t| !attempted.contains(&t.account_id) && !self.is_rate_limited(&t.account_id));
-                            
-                            if let Some(t) = retry_token {
-                                tracing::info!("✅ Buffer delay successful! Found available account: {}", t.email);
-                                t.clone()
-                            } else {
-                                // Layer 2: 缓冲后仍无可用账号,执行乐观重置
-                                tracing::warn!(
-                                    "Buffer delay failed. Executing optimistic reset for all {} accounts...",
-                                    tokens_snapshot.len()
-                                );
-                                
-                                // 清除所有限流记录
-                                self.rate_limit_tracker.clear_all();
-                                
-                                // 再次尝试选择账号
-                                let final_token = tokens_snapshot.iter()
-                                    .find(|t| !attempted.contains(&t.account_id));
-                                
-                                if let Some(t) = final_token {
-                                    tracing::info!("✅ Optimistic reset successful! Using account: {}", t.email);
-                                    t.clone()
-                                } else {
-                                    // 所有策略都失败,返回错误
-                                    return Err(
-                                        "All accounts failed after optimistic reset. Please check account health.".to_string()
-                                    );
-                                }
-                            }
-                        } else {
-                            // 等待时间 > 2秒,正常返回错误
-                            return Err(format!("All accounts are currently limited. Please wait {}s.", wait_sec));
-                        }
-                    } else {
-                        // 无限流记录但仍无可用账号,可能是其他问题
-                        return Err("All accounts failed or unhealthy.".to_string());
-                    }
+                    return Err(format!("All accounts are currently limited or unhealthy. Please wait {}s.", min_wait));
                 }
             };
 
@@ -656,34 +605,27 @@ impl TokenManager {
     
     /// 使用配额刷新时间精确锁定账号
     /// 
-    /// 当 API 返回 429 但没有 quotaResetDelay 时,尝试使用账号的配额刷新时间
-    /// 
-    /// # 参数
-    /// - `model`: 可选的模型名称,用于模型级别限流
-    pub fn set_precise_lockout(&self, email: &str, reason: crate::proxy::rate_limit::RateLimitReason, model: Option<String>) -> bool {
+    /// 当 API 返回 429 但没有 quotaResetDelay 时，尝试使用账号的配额刷新时间
+    pub fn set_precise_lockout(&self, email: &str, reason: crate::proxy::rate_limit::RateLimitReason) -> bool {
         if let Some(reset_time_str) = self.get_quota_reset_time(email) {
             tracing::info!("找到账号 {} 的配额刷新时间: {}", email, reset_time_str);
-            self.rate_limit_tracker.set_lockout_until_iso(email, &reset_time_str, reason, model)
+            self.rate_limit_tracker.set_lockout_until_iso(email, &reset_time_str, reason)
         } else {
-            tracing::debug!("未找到账号 {} 的配额刷新时间,将使用默认退避策略", email);
+            tracing::debug!("未找到账号 {} 的配额刷新时间，将使用默认退避策略", email);
             false
         }
     }
     
     /// 实时刷新配额并精确锁定账号
     /// 
-    /// 当 429 发生时调用此方法:
+    /// 当 429 发生时调用此方法：
     /// 1. 实时调用配额刷新 API 获取最新的 reset_time
     /// 2. 使用最新的 reset_time 精确锁定账号
-    /// 3. 如果获取失败,返回 false 让调用方使用回退策略
-    /// 
-    /// # 参数
-    /// - `model`: 可选的模型名称,用于模型级别限流
+    /// 3. 如果获取失败，返回 false 让调用方使用回退策略
     pub async fn fetch_and_lock_with_realtime_quota(
         &self,
         email: &str,
         reason: crate::proxy::rate_limit::RateLimitReason,
-        model: Option<String>,
     ) -> bool {
         // 1. 从 tokens 中获取该账号的 access_token
         let access_token = {
@@ -700,7 +642,7 @@ impl TokenManager {
         let access_token = match access_token {
             Some(t) => t,
             None => {
-                tracing::warn!("无法找到账号 {} 的 access_token,无法实时刷新配额", email);
+                tracing::warn!("无法找到账号 {} 的 access_token，无法实时刷新配额", email);
                 return false;
             }
         };
@@ -722,10 +664,10 @@ impl TokenManager {
                 
                 if let Some(reset_time_str) = earliest_reset {
                     tracing::info!(
-                        "账号 {} 实时配额刷新成功,reset_time: {}",
+                        "账号 {} 实时配额刷新成功，reset_time: {}",
                         email, reset_time_str
                     );
-                    self.rate_limit_tracker.set_lockout_until_iso(email, reset_time_str, reason, model)
+                    self.rate_limit_tracker.set_lockout_until_iso(email, reset_time_str, reason)
                 } else {
                     tracing::warn!("账号 {} 配额刷新成功但未找到 reset_time", email);
                     false
@@ -738,35 +680,27 @@ impl TokenManager {
         }
     }
     
-    /// 标记账号限流(异步版本,支持实时配额刷新)
+    /// 标记账号限流（异步版本，支持实时配额刷新）
     /// 
-    /// 三级降级策略:
-    /// 1. 优先: API 返回 quotaResetDelay → 直接使用
-    /// 2. 次优: 实时刷新配额 → 获取最新 reset_time
-    /// 3. 保底: 使用本地缓存配额 → 读取账号文件
-    /// 4. 兜底: 指数退避策略 → 默认锁定时间
-    /// 
-    /// # 参数
-    /// - `model`: 可选的模型名称,用于模型级别限流。传入实际使用的模型可以避免不同模型配额互相影响
+    /// 三级降级策略：
+    /// 1. 优先：API 返回 quotaResetDelay → 直接使用
+    /// 2. 次优：实时刷新配额 → 获取最新 reset_time
+    /// 3. 保底：使用本地缓存配额 → 读取账号文件
+    /// 4. 兜底：指数退避策略 → 默认锁定时间
     pub async fn mark_rate_limited_async(
         &self,
         account_id: &str,
         status: u16,
         retry_after_header: Option<&str>,
         error_body: &str,
-        model: Option<&str>,  // 🆕 新增模型参数
     ) {
         // 检查 API 是否返回了精确的重试时间
         let has_explicit_retry_time = retry_after_header.is_some() || 
             error_body.contains("quotaResetDelay");
         
         if has_explicit_retry_time {
-            // API 返回了精确时间(quotaResetDelay),直接使用,无需实时刷新
-            if let Some(m) = model {
-                tracing::debug!("账号 {} 的模型 {} 的 429 响应包含 quotaResetDelay,直接使用 API 返回的时间", account_id, m);
-            } else {
-                tracing::debug!("账号 {} 的 429 响应包含 quotaResetDelay,直接使用 API 返回的时间", account_id);
-            }
+            // API 返回了精确时间（quotaResetDelay），直接使用，无需实时刷新
+            tracing::debug!("账号 {} 的 429 响应包含 quotaResetDelay，直接使用 API 返回的时间", account_id);
             self.rate_limit_tracker.parse_from_error(
                 account_id,
                 status,
@@ -785,26 +719,21 @@ impl TokenManager {
             crate::proxy::rate_limit::RateLimitReason::Unknown
         };
         
-        // API 未返回 quotaResetDelay,需要实时刷新配额获取精确锁定时间
-        if let Some(m) = model {
-            tracing::info!("账号 {} 的模型 {} 的 429 响应未包含 quotaResetDelay,尝试实时刷新配额...", account_id, m);
-        } else {
-            tracing::info!("账号 {} 的 429 响应未包含 quotaResetDelay,尝试实时刷新配额...", account_id);
-        }
-        
-        if self.fetch_and_lock_with_realtime_quota(account_id, reason, model.map(|s| s.to_string())).await {
+        // API 未返回 quotaResetDelay，需要实时刷新配额获取精确锁定时间
+        tracing::info!("账号 {} 的 429 响应未包含 quotaResetDelay，尝试实时刷新配额...", account_id);
+        if self.fetch_and_lock_with_realtime_quota(account_id, reason).await {
             tracing::info!("账号 {} 已使用实时配额精确锁定", account_id);
             return;
         }
         
-        // 实时刷新失败,尝试使用本地缓存的配额刷新时间
-        if self.set_precise_lockout(account_id, reason, model.map(|s| s.to_string())) {
+        // 实时刷新失败，尝试使用本地缓存的配额刷新时间
+        if self.set_precise_lockout(account_id, reason) {
             tracing::info!("账号 {} 已使用本地缓存配额锁定", account_id);
             return;
         }
         
-        // 都失败了,回退到指数退避策略
-        tracing::warn!("账号 {} 无法获取配额刷新时间,使用指数退避策略", account_id);
+        // 都失败了，回退到指数退避策略
+        tracing::warn!("账号 {} 无法获取配额刷新时间，使用指数退避策略", account_id);
         self.rate_limit_tracker.parse_from_error(
             account_id,
             status,

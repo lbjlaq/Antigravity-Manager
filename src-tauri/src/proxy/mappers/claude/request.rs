@@ -435,7 +435,7 @@ fn has_valid_signature_for_function_calls(
 }
 
 /// 构建 System Instruction (支持动态身份映射与 Prompt 隔离)
-fn build_system_instruction(system: &Option<SystemPrompt>, _model_name: &str) -> Option<Value> {
+fn build_system_instruction(system: &Option<SystemPrompt>, model_name: &str) -> Option<Value> {
     let mut parts = Vec::new();
 
     // [NEW] Antigravity 身份指令 (原始简化版)
