@@ -178,6 +178,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub custom_mapping: std::collections::HashMap<String, String>,
 
+    /// 系统提示词替换表 (key: 原始文本, value: 替换后文本)
+    #[serde(default)]
+    pub system_prompt_replacements: std::collections::HashMap<String, String>,
+
     /// API 请求超时时间(秒)
     #[serde(default = "default_request_timeout")]
     pub request_timeout: u64,
@@ -222,6 +226,7 @@ impl Default for ProxyConfig {
             api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),
             auto_start: false,
             custom_mapping: std::collections::HashMap::new(),
+            system_prompt_replacements: std::collections::HashMap::new(),
             request_timeout: default_request_timeout(),
             enable_logging: false, // 默认关闭，节省性能
             upstream_proxy: UpstreamProxyConfig::default(),
