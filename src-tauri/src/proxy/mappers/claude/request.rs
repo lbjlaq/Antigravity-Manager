@@ -111,6 +111,14 @@ pub fn transform_claude_request_in(
     claude_req: &ClaudeRequest,
     project_id: &str,
 ) -> Result<Value, String> {
+    // [DEBUG] Log incoming request parameters
+    tracing::info!(
+        "[Claude-Request] Incoming: model={}, max_tokens={:?}, thinking={:?}",
+        claude_req.model,
+        claude_req.max_tokens,
+        claude_req.thinking.as_ref().map(|t| format!("type={}, budget={:?}", t.type_, t.budget_tokens))
+    );
+
     // [CRITICAL FIX] 预先清理所有消息中的 cache_control 字段
     // 这解决了 VS Code 插件等客户端在多轮对话中将历史消息的 cache_control 字段
     // 原封不动发回导致的 "Extra inputs are not permitted" 错误
@@ -951,6 +959,10 @@ fn build_generation_config(
                 if is_flash_model {
                     budget = budget.min(24576);
                 }
+                tracing::info!(
+                    "[Generation-Config] Setting thinkingBudget: original={}, clamped={}, model={}",
+                    budget_tokens, budget, mapped_model
+                );
                 thinking_config["thinkingBudget"] = json!(budget);
             }
 
@@ -1039,6 +1051,17 @@ fn build_generation_config(
     };
 
     config["maxOutputTokens"] = json!(max_output_tokens);
+
+    // [DEBUG] Log generation config for troubleshooting
+    tracing::info!(
+        "[Generation-Config] Final config: maxOutputTokens={}, thinking_enabled={}, has_thinking_config={}",
+        max_output_tokens,
+        is_thinking_enabled,
+        config.get("thinkingConfig").is_some()
+    );
+    if let Some(thinking_cfg) = config.get("thinkingConfig") {
+        tracing::info!("[Generation-Config] thinkingConfig: {}", serde_json::to_string(&thinking_cfg).unwrap_or_default());
+    }
 
     // [优化] 设置全局停止序列,防止流式输出冗余
     config["stopSequences"] = json!([
