@@ -189,7 +189,9 @@ fn determine_retry_strategy(
         400 if !retried_without_thinking
             && (error_text.contains("Invalid `signature`")
                 || error_text.contains("thinking.signature")
-                || error_text.contains("thinking.thinking")) =>
+                || error_text.contains("thinking.thinking")
+                || error_text.contains("Corrupted thought signature")
+                || error_text.contains("INVALID_ARGUMENT")) =>
         {
             // 固定 200ms 延迟后重试
             RetryStrategy::FixedDelay(Duration::from_millis(200))
