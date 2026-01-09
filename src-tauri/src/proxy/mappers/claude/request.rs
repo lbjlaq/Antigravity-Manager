@@ -178,10 +178,11 @@ pub fn transform_claude_request_in(
         });
 
     // [NEW FIX] Check if target model supports thinking
-    // Only models with "-thinking" suffix or Claude models support thinking
-    // Regular Gemini models (gemini-2.5-flash, gemini-2.5-pro) do NOT support thinking
-    let target_model_supports_thinking = mapped_model.contains("-thinking") 
-        || mapped_model.starts_with("claude-");
+    // Claude models: thinking via "-thinking" suffix in model name
+    // Gemini models: thinking via thinkingConfig parameter in API request (NOT in model name!)
+    let target_model_supports_thinking = mapped_model.contains("-thinking")
+        || mapped_model.starts_with("claude-")
+        || mapped_model.starts_with("gemini-");
     
     if is_thinking_enabled && !target_model_supports_thinking {
         tracing::warn!(
