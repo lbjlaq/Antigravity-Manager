@@ -17,6 +17,7 @@
 
 | Document | Description | When to use |
 |----------|-------------|-------------|
+| **[EXTENDED_THINKING_FIXES.md](./EXTENDED_THINKING_FIXES.md)** ⭐ | Critical bug fixes & solutions (effortLevel, signature errors) | Understand problem resolutions, implementation details |
 | **[THINKING_MODELS.md](./THINKING_MODELS.md)** | Extended Thinking implementation details | Understand Claude vs Gemini thinking, debug 404s |
 | **[TESTING_GUIDE.md](./TESTING_GUIDE.md)** | Comprehensive test suite (19 tests) | Run tests, add new test cases |
 | **[SESSION_ANALYSIS.md](./SESSION_ANALYSIS.md)** | Real-world testing analysis & metrics | Review session statistics, root cause analysis |
@@ -46,8 +47,10 @@
 
 | Problem | Document | Section |
 |---------|----------|---------|
+| **effortLevel 400 errors** | [EXTENDED_THINKING_FIXES.md](./EXTENDED_THINKING_FIXES.md) | "Проблема #1: effortLevel" |
+| **Corrupted thought signature** | [EXTENDED_THINKING_FIXES.md](./EXTENDED_THINKING_FIXES.md) | "Проблема #2: Corrupted thought signature" |
 | **404 Not Found errors** | [THINKING_MODELS.md](./THINKING_MODELS.md) | "❌ Распространенная ошибка" |
-| **Claude Opus timeouts** | [FALLBACK_GUIDE.md](./FALLBACK_GUIDE.md) | "🐛 Troubleshooting" |
+| **Claude Opus timeouts** | [EXTENDED_THINKING_FIXES.md](./EXTENDED_THINKING_FIXES.md) | "Проблема #3: Claude Opus Thinking timeout" |
 | **Gemini thinking not working** | [THINKING_MODELS.md](./THINKING_MODELS.md) | "🔧 Реализация в коде" |
 | **Test failures** | [TESTING_GUIDE.md](./TESTING_GUIDE.md) | "Troubleshooting" |
 | **Low success rates** | [SESSION_ANALYSIS.md](./SESSION_ANALYSIS.md) | "🔍 Анализ проблемы зависаний" |
@@ -58,13 +61,14 @@
 
 | Document | Size | Sections | Last Updated |
 |----------|------|----------|--------------|
+| EXTENDED_THINKING_FIXES.md | ~50 KB | 9 major | 2026-01-09 |
 | FALLBACK_GUIDE.md | ~15 KB | 10 major | 2026-01-09 |
 | MODELS_REFERENCE.md | ~25 KB | 8 major | 2026-01-09 |
 | THINKING_MODELS.md | ~12 KB | 7 major | 2026-01-09 |
 | TESTING_GUIDE.md | ~10 KB | 6 major | 2026-01-09 |
 | SESSION_ANALYSIS.md | ~10 KB | 9 major | 2026-01-09 |
 
-**Total:** ~72 KB of technical documentation
+**Total:** ~122 KB of technical documentation
 
 ---
 
@@ -156,7 +160,12 @@ MODELS_REFERENCE.md (Entry Point)
 
 ## 🆕 Recent Updates
 
-### v3.3.20 (2026-01-09)
+### v3.3.20 (2026-01-09) - Critical Fixes
+
+- ✅ **NEW:** EXTENDED_THINKING_FIXES.md - Comprehensive problem resolution documentation
+- ✅ **FIX:** effortLevel parameter mapping (effort → temperature) - 100% success rate
+- ✅ **FIX:** Corrupted thought signature retry logic - automatic recovery
+- ✅ **FIX:** Claude Opus Thinking timeout fallback - 93.7% improvement
 - ✅ **NEW:** FALLBACK_GUIDE.md - Comprehensive fallback documentation
 - ✅ **UPDATED:** THINKING_MODELS.md - Added fallback mechanics section
 - ✅ **UPDATED:** SESSION_ANALYSIS.md - Implementation changelog
