@@ -7,7 +7,8 @@ use crate::proxy::mappers::gemini::{wrap_request, unwrap_response};
 use crate::proxy::server::AppState;
 use crate::proxy::session_manager::SessionManager;
  
-const MAX_RETRY_ATTEMPTS: usize = 3;
+// Increase to allow rotation across larger account pools.
+const MAX_RETRY_ATTEMPTS: usize = 20;
  
 /// 处理 generateContent 和 streamGenerateContent
 /// 路径参数: model_name, method (e.g. "gemini-pro", "generateContent")
@@ -36,64 +37,80 @@ pub async fn handle_generate(
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
-    
+
+    // 提取 tools 列表以进行联网探测 (Gemini 风格可能是嵌套的)
+    let tools_val: Option<Vec<Value>> = body.get("tools").and_then(|t| t.as_array()).map(|arr| {
+        let mut flattened = Vec::new();
+        for tool_entry in arr {
+            if let Some(decls) = tool_entry.get("functionDeclarations").and_then(|v| v.as_array()) {
+                flattened.extend(decls.iter().cloned());
+            } else {
+                flattened.push(tool_entry.clone());
+            }
+        }
+        flattened
+    });
+
+    // 解析模型策略（支持 strategy:<id>）
+    let route_plan = crate::proxy::common::model_mapping::resolve_model_route_plan(
+        &model_name,
+        &*state.custom_mapping.read().await,
+        &*state.openai_mapping.read().await,
+        &*state.anthropic_mapping.read().await,
+        &*state.model_strategies.read().await,
+        false, // Gemini 请求不应用 Claude 家族映射
+    );
+    let mut model_candidates = route_plan.candidates();
+    let max_models = route_plan.max_models();
+    if model_candidates.is_empty() {
+        model_candidates.push(model_name.clone());
+    }
+    model_candidates.truncate(max_models);
+
+    // 提取 SessionId (粘性指纹)
+    let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
+
     let mut last_error = String::new();
 
-    for attempt in 0..max_attempts {
-        // 3. 模型路由解析
-        let mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
-            &model_name,
-            &*state.custom_mapping.read().await,
-        );
-        // 提取 tools 列表以进行联网探测 (Gemini 风格可能是嵌套的)
-        let tools_val: Option<Vec<Value>> = body.get("tools").and_then(|t| t.as_array()).map(|arr| {
-            let mut flattened = Vec::new();
-            for tool_entry in arr {
-                if let Some(decls) = tool_entry.get("functionDeclarations").and_then(|v| v.as_array()) {
-                    flattened.extend(decls.iter().cloned());
-                } else {
-                    flattened.push(tool_entry.clone());
+    for (model_index, mapped_model) in model_candidates.iter().enumerate() {
+        let is_last_model = model_index + 1 >= model_candidates.len();
+        let mut switched_model = false;
+
+        // 3. 模型路由与配置解析
+        let config = crate::proxy::mappers::common_utils::resolve_request_config(&model_name, mapped_model, &tools_val);
+
+        for attempt in 0..max_attempts {
+            // 4. 获取 Token (使用准确的 request_type)
+            // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
+            let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, attempt > 0, Some(&session_id)).await {
+                Ok(t) => t,
+                Err(e) => {
+                    return Err((StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)));
                 }
-            }
-            flattened
-        });
+            };
 
-        let config = crate::proxy::mappers::common_utils::resolve_request_config(&model_name, &mapped_model, &tools_val);
+            info!("✓ Using account: {} (type: {})", email, config.request_type);
 
-        // 4. 获取 Token (使用准确的 request_type)
-        // 提取 SessionId (粘性指纹)
-        let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
-
-        // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, attempt > 0, Some(&session_id)).await {
-            Ok(t) => t,
-            Err(e) => {
-                return Err((StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)));
-            }
-        };
-
-        info!("✓ Using account: {} (type: {})", email, config.request_type);
-
-        // 5. 包装请求 (project injection)
-        let wrapped_body = wrap_request(&body, &project_id, &mapped_model);
+            // 5. 包装请求 (project injection)
+            let wrapped_body = wrap_request(&body, &project_id, mapped_model);
 
         // 5. 上游调用
         let query_string = if is_stream { Some("alt=sse") } else { None };
         let upstream_method = if is_stream { "streamGenerateContent" } else { "generateContent" };
 
-        let response = match upstream
-            .call_v1_internal(upstream_method, &access_token, wrapped_body, query_string)
-            .await {
-                Ok(r) => r,
-                Err(e) => {
-                    last_error = e.clone();
-                    debug!("Gemini Request failed on attempt {}/{}: {}", attempt + 1, max_attempts, e);
-                    continue;
-                }
-            };
+            let response = match upstream
+                .call_v1_internal(upstream_method, &access_token, wrapped_body, query_string)
+                .await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        last_error = e.clone();
+                        debug!("Gemini Request failed on attempt {}/{}: {}", attempt + 1, max_attempts, e);
+                        continue;
+                    }
+                };
 
         let status = response.status();
-        if status.is_success() {
+            if status.is_success() {
             // 6. 响应处理
             if is_stream {
                 use axum::body::Body;
@@ -163,7 +180,7 @@ pub async fn handle_generate(
                     .header("Cache-Control", "no-cache")
                     .header("Connection", "keep-alive")
                     .header("X-Account-Email", &email)
-                    .header("X-Mapped-Model", &mapped_model)
+                    .header("X-Mapped-Model", mapped_model.as_str())
                     .body(body)
                     .unwrap()
                     .into_response());
@@ -189,6 +206,11 @@ pub async fn handle_generate(
             // 记录限流信息 (全局同步)
             token_manager.mark_rate_limited(&email, status_code, retry_after.as_deref(), &error_text);
 
+            if route_plan.is_capacity_first() && !is_last_model {
+                switched_model = true;
+                break;
+            }
+
             // 只有明确包含 "QUOTA_EXHAUSTED" 才停止，避免误判上游的频率限制提示 (如 "check quota")
             if status_code == 429 && error_text.contains("QUOTA_EXHAUSTED") {
                 error!("Gemini Quota exhausted (429) on account {} attempt {}/{}, stopping to protect pool.", email, attempt + 1, max_attempts);
@@ -202,6 +224,28 @@ pub async fn handle_generate(
         // 404 等由于模型配置或路径错误的 HTTP 异常，直接报错，不进行无效轮换
         error!("Gemini Upstream non-retryable error {}: {}", status_code, error_text);
         return Err((status, error_text));
+        }
+        if switched_model {
+            if route_plan.policy.stickiness == crate::proxy::config::ModelStickiness::Weak {
+                token_manager.clear_session_binding(&session_id);
+            }
+            tracing::warn!(
+                "[Router] Strategy fallback (Gemini): {} -> {}",
+                mapped_model,
+                model_candidates.get(model_index + 1).unwrap_or(mapped_model)
+            );
+            continue;
+        }
+        if !is_last_model {
+            if route_plan.policy.stickiness == crate::proxy::config::ModelStickiness::Weak {
+                token_manager.clear_session_binding(&session_id);
+            }
+            tracing::warn!(
+                "[Router] Strategy fallback (Gemini): {} -> {}",
+                mapped_model,
+                model_candidates.get(model_index + 1).unwrap_or(mapped_model)
+            );
+        }
     }
 
     Ok((StatusCode::TOO_MANY_REQUESTS, format!("All accounts exhausted. Last error: {}", last_error)).into_response())

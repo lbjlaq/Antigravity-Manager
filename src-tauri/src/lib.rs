@@ -1,20 +1,26 @@
-mod models;
-mod modules;
-mod commands;
-mod utils;
-mod proxy;  // 反代服务模块
+pub mod models;
+pub mod modules;
+#[cfg(feature = "ui")]
+pub mod commands;
+pub mod utils;
+pub mod proxy;  // 反代服务模块
+pub mod services; // Shared services
 pub mod error;
 
+
+#[cfg(feature = "ui")]
 use tauri::Manager;
 use modules::logger;
 use tracing::{info, error};
 
 // 测试命令
+#[cfg(feature = "ui")]
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[cfg(feature = "ui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化日志

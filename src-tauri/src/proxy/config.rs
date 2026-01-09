@@ -82,6 +82,59 @@ impl Default for ZaiMcpConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelPriority {
+    AccuracyFirst,
+    CapacityFirst,
+}
+
+impl Default for ModelPriority {
+    fn default() -> Self {
+        Self::AccuracyFirst
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelStickiness {
+    Strong,
+    Weak,
+}
+
+impl Default for ModelStickiness {
+    fn default() -> Self {
+        Self::Strong
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelFallbackPolicy {
+    #[serde(default)]
+    pub model_priority: ModelPriority,
+    #[serde(default)]
+    pub stickiness: ModelStickiness,
+    #[serde(default)]
+    pub max_model_hops: Option<usize>,
+}
+
+impl Default for ModelFallbackPolicy {
+    fn default() -> Self {
+        Self {
+            model_priority: ModelPriority::AccuracyFirst,
+            stickiness: ModelStickiness::Strong,
+            max_model_hops: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelStrategy {
+    pub candidates: Vec<String>,
+    #[serde(default)]
+    pub policy: ModelFallbackPolicy,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZaiConfig {
     #[serde(default)]
@@ -174,6 +227,14 @@ pub struct ProxyConfig {
     /// 是否自动启动
     pub auto_start: bool,
 
+    /// Anthropic 模型映射表 (key: Claude模型名, value: Gemini模型名)
+    #[serde(default)]
+    pub anthropic_mapping: std::collections::HashMap<String, String>,
+
+    /// OpenAI 模型映射表 (key: OpenAI模型组, value: Gemini模型名)
+    #[serde(default)]
+    pub openai_mapping: std::collections::HashMap<String, String>,
+
     /// 自定义精确模型映射表 (key: 原始模型名, value: 目标模型名)
     #[serde(default)]
     pub custom_mapping: std::collections::HashMap<String, String>,
@@ -181,6 +242,10 @@ pub struct ProxyConfig {
     /// API 请求超时时间(秒)
     #[serde(default = "default_request_timeout")]
     pub request_timeout: u64,
+
+    /// 可复用的模型策略池 (strategy_id -> strategy)
+    #[serde(default)]
+    pub model_strategies: std::collections::HashMap<String, ModelStrategy>,
 
     /// 是否开启请求日志记录 (监控)
     #[serde(default)]
@@ -221,8 +286,11 @@ impl Default for ProxyConfig {
             port: 8045,
             api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),
             auto_start: false,
+            anthropic_mapping: std::collections::HashMap::new(),
+            openai_mapping: std::collections::HashMap::new(),
             custom_mapping: std::collections::HashMap::new(),
             request_timeout: default_request_timeout(),
+            model_strategies: std::collections::HashMap::new(),
             enable_logging: false, // 默认关闭，节省性能
             upstream_proxy: UpstreamProxyConfig::default(),
             zai: ZaiConfig::default(),

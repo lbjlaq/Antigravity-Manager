@@ -18,6 +18,9 @@ use std::sync::atomic::AtomicUsize;
 pub struct AppState {
     pub token_manager: Arc<TokenManager>,
     pub custom_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    pub openai_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    pub anthropic_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    pub model_strategies: Arc<tokio::sync::RwLock<std::collections::HashMap<String, crate::proxy::config::ModelStrategy>>>,
     #[allow(dead_code)]
     pub request_timeout: u64, // API 请求超时(秒)
     #[allow(dead_code)]
@@ -36,6 +39,9 @@ pub struct AppState {
 pub struct AxumServer {
     shutdown_tx: Option<oneshot::Sender<()>>,
     custom_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    openai_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    anthropic_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    model_strategies: Arc<tokio::sync::RwLock<std::collections::HashMap<String, crate::proxy::config::ModelStrategy>>>,
     proxy_state: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
     security_state: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,
     zai_state: Arc<RwLock<crate::proxy::ZaiConfig>>,
@@ -47,7 +53,19 @@ impl AxumServer {
             let mut m = self.custom_mapping.write().await;
             *m = config.custom_mapping.clone();
         }
-        tracing::debug!("模型映射 (Custom) 已全量热更新");
+        {
+            let mut m = self.openai_mapping.write().await;
+            *m = config.openai_mapping.clone();
+        }
+        {
+            let mut m = self.anthropic_mapping.write().await;
+            *m = config.anthropic_mapping.clone();
+        }
+        {
+            let mut m = self.model_strategies.write().await;
+            *m = config.model_strategies.clone();
+        }
+        tracing::debug!("模型映射 (Anthropic/OpenAI/Custom/Strategy) 已全量热更新");
     }
 
     /// 更新代理配置
@@ -73,7 +91,10 @@ impl AxumServer {
         host: String,
         port: u16,
         token_manager: Arc<TokenManager>,
+        anthropic_mapping: std::collections::HashMap<String, String>,
+        openai_mapping: std::collections::HashMap<String, String>,
         custom_mapping: std::collections::HashMap<String, String>,
+        model_strategies: std::collections::HashMap<String, crate::proxy::config::ModelStrategy>,
         _request_timeout: u64,
         upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
         security_config: crate::proxy::ProxySecurityConfig,
@@ -83,6 +104,9 @@ impl AxumServer {
 
     ) -> Result<(Self, tokio::task::JoinHandle<()>), String> {
         let custom_mapping_state = Arc::new(tokio::sync::RwLock::new(custom_mapping));
+        let openai_mapping_state = Arc::new(tokio::sync::RwLock::new(openai_mapping));
+        let anthropic_mapping_state = Arc::new(tokio::sync::RwLock::new(anthropic_mapping));
+        let model_strategies_state = Arc::new(tokio::sync::RwLock::new(model_strategies));
 	        let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
 	        let security_state = Arc::new(RwLock::new(security_config));
 	        let zai_state = Arc::new(RwLock::new(zai_config));
@@ -94,6 +118,9 @@ impl AxumServer {
 	        let state = AppState {
 	            token_manager: token_manager.clone(),
 	            custom_mapping: custom_mapping_state.clone(),
+                openai_mapping: openai_mapping_state.clone(),
+                anthropic_mapping: anthropic_mapping_state.clone(),
+                model_strategies: model_strategies_state.clone(),
 	            request_timeout: 300, // 5分钟超时
             thought_signature_map: Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
@@ -199,6 +226,9 @@ impl AxumServer {
         let server_instance = Self {
             shutdown_tx: Some(shutdown_tx),
             custom_mapping: custom_mapping_state.clone(),
+            openai_mapping: openai_mapping_state.clone(),
+            anthropic_mapping: anthropic_mapping_state.clone(),
+            model_strategies: model_strategies_state.clone(),
             proxy_state,
             security_state,
             zai_state,

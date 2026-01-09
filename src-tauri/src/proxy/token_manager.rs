@@ -756,6 +756,21 @@ impl TokenManager {
         error_body: &str,
         model: Option<&str>,  // 🆕 新增模型参数
     ) {
+        if status == 429 {
+            let body_len = error_body.len();
+            let mut preview: String = error_body.chars().take(2000).collect();
+            if body_len > preview.len() {
+                preview.push_str("...(truncated)");
+            }
+            let preview = preview.replace('\n', "\\n");
+            tracing::warn!(
+                "账号 {} 429 Body (len={}, retry_after={:?}): {}",
+                account_id,
+                body_len,
+                retry_after_header,
+                preview
+            );
+        }
         // 检查 API 是否返回了精确的重试时间
         let has_explicit_retry_time = retry_after_header.is_some() || 
             error_body.contains("quotaResetDelay");

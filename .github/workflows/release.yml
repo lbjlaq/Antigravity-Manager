@@ -56,6 +56,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Build universal CLI sidecar
+        if: contains(matrix.args, 'universal-apple-darwin')
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml --release --target aarch64-apple-darwin --bin agy-tool-cli
+          cargo build --manifest-path src-tauri/Cargo.toml --release --target x86_64-apple-darwin --bin agy-tool-cli
+          mkdir -p src-tauri/target/universal-apple-darwin/release
+          lipo -create -output src-tauri/target/universal-apple-darwin/release/agy-tool-cli \
+            src-tauri/target/aarch64-apple-darwin/release/agy-tool-cli \
+            src-tauri/target/x86_64-apple-darwin/release/agy-tool-cli
+          chmod +x src-tauri/target/universal-apple-darwin/release/agy-tool-cli
+
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:

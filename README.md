@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业的 AI 账号管理与协议反代系统 (v3.3.20)
+> 专业的 AI 账号管理与协议反代系统 (v3.3.21)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-3.3.20-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-3.3.21-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -182,6 +182,16 @@ print(response.choices[0].message.content)
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v3.3.21 (2026-01-09)**:
+        - **模型策略池 (Strategy Pool) & 路由策略**:
+            - 支持在映射中引用 `strategy:<id>`，统一定义“主模型 + 回退序列 + 策略”。
+            - 默认 **先轮账号，再切模型**；支持 **优先容量**（被限流即切模型）与 **弱粘性**（切模型清理会话）。
+        - **多协议一致性**:
+            - Claude / OpenAI / Gemini 全部按策略候选模型序列轮询，支持统一的回退触发条件。
+        - **前端配置增强**:
+            - 新增“策略池”编辑器与映射选择策略的 UI，支持创建/编辑/删除与即时保存。
+        - **测试补充**:
+            - 添加策略解析与家族映射联动的单元/集成测试。
     *   **v3.3.20 (2026-01-09)**:
         - **请求超时配置优化 (Request Timeout Enhancement) - 支持长时间文本处理 (核心致谢 @xiaoyaocp Issue #473)**:
             - **提升超时上限**: 将服务配置中的请求超时最大值从 600 秒（10 分钟）提升到 3600 秒（1 小时）。

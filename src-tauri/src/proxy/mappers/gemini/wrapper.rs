@@ -143,7 +143,7 @@ pub fn unwrap_response(response: &Value) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests_identity {
     use super::*;
 
     #[test]

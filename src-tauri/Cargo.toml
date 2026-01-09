@@ -1,10 +1,11 @@
 [package]
 name = "antigravity_tools"
-version = "3.3.20"
+version = "3.3.23"
 description = "A Tauri App"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"
 edition = "2021"
+default-run = "antigravity_tools"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -18,15 +19,26 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = ["ui"]
+ui = [
+    "dep:tauri",
+    "dep:tauri-plugin-opener",
+    "dep:tauri-plugin-dialog",
+    "dep:tauri-plugin-fs",
+    "dep:tauri-plugin-autostart",
+    "dep:tauri-plugin-single-instance",
+]
+
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
-tauri-plugin-opener = "2"
+tauri = { version = "2", features = ["tray-icon", "image-png"], optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = "0.4"
 dirs = "5.0"
-reqwest = { version = "0.12", features = ["json", "stream", "socks"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "socks", "rustls-tls"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -34,8 +46,8 @@ base64 = "0.22"
 sysinfo = "0.31"
 tokio = { version = "1", features = ["full"] }
 url = "2.5.7"
-tauri-plugin-dialog = "2.4.2"
-tauri-plugin-fs = "2.4.4"
+tauri-plugin-dialog = { version = "2.4.2", optional = true }
+tauri-plugin-fs = { version = "2.4.4", optional = true }
 image = "0.25.9"
 thiserror = "2.0.17"
 
@@ -57,8 +69,13 @@ regex = "1.12.2"                    # Duration 解析
 once_cell = "1.19"                  # 静态初始化 (模型映射表)
 pin-project = "1.1"                 # Pin 投影辅助
 bytes = "1.5"                       # SSE 字节操作
-tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
+tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"], optional = true }
 tracing-appender = "0.2.4"
 tracing-log = "0.2.0"
-tauri-plugin-autostart = "2.5.1"
+tauri-plugin-autostart = { version = "2.5.1", optional = true }
 sha2 = "0.10"
+clap = { version = "4.4", features = ["derive"] }
+
+[[bin]]
+name = "agy-tool-cli"
+path = "src/bin/cli.rs"
