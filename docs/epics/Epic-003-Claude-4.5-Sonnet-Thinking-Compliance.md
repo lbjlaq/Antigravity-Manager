@@ -98,7 +98,7 @@ Achieve **100% compliance** with Google Antigravity v1.13.3 through:
 
 ## Implementation Phases
 
-### Phase 1: Critical Compliance (P0) - 8 hours
+### Phase 1: Critical Compliance (P0) - 7 hours
 
 **Goal**: Achieve anti-detection compliance
 
@@ -106,8 +106,7 @@ Achieve **100% compliance** with Google Antigravity v1.13.3 through:
 1. [Story-003-01](../stories/Story-003-01-model-id-constant.md): Add Model ID Constant (1.5h)
 2. [Story-003-02](../stories/Story-003-02-api-model-providers.md): Add API/Model Provider Constants (1.5h)
 3. [Story-003-03](../stories/Story-003-03-antigravity-metadata.md): Add ideType ANTIGRAVITY Metadata (2h)
-4. [Story-003-04](../stories/Story-003-04-extended-session-metadata.md): Add Extended Session Metadata (1h)
-5. [Story-003-05](../stories/Story-003-05-jwt-signature-validation.md): JWT Signature Validation (2h)
+4. [Story-003-05](../stories/Story-003-05-jwt-signature-validation.md): JWT Signature Validation (2h)
 
 **Success Criteria**:
 - All requests include modelId: 334, apiProvider: 26, modelProvider: 3
@@ -120,7 +119,7 @@ Achieve **100% compliance** with Google Antigravity v1.13.3 through:
 **Goal**: Match expected validation behavior
 
 **Stories**:
-6. CLAUDE-THINKING-001-06: Budget Constraint Warnings (0.5h)
+6. [Story-003-06](../stories/Story-003-06-budget-constraint-warnings.md): Budget Constraint Warnings (0.5h)
 7. CLAUDE-THINKING-001-07: Position Enforcement Logging (1h)
 8. CLAUDE-THINKING-001-08: Enhanced Violation Metrics (2h)
 
@@ -143,14 +142,16 @@ Achieve **100% compliance** with Google Antigravity v1.13.3 through:
 - Recitation policy configured
 - Compliance score: 95% → 100%
 
-### Phase 4: Monitoring & Validation (P3) - 1 hour
+### Phase 4: Enhancement & Monitoring (P3) - 2 hours
 
-**Goal**: Comprehensive observability
+**Goal**: Extended context and comprehensive observability
 
 **Stories**:
+11. [Story-003-04](../stories/Story-003-04-extended-session-metadata.md): Add Extended Session Metadata (1h)
 12. CLAUDE-THINKING-001-12: Compliance Monitoring Dashboard (1h)
 
 **Success Criteria**:
+- workspace_id and cloudaicompanion_project fields supported
 - Real-time compliance metrics
 - Detection failure alerts
 - 100% compliance validated
@@ -189,17 +190,17 @@ Achieve **100% compliance** with Google Antigravity v1.13.3 through:
 ### Total Stories: 12 (estimated 15-20 when fully broken down)
 ### Total Effort: 17.5 hours (~2.2 days)
 
-**P0 Stories** (8h):
-- Stories 1-5: Critical compliance (model info, metadata, JWT validation)
+**P0 Stories** (7h):
+- Stories 1-3, 5: Critical compliance (model info, metadata, JWT validation)
 
 **P1 Stories** (3.5h):
 - Stories 6-8: Validation and logging enhancements
 
 **P2 Stories** (5h):
-- Stories 9-11: Feature parity (tool modes, grounding)
+- Stories 9-10: Feature parity (tool modes, grounding, testing)
 
-**P3 Stories** (1h):
-- Story 12: Monitoring and observability
+**P3 Stories** (2h):
+- Stories 4, 12: Extended session metadata, monitoring and observability
 
 ---
 
@@ -276,3 +277,5 @@ Achieve **100% compliance** with Google Antigravity v1.13.3 through:
 | 2026-01-10 | Epic created | BMad Master |
 | 2026-01-10 | Stories 1-4 documented | BMad Master |
 | 2026-01-10 | Story 5 (JWT validation) added - P0 phase complete | BMad Master |
+| 2026-01-10 | Story-003-04 moved from P0 to P3 (correct priority alignment) | BMad Master |
+| 2026-01-10 | Story-003-06 (Budget Constraint Warnings) created | BMad Master |
