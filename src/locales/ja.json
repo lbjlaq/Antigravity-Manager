@@ -1,0 +1,613 @@
+{
+    "common": {
+        "loading": "読み込み中...",
+        "add": "追加",
+        "action": "アクション",
+        "save": "保存",
+        "saved": "正常に保存されました",
+        "cancel": "キャンセル",
+        "confirm": "確認",
+        "delete": "削除",
+        "edit": "編集",
+        "refresh": "更新",
+        "refreshing": "更新中...",
+        "export": "エクスポート",
+        "import": "インポート",
+        "success": "成功",
+        "error": "エラー",
+        "unknown": "不明",
+        "warning": "警告",
+        "info": "情報",
+        "details": "詳細",
+        "clear": "クリア",
+        "prev_page": "前へ",
+        "next_page": "次へ",
+        "pagination_info": "{{total}} 件中 {{start}} から {{end}} を表示",
+        "per_page": "ページあたり",
+        "items": "項目",
+        "accounts": "アカウント",
+        "enabled": "有効",
+        "disabled": "無効",
+        "tauri_api_not_loaded": "Tauri APIが読み込まれていません。アプリを再起動してください",
+        "environment_error": "環境エラー: {{error}}"
+    },
+    "nav": {
+        "dashboard": "ダッシュボード",
+        "accounts": "アカウント",
+        "proxy": "APIプロキシ",
+        "settings": "設定",
+        "theme_to_dark": "ダークモードに切り替え",
+        "theme_to_light": "ライトモードに切り替え",
+        "switch_to_english": "Englishに切り替え",
+        "switch_to_chinese": "简体中文に切り替え",
+        "switch_to_english_short": "EN",
+        "switch_to_chinese_short": "ZH"
+    },
+    "dashboard": {
+        "hello": "こんにちは 👋",
+        "refresh_quota": "クォータ更新",
+        "refreshing": "更新中...",
+        "total_accounts": "合計アカウント",
+        "avg_gemini": "平均Geminiクォータ",
+        "avg_gemini_image": "平均Gemini画像クォータ",
+        "avg_claude": "平均Claudeクォータ",
+        "low_quota_accounts": "低クォータアカウント",
+        "quota_sufficient": "クォータ十分",
+        "quota_low": "低クォータ",
+        "quota_desc": "クォータ < 20%",
+        "current_account": "現在のアカウント",
+        "switch_account": "アカウント切り替え",
+        "no_active_account": "アクティブなアカウントなし",
+        "best_accounts": "おすすめアカウント",
+        "best_account_recommendation": "最適アカウント",
+        "switch_best": "最適に切り替え",
+        "switch_successfully": "最適に切り替えました",
+        "view_all_accounts": "すべてのアカウントを表示",
+        "export_data": "データエクスポート",
+        "for_gemini": "Gemini用",
+        "for_claude": "Claude用",
+        "toast": {
+            "switch_success": "切り替えに成功しました！",
+            "switch_error": "アカウントの切り替えに失敗しました",
+            "refresh_success": "クォータの更新に成功しました",
+            "refresh_error": "更新に失敗しました",
+            "export_no_accounts": "エクスポートするアカウントがありません",
+            "export_success": "エクスポートに成功しました！保存先: {{path}}",
+            "export_error": "エクスポートに失敗しました"
+        }
+    },
+    "accounts": {
+        "search_placeholder": "メールアドレスで検索...",
+        "all": "すべて",
+        "available": "利用可能",
+        "low_quota": "低クォータ",
+        "ultra": "ULTRA",
+        "pro": "PRO",
+        "free": "FREE",
+        "add_account": "アカウント追加",
+        "refresh_all": "すべて更新",
+        "refresh_selected": "更新 ({{count}})",
+        "export_selected": "エクスポート ({{count}})",
+        "delete_selected": "削除 ({{count}})",
+        "current": "現在",
+        "current_badge": "現在",
+        "disabled": "無効",
+        "disabled_tooltip": "アカウントが無効です（refresh_tokenが失効または期限切れ）。再認証するかトークンを更新して再度有効にしてください。",
+        "proxy_disabled": "プロキシ無効",
+        "proxy_disabled_tooltip": "このアカウントは手動でプロキシが無効に設定されています。APIリクエストは処理しませんが、アプリ内では引き続き使用可能です。",
+        "enable_proxy": "プロキシを有効化",
+        "disable_proxy": "プロキシを無効化",
+        "enable_proxy_selected": "有効化 ({{count}})",
+        "disable_proxy_selected": "無効化 ({{count}})",
+        "proxy_disabled_reason_manual": "ユーザーにより手動で無効化",
+        "proxy_disabled_reason_batch": "一括で無効化",
+        "forbidden": "403",
+        "forbidden_badge": "403",
+        "forbidden_tooltip": "APIが403 Forbiddenを返しました。このアカウントにはGemini Code Assistの権限がありません",
+        "forbidden_msg": "アクセス禁止のため自動更新をスキップ",
+        "no_data": "データなし",
+        "last_used": "最終使用",
+        "reset_time": "リセット時間",
+        "switch_to": "このアカウントに切り替え",
+        "actions": "操作",
+        "details": {
+            "title": "クォータ詳細"
+        },
+        "toast": {
+            "proxy_enabled": "{{count}} 個のアカウントのプロキシを有効にしました",
+            "proxy_disabled": "{{count}} 個のアカウントのプロキシを無効にしました"
+        },
+        "add": {
+            "title": "アカウント追加",
+            "tabs": {
+                "oauth": "OAuth",
+                "token": "リフレッシュトークン",
+                "import": "DBインポート"
+            },
+            "oauth": {
+                "recommend": "推奨",
+                "desc": "デフォルトブラウザを開いてGoogleログインを行い、トークンを自動で取得・保存します。",
+                "btn_start": "OAuth開始",
+                "btn_waiting": "認証待ち...",
+                "btn_finish": "認証完了",
+                "copy_link": "認証リンクをコピー",
+                "copied": "コピーしました",
+                "link_label": "認証URL",
+                "link_click_to_copy": "クリックしてコピー"
+            },
+            "token": {
+                "label": "リフレッシュトークン",
+                "placeholder": "リフレッシュトークンをここに貼り付けてください（一括対応）\n\n対応形式:\n1. 単一トークン (1//...)\n2. JSON配列 (refresh_tokenフィールドを含む)\n3. トークンを含む任意のテキスト (自動抽出)",
+                "hint": "ヒント: 複数のトークンやJSON配列を貼り付けて一括インポートできます。",
+                "error_token": "リフレッシュトークンを入力してください",
+                "batch_progress": "{{total}} 個中 {{current}} 個のアカウントをインポート中...",
+                "batch_success": "{{count}} 個のアカウントを正常にインポートしました",
+                "batch_partial": "インポート完了: 成功 {{success}}, 失敗 {{fail}}",
+                "batch_fail": "インポートに失敗しました"
+            },
+            "import": {
+                "scheme_a": "プランA: IDEのDBから",
+                "scheme_a_desc": "ローカルのAntigravity DBから現在ログイン中のアカウントを自動読み込みします。",
+                "btn_db": "現在のアカウントをインポート",
+                "or": "または",
+                "scheme_b": "プランB: V1のバックアップから",
+                "scheme_b_desc": "~/.antigravity-agentのスキャンを行いV1のアカウントデータを取得します。",
+                "btn_v1": "V1から一括インポート",
+                "btn_custom_db": "カスタムDBをインポート"
+            },
+            "btn_cancel": "キャンセル",
+            "btn_confirm": "確定",
+            "oauth_error": "OAuth失敗: {{error}}",
+            "status": {
+                "error_token": "リフレッシュトークンを入力してください"
+            }
+        },
+        "table": {
+            "email": "メールアドレス",
+            "quota": "モデルクォータ",
+            "last_used": "最終使用",
+            "actions": "操作"
+        },
+        "drag_to_reorder": "ドラッグして並べ替え",
+        "empty": {
+            "title": "アカウントなし",
+            "desc": "上の「アカウント追加」ボタンをクリックして最初のアカウントを追加してください"
+        },
+        "views": {
+            "list": "リスト表示",
+            "grid": "グリッド表示"
+        },
+        "dialog": {
+            "add_title": "アカウント追加",
+            "batch_delete_title": "一括削除の確認",
+            "delete_title": "削除の確認",
+            "batch_delete_msg": "選択した {{count}} 個のアカウントを削除してもよろしいですか？この操作は取り消せません。",
+            "delete_msg": "このアカウントを削除してもよろしいですか？この操作は取り消せません。",
+            "refresh_title": "クォータ更新",
+            "batch_refresh_title": "一括更新",
+            "refresh_msg": "現在のアカウントのクォータを更新してもよろしいですか？",
+            "batch_refresh_msg": "選択した {{count}} 個のアカウントのクォータを更新してもよろしいですか？これには時間がかかる場合があります。",
+            "disable_proxy_title": "プロキシ無効化",
+            "disable_proxy_msg": "このアカウントのプロキシを無効にしてもよろしいですか？アカウントはアプリ内で引き続き使用可能です。",
+            "enable_proxy_title": "プロキシ有効化",
+            "enable_proxy_msg": "このアカウントのプロキシを再度有効にしてもよろしいですか？"
+        }
+    },
+    "settings": {
+        "save": "設定を保存",
+        "tabs": {
+            "general": "一般",
+            "account": "アカウント",
+            "proxy": "プロキシ設定",
+            "advanced": "詳細設定",
+            "about": "情報"
+        },
+        "general": {
+            "title": "一般設定",
+            "language": "言語",
+            "theme": "テーマ",
+            "theme_light": "ライト",
+            "theme_dark": "ダーク",
+            "theme_system": "システム",
+            "auto_launch": "起動時に実行",
+            "auto_launch_enabled": "有効",
+            "auto_launch_disabled": "無効",
+            "auto_launch_desc": "システム起動時にAntigravity Toolsを自動的に起動する"
+        },
+        "account": {
+            "title": "アカウント設定",
+            "auto_refresh": "クォータの自動更新",
+            "auto_refresh_desc": "すべてのアカウントのクォータ情報を定期的に自動更新する",
+            "refresh_interval": "更新間隔 (分)",
+            "auto_sync": "現在のアカウントの自動同期",
+            "auto_sync_desc": "現在アクティブなアカウントの情報を定期的に自動同期する",
+            "sync_interval": "同期間隔 (秒)"
+        },
+        "proxy": {
+            "title": "プロキシ設定"
+        },
+        "advanced": {
+            "title": "詳細設定",
+            "export_path": "デフォルトのエクスポート先",
+            "export_path_placeholder": "未設定 (毎回確認)",
+            "default_export_path_desc": "確認なしで直接このフォルダにファイルを保存します",
+            "select_btn": "選択",
+            "open_btn": "開く",
+            "data_dir": "データディレクトリ",
+            "data_dir_desc": "アカウントデータと設定ファイルの保存場所",
+            "antigravity_path": "Antigravityのパス",
+            "antigravity_path_placeholder": "未設定 (自動検出を使用)",
+            "antigravity_path_desc": "Antigravityを非標準の場所にインストールした場合は、実行ファイルのパスをここで手動指定できます (MacOSでは.appを指します)。",
+            "antigravity_path_select": "Antigravity実行ファイルを選択",
+            "antigravity_path_detected": "検出されたパスを更新しました",
+            "detect_btn": "検出",
+            "antigravity_args": "Antigravityの起動引数",
+            "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",
+            "antigravity_args_desc": "Antigravityの起動引数を指定します。例: --user-data-dir でユーザーデータディレクトリを指定",
+            "detect_args_btn": "検出",
+            "antigravity_args_detected": "起動引数を更新しました",
+            "antigravity_args_detect_error": "起動引数の検出に失敗しました",
+            "accounts_page_size": "アカウントの表示数",
+            "page_size_auto": "自動計算 (推奨)",
+            "page_size_desc": "1ページに表示するアカウント数を設定します。「自動計算」を選択するとウィンドウサイズに合わせて動的に調整します。",
+            "logs_title": "ログのメンテナンス",
+            "logs_desc": "ログキャッシュファイルをクリアします。アカウントデータには影響しません。",
+            "clear_logs": "ログキャッシュをクリア",
+            "clear_logs_title": "ログクリアの確認",
+            "clear_logs_msg": "すべてのログキャッシュファイルをクリアしてもよろしいですか？",
+            "logs_cleared": "ログキャッシュをクリアしました"
+        },
+        "about": {
+            "title": "情報",
+            "version": "アプリバージョン",
+            "tech_stack": "技術スタック",
+            "author": "開発者",
+            "wechat": "WeChat",
+            "github": "GitHub",
+            "view_code": "コードを表示",
+            "copyright": "Copyright © 2025-2026 Antigravity. All rights reserved.",
+            "check_update": "アップデートを確認",
+            "checking_update": "確認中...",
+            "latest_version": "最新バージョンです",
+            "new_version_available": "新バージョン {{version}} が利用可能です",
+            "download_update": "ダウンロード",
+            "update_check_failed": "アップデートの確認に失敗しました"
+        }
+    },
+    "tray": {
+        "current": "現在",
+        "quota": "クォータ",
+        "switch_next": "次のアカウントに切り替え",
+        "refresh_current": "現在のクォータを更新",
+        "show_window": "メインウィンドウを表示",
+        "quit": "アプリを終了",
+        "no_account": "アカウントなし",
+        "unknown_quota": "不明 (クリックして更新)",
+        "forbidden": "アカウント使用不可"
+    },
+    "proxy": {
+        "title": "APIプロキシサービス",
+        "status": {
+            "running": "サービス稼働中",
+            "stopped": "サービス停止中",
+            "accounts_available": "{{count}} 個のアカウントが利用可能",
+            "processing": "処理中..."
+        },
+        "action": {
+            "start": "サービス開始",
+            "stop": "サービス停止"
+        },
+        "config": {
+            "title": "サービス構成",
+            "port": "リスニングポート",
+            "port_tooltip": "ローカルAPIプロキシがリッスンするTCPポート。変更するにはサービスを停止し、再起動して適用してください。",
+            "port_hint": "デフォルト 8045、適用には再起動が必要",
+            "auto_start": "アプリ起動時に自動開始",
+            "auto_start_tooltip": "アプリの起動時にローカルAPIプロキシサービスを自動的に開始します。",
+            "allow_lan_access": "LANアクセスの許可",
+            "allow_lan_access_tooltip": "有効にすると、サービスは 0.0.0.0 にバインドされ、LAN内の他のデバイスからアクセスできるようになります。認証を有効にし、APIキーを保護してください。適用には再起動が必要です。",
+            "allow_lan_access_hint_enabled": "🌐 0.0.0.0 で待機中、LAN内のデバイスがアクセス可能",
+            "allow_lan_access_hint_disabled": "🔒 127.0.0.1 のみで待機中、localhostアクセス (プライバシー優先)",
+            "allow_lan_access_warning": "⚠️ 有効にするとLAN内のデバイスがアクセス可能になります。APIキーを安全に保ってください",
+            "allow_lan_access_restart_hint": "ℹ️ 適用にはサービスの再起動が必要です",
+            "api_key": "APIキー",
+            "api_key_tooltip": "プロキシ認証が有効な場合にクライアントが使用する共通の秘密キー。キーを再生成すると古いキーは即座に無効になります。",
+            "btn_regenerate": "キーを再生成",
+            "btn_copy": "コピー",
+            "btn_copied": "コピーしました",
+            "warning_key": "注意: APIキーを安全に保管してください。他人に共有しないでください。",
+            "auth": {
+                "title": "認証",
+                "title_tooltip": "着信リクエストの認証が必要かどうか、およびどのルートを保護するかを制御します。",
+                "enabled": "有効",
+                "enabled_tooltip": "認証モードを切り替えて認証をオン/オフにします。有効な場合、クライアントは Authorization: Bearer <API_KEY> または x-api-key を含める必要があります。",
+                "mode": "モード",
+                "mode_tooltip": "APIキーが必要なルートを選択します: Off = 認証なし; All = すべて保護; All except Health = /healthz 以外を保護; Auto = localhost以外は All except Health。",
+                "hint": "有効な場合、クライアントは Authorization: Bearer ... でAPIキーを送る必要があります（ヘルスチェック以外）。",
+                "modes": {
+                    "off": "オフ (開放)",
+                    "strict": "すべて (厳格)",
+                    "all_except_health": "ヘルスチェック以外すべて",
+                    "auto": "自動 (推奨)"
+                }
+            },
+            "zai": {
+                "title": "z.ai (GLM) プロバイダー",
+                "title_tooltip": "Claudeプロトコル用のオプションのAnthropic互換アップストリーム。Anthropicエンドポイントにのみ影響し、Googleアカウントのルーティングは変更されません。",
+                "subtitle": "Claudeプロトコル専用のオプションのAnthropic互換アップストリーム。",
+                "enabled": "有効",
+                "enabled_tooltip": "選択したディスパッチモードに従って、Anthropicリクエストのz.aiルーティングを有効にします。",
+                "base_url": "ベースURL",
+                "base_url_tooltip": "Anthropic互換のベースURL。プロキシは /v1/messages などのパスを追加します。カスタムゲートウェイを使用しない限りデフォルトのままで構いません。",
+                "dispatch_mode": "ディスパッチモード",
+                "dispatch_mode_tooltip": "Anthropicリクエストにz.aiを使用するタイミングを制御します: Off は無効; All Anthropic requests はすべて転送; Pooled はGoogleアカウントとのラウンドロビンにz.aiを追加; Fallback はGoogleアカウントがない場合のみz.aiを使用。",
+                "api_key": "APIキー",
+                "api_key_tooltip": "z.aiへのリクエスト認証に使用するAPIキー。ローカルに保存され、z.aiとMCP機能に必要です。",
+                "api_key_placeholder": "z.aiのAPIキーをここに貼り付けてください",
+                "warning": "注意: このキーはアプリデータディレクトリにローカル保存されます。",
+                "models": {
+                    "title": "モデルマッピング",
+                    "title_tooltip": "利用可能なz.aiモデルIDを取得し、Claudeモデル名がどのようにz.aiモデルIDに翻訳されるかを構成します。",
+                    "refresh": "モデルを取得",
+                    "refreshing": "取得中...",
+                    "hint": "利用可能なモデル: {{count}}。提案を選択するか、カスタムモデルIDを入力してください。",
+                    "error": "モデルの取得に失敗しました: {{error}}",
+                    "select_placeholder": "モデルを選択...",
+                    "opus": "Opusファミリー → z.aiモデル",
+                    "opus_tooltip": "リクエストモデルに \"opus\" が含まれる場合 (例: claude-opus-*) に使用されるデフォルトのz.aiモデルID。",
+                    "sonnet": "Sonnetファミリー → z.aiモデル",
+                    "sonnet_tooltip": "その他のClaudeモデル (例: claude-sonnet-* やほとんどの claude-* リクエスト) に使用されるデフォルトのz.aiモデルID。",
+                    "haiku": "Haikuファミリー → z.aiモデル",
+                    "haiku_tooltip": "リクエストモデルに \"haiku\" が含まれる場合 (例: claude-haiku-*) に使用されるデフォルトのz.aiモデルID。",
+                    "advanced_title": "高度なオーバーライド",
+                    "advanced_tooltip": "オプションの完全一致オーバーライド。リクエストモデル文字列がルールキーと一致する場合、マップされたz.aiモデルIDに置き換えられます。",
+                    "from_label": "リクエストモデル",
+                    "to_label": "z.aiモデル",
+                    "from_placeholder": "例: claude-opus-4-5-thinking",
+                    "to_placeholder": "例: glm-4.7",
+                    "add_rule": "追加",
+                    "empty": "オーバーライドルールが構成されていません。"
+                },
+                "modes": {
+                    "off": "オフ",
+                    "exclusive": "すべてのAnthropicリクエスト",
+                    "pooled": "プール (1スロット)",
+                    "fallback": "フォールバックのみ"
+                },
+                "mcp": {
+                    "title": "MCPサーバー (ローカルプロキシ経由)",
+                    "title_tooltip": "MCPクライアントが接続できるように、このローカルプロキシでオプションの /mcp/* エンドポイントを公開します。サービス稼働中、z.ai構成済み、およびトグル有効時に利用可能です。",
+                    "enabled": "MCPプロキシを有効化",
+                    "enabled_tooltip": "MCPエンドポイントのマスタースイッチ。オフの場合、すべての /mcp/* ルートは 404 を返します。",
+                    "web_search": "Web検索",
+                    "web_search_tooltip": "/mcp/web_search_prime/mcp を公開し、リクエストを z.ai Web Search MCP に転送します。",
+                    "web_reader": "Webリーダー",
+                    "web_reader_tooltip": "/mcp/web_reader/mcp を公開し、リクエストを z.ai Web Reader MCP に転送します。",
+                    "vision": "Vision",
+                    "vision_tooltip": "z.aiをバックエンドとするVisionツールを提供する /mcp/zai-mcp-server/mcp (ローカルMCPサーバー) を公開します。",
+                    "local_endpoints": "ローカルエンドポイント (MCPクライアントに設定するURL):",
+                    "local_endpoints_tooltip": "これらのURLをMCPクライアントで使用してください。APIプロキシと同じホスト/ポートを共有し、プロキシ認証ポリシーに従います。"
+                }
+            },
+            "request_timeout": "リクエストタイムアウト",
+            "request_timeout_tooltip": "プロキシがアップストリームの応答を待機する最大時間（秒）。長い生成の場合は増やしてください。適用には再起動が必要です。",
+            "request_timeout_hint": "デフォルト 120秒、範囲 30-3600秒。適用には再起動が必要。",
+            "enable_logging": "リクエストのログ記録を有効化",
+            "enable_logging_hint": "デバッグ用に履歴を記録 (わずかなパフォーマンス低下あり)",
+            "upstream_proxy": {
+                "title": "グローバルアップストリームプロキシ (グローバルプロキシ)",
+                "desc": "有効にすると、すべての外部リクエスト (APIプロキシ、トークン更新、クォータ確認、アップデート確認) はこのプロキシ経由で行われます。",
+                "enable": "アップストリームプロキシを有効化",
+                "url": "プロキシURL",
+                "url_placeholder": "例: http://127.0.0.1:7890 や socks5://127.0.0.1:7890",
+                "tip": "HTTP, HTTPS, SOCKS5 をサポートしています。"
+            },
+            "scheduling": {
+                "title": "アカウントローテーションとスケジューリング",
+                "title_tooltip": "セッションをアカウントにバインドする方法と、レート制限の処理方法を制御します。",
+                "subtitle": "すべてのプロトコル (OpenAI/Gemini/Claude) のプロンプトキャッシュとレート制限処理を最適化します。",
+                "mode": "スケジューリングモード",
+                "mode_tooltip": "キャッシュ優先: セッションをアカウントに固定し、レート制限時は待機 (キャッシュ効率最大); バランス: セッションを固定しつつレート制限時は切り替え; パフォーマンス: 標準的なラウンドロビン。",
+                "modes": {
+                    "CacheFirst": "キャッシュ優先",
+                    "Balance": "バランス",
+                    "PerformanceFirst": "パフォーマンス"
+                },
+                "modes_desc": {
+                    "CacheFirst": "セッションをアカウントに固定し、制限時は正確に待機します (プロンプトキャッシュのヒット率を最大化)。",
+                    "Balance": "セッションを固定しつつ、制限時は利用可能なアカウントに自動切り替えします (キャッシュと可用性のバランス)。",
+                    "PerformanceFirst": "セッション固定なしの純粋なラウンドロビン方式 (高並列リクエストに最適)。"
+                },
+                "max_wait": "最大待機時間 (秒)",
+                "max_wait_tooltip": "「キャッシュ優先」モードでのみ使用: レートリミットのリセット時間がこの値以下の場合、切り替えずに待機します。",
+                "clear_bindings": "セッションバインディングをクリア",
+                "clear_bindings_tooltip": "すべてのセッションとアカウントの紐付けを強制リセットし、次のリクエストでアカウントを再割り当てします。"
+            }
+        },
+        "example": {
+            "title": "使用例",
+            "curl": "cURL",
+            "python": "Python",
+            "python_anthropic": "from anthropic import Anthropic\n\nclient = Anthropic(\n    # 推奨: 127.0.0.1\n    base_url=\"{{baseUrl}}\",\n    api_key=\"{{apiKey}}\"\n)\n\n# 注意: AntigravityはAnthropic SDK経由でのあらゆるモデル呼び出しをサポートします\nresponse = client.messages.create(\n    model=\"{{modelId}}\",\n    max_tokens=1024,\n    messages=[{\"role\": \"user\", \"content\": \"こんにちは\"}]\n)\n\nprint(response.content[0].text)",
+            "python_gemini": "# インストール: pip install google-generativeai\nimport google.generativeai as genai\n\n# Antigravityプロキシアドレスを使用 (推奨 127.0.0.1)\ngenai.configure(\n    api_key=\"{{apiKey}}\",\n    transport='rest',\n    client_options={'api_endpoint': '{{rawBaseUrl}}'}\n)\n\nmodel = genai.GenerativeModel('{{modelId}}')\nresponse = model.generate_content(\"こんにちは\")\nprint(response.text)",
+            "python_openai_image": "from openai import OpenAI\n\nclient = OpenAI(\n    base_url=\"{{baseUrl}}\",\n    api_key=\"{{apiKey}}\"\n)\n\nresponse = client.chat.completions.create(\n    model=\"{{modelId}}\",\n    # オプション1: サイズ指定 (推奨)\n    # サポート: \"1024x1024\" (1:1), \"1280x720\" (16:9), \"720x1280\" (9:16), \"1216x896\" (4:3)\n    extra_body={ \"size\": \"1024x1024\" },\n\n    # オプション2: モデルサフィックス使用\n    # 例: gemini-3-pro-image-16-9, gemini-3-pro-image-4-3\n    # model=\"gemini-3-pro-image-16-9\",\n    messages=[{\n        \"role\": \"user\",\n        \"content\": \"近未来の都市を描いてください\"\n    }]\n)\n\nprint(response.choices[0].message.content)",
+            "python_openai": "from openai import OpenAI\n\nclient = OpenAI(\n    base_url=\"{{baseUrl}}\",\n    api_key=\"{{apiKey}}\"\n)\n\nresponse = client.chat.completions.create(\n    model=\"{{modelId}}\",\n    messages=[{\"role\": \"user\", \"content\": \"こんにちは\"}]\n)\n\nprint(response.choices[0].message.content)"
+        },
+        "examples": {
+            "title": "使用例"
+        },
+        "dialog": {
+            "confirm_regenerate": "APIキーを再生成してもよろしいですか？古いキーは即座に無効になります。",
+            "operate_failed": "操作に失敗しました: {{error}}",
+            "reset_mapping_title": "モデルマッピングをリセット",
+            "reset_mapping_msg": "すべてのモデルマッピングをシステムデフォルトにリセットしてもよろしいですか？この操作は取り消せません。",
+            "regenerate_key_title": "APIキーを再生成",
+            "regenerate_key_msg": "APIキーを再生成してもよろしいですか？古いキーは即座に無効になります。",
+            "clear_bindings_title": "セッションバインディングをクリア",
+            "clear_bindings_msg": "すべてのセッションとアカウントの紐付けをクリアしてもよろしいですか？"
+        },
+        "model": {
+            "flash": "高速レスポンス",
+            "flash_preview": "Flashプレビュー",
+            "flash_lite": "軽量・高速",
+            "flash_thinking": "思考能力",
+            "pro_legacy": "レガシーPro",
+            "pro_low": "ハイパフォーマンス",
+            "pro_high": "最高推論",
+            "pro_image": "画像生成 (1:1)",
+            "pro_image_16_9": "画像生成 (16:9)",
+            "pro_image_9_16": "画像生成 (9:16)",
+            "pro_image_4_3": "画像生成 (4:3)",
+            "pro_image_3_4": "画像生成 (3:4)",
+            "pro_image_1_1": "画像生成 (1:1)",
+            "claude_sonnet": "コーディング推論",
+            "claude_sonnet_thinking": "思考の連鎖",
+            "claude_opus_thinking": "最強の思考"
+        },
+        "mapping": {
+            "title": "Claude Code モデルマッピング",
+            "description": "Claude CodeモデルをAntigravityモデルにマッピングします。リクエストを賢くルーティングしてコストと速度を最適化します。",
+            "default": "デフォルト",
+            "sonnet_desc": "複雑な作業に最適",
+            "opus_desc": "プレミアムティア",
+            "haiku_desc": "クイックな回答に最速",
+            "maps_to": "Antigravityにマップ",
+            "apply_recommended": "推奨設定を適用",
+            "restore_defaults": "デフォルト設定に戻す",
+            "reset_all": "すべてリセット"
+        },
+        "models": {
+            "flash": "超高速",
+            "flash_thinking": "思考能力",
+            "pro_high": "最高推論",
+            "pro_low": "低クォータ",
+            "sonnet": "コーディング推論",
+            "sonnet_thinking": "思考の連鎖",
+            "opus_thinking": "最強の思考"
+        },
+        "router": {
+            "title": "モデルルーター",
+            "subtitle": "シリーズごとにモデルをルーティングするか、カスタムマッピングを追加します。\n注: ネイティブなClaudeパススルーモデル (例: claude-opus-4-5-thinking) はデフォルトでシリーズグループをバイパスします。上書きするには「エキスパートカスタムルーティング」を使用してください。",
+            "subtitle_simple": "ワイルドカードまたは完全一致マッピングでモデルルーティングをカスタマイズ",
+            "apply_presets": "プリセットを適用",
+            "presets_applied": "プリセットを正常に適用しました",
+            "custom_mappings": "カスタムマッピング",
+            "group_title": "シリーズグループ",
+            "gemini3_group_label": "Gemini 3 (推奨)",
+            "gemini3_option_high": "gemini-3-pro-high (高品質)",
+            "gemini3_option_low": "gemini-3-pro-low (バランス)",
+            "gemini3_option_flash": "gemini-3-flash (高速)",
+            "groups": {
+                "claude_45": {
+                    "name": "Claude 4.5 シリーズ",
+                    "desc": "Opus 4.5, Sonnet 4.5"
+                },
+                "claude_35": {
+                    "name": "Claude 3.5 シリーズ",
+                    "desc": "Sonnet 3.5, Haiku 3.5"
+                },
+                "gpt_4": {
+                    "name": "GPT-4 / o1 シリーズ",
+                    "desc": "GPT-4, Turbo, o1-preview"
+                },
+                "gpt_4o": {
+                    "name": "GPT-4o / 3.5 シリーズ",
+                    "desc": "GPT-4o, Mini, 3.5 Turbo"
+                },
+                "gpt_5": {
+                    "name": "GPT-5 シリーズ",
+                    "desc": "GPT-5.1, GPT-5.2 xhigh"
+                }
+            },
+            "expert_title": "エキスパートカスタムルーティング",
+            "expert_subtitle": "任意のモデルIDに精密にマッチングさせます。",
+            "money_saving_tip": "💰 節約ヒント:",
+            "haiku_optimization_tip": "Claude CLIはデフォルトで、バックグラウンドタスクに {{model}} を使用します。安価なFlashモデルにマップすることで、コストを約95%節約できます",
+            "haiku_optimization_btn": "クイック最適化",
+            "haiku_tip_title": "💰 節約ヒント:",
+            "haiku_tip_body_before": "Claude CLIはデフォルトで",
+            "haiku_tip_body_after": "をバックグラウンドタスクに使用します。これをより安価なFlashモデルにマッピングすると、コストを約95%節約できます。",
+            "haiku_tip_action": "最適化",
+            "reset_confirm": "すべてのマッピングをシステムデフォルトにリセットしますか？",
+            "reset_mapping": "マッピングをリセット",
+            "add_mapping": "マッピングを追加",
+            "current_list": "カスタムリスト",
+            "no_custom_mapping": "カスタムマッピングはまだありません",
+            "gemini3_only_warning": "⚠️ Gemini 3 シリーズのみ",
+            "default_suffix": " (デフォルト)",
+            "original_id": "元のID",
+            "route_to": "ルーティング先",
+            "select_target_model": "ターゲットモデルを選択"
+        },
+        "multi_protocol": {
+            "title": "マルチプロトコルサポート",
+            "subtitle": "プロトコルサポート",
+            "description": "プロキシサービスはOpenAIとAnthropicの両方のAPI形式をサポートし、さまざまなツールの要件に対応します",
+            "openai_label": "OpenAI プロトコル",
+            "anthropic_label": "Anthropic プロトコル",
+            "openai_tools": "Cherry Studio, NextChat",
+            "anthropic_tools": "Claude Code CLI",
+            "gemini_label": "Gemini プロトコル",
+            "gemini_tools": "Google AI SDK, LangChain",
+            "quick_integration": "クイック統合",
+            "click_tip": "👆 左側のモデルをクリックするとこのコードが更新されます。"
+        },
+        "supported_models": {
+            "title": "サポートモデルと統合",
+            "model_name": "モデル名",
+            "model_id": "モデルID",
+            "description": "説明",
+            "action": "操作"
+        }
+    },
+    "monitor": {
+        "page_title": "APIモニターダッシュボード",
+        "page_subtitle": "リアルタイムのリクエストログと分析",
+        "open_monitor": "モニターを開く",
+        "logging_status": {
+            "active": "記録中",
+            "paused": "一時停止中"
+        },
+        "stats": {
+            "total": "合計",
+            "ok": "成功",
+            "err": "エラー"
+        },
+        "filters": {
+            "placeholder": "モデル、パス、またはステータスでフィルタリング...",
+            "quick_filters": "クイックフィルタ:",
+            "all": "すべて",
+            "error": "エラー",
+            "chat": "チャット",
+            "gemini": "Gemini",
+            "claude": "Claude",
+            "images": "画像",
+            "reset": "リセット"
+        },
+        "table": {
+            "status": "ステータス",
+            "method": "メソッド",
+            "model": "モデル",
+            "account": "アカウント",
+            "path": "パス",
+            "usage": "トークン",
+            "duration": "所要時間",
+            "time": "時間",
+            "empty": "記録されたリクエストはありません"
+        },
+        "details": {
+            "title": "リクエスト詳細",
+            "request_payload": "リクエストペイロード",
+            "response_payload": "レスポンスペイロード",
+            "duration": "所要時間",
+            "tokens": "トークン (I/O)",
+            "time": "時間",
+            "model": "モデル",
+            "id": "リクエストID"
+        },
+        "dialog": {
+            "clear_title": "プロキシログをクリア",
+            "clear_msg": "すべてのプロキシログをクリアしてもよろしいですか？この操作は取り消せません。"
+        }
+    }
+}

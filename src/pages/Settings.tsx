@@ -242,6 +242,7 @@ function Settings() {
                                 >
                                     <option value="zh">简体中文</option>
                                     <option value="en">English</option>
+                                    <option value="ja">日本語</option>
                                 </select>
                             </div>
 
