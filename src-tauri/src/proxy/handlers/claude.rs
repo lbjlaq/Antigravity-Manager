@@ -68,16 +68,21 @@ fn sanitize_thinking_block(block: ContentBlock) -> ContentBlock {
 }
 
 /// 过滤消息中的无效 thinking 块
+/// [FIX] Only filter the last 30 messages to avoid performance issues with large histories
 fn filter_invalid_thinking_blocks(messages: &mut Vec<Message>) {
     let mut total_filtered = 0;
     
-    for msg in messages.iter_mut() {
+    // Get slice of last 30 messages to avoid O(N²) performance on large histories
+    let start_idx = messages.len().saturating_sub(30);
+    let messages_to_filter = &mut messages[start_idx..];
+    
+    for msg in messages_to_filter.iter_mut() {
         // 只处理 assistant 消息
         // [CRITICAL FIX] Handle 'model' role too (Google history usage)
         if msg.role != "assistant" && msg.role != "model" {
             continue;
         }
-        tracing::error!("[DEBUG-FILTER] Inspecting msg with role: {}", msg.role);
+        debug!("[DEBUG-FILTER] Inspecting msg with role: {}", msg.role);
         
         if let MessageContent::Array(blocks) = &mut msg.content {
             let original_len = blocks.len();
@@ -88,7 +93,7 @@ fn filter_invalid_thinking_blocks(messages: &mut Vec<Message>) {
                 if matches!(block, ContentBlock::Thinking { .. }) {
                     // [DEBUG] 强制输出日志
                     if let ContentBlock::Thinking { ref signature, .. } = block {
-                         tracing::error!("[DEBUG-FILTER] Found thinking block. Sig len: {:?}", signature.as_ref().map(|s| s.len()));
+                         debug!("[DEBUG-FILTER] Found thinking block. Sig len: {:?}", signature.as_ref().map(|s| s.len()));
                     }
 
                     // [CRITICAL FIX] Vertex AI 不认可 skip_thought_signature_validator
@@ -96,17 +101,17 @@ fn filter_invalid_thinking_blocks(messages: &mut Vec<Message>) {
                     if has_valid_signature(&block) {
                         new_blocks.push(sanitize_thinking_block(block));
                     } else {
-                        // [IMPROVED] 保留内容转换为 text，而不是直接丢弃
+                        // [FIX] Drop invalid thinking blocks instead of converting to text
+                        // This prevents context bloat and broken tool loops
                         if let ContentBlock::Thinking { thinking, .. } = &block {
                             if !thinking.is_empty() {
-                                tracing::info!(
-                                    "[Claude-Handler] Converting thinking block with invalid signature to text. \
+                                debug!(
+                                    "[Claude-Handler] Dropping thinking block with invalid signature. \
                                      Content length: {} chars",
                                     thinking.len()
                                 );
-                                new_blocks.push(ContentBlock::Text { text: thinking.clone() });
                             } else {
-                                tracing::debug!("[Claude-Handler] Dropping empty thinking block with invalid signature");
+                                debug!("[Claude-Handler] Dropping empty thinking block with invalid signature");
                             }
                         }
                     }
@@ -129,7 +134,7 @@ fn filter_invalid_thinking_blocks(messages: &mut Vec<Message>) {
     }
     
     if total_filtered > 0 {
-        debug!("Filtered {} invalid thinking block(s) from history", total_filtered);
+        info!("Filtered {} invalid thinking block(s) from last 30 messages", total_filtered);
     }
 }
 
@@ -364,8 +369,9 @@ pub async fn handle_messages(
 
     // [New] Recover from broken tool loops (where signatures were stripped)
     // This prevents "Assistant message must start with thinking" errors by closing the loop with synthetic messages
+    // [FIX #498] Only apply to thinking-enabled models to avoid breaking tool loops for non-thinking models
     if state.experimental.read().await.enable_tool_loop_recovery {
-        close_tool_loop_for_thinking(&mut request.messages);
+        close_tool_loop_for_thinking(&mut request.messages, &request.model);
     }
 
     if use_zai {

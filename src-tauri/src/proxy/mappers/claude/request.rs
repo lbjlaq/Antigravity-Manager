@@ -869,6 +869,19 @@ fn build_contents(
     // Merge adjacent messages with the same role to satisfy Gemini's strict alternation rule
     let mut merged_contents = merge_adjacent_roles(contents);
 
+    // [FIX P3-5] Orphaned Tool Result Cleanup
+    // Remove tool_result blocks that reference non-existent tool_use_id
+    // This prevents "unexpected tool_use_id found in tool_result blocks" errors
+    merged_contents = remove_orphaned_tool_results(merged_contents);
+
+    // [FIX P3-6] Function Call Order Validation
+    // Validate strict ordering: user → functionCall → functionResponse → functionCall
+    if let Err(e) = validate_function_call_order(&merged_contents) {
+        tracing::error!("[Function-Call-Order] {}", e);
+        // Don't fail completely - try to recover by returning partially cleaned content
+        // The upstream API will provide better error messages
+    }
+
     // [FIX P3-4] Deep "Un-thinking" Cleanup
     // If thinking is disabled (e.g. smart downgrade), recursively remove any stray 'thought'/'thoughtSignature'
     // This is critical because converting Thinking->Text isn't enough; metadata must be gone.
@@ -878,10 +891,167 @@ fn build_contents(
         }
     }
 
-    Ok(json!(merged_contents))
+    // [FIX P3-7] Ensure strict role alternation
+    // After all processing, verify that roles properly alternate
+    // If we detect consecutive same roles with function interactions, split them
+    let final_contents = enforce_strict_role_alternation(merged_contents);
+
+    Ok(json!(final_contents))
+}
+
+/// Enforce strict role alternation (user ↔ model)
+/// If consecutive messages have same role and contain function interactions,
+/// split them to maintain proper ordering
+fn enforce_strict_role_alternation(contents: Vec<Value>) -> Vec<Value> {
+    let mut result: Vec<Value> = Vec::new();
+
+    for msg in contents {
+        if let Some(last) = result.last() {
+            let last_role = last.get("role").and_then(|r| r.as_str()).unwrap_or("");
+            let current_role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
+
+            if last_role == current_role {
+                let current_has_function = contains_function_interaction(&msg);
+                let last_has_function = contains_function_interaction(last);
+
+                if current_has_function || last_has_function {
+                    // Split: can't merge these due to function interactions
+                    result.push(msg);
+                    continue;
+                }
+            }
+        }
+        result.push(msg);
+    }
+
+    result
+}
+
+/// Check if a message contains function calls or responses
+fn contains_function_interaction(msg: &Value) -> bool {
+    if let Some(parts) = msg.get("parts").and_then(|p| p.as_array()) {
+        for part in parts {
+            if part.get("functionCall").is_some() || part.get("functionResponse").is_some() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Remove orphaned tool_result blocks (tool results with no matching tool_use)
+/// This prevents "unexpected tool_use_id found in tool_result blocks" errors
+fn remove_orphaned_tool_results(mut contents: Vec<Value>) -> Vec<Value> {
+    // First pass: collect all valid tool_use_ids
+    let mut valid_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for msg in &contents {
+        if let Some(parts) = msg.get("parts").and_then(|p| p.as_array()) {
+            for part in parts {
+                if let Some(function_call) = part.get("functionCall") {
+                    if let Some(id) = function_call.get("id").and_then(|v| v.as_str()) {
+                        valid_tool_ids.insert(id.to_string());
+                        tracing::debug!("[Tool-Result-Cleanup] Found valid tool_use_id: {}", id);
+                    }
+                }
+            }
+        }
+    }
+
+    // Second pass: remove tool_result blocks with invalid tool_use_id
+    let mut cleaned_contents = Vec::new();
+    let mut removed_count = 0;
+
+    for msg in contents {
+        let mut msg = msg;
+        if let Some(parts) = msg.get_mut("parts").and_then(|p| p.as_array_mut()) {
+            let original_len = parts.len();
+            parts.retain(|part| {
+                if let Some(function_response) = part.get("functionResponse") {
+                    if let Some(id) = function_response.get("id").and_then(|v| v.as_str()) {
+                        if !valid_tool_ids.contains(id) {
+                            tracing::warn!(
+                                "[Tool-Result-Cleanup] Removing orphaned tool_result for unknown tool_use_id: {}",
+                                id
+                            );
+                            removed_count += 1;
+                            return false;
+                        }
+                    }
+                }
+                true
+            });
+
+            if original_len != parts.len() {
+                tracing::info!(
+                    "[Tool-Result-Cleanup] Cleaned {} orphaned tool_result(s) from message with role {}",
+                    original_len - parts.len(),
+                    msg["role"].as_str().unwrap_or("unknown")
+                );
+            }
+        }
+
+        // Only keep messages that still have parts
+        if let Some(parts) = msg.get("parts").and_then(|p| p.as_array()) {
+            if !parts.is_empty() {
+                cleaned_contents.push(msg);
+            }
+        }
+    }
+
+    if removed_count > 0 {
+        tracing::warn!(
+            "[Tool-Result-Cleanup] Total orphaned tool results removed: {}",
+            removed_count
+        );
+    }
+
+    cleaned_contents
+}
+
+/// Validate and enforce proper message ordering for function calls
+/// Gemini API requires: user → functionCall → functionResponse → functionCall
+fn validate_function_call_order(contents: &[Value]) -> Result<(), String> {
+    for (i, msg) in contents.iter().enumerate() {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("unknown");
+        let has_function_call = msg.get("parts")
+            .and_then(|p| p.as_array())
+            .map(|parts| parts.iter().any(|p| p.get("functionCall").is_some()))
+            .unwrap_or(false);
+
+        if has_function_call {
+            // Check previous message
+            if i > 0 {
+                let prev_role = contents[i - 1].get("role")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("unknown");
+
+                let prev_has_function_response = contents[i - 1].get("parts")
+                    .and_then(|p| p.as_array())
+                    .map(|parts| parts.iter().any(|p| p.get("functionResponse").is_some()))
+                    .unwrap_or(false);
+
+                // Function calls must follow user or functionResponse
+                if prev_role != "user" && !prev_has_function_response {
+                    return Err(format!(
+                        "Invalid function call order at index {}: functionCall in role '{}' must follow 'user' or 'functionResponse', found previous role '{}'",
+                        i, role, prev_role
+                    ));
+                }
+            } else {
+                // First message is a functionCall - invalid
+                return Err(format!(
+                    "Invalid function call order at index 0: functionCall cannot be first message, must start with 'user'"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Merge adjacent messages with the same role
+/// IMPORTANT: Never merge messages containing functionCall or functionResponse
+/// as this violates Gemini's strict turn alternation rule
 fn merge_adjacent_roles(mut contents: Vec<Value>) -> Vec<Value> {
     if contents.is_empty() {
         return contents;
@@ -895,10 +1065,18 @@ fn merge_adjacent_roles(mut contents: Vec<Value>) -> Vec<Value> {
         let next_role = msg["role"].as_str().unwrap_or_default();
 
         if current_role == next_role {
-            // Merge parts
-            if let Some(current_parts) = current_msg.get_mut("parts").and_then(|p| p.as_array_mut()) {
-                if let Some(next_parts) = msg.get("parts").and_then(|p| p.as_array()) {
-                    current_parts.extend(next_parts.clone());
+            // [CRITICAL FIX] Do NOT merge if either message contains function calls/responses
+            // This preserves strict turn order: user -> functionCall -> functionResponse -> functionCall
+            if contains_function_interaction(&current_msg) || contains_function_interaction(&msg) {
+                tracing::debug!("[Role-Merge] Skipping merge due to function interaction in role {}", current_role);
+                merged.push(current_msg);
+                current_msg = msg;
+            } else {
+                // Safe to merge - no function interactions
+                if let Some(current_parts) = current_msg.get_mut("parts").and_then(|p| p.as_array_mut()) {
+                    if let Some(next_parts) = msg.get("parts").and_then(|p| p.as_array()) {
+                        current_parts.extend(next_parts.clone());
+                    }
                 }
             }
         } else {

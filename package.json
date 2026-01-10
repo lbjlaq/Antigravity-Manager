@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:debug": "./dev-with-debug.sh",
+    "tauri:dev": "RUST_LOG=debug DEBUG_CLAUDE_REQUESTS=1 tauri dev"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

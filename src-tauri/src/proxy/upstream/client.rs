@@ -206,8 +206,21 @@ impl UpstreamClient {
                         tracing::error!("📄 Error Body: {}", body_str);
                         tracing::error!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-                        // Return error since we consumed the body
+                        // Return error since we consumed body
                         return Err(format!("429 Rate Limit: {}", body_str));
+                    }
+
+                    // [DEBUG] For 400 errors, capture error body
+                    if status == StatusCode::BAD_REQUEST {
+                        tracing::error!("❌❌❌ 400 BAD REQUEST ERROR DETECTED! ❌❌❌");
+                        // Try to read error body
+                        let body_bytes = resp.bytes().await.unwrap_or_default();
+                        let body_str = String::from_utf8_lossy(&body_bytes);
+                        tracing::error!("📄 Error Body: {}", body_str);
+                        tracing::error!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+                        // Return error since we consumed body
+                        return Err(format!("400 Bad Request: {}", body_str));
                     }
                     tracing::error!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
