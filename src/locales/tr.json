@@ -1,0 +1,613 @@
+{
+    "common": {
+        "loading": "Yükleniyor...",
+        "add": "Ekle",
+        "action": "İşlem",
+        "save": "Kaydet",
+        "saved": "Başarıyla kaydedildi",
+        "cancel": "İptal",
+        "confirm": "Onayla",
+        "delete": "Sil",
+        "edit": "Düzenle",
+        "refresh": "Yenile",
+        "refreshing": "Yenileniyor...",
+        "export": "Dışa Aktar",
+        "import": "İçe Aktar",
+        "success": "Başarılı",
+        "error": "Hata",
+        "unknown": "Bilinmiyor",
+        "warning": "Uyarı",
+        "info": "Bilgi",
+        "details": "Detaylar",
+        "clear": "Temizle",
+        "prev_page": "Önceki",
+        "next_page": "Sonraki",
+        "pagination_info": "{{total}} kayıttan {{start}} - {{end}} arası gösteriliyor",
+        "per_page": "Sayfa başına",
+        "items": "öğe",
+        "accounts": "hesap",
+        "enabled": "Etkin",
+        "disabled": "Devre Dışı",
+        "tauri_api_not_loaded": "Tauri API yüklenemedi, lütfen uygulamayı yeniden başlatın",
+        "environment_error": "Ortam hatası: {{error}}"
+    },
+    "nav": {
+        "dashboard": "Kontrol Paneli",
+        "accounts": "Hesaplar",
+        "proxy": "API Proxy",
+        "settings": "Ayarlar",
+        "theme_to_dark": "Karanlık Moda Geç",
+        "theme_to_light": "Aydınlık Moda Geç",
+        "switch_to_english": "İngilizce'ye Geç",
+        "switch_to_chinese": "Çince'ye Geç",
+        "switch_to_english_short": "EN",
+        "switch_to_chinese_short": "ZH"
+    },
+    "dashboard": {
+        "hello": "Merhaba, Kullanıcı 👋",
+        "refresh_quota": "Kotayı Yenile",
+        "refreshing": "Yenileniyor...",
+        "total_accounts": "Toplam Hesap",
+        "avg_gemini": "Ort. Gemini Kotası",
+        "avg_gemini_image": "Ort. Gemini Görsel Kotası",
+        "avg_claude": "Ort. Claude Kotası",
+        "low_quota_accounts": "Düşük Kotalı Hesaplar",
+        "quota_sufficient": "Kota Yeterli",
+        "quota_low": "Düşük Kota",
+        "quota_desc": "Kota < %20",
+        "current_account": "Mevcut Hesap",
+        "switch_account": "Hesap Değiştir",
+        "no_active_account": "Aktif Hesap Yok",
+        "best_accounts": "En İyi Hesaplar",
+        "best_account_recommendation": "En İyi Hesap",
+        "switch_best": "En İyisine Geç",
+        "switch_successfully": "En İyisine Geç",
+        "view_all_accounts": "Tüm Hesapları Görüntüle",
+        "export_data": "Veri Dışa Aktar",
+        "for_gemini": "Gemini İçin",
+        "for_claude": "Claude İçin",
+        "toast": {
+            "switch_success": "Geçiş başarılı!",
+            "switch_error": "Hesap geçişi başarısız",
+            "refresh_success": "Kota yenileme başarılı",
+            "refresh_error": "Yenileme başarısız",
+            "export_no_accounts": "Dışa aktarılacak hesap yok",
+            "export_success": "Dışa aktarma başarılı! Dosya kaydedildi: {{path}}",
+            "export_error": "Dışa aktarma başarısız"
+        }
+    },
+    "accounts": {
+        "search_placeholder": "E-posta ara...",
+        "all": "Tümü",
+        "available": "Kullanılabilir",
+        "low_quota": "Düşük Kota",
+        "ultra": "ULTRA",
+        "pro": "PRO",
+        "free": "ÜCRETSİZ",
+        "add_account": "Hesap Ekle",
+        "refresh_all": "Tümünü Yenile",
+        "refresh_selected": "Yenile ({{count}})",
+        "export_selected": "Dışa Aktar ({{count}})",
+        "delete_selected": "Sil ({{count}})",
+        "current": "Mevcut",
+        "current_badge": "Mevcut",
+        "disabled": "Devre Dışı",
+        "disabled_tooltip": "Hesap devre dışı (örn. refresh_token iptal edildi/süresi doldu). Yeniden yetkilendirin veya token'ı güncelleyin.",
+        "proxy_disabled": "Proxy Devre Dışı",
+        "proxy_disabled_tooltip": "Bu hesabın proxy'si manuel olarak devre dışı bırakıldı, API isteklerini işlemez ancak uygulamada kullanılabilir durumda kalır.",
+        "enable_proxy": "Proxy'yi Etkinleştir",
+        "disable_proxy": "Proxy'yi Devre Dışı Bırak",
+        "enable_proxy_selected": "Etkinleştir ({{count}})",
+        "disable_proxy_selected": "Devre Dışı Bırak ({{count}})",
+        "proxy_disabled_reason_manual": "Kullanıcı tarafından manuel olarak devre dışı bırakıldı",
+        "proxy_disabled_reason_batch": "Toplu işlemle devre dışı bırakıldı",
+        "forbidden": "403",
+        "forbidden_badge": "403",
+        "forbidden_tooltip": "API 403 Forbidden döndürdü, hesap Gemini Code Assist için izne sahip değil",
+        "forbidden_msg": "Yasaklı, otomatik yenileme atlandı",
+        "no_data": "Veri Yok",
+        "last_used": "Son Kullanım",
+        "reset_time": "Sıfırlama Zamanı",
+        "switch_to": "Bu hesaba geç",
+        "actions": "İşlemler",
+        "details": {
+            "title": "Kota Detayları"
+        },
+        "toast": {
+            "proxy_enabled": "{{count}} hesap için proxy etkinleştirildi",
+            "proxy_disabled": "{{count}} hesap için proxy devre dışı bırakıldı"
+        },
+        "add": {
+            "title": "Hesap Ekle",
+            "tabs": {
+                "oauth": "OAuth",
+                "token": "Refresh Token",
+                "import": "DB İçe Aktar"
+            },
+            "oauth": {
+                "recommend": "Önerilen",
+                "desc": "Google girişi için varsayılan tarayıcıyı açar ve Token'ı otomatik olarak alıp kaydeder.",
+                "btn_start": "OAuth Başlat",
+                "btn_waiting": "Yetkilendirme bekleniyor...",
+                "btn_finish": "Zaten yetkilendirdim",
+                "copy_link": "Yetkilendirme Bağlantısını Kopyala",
+                "copied": "Kopyalandı",
+                "link_label": "Yetkilendirme URL'si",
+                "link_click_to_copy": "Kopyalamak için tıklayın"
+            },
+            "token": {
+                "label": "Refresh Token",
+                "placeholder": "Refresh Token'ınızı buraya yapıştırın (Toplu işlem desteklenir)\n\nDesteklenen formatlar:\n1. Tek Token (1//...)\n2. JSON Dizisi (refresh_token alanı ile)\n3. Token içeren herhangi bir metin (Otomatik çıkarma)",
+                "hint": "İpucu: Toplu içe aktarmak için birden fazla token veya JSON dizisi yapıştırabilirsiniz.",
+                "error_token": "Lütfen Refresh Token girin",
+                "batch_progress": "{{current}}/{{total}} hesap içe aktarılıyor...",
+                "batch_success": "{{count}} hesap başarıyla içe aktarıldı",
+                "batch_partial": "İçe aktarma tamamlandı: {{success}} başarılı, {{fail}} başarısız",
+                "batch_fail": "İçe aktarma başarısız"
+            },
+            "import": {
+                "scheme_a": "Plan A: IDE DB'den",
+                "scheme_a_desc": "Yerel Antigravity DB'den mevcut giriş yapmış hesabı otomatik olarak okur.",
+                "btn_db": "Mevcut Hesabı İçe Aktar",
+                "or": "VEYA",
+                "scheme_b": "Plan B: V1 Yedekten",
+                "scheme_b_desc": "V1 hesap verileri için ~/.antigravity-agent tarar.",
+                "btn_v1": "V1'i Toplu İçe Aktar",
+                "btn_custom_db": "Özel DB İçe Aktar"
+            },
+            "btn_cancel": "İptal",
+            "btn_confirm": "Onayla",
+            "oauth_error": "OAuth başarısız: {{error}}",
+            "status": {
+                "error_token": "Lütfen Refresh Token girin"
+            }
+        },
+        "table": {
+            "email": "E-posta",
+            "quota": "Model Kotası",
+            "last_used": "Son Kullanım",
+            "actions": "İşlemler"
+        },
+        "drag_to_reorder": "Yeniden sıralamak için sürükleyin",
+        "empty": {
+            "title": "Hesap Yok",
+            "desc": "İlk hesabınızı eklemek için yukarıdaki \"Hesap Ekle\" düğmesine tıklayın"
+        },
+        "views": {
+            "list": "Liste Görünümü",
+            "grid": "Izgara Görünümü"
+        },
+        "dialog": {
+            "add_title": "Hesap Ekle",
+            "batch_delete_title": "Toplu Silme Onayı",
+            "delete_title": "Silme Onayı",
+            "batch_delete_msg": "Seçili {{count}} hesabı silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+            "delete_msg": "Bu hesabı silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+            "refresh_title": "Kotayı Yenile",
+            "batch_refresh_title": "Toplu Yenileme",
+            "refresh_msg": "Mevcut hesap için kotayı yenilemek istediğinizden emin misiniz?",
+            "batch_refresh_msg": "Seçili {{count}} hesap için kotaları yenilemek istediğinizden emin misiniz? Bu biraz zaman alabilir.",
+            "disable_proxy_title": "Proxy'yi Devre Dışı Bırak",
+            "disable_proxy_msg": "Bu hesap için proxy'yi devre dışı bırakmak istediğinizden emin misiniz? Hesap uygulamada kullanılabilir durumda kalacaktır.",
+            "enable_proxy_title": "Proxy'yi Etkinleştir",
+            "enable_proxy_msg": "Bu hesap için proxy'yi yeniden etkinleştirmek istediğinizden emin misiniz?"
+        }
+    },
+    "settings": {
+        "save": "Ayarları Kaydet",
+        "tabs": {
+            "general": "Genel",
+            "account": "Hesap",
+            "proxy": "Proxy Ayarları",
+            "advanced": "Gelişmiş",
+            "about": "Hakkında"
+        },
+        "general": {
+            "title": "Genel Ayarlar",
+            "language": "Dil",
+            "theme": "Tema",
+            "theme_light": "Aydınlık",
+            "theme_dark": "Karanlık",
+            "theme_system": "Sistem",
+            "auto_launch": "Başlangıçta Çalıştır",
+            "auto_launch_enabled": "Etkin",
+            "auto_launch_disabled": "Devre Dışı",
+            "auto_launch_desc": "Sistem başladığında Antigravity Tools'u otomatik olarak başlat"
+        },
+        "account": {
+            "title": "Hesap Ayarları",
+            "auto_refresh": "Otomatik Kota Yenileme",
+            "auto_refresh_desc": "Tüm hesaplar için kota bilgilerini periyodik olarak otomatik yenile",
+            "refresh_interval": "Yenileme Aralığı (dakika)",
+            "auto_sync": "Mevcut Hesabı Otomatik Senkronize Et",
+            "auto_sync_desc": "Mevcut aktif hesap bilgilerini periyodik olarak otomatik senkronize et",
+            "sync_interval": "Senkronizasyon Aralığı (saniye)"
+        },
+        "proxy": {
+            "title": "Proxy Ayarları"
+        },
+        "advanced": {
+            "title": "Gelişmiş Ayarlar",
+            "export_path": "Varsayılan Dışa Aktarma Yolu",
+            "export_path_placeholder": "Ayarlanmadı (Her seferinde sor)",
+            "default_export_path_desc": "Dosyalar sormadan doğrudan bu klasöre kaydedilecek",
+            "select_btn": "Seç",
+            "open_btn": "Aç",
+            "data_dir": "Veri Dizini",
+            "data_dir_desc": "Hesap verileri ve yapılandırma dosyası konumu",
+            "antigravity_path": "Antigravity Yolu",
+            "antigravity_path_placeholder": "Ayarlanmadı (Otomatik algılama kullanılacak)",
+            "antigravity_path_desc": "Antigravity'yi standart olmayan bir konuma yüklediyseniz, buradan çalıştırılabilir dosya yolunu manuel olarak belirtebilirsiniz (MacOS'ta .app'i işaret eder).",
+            "antigravity_path_select": "Antigravity Çalıştırılabilir Dosyasını Seç",
+            "antigravity_path_detected": "Algılanan yol güncellendi",
+            "detect_btn": "Algıla",
+            "antigravity_args": "Antigravity Başlangıç Parametreleri",
+            "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",
+            "antigravity_args_desc": "Antigravity için başlangıç parametreleri belirtin, örn. veri dizinini belirtmek için --user-data-dir",
+            "detect_args_btn": "Algıla",
+            "antigravity_args_detected": "Başlangıç parametreleri güncellendi",
+            "antigravity_args_detect_error": "Başlangıç parametreleri algılanamadı",
+            "accounts_page_size": "Hesaplar Sayfa Boyutu",
+            "page_size_auto": "Otomatik Hesapla (Önerilen)",
+            "page_size_desc": "Sayfa başına gösterilecek hesap sayısını ayarlayın. Pencere boyutuna göre dinamik ayarlama için 'Otomatik Hesapla'yı seçin.",
+            "logs_title": "Log Bakımı",
+            "logs_desc": "Log önbellek dosyalarını temizle. Hesap verilerini etkilemez.",
+            "clear_logs": "Log Önbelleğini Temizle",
+            "clear_logs_title": "Log Temizleme Onayı",
+            "clear_logs_msg": "Tüm log önbellek dosyalarını temizlemek istediğinizden emin misiniz?",
+            "logs_cleared": "Log önbelleği temizlendi"
+        },
+        "about": {
+            "title": "Hakkında",
+            "version": "Uygulama Sürümü",
+            "tech_stack": "Teknoloji Yığını",
+            "author": "Yazar",
+            "wechat": "WeChat",
+            "github": "GitHub",
+            "view_code": "Kodu Görüntüle",
+            "copyright": "Telif Hakkı © 2025-2026 Antigravity. Tüm hakları saklıdır.",
+            "check_update": "Güncellemeleri Kontrol Et",
+            "checking_update": "Kontrol ediliyor...",
+            "latest_version": "Güncelsiniz",
+            "new_version_available": "Yeni sürüm {{version}} mevcut",
+            "download_update": "İndir",
+            "update_check_failed": "Güncelleme kontrolü başarısız"
+        }
+    },
+    "tray": {
+        "current": "Mevcut",
+        "quota": "Kota",
+        "switch_next": "Sonraki Hesaba Geç",
+        "refresh_current": "Mevcut Kotayı Yenile",
+        "show_window": "Ana Pencereyi Göster",
+        "quit": "Uygulamadan Çık",
+        "no_account": "Hesap Yok",
+        "unknown_quota": "Bilinmiyor (Yenilemek için tıklayın)",
+        "forbidden": "Hesap Yasaklı"
+    },
+    "proxy": {
+        "title": "API Proxy Hizmeti",
+        "status": {
+            "running": "Hizmet Çalışıyor",
+            "stopped": "Hizmet Durduruldu",
+            "accounts_available": "{{count}} Hesap Kullanılabilir",
+            "processing": "İşleniyor..."
+        },
+        "action": {
+            "start": "Hizmeti Başlat",
+            "stop": "Hizmeti Durdur"
+        },
+        "config": {
+            "title": "Hizmet Yapılandırması",
+            "port": "Dinleme Portu",
+            "port_tooltip": "Yerel API Proxy'nin dinlediği TCP portu. Değiştirmek için hizmeti durdurun, ardından uygulamak için yeniden başlatın.",
+            "port_hint": "Varsayılan 8045, değişiklikleri uygulamak için yeniden başlatma gerekir",
+            "auto_start": "Uygulama ile Otomatik Başlat",
+            "auto_start_tooltip": "Uygulama başladığında yerel API Proxy hizmetini otomatik olarak başlatır.",
+            "allow_lan_access": "LAN Erişimine İzin Ver",
+            "allow_lan_access_tooltip": "Etkinleştirildiğinde, hizmet 0.0.0.0'a bağlanır böylece LAN'ınızdaki diğer cihazlar erişebilir. Yetkilendirmeyi etkin tutun ve API anahtarınızı koruyun; uygulamak için yeniden başlatma gerekir.",
+            "allow_lan_access_hint_enabled": "🌐 0.0.0.0 dinleniyor, LAN cihazları erişebilir",
+            "allow_lan_access_hint_disabled": "🔒 Sadece 127.0.0.1 dinleniyor, localhost erişimi (Gizlilik Öncelikli)",
+            "allow_lan_access_warning": "⚠️ Etkinleştirildiğinde LAN cihazları erişebilir. API anahtarınızı güvende tutun",
+            "allow_lan_access_restart_hint": "ℹ️ Değişiklikleri uygulamak için hizmet yeniden başlatması gerekir",
+            "api_key": "API Anahtarı",
+            "api_key_tooltip": "Proxy yetkilendirmesi etkinleştirildiğinde istemciler tarafından kullanılan paylaşılan gizli anahtar. Anahtarı yeniden oluşturmak eskisini hemen geçersiz kılar.",
+            "btn_regenerate": "Anahtarı Yeniden Oluştur",
+            "btn_copy": "Kopyala",
+            "btn_copied": "Kopyalandı",
+            "warning_key": "Not: API anahtarınızı güvende tutun. Paylaşmayın.",
+            "auth": {
+                "title": "Yetkilendirme",
+                "title_tooltip": "Gelen isteklerin kimlik doğrulamasının gerekli olup olmadığını ve hangi rotaların korunduğunu kontrol eder.",
+                "enabled": "Etkin",
+                "enabled_tooltip": "Yetkilendirme modunu değiştirerek yetkilendirmeyi açar/kapatır. Etkinleştirildiğinde, istemciler API anahtarını Authorization: Bearer <API_KEY> veya x-api-key ile dahil etmelidir.",
+                "mode": "Mod",
+                "mode_tooltip": "Hangi rotaların API anahtarı gerektirdiğini seçer: Off = yetkilendirme yok; All = her şeyi koru; All except Health = /healthz açık kalır; Auto = Sadece localhost için Off, aksi takdirde All except Health.",
+                "hint": "Etkinleştirildiğinde, istemciler API anahtarını Authorization: Bearer ... ile göndermelidir (health seçiliyse hariç).",
+                "modes": {
+                    "off": "Kapalı (Açık)",
+                    "strict": "Tümü (Katı)",
+                    "all_except_health": "Health Hariç Tümü",
+                    "auto": "Otomatik (Önerilen)"
+                }
+            },
+            "zai": {
+                "title": "z.ai (GLM) Sağlayıcısı",
+                "title_tooltip": "Sadece Claude protokolü için isteğe bağlı Anthropic-uyumlu upstream. Yalnızca Anthropic endpoint'lerini etkiler; Google hesap yönlendirmesi değişmeden kalır.",
+                "subtitle": "Sadece Claude protokolü için isteğe bağlı Anthropic-uyumlu upstream.",
+                "enabled": "Etkin",
+                "enabled_tooltip": "Seçilen dağıtım moduna göre Anthropic istekleri için z.ai yönlendirmesini etkinleştirir.",
+                "base_url": "Temel URL",
+                "base_url_tooltip": "Anthropic-uyumlu temel URL. Proxy /v1/messages gibi yolları ekler. Özel bir ağ geçidi kullanmıyorsanız varsayılanı bırakın.",
+                "dispatch_mode": "Dağıtım Modu",
+                "dispatch_mode_tooltip": "Anthropic istekleri için z.ai'nin ne zaman kullanılacağını kontrol eder: Off devre dışı bırakır; All Anthropic requests her şeyi yönlendirir; Pooled Google hesaplarıyla round-robin'de bir slot olarak z.ai ekler; Fallback sadece Google hesabı olmadığında z.ai kullanır.",
+                "api_key": "API Anahtarı",
+                "api_key_tooltip": "z.ai'ye istekleri doğrulamak için kullanılan API anahtarı. Yerel olarak saklanır ve z.ai ve MCP özellikleri için gereklidir.",
+                "api_key_placeholder": "z.ai API anahtarınızı buraya yapıştırın",
+                "warning": "Not: Bu anahtar yerel olarak uygulama veri dizininde saklanır.",
+                "models": {
+                    "title": "Model Eşleme",
+                    "title_tooltip": "Mevcut z.ai model kimliklerini alın ve gelen Anthropic/Claude model adlarının z.ai model kimliklerine nasıl çevrileceğini yapılandırın.",
+                    "refresh": "Modelleri getir",
+                    "refreshing": "Getiriliyor...",
+                    "hint": "Kullanılabilir modeller: {{count}}. Bir öneri seçin veya özel model kimliği yazın.",
+                    "error": "Modeller getirilemedi: {{error}}",
+                    "select_placeholder": "Model seçin...",
+                    "opus": "Opus ailesi → z.ai modeli",
+                    "opus_tooltip": "Gelen model \"opus\" içerdiğinde kullanılan varsayılan z.ai model kimliği (örn. claude-opus-*).",
+                    "sonnet": "Sonnet ailesi → z.ai modeli",
+                    "sonnet_tooltip": "Diğer Claude modelleri için kullanılan varsayılan z.ai model kimliği (örn. claude-sonnet-* ve çoğu claude-* isteği).",
+                    "haiku": "Haiku ailesi → z.ai modeli",
+                    "haiku_tooltip": "Gelen model \"haiku\" içerdiğinde kullanılan varsayılan z.ai model kimliği (örn. claude-haiku-*).",
+                    "advanced_title": "Gelişmiş geçersiz kılmalar",
+                    "advanced_tooltip": "İsteğe bağlı tam eşleşme geçersiz kılmaları. Gelen bir model dizesi bir kural anahtarıyla eşleşirse, eşlenen z.ai model kimliğiyle değiştirilir.",
+                    "from_label": "Gelen model",
+                    "to_label": "z.ai modeli",
+                    "from_placeholder": "örn. claude-opus-4-5-thinking",
+                    "to_placeholder": "örn. glm-4.7",
+                    "add_rule": "Ekle",
+                    "empty": "Geçersiz kılma kuralı yapılandırılmadı."
+                },
+                "modes": {
+                    "off": "Kapalı",
+                    "exclusive": "Tüm Anthropic istekleri",
+                    "pooled": "Havuzlanmış (bir slot)",
+                    "fallback": "Sadece Yedek"
+                },
+                "mcp": {
+                    "title": "MCP Sunucuları (yerel proxy üzerinden)",
+                    "title_tooltip": "MCP istemcilerinin bağlanabilmesi için bu yerel proxy'de isteğe bağlı /mcp/* endpoint'lerini açığa çıkarır. Yalnızca hizmet çalışırken, z.ai yapılandırıldığında ve ilgili anahtarlar etkinleştirildiğinde kullanılabilir.",
+                    "enabled": "MCP proxy'yi etkinleştir",
+                    "enabled_tooltip": "MCP endpoint'leri için ana anahtar. Kapalı olduğunda, tüm /mcp/* rotaları 404 döndürür.",
+                    "web_search": "Web Araması",
+                    "web_search_tooltip": "/mcp/web_search_prime/mcp açığa çıkarır ve istekleri z.ai Web Search MCP upstream'ine yönlendirir.",
+                    "web_reader": "Web Okuyucu",
+                    "web_reader_tooltip": "/mcp/web_reader/mcp açığa çıkarır ve istekleri z.ai Web Reader MCP upstream'ine yönlendirir.",
+                    "vision": "Görsel",
+                    "vision_tooltip": "z.ai tarafından desteklenen görsel araçları sağlayan /mcp/zai-mcp-server/mcp (yerel MCP sunucusu) açığa çıkarır.",
+                    "local_endpoints": "Yerel endpoint'ler (MCP istemcinizi bu URL'leri kullanacak şekilde yapılandırın):",
+                    "local_endpoints_tooltip": "MCP istemcinizde bu URL'leri kullanın. API Proxy ile aynı host/port'u paylaşırlar ve proxy yetkilendirme politikasını takip ederler."
+                }
+            },
+            "request_timeout": "İstek Zaman Aşımı",
+            "request_timeout_tooltip": "Proxy'nin streaming dahil upstream yanıtı için beklediği maksimum süre (saniye). Uzun üretimler için artırın; uygulamak için yeniden başlatma gerekir.",
+            "request_timeout_hint": "Varsayılan 120s, aralık 30-3600s. Değişiklikleri uygulamak için hizmeti yeniden başlatın.",
+            "enable_logging": "İstek Loglamayı Etkinleştir",
+            "enable_logging_hint": "Hata ayıklama için geçmişi kaydet (Küçük performans maliyeti)",
+            "upstream_proxy": {
+                "title": "Global Upstream Proxy (Global Proxy)",
+                "desc": "Etkinleştirildiğinde, tüm harici istekler (API Proxy, Token Yenileme, Kota Kontrolü, Güncelleme Kontrolü) bu proxy üzerinden yönlendirilir.",
+                "enable": "Upstream Proxy'yi Etkinleştir",
+                "url": "Proxy URL'si",
+                "url_placeholder": "örn. http://127.0.0.1:7890 veya socks5://127.0.0.1:7890",
+                "tip": "HTTP, HTTPS ve SOCKS5 destekler."
+            },
+            "scheduling": {
+                "title": "Hesap Rotasyonu ve Zamanlama",
+                "title_tooltip": "Oturumların hesaplara nasıl bağlandığını ve oran limitlerinin nasıl işlendiğini kontrol eder.",
+                "subtitle": "Tüm protokoller (OpenAI/Gemini/Claude) için Prompt Önbelleğini ve oran limiti işlemeyi optimize eder.",
+                "mode": "Zamanlama Modu",
+                "mode_tooltip": "Cache-First: Oturumu hesaba bağla, oran limitinde bekle (önbellek kullanımını maksimize et); Balance: Oturumu bağla, oran limitinde hesap değiştir; Performance: Standart Round-robin.",
+                "modes": {
+                    "CacheFirst": "Önbellek Öncelikli",
+                    "Balance": "Dengeli",
+                    "PerformanceFirst": "Performans"
+                },
+                "modes_desc": {
+                    "CacheFirst": "Oturumu hesaba bağlar, sınırlandırıldığında hassas şekilde bekler (Prompt Önbellek isabetlerini maksimize eder).",
+                    "Balance": "Oturumu bağlar, sınırlandırıldığında otomatik olarak kullanılabilir hesaba geçer (Dengeli önbellek ve kullanılabilirlik).",
+                    "PerformanceFirst": "Oturum bağlama yok, saf round-robin rotasyon (Yüksek eşzamanlılık için en iyi)."
+                },
+                "max_wait": "Maks Bekleme (sn)",
+                "max_wait_tooltip": "Yalnızca 'Önbellek Öncelikli' modunda kullanılır: oran limiti sıfırlama zamanı bu değerin altındaysa geçiş yapmak yerine bekle.",
+                "clear_bindings": "Oturum Bağlantılarını Temizle",
+                "clear_bindings_tooltip": "Tüm oturum-hesap bağlantılarını sert sıfırlama, hesapların bir sonraki istekte yeniden atanmasını zorlar."
+            }
+        },
+        "example": {
+            "title": "Kullanım Örnekleri",
+            "curl": "cURL",
+            "python": "Python",
+            "python_anthropic": "from anthropic import Anthropic\n\nclient = Anthropic(\n    # Önerilen: 127.0.0.1\n    base_url=\"{{baseUrl}}\",\n    api_key=\"{{apiKey}}\"\n)\n\n# Not: Antigravity, Anthropic SDK ile herhangi bir modeli çağırmayı destekler\nresponse = client.messages.create(\n    model=\"{{modelId}}\",\n    max_tokens=1024,\n    messages=[{\"role\": \"user\", \"content\": \"Merhaba\"}]\n)\n\nprint(response.content[0].text)",
+            "python_gemini": "# Kurulum: pip install google-generativeai\nimport google.generativeai as genai\n\n# Antigravity proxy adresini kullan (önerilen 127.0.0.1)\ngenai.configure(\n    api_key=\"{{apiKey}}\",\n    transport='rest',\n    client_options={'api_endpoint': '{{rawBaseUrl}}'}\n)\n\nmodel = genai.GenerativeModel('{{modelId}}')\nresponse = model.generate_content(\"Merhaba\")\nprint(response.text)",
+            "python_openai_image": "from openai import OpenAI\n\nclient = OpenAI(\n    base_url=\"{{baseUrl}}\",\n    api_key=\"{{apiKey}}\"\n)\n\nresponse = client.chat.completions.create(\n    model=\"{{modelId}}\",\n    # Seçenek 1: boyut kullan (önerilen)\n    # Desteklenen: \"1024x1024\" (1:1), \"1280x720\" (16:9), \"720x1280\" (9:16), \"1216x896\" (4:3)\n    extra_body={ \"size\": \"1024x1024\" },\n\n    # Seçenek 2: model eki kullan\n    # örn. gemini-3-pro-image-16-9, gemini-3-pro-image-4-3\n    # model=\"gemini-3-pro-image-16-9\",\n    messages=[{\n        \"role\": \"user\",\n        \"content\": \"Fütüristik bir şehir çiz\"\n    }]\n)\n\nprint(response.choices[0].message.content)",
+            "python_openai": "from openai import OpenAI\n\nclient = OpenAI(\n    base_url=\"{{baseUrl}}\",\n    api_key=\"{{apiKey}}\"\n)\n\nresponse = client.chat.completions.create(\n    model=\"{{modelId}}\",\n    messages=[{\"role\": \"user\", \"content\": \"Merhaba\"}]\n)\n\nprint(response.choices[0].message.content)"
+        },
+        "examples": {
+            "title": "Kullanım Örnekleri"
+        },
+        "dialog": {
+            "confirm_regenerate": "API Anahtarını yeniden oluşturmak istediğinizden emin misiniz? Eski anahtar hemen geçersiz olacak.",
+            "operate_failed": "İşlem başarısız: {{error}}",
+            "reset_mapping_title": "Model Eşlemeyi Sıfırla",
+            "reset_mapping_msg": "Tüm model eşlemelerini sistem varsayılanlarına sıfırlamak istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+            "regenerate_key_title": "API Anahtarını Yeniden Oluştur",
+            "regenerate_key_msg": "API Anahtarını yeniden oluşturmak istediğinizden emin misiniz? Eski anahtar hemen geçersiz kılınacak.",
+            "clear_bindings_title": "Oturum Bağlantılarını Temizle",
+            "clear_bindings_msg": "Tüm oturum-hesap bağlantılarını temizlemek istediğinizden emin misiniz?"
+        },
+        "model": {
+            "flash": "Hızlı Yanıt",
+            "flash_preview": "Flash Önizleme",
+            "flash_lite": "Hafif ve Hızlı",
+            "flash_thinking": "Düşünme Yeteneği",
+            "pro_legacy": "Eski Pro",
+            "pro_low": "Yüksek Performans",
+            "pro_high": "En İyi Akıl Yürütme",
+            "pro_image": "Görsel Oluşturma (1:1)",
+            "pro_image_16_9": "Görsel Oluşturma (16:9)",
+            "pro_image_9_16": "Görsel Oluşturma (9:16)",
+            "pro_image_4_3": "Görsel Oluşturma (4:3)",
+            "pro_image_3_4": "Görsel Oluşturma (3:4)",
+            "pro_image_1_1": "Görsel Oluşturma (1:1)",
+            "claude_sonnet": "Kod Akıl Yürütme",
+            "claude_sonnet_thinking": "Düşünce Zinciri",
+            "claude_opus_thinking": "En Güçlü Düşünme"
+        },
+        "mapping": {
+            "title": "Claude Code Model Eşleme",
+            "description": "Claude Code modellerini Antigravity modellerine eşleyin. İstekleri akıllıca yönlendirerek maliyeti ve hızı optimize edin.",
+            "default": "Varsayılan",
+            "sonnet_desc": "Karmaşık işler için en yetenekli",
+            "opus_desc": "Premium katman",
+            "haiku_desc": "Hızlı cevaplar için en hızlı",
+            "maps_to": "Antigravity'ye Eşlenir",
+            "apply_recommended": "Önerileni Uygula",
+            "restore_defaults": "Varsayılan Yapılandırmayı Geri Yükle",
+            "reset_all": "Tümünü Sıfırla"
+        },
+        "models": {
+            "flash": "Ultra-hızlı",
+            "flash_thinking": "Düşünme Yeteneği",
+            "pro_high": "En İyi Akıl Yürütme",
+            "pro_low": "Düşük Kota",
+            "sonnet": "Kod Akıl Yürütme",
+            "sonnet_thinking": "Düşünce Zinciri",
+            "opus_thinking": "En Güçlü Düşünme"
+        },
+        "router": {
+            "title": "Model Yönlendirici",
+            "subtitle": "Modelleri serilere göre yönlendirin veya özel tam eşlemeler ekleyin.\nNot: Yerel Claude geçiş modelleri (örn. claude-opus-4-5-thinking) varsayılan olarak seri gruplarını atlar. Geçersiz kılmak için \"Uzman Özel Yönlendirme\" kullanın.",
+            "subtitle_simple": "Joker karakterlerle veya tam eşlemelerle model yönlendirmeyi özelleştirin",
+            "apply_presets": "Ön Ayarları Uygula",
+            "presets_applied": "Ön ayarlar başarıyla uygulandı",
+            "custom_mappings": "Özel Eşlemeler",
+            "group_title": "Seri Grupları",
+            "gemini3_group_label": "Gemini 3 (Önerilen)",
+            "gemini3_option_high": "gemini-3-pro-high (Yüksek Kalite)",
+            "gemini3_option_low": "gemini-3-pro-low (Dengeli)",
+            "gemini3_option_flash": "gemini-3-flash (Hızlı)",
+            "groups": {
+                "claude_45": {
+                    "name": "Claude 4.5 Serisi",
+                    "desc": "Opus 4.5, Sonnet 4.5"
+                },
+                "claude_35": {
+                    "name": "Claude 3.5 Serisi",
+                    "desc": "Sonnet 3.5, Haiku 3.5"
+                },
+                "gpt_4": {
+                    "name": "GPT-4 / o1 Serisi",
+                    "desc": "GPT-4, Turbo, o1-preview"
+                },
+                "gpt_4o": {
+                    "name": "GPT-4o / 3.5 Serisi",
+                    "desc": "GPT-4o, Mini, 3.5 Turbo"
+                },
+                "gpt_5": {
+                    "name": "GPT-5 Serisi",
+                    "desc": "GPT-5.1, GPT-5.2 xhigh"
+                }
+            },
+            "expert_title": "Uzman Özel Yönlendirme",
+            "expert_subtitle": "Herhangi bir orijinal model kimliği için hassas eşleştirme.",
+            "money_saving_tip": "💰 Maliyet tasarrufu ipucu:",
+            "haiku_optimization_tip": "Claude CLI varsayılan olarak arka plan görevleri için {{model}} kullanır. Daha ucuz bir Flash modeline eşleyin ve ~%95 tasarruf edin",
+            "haiku_optimization_btn": "Hızlı Optimize Et",
+            "haiku_tip_title": "💰 Maliyet tasarrufu ipucu:",
+            "haiku_tip_body_before": "Claude CLI arka plan görevleri için varsayılan olarak",
+            "haiku_tip_body_after": "kullanır; bunu daha ucuz bir Flash modeline eşlemek maliyetin yaklaşık %95'ini tasarruf edebilir.",
+            "haiku_tip_action": "Optimize Et",
+            "reset_confirm": "Tüm eşlemeleri sistem varsayılanlarına sıfırla?",
+            "reset_mapping": "Eşlemeyi Sıfırla",
+            "add_mapping": "Eşleme Ekle",
+            "current_list": "Özel Liste",
+            "no_custom_mapping": "Henüz özel eşleme yok",
+            "gemini3_only_warning": "⚠️ Sadece Gemini 3 serisi",
+            "default_suffix": " (Varsayılan)",
+            "original_id": "Orijinal Kimlik",
+            "route_to": "Şuna Yönlendir",
+            "select_target_model": "Hedef Model Seç"
+        },
+        "multi_protocol": {
+            "title": "Çoklu Protokol Desteği",
+            "subtitle": "Protokol Desteği",
+            "description": "Proxy hizmeti farklı araç gereksinimlerini karşılamak için hem OpenAI hem de Anthropic API formatlarını destekler",
+            "openai_label": "OpenAI Protokolü",
+            "anthropic_label": "Anthropic Protokolü",
+            "openai_tools": "Cherry Studio, NextChat",
+            "anthropic_tools": "Claude Code CLI",
+            "gemini_label": "Gemini Protokolü",
+            "gemini_tools": "Google AI SDK, LangChain",
+            "quick_integration": "Hızlı Entegrasyon",
+            "click_tip": "👆 Bu kodu güncellemek için soldaki herhangi bir modele tıklayın."
+        },
+        "supported_models": {
+            "title": "Desteklenen Modeller ve Entegrasyon",
+            "model_name": "Model Adı",
+            "model_id": "Model Kimliği",
+            "description": "Açıklama",
+            "action": "İşlem"
+        }
+    },
+    "monitor": {
+        "page_title": "API İzleme Paneli",
+        "page_subtitle": "Gerçek zamanlı istek loglama ve analiz",
+        "open_monitor": "İzlemeyi Aç",
+        "logging_status": {
+            "active": "Kaydediliyor",
+            "paused": "Duraklatıldı"
+        },
+        "stats": {
+            "total": "Toplam",
+            "ok": "BAŞARILI",
+            "err": "HATA"
+        },
+        "filters": {
+            "placeholder": "Model, yol veya duruma göre filtrele...",
+            "quick_filters": "Hızlı Filtreler:",
+            "all": "Tümü",
+            "error": "Hata",
+            "chat": "Sohbet",
+            "gemini": "Gemini",
+            "claude": "Claude",
+            "images": "Görseller",
+            "reset": "Sıfırla"
+        },
+        "table": {
+            "status": "Durum",
+            "method": "Metot",
+            "model": "Model",
+            "account": "Hesap",
+            "path": "Yol",
+            "usage": "Token'lar",
+            "duration": "Süre",
+            "time": "Zaman",
+            "empty": "Kayıtlı istek yok"
+        },
+        "details": {
+            "title": "İstek Detayları",
+            "request_payload": "İstek Yükü",
+            "response_payload": "Yanıt Yükü",
+            "duration": "Süre",
+            "tokens": "Token'lar (G/Ç)",
+            "time": "Zaman",
+            "model": "Model",
+            "id": "İstek Kimliği"
+        },
+        "dialog": {
+            "clear_title": "Proxy Loglarını Temizle",
+            "clear_msg": "Tüm proxy loglarını temizlemek istediğinizden emin misiniz? Bu işlem geri alınamaz."
+        }
+    }
+}
