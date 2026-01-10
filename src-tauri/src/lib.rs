@@ -86,6 +86,17 @@ pub fn run() {
             commands::delete_accounts,
             commands::reorder_accounts,
             commands::switch_account,
+            // 设备指纹
+            commands::get_device_profiles,
+            commands::bind_device_profile,
+            commands::bind_device_profile_with_profile,
+            commands::preview_generate_profile,
+            commands::apply_device_profile,
+            commands::restore_original_device,
+            commands::list_device_versions,
+            commands::restore_device_version,
+            commands::delete_device_version,
+            commands::open_device_folder,
             commands::get_current_account,
             // 配额命令
             commands::fetch_account_quota,

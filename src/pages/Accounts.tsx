@@ -7,6 +7,7 @@ import { useAccountStore } from '../stores/useAccountStore';
 import { useConfigStore } from '../stores/useConfigStore';
 import AccountTable from '../components/accounts/AccountTable';
 import AccountGrid from '../components/accounts/AccountGrid';
+import DeviceFingerprintDialog from '../components/accounts/DeviceFingerprintDialog';
 import AccountDetailsDialog from '../components/accounts/AccountDetailsDialog';
 import AddAccountDialog from '../components/accounts/AddAccountDialog';
 import ModalDialog from '../components/common/ModalDialog';
@@ -49,6 +50,7 @@ function Accounts() {
         localStorage.setItem('accounts_view_mode', viewMode);
     }, [viewMode]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [deviceAccount, setDeviceAccount] = useState<Account | null>(null);
     const [detailsAccount, setDetailsAccount] = useState<Account | null>(null);
     const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
     const [isBatchDelete, setIsBatchDelete] = useState(false);
@@ -456,6 +458,13 @@ function Accounts() {
             setDetailsAccount(account);
         }
     };
+    const handleViewDevice = (accountId: string) => {
+        const account = accounts.find(a => a.id === accountId);
+        if (account) {
+            setDeviceAccount(account);
+        }
+    };
+
 
     return (
         <div className="h-full flex flex-col p-5 gap-4 max-w-7xl mx-auto w-full">
@@ -663,6 +672,7 @@ function Accounts() {
                                 switchingAccountId={switchingAccountId}
                                 onSwitch={handleSwitch}
                                 onRefresh={handleRefresh}
+                                onViewDevice={handleViewDevice}
                                 onViewDetails={handleViewDetails}
                                 onExport={handleExportOne}
                                 onDelete={handleDelete}
@@ -682,6 +692,7 @@ function Accounts() {
                             switchingAccountId={switchingAccountId}
                             onSwitch={handleSwitch}
                             onRefresh={handleRefresh}
+                            onViewDevice={handleViewDevice}
                             onViewDetails={handleViewDetails}
                             onExport={handleExportOne}
                             onDelete={handleDelete}
@@ -714,6 +725,10 @@ function Accounts() {
             <AccountDetailsDialog
                 account={detailsAccount}
                 onClose={() => setDetailsAccount(null)}
+            />
+            <DeviceFingerprintDialog
+                account={deviceAccount}
+                onClose={() => setDeviceAccount(null)}
             />
 
             <ModalDialog

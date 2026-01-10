@@ -11,6 +11,7 @@ interface AccountGridProps {
     switchingAccountId: string | null;
     onSwitch: (accountId: string) => void;
     onRefresh: (accountId: string) => void;
+    onViewDevice: (accountId: string) => void;
     onViewDetails: (accountId: string) => void;
     onExport: (accountId: string) => void;
     onDelete: (accountId: string) => void;
@@ -18,7 +19,7 @@ interface AccountGridProps {
 }
 
 
-function AccountGrid({ accounts, selectedIds, refreshingIds, onToggleSelect, currentAccountId, switchingAccountId, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy }: AccountGridProps) {
+function AccountGrid({ accounts, selectedIds, refreshingIds, onToggleSelect, currentAccountId, switchingAccountId, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice }: AccountGridProps) {
     const { t } = useTranslation();
     if (accounts.length === 0) {
         return (
@@ -42,6 +43,7 @@ function AccountGrid({ accounts, selectedIds, refreshingIds, onToggleSelect, cur
                     isSwitching={account.id === switchingAccountId}
                     onSwitch={() => onSwitch(account.id)}
                     onRefresh={() => onRefresh(account.id)}
+                    onViewDevice={() => onViewDevice(account.id)}
                     onViewDetails={() => onViewDetails(account.id)}
                     onExport={() => onExport(account.id)}
                     onDelete={() => onDelete(account.id)}

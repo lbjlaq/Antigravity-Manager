@@ -10,6 +10,7 @@ pub mod migration;
 pub mod tray;
 pub mod i18n;
 pub mod proxy_db;
+pub mod device;
 
 use crate::models;
 
@@ -20,6 +21,7 @@ pub use quota::*;
 pub use config::*;
 #[allow(unused_imports)]
 pub use logger::*;
+pub use device::*;
 
 pub async fn fetch_quota(access_token: &str, email: &str) -> crate::error::AppResult<(models::QuotaData, Option<String>)> {
     quota::fetch_quota(access_token, email).await

@@ -28,6 +28,7 @@ import {
     RefreshCw,
     Trash2,
     Download,
+    Fingerprint,
     Info,
     Lock,
     Ban,
@@ -57,6 +58,7 @@ interface AccountTableProps {
     switchingAccountId: string | null;
     onSwitch: (accountId: string) => void;
     onRefresh: (accountId: string) => void;
+    onViewDevice: (accountId: string) => void;
     onViewDetails: (accountId: string) => void;
     onExport: (accountId: string) => void;
     onDelete: (accountId: string) => void;
@@ -75,6 +77,7 @@ interface SortableRowProps {
     onSelect: () => void;
     onSwitch: () => void;
     onRefresh: () => void;
+    onViewDevice: () => void;
     onViewDetails: () => void;
     onExport: () => void;
     onDelete: () => void;
@@ -88,6 +91,7 @@ interface AccountRowContentProps {
     isSwitching: boolean;
     onSwitch: () => void;
     onRefresh: () => void;
+    onViewDevice: () => void;
     onViewDetails: () => void;
     onExport: () => void;
     onDelete: () => void;
@@ -141,6 +145,7 @@ function SortableAccountRow({
     onSelect,
     onSwitch,
     onRefresh,
+    onViewDevice,
     onViewDetails,
     onExport,
     onDelete,
@@ -202,6 +207,7 @@ function SortableAccountRow({
                 isSwitching={isSwitching}
                 onSwitch={onSwitch}
                 onRefresh={onRefresh}
+                onViewDevice={onViewDevice}
                 onViewDetails={onViewDetails}
                 onExport={onExport}
                 onDelete={onDelete}
@@ -222,6 +228,7 @@ function AccountRowContent({
     isSwitching,
     onSwitch,
     onRefresh,
+    onViewDevice,
     onViewDetails,
     onExport,
     onDelete,
@@ -468,6 +475,13 @@ function AccountRowContent({
                         <Info className="w-3.5 h-3.5" />
                     </button>
                     <button
+                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-all"
+                        onClick={(e) => { e.stopPropagation(); onViewDevice(); }}
+                        title="设备指纹"
+                    >
+                        <Fingerprint className="w-3.5 h-3.5" />
+                    </button>
+                    <button
                         className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}
                         onClick={(e) => { e.stopPropagation(); onSwitch(); }}
                         title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to'))}
@@ -537,6 +551,7 @@ function AccountTable({
     switchingAccountId,
     onSwitch,
     onRefresh,
+    onViewDevice,
     onViewDetails,
     onExport,
     onDelete,
@@ -628,6 +643,7 @@ function AccountTable({
                                     onSelect={() => onToggleSelect(account.id)}
                                     onSwitch={() => onSwitch(account.id)}
                                     onRefresh={() => onRefresh(account.id)}
+                                    onViewDevice={() => onViewDevice(account.id)}
                                     onViewDetails={() => onViewDetails(account.id)}
                                     onExport={() => onExport(account.id)}
                                     onDelete={() => onDelete(account.id)}
@@ -665,6 +681,7 @@ function AccountTable({
                                     isSwitching={activeAccount.id === switchingAccountId}
                                     onSwitch={() => { }}
                                     onRefresh={() => { }}
+                                    onViewDevice={() => { }}
                                     onViewDetails={() => { }}
                                     onExport={() => { }}
                                     onDelete={() => { }}

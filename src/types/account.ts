@@ -3,6 +3,8 @@ export interface Account {
     email: string;
     name?: string;
     token: TokenData;
+    device_profile?: DeviceProfile;
+    device_history?: DeviceProfileVersion[];
     quota?: QuotaData;
     disabled?: boolean;
     disabled_reason?: string;
@@ -35,3 +37,19 @@ export interface ModelQuota {
     percentage: number;
     reset_time: string;
 }
+
+export interface DeviceProfile {
+    machine_id: string;
+    mac_machine_id: string;
+    dev_device_id: string;
+    sqm_id: string;
+}
+
+export interface DeviceProfileVersion {
+    id: string;
+    created_at: number;
+    label: string;
+    profile: DeviceProfile;
+    is_current?: boolean;
+}
+

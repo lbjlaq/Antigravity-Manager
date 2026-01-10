@@ -8,6 +8,12 @@ pub struct Account {
     pub email: String,
     pub name: Option<String>,
     pub token: TokenData,
+    /// 可选的设备指纹，用于切换账号时固定机器信息
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_profile: Option<DeviceProfile>,
+    /// 设备指纹历史（生成/采集时记录），不含基线
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub device_history: Vec<DeviceProfileVersion>,
     pub quota: Option<QuotaData>,
     /// Disabled accounts are ignored by the proxy token pool (e.g. revoked refresh_token -> invalid_grant).
     #[serde(default)]
@@ -39,6 +45,8 @@ impl Account {
             email,
             name: None,
             token,
+            device_profile: None,
+            device_history: Vec::new(),
             quota: None,
             disabled: false,
             disabled_reason: None,
@@ -92,4 +100,24 @@ impl Default for AccountIndex {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 设备指纹（storage.json 中 telemetry 相关字段）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceProfile {
+    pub machine_id: String,
+    pub mac_machine_id: String,
+    pub dev_device_id: String,
+    pub sqm_id: String,
+}
+
+/// 指纹历史版本
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceProfileVersion {
+    pub id: String,
+    pub created_at: i64,
+    pub label: String,
+    pub profile: DeviceProfile,
+    #[serde(default)]
+    pub is_current: bool,
 }
