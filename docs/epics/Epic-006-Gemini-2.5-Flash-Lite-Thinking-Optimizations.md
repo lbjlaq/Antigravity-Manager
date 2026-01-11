@@ -1,11 +1,21 @@
 # Epic-006: Gemini 2.5 Flash Lite Thinking - Intelligence & Analytics
 
+> **🚨 EPIC BLOCKED - 2026-01-11** ❌
+>
+> **Reason**: `gemini-2.5-flash-lite` **does NOT support thinking mode** at Google API level
+> **Evidence**: Direct API testing (11 accounts, 95% confidence)
+> **Decision**: Epic cannot proceed - fundamental assumption invalid
+> **Details**: See `docs/qa/story-006-01-GATE.md`
+> **Next Action**: Proceed to Epic-007 (Gemini 3 Pro Image)
+
+---
+
 **Model**: `gemini-2.5-flash-lite-thinking`
-**Priority**: MEDIUM
-**Total Effort**: 12 hours
-**Stories**: 6
-**Target Compliance**: 91.2% → 100%
-**Status**: PENDING
+**Priority**: ~~MEDIUM~~ **BLOCKED**
+**Total Effort**: ~~12 hours~~ **1 hour invested (validation only)**
+**Stories**: ~~6~~ **1 completed (validation)**
+**Target Compliance**: ~~91.2% → 100%~~ **N/A (model lacks thinking)**
+**Status**: ❌ **BLOCKED** (was: PENDING)
 
 ---
 

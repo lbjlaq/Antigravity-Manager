@@ -692,18 +692,39 @@ fn should_enable_thinking_by_default(model: &str) -> bool {
     false
 }
 
-/// Check if a Gemini model supports thinking mode
+/// [UPDATED Epic-006] Check if Gemini model supports thinking mode.
 ///
-/// Gemini thinking models use thinkingConfig parameter in API request.
-/// Unlike Claude (which uses "-thinking" suffix in model name),
-/// Gemini model names do NOT have a special suffix for thinking variants.
+/// NOT all Gemini models support thinking - only specific models validated via live API testing.
+/// Lite variants (e.g., gemini-2.5-flash-lite) do NOT support thinking despite accepting the parameter.
 ///
-/// All Gemini models can support thinking via the thinkingConfig parameter.
-/// Reference: docs/antigravity/workflows/models/gemini/gemini-thinking-workflow.md
+/// Unlike Claude (which uses "-thinking" suffix), Gemini uses thinkingConfig parameter in API request.
+/// Reference: docs/qa/FLASH_LITE_THINKING_CODE_ANALYSIS.md
 fn is_gemini_thinking_model(model: &str) -> bool {
-    // Gemini models support thinking via thinkingConfig parameter
-    // All gemini-* models are thinking-capable
-    model.starts_with("gemini-")
+    // [FIX Epic-006] Explicit allow-list for thinking-capable models
+    // Based on live API validation (Story-006-01)
+    // NOT all Gemini models support thinking - lite variants do NOT
+    match model {
+        // Gemini 2.x series (legacy and current)
+        "gemini-2.0-flash" => true,
+        "gemini-2.5-flash" => true,
+        "gemini-2.5-pro" => true,
+
+        // Gemini Pro (legacy)
+        "gemini-pro" => true,
+
+        // Gemini 3 series (verified thinking support)
+        "gemini-3-flash" => true,
+        "gemini-3-pro-low" => true,
+        "gemini-3-pro-high" => true,
+
+        // Gemini -thinking suffix models (ONLY for gemini-* models)
+        m if m.starts_with("gemini-") && m.ends_with("-thinking") => true,
+
+        // Default: NO thinking support
+        // Excludes: gemini-2.5-flash-lite, gemini-pro-vision, claude-*, gpt-*, etc.
+        // Reason: API validation showed lite ignores thinkingConfig parameter
+        _ => false,
+    }
 }
 
 /// Minimum length for a valid thought_signature

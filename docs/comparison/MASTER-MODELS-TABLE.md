@@ -49,7 +49,7 @@
 | 1 | gemini-3-pro-high | Gemini 3 Pro (High) | ✅ 38KB | ✅ 56KB | ✅ 25KB | DONE | - | v2.0, 32000 budget |
 | 2 | gemini-3-pro-low | Gemini 3 Pro (Low) | ✅ 40KB | ✅ 43KB | ✅ 42KB | DONE | - | v2.0, 32000 budget |
 | 3 | gemini-3-flash | Gemini 3 Flash | ✅ 45KB | ✅ 58KB | ✅ 38KB | DONE | - | v2.0, 4 levels, ⚠️ API |
-| 4 | gemini-3-pro-image | - | ⏳ | ❌ N/A | ⏳ | TODO | 🟡 | Image-only |
+| 4 | gemini-3-pro-image | - | ✅ 43KB | ❌ N/A | ✅ 33KB | EPIC-007 | 🔴 | v2.0, 21 variants, Epic planning |
 
 **Документов**: 9/10 (90%)
 **Критические открытия**:
@@ -80,8 +80,8 @@
 
 | # | Model Name | UI Display | Base Workflow | Thinking Workflow | COMPARISON | Status | Priority | Notes |
 |---|------------|------------|---------------|-------------------|------------|--------|----------|-------|
-| 1 | gemini-2.5-pro-thinking | - | ❌ N/A | ⏳ | ⏳ | TODO | 🔴 HIGH | 32000 budget |
-| 2 | gemini-2.5-flash-lite-thinking | - | ❌ N/A | ⏳ | ⏳ | TODO | 🟡 MEDIUM | 12000-16000 |
+| 1 | gemini-2.5-pro-thinking | - | ❌ N/A | ⏳ | ✅ 33KB | EPIC-008 | 🔴 HIGH | 32000 budget, 90.6%, Next after 007 |
+| 2 | gemini-2.5-flash-lite-thinking | - | ❌ N/A | ❌ NOT SUPPORTED | ❌ | BLOCKED | ⚫ N/A | ❌ Model does NOT support thinking (Epic-006 blocked) |
 
 **Документов**: 0/4 (0%)
 

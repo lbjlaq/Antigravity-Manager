@@ -839,8 +839,31 @@ pub async fn handle_messages(
         };
         let query = if actual_stream { Some("alt=sse") } else { None };
 
+        // [CRITICAL FIX] Remove Antigravity-specific routing fields before sending to Google API
+        // These fields are for internal routing only and cause 400 Bad Request if sent upstream
+        let mut clean_body = gemini_body.clone();
+        if let Some(obj) = clean_body.as_object_mut() {
+            // Remove top-level routing fields
+            obj.remove("apiProvider");
+            obj.remove("modelProvider");
+            obj.remove("modelId");
+            obj.remove("geminiSettings");
+            obj.remove("metadata");
+
+            // Remove nested routing fields inside 'request' object
+            if let Some(request_obj) = obj.get_mut("request").and_then(|r| r.as_object_mut()) {
+                request_obj.remove("geminiSettings");
+                request_obj.remove("metadata");
+            }
+
+            debug!(
+                "[{}] Cleaned routing fields from upstream body",
+                trace_id
+            );
+        }
+
         let response = match upstream
-            .call_v1_internal(method, &access_token, gemini_body, query)
+            .call_v1_internal(method, &access_token, clean_body, query)
             .await
         {
             Ok(r) => r,
