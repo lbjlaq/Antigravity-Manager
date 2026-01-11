@@ -62,3 +62,7 @@ tracing-appender = "0.2.4"
 tracing-log = "0.2.0"
 tauri-plugin-autostart = "2.5.1"
 sha2 = "0.10"
+async-trait = "0.1"                 # Async trait support for cache
+
+[dev-dependencies]
+tempfile = "3"                      # Temporary directories for cache tests

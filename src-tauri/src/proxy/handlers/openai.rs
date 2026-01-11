@@ -11,6 +11,7 @@ use crate::proxy::mappers::openai::{
 // use crate::proxy::upstream::client::UpstreamClient; // 通过 state 获取
 use crate::proxy::server::AppState;
 use crate::proxy::errors::{categorize_error, format_error_message, hash_prompt};
+use crate::proxy::cache::{CacheBackend, CachedImage, generate_cache_key};
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 use crate::proxy::session_manager::SessionManager;
@@ -839,6 +840,53 @@ pub async fn handle_images_generations(
         style
     );
 
+    // [AC-1] Generate cache key from request parameters
+    let cache_key = generate_cache_key(
+        model,
+        prompt,
+        Some(quality),
+        Some(style),
+    );
+
+    // [AC-2] Try cache lookup (single image only - n=1)
+    if n == 1 {
+        if let Some(ref cache) = state.image_cache {
+            match cache.get(&cache_key).await {
+                Ok(Some(cached)) => {
+                    info!(
+                        "[Images] 🎯 Cache hit for model={}, prompt_hash={}",
+                        model,
+                        cached.prompt_hash
+                    );
+
+                    // Return cached response in OpenAI format
+                    let openai_response = json!({
+                        "created": cached.created_at,
+                        "data": [{
+                            "b64_json": cached.b64_json
+                        }]
+                    });
+
+                    return Ok(Json(openai_response));
+                }
+                Ok(None) => {
+                    debug!(
+                        "[Images] Cache miss for model={}, prompt_hash={}",
+                        model,
+                        hash_prompt(prompt)
+                    );
+                }
+                Err(e) => {
+                    // Cache error - log and continue with generation
+                    tracing::warn!(
+                        "[Images] Cache lookup error (continuing with generation): {}",
+                        e
+                    );
+                }
+            }
+        }
+    }
+
     // 2. 解析尺寸为宽高比
     let aspect_ratio = match size {
         "1792x768" | "2560x1080" => "21:9", // Ultra-wide
@@ -1102,6 +1150,42 @@ pub async fn handle_images_generations(
         n
     );
 
+    // [AC-3] Store in cache (single successful image only - n=1)
+    if n == 1 && images.len() == 1 {
+        if let Some(ref cache) = state.image_cache {
+            // Extract b64_json from first image
+            if let Some(b64_data) = images[0].get("b64_json").and_then(|v| v.as_str()) {
+                let cached_image = CachedImage {
+                    b64_json: b64_data.to_string(),
+                    model: model.to_string(),
+                    created_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    prompt_hash: hash_prompt(&final_prompt),
+                    quality: quality.to_string(),
+                    style: style.to_string(),
+                };
+
+                match cache.set(&cache_key, cached_image, std::time::Duration::from_secs(3600)).await {
+                    Ok(_) => {
+                        debug!(
+                            "[Images] ✓ Cached image for model={}, prompt_hash={}",
+                            model,
+                            hash_prompt(&final_prompt)
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[Images] Failed to cache image (non-critical): {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // 6. 构建 OpenAI 格式响应
     let openai_response = json!({
         "created": chrono::Utc::now().timestamp(),
@@ -1197,6 +1281,73 @@ pub async fn handle_images_edits(
         mask_data.is_some(),
         response_format
     );
+
+    // [AC-4] Generate cache key for edit operations
+    // Note: Image editing cache keys include hash of image data for uniqueness
+    let image_hash = if let Some(ref img_data) = image_data {
+        // Use first 16 chars of image data hash
+        let image_portion = if img_data.len() > 64 {
+            &img_data[0..64]
+        } else {
+            img_data.as_str()
+        };
+        hash_prompt(image_portion)
+    } else {
+        "no_image".to_string()
+    };
+
+    let cache_key = format!(
+        "img-edit:{}:{}:{}:{}",
+        model,
+        image_hash,
+        hash_prompt(&prompt),
+        mask_data.is_some()
+    );
+
+    // [AC-4] Try cache lookup for edit operations (single image only - n=1)
+    if n == 1 {
+        if let Some(ref cache) = state.image_cache {
+            match cache.get(&cache_key).await {
+                Ok(Some(cached)) => {
+                    info!(
+                        "[Images] 🎯 Cache hit for edit operation, model={}, prompt_hash={}",
+                        model,
+                        cached.prompt_hash
+                    );
+
+                    // Return cached response in OpenAI format
+                    let data_field = if response_format == "url" {
+                        json!([{
+                            "url": format!("data:image/png;base64,{}", cached.b64_json)
+                        }])
+                    } else {
+                        json!([{
+                            "b64_json": cached.b64_json
+                        }])
+                    };
+
+                    let openai_response = json!({
+                        "created": cached.created_at,
+                        "data": data_field
+                    });
+
+                    return Ok(Json(openai_response));
+                }
+                Ok(None) => {
+                    debug!(
+                        "[Images] Cache miss for edit operation, prompt_hash={}",
+                        hash_prompt(&prompt)
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[Images] Cache lookup error for edit (continuing): {}",
+                        e
+                    );
+                }
+            }
+        }
+    }
 
     // FIX: Client Display Issue
     // Cherry Studio (and potentially others) might accept Data URI for generations but display raw text for edits
@@ -1476,6 +1627,55 @@ pub async fn handle_images_edits(
         images.len(),
         n
     );
+
+    // [AC-4] Store edited image in cache (single successful image only - n=1)
+    if n == 1 && images.len() == 1 {
+        if let Some(ref cache) = state.image_cache {
+            // Extract b64_json from first image (handle both b64_json and url formats)
+            let b64_data = if let Some(b64) = images[0].get("b64_json").and_then(|v| v.as_str()) {
+                Some(b64.to_string())
+            } else if let Some(url) = images[0].get("url").and_then(|v| v.as_str()) {
+                // Extract base64 from data URI format: data:image/png;base64,{data}
+                if let Some(pos) = url.find("base64,") {
+                    Some(url[pos + 7..].to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(b64_data) = b64_data {
+                let cached_image = CachedImage {
+                    b64_json: b64_data,
+                    model: model.to_string(),
+                    created_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
+                    prompt_hash: hash_prompt(&prompt),
+                    quality: "standard".to_string(), // Edits don't have quality parameter
+                    style: "natural".to_string(), // Edits don't have style parameter
+                };
+
+                match cache.set(&cache_key, cached_image, std::time::Duration::from_secs(3600)).await {
+                    Ok(_) => {
+                        debug!(
+                            "[Images] ✓ Cached edited image for model={}, prompt_hash={}",
+                            model,
+                            hash_prompt(&prompt)
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "[Images] Failed to cache edited image (non-critical): {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     let openai_response = json!({
         "created": chrono::Utc::now().timestamp(),

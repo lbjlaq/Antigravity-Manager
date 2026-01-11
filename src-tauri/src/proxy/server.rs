@@ -32,6 +32,8 @@ pub struct AppState {
     pub experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
     /// Story-007-02: Gemini Image Generation Safety Settings
     pub safety_threshold: Arc<RwLock<Option<String>>>,
+    /// Story-007-04: Image generation response cache
+    pub image_cache: Option<Arc<dyn crate::proxy::cache::CacheBackend>>,
 }
 
 /// Axum 服务器实例
@@ -44,6 +46,82 @@ pub struct AxumServer {
 }
 
 impl AxumServer {
+    /// Initialize image cache from environment variables (Story-007-04)
+    ///
+    /// Environment variables:
+    /// - CACHE_BACKEND=none|filesystem|redis (default: none)
+    /// - CACHE_TTL_SECONDS=3600 (default: 1 hour)
+    /// - CACHE_MAX_SIZE_MB=100 (default: 100MB)
+    /// - CACHE_DIR={data_dir}/image_cache/ (filesystem only)
+    fn initialize_cache() -> Option<Arc<dyn crate::proxy::cache::CacheBackend>> {
+        use crate::proxy::cache::{FilesystemCache, NoOpCache};
+
+        let backend = std::env::var("CACHE_BACKEND").unwrap_or_else(|_| "none".to_string());
+
+        match backend.as_str() {
+            "filesystem" => {
+                let cache_dir = std::env::var("CACHE_DIR").ok().and_then(|d| {
+                    if d.is_empty() {
+                        None
+                    } else {
+                        Some(std::path::PathBuf::from(d))
+                    }
+                }).unwrap_or_else(|| {
+                    // Default: {data_dir}/image_cache/
+                    let data_dir = dirs::data_local_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join("com.lbjlaq.antigravity-tools")
+                        .join("image_cache");
+                    data_dir
+                });
+
+                let max_size_mb: u64 = std::env::var("CACHE_MAX_SIZE_MB")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(100);
+
+                let ttl_secs: u64 = std::env::var("CACHE_TTL_SECONDS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(3600);
+
+                match FilesystemCache::new(
+                    cache_dir.clone(),
+                    max_size_mb,
+                    std::time::Duration::from_secs(ttl_secs),
+                ) {
+                    Ok(cache) => {
+                        tracing::info!(
+                            "[Cache] ✓ Filesystem cache enabled: dir={:?}, max_size={}MB, ttl={}s",
+                            cache_dir,
+                            max_size_mb,
+                            ttl_secs
+                        );
+                        Some(Arc::new(cache) as Arc<dyn crate::proxy::cache::CacheBackend>)
+                    }
+                    Err(e) => {
+                        tracing::error!("[Cache] Failed to initialize filesystem cache: {}", e);
+                        tracing::warn!("[Cache] Falling back to NoOp cache (disabled)");
+                        Some(Arc::new(NoOpCache::new()) as Arc<dyn crate::proxy::cache::CacheBackend>)
+                    }
+                }
+            }
+            "redis" => {
+                // TODO: Implement RedisCache (optional, Story-007-04)
+                tracing::warn!("[Cache] Redis backend not yet implemented, falling back to NoOp");
+                Some(Arc::new(NoOpCache::new()) as Arc<dyn crate::proxy::cache::CacheBackend>)
+            }
+            "none" => {
+                tracing::debug!("[Cache] Cache disabled (backend=none)");
+                None
+            }
+            other => {
+                tracing::warn!("[Cache] Unknown backend '{}', cache disabled", other);
+                None
+            }
+        }
+    }
+
     pub async fn update_mapping(&self, config: &crate::proxy::config::ProxyConfig) {
         {
             let mut m = self.custom_mapping.write().await;
@@ -112,6 +190,11 @@ impl AxumServer {
             safety_threshold: Arc::new(RwLock::new(
                 std::env::var("GEMINI_IMAGE_SAFETY_THRESHOLD").ok()
             )),
+            // Story-007-04: Initialize image cache from environment variables
+            // CACHE_BACKEND=none|filesystem|redis (default: none)
+            // CACHE_TTL_SECONDS=3600 (default: 1 hour)
+            // CACHE_MAX_SIZE_MB=100 (default: 100MB)
+            image_cache: Self::initialize_cache(),
         };
 
         // 构建路由 - 使用新架构的 handlers！
