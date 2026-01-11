@@ -46,16 +46,22 @@
 
 | # | Model Name | UI Display | Base Workflow | Thinking Workflow | COMPARISON | Status | Priority | Notes |
 |---|------------|------------|---------------|-------------------|------------|--------|----------|-------|
-| 1 | gemini-3-pro-high | Gemini 3 Pro (High) | ✅ 38KB | ✅ 56KB | ✅ 25KB | DONE | - | v2.0, 32000 budget |
-| 2 | gemini-3-pro-low | Gemini 3 Pro (Low) | ✅ 40KB | ✅ 43KB | ✅ 42KB | DONE | - | v2.0, 32000 budget |
-| 3 | gemini-3-flash | Gemini 3 Flash | ✅ 45KB | ✅ 58KB | ✅ 38KB | DONE | - | v2.0, 4 levels, ⚠️ API |
-| 4 | gemini-3-pro-image | - | ✅ 43KB | ❌ N/A | ✅ 33KB | EPIC-007 | 🔴 | v2.0, 21 variants, Epic planning |
+| 1 | gemini-3-pro-high | Gemini 3 Pro (High) | ✅ 38KB | ✅ 56KB | ✅ 25KB | DONE | - | v2.0, 32000 budget, Epic-005 ✅ |
+| 2 | gemini-3-pro-low | Gemini 3 Pro (Low) | ✅ 40KB | ✅ 43KB | ✅ 42KB | EPIC-009 🔄 | 🔴 | v2.0, 32000 budget, In Progress Команда 2 |
+| 3 | gemini-3-flash | Gemini 3 Flash | ✅ 45KB | ✅ 58KB | ✅ 38KB | EPIC-010 🚫 | 🔴 | v2.0, 4 levels, BLOCKED by API (needs Epic-011) |
+| 4 | gemini-3-pro-image | - | ✅ 43KB | ❌ N/A | ✅ 33KB | EPIC-007 🔄 | 🔴 | v2.0, 21 variants, In Progress Команда 1 |
 
 **Документов**: 9/10 (90%)
 **Критические открытия**:
+- 🚨 **CRITICAL**: Epic-011 API Migration REQUIRED (разблокирует Epic-010)
 - ⚠️ **API Breaking Change**: Gemini 3 использует `thinkingLevel` (MINIMAL/LOW/MEDIUM/HIGH)
 - ⭐ **Budget Equality**: Pro Low = Pro High (32000 tokens)
 - ⭐ **MEDIUM Level**: Только у Flash, НЕТ у Pro
+
+**Active Epics**:
+- **Epic-007** (Image): 🔄 IN PROGRESS, Команда 1, 2026-01-11 → 2026-01-21
+- **Epic-009** (Low): 🔄 IN PROGRESS, Команда 2, 2026-01-11 → 2026-01-25
+- **Epic-010** (Flash): 🚫 BLOCKED → DEFERRED until Epic-011 complete
 
 ---
 
@@ -80,10 +86,13 @@
 
 | # | Model Name | UI Display | Base Workflow | Thinking Workflow | COMPARISON | Status | Priority | Notes |
 |---|------------|------------|---------------|-------------------|------------|--------|----------|-------|
-| 1 | gemini-2.5-pro-thinking | - | ❌ N/A | ⏳ | ✅ 33KB | EPIC-008 | 🔴 HIGH | 32000 budget, 90.6%, Next after 007 |
-| 2 | gemini-2.5-flash-lite-thinking | - | ❌ N/A | ❌ NOT SUPPORTED | ❌ | BLOCKED | ⚫ N/A | ❌ Model does NOT support thinking (Epic-006 blocked) |
+| 1 | gemini-2.5-pro-thinking | - | ❌ N/A | ⏳ | ✅ 33KB | EPIC-008 📋 | 🔴 HIGH | 32000 budget, 90.6%, Planned after Epic-007 |
+| 2 | gemini-2.5-flash-lite-thinking | - | ❌ N/A | ❌ NOT SUPPORTED | ❌ | BLOCKED ⚫ | ⚫ N/A | ❌ Model does NOT support thinking (Epic-006 blocked) |
 
 **Документов**: 0/4 (0%)
+
+**Planned Epic**:
+- **Epic-008** (Pro Thinking): 📋 PLANNED, Команда 1, 2026-01-22 → 2026-02-11 (после Epic-007)
 
 ---
 
@@ -241,30 +250,45 @@
 
 ## 4️⃣ НЕДОКУМЕНТИРОВАННЫЕ МОДЕЛИ (15+ моделей)
 
-### 4.1 HIGH Priority (16 моделей - 2-3 недели)
+### 4.1 HIGH Priority - Epics In Progress/Planned
+
+| # | Model Name | UI Display | Base Workflow | Thinking Workflow | COMPARISON | Priority | Epic Status | Notes |
+|---|------------|------------|---------------|-------------------|------------|----------|-------------|-------|
+| 1 | gemini-3-pro-image | - | ✅ Done | ❌ N/A | ✅ Done | 🔴 HIGH | EPIC-007 🔄 | In Progress, Команда 1, 2026-01-11→21 |
+| 2 | gemini-3-pro-low | - | ✅ Done | ✅ Done | ✅ Done | 🔴 HIGH | EPIC-009 🔄 | In Progress, Команда 2, 2026-01-11→25 |
+| 3 | gemini-2.5-pro-thinking | - | ❌ N/A | ⏳ | ✅ Done | 🔴 HIGH | EPIC-008 📋 | Planned, Команда 1, 2026-01-22→02-11 |
+| 4 | gemini-3-flash | - | ✅ Done | ✅ Done | ✅ Done | 🔴 HIGH | EPIC-010 🚫 | BLOCKED (needs EPIC-011) |
+
+### 4.2 CRITICAL Infrastructure Epic
+
+| # | Epic Name | Type | Duration | Priority | Status | Notes |
+|---|-----------|------|----------|----------|--------|-------|
+| 1 | Epic-011: API Migration | Infrastructure | 2 weeks | 🚨 P0 | 📋 PLANNED | Gemini 3 thinkingBudget→thinkingLevel, UNBLOCKS Epic-010 |
+
+**Timeline**: Epic-011 (2026-02-17→03-03) → Epic-010 ready for implementation
+
+### 4.3 HIGH Priority - Future Investigation (14 моделей)
 
 | # | Model Name | UI Display | Base Workflow | Thinking Workflow | COMPARISON | Priority | Effort | Notes |
 |---|------------|------------|---------------|-------------------|------------|----------|--------|-------|
-| 1 | gemini-3-pro-image | - | ⏳ | ❌ N/A | ⏳ | 🔴 HIGH | 1 день | Завершит Gemini 3.x |
-| 2 | gemini-2.5-pro-thinking | - | ❌ N/A | ⏳ | ⏳ | 🔴 HIGH | 1 день | Pro thinking |
-| 3-16 | Model IDs 314-327 | ❓ | ⏳ | ⏳ | ⏳ | 🔴 HIGH | 2-3 недели | 14 моделей gap |
+| 1-14 | Model IDs 314-327 | ❓ | ⏳ | ⏳ | ⏳ | 🔴 HIGH | 2-3 недели | 14 моделей gap, needs research |
 
-**Документов нужно**: ~32 (16 моделей × 2 docs avg)
+**Документов нужно**: ~28 (14 моделей × 2 docs avg)
 
 ---
 
-### 4.2 MEDIUM Priority (2 модели - 4 дня)
+### 4.4 MEDIUM Priority (2 модели - 4 дня)
 
 | # | Model Name | UI Display | Base Workflow | Thinking Workflow | COMPARISON | Priority | Effort | Notes |
 |---|------------|------------|---------------|-------------------|------------|----------|--------|-------|
-| 1 | gemini-2.0-flash-exp | - | ⏳ | ⏳ | ⏳ | 🟡 MEDIUM | 2 дня | Experimental |
-| 2 | gemini-2.5-flash-lite-thinking | - | ❌ N/A | ⏳ | ⏳ | 🟡 MEDIUM | 1 день | Lite thinking |
+| 1 | gemini-2.0-flash-exp | - | ⏳ | ⏳ | ⏳ | 🟡 MEDIUM | 2 дня | Experimental, audio focus |
+| 2 | gemini-2.5-flash-lite-thinking | - | ❌ N/A | ❌ | ❌ | ⚫ BLOCKED | N/A | ❌ Model does NOT support thinking |
 
-**Документов нужно**: ~5
+**Документов нужно**: ~3 (только gemini-2.0-flash-exp)
 
 ---
 
-### 4.3 LOW Priority (~10 моделей - переменно)
+### 4.5 LOW Priority (~10 моделей - переменно)
 
 | Range | Description | Priority | Estimated Count | Notes |
 |-------|-------------|----------|-----------------|-------|
@@ -448,41 +472,130 @@ Unknown (25+ моделей):
 
 ---
 
-## 🎯 РЕКОМЕНДУЕМЫЕ СЛЕДУЮЩИЕ ШАГИ
+## 🎯 ТЕКУЩИЕ EPICS И ROADMAP
 
-### Option A: Завершить Gemini 3.x Series (1 день)
+### Active Epics (In Progress)
 
 ```yaml
-модель: gemini-3-pro-image
-документы:
-  - base_workflow (15+ sections)
-  - COMPARISON (compliance analysis)
-effort: 1 день
-прогресс_после: 73.7% (40/54+)
-benefit: "Полностью закрыта Gemini 3.x серия (7/7 моделей = 100%)"
+epic_007_gemini_3_pro_image:
+  team: "Команда 1"
+  timeline: "2026-01-11 → 2026-01-21 (10 days)"
+  status: "🔄 IN PROGRESS"
+  compliance: "86.7% → 100%"
+  stories: 5
+  focus: "End-to-End Testing, Safety Settings, Caching"
+
+epic_009_gemini_3_pro_low:
+  team: "Команда 2"
+  timeline: "2026-01-11 → 2026-01-25 (14 days)"
+  status: "🔄 IN PROGRESS"
+  compliance: "82.1% → 100%"
+  stories: 6
+  focus: "P0/P1 gaps, thinking mode, cost optimization"
+  note: "Will benefit from Epic-011 API migration"
 ```
 
-### Option B: Добавить Gemini 2.5 Pro Thinking (1 день)
+### Planned Epics (Next in Queue)
 
 ```yaml
-модель: gemini-2.5-pro-thinking
-документы:
-  - thinking_workflow (15+ sections)
-  - COMPARISON (compliance analysis)
-effort: 1 день
-прогресс_после: 73.7% (40/54+)
-benefit: "Pro tier получает thinking capability"
+epic_008_gemini_2_5_pro_thinking:
+  team: "Команда 1 (after Epic-007)"
+  timeline: "2026-01-22 → 2026-02-11 (3 weeks)"
+  status: "📋 PLANNED"
+  compliance: "90.6% → 100%"
+  stories: 3
+  focus: "Adaptive Budget Optimization, Cache Monitoring"
+
+epic_011_api_migration:
+  team: "3 developers + QA"
+  timeline: "2026-02-17 → 2026-03-03 (2 weeks)"
+  status: "📋 PLANNED"
+  priority: "🚨 P0 CRITICAL"
+  type: "Infrastructure"
+  focus: "Gemini 3 thinkingBudget → thinkingLevel API"
+  unblocks: "Epic-010 (Flash compliance)"
+  improves: "Epic-009 (Low thinking mode)"
+  stories: 6
 ```
 
-### Option C: Исследовать Model IDs 314-327 (2-3 недели)
+### Deferred Epics (Blocked)
 
 ```yaml
-модели: 14 моделей (потенциально)
-документы: 28+ документов
-effort: 2-3 недели
-прогресс_после: ~98% (52/54+)
-benefit: "Закрывает большой gap, почти полная документация"
-complexity: "Требуется reverse engineering названий"
+epic_010_gemini_3_flash:
+  status: "🚫 BLOCKED → DEFERRED"
+  blocking_issue: "API incompatibility (thinkingBudget vs thinkingLevel)"
+  compliance: "68.8% (thinking: 25%)"
+  blocker: "Requires Epic-011 completion"
+  after_epic_011: "68.8% → 85% (ready for Phases 2+3)"
+  timeline_after_unblock: "2-3 weeks"
+  target: "95%+ compliance"
+```
+
+### Q1 2026 Strategic Milestones
+
+```yaml
+milestone_1:
+  date: "2026-02-16"
+  achievement: "Epic-007/008/009 complete"
+  impact: "Gemini 3.x 75% complete, Gemini 2.5 Pro 100%"
+
+milestone_2:
+  date: "2026-03-03"
+  achievement: "Epic-011 API Migration complete"
+  impact: "Gemini 3 API debt eliminated, Epic-010 unblocked"
+
+milestone_3:
+  date: "2026-03-04"
+  decision: "Epic-010 in Q1 OR Strategic Review week"
+  recommendation: "Strategic Review for Q2 planning"
+```
+
+## 🎯 СЛЕДУЮЩИЕ ШАГИ (После текущих Epics)
+
+### Immediate: Epic-011 API Migration (CRITICAL)
+
+```yaml
+priority: "🚨 P0 - HIGHEST"
+timeline: "2 weeks (2026-02-17 → 2026-03-03)"
+effort: "3 developers + QA + tech writer"
+unblocks: "Epic-010 (Flash compliance)"
+benefit: "Eliminates Gemini 3 API technical debt, enables 100% series compliance"
+
+deliverables:
+  phase_1: "API detection, thinkingLevel implementation, validation"
+  phase_2: "Flash auto-injection, tests, documentation"
+```
+
+### Option A: Complete Epic-010 in Q1 (After Epic-011)
+
+```yaml
+модель: gemini-3-flash
+timeline: "2 weeks (2026-03-04 → 2026-03-17)"
+compliance: "85% → 95%+"
+benefit: "Gemini 3 Flash 95%+ в Q1"
+consideration: "Tight timeline, less Q2 planning"
+```
+
+### Option B: Strategic Review Week (Recommended)
+
+```yaml
+timeline: "1 week (2026-03-04 → 2026-03-10)"
+team: "PO + Tech Lead + 1 developer"
+deliverables:
+  - "Q1 Retrospective"
+  - "Usage Metrics Analysis"
+  - "Q2 Roadmap (with Epic-010 prioritized)"
+benefit: "Data-driven Q2 planning, Epic-010 as Q2 first epic"
+```
+
+### Option C: Future Investigation - Model IDs 314-327
+
+```yaml
+models: "14 models (gap investigation)"
+effort: "2-3 weeks"
+priority: "🔴 HIGH (deferred to Q2)"
+complexity: "Requires reverse engineering"
+benefit: "~98% documentation coverage"
 ```
 
 ---
@@ -556,15 +669,22 @@ complexity: "Требуется reverse engineering названий"
 РАЗМЕР ДОКУМЕНТАЦИИ: ~685KB
 ```
 
-### Следующий Модель
+### Epic Execution Status
 
-**Рекомендация**:
-1. **Gemini 3 Pro Image** (1 день) - завершит Gemini 3.x на 100%
-2. **Gemini 2.5 Pro Thinking** (1 день) - HIGH priority thinking variant
-3. **Model IDs 314-327** (2-3 недели) - большой gap
+**Active Development** (2026-01-11):
+1. **Epic-007** (Gemini 3 Pro Image) - 🔄 IN PROGRESS, Команда 1, 10 days
+2. **Epic-009** (Gemini 3 Pro Low) - 🔄 IN PROGRESS, Команда 2, 14 days
+
+**Next in Queue**:
+1. **Epic-008** (Gemini 2.5 Pro Thinking) - 📋 PLANNED, Команда 1, 3 weeks (after Epic-007)
+2. **Epic-011** (API Migration) - 📋 PLANNED, 🚨 P0 CRITICAL, 2 weeks (разблокирует Epic-010)
+
+**Deferred**:
+1. **Epic-010** (Gemini 3 Flash) - 🚫 BLOCKED until Epic-011 complete
 
 ---
 
-**Обновлено**: 2026-01-11 02:45 UTC
-**Источники**: model_mapping.rs + файлы docs + UI screenshot + DOCUMENTATION_STATUS.md
-**Статус**: ✅ Полная инвентаризация завершена
+**Обновлено**: 2026-01-11 15:30 UTC
+**Источники**: model_mapping.rs + docs files + UI screenshot + Epic planning docs
+**Статус**: ✅ Полная инвентаризация завершена + Epic roadmap updated
+**Критическое изменение**: Epic-011 API Migration добавлен как P0 infrastructure epic
