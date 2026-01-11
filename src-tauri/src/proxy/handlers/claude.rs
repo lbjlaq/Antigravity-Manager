@@ -421,6 +421,9 @@ pub async fn handle_messages(
         }
     };
 
+    // Epic-008 Story-012-02: Clone body for feedback recording before it gets moved
+    let body_for_feedback = body.clone();
+
     // [CRITICAL REFACTOR] 优先解析并过滤 Thinking 块，确保 z.ai 也是用修复后的 Body
     let mut request: crate::proxy::mappers::claude::models::ClaudeRequest =
         match serde_json::from_value(body) {
@@ -1004,6 +1007,30 @@ pub async fn handle_messages(
                     claude_response.usage.output_tokens,
                     cache_info
                 );
+
+                // Epic-008 Story-012-02: Record feedback for budget optimization (async, non-blocking)
+                {
+                    let optimizer = state.budget_optimizer.clone();
+                    let request_clone = body_for_feedback.clone();
+                    let response_clone = serde_json::to_value(&claude_response).unwrap_or_default();
+
+                    tokio::spawn(async move {
+                        use crate::proxy::handlers::feedback_utils;
+
+                        let prompt = feedback_utils::extract_claude_prompt(&request_clone);
+                        if !prompt.is_empty() {
+                            let budget_used = feedback_utils::extract_claude_budget(&response_clone);
+                            let quality_score = feedback_utils::calculate_claude_quality(&response_clone, budget_used);
+
+                            optimizer.record_feedback(&prompt, budget_used, quality_score);
+                            tracing::debug!(
+                                "[Epic-008] Claude feedback recorded: budget={}, quality={:.2}",
+                                budget_used,
+                                quality_score
+                            );
+                        }
+                    });
+                }
 
                 return (
                     StatusCode::OK,

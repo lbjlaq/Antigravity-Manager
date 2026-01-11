@@ -34,6 +34,8 @@ pub struct AppState {
     pub safety_threshold: Arc<RwLock<Option<String>>>,
     /// Story-007-04: Image generation response cache
     pub image_cache: Option<Arc<dyn crate::proxy::cache::CacheBackend>>,
+    /// Epic-008 Story-012-02: Budget optimizer with pattern learning
+    pub budget_optimizer: Arc<crate::proxy::budget_optimizer::BudgetOptimizer>,
 }
 
 /// Axum 服务器实例
@@ -173,6 +175,26 @@ impl AxumServer {
         let zai_vision_mcp_state = Arc::new(crate::proxy::zai_vision_mcp::ZaiVisionMcpState::new());
         let experimental_state = Arc::new(RwLock::new(experimental_config));
 
+        // Epic-008 Story-012-02: Initialize budget optimizer with pattern loading
+        let budget_optimizer = Arc::new(crate::proxy::budget_optimizer::BudgetOptimizer::new());
+
+        // Load saved patterns from database (graceful degradation on failure)
+        match crate::modules::proxy_db::load_budget_patterns() {
+            Ok(patterns) if !patterns.is_empty() => {
+                match budget_optimizer.get_pattern_store().write() {
+                    Ok(mut store) => {
+                        store.load_from_db(patterns.clone());
+                        tracing::info!("[Epic-008] ✓ Loaded {} budget patterns from database", patterns.len());
+                    }
+                    Err(e) => tracing::warn!("[Epic-008] Failed to acquire pattern store lock: {}. Using defaults.", e),
+                }
+            }
+            Ok(_) => tracing::info!("[Epic-008] No budget patterns in database (first run or empty)"),
+            Err(e) => {
+                tracing::warn!("[Epic-008] Failed to load budget patterns: {}. Using defaults.", e);
+            }
+        }
+
         let state = AppState {
             token_manager: token_manager.clone(),
             custom_mapping: custom_mapping_state.clone(),
@@ -199,6 +221,8 @@ impl AxumServer {
             // CACHE_TTL_SECONDS=3600 (default: 1 hour)
             // CACHE_MAX_SIZE_MB=100 (default: 100MB)
             image_cache: Self::initialize_cache(),
+            // Epic-008 Story-012-02: Budget optimizer with loaded patterns
+            budget_optimizer: budget_optimizer.clone(),
         };
 
         // 构建路由 - 使用新架构的 handlers！
@@ -335,7 +359,51 @@ impl AxumServer {
             }
         });
 
+        // Epic-008 Story-012-02: Start periodic pattern persistence task
+        Self::start_pattern_persistence_task(budget_optimizer);
+
         Ok((server_instance, handle))
+    }
+
+    /// Epic-008 Story-012-02: Background task for periodic pattern persistence
+    ///
+    /// Saves budget patterns to database every 5 minutes.
+    /// Runs indefinitely in background, with graceful error handling.
+    fn start_pattern_persistence_task(optimizer: Arc<crate::proxy::budget_optimizer::BudgetOptimizer>) {
+        use std::time::Duration;
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
+
+            loop {
+                interval.tick().await;
+
+                // Get all patterns from store
+                let patterns = match optimizer.get_pattern_store().read() {
+                    Ok(store) => store.get_all_patterns(),
+                    Err(e) => {
+                        tracing::error!("[Epic-008] Failed to read pattern store: {}. Skipping persistence.", e);
+                        continue;
+                    }
+                };
+
+                if patterns.is_empty() {
+                    tracing::debug!("[Epic-008] No patterns to persist (empty store)");
+                    continue;
+                }
+
+                // Save patterns to database
+                let mut saved_count = 0;
+                for pattern in patterns {
+                    match crate::modules::proxy_db::save_budget_pattern(&pattern) {
+                        Ok(_) => saved_count += 1,
+                        Err(e) => tracing::warn!("[Epic-008] Failed to save pattern {}: {}", &pattern.prompt_hash[..8], e),
+                    }
+                }
+
+                tracing::info!("[Epic-008] ✓ Persisted {} budget patterns to database", saved_count);
+            }
+        });
     }
 
     /// 停止服务器

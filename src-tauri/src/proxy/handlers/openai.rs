@@ -240,6 +240,31 @@ pub async fn handle_chat_completions(
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
             let openai_response = transform_openai_response(&gemini_resp);
+
+            // Epic-008 Story-012-02: Record feedback for budget optimization (async, non-blocking)
+            {
+                let optimizer = state.budget_optimizer.clone();
+                let request_clone = openai_req.clone();
+                let response_clone = serde_json::to_value(&openai_response).unwrap_or_default();
+
+                tokio::spawn(async move {
+                    use crate::proxy::handlers::feedback_utils;
+
+                    let prompt = feedback_utils::extract_openai_prompt(&request_clone);
+                    if !prompt.is_empty() {
+                        let budget_used = feedback_utils::extract_openai_budget(&response_clone);
+                        let quality_score = feedback_utils::calculate_openai_quality(&response_clone, budget_used);
+
+                        optimizer.record_feedback(&prompt, budget_used, quality_score);
+                        tracing::debug!(
+                            "[Epic-008] Budget feedback recorded: budget={}, quality={:.2}",
+                            budget_used,
+                            quality_score
+                        );
+                    }
+                });
+            }
+
             return Ok((
                 StatusCode::OK,
                 [
