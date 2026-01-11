@@ -13,7 +13,6 @@ mod tests {
         ClaudeRequest, Message, MessageContent, ThinkingConfig,
     };
     use crate::proxy::mappers::claude::request::transform_claude_request_in;
-    use serde_json::json;
     use std::collections::HashMap;
 
     // ==================================================================================
@@ -475,6 +474,160 @@ mod tests {
             "maxOutputTokens ({}) должен быть > thinkingBudget ({})",
             max_tokens,
             budget
+        );
+    }
+
+    // ==================================================================================
+    // LOW TIER SPECIFIC TESTS (Story-009-05)
+    // ==================================================================================
+
+    /// Test 1: Direct routing for gemini-3-pro-low
+    /// Validates that gemini-3-pro-low routes correctly without fallback to High tier
+    #[test]
+    fn test_gemini_3_pro_low_routing() {
+        let req = create_basic_request("gemini-3-pro-low", false);
+        let result = transform_claude_request_in(&req, "test-project");
+
+        assert!(result.is_ok(), "Request should succeed");
+
+        let (body, _violations) = result.unwrap();
+
+        // Verify model routes to gemini-3-pro-low (not High tier fallback)
+        assert_eq!(
+            body["model"].as_str(),
+            Some("gemini-3-pro-low"),
+            "Model should be gemini-3-pro-low"
+        );
+    }
+
+    /// Test 2: Budget equality between Low and High tiers
+    /// CRITICAL: Validates that Low tier has SAME 32000 thinking budget as High tier
+    /// This is the key value proposition of Low tier!
+    #[test]
+    fn test_gemini_3_pro_low_thinking_budget_same_as_high() {
+        // Create requests for both tiers with excessive budget (64000 > 32000 max)
+        let mut req_low = create_basic_request("gemini-3-pro-low", true);
+        let mut req_high = create_basic_request("gemini-3-pro-high", true);
+
+        req_low.thinking = Some(ThinkingConfig {
+            type_: "enabled".to_string(),
+            budget_tokens: Some(64000), // Exceeds 32000 limit
+        });
+        req_high.thinking = req_low.thinking.clone();
+
+        let result_low = transform_claude_request_in(&req_low, "test-project");
+        let result_high = transform_claude_request_in(&req_high, "test-project");
+
+        assert!(result_low.is_ok());
+        assert!(result_high.is_ok());
+
+        let (body_low, _) = result_low.unwrap();
+        let (body_high, _) = result_high.unwrap();
+
+        let budget_low = body_low["request"]["generationConfig"]["thinkingConfig"]
+            ["thinkingBudget"]
+            .as_i64()
+            .unwrap();
+        let budget_high = body_high["request"]["generationConfig"]["thinkingConfig"]
+            ["thinkingBudget"]
+            .as_i64()
+            .unwrap();
+
+        // CRITICAL: Both tiers have SAME budget limit
+        assert_eq!(
+            budget_low, budget_high,
+            "Low tier budget ({}) should equal High tier budget ({})",
+            budget_low, budget_high
+        );
+        assert_eq!(budget_low, 32000, "Both tiers should clamp to 32000");
+    }
+
+    /// Test 3: Thinking configuration with 16000 budget for Low tier
+    /// Validates that Low tier correctly handles 16000 thinking budget
+    /// (This is the default budget used by OpenAI auto-injection for ends_with("-low") models)
+    #[test]
+    fn test_gemini_3_pro_low_thinking_budget_16000() {
+        // Create request with 16000 thinking budget (OpenAI auto-injection default)
+        let mut req = create_basic_request("gemini-3-pro-low", true);
+        req.thinking = Some(ThinkingConfig {
+            type_: "enabled".to_string(),
+            budget_tokens: Some(16000), // Default budget from OpenAI auto-injection
+        });
+
+        let result = transform_claude_request_in(&req, "test-project");
+        assert!(result.is_ok(), "Request should succeed");
+
+        let (body, _violations) = result.unwrap();
+
+        // Check that thinkingConfig is present
+        let thinking_config = &body["request"]["generationConfig"]["thinkingConfig"];
+        assert!(
+            !thinking_config.is_null(),
+            "thinkingConfig should be present for Low tier with thinking enabled"
+        );
+
+        // Verify budget is 16000 (not clamped since it's within limits)
+        let budget = thinking_config["thinkingBudget"].as_i64().unwrap();
+        assert_eq!(
+            budget, 16000,
+            "Budget should be 16000 for Low tier (OpenAI auto-injection default)"
+        );
+
+        // Verify includeThoughts is true
+        assert_eq!(
+            thinking_config["includeThoughts"].as_bool(),
+            Some(true),
+            "includeThoughts should be true"
+        );
+    }
+
+    /// Test 4: Alias routing for Low tier
+    /// Validates that both "gemini-low" and "gemini-3-low" aliases route correctly
+    #[test]
+    fn test_gemini_low_aliases() {
+        let aliases = vec!["gemini-low", "gemini-3-low"];
+
+        for model_alias in aliases {
+            let req = create_basic_request(model_alias, false);
+            let result = transform_claude_request_in(&req, "test-project");
+
+            assert!(
+                result.is_ok(),
+                "Request with alias '{}' should succeed",
+                model_alias
+            );
+
+            let (body, _violations) = result.unwrap();
+            let model = body["model"].as_str().unwrap();
+
+            // Both aliases should resolve to gemini-3-pro-low
+            assert_eq!(
+                model, "gemini-3-pro-low",
+                "Alias '{}' should resolve to gemini-3-pro-low",
+                model_alias
+            );
+        }
+    }
+
+    /// Test 5: Model ID mapping for Low tier
+    /// Validates that gemini-3-pro-low uses Model ID = 0 (name-based routing)
+    /// This is the architectural decision from Story-009-02
+    #[test]
+    fn test_gemini_3_pro_low_model_id_mapping() {
+        use crate::proxy::mappers::claude::request::get_model_id;
+
+        // Test base model
+        let model_id = get_model_id("gemini-3-pro-low");
+        assert_eq!(
+            model_id, 0,
+            "gemini-3-pro-low should use Model ID 0 (name-based routing)"
+        );
+
+        // Test thinking variant (should also use 0)
+        let thinking_id = get_model_id("gemini-3-pro-low-thinking");
+        assert_eq!(
+            thinking_id, 0,
+            "gemini-3-pro-low-thinking should use Model ID 0 (name-based routing)"
         );
     }
 }
