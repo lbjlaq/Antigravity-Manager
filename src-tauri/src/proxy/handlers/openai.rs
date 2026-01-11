@@ -9,9 +9,9 @@ use crate::proxy::mappers::openai::{
     transform_openai_request, transform_openai_response, OpenAIRequest,
 };
 // use crate::proxy::upstream::client::UpstreamClient; // 通过 state 获取
-use crate::proxy::server::AppState;
+use crate::proxy::cache::{generate_cache_key, CachedImage};
 use crate::proxy::errors::{categorize_error, format_error_message, hash_prompt};
-use crate::proxy::cache::{CacheBackend, CachedImage, generate_cache_key};
+use crate::proxy::server::AppState;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 use crate::proxy::session_manager::SessionManager;
@@ -820,12 +820,15 @@ pub async fn handle_images_generations(
         .unwrap_or("vivid");
 
     // AC-3: Extract safety_threshold from request (per-request override)
-    let request_safety = body
-        .get("safety_threshold")
-        .and_then(|v| v.as_str());
+    let request_safety = body.get("safety_threshold").and_then(|v| v.as_str());
 
     // AC-1: Get config-level safety threshold (environment variable)
-    let config_safety = state.safety_threshold.read().await.as_deref().map(String::from);
+    let config_safety = state
+        .safety_threshold
+        .read()
+        .await
+        .as_deref()
+        .map(String::from);
 
     // AC-3: Request-level override has priority over config-level
     let final_safety_threshold = request_safety.map(String::from).or(config_safety);
@@ -841,12 +844,7 @@ pub async fn handle_images_generations(
     );
 
     // [AC-1] Generate cache key from request parameters
-    let cache_key = generate_cache_key(
-        model,
-        prompt,
-        Some(quality),
-        Some(style),
-    );
+    let cache_key = generate_cache_key(model, prompt, Some(quality), Some(style));
 
     // [AC-2] Try cache lookup (single image only - n=1)
     if n == 1 {
@@ -855,8 +853,7 @@ pub async fn handle_images_generations(
                 Ok(Some(cached)) => {
                     info!(
                         "[Images] 🎯 Cache hit for model={}, prompt_hash={}",
-                        model,
-                        cached.prompt_hash
+                        model, cached.prompt_hash
                     );
 
                     // Return cached response in OpenAI format
@@ -1167,7 +1164,14 @@ pub async fn handle_images_generations(
                     style: style.to_string(),
                 };
 
-                match cache.set(&cache_key, cached_image, std::time::Duration::from_secs(3600)).await {
+                match cache
+                    .set(
+                        &cache_key,
+                        cached_image,
+                        std::time::Duration::from_secs(3600),
+                    )
+                    .await
+                {
                     Ok(_) => {
                         debug!(
                             "[Images] ✓ Cached image for model={}, prompt_hash={}",
@@ -1176,10 +1180,7 @@ pub async fn handle_images_generations(
                         );
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "[Images] Failed to cache image (non-critical): {}",
-                            e
-                        );
+                        tracing::warn!("[Images] Failed to cache image (non-critical): {}", e);
                     }
                 }
             }
@@ -1311,8 +1312,7 @@ pub async fn handle_images_edits(
                 Ok(Some(cached)) => {
                     info!(
                         "[Images] 🎯 Cache hit for edit operation, model={}, prompt_hash={}",
-                        model,
-                        cached.prompt_hash
+                        model, cached.prompt_hash
                     );
 
                     // Return cached response in OpenAI format
@@ -1340,10 +1340,7 @@ pub async fn handle_images_edits(
                     );
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "[Images] Cache lookup error for edit (continuing): {}",
-                        e
-                    );
+                    tracing::warn!("[Images] Cache lookup error for edit (continuing): {}", e);
                 }
             }
         }
@@ -1361,7 +1358,12 @@ pub async fn handle_images_edits(
     // Let's keep the log to confirm.
 
     // AC-1 & AC-3: Determine safety threshold (request override > config)
-    let config_safety = state.safety_threshold.read().await.as_deref().map(String::from);
+    let config_safety = state
+        .safety_threshold
+        .read()
+        .await
+        .as_deref()
+        .map(String::from);
     let final_safety_threshold = request_safety.or(config_safety);
     let safety_threshold = get_safety_threshold(final_safety_threshold.as_deref());
 
@@ -1655,10 +1657,17 @@ pub async fn handle_images_edits(
                         .as_secs(),
                     prompt_hash: hash_prompt(&prompt),
                     quality: "standard".to_string(), // Edits don't have quality parameter
-                    style: "natural".to_string(), // Edits don't have style parameter
+                    style: "natural".to_string(),    // Edits don't have style parameter
                 };
 
-                match cache.set(&cache_key, cached_image, std::time::Duration::from_secs(3600)).await {
+                match cache
+                    .set(
+                        &cache_key,
+                        cached_image,
+                        std::time::Duration::from_secs(3600),
+                    )
+                    .await
+                {
                     Ok(_) => {
                         debug!(
                             "[Images] ✓ Cached edited image for model={}, prompt_hash={}",
@@ -1735,10 +1744,7 @@ mod tests {
     fn test_safety_threshold_invalid() {
         // Invalid values default to OFF
         let result = get_safety_threshold(Some("INVALID"));
-        assert_eq!(
-            result, "OFF",
-            "Invalid threshold should default to OFF"
-        );
+        assert_eq!(result, "OFF", "Invalid threshold should default to OFF");
 
         let result = get_safety_threshold(Some(""));
         assert_eq!(
@@ -1797,10 +1803,7 @@ mod tests {
         let config_threshold: Option<&str> = None;
 
         let final_threshold = request_threshold.or(config_threshold);
-        assert_eq!(
-            final_threshold, None,
-            "Both None should result in None"
-        );
+        assert_eq!(final_threshold, None, "Both None should result in None");
 
         let result = get_safety_threshold(final_threshold);
         assert_eq!(

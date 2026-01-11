@@ -856,10 +856,7 @@ pub async fn handle_messages(
                 request_obj.remove("metadata");
             }
 
-            debug!(
-                "[{}] Cleaned routing fields from upstream body",
-                trace_id
-            );
+            debug!("[{}] Cleaned routing fields from upstream body", trace_id);
         }
 
         let response = match upstream

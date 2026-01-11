@@ -97,7 +97,9 @@ fn create_client() -> Client {
 }
 
 /// Send image generation request
-fn send_generation_request(request: ImageGenerationRequest) -> Result<ImageGenerationResponse, String> {
+fn send_generation_request(
+    request: ImageGenerationRequest,
+) -> Result<ImageGenerationResponse, String> {
     let client = create_client();
     let api_key = get_api_key();
 
@@ -110,23 +112,35 @@ fn send_generation_request(request: ImageGenerationRequest) -> Result<ImageGener
         .map_err(|e| format!("Request failed: {}", e))?;
 
     let status = response.status();
-    let response_text = response.text().map_err(|e| format!("Failed to read response: {}", e))?;
+    let response_text = response
+        .text()
+        .map_err(|e| format!("Failed to read response: {}", e))?;
 
     if !status.is_success() {
         if let Ok(error_resp) = serde_json::from_str::<ErrorResponse>(&response_text) {
-            return Err(format!("API Error {}: {}", status, error_resp.error.message));
+            return Err(format!(
+                "API Error {}: {}",
+                status, error_resp.error.message
+            ));
         }
         return Err(format!("HTTP {}: {}", status, response_text));
     }
 
-    serde_json::from_str(&response_text)
-        .map_err(|e| format!("Failed to parse response: {} - Response: {}", e, response_text))
+    serde_json::from_str(&response_text).map_err(|e| {
+        format!(
+            "Failed to parse response: {} - Response: {}",
+            e, response_text
+        )
+    })
 }
 
 /// Validate base64 image data
 fn is_valid_base64(data: &str) -> bool {
     // Basic validation: length should be divisible by 4, and only contains valid base64 chars
-    data.len() % 4 == 0 && data.chars().all(|c| c.is_alphanumeric() || c == '+' || c == '/' || c == '=')
+    data.len() % 4 == 0
+        && data
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '+' || c == '/' || c == '=')
 }
 
 /// Validate data URI format
@@ -176,11 +190,17 @@ fn test_basic_image_generation() {
 
     let image = &response.data[0];
     assert!(image.b64_json.is_some(), "Should have b64_json field");
-    assert!(image.url.is_none(), "Should NOT have url field when format is b64_json");
+    assert!(
+        image.url.is_none(),
+        "Should NOT have url field when format is b64_json"
+    );
 
     let b64_data = image.b64_json.as_ref().unwrap();
     assert!(is_valid_base64(b64_data), "Should be valid base64 data");
-    assert!(b64_data.len() > 1000, "Image data should be substantial (>1KB)");
+    assert!(
+        b64_data.len() > 1000,
+        "Image data should be substantial (>1KB)"
+    );
 
     println!("\n✅ AC-1 PASS: Basic generation works correctly");
     println!("   ✓ Returns 1 image");
@@ -221,26 +241,49 @@ fn test_parallel_generation_n_4() {
 
     // Validations
     assert_eq!(response.data.len(), 4, "Should return exactly 4 images");
-    assert!(duration.as_secs() < 15, "Should complete in <15 seconds (parallel execution)");
+    assert!(
+        duration.as_secs() < 15,
+        "Should complete in <15 seconds (parallel execution)"
+    );
 
     // Validate all images
     for (i, image) in response.data.iter().enumerate() {
-        assert!(image.b64_json.is_some(), "Image {} should have b64_json", i + 1);
+        assert!(
+            image.b64_json.is_some(),
+            "Image {} should have b64_json",
+            i + 1
+        );
         let b64_data = image.b64_json.as_ref().unwrap();
-        assert!(is_valid_base64(b64_data), "Image {} should be valid base64", i + 1);
-        assert!(b64_data.len() > 1000, "Image {} should have substantial data", i + 1);
+        assert!(
+            is_valid_base64(b64_data),
+            "Image {} should be valid base64",
+            i + 1
+        );
+        assert!(
+            b64_data.len() > 1000,
+            "Image {} should have substantial data",
+            i + 1
+        );
     }
 
     // Check for duplicates (different images should have different data)
-    let unique_images: std::collections::HashSet<_> = response.data.iter()
+    let unique_images: std::collections::HashSet<_> = response
+        .data
+        .iter()
         .map(|img| img.b64_json.as_ref().unwrap().len())
         .collect();
 
     println!("\n✅ AC-2 PASS: Parallel generation works correctly");
     println!("   ✓ Returns 4 images");
     println!("   ✓ All images valid");
-    println!("   ✓ Performance acceptable ({:.2}s)", duration.as_secs_f64());
-    println!("   ✓ Unique images generated (varied sizes: {})", unique_images.len());
+    println!(
+        "   ✓ Performance acceptable ({:.2}s)",
+        duration.as_secs_f64()
+    );
+    println!(
+        "   ✓ Unique images generated (varied sizes: {})",
+        unique_images.len()
+    );
 }
 
 // ==================================================================================
@@ -277,16 +320,26 @@ fn test_parallel_generation_n_10_live() {
 
     // Validations
     assert_eq!(response.data.len(), 10, "Should return exactly 10 images");
-    assert!(duration.as_secs() < 30, "CRITICAL: Should complete in <30 seconds");
+    assert!(
+        duration.as_secs() < 30,
+        "CRITICAL: Should complete in <30 seconds"
+    );
 
     // Validate all images
     for (i, image) in response.data.iter().enumerate() {
-        assert!(image.b64_json.is_some(), "Image {} should have b64_json", i + 1);
+        assert!(
+            image.b64_json.is_some(),
+            "Image {} should have b64_json",
+            i + 1
+        );
     }
 
     println!("\n✅ AC-3 PASS: High-volume parallel generation works");
     println!("   ✓ Returns 10 images");
-    println!("   ✓ Performance target met ({:.2}s < 30s)", duration.as_secs_f64());
+    println!(
+        "   ✓ Performance target met ({:.2}s < 30s)",
+        duration.as_secs_f64()
+    );
 }
 
 // ==================================================================================
@@ -307,7 +360,10 @@ fn test_image_editing_mock() {
 
     // Validate endpoint path construction
     let endpoint = format!("{}/v1/images/edits", PROXY_URL);
-    assert!(endpoint.contains("/v1/images/edits"), "Endpoint path should be correct");
+    assert!(
+        endpoint.contains("/v1/images/edits"),
+        "Endpoint path should be correct"
+    );
 
     println!("✅ AC-4 PASS: Image editing endpoint structure validated");
     println!("   ✓ Endpoint: {}", endpoint);
@@ -378,8 +434,14 @@ fn test_response_formats() {
 
     let response_b64 = send_generation_request(request_b64).expect("b64_json request failed");
     assert_eq!(response_b64.data.len(), 1);
-    assert!(response_b64.data[0].b64_json.is_some(), "Should have b64_json field");
-    assert!(response_b64.data[0].url.is_none(), "Should NOT have url field");
+    assert!(
+        response_b64.data[0].b64_json.is_some(),
+        "Should have b64_json field"
+    );
+    assert!(
+        response_b64.data[0].url.is_none(),
+        "Should NOT have url field"
+    );
     println!("   ✓ b64_json format works");
 
     // Test 6b: url (data URI) format
@@ -397,7 +459,10 @@ fn test_response_formats() {
     let response_url = send_generation_request(request_url).expect("url request failed");
     assert_eq!(response_url.data.len(), 1);
     assert!(response_url.data[0].url.is_some(), "Should have url field");
-    assert!(response_url.data[0].b64_json.is_none(), "Should NOT have b64_json field");
+    assert!(
+        response_url.data[0].b64_json.is_none(),
+        "Should NOT have b64_json field"
+    );
 
     let data_uri = response_url.data[0].url.as_ref().unwrap();
     assert!(is_valid_data_uri(data_uri), "Should be valid data URI");
@@ -454,7 +519,11 @@ fn test_model_variants() {
     for model in &models {
         // Mock validation: check that model ID is properly formatted
         let is_valid = model.starts_with("gemini-3-pro-image");
-        assert!(is_valid, "Model {} should start with gemini-3-pro-image", model);
+        assert!(
+            is_valid,
+            "Model {} should start with gemini-3-pro-image",
+            model
+        );
 
         // Check suffix parsing
         if model.contains("-2k") {
@@ -511,7 +580,8 @@ fn test_full_workflow_live() {
         style: Some("vivid".to_string()),
         response_format: Some("b64_json".to_string()),
     };
-    let enhanced_response = send_generation_request(enhanced_request).expect("Enhanced generation failed");
+    let enhanced_response =
+        send_generation_request(enhanced_request).expect("Enhanced generation failed");
     assert_eq!(enhanced_response.data.len(), 1);
     println!("   ✓ Enhanced generation successful\n");
 
@@ -526,7 +596,8 @@ fn test_full_workflow_live() {
         style: Some("vivid".to_string()),
         response_format: Some("url".to_string()),
     };
-    let ultrawide_response = send_generation_request(ultrawide_request).expect("Ultra-wide generation failed");
+    let ultrawide_response =
+        send_generation_request(ultrawide_request).expect("Ultra-wide generation failed");
     assert_eq!(ultrawide_response.data.len(), 1);
     assert!(ultrawide_response.data[0].url.is_some());
     println!("   ✓ Ultra-wide generation successful\n");

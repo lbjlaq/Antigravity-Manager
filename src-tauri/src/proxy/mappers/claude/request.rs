@@ -594,7 +594,7 @@ pub fn transform_claude_request_in(
     let request_id = format!("agent-{}", uuid::Uuid::new_v4());
 
     // 构建最终请求体
-    let mut body = json!({
+    let body = json!({
         "project": project_id,
         "requestId": request_id,
         "request": inner_request,
@@ -1250,7 +1250,7 @@ fn contains_function_interaction(msg: &Value) -> bool {
 
 /// Remove orphaned tool_result blocks (tool results with no matching tool_use)
 /// This prevents "unexpected tool_use_id found in tool_result blocks" errors
-fn remove_orphaned_tool_results(mut contents: Vec<Value>) -> Vec<Value> {
+fn remove_orphaned_tool_results(contents: Vec<Value>) -> Vec<Value> {
     // First pass: collect all valid tool_use_ids
     let mut valid_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 

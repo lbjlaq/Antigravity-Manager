@@ -133,11 +133,7 @@ pub fn hash_prompt(prompt: &str) -> String {
 ///
 /// # Returns
 /// User-friendly error message with resolution suggestions
-pub fn format_error_message(
-    category: ErrorCategory,
-    status_code: u16,
-    details: &str,
-) -> String {
+pub fn format_error_message(category: ErrorCategory, status_code: u16, details: &str) -> String {
     let details_lower = details.to_lowercase();
 
     match category {
@@ -165,12 +161,18 @@ pub fn format_error_message(
         }
 
         ErrorCategory::ApiError => {
-            if status_code == 429 || details_lower.contains("quota") || details_lower.contains("rate") {
+            if status_code == 429
+                || details_lower.contains("quota")
+                || details_lower.contains("rate")
+            {
                 format!(
                     "Rate limit exceeded: The API quota for image generation has been exhausted for this account. The system will automatically rotate to another account. If all accounts are exhausted, please wait for quota reset (typically 24 hours). Details: {}",
                     details
                 )
-            } else if details_lower.contains("safety") || details_lower.contains("filter") || details_lower.contains("blocked") {
+            } else if details_lower.contains("safety")
+                || details_lower.contains("filter")
+                || details_lower.contains("blocked")
+            {
                 format!(
                     "Content safety filter triggered: The generated image was blocked by content safety filters. Try adjusting your prompt or lowering the safety_threshold setting. Current threshold can be configured via GEMINI_IMAGE_SAFETY_THRESHOLD environment variable (OFF|LOW|MEDIUM|HIGH) or per-request safety_threshold parameter. Details: {}",
                     details
@@ -235,7 +237,10 @@ pub fn get_error_reference(status_code: u16, error_text: &str) -> Option<ErrorCo
         });
     }
 
-    if error_lower.contains("safety") || error_lower.contains("filter") || error_lower.contains("blocked") {
+    if error_lower.contains("safety")
+        || error_lower.contains("filter")
+        || error_lower.contains("blocked")
+    {
         return Some(ErrorCodeReference {
             code: "IMG_SAFETY_BLOCKED",
             description: "Content safety filter blocked image generation",
@@ -359,19 +364,30 @@ mod tests {
     fn test_hash_prompt_different() {
         let hash1 = hash_prompt("A serene mountain landscape");
         let hash2 = hash_prompt("A beautiful sunset");
-        assert_ne!(hash1, hash2, "Different prompts should produce different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "Different prompts should produce different hashes"
+        );
     }
 
     #[test]
     fn test_hash_prompt_empty() {
         let hash = hash_prompt("");
-        assert_eq!(hash.len(), 16, "Empty prompt should still produce 16-char hash");
+        assert_eq!(
+            hash.len(),
+            16,
+            "Empty prompt should still produce 16-char hash"
+        );
     }
 
     #[test]
     fn test_hash_prompt_special_chars() {
         let hash = hash_prompt("Test with émojis 🎨 and spëcial çhars!");
-        assert_eq!(hash.len(), 16, "Special characters should be handled correctly");
+        assert_eq!(
+            hash.len(),
+            16,
+            "Special characters should be handled correctly"
+        );
     }
 
     // ==================================================================================
@@ -407,7 +423,11 @@ mod tests {
 
     #[test]
     fn test_format_error_service_unavailable() {
-        let msg = format_error_message(ErrorCategory::ApiError, 503, "Service temporarily unavailable");
+        let msg = format_error_message(
+            ErrorCategory::ApiError,
+            503,
+            "Service temporarily unavailable",
+        );
         assert!(msg.contains("Service unavailable"));
         assert!(msg.contains("retry automatically"));
     }

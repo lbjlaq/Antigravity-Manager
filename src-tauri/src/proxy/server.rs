@@ -60,20 +60,23 @@ impl AxumServer {
 
         match backend.as_str() {
             "filesystem" => {
-                let cache_dir = std::env::var("CACHE_DIR").ok().and_then(|d| {
-                    if d.is_empty() {
-                        None
-                    } else {
-                        Some(std::path::PathBuf::from(d))
-                    }
-                }).unwrap_or_else(|| {
-                    // Default: {data_dir}/image_cache/
-                    let data_dir = dirs::data_local_dir()
-                        .unwrap_or_else(|| std::path::PathBuf::from("."))
-                        .join("com.lbjlaq.antigravity-tools")
-                        .join("image_cache");
-                    data_dir
-                });
+                let cache_dir = std::env::var("CACHE_DIR")
+                    .ok()
+                    .and_then(|d| {
+                        if d.is_empty() {
+                            None
+                        } else {
+                            Some(std::path::PathBuf::from(d))
+                        }
+                    })
+                    .unwrap_or_else(|| {
+                        // Default: {data_dir}/image_cache/
+                        let data_dir = dirs::data_local_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            .join("com.lbjlaq.antigravity-tools")
+                            .join("image_cache");
+                        data_dir
+                    });
 
                 let max_size_mb: u64 = std::env::var("CACHE_MAX_SIZE_MB")
                     .ok()
@@ -102,7 +105,8 @@ impl AxumServer {
                     Err(e) => {
                         tracing::error!("[Cache] Failed to initialize filesystem cache: {}", e);
                         tracing::warn!("[Cache] Falling back to NoOp cache (disabled)");
-                        Some(Arc::new(NoOpCache::new()) as Arc<dyn crate::proxy::cache::CacheBackend>)
+                        Some(Arc::new(NoOpCache::new())
+                            as Arc<dyn crate::proxy::cache::CacheBackend>)
                     }
                 }
             }
@@ -188,7 +192,7 @@ impl AxumServer {
             // Story-007-02: Initialize safety_threshold from environment variable
             // GEMINI_IMAGE_SAFETY_THRESHOLD can be set to OFF|LOW|MEDIUM|HIGH
             safety_threshold: Arc::new(RwLock::new(
-                std::env::var("GEMINI_IMAGE_SAFETY_THRESHOLD").ok()
+                std::env::var("GEMINI_IMAGE_SAFETY_THRESHOLD").ok(),
             )),
             // Story-007-04: Initialize image cache from environment variables
             // CACHE_BACKEND=none|filesystem|redis (default: none)

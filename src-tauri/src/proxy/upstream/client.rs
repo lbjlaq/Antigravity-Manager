@@ -316,23 +316,21 @@ impl UpstreamClient {
         Err(last_err.unwrap_or_else(|| "All endpoints failed".to_string()))
     }
 
-    /// 调用 v1internal API（带 429 重试,支持闭包）
-    ///
-    /// 带容错和重试的核心请求逻辑
-    ///
-    /// # Arguments
-    /// * `method` - API method (e.g., "generateContent")
-    /// * `query_string` - Optional query string (e.g., "?alt=sse")
-    /// * `get_credentials` - 闭包，获取凭证（支持账号轮换）
-    /// * `build_body` - 闭包，接收 project_id 构建请求体
-    /// * `max_attempts` - 最大重试次数
-    ///
-    /// # Returns
-    /// HTTP Response
+    // 调用 v1internal API（带 429 重试,支持闭包）
+    //
+    // 带容错和重试的核心请求逻辑
+    //
+    // # Arguments
+    // * `method` - API method (e.g., "generateContent")
+    // * `query_string` - Optional query string (e.g., "?alt=sse")
+    // * `get_credentials` - 闭包，获取凭证（支持账号轮换）
+    // * `build_body` - 闭包，接收 project_id 构建请求体
+    // * `max_attempts` - 最大重试次数
+    //
+    // # Returns
+    // HTTP Response
     // 已移除弃用的重试方法 (call_v1_internal_with_retry)
-
     // 已移除弃用的辅助方法 (parse_retry_delay)
-
     // 已移除弃用的辅助方法 (parse_duration_ms)
 
     /// 获取可用模型列表

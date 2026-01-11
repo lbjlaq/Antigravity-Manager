@@ -45,13 +45,13 @@
 //! cache.set(&key, result.clone(), Duration::from_secs(3600)).await?;
 //! ```
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
-use anyhow::Result;
 
 // ==================================================================================
 // DATA STRUCTURES
@@ -95,6 +95,7 @@ pub struct CacheStats {
 
 impl CacheStats {
     /// Calculate cache hit rate (0.0 - 1.0)
+    #[allow(dead_code)]
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
         if total == 0 {
@@ -135,16 +136,19 @@ pub trait CacheBackend: Send + Sync {
     /// Delete specific cache entry
     ///
     /// Used for manual cache invalidation.
+    #[allow(dead_code)]
     async fn delete(&self, key: &str) -> Result<()>;
 
     /// Clear entire cache
     ///
     /// Removes all cached entries. Use sparingly in production.
+    #[allow(dead_code)]
     async fn clear(&self) -> Result<()>;
 
     /// Get cache statistics
     ///
     /// Returns current cache metrics for monitoring.
+    #[allow(dead_code)]
     async fn stats(&self) -> Result<CacheStats>;
 }
 
@@ -229,6 +233,7 @@ pub struct FilesystemCache {
     /// Maximum cache size in bytes
     max_size_bytes: u64,
     /// Default TTL for new entries
+    #[allow(dead_code)]
     ttl: Duration,
     /// Cache statistics (thread-safe)
     stats: Arc<RwLock<CacheStats>>,
@@ -526,10 +531,7 @@ mod tests {
     fn test_cache_key_deterministic() {
         let key1 = generate_cache_key("gemini-3-pro-image", "test", Some("hd"), Some("vivid"));
         let key2 = generate_cache_key("gemini-3-pro-image", "test", Some("hd"), Some("vivid"));
-        assert_eq!(
-            key1, key2,
-            "Same parameters should produce same cache key"
-        );
+        assert_eq!(key1, key2, "Same parameters should produce same cache key");
     }
 
     #[test]
@@ -638,12 +640,9 @@ mod tests {
     #[tokio::test]
     async fn test_filesystem_cache_miss() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let cache = FilesystemCache::new(
-            temp_dir.path().to_path_buf(),
-            100,
-            Duration::from_secs(60),
-        )
-        .unwrap();
+        let cache =
+            FilesystemCache::new(temp_dir.path().to_path_buf(), 100, Duration::from_secs(60))
+                .unwrap();
 
         // Get non-existent key
         let result = cache.get("nonexistent").await.unwrap();
@@ -699,12 +698,9 @@ mod tests {
     #[tokio::test]
     async fn test_filesystem_cache_delete() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let cache = FilesystemCache::new(
-            temp_dir.path().to_path_buf(),
-            100,
-            Duration::from_secs(60),
-        )
-        .unwrap();
+        let cache =
+            FilesystemCache::new(temp_dir.path().to_path_buf(), 100, Duration::from_secs(60))
+                .unwrap();
 
         let cached = CachedImage {
             b64_json: "test_data".to_string(),
@@ -736,12 +732,9 @@ mod tests {
     #[tokio::test]
     async fn test_filesystem_cache_clear() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let cache = FilesystemCache::new(
-            temp_dir.path().to_path_buf(),
-            100,
-            Duration::from_secs(60),
-        )
-        .unwrap();
+        let cache =
+            FilesystemCache::new(temp_dir.path().to_path_buf(), 100, Duration::from_secs(60))
+                .unwrap();
 
         // Add multiple entries
         for i in 0..5 {
@@ -777,12 +770,9 @@ mod tests {
     #[tokio::test]
     async fn test_cache_stats_hit_rate() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let cache = FilesystemCache::new(
-            temp_dir.path().to_path_buf(),
-            100,
-            Duration::from_secs(60),
-        )
-        .unwrap();
+        let cache =
+            FilesystemCache::new(temp_dir.path().to_path_buf(), 100, Duration::from_secs(60))
+                .unwrap();
 
         let cached = CachedImage {
             b64_json: "test_data".to_string(),

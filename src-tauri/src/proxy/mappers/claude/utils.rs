@@ -3,8 +3,8 @@
 
 // 已移除未使用的 Value 导入
 
-/// 将 JSON Schema 中的类型名称转为大写 (Gemini 要求)
-/// 例如: "string" -> "STRING", "integer" -> "INTEGER"
+// 将 JSON Schema 中的类型名称转为大写 (Gemini 要求)
+// 例如: "string" -> "STRING", "integer" -> "INTEGER"
 // 已移除未使用的 uppercase_schema_types 函数
 
 /// 从 Gemini UsageMetadata 转换为 Claude Usage

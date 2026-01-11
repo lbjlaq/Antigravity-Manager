@@ -141,8 +141,12 @@ async fn send_claude_request(request: ClaudeRequest) -> Result<ClaudeResponse, S
         ));
     }
 
-    serde_json::from_str(&response_text)
-        .map_err(|e| format!("Failed to parse response: {}. Response: {}", e, response_text))
+    serde_json::from_str(&response_text).map_err(|e| {
+        format!(
+            "Failed to parse response: {}. Response: {}",
+            e, response_text
+        )
+    })
 }
 
 /// Helper to create test request with specified budget
@@ -313,10 +317,7 @@ async fn test_phase_3_budget_limits() {
             let thinking_tokens = extract_thinking_tokens(&response).unwrap_or(0);
             println!("   Requested budget: 2000");
             println!("   Thinking tokens used: {}", thinking_tokens);
-            println!(
-                "   ✅ Budget respected: {}",
-                thinking_tokens <= 2000
-            );
+            println!("   ✅ Budget respected: {}", thinking_tokens <= 2000);
 
             assert!(
                 thinking_tokens <= 2000,
@@ -341,10 +342,7 @@ async fn test_phase_3_budget_limits() {
             let thinking_tokens = extract_thinking_tokens(&response).unwrap_or(0);
             println!("   Requested budget: 24576 (Flash limit)");
             println!("   Thinking tokens used: {}", thinking_tokens);
-            println!(
-                "   ✅ Budget respected: {}",
-                thinking_tokens <= 24576
-            );
+            println!("   ✅ Budget respected: {}", thinking_tokens <= 24576);
 
             assert!(
                 thinking_tokens <= 24576,
