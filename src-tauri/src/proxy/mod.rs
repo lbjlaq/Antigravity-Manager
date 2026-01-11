@@ -9,6 +9,7 @@ pub mod token_manager;
 
 // 新架构模块
 pub mod audio; // 音频处理模块 (PR #311)
+pub mod budget_optimizer; // Adaptive budget optimization (Story-008-01)
 pub mod cache; // 响应缓存 (Story-007-04)
 pub mod cache_monitor; // Signature cache monitoring (Story-008-02)
 pub mod common; // 公共工具

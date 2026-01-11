@@ -52,6 +52,9 @@ pub fn init_db() -> Result<(), String> {
     // 🆕 Story-008-02: Run migration for cache_metrics tables
     migrate_cache_metrics_table()?;
 
+    // 🆕 Story-008-01: Run migration for budget_patterns table
+    migrate_budget_patterns_table()?;
+
     Ok(())
 }
 
@@ -557,4 +560,134 @@ pub fn load_top_signatures(limit: usize) -> Result<Vec<crate::proxy::cache_monit
         stats.push(stat.map_err(|e| e.to_string())?);
     }
     Ok(stats)
+}
+
+// ========== Story-008-01: Budget Patterns Database Integration ==========
+
+/// Create budget_patterns table for adaptive budget optimization
+/// Story-008-01 AC3: Historical pattern storage
+pub fn migrate_budget_patterns_table() -> Result<(), String> {
+    let db_path = get_proxy_db_path()?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Check if budget_patterns table exists
+    let has_budget_patterns: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='budget_patterns'",
+            [],
+            |row| {
+                let count: i32 = row.get(0)?;
+                Ok(count > 0)
+            },
+        )
+        .unwrap_or(false);
+
+    if has_budget_patterns {
+        tracing::info!("[ProxyDB] budget_patterns table already exists");
+        return Ok(());
+    }
+
+    // Create budget_patterns table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS budget_patterns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_hash TEXT UNIQUE NOT NULL,
+            complexity_level TEXT NOT NULL,
+            avg_budget INTEGER NOT NULL,
+            usage_count INTEGER DEFAULT 1,
+            total_quality_score REAL DEFAULT 0.0,
+            last_used INTEGER NOT NULL,
+            created_at INTEGER NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| format!("Failed to create budget_patterns table: {}", e))?;
+
+    // Create index on prompt_hash for fast lookups
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_budget_patterns_hash ON budget_patterns(prompt_hash)",
+        [],
+    )
+    .map_err(|e| format!("Failed to create prompt_hash index: {}", e))?;
+
+    // Create index on last_used for cleanup queries
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_budget_patterns_last_used ON budget_patterns(last_used DESC)",
+        [],
+    )
+    .map_err(|e| format!("Failed to create last_used index: {}", e))?;
+
+    tracing::info!("[ProxyDB] Successfully migrated budget_patterns table");
+    Ok(())
+}
+
+/// Save budget pattern to database
+/// Story-008-01 AC4: Feedback loop persistence
+pub fn save_budget_pattern(
+    pattern: &crate::proxy::budget_optimizer::BudgetPattern,
+) -> Result<(), String> {
+    let db_path = get_proxy_db_path()?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO budget_patterns 
+         (prompt_hash, complexity_level, avg_budget, usage_count, total_quality_score, last_used, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            pattern.prompt_hash,
+            pattern.complexity_level.to_string(),
+            pattern.avg_budget as i64,
+            pattern.usage_count as i64,
+            pattern.total_quality_score,
+            pattern.last_used,
+            pattern.created_at,
+        ],
+    )
+    .map_err(|e| format!("Failed to save budget pattern: {}", e))?;
+
+    Ok(())
+}
+
+/// Load all budget patterns from database
+/// Story-008-01 AC3: Pattern persistence and retrieval
+pub fn load_budget_patterns() -> Result<Vec<crate::proxy::budget_optimizer::BudgetPattern>, String> {
+    let db_path = get_proxy_db_path()?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT prompt_hash, complexity_level, avg_budget, usage_count, total_quality_score, last_used, created_at
+             FROM budget_patterns
+             ORDER BY usage_count DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let patterns_iter = stmt
+        .query_map([], |row| {
+            let complexity_str: String = row.get(1)?;
+            let complexity_level = match complexity_str.as_str() {
+                "Simple" => crate::proxy::budget_optimizer::ComplexityLevel::Simple,
+                "Moderate" => crate::proxy::budget_optimizer::ComplexityLevel::Moderate,
+                "Complex" => crate::proxy::budget_optimizer::ComplexityLevel::Complex,
+                "Deep" => crate::proxy::budget_optimizer::ComplexityLevel::Deep,
+                _ => crate::proxy::budget_optimizer::ComplexityLevel::Moderate, // Default fallback
+            };
+
+            Ok(crate::proxy::budget_optimizer::BudgetPattern {
+                prompt_hash: row.get(0)?,
+                complexity_level,
+                avg_budget: row.get::<_, i64>(2)? as u32,
+                usage_count: row.get::<_, i64>(3)? as u32,
+                total_quality_score: row.get(4)?,
+                last_used: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut patterns = Vec::new();
+    for pattern in patterns_iter {
+        patterns.push(pattern.map_err(|e| e.to_string())?);
+    }
+    Ok(patterns)
 }

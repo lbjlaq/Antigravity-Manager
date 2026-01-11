@@ -415,6 +415,7 @@ pub fn transform_claude_request_in(
     }
 
     // 4. Generation Config & Thinking (Pass final is_thinking_enabled)
+    // 🆕 Story-008-01: Pass messages for adaptive budget optimization
     let generation_config = build_generation_config(
         claude_req,
         has_web_search_tool,
@@ -1500,25 +1501,78 @@ fn build_generation_config(
         if thinking.type_ == "enabled" && is_thinking_enabled {
             let mut thinking_config = json!({"includeThoughts": true});
 
-            if let Some(budget_tokens) = thinking.budget_tokens {
-                let mut budget = budget_tokens;
+            // 🆕 Story-008-01: Adaptive Budget Optimization
+            // Use intelligent budget calculation based on prompt complexity
+            let budget = if let Some(budget_tokens) = thinking.budget_tokens {
+                // User explicitly provided budget - respect it
+                let mut user_budget = budget_tokens;
 
                 // [CRITICAL FIX] Apply model-specific thinking budget limits
-                // Different models have different maximum thinking budgets
                 if has_web_search || mapped_model.contains("gemini-2.5-flash") {
-                    // Gemini 2.5 Flash: max 24576
-                    budget = budget.min(24576);
+                    user_budget = user_budget.min(24576);
                 } else if mapped_model.contains("claude") {
-                    // Claude models (Sonnet, Opus): max 32000
-                    budget = budget.min(32000);
+                    user_budget = user_budget.min(32000);
                 } else if mapped_model.contains("gemini") {
-                    // Other Gemini models: max 32000
-                    budget = budget.min(32000);
+                    user_budget = user_budget.min(32000);
                 }
 
-                thinking_config["thinkingBudget"] = json!(budget);
-            }
+                tracing::debug!(
+                    "[Budget-Optimizer] Using explicit budget: {} (model: {})",
+                    user_budget,
+                    mapped_model
+                );
 
+                user_budget
+            } else {
+                // No explicit budget - use adaptive optimization
+                // Extract first user message content for classification
+                let first_user_prompt = claude_req
+                    .messages
+                    .iter()
+                    .find(|m| m.role == "user")
+                    .and_then(|msg| match &msg.content {
+                        MessageContent::String(s) => Some(s.as_str()),
+                        MessageContent::Array(blocks) => {
+                            // Extract text from first text block
+                            blocks.iter().find_map(|block| {
+                                if let ContentBlock::Text { text } = block {
+                                    Some(text.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                        }
+                    })
+                    .unwrap_or("");
+
+                // Calculate optimal budget using budget optimizer
+                let optimizer = crate::proxy::budget_optimizer::BudgetOptimizer::new();
+                let optimal_budget = optimizer
+                    .calculate_optimal_budget(first_user_prompt, mapped_model)
+                    .unwrap_or(16000); // Fallback to default 16K if optimization fails
+
+                // Apply model-specific limits to optimal budget
+                let clamped_budget = if has_web_search || mapped_model.contains("gemini-2.5-flash") {
+                    optimal_budget.min(24576)
+                } else if mapped_model.contains("claude") {
+                    optimal_budget.min(32000)
+                } else if mapped_model.contains("gemini") {
+                    optimal_budget.min(32000)
+                } else {
+                    optimal_budget
+                };
+
+                tracing::info!(
+                    "[Budget-Optimizer] 🎯 Adaptive budget: {} (prompt_len: {}, model: {})",
+                    clamped_budget,
+                    first_user_prompt.len(),
+                    mapped_model
+                );
+
+                clamped_budget
+            };
+
+            thinking_config["thinkingBudget"] = json!(budget);
             config["thinkingConfig"] = thinking_config;
         }
     }
