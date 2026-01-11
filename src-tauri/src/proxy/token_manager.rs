@@ -239,19 +239,28 @@ impl TokenManager {
                 
                 // 1. 检查会话是否已绑定账号
                 if let Some(bound_id) = self.session_accounts.get(sid).map(|v| v.clone()) {
-                    // 2. 检查绑定的账号是否限流 (使用精准的剩余时间接口)
-                    let reset_sec = self.rate_limit_tracker.get_remaining_wait(&bound_id);
-                    if reset_sec > 0 {
-                        // 【修复 Issue #284】立即解绑并切换账号，不再阻塞等待
-                        // 原因：阻塞等待会导致并发请求时客户端 socket 超时 (UND_ERR_SOCKET)
-                        tracing::warn!("Session {} bound account {} is rate-limited ({}s remaining). Unbinding and switching to next available account.", sid, bound_id, reset_sec);
-                        self.session_accounts.remove(sid);
-                    } else if !attempted.contains(&bound_id) {
-                        // 3. 账号可用且未被标记为尝试失败，优先复用
-                        if let Some(found) = tokens_snapshot.iter().find(|t| t.account_id == bound_id) {
-                            tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", found.email, sid);
-                            target_token = Some(found.clone());
+                    // 【修复】先通过 account_id 找到对应的账号，获取其 email
+                    // 因为限流记录是以 email 为 key 存储的
+                    if let Some(bound_token) = tokens_snapshot.iter().find(|t| t.account_id == bound_id) {
+                        // 2. 使用 email 检查绑定的账号是否限流
+                        let reset_sec = self.rate_limit_tracker.get_remaining_wait(&bound_token.email);
+                        if reset_sec > 0 {
+                            // 【修复 Issue #284】立即解绑并切换账号，不再阻塞等待
+                            // 原因：阻塞等待会导致并发请求时客户端 socket 超时 (UND_ERR_SOCKET)
+                            tracing::warn!(
+                                "Session {} bound account {} is rate-limited ({}s remaining). Unbinding and switching to next available account.", 
+                                sid, bound_token.email, reset_sec
+                            );
+                            self.session_accounts.remove(sid);
+                        } else if !attempted.contains(&bound_id) {
+                            // 3. 账号可用且未被标记为尝试失败，优先复用
+                            tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
+                            target_token = Some(bound_token.clone());
                         }
+                    } else {
+                        // 绑定的账号已不存在（可能被删除），解绑
+                        tracing::warn!("Session {} bound to non-existent account {}, unbinding.", sid, bound_id);
+                        self.session_accounts.remove(sid);
                     }
                 }
             }
@@ -262,8 +271,13 @@ impl TokenManager {
                 if let Some((account_id, last_time)) = &last_used_account_id {
                     if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
                         if let Some(found) = tokens_snapshot.iter().find(|t| &t.account_id == account_id) {
-                            tracing::debug!("60s Window: Force reusing last account: {}", found.email);
-                            target_token = Some(found.clone());
+                            // 【修复】检查限流状态，避免复用已被锁定的账号
+                            if !self.is_rate_limited(&found.email) {
+                                tracing::debug!("60s Window: Force reusing last account: {}", found.email);
+                                target_token = Some(found.clone());
+                            } else {
+                                tracing::debug!("60s Window: Last account {} is rate-limited, skipping", found.email);
+                            }
                         }
                     }
                 }

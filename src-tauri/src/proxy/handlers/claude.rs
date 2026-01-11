@@ -365,6 +365,17 @@ pub async fn handle_messages(
         close_tool_loop_for_thinking(&mut request.messages);
     }
 
+    // ===== [Issue #467 Fix] 拦截 Claude Code Warmup 请求 =====
+    // Claude Code 会每 10 秒发送一次 warmup 请求来保持连接热身，
+    // 这些请求会消耗大量配额。检测到 warmup 请求后直接返回模拟响应。
+    if is_warmup_request(&request) {
+        tracing::info!(
+            "[{}] 🔥 拦截 Warmup 请求，返回模拟响应（节省配额）",
+            trace_id
+        );
+        return create_warmup_response(&request, request.stream);
+    }
+
     if use_zai {
         // 重新序列化修复后的请求体
         let new_body = match serde_json::to_value(&request) {
@@ -460,8 +471,11 @@ pub async fn handle_messages(
     for (idx, msg) in request.messages.iter().enumerate() {
         let content_preview = match &msg.content {
             crate::proxy::mappers::claude::models::MessageContent::String(s) => {
-                if s.len() > 200 {
-                    format!("{}... (total {} chars)", &s[..200], s.len())
+                let char_count = s.chars().count();
+                if char_count > 200 {
+                    // 【修复】使用 chars().take() 安全截取，避免 UTF-8 字符边界 panic
+                    let preview: String = s.chars().take(200).collect();
+                    format!("{}... (total {} chars)", preview, char_count)
                 } else {
                     s.clone()
                 }
@@ -1060,5 +1074,137 @@ fn select_background_model(task_type: BackgroundTaskType) -> &'static str {
         BackgroundTaskType::PromptSuggestion => BACKGROUND_MODEL_LITE,    // 建议生成
         BackgroundTaskType::EnvironmentProbe => BACKGROUND_MODEL_LITE,    // 环境探测
         BackgroundTaskType::ContextCompression => BACKGROUND_MODEL_STANDARD, // 复杂压缩
+    }
+}
+
+// ===== [Issue #467 Fix] Warmup 请求拦截 =====
+
+/// 检测是否为 Warmup 请求
+/// 
+/// Claude Code 每 10 秒发送一次 warmup 请求，特征包括：
+/// 1. 用户消息内容以 "Warmup" 开头或包含 "Warmup"
+/// 2. tool_result 内容为 "Warmup" 错误
+/// 3. 消息循环模式：助手发送工具调用，用户返回 Warmup 错误
+fn is_warmup_request(request: &ClaudeRequest) -> bool {
+    // 检查最近的消息是否包含 Warmup 特征
+    let mut warmup_tool_result_count = 0;
+    let mut total_tool_results = 0;
+    
+    for msg in request.messages.iter().rev().take(10) {
+        match &msg.content {
+            crate::proxy::mappers::claude::models::MessageContent::String(s) => {
+                // 简单文本消息：检查是否以 Warmup 开头
+                if s.trim().starts_with("Warmup") && s.len() < 100 {
+                    return true;
+                }
+            },
+            crate::proxy::mappers::claude::models::MessageContent::Array(arr) => {
+                for block in arr {
+                    match block {
+                        // 检查 text block 是否为 Warmup
+                        crate::proxy::mappers::claude::models::ContentBlock::Text { text } => {
+                            let trimmed = text.trim();
+                            if trimmed == "Warmup" || trimmed.starts_with("Warmup\n") {
+                                return true;
+                            }
+                        },
+                        // 检查 tool_result 是否返回 Warmup 错误
+                        crate::proxy::mappers::claude::models::ContentBlock::ToolResult { 
+                            content, is_error, .. 
+                        } => {
+                            total_tool_results += 1;
+                            // content 是 serde_json::Value，需要转换为字符串检查
+                            let content_str = if let Some(s) = content.as_str() {
+                                s.to_string()
+                            } else {
+                                content.to_string()
+                            };
+                            if content_str.contains("Warmup") {
+                                warmup_tool_result_count += 1;
+                                // 如果是错误且内容为 Warmup，很可能是 warmup 请求
+                                if *is_error == Some(true) && content_str.trim().starts_with("Warmup") {
+                                    // 如果连续多个 tool_result 都是 Warmup 错误，确认为 warmup 请求
+                                    if warmup_tool_result_count >= 2 {
+                                        return true;
+                                    }
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    
+    // 如果大多数 tool_result 都是 Warmup 错误，确认为 warmup 请求
+    if total_tool_results >= 3 && warmup_tool_result_count >= total_tool_results / 2 {
+        return true;
+    }
+    
+    false
+}
+
+/// 创建 Warmup 请求的模拟响应
+/// 
+/// 返回一个简单的响应，不消耗上游配额
+fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response {
+    let model = &request.model;
+    let message_id = format!("msg_warmup_{}", chrono::Utc::now().timestamp_millis());
+    
+    if is_stream {
+        // 流式响应：发送标准的 SSE 事件序列
+        let events = vec![
+            // message_start
+            format!(
+                "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"{}\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"{}\",\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{{\"input_tokens\":1,\"output_tokens\":0}}}}}}\n\n",
+                message_id, model
+            ),
+            // content_block_start
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n".to_string(),
+            // content_block_delta
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\n".to_string(),
+            // content_block_stop
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n".to_string(),
+            // message_delta
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n".to_string(),
+            // message_stop
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string(),
+        ];
+        
+        let body = events.join("");
+        
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .header(header::CONNECTION, "keep-alive")
+            .header("X-Warmup-Intercepted", "true")
+            .body(Body::from(body))
+            .unwrap()
+    } else {
+        // 非流式响应
+        let response = json!({
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "content": [{
+                "type": "text",
+                "text": "OK"
+            }],
+            "model": model,
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 1
+            }
+        });
+        
+        (
+            StatusCode::OK,
+            [("X-Warmup-Intercepted", "true")],
+            Json(response)
+        ).into_response()
     }
 }
