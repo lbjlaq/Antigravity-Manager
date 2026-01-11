@@ -53,6 +53,9 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gemini-2.5-flash-lite", "gemini-2.5-flash-lite");
     m.insert("gemini-2.5-flash-thinking", "gemini-2.5-flash-thinking"); // Legacy support
     m.insert("gemini-3-pro-low", "gemini-3-pro-low");
+    // Low tier convenience aliases (Story-009-01)
+    m.insert("gemini-low", "gemini-3-pro-low");
+    m.insert("gemini-3-low", "gemini-3-pro-low");
     m.insert("gemini-3-pro-high", "gemini-3-pro-high");
     m.insert("gemini-3-pro-preview", "gemini-3-pro-high"); // Preview → High
     m.insert("gemini-3-pro", "gemini-3-pro-high"); // По умолчанию роутим в high
@@ -241,6 +244,15 @@ mod tests {
         assert_eq!(
             map_claude_model_to_gemini("gemini-3-pro-low"),
             "gemini-3-pro-low" // Low → Low
+        );
+        // Story-009-01: Test Low tier convenience aliases
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-low"),
+            "gemini-3-pro-low" // gemini-low → gemini-3-pro-low
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-3-low"),
+            "gemini-3-pro-low" // gemini-3-low → gemini-3-pro-low
         );
         assert_eq!(
             map_claude_model_to_gemini("gemini-3-flash"),

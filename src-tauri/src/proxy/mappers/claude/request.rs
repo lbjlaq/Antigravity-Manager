@@ -22,6 +22,8 @@ const CLAUDE_4_5_SONNET_MODEL_ID: u32 = 333;
 // Gemini 3.x models (high/low/flash) do not have distinct Model IDs in Antigravity v1.13.3
 const GEMINI_3_PRO_HIGH_MODEL_ID: u32 = 0; // Name-based routing
 const GEMINI_3_PRO_HIGH_THINKING_MODEL_ID: u32 = 0; // Same as base (thinking via parameter)
+const GEMINI_3_PRO_LOW_MODEL_ID: u32 = 0; // Name-based routing (Story-009-02)
+const GEMINI_3_PRO_LOW_THINKING_MODEL_ID: u32 = 0; // Same as base (thinking via parameter)
 
 // API Provider constants
 // Reference: docs/antigravity/workflows/models/claude/claude-4.5-sonnet-thinking-workflow.md:161-166
@@ -193,9 +195,10 @@ fn get_model_id(model_name: &str) -> u32 {
         "claude-4.5-sonnet" => CLAUDE_4_5_SONNET_MODEL_ID,
         "claude-sonnet-4-5" => CLAUDE_4_5_SONNET_MODEL_ID,
 
-        // Gemini 3.x models (Story-005-01)
+        // Gemini 3.x models (Story-005-01, Story-009-02)
         // NOTE: Returns 0 (name-based routing) - Gemini 3.x models don't use explicit Model IDs
         "gemini-3-pro-high" => GEMINI_3_PRO_HIGH_MODEL_ID,
+        "gemini-3-pro-low" => GEMINI_3_PRO_LOW_MODEL_ID,
 
         // Add mappings for other models
         _ => 0, // Unknown model
