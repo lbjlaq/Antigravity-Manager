@@ -1,5 +1,5 @@
 // OpenAI Handler
-use axum::{extract::Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{body::Body, extract::Json, extract::State, http::StatusCode, response::{IntoResponse, Response}};
 use base64::Engine as _;
 use bytes::Bytes;
 use serde_json::{json, Value};
@@ -116,7 +116,23 @@ pub async fn handle_chat_completions(
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
         // 4. 转换请求
-        let gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
+        let gemini_body = match transform_openai_request(&openai_req, &project_id, &mapped_model) {
+            Ok(body) => body,
+            Err(e) => {
+                error!("[OpenAI] Request transformation failed: {}", e);
+                return Ok(Response::builder()
+                    .status(StatusCode::BAD_REQUEST)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json!({
+                        "error": {
+                            "message": e,
+                            "type": "invalid_request_error",
+                            "code": "validation_error"
+                        }
+                    }).to_string()))
+                    .unwrap());
+            }
+        };
 
         // [New] 打印转换后的报文 (Gemini Body) 供调试
         if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {
@@ -651,7 +667,16 @@ pub async fn handle_completions(
 
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
-        let gemini_body = transform_openai_request(&openai_req, &project_id, &mapped_model);
+        let gemini_body = match transform_openai_request(&openai_req, &project_id, &mapped_model) {
+            Ok(body) => body,
+            Err(e) => {
+                error!("[Codex] Request transformation failed: {}", e);
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("Gemini API validation error: {}", e),
+                ));
+            }
+        };
 
         // [New] 打印转换后的报文 (Gemini Body) 供调试 (Codex 路径)
         if let Ok(body_json) = serde_json::to_string_pretty(&gemini_body) {

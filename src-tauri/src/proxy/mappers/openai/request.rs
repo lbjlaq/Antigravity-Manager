@@ -1,13 +1,16 @@
 // OpenAI → Gemini 请求转换
 use super::models::*;
 use super::streaming::get_thought_signature;
+use crate::proxy::mappers::common::gemini_detection::is_gemini_3_model;
+use crate::proxy::mappers::common::thinking_level_mapper::determine_thinking_level;
+use crate::proxy::mappers::common::gemini_api_validator::validate_gemini_request;
 use serde_json::{json, Value};
 
 pub fn transform_openai_request(
     request: &OpenAIRequest,
     project_id: &str,
     mapped_model: &str,
-) -> Value {
+) -> Result<Value, String> {
     // 将 OpenAI 工具转为 Value 数组以便探测
     let tools_val = request
         .tools
@@ -243,11 +246,9 @@ pub fn transform_openai_request(
     let contents = merged_contents;
 
     // 3. 构建请求体
-    // [FIX PR #368] 检测 Gemini 3 Pro thinking 模型，注入 thinkingBudget 配置
-    let is_gemini_3_thinking = mapped_model.contains("gemini-3")
-        && (mapped_model.ends_with("-high")
-            || mapped_model.ends_with("-low")
-            || mapped_model.contains("-pro"));
+    // [EPIC-011 Story-011-01] 检测 Gemini 3.x thinking 模型，注入 thinkingLevel 配置
+    // CHANGED: Use centralized detection function that includes ALL Gemini 3 variants
+    let is_gemini_3_thinking = is_gemini_3_model(mapped_model);
 
     let mut gen_config = json!({
         "maxOutputTokens": request.max_tokens.unwrap_or(64000),
@@ -260,14 +261,23 @@ pub fn transform_openai_request(
         gen_config["candidateCount"] = json!(n);
     }
 
-    // [FIX PR #368] 为 Gemini 3 Pro 注入 thinkingConfig (使用 thinkingBudget 而非 thinkingLevel)
+    // [EPIC-011 Story-011-01 + Story-011-04] 为 Gemini 3.x 注入 thinkingConfig (使用 thinkingLevel API)
+    // CRITICAL: Gemini 3.x uses thinkingLevel (enum), NOT thinkingBudget (integer)
+    // [Story-011-04] OpenAI protocol auto-injects thinking with model-specific defaults
     if is_gemini_3_thinking {
+        // Map token budget to thinking level (None = use model default)
+        // Flash default: MEDIUM (balance cost/quality)
+        // Pro default: HIGH (maximize quality)
+        let thinking_level = determine_thinking_level(mapped_model, None);
+
         gen_config["thinkingConfig"] = json!({
             "includeThoughts": true,
-            "thinkingBudget": 16000
+            "thinkingLevel": thinking_level
         });
-        tracing::debug!(
-            "[OpenAI-Request] Injected thinkingConfig for Gemini 3 Pro: thinkingBudget=16000"
+        tracing::info!(
+            "[OpenAI-Request] Gemini 3 thinkingLevel: {} (model: {}, auto-injected)",
+            thinking_level,
+            mapped_model
         );
     }
 
@@ -408,14 +418,22 @@ pub fn transform_openai_request(
         }
     }
 
-    json!({
+    // [EPIC-011 Story-011-03] Validate Gemini API format before sending to upstream
+    if mapped_model.starts_with("gemini-") {
+        if let Err(e) = validate_gemini_request(mapped_model, &inner_request) {
+            tracing::error!("[OpenAI-Request] Gemini API validation failed: {}", e);
+            return Err(format!("Gemini API validation error: {}", e));
+        }
+    }
+
+    Ok(json!({
         "project": project_id,
         "requestId": format!("openai-{}", uuid::Uuid::new_v4()),
         "request": inner_request,
         "model": config.final_model,
         "userAgent": "antigravity",
         "requestType": config.request_type
-    })
+    }))
 }
 
 fn enforce_uppercase_types(value: &mut Value) {
@@ -479,7 +497,7 @@ mod tests {
             prompt: None,
         };
 
-        let result = transform_openai_request(&req, "test-v", "gemini-1.5-flash");
+        let result = transform_openai_request(&req, "test-v", "gemini-1.5-flash").unwrap();
         let parts = &result["request"]["contents"][0]["parts"];
         assert_eq!(parts.as_array().unwrap().len(), 2);
         assert_eq!(parts[0]["text"].as_str().unwrap(), "What is in this image?");

@@ -379,6 +379,7 @@ mod tests {
     }
 
     /// Test thinking budget clamping for Gemini Pro
+    /// NOTE (EPIC-011): Updated to test thinkingLevel instead of thinkingBudget for Gemini 3.x
     #[test]
     fn test_gemini_pro_thinking_budget_limits() {
         let mut req = create_basic_request("gemini-3-pro-high", true);
@@ -391,14 +392,23 @@ mod tests {
         assert!(result.is_ok());
 
         let (body, _violations) = result.unwrap();
-        let budget = body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
-            .as_i64()
-            .unwrap();
+        let thinking_config = &body["request"]["generationConfig"]["thinkingConfig"];
 
+        // EPIC-011: Gemini 3.x uses thinkingLevel (NOT thinkingBudget)
         assert!(
-            budget <= 32000,
-            "Thinking budget для Gemini Pro должен быть ограничен 32000, получено: {}",
-            budget
+            thinking_config["thinkingLevel"].is_string(),
+            "Gemini 3 must use thinkingLevel"
+        );
+        assert!(
+            thinking_config["thinkingBudget"].is_null(),
+            "Gemini 3 must NOT have thinkingBudget"
+        );
+
+        // Budget 64000 clamps to 32000, which maps to HIGH
+        let level = thinking_config["thinkingLevel"].as_str().unwrap();
+        assert_eq!(
+            level, "HIGH",
+            "Budget >32000 should clamp to 32000, then map to HIGH"
         );
     }
 
@@ -504,6 +514,7 @@ mod tests {
     /// CRITICAL: Validates that Low tier has SAME 32000 thinking budget as High tier
     /// This is the key value proposition of Low tier!
     #[test]
+    /// NOTE (EPIC-011): Updated to test thinkingLevel instead of thinkingBudget for Gemini 3.x
     fn test_gemini_3_pro_low_thinking_budget_same_as_high() {
         // Create requests for both tiers with excessive budget (64000 > 32000 max)
         let mut req_low = create_basic_request("gemini-3-pro-low", true);
@@ -524,27 +535,29 @@ mod tests {
         let (body_low, _) = result_low.unwrap();
         let (body_high, _) = result_high.unwrap();
 
-        let budget_low = body_low["request"]["generationConfig"]["thinkingConfig"]
-            ["thinkingBudget"]
-            .as_i64()
+        // EPIC-011: Gemini 3.x uses thinkingLevel (NOT thinkingBudget)
+        let level_low = body_low["request"]["generationConfig"]["thinkingConfig"]
+            ["thinkingLevel"]
+            .as_str()
             .unwrap();
-        let budget_high = body_high["request"]["generationConfig"]["thinkingConfig"]
-            ["thinkingBudget"]
-            .as_i64()
+        let level_high = body_high["request"]["generationConfig"]["thinkingConfig"]
+            ["thinkingLevel"]
+            .as_str()
             .unwrap();
 
-        // CRITICAL: Both tiers have SAME budget limit
+        // CRITICAL: Both tiers have SAME thinking level
         assert_eq!(
-            budget_low, budget_high,
-            "Low tier budget ({}) should equal High tier budget ({})",
-            budget_low, budget_high
+            level_low, level_high,
+            "Low tier level ({}) should equal High tier level ({})",
+            level_low, level_high
         );
-        assert_eq!(budget_low, 32000, "Both tiers should clamp to 32000");
+        assert_eq!(level_low, "HIGH", "Both tiers should map to HIGH (budget 64000 → 32000 → HIGH)");
     }
 
     /// Test 3: Thinking configuration with 16000 budget for Low tier
     /// Validates that Low tier correctly handles 16000 thinking budget
     /// (This is the default budget used by OpenAI auto-injection for ends_with("-low") models)
+    /// NOTE (EPIC-011): Updated to test thinkingLevel instead of thinkingBudget for Gemini 3.x
     #[test]
     fn test_gemini_3_pro_low_thinking_budget_16000() {
         // Create request with 16000 thinking budget (OpenAI auto-injection default)
@@ -566,11 +579,21 @@ mod tests {
             "thinkingConfig should be present for Low tier with thinking enabled"
         );
 
-        // Verify budget is 16000 (not clamped since it's within limits)
-        let budget = thinking_config["thinkingBudget"].as_i64().unwrap();
+        // EPIC-011: Gemini 3.x uses thinkingLevel (NOT thinkingBudget)
+        assert!(
+            thinking_config["thinkingLevel"].is_string(),
+            "Gemini 3 Pro Low must use thinkingLevel"
+        );
+        assert!(
+            thinking_config["thinkingBudget"].is_null(),
+            "Gemini 3 Pro Low must NOT have thinkingBudget"
+        );
+
+        // Budget 16000 maps to LOW for Pro models (threshold is 16000)
+        let level = thinking_config["thinkingLevel"].as_str().unwrap();
         assert_eq!(
-            budget, 16000,
-            "Budget should be 16000 for Low tier (OpenAI auto-injection default)"
+            level, "LOW",
+            "Budget 16000 should map to LOW for Pro (threshold is 16000)"
         );
 
         // Verify includeThoughts is true

@@ -3,6 +3,9 @@
 
 use super::models::*;
 use crate::proxy::common::platform;
+use crate::proxy::mappers::common::gemini_detection::is_gemini_3_model;
+use crate::proxy::mappers::common::thinking_level_mapper::determine_thinking_level;
+use crate::proxy::mappers::common::gemini_api_validator::validate_gemini_request;
 use crate::proxy::mappers::signature_store::get_thought_signature;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -633,6 +636,14 @@ pub fn transform_claude_request_in(
                 max_tokens,
                 serde_json::to_string(thinking_config).unwrap_or_default()
             );
+        }
+    }
+
+    // [EPIC-011 Story-011-03] Validate Gemini API format before returning
+    if config.final_model.starts_with("gemini-") {
+        if let Err(e) = validate_gemini_request(&config.final_model, &inner_request) {
+            tracing::error!("[Claude-Request] Gemini API validation failed: {}", e);
+            return Err(e.to_string());
         }
     }
 
@@ -1576,7 +1587,32 @@ fn build_generation_config(
                 clamped_budget
             };
 
-            thinking_config["thinkingBudget"] = json!(budget);
+            // [EPIC-011 Story-011-01] Gemini 3.x uses thinkingLevel, Gemini 2.5 uses thinkingBudget
+            if is_gemini_3_model(&mapped_model) {
+                // Gemini 3.x: Map budget to thinkingLevel
+                let thinking_level = determine_thinking_level(&mapped_model, Some(budget as i32));
+
+                thinking_config["thinkingLevel"] = json!(thinking_level);
+                // Remove thinkingBudget if it was added (shouldn't exist for Gemini 3)
+                thinking_config.as_object_mut().unwrap().remove("thinkingBudget");
+
+                tracing::info!(
+                    "[Claude-Request] Gemini 3 thinkingLevel: {} (budget: {}, model: {})",
+                    thinking_level,
+                    budget,
+                    mapped_model
+                );
+            } else {
+                // Gemini 2.5 and other models: Use thinkingBudget (backward compatibility)
+                thinking_config["thinkingBudget"] = json!(budget);
+
+                tracing::debug!(
+                    "[Claude-Request] Gemini 2.5 thinkingBudget: {} (model: {})",
+                    budget,
+                    mapped_model
+                );
+            }
+
             config["thinkingConfig"] = thinking_config;
         }
     }
