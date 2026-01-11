@@ -384,6 +384,49 @@ Before escalating issues, verify:
 | 429 quota errors | Quota exhausted | Wait for reset or rotate accounts | High |
 | "-thinking suffix not working" | Parameter-based activation | Use `thinkingConfig` parameter | Low |
 | Routing to High tier | No Low tier fallback | Check routing configuration | Medium |
+| "Corrupted thought signature" | Signature validation failure | Automatic retry (200ms), no action | Low |
+
+### 7. Corrupted Thought Signature
+
+**Symptoms**:
+- HTTP 400 Bad Request response
+- Error message contains "Corrupted thought signature"
+- May also include "Invalid `signature`", "thinking.signature", or "INVALID_ARGUMENT"
+- Occurs during thinking mode operations with extended thinking blocks
+
+**Cause**:
+- Signature cache corruption or invalid signature format during thinking mode
+- Malformed thinking signature data in request
+- Cache integrity issues during thought processing
+- Internal signature validation failures
+
+**Recovery**:
+- Automatic retry with 200ms fixed delay
+- System removes thinking blocks and retries without thinking capability
+- Implemented in request handler layer (`claude.rs:259-269`)
+- No user intervention required for single occurrence
+
+**Code Reference**: `src-tauri/src/proxy/handlers/claude.rs:259-269`
+
+**Log Queries**:
+```bash
+# Find corrupted signature errors
+grep "Corrupted thought signature" logs/antigravity.log | tail -50
+
+# Check retry success rate for signature errors
+grep "thinking.signature\|Corrupted thought signature" logs/antigravity.log | \
+  grep -c "retry"
+```
+
+**Recovery Timeline**: Immediate (200ms retry delay)
+
+**Prevention**: N/A - System-level handling, automatic graceful degradation
+
+**Notes**:
+- First occurrence triggers automatic retry without thinking mode
+- If retry fails, error is surfaced to user
+- This is a graceful degradation strategy (thinking → non-thinking)
+- Monitor logs if this error occurs frequently (indicates potential upstream issue)
 
 ---
 
@@ -458,7 +501,7 @@ If errors persist after following this guide:
 
 ---
 
-**Document Version**: 1.0
+**Document Version**: 1.1
 **Last Updated**: 2026-01-11
 **Epic**: Epic-009 Story-009-04
-**Status**: ✅ Complete
+**Status**: ✅ Complete (Error Type 6 Added)
