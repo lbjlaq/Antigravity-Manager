@@ -186,7 +186,8 @@ fn clean_cache_control_from_messages(messages: &mut [Message]) {
 /// Get model ID for Antigravity v1internal API
 /// Returns model ID from reverse-engineered specification
 /// Reference: docs/antigravity/workflows/models/claude/claude-4.5-sonnet-thinking-workflow.md:161-166
-fn get_model_id(model_name: &str) -> u32 {
+/// Made public for test coverage (Story-009-05)
+pub fn get_model_id(model_name: &str) -> u32 {
     let model_id = match model_name {
         // Thinking variants (ID 334)
         "claude-4.5-sonnet-thinking" => CLAUDE_4_5_SONNET_THINKING_MODEL_ID,
