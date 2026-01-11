@@ -564,6 +564,9 @@
         "page_title": "API 监控看板",
         "page_subtitle": "实时请求日志与分析",
         "open_monitor": "打开监控",
+        "compliance": "合规监控",
+        "show_compliance": "显示合规看板",
+        "hide_compliance": "隐藏合规看板",
         "logging_status": {
             "active": "正在录制",
             "paused": "已暂停"
@@ -608,6 +611,110 @@
         "dialog": {
             "clear_title": "清除监控日志",
             "clear_msg": "确定要清除所有监控记录吗？此操作无法撤销。"
+        }
+    },
+    "compliance": {
+        "title": "合规监控",
+        "score": "合规评分",
+        "budget_violations": "预算违规",
+        "position_violations": "位置违规",
+        "position_histogram": "位置违规分布",
+        "user_messages": "用户消息",
+        "model_messages": "模型消息",
+        "refresh": "刷新指标",
+        "reset": "重置指标",
+        "export": "导出报告",
+        "confirm_reset": "确定要重置所有违规指标吗？这将清除所有历史数据。",
+        "no_data": "暂无合规数据",
+        "alerts": {
+            "all_green": "所有阈值均为绿色 - 合规性优秀",
+            "budget_red": "预算违规率 ({{rate}}/秒) 超过红色阈值 (>0.28/秒)",
+            "budget_red_fix": "检查客户端配置，确保 maxOutputTokens > thinkingBudget + 100",
+            "budget_yellow": "预算违规率 ({{rate}}/秒) 处于黄色范围 (0.03-0.28/秒)",
+            "budget_yellow_fix": "监控客户端配置并考虑调整令牌预算",
+            "position_red": "位置违规率 ({{rate}}/秒) 超过红色阈值 (>0.28/秒)",
+            "position_red_fix": "检查客户端实现，确保思维块在文本内容之前发送",
+            "position_yellow": "位置违规率 ({{rate}}/秒) 处于黄色范围 (0.03-0.28/秒)",
+            "position_yellow_fix": "监控客户端实现中的消息顺序"
+        }
+    },
+    "profiles": {
+        "title": "配置预设",
+        "subtitle": "Gemini 3 Pro High 优化预设配置",
+        "thinking_enabled": "思维模式",
+        "max_tokens": "最大令牌",
+        "thinking_budget": "思维预算",
+        "response_time": "响应速度",
+        "apply_profile": "应用预设",
+        "active": "当前使用",
+        "profile_applied": "预设 '{{name}}' 已成功应用",
+        "filter": {
+            "all": "全部",
+            "base": "基础",
+            "thinking": "思维"
+        },
+        "speed": {
+            "fast": "快速",
+            "medium": "中等",
+            "slow": "详细"
+        },
+        "info": {
+            "title": "预设说明",
+            "description": "预设配置针对不同使用场景优化了模型参数。思维预设启用扩展推理能力。"
+        },
+        "fast-general": {
+            "name": "快速通用",
+            "description": "通用任务的快速响应"
+        },
+        "balanced": {
+            "name": "平衡模式",
+            "description": "速度与质量的平衡"
+        },
+        "quality": {
+            "name": "高质量",
+            "description": "最高质量响应"
+        },
+        "creative": {
+            "name": "创意模式",
+            "description": "创意和多样化响应"
+        },
+        "thinking-fast": {
+            "name": "思维快速",
+            "description": "小型思维预算的快速推理"
+        },
+        "thinking-balanced": {
+            "name": "思维平衡",
+            "description": "中等预算的平衡推理"
+        },
+        "thinking-deep": {
+            "name": "思维深度",
+            "description": "大型预算的深度推理"
+        },
+        "thinking-max": {
+            "name": "思维极限",
+            "description": "最大推理能力"
+        },
+        "use_case": {
+            "chat": "聊天",
+            "general": "通用",
+            "quick": "快速",
+            "coding": "编程",
+            "analysis": "分析",
+            "balanced": "平衡",
+            "complex": "复杂",
+            "detailed": "详细",
+            "quality": "高质量",
+            "creative": "创意",
+            "brainstorming": "头脑风暴",
+            "writing": "写作",
+            "reasoning": "推理",
+            "problem-solving": "问题解决",
+            "fast": "快速",
+            "research": "研究",
+            "deep-analysis": "深度分析",
+            "expert": "专家",
+            "critical": "关键",
+            "maximum": "极限"
         }
     }
 }

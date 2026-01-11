@@ -564,6 +564,9 @@
         "page_title": "API Monitor Dashboard",
         "page_subtitle": "Real-time request logging and analysis",
         "open_monitor": "Open Monitor",
+        "compliance": "Compliance",
+        "show_compliance": "Show Compliance Dashboard",
+        "hide_compliance": "Hide Compliance Dashboard",
         "logging_status": {
             "active": "Recording",
             "paused": "Paused"
@@ -608,6 +611,110 @@
         "dialog": {
             "clear_title": "Clear Proxy Logs",
             "clear_msg": "Are you sure you want to clear all proxy logs? This action cannot be undone."
+        }
+    },
+    "compliance": {
+        "title": "Compliance Monitoring",
+        "score": "Compliance Score",
+        "budget_violations": "Budget Violations",
+        "position_violations": "Position Violations",
+        "position_histogram": "Position Violation Distribution",
+        "user_messages": "User messages",
+        "model_messages": "Model messages",
+        "refresh": "Refresh metrics",
+        "reset": "Reset metrics",
+        "export": "Export report",
+        "confirm_reset": "Are you sure you want to reset all violation metrics? This will clear all historical data.",
+        "no_data": "No compliance data available",
+        "alerts": {
+            "all_green": "All thresholds GREEN - Compliance excellent",
+            "budget_red": "Budget violations rate ({{rate}}/sec) exceeds RED threshold (>0.28/sec)",
+            "budget_red_fix": "Review client configurations to ensure maxOutputTokens > thinkingBudget + 100",
+            "budget_yellow": "Budget violations rate ({{rate}}/sec) in YELLOW range (0.03-0.28/sec)",
+            "budget_yellow_fix": "Monitor client configurations and consider adjusting token budgets",
+            "position_red": "Position violations rate ({{rate}}/sec) exceeds RED threshold (>0.28/sec)",
+            "position_red_fix": "Review client implementations to ensure thinking blocks are sent before text content",
+            "position_yellow": "Position violations rate ({{rate}}/sec) in YELLOW range (0.03-0.28/sec)",
+            "position_yellow_fix": "Monitor message ordering in client implementations"
+        }
+    },
+    "profiles": {
+        "title": "Configuration Profiles",
+        "subtitle": "Quick presets for Gemini 3 Pro High with optimized settings",
+        "thinking_enabled": "Thinking",
+        "max_tokens": "Max Tokens",
+        "thinking_budget": "Think Budget",
+        "response_time": "Response",
+        "apply_profile": "Apply Profile",
+        "active": "Active",
+        "profile_applied": "Profile '{{name}}' applied successfully",
+        "filter": {
+            "all": "All",
+            "base": "Base",
+            "thinking": "Thinking"
+        },
+        "speed": {
+            "fast": "Fast",
+            "medium": "Medium",
+            "slow": "Detailed"
+        },
+        "info": {
+            "title": "Profile Info",
+            "description": "Profiles optimize model parameters for different use cases. Thinking profiles enable extended reasoning capabilities."
+        },
+        "fast-general": {
+            "name": "Fast General",
+            "description": "Quick responses for general tasks"
+        },
+        "balanced": {
+            "name": "Balanced",
+            "description": "Balance between speed and quality"
+        },
+        "quality": {
+            "name": "High Quality",
+            "description": "Maximum quality responses"
+        },
+        "creative": {
+            "name": "Creative",
+            "description": "Creative and diverse responses"
+        },
+        "thinking-fast": {
+            "name": "Thinking Fast",
+            "description": "Quick reasoning with small thinking budget"
+        },
+        "thinking-balanced": {
+            "name": "Thinking Balanced",
+            "description": "Balanced reasoning with moderate budget"
+        },
+        "thinking-deep": {
+            "name": "Thinking Deep",
+            "description": "Deep reasoning with large thinking budget"
+        },
+        "thinking-max": {
+            "name": "Thinking Maximum",
+            "description": "Maximum reasoning capability"
+        },
+        "use_case": {
+            "chat": "Chat",
+            "general": "General",
+            "quick": "Quick",
+            "coding": "Coding",
+            "analysis": "Analysis",
+            "balanced": "Balanced",
+            "complex": "Complex",
+            "detailed": "Detailed",
+            "quality": "Quality",
+            "creative": "Creative",
+            "brainstorming": "Brainstorming",
+            "writing": "Writing",
+            "reasoning": "Reasoning",
+            "problem-solving": "Problem Solving",
+            "fast": "Fast",
+            "research": "Research",
+            "deep-analysis": "Deep Analysis",
+            "expert": "Expert",
+            "critical": "Critical",
+            "maximum": "Maximum"
         }
     }
 }

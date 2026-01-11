@@ -31,6 +31,7 @@ import { showToast } from '../components/common/ToastContainer';
 import { cn } from '../utils/cn';
 import { useProxyModels } from '../hooks/useProxyModels';
 import GroupedSelect, { SelectOption } from '../components/common/GroupedSelect';
+import ConfigurationProfiles from '../components/proxy/ConfigurationProfiles';
 
 interface ProxyStatus {
     running: boolean;
@@ -1186,6 +1187,22 @@ print(response.text)`;
                         </div>
                     )
                 }
+
+                {/* Configuration Profiles Section */}
+                {appConfig && (
+                    <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 p-5">
+                        <ConfigurationProfiles
+                            currentModel={appConfig.proxy.custom_mapping?.['gemini-3-pro-high'] || 'gemini-3-pro-high'}
+                            currentThinking={{ enabled: false }}
+                            currentMaxTokens={32000}
+                            currentTemperature={0.7}
+                            onProfileSelect={(profile) => {
+                                console.log('[ConfigurationProfiles] Selected profile:', profile);
+                                showToast(t('profiles.profile_applied', { name: profile.name }), 'success');
+                            }}
+                        />
+                    </div>
+                )}
 
                 {/* 模型路由中心 */}
                 {
