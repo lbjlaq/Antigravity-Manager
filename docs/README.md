@@ -865,6 +865,138 @@ target_achieved: YES ✅
 
 ---
 
+## 🎯 Gemini 3 Pro Low - Cost-Optimized Reasoning
+
+### Overview
+
+Gemini 3 Pro Low provides the **same 32,000 token thinking budget as High tier** with **40-60% cost savings**. This makes it the optimal choice for reasoning-intensive tasks where cost efficiency matters.
+
+### Model Information
+
+**Models**:
+- `gemini-3-pro-low` - Base model (Model ID: 342)
+- Thinking via `thinkingConfig` parameter (no `-thinking` suffix)
+
+**Aliases**:
+- `gemini-low` → `gemini-3-pro-low`
+- `gemini-3-low` → `gemini-3-pro-low`
+
+### Key Features
+
+- ✅ **Same 32,000 token thinking budget** as High tier
+- ✅ **40-60% cost savings** vs High tier
+- ✅ **Comprehensive error recovery** (7 error types)
+- ✅ **Cost-optimized reasoning specialist**
+
+### Usage Examples
+
+#### Basic Request
+
+```bash
+curl http://localhost:8045/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_KEY" \
+  -d '{
+    "model": "gemini-3-pro-low",
+    "max_tokens": 1024,
+    "messages": [
+      {"role": "user", "content": "Explain quantum computing"}
+    ]
+  }'
+```
+
+#### With Thinking Mode (parameter-based)
+
+```bash
+curl http://localhost:8045/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_KEY" \
+  -d '{
+    "model": "gemini-3-pro-low",
+    "max_tokens": 1024,
+    "messages": [
+      {"role": "user", "content": "Analyze trade-offs between X and Y"}
+    ],
+    "thinking": {
+      "type": "enabled",
+      "budget_tokens": 24000
+    }
+  }'
+```
+
+#### Using Aliases
+
+```bash
+# Short form
+curl http://localhost:8045/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_KEY" \
+  -d '{
+    "model": "gemini-low",
+    "max_tokens": 1024,
+    "messages": [
+      {"role": "user", "content": "Your request here"}
+    ]
+  }'
+
+# Version-specific short form
+curl http://localhost:8045/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key": "YOUR_KEY" \
+  -d '{
+    "model": "gemini-3-low",
+    "max_tokens": 1024,
+    "messages": [
+      {"role": "user", "content": "Your request here"}
+    ]
+  }'
+```
+
+### Cost Optimization Strategy
+
+**When to Use Low Tier**:
+- **Code Analysis**: Reasoning depth > eloquence
+- **Data Extraction**: Logic > presentation quality
+- **Problem Solving**: Capability > polish
+- **Multi-Step Reasoning**: Depth > output quality
+- **Cost Optimization**: Same thinking, lower cost
+
+**When to Use High Tier**:
+- **Customer-Facing**: Quality presentation matters
+- **Production Critical**: Maximum quality required
+- **Brand Consistency**: Premium output needed
+
+### Value Proposition
+
+**Critical Discovery**: Low tier has the **SAME 32,000 token thinking budget** as High tier!
+
+```yaml
+thinking_capability:
+  gemini_3_pro_low: 32000 tokens
+  gemini_3_pro_high: 32000 tokens
+  difference: 0
+
+cost_difference:
+  source: "Base model quality, NOT thinking budget"
+  savings: "40-60%"
+  reasoning_capability: "IDENTICAL"
+```
+
+### Error Recovery
+
+See comprehensive error recovery documentation: [gemini-3-pro-low-error-recovery.md](operations/gemini-3-pro-low-error-recovery.md)
+
+**Supported Error Types** (7 total):
+1. Quota Exhaustion (Low Tier Specific)
+2. Routing Errors (alias support)
+3. Thinking Mode Confusion
+4. Cost Budget Limits
+5. Authentication Errors (401)
+6. Rate Limiting (429)
+7. Corrupted Thought Signature
+
+---
+
 ## 🤖 Antigravity Workflows & Model Documentation
 
 ### 📊 Documentation Status
