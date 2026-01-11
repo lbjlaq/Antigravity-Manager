@@ -53,3 +53,10 @@ docs/antigravity/
 _bmad
 _bmad-output
 .debug
+
+# Debug and test scripts
+*-debug*.sh
+collect-debug-logs.sh
+watch-logs.sh*
+test_*.sh
+DEBUG_GUIDE.md
