@@ -93,6 +93,11 @@ jobs:
           override: true
           components: rustfmt, clippy
 
+      - name: Install system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
+
       - name: Run rustfmt
         working-directory: ./src-tauri
         run: cargo fmt -- --check
@@ -104,6 +109,9 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./src-tauri
 
     steps:
       - name: Checkout repository
