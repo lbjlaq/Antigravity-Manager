@@ -7,7 +7,9 @@ use tokio::sync::RwLock;
 // 🆕 Story #8: Import for json! macro
 use serde_json;
 // 🆕 Story-015-01: Import budget metrics types
-use crate::proxy::mappers::gemini::budget_optimizer::{BudgetMetrics, BudgetMetricsTracker, BudgetTier};
+use crate::proxy::mappers::gemini::budget_optimizer::{
+    BudgetMetrics, BudgetMetricsTracker, BudgetTier,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyRequestLog {

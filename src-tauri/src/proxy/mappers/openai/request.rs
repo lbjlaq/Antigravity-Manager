@@ -6,7 +6,7 @@ use crate::proxy::mappers::common::gemini_api_validator::validate_gemini_request
 use crate::proxy::mappers::common::gemini_detection::is_gemini_3_model;
 use crate::proxy::mappers::common::thinking_level_mapper::determine_thinking_level;
 use crate::proxy::mappers::gemini::budget_optimizer::{
-    QueryComplexityClassifier, BudgetRecommendationEngine,
+    BudgetRecommendationEngine, QueryComplexityClassifier,
 }; // Story-015-01: Adaptive budget optimization
 use serde_json::{json, Value};
 

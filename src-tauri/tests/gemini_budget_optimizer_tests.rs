@@ -155,13 +155,17 @@ fn test_classify_complex_query_many_sentences() {
 #[test]
 fn test_classify_uncertain_defaults_to_complex() {
     let classifier = QueryComplexityClassifier::with_threshold(0.95); // Very high threshold
-    // Use a query that would normally be MODERATE (confidence ~0.80)
+                                                                      // Use a query that would normally be MODERATE (confidence ~0.80)
     let result = classifier.classify("This is a medium complexity query with some technical context that would normally be moderate but confidence is below threshold");
 
     // With high threshold (0.95), queries with confidence <0.95 default to COMPLEX for safety
     // The classifier gives MODERATE tier ~0.80 confidence, which is < 0.95
     assert_eq!(result.tier, BudgetTier::Complex);
-    assert!(result.confidence < 0.95, "Expected confidence < 0.95, got {}", result.confidence);
+    assert!(
+        result.confidence < 0.95,
+        "Expected confidence < 0.95, got {}",
+        result.confidence
+    );
 }
 
 #[test]
@@ -196,11 +200,7 @@ fn test_classify_technical_keywords_detection() {
 
     for query in technical_queries {
         let result = classifier.classify(query);
-        assert!(
-            result.features.has_technical_keywords,
-            "Query: {}",
-            query
-        );
+        assert!(result.features.has_technical_keywords, "Query: {}", query);
     }
 }
 
@@ -709,5 +709,9 @@ fn test_metrics_tracking_performance() {
     println!("Average time per record: {:?}", elapsed / iterations);
 
     // Should be very fast (mutex-based, simple operations)
-    assert!(elapsed.as_millis() < 1000, "Tracking too slow: {:?}", elapsed);
+    assert!(
+        elapsed.as_millis() < 1000,
+        "Tracking too slow: {:?}",
+        elapsed
+    );
 }
