@@ -2,6 +2,7 @@
 // 负责 Claude ↔ Gemini 协议转换
 
 pub mod collector;
+pub mod grounding;
 pub mod models;
 pub mod request;
 pub mod response;
@@ -10,6 +11,7 @@ pub mod thinking_utils;
 pub mod utils;
 
 pub use collector::collect_stream_to_json;
+pub use grounding::GroundingConfig;
 pub use models::*;
 pub use request::{set_app_handle, transform_claude_request_in};
 pub use response::transform_response;
