@@ -36,6 +36,8 @@ pub struct AppState {
     pub image_cache: Option<Arc<dyn crate::proxy::cache::CacheBackend>>,
     /// Epic-008 Story-012-02: Budget optimizer with pattern learning
     pub budget_optimizer: Arc<crate::proxy::budget_optimizer::BudgetOptimizer>,
+    /// Story-013-05: Response caching for thinking API responses
+    pub response_cache: Option<Arc<crate::proxy::response_cache::ResponseCache>>,
 }
 
 /// Axum 服务器实例
@@ -48,6 +50,35 @@ pub struct AxumServer {
 }
 
 impl AxumServer {
+    /// Initialize response cache from config (Story-013-05)
+    ///
+    /// Creates LRU cache for thinking API responses based on configuration.
+    /// Returns None if caching is disabled.
+    async fn initialize_response_cache(
+        experimental_config: &Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
+    ) -> Option<Arc<crate::proxy::response_cache::ResponseCache>> {
+        let config = experimental_config.read().await;
+        let cache_config = &config.response_cache;
+
+        if !cache_config.enabled {
+            tracing::info!("[ResponseCache] Cache disabled via config");
+            return None;
+        }
+
+        let cache = Arc::new(crate::proxy::response_cache::ResponseCache::new(
+            cache_config.capacity,
+            cache_config.ttl_seconds,
+        ));
+
+        tracing::info!(
+            "[ResponseCache] ✓ Response cache enabled: capacity={}, ttl={}s",
+            cache_config.capacity,
+            cache_config.ttl_seconds
+        );
+
+        Some(cache)
+    }
+
     /// Initialize image cache from environment variables (Story-007-04)
     ///
     /// Environment variables:
@@ -207,6 +238,9 @@ impl AxumServer {
             }
         }
 
+        // Story-013-05: Initialize response cache from config before moving experimental_state
+        let response_cache_opt = Self::initialize_response_cache(&experimental_state).await;
+
         let state = AppState {
             token_manager: token_manager.clone(),
             custom_mapping: custom_mapping_state.clone(),
@@ -235,6 +269,8 @@ impl AxumServer {
             image_cache: Self::initialize_cache(),
             // Epic-008 Story-012-02: Budget optimizer with loaded patterns
             budget_optimizer: budget_optimizer.clone(),
+            // Story-013-05: Response cache initialized above
+            response_cache: response_cache_opt,
         };
 
         // 构建路由 - 使用新架构的 handlers！

@@ -63,6 +63,7 @@ tracing-log = "0.2.0"
 tauri-plugin-autostart = "2.5.1"
 sha2 = "0.10"
 async-trait = "0.1"                 # Async trait support for cache
+lru = "0.12"                        # LRU cache for response caching (Story-013-05)
 
 [dev-dependencies]
 tempfile = "3"                      # Temporary directories for cache tests

@@ -70,6 +70,42 @@ pub async fn handle_chat_completions(
 
     debug!("Received OpenAI request for model: {}", openai_req.model);
 
+    // Story-013-05: Check response cache for non-streaming thinking requests
+    let cache_enabled = state.response_cache.is_some();
+    let can_use_cache = cache_enabled && !openai_req.stream && openai_req.reasoning_effort.is_some();
+
+    if can_use_cache {
+        if let Some(ref cache) = state.response_cache {
+            // Generate cache key based on request parameters
+            let messages_val = serde_json::to_value(&openai_req.messages).unwrap_or_default();
+            let thinking_level = openai_req.reasoning_effort.as_deref().unwrap_or("NONE");
+            let temperature = openai_req.temperature.unwrap_or(0.7);
+            let top_p = openai_req.top_p.unwrap_or(0.95);
+            let max_tokens = openai_req.max_tokens.unwrap_or(8192) as i32;
+
+            let cache_key = crate::proxy::response_cache::generate_cache_key(
+                &openai_req.model,
+                &messages_val,
+                thinking_level,
+                temperature,
+                top_p,
+                max_tokens,
+            );
+
+            // Try cache lookup
+            if let Some(cached_response) = cache.get(&cache_key) {
+                info!(
+                    category = "cache",
+                    cache_hit = true,
+                    model = %openai_req.model,
+                    thinking_level = %thinking_level,
+                    "Response cache hit - returning cached response"
+                );
+                return Ok((StatusCode::OK, Json(cached_response)).into_response());
+            }
+        }
+    }
+
     // 1. 获取 UpstreamClient (Clone handle)
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
@@ -270,6 +306,30 @@ pub async fn handle_chat_completions(
                         );
                     }
                 });
+            }
+
+            // Story-013-05: Cache successful non-streaming thinking responses
+            if can_use_cache {
+                if let Some(ref cache) = state.response_cache {
+                    let messages_val = serde_json::to_value(&openai_req.messages).unwrap_or_default();
+                    let thinking_level = openai_req.reasoning_effort.as_deref().unwrap_or("NONE");
+                    let temperature = openai_req.temperature.unwrap_or(0.7);
+                    let top_p = openai_req.top_p.unwrap_or(0.95);
+                    let max_tokens = openai_req.max_tokens.unwrap_or(8192) as i32;
+
+                    let cache_key = crate::proxy::response_cache::generate_cache_key(
+                        &openai_req.model,
+                        &messages_val,
+                        thinking_level,
+                        temperature,
+                        top_p,
+                        max_tokens,
+                    );
+
+                    // Cache the response
+                    let response_val = serde_json::to_value(&openai_response).unwrap_or_default();
+                    cache.put(cache_key, response_val);
+                }
             }
 
             return Ok((

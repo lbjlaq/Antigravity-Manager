@@ -97,6 +97,40 @@ impl Default for ZaiConfig {
     }
 }
 
+/// Response cache configuration (Story-013-05)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseCacheConfig {
+    /// Enable response caching
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Maximum number of cached entries (LRU eviction)
+    #[serde(default = "default_cache_capacity")]
+    pub capacity: usize,
+
+    /// Time-to-live for cached entries (seconds)
+    #[serde(default = "default_cache_ttl")]
+    pub ttl_seconds: u64,
+}
+
+impl Default for ResponseCacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            capacity: default_cache_capacity(),
+            ttl_seconds: default_cache_ttl(),
+        }
+    }
+}
+
+fn default_cache_capacity() -> usize {
+    1000
+}
+
+fn default_cache_ttl() -> u64 {
+    3600 // 1 hour
+}
+
 /// 实验性功能配置 (Feature Flags)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperimentalConfig {
@@ -111,6 +145,10 @@ pub struct ExperimentalConfig {
     /// 启用跨模型兼容性检查 (Cross-Model Checks)
     #[serde(default = "default_true")]
     pub enable_cross_model_checks: bool,
+
+    /// Response caching configuration (Story-013-05)
+    #[serde(default)]
+    pub response_cache: ResponseCacheConfig,
 }
 
 impl Default for ExperimentalConfig {
@@ -119,6 +157,7 @@ impl Default for ExperimentalConfig {
             enable_signature_cache: true,
             enable_tool_loop_recovery: true,
             enable_cross_model_checks: true,
+            response_cache: ResponseCacheConfig::default(),
         }
     }
 }

@@ -446,6 +446,53 @@ pub async fn handle_messages(
     // [CRITICAL FIX] 过滤并修复 Thinking 块签名
     filter_invalid_thinking_blocks(&mut request.messages);
 
+    // Story-013-05: Check response cache for non-streaming thinking requests
+    let cache_enabled = state.response_cache.is_some();
+    let has_thinking = request.thinking.is_some() || request.output_config.is_some();
+    let can_use_cache = cache_enabled && !request.stream && has_thinking;
+
+    if can_use_cache {
+        if let Some(ref cache) = state.response_cache {
+            // Generate cache key based on request parameters
+            let messages_val = serde_json::to_value(&request.messages).unwrap_or_default();
+
+            // Determine thinking level from config
+            let thinking_level = if let Some(ref output_config) = request.output_config {
+                // Extract effort level from output_config
+                output_config.effort.as_deref().unwrap_or("NONE")
+            } else if request.thinking.is_some() {
+                "ENABLED" // Generic thinking enabled
+            } else {
+                "NONE"
+            };
+
+            let temperature = request.temperature.unwrap_or(0.7);
+            let top_p = request.top_p.unwrap_or(0.95);
+            let max_tokens = request.max_tokens.unwrap_or(8192) as i32;
+
+            let cache_key = crate::proxy::response_cache::generate_cache_key(
+                &request.model,
+                &messages_val,
+                thinking_level,
+                temperature,
+                top_p,
+                max_tokens,
+            );
+
+            // Try cache lookup
+            if let Some(cached_response) = cache.get(&cache_key) {
+                info!(
+                    category = "cache",
+                    cache_hit = true,
+                    model = %request.model,
+                    thinking_level = %thinking_level,
+                    "Response cache hit - returning cached Claude response"
+                );
+                return (StatusCode::OK, Json(cached_response)).into_response();
+            }
+        }
+    }
+
     // [New] Recover from broken tool loops (where signatures were stripped)
     // This prevents "Assistant message must start with thinking" errors by closing the loop with synthetic messages
     // [FIX #498] Only apply to thinking-enabled models to avoid breaking tool loops for non-thinking models
@@ -920,6 +967,36 @@ pub async fn handle_messages(
                     match collect_stream_to_json(sse_stream).await {
                         Ok(full_response) => {
                             info!("[{}] ✓ Stream collected and converted to JSON", trace_id);
+
+                            // Story-013-05: Cache successful non-streaming thinking responses
+                            if can_use_cache {
+                                if let Some(ref cache) = state.response_cache {
+                                    let messages_val = serde_json::to_value(&request.messages).unwrap_or_default();
+                                    let thinking_level = if let Some(ref output_config) = request.output_config {
+                                        output_config.effort.as_deref().unwrap_or("NONE")
+                                    } else if request.thinking.is_some() {
+                                        "ENABLED"
+                                    } else {
+                                        "NONE"
+                                    };
+                                    let temperature = request.temperature.unwrap_or(0.7);
+                                    let top_p = request.top_p.unwrap_or(0.95);
+                                    let max_tokens = request.max_tokens.unwrap_or(8192) as i32;
+
+                                    let cache_key = crate::proxy::response_cache::generate_cache_key(
+                                        &request.model,
+                                        &messages_val,
+                                        thinking_level,
+                                        temperature,
+                                        top_p,
+                                        max_tokens,
+                                    );
+
+                                    let response_val = serde_json::to_value(&full_response).unwrap_or_default();
+                                    cache.put(cache_key, response_val);
+                                }
+                            }
+
                             return Response::builder()
                                 .status(StatusCode::OK)
                                 .header(header::CONTENT_TYPE, "application/json")
@@ -1034,6 +1111,35 @@ pub async fn handle_messages(
                             );
                         }
                     });
+                }
+
+                // Story-013-05: Cache successful non-streaming thinking responses
+                if can_use_cache {
+                    if let Some(ref cache) = state.response_cache {
+                        let messages_val = serde_json::to_value(&request.messages).unwrap_or_default();
+                        let thinking_level = if let Some(ref output_config) = request.output_config {
+                            output_config.effort.as_deref().unwrap_or("NONE")
+                        } else if request.thinking.is_some() {
+                            "ENABLED"
+                        } else {
+                            "NONE"
+                        };
+                        let temperature = request.temperature.unwrap_or(0.7);
+                        let top_p = request.top_p.unwrap_or(0.95);
+                        let max_tokens = request.max_tokens.unwrap_or(8192) as i32;
+
+                        let cache_key = crate::proxy::response_cache::generate_cache_key(
+                            &request.model,
+                            &messages_val,
+                            thinking_level,
+                            temperature,
+                            top_p,
+                            max_tokens,
+                        );
+
+                        let response_val = serde_json::to_value(&claude_response).unwrap_or_default();
+                        cache.put(cache_key, response_val);
+                    }
                 }
 
                 return (
