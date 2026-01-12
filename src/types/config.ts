@@ -10,12 +10,29 @@ export interface ProxyConfig {
     port: number;
     api_key: string;
     auto_start: boolean;
+    anthropic_mapping?: Record<string, string>;
+    openai_mapping?: Record<string, string>;
     custom_mapping?: Record<string, string>;
     request_timeout: number;
+    model_strategies?: Record<string, ModelStrategy>;
     enable_logging: boolean;
     upstream_proxy: UpstreamProxyConfig;
     zai?: ZaiConfig;
     scheduling?: StickySessionConfig;
+}
+
+export type ModelPriority = 'accuracy_first' | 'capacity_first';
+export type ModelStickiness = 'strong' | 'weak';
+
+export interface ModelFallbackPolicy {
+    model_priority?: ModelPriority;
+    stickiness?: ModelStickiness;
+    max_model_hops?: number;
+}
+
+export interface ModelStrategy {
+    candidates: string[];
+    policy?: ModelFallbackPolicy;
 }
 
 export type SchedulingMode = 'CacheFirst' | 'Balance' | 'PerformanceFirst';
