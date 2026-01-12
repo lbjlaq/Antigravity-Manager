@@ -2,9 +2,10 @@
 
 **Дата**: 2026-01-12
 **Источники**: Код + Документация + UI + Reverse Engineering
-**Общий прогресс**: 72.2% (39/54+ моделей)
-**🎉 UPDATE**: Epic-011 (API Migration) COMPLETE ✅ - Epic-010 COMPLETE (via Epic-011) ✅
-**📊 VALIDATION**: Epic-010 независимая валидация завершена (2026-01-12) - см. `docs/analysis/EPIC-010-VALIDATION-ANALYSIS.md`
+**Общий прогресс**: 74.1% (40/54+ моделей)
+**🎉 UPDATE**: Epic-017 (Sonnet Standard) COMPLETE ✅ - Epic-019 (Opus Standard) COMPLETE ✅
+**📊 LATEST**: Epic-011 (API Migration) COMPLETE ✅ - Epic-010 COMPLETE (via Epic-011) ✅
+**🚀 TODAY**: 2 Epics merged (Epic-017: commit b006509, Epic-019: commit 04fef77) - 137 tests, 100% compliance
 
 ---
 
@@ -12,19 +13,24 @@
 
 ```yaml
 ВСЕГО МОДЕЛЕЙ: 54+
-  Задокументировано: 39 (72.2%)
-  Осталось: 15+ (27.8%)
+  Задокументировано: 40 (74.1%)
+  Осталось: 14+ (25.9%)
 
 ПО КАТЕГОРИЯМ:
   Gemini: 27/42+ (64.3%)
-  Claude: 8/8 (100% ✅)
+  Claude: 9/9 (100% ✅)
   OpenAI: 4/4 (100% ✅)
 
 ПО ТИПАМ ДОКУМЕНТОВ:
   Base Workflows: 30 ✅
   Thinking Workflows: 9 ✅
-  COMPARISON Files: 3 ✅
-  Всего файлов: 42
+  COMPARISON Files: 5 ✅
+  Всего файлов: 44
+
+TODAY'S ACHIEVEMENTS:
+  Epic-017: ✅ Claude Sonnet 4.5 Standard - 67/67 tests, 100% compliance (commit b006509)
+  Epic-019: ✅ Claude Opus 4.5 Standard - 70/70 tests, 100% compliance (commit 04fef77)
+  Total: 137 new tests, 2 COMPARISON files, 90% code reuse pattern proven
 ```
 
 ---
@@ -66,9 +72,10 @@
 - **Epic-013** (Flash Phases 2+3): ✅ COMPLETE (2026-01-12, 100% compliance, 398/398 tests, 10/10 QA)
 - **Epic-024** (Anti-Detection): ✅ COMPLETE (2026-01-12, P0 CRITICAL resolved, merged a079136, 10/10 QA)
 - **Epic-015** (Pro Optimization): ✅ COMPLETE (2026-01-12, 16.4% savings, 89% accuracy, 112/113 tests, merged to main)
+- **Epic-017** (Sonnet Standard): ✅ COMPLETE (2026-01-12, 67/67 tests, 100% compliance, commit b006509, 10/10 QA)
+- **Epic-019** (Opus Standard): ✅ COMPLETE (2026-01-12, 70/70 tests, 100% compliance, commit 04fef77, 10/10 QA)
 
-**Next Epic** (Ready to Start):
-- **Epic-017** (Claude Sonnet Standard): 📋 READY, P1 HIGH, 9-11h (1.5 weeks), 3 stories, 90% code reuse
+**Total Today**: 7 Epics complete, 715+ tests passing, 100% quality maintained
 
 **Active Epics**:
 - **Epic-007** (Image): 🔄 IN PROGRESS, Команда 1, 2026-01-11 → 2026-01-21
@@ -178,12 +185,13 @@
 
 | # | Model Name | UI Display | Base Workflow | Thinking Workflow | COMPARISON | Status | Notes |
 |---|------------|------------|---------------|-------------------|------------|--------|-------|
-| 1 | claude-sonnet-4-5 | Claude Sonnet 4.5 | ✅ | ❌ | ❌ | DONE | v1.0, base |
-| 2 | claude-sonnet-4-5-thinking | Claude Sonnet 4.5 (Thinking) | ❌ | ✅ | ❌ | DONE | v1.0, 32000 |
+| 1 | claude-sonnet-4-5 | Claude Sonnet 4.5 | ✅ | ❌ | ✅ | DONE | Epic-017 ✅ v2.0, modelId 333, 67 tests |
+| 2 | claude-sonnet-4-5-thinking | Claude Sonnet 4.5 (Thinking) | ❌ | ✅ | ✅ | DONE | Epic-017 ✅ v2.0, modelId 334, 32000 |
 | 3 | claude-haiku-4-5 | - | ✅ | ❌ | ❌ | DONE | v1.0, routes to gemini-3-pro-high |
 | 4 | claude-haiku-4-5-thinking | - | ❌ | ✅ | ❌ | DONE | v1.0, via gemini |
 
-**Документов**: 4/4 (100%)
+**Документов**: 6/6 (100%)
+**COMPARISON Files**: claude-4-5-sonnet-COMPARISON.md (Epic-017) ✅
 **В UI**: Sonnet 4.5 (base + thinking)
 **Примечание**: Haiku роутится в Gemini 3 Pro High
 
@@ -193,32 +201,37 @@
 
 | # | Model Name | UI Display | Base Workflow | Thinking Workflow | COMPARISON | Status | Notes |
 |---|------------|------------|---------------|-------------------|------------|--------|-------|
-| 1 | claude-opus-4-5 | - | ✅ | ❌ | ❌ | DONE | v1.0, base (rare) |
-| 2 | claude-opus-4-5-thinking | Claude Opus 4.5 (Thinking) | ❌ | ✅ | ❌ | DONE | v1.0, 32000 |
+| 1 | claude-opus-4-5 | Claude Opus 4.5 | ✅ | ❌ | ✅ | DONE | Epic-019 ✅ v2.0, modelId 335, 70 tests |
+| 2 | claude-opus-4-5-thinking | Claude Opus 4.5 (Thinking) | ❌ | ✅ | ✅ | DONE | Epic-019 ✅ v2.0, modelId 336, 32000 |
 | 3 | claude-4-sonnet | - | ✅ | ❌ | ❌ | DONE | v1.0, base |
 | 4 | claude-4-sonnet-thinking | - | ❌ | ✅ | ❌ | DONE | v1.0, 32000 |
 
-**Документов**: 4/4 (100%)
-**В UI**: Opus 4.5 (Thinking)
-**Примечание**: Google предоставляет Opus ТОЛЬКО с thinking
+**Документов**: 6/6 (100%)
+**COMPARISON Files**: claude-opus-4-5-COMPARISON.md (Epic-019) ✅
+**В UI**: Opus 4.5 (standard + thinking)
+**Примечание**: Epic-019 adds standard mode support (non-thinking variant)
 
 ---
 
 ### 2.3 Claude Aliases (Routing Only - No Separate Docs)
 
-| Alias | Routes To | In Code | Documented |
-|-------|-----------|---------|------------|
-| claude-3-5-sonnet-20241022 | claude-sonnet-4-5 | ✅ | ❌ (alias) |
-| claude-3-5-sonnet-20240620 | claude-sonnet-4-5 | ✅ | ❌ (alias) |
-| claude-sonnet-4-5-20250929 | claude-sonnet-4-5-thinking | ✅ | ❌ (alias) |
-| claude-opus-4 | claude-opus-4-5-thinking | ✅ | ❌ (alias) |
-| claude-opus-4-5-20251101 | claude-opus-4-5-thinking | ✅ | ❌ (alias) |
-| claude-opus-4-5-high | claude-opus-4-5-thinking | ✅ | ❌ (alias) |
-| claude-haiku-4 | gemini-3-pro-high | ✅ | ❌ (routes) |
-| claude-3-haiku-20240307 | gemini-3-pro-high | ✅ | ❌ (routes) |
-| claude-haiku-4-5-20251001 | gemini-3-pro-high | ✅ | ❌ (routes) |
+| Alias | Routes To | In Code | Documented | Epic |
+|-------|-----------|---------|------------|------|
+| claude-3-5-sonnet-20241022 | claude-sonnet-4-5 | ✅ | ❌ (alias) | Epic-017 |
+| claude-3-5-sonnet-20240620 | claude-sonnet-4-5 | ✅ | ❌ (alias) | Epic-017 |
+| claude-4.5-sonnet | claude-sonnet-4-5 | ✅ | ❌ (alias) | Epic-017 |
+| claude-sonnet-4-5-20250929 | claude-sonnet-4-5-thinking | ✅ | ❌ (alias) | - |
+| claude-4.5-sonnet-thinking | claude-sonnet-4-5-thinking | ✅ | ❌ (alias) | Epic-017 |
+| claude-opus-4 | claude-opus-4-5-thinking | ✅ | ❌ (alias) | Epic-019 (legacy) |
+| claude-opus-4-5-20251101 | claude-opus-4-5-thinking | ✅ | ❌ (alias) | Epic-019 (legacy) |
+| claude-4.5-opus | claude-opus-4-5 | ✅ | ❌ (alias) | Epic-019 (NEW) |
+| claude-4.5-opus-thinking | claude-opus-4-5-thinking | ✅ | ❌ (alias) | Epic-019 (NEW) |
+| claude-haiku-4 | gemini-3-pro-high | ✅ | ❌ (routes) | - |
+| claude-3-haiku-20240307 | gemini-3-pro-high | ✅ | ❌ (routes) | - |
+| claude-haiku-4-5-20251001 | gemini-3-pro-high | ✅ | ❌ (routes) | - |
 
 **Примечание**: Aliases не требуют отдельной документации, роутятся в основные модели
+**Epic-019 Change**: "claude-opus-4-5" now routes to STANDARD mode (not thinking), legacy aliases preserved for compatibility
 
 ---
 
