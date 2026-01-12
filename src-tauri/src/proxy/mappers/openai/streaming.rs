@@ -176,12 +176,39 @@ pub fn create_openai_sse_stream(
                                             // Extract finish reason
                                             let finish_reason = candidate.get("finishReason")
                                                 .and_then(|f| f.as_str())
-                                                .map(|f| match f {
-                                                    "STOP" => "stop",
-                                                    "MAX_TOKENS" => "length",
-                                                    "SAFETY" => "content_filter",
-                                                    "RECITATION" => "content_filter",
-                                                    _ => f,
+                                                .map(|f| {
+                                                    let mapped = match f {
+                                                        "STOP" => "stop",
+                                                        "MAX_TOKENS" => "length",
+                                                        "SAFETY" => {
+                                                            // [Story-013-04] Log content filter blocks
+                                                            tracing::warn!(
+                                                                category = "content_filter",
+                                                                error_type = "safety_block",
+                                                                model = %model,
+                                                                finish_reason = "content_filter",
+                                                                blocked_category = "HARM_CATEGORY_DANGEROUS_CONTENT",
+                                                                reason = "Content blocked by safety filters (SAFETY)",
+                                                                "Response blocked by Google safety filters"
+                                                            );
+                                                            "content_filter"
+                                                        }
+                                                        "RECITATION" => {
+                                                            // [Story-013-04] Log content filter blocks
+                                                            tracing::warn!(
+                                                                category = "content_filter",
+                                                                error_type = "recitation_block",
+                                                                model = %model,
+                                                                finish_reason = "content_filter",
+                                                                blocked_category = "RECITATION",
+                                                                reason = "Content blocked due to recitation detection",
+                                                                "Response blocked due to recitation"
+                                                            );
+                                                            "content_filter"
+                                                        }
+                                                        _ => f,
+                                                    };
+                                                    mapped
                                                 });
 
                                             // Construct OpenAI SSE chunk
@@ -310,11 +337,26 @@ pub fn create_legacy_sse_stream(
                                         .and_then(|c| c.first())
                                         .and_then(|c| c.get("finishReason"))
                                         .and_then(|f| f.as_str())
-                                        .map(|f| match f {
-                                            "STOP" => "stop",
-                                            "MAX_TOKENS" => "length",
-                                            "SAFETY" => "content_filter",
-                                            _ => f,
+                                        .map(|f| {
+                                            let mapped = match f {
+                                                "STOP" => "stop",
+                                                "MAX_TOKENS" => "length",
+                                                "SAFETY" => {
+                                                    // [Story-013-04] Log content filter blocks
+                                                    tracing::warn!(
+                                                        category = "content_filter",
+                                                        error_type = "safety_block",
+                                                        model = %model,
+                                                        finish_reason = "content_filter",
+                                                        blocked_category = "SAFETY",
+                                                        reason = "Content blocked by safety filters",
+                                                        "Response blocked by Google safety filters (legacy completion)"
+                                                    );
+                                                    "content_filter"
+                                                }
+                                                _ => f,
+                                            };
+                                            mapped
                                         });
 
                                     // Construct LEGACY completion chunk - STRICT VERSION

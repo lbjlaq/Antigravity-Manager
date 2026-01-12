@@ -262,23 +262,71 @@ pub fn transform_openai_request(
     if is_gemini_3_thinking {
         // Determine thinking level from reasoning_effort or use defaults
         let thinking_level = if let Some(ref effort) = request.reasoning_effort {
+            let effort_lower = effort.to_lowercase();
             // Map OpenAI reasoning_effort to Gemini thinkingLevel
-            match effort.to_lowercase().as_str() {
-                "low" => "LOW",
+            let level = match effort_lower.as_str() {
+                "low" => {
+                    tracing::info!(
+                        category = "thinking_mapping",
+                        model = %mapped_model,
+                        reasoning_effort = %effort,
+                        level = "LOW",
+                        source = "openai_reasoning_effort",
+                        "OpenAI reasoning_effort mapped to LOW"
+                    );
+                    "LOW"
+                }
                 "medium" => {
                     // CRITICAL: Pro models don't support MEDIUM
                     if mapped_model.contains("-flash") {
+                        tracing::info!(
+                            category = "thinking_mapping",
+                            model = %mapped_model,
+                            reasoning_effort = %effort,
+                            level = "MEDIUM",
+                            source = "openai_reasoning_effort",
+                            "OpenAI reasoning_effort mapped to MEDIUM (Flash)"
+                        );
                         "MEDIUM"
                     } else {
+                        tracing::warn!(
+                            category = "thinking_validation",
+                            error_type = "medium_downgrade",
+                            model = %mapped_model,
+                            requested_level = "MEDIUM",
+                            actual_level = "LOW",
+                            reasoning_effort = %effort,
+                            reason = "Pro models don't support MEDIUM, downgraded from OpenAI reasoning_effort='medium'",
+                            "OpenAI reasoning_effort='medium' downgraded to LOW for Pro"
+                        );
                         "LOW" // Pro: downgrade MEDIUM to LOW
                     }
                 }
-                "high" => "HIGH",
+                "high" => {
+                    tracing::info!(
+                        category = "thinking_mapping",
+                        model = %mapped_model,
+                        reasoning_effort = %effort,
+                        level = "HIGH",
+                        source = "openai_reasoning_effort",
+                        "OpenAI reasoning_effort mapped to HIGH"
+                    );
+                    "HIGH"
+                }
                 _ => {
                     // Invalid effort, use model defaults
+                    tracing::warn!(
+                        category = "thinking_validation",
+                        error_type = "invalid_reasoning_effort",
+                        model = %mapped_model,
+                        reasoning_effort = %effort,
+                        reason = "Invalid reasoning_effort value, using model defaults",
+                        "Invalid OpenAI reasoning_effort, using model defaults"
+                    );
                     determine_thinking_level(mapped_model, None)
                 }
-            }
+            };
+            level
         } else {
             // No reasoning_effort specified, use model defaults
             // Flash default: MEDIUM (balance cost/quality)

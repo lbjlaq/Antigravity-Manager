@@ -50,32 +50,91 @@
 pub fn determine_thinking_level(model: &str, budget: Option<i32>) -> &'static str {
     // Default levels if no budget specified
     if budget.is_none() {
-        return if model.contains("-flash") {
+        let level = if model.contains("-flash") {
             "MEDIUM" // Flash: balance cost/quality
         } else {
             "HIGH" // Pro: maximize quality
         };
+
+        tracing::info!(
+            category = "thinking_mapping",
+            model = %model,
+            budget = "default",
+            level = %level,
+            "Using default thinking level (no budget specified)"
+        );
+
+        return level;
     }
 
     // Clamp budget to valid range: 0-32000 tokens
     // Negative budgets are invalid and would cause incorrect mappings
-    let budget = budget.unwrap().clamp(0, 32000);
+    let budget_raw = budget.unwrap();
+    let budget = budget_raw.clamp(0, 32000);
+
+    // Log if clamping occurred
+    if budget_raw != budget {
+        tracing::warn!(
+            category = "thinking_validation",
+            error_type = "budget_clamping",
+            model = %model,
+            requested_budget = budget_raw,
+            actual_budget = budget,
+            reason = "Budget outside valid range (0-32000), clamped",
+            "Budget clamped to valid range"
+        );
+    }
 
     if model.contains("-flash") {
         // Flash: 4 levels (MINIMAL, LOW, MEDIUM, HIGH)
-        match budget {
+        let level = match budget {
             0..=4000 => "MINIMAL",
             4001..=10000 => "LOW",
             10001..=20000 => "MEDIUM",
             _ => "HIGH",
-        }
+        };
+
+        tracing::info!(
+            category = "thinking_mapping",
+            model = %model,
+            budget = budget,
+            level = %level,
+            "Budget mapped to thinking level (Flash)"
+        );
+
+        level
     } else {
         // Pro (High/Low): 2 levels only (LOW, HIGH)
         // CRITICAL: Pro does NOT support MEDIUM level
-        match budget {
+        let level = match budget {
             0..=16000 => "LOW",
             _ => "HIGH",
+        };
+
+        // Check if Pro would have used MEDIUM (budget 10001-20000) if it were Flash
+        // This is the CRITICAL MEDIUM downgrade case
+        if budget > 10000 && budget <= 20000 {
+            tracing::warn!(
+                category = "thinking_validation",
+                error_type = "medium_downgrade",
+                model = %model,
+                requested_level = "MEDIUM",
+                actual_level = %level,
+                budget_tokens = budget,
+                reason = "Pro models don't support MEDIUM, downgraded to LOW",
+                "MEDIUM level not supported for Pro, downgrading to LOW"
+            );
+        } else {
+            tracing::info!(
+                category = "thinking_mapping",
+                model = %model,
+                budget = budget,
+                level = %level,
+                "Budget mapped to thinking level (Pro)"
+            );
         }
+
+        level
     }
 }
 
