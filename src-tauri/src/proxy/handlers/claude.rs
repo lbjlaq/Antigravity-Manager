@@ -80,11 +80,11 @@ fn has_valid_signature(block: &ContentBlock) -> bool {
         } => {
             // Empty thinking + valid JWT signature = valid (trailing signature case)
             if thinking.is_empty() && signature.is_some() {
-                return signature.as_ref().map_or(false, |s| is_valid_jwt_format(s));
+                return signature.as_ref().is_some_and(|s| is_valid_jwt_format(s));
             }
 
             // Has content + valid JWT signature with minimum length
-            signature.as_ref().map_or(false, |s| {
+            signature.as_ref().is_some_and(|s| {
                 s.len() >= MIN_SIGNATURE_LENGTH && is_valid_jwt_format(s)
             })
         }

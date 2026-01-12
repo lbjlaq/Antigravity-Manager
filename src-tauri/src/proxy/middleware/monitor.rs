@@ -180,7 +180,7 @@ pub async fn monitor_middleware(
         match axum::body::to_bytes(body, MAX_RESPONSE_LOG_SIZE).await {
             Ok(bytes) => {
                 if let Ok(s) = std::str::from_utf8(&bytes) {
-                    if let Ok(json) = serde_json::from_str::<Value>(&s) {
+                    if let Ok(json) = serde_json::from_str::<Value>(s) {
                         if let Some(usage) = json.get("usage") {
                             log.input_tokens = usage
                                 .get("prompt_tokens")

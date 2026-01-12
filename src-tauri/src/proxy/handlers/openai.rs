@@ -82,7 +82,7 @@ pub async fn handle_chat_completions(
         let tools_val: Option<Vec<Value>> = openai_req
             .tools
             .as_ref()
-            .map(|list| list.iter().cloned().collect());
+            .map(|list| list.to_vec());
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &openai_req.model,
             &mapped_model,
@@ -207,7 +207,7 @@ pub async fn handle_chat_completions(
                     let sse_stream = openai_stream.map(|result| -> Result<Bytes, std::io::Error> {
                         match result {
                             Ok(bytes) => Ok(bytes),
-                            Err(e) => Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+                            Err(e) => Err(std::io::Error::other(e)),
                         }
                     });
 
@@ -669,7 +669,7 @@ pub async fn handle_completions(
         let tools_val: Option<Vec<Value>> = openai_req
             .tools
             .as_ref()
-            .map(|list| list.iter().cloned().collect());
+            .map(|list| list.to_vec());
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
             &openai_req.model,
             &mapped_model,
@@ -1688,11 +1688,7 @@ pub async fn handle_images_edits(
                 Some(b64.to_string())
             } else if let Some(url) = images[0].get("url").and_then(|v| v.as_str()) {
                 // Extract base64 from data URI format: data:image/png;base64,{data}
-                if let Some(pos) = url.find("base64,") {
-                    Some(url[pos + 7..].to_string())
-                } else {
-                    None
-                }
+                url.find("base64,").map(|pos| url[pos + 7..].to_string())
             } else {
                 None
             };

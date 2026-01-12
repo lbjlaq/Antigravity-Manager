@@ -62,7 +62,7 @@ pub async fn auth_middleware(
     }
 
     // Constant-time compare is unnecessary here, but keep strict equality and avoid leaking values.
-    let authorized = api_key.map(|k| k == security.api_key).unwrap_or(false);
+    let authorized = api_key.is_some_and(|k| k == security.api_key);
 
     if authorized {
         Ok(next.run(request).await)

@@ -237,8 +237,10 @@ pub struct OutputConfig {
 /// Defines how the model should use tools in requests
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ToolChoice {
     /// Let the model decide when to use tools (maps to AUTO mode)
+    #[default]
     Auto,
 
     /// Force the model to use at least one tool (maps to ANY mode)
@@ -252,11 +254,6 @@ pub enum ToolChoice {
     Tool { name: String },
 }
 
-impl Default for ToolChoice {
-    fn default() -> Self {
-        ToolChoice::Auto
-    }
-}
 
 impl ToolChoice {
     /// Convert to Gemini Protocol mode string

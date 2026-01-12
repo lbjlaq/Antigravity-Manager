@@ -29,8 +29,7 @@ pub fn wrap_request(body: &Value, project_id: &str, mapped_model: &str) -> Value
     // 提取 tools 列表以进行联网探测 (Gemini 风格可能是嵌套的)
     let tools_val: Option<Vec<Value>> = inner_request
         .get("tools")
-        .and_then(|t| t.as_array())
-        .map(|arr| arr.clone());
+        .and_then(|t| t.as_array()).cloned();
 
     // Use shared grounding/config logic
     let config = crate::proxy::mappers::common_utils::resolve_request_config(
@@ -117,12 +116,10 @@ pub fn wrap_request(body: &Value, project_id: &str, mapped_model: &str) -> Value
             if let Some(parts) = system_instruction.get_mut("parts") {
                 if let Some(parts_array) = parts.as_array_mut() {
                     // 检查第一个 part 是否已包含 Antigravity 身份
-                    let has_antigravity = parts_array
-                        .get(0)
+                    let has_antigravity = parts_array.first()
                         .and_then(|p| p.get("text"))
                         .and_then(|t| t.as_str())
-                        .map(|s| s.contains("You are Antigravity"))
-                        .unwrap_or(false);
+                        .is_some_and(|s| s.contains("You are Antigravity"));
 
                     if !has_antigravity {
                         // 在前面插入 Antigravity 身份

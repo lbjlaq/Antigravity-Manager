@@ -34,7 +34,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                     if let Some(paths) = obj.remove("paths") {
                         let path_str = if let Some(arr) = paths.as_array() {
                             // Take first element if array
-                            arr.get(0)
+                            arr.first()
                                 .and_then(|v| v.as_str())
                                 .unwrap_or(".")
                                 .to_string()
@@ -69,7 +69,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.remove("paths") {
                         let path_str = if let Some(arr) = paths.as_array() {
-                            arr.get(0)
+                            arr.first()
                                 .and_then(|v| v.as_str())
                                 .unwrap_or(".")
                                 .to_string()
@@ -211,7 +211,7 @@ impl StreamingState {
         let mut message = json!({
             "id": raw_json.get("responseId")
                 .and_then(|v| v.as_str())
-                .unwrap_or_else(|| "msg_unknown"),
+                .unwrap_or("msg_unknown"),
             "type": "message",
             "role": "assistant",
             "content": [],
@@ -408,13 +408,13 @@ impl StreamingState {
             "end_turn"
         };
 
-        let usage = usage_metadata.map(|u| to_claude_usage(u)).unwrap_or(Usage {
+        let usage = usage_metadata.map_or(Usage {
             input_tokens: 0,
             output_tokens: 0,
             cache_read_input_tokens: None,
             cache_creation_input_tokens: None,
             server_tool_use: None,
-        });
+        }, to_claude_usage);
 
         chunks.push(self.emit(
             "message_delta",

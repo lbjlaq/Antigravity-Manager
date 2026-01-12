@@ -514,7 +514,7 @@ impl CacheMonitor {
 
             // Keep only last 24 hours
             let cutoff = now.timestamp() - 86400;
-            while hourly.front().map_or(false, |(h, _)| *h < cutoff) {
+            while hourly.front().is_some_and(|(h, _)| *h < cutoff) {
                 hourly.pop_front();
             }
         }
@@ -534,7 +534,7 @@ impl CacheMonitor {
 
             // Keep only last 7 days
             let cutoff = now.timestamp() - 7 * 86400;
-            while daily.front().map_or(false, |(d, _)| *d < cutoff) {
+            while daily.front().is_some_and(|(d, _)| *d < cutoff) {
                 daily.pop_front();
             }
         }

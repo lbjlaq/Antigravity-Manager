@@ -537,7 +537,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
 
         // 重新获取用户名 (Token 刷新后顺便获取)
         let name = if account.name.is_none()
-            || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
+            || account.name.as_ref().is_some_and(|n| n.trim().is_empty())
         {
             match oauth::get_user_info(&token.access_token).await {
                 Ok(user_info) => user_info.get_display_name(),
@@ -552,7 +552,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     }
 
     // 0. 补充用户名 (如果 Token 没过期但也没用户名，或者上面没获取到)
-    if account.name.is_none() || account.name.as_ref().map_or(false, |n| n.trim().is_empty()) {
+    if account.name.is_none() || account.name.as_ref().is_some_and(|n| n.trim().is_empty()) {
         modules::logger::log_info(&format!("账号 {} 缺少用户名，尝试获取...", account.email));
         // 使用更新后的 token
         match oauth::get_user_info(&account.token.access_token).await {
@@ -635,7 +635,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
 
                 // 重新获取用户名
                 let name = if account.name.is_none()
-                    || account.name.as_ref().map_or(false, |n| n.trim().is_empty())
+                    || account.name.as_ref().is_some_and(|n| n.trim().is_empty())
                 {
                     match oauth::get_user_info(&token_res.access_token).await {
                         Ok(user_info) => user_info.get_display_name(),

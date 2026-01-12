@@ -30,7 +30,7 @@ pub fn store_thought_signature(sig: &str) {
             tracing::debug!(
                 "[ThoughtSig] Skipping shorter signature (new length: {}, existing length: {})",
                 sig.len(),
-                guard.as_ref().map(|s| s.len()).unwrap_or(0)
+                guard.as_ref().map_or(0, |s| s.len())
             );
         }
     }

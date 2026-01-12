@@ -52,14 +52,10 @@ pub fn transform_openai_response(gemini_response: &Value) -> OpenAIResponse {
                     if let Some(fc) = part.get("functionCall") {
                         let name = fc.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
                         let args = fc
-                            .get("args")
-                            .map(|v| v.to_string())
-                            .unwrap_or_else(|| "{}".to_string());
+                            .get("args").map_or_else(|| "{}".to_string(), |v| v.to_string());
                         let id = fc
                             .get("id")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| format!("{}-{}", name, uuid::Uuid::new_v4()));
+                            .and_then(|v| v.as_str()).map_or_else(|| format!("{}-{}", name, uuid::Uuid::new_v4()), |s| s.to_string());
 
                         tool_calls.push(ToolCall {
                             id,
@@ -129,14 +125,13 @@ pub fn transform_openai_response(gemini_response: &Value) -> OpenAIResponse {
             let finish_reason = candidate
                 .get("finishReason")
                 .and_then(|f| f.as_str())
-                .map(|f| match f {
+                .map_or("stop", |f| match f {
                     "STOP" => "stop",
                     "MAX_TOKENS" => "length",
                     "SAFETY" => "content_filter",
                     "RECITATION" => "content_filter",
                     _ => "stop",
-                })
-                .unwrap_or("stop");
+                });
 
             choices.push(Choice {
                 index: idx as u32,

@@ -522,14 +522,13 @@ impl TokenManager {
                         attempted.insert(token.account_id.clone());
 
                         // 【优化】标记需要清除锁定，避免在循环内加锁
-                        if quota_group != "image_gen" {
-                            if matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
+                        if quota_group != "image_gen"
+                            && matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
                             {
                                 need_update_last_used =
                                     Some((String::new(), std::time::Instant::now()));
                                 // 空字符串表示需要清除
                             }
-                        }
                         continue;
                     }
                 }
@@ -557,14 +556,13 @@ impl TokenManager {
                         attempted.insert(token.account_id.clone());
 
                         // 【优化】标记需要清除锁定，避免在循环内加锁
-                        if quota_group != "image_gen" {
-                            if matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
+                        if quota_group != "image_gen"
+                            && matches!(&last_used_account_id, Some((id, _)) if id == &token.account_id)
                             {
                                 need_update_last_used =
                                     Some((String::new(), std::time::Instant::now()));
                                 // 空字符串表示需要清除
                             }
-                        }
                         continue;
                     }
                 }
@@ -801,13 +799,12 @@ impl TokenManager {
                                     if let Some(reset_time) =
                                         model.get("reset_time").and_then(|r| r.as_str())
                                     {
-                                        if !reset_time.is_empty() {
-                                            if earliest_reset.is_none()
-                                                || reset_time < earliest_reset.unwrap()
+                                        if !reset_time.is_empty()
+                                            && (earliest_reset.is_none()
+                                                || reset_time < earliest_reset.unwrap())
                                             {
                                                 earliest_reset = Some(reset_time);
                                             }
-                                        }
                                     }
                                 }
                                 if let Some(reset) = earliest_reset {

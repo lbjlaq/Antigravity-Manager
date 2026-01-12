@@ -100,7 +100,7 @@ impl ViolationMetrics {
 
         // Keep only last 60 seconds for rate calculation
         let cutoff = now - 60;
-        while timestamps.front().map_or(false, |&t| t < cutoff) {
+        while timestamps.front().is_some_and(|&t| t < cutoff) {
             timestamps.pop_front();
         }
     }
@@ -114,7 +114,7 @@ impl ViolationMetrics {
 
         // Keep only last 60 seconds
         let cutoff = now - 60;
-        while timestamps.front().map_or(false, |&t| t < cutoff) {
+        while timestamps.front().is_some_and(|&t| t < cutoff) {
             timestamps.pop_front();
         }
     }

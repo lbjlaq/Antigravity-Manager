@@ -15,7 +15,7 @@ pub fn transform_openai_request(
     let tools_val = request
         .tools
         .as_ref()
-        .map(|list| list.iter().map(|v| v.clone()).collect::<Vec<_>>());
+        .map(|list| list.to_vec());
 
     // Resolve grounding config
     let config = crate::proxy::mappers::common_utils::resolve_request_config(
@@ -176,7 +176,7 @@ pub fn transform_openai_request(
 
             // Handle tool calls (assistant message)
             if let Some(tool_calls) = &msg.tool_calls {
-                for (_index, tc) in tool_calls.iter().enumerate() {
+                for tc in tool_calls.iter() {
                     /* 暂时移除：防止 Codex CLI 界面碎片化
                     if index == 0 && parts.is_empty() {
                          if mapped_model.contains("gemini-3") {
@@ -206,7 +206,7 @@ pub fn transform_openai_request(
             if msg.role == "tool" || msg.role == "function" {
                 let name = msg.name.as_deref().unwrap_or("unknown");
                 let final_name = if name == "local_shell_call" { "shell" } 
-                                else if let Some(id) = &msg.tool_call_id { tool_id_to_name.get(id).map(|s| s.as_str()).unwrap_or(name) }
+                                else if let Some(id) = &msg.tool_call_id { tool_id_to_name.get(id).map_or(name, |s| s.as_str()) }
                                 else { name };
 
                 let content_val = match &msg.content {

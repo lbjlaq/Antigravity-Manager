@@ -127,9 +127,9 @@ pub async fn start_proxy_service(
     *instance_lock = Some(instance);
 
     // 保存配置到全局 AppConfig
-    let mut app_config = crate::modules::config::load_app_config().map_err(|e| e)?;
+    let mut app_config = crate::modules::config::load_app_config()?;
     app_config.proxy = config.clone();
-    crate::modules::config::save_app_config(&app_config).map_err(|e| e)?;
+    crate::modules::config::save_app_config(&app_config)?;
 
     Ok(ProxyStatus {
         running: true,
@@ -301,9 +301,9 @@ pub async fn update_model_mapping(
     }
 
     // 2. 无论是否运行，都保存到全局配置持久化
-    let mut app_config = crate::modules::config::load_app_config().map_err(|e| e)?;
+    let mut app_config = crate::modules::config::load_app_config()?;
     app_config.proxy.custom_mapping = config.custom_mapping;
-    crate::modules::config::save_app_config(&app_config).map_err(|e| e)?;
+    crate::modules::config::save_app_config(&app_config)?;
 
     Ok(())
 }

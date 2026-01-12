@@ -37,7 +37,7 @@ pub fn store_thought_signature(sig: &str) {
             tracing::debug!(
                 "[ThoughtSig] 跳过短签名 (新长度: {}，现有长度: {})",
                 sig.len(),
-                guard.as_ref().map(|s| s.len()).unwrap_or(0)
+                guard.as_ref().map_or(0, |s| s.len())
             );
         }
     }
@@ -286,7 +286,7 @@ pub fn create_legacy_sse_stream(
 
                                     let mut content_out = String::new();
                                     if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
-                                        if let Some(parts) = candidates.get(0).and_then(|c| c.get("content")).and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+                                        if let Some(parts) = candidates.first().and_then(|c| c.get("content")).and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                                             for part in parts {
                                                 if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                                                     content_out.push_str(text);
@@ -307,7 +307,7 @@ pub fn create_legacy_sse_stream(
 
                                     let finish_reason = actual_data.get("candidates")
                                         .and_then(|c| c.as_array())
-                                        .and_then(|c| c.get(0))
+                                        .and_then(|c| c.first())
                                         .and_then(|c| c.get("finishReason"))
                                         .and_then(|f| f.as_str())
                                         .map(|f| match f {
@@ -404,7 +404,7 @@ pub fn create_codex_sse_stream(
 
                                 // Capture finish reason
                                 if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
-                                    if let Some(candidate) = candidates.get(0) {
+                                    if let Some(candidate) = candidates.first() {
                                         if let Some(reason) = candidate.get("finishReason").and_then(|r| r.as_str()) {
                                             last_finish_reason = match reason {
                                                 "STOP" => "stop".to_string(),
@@ -418,12 +418,12 @@ pub fn create_codex_sse_stream(
                                 // text delta
                                 let mut delta_text = String::new();
                                 if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
-                                    if let Some(candidate) = candidates.get(0) {
+                                    if let Some(candidate) = candidates.first() {
                                         if let Some(parts) = candidate.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                                             for part in parts {
                                                 if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                                                     // Sanitize smart quotes to standard quotes for JSON compatibility
-                                                    let clean_text = text.replace('“', "\"").replace('”', "\"");
+                                                    let clean_text = text.replace(['“', '”'], "\"");
                                                     delta_text.push_str(&clean_text);
                                                 }
                                                 /* 禁用思维链输出到正文
@@ -468,7 +468,7 @@ pub fn create_codex_sse_stream(
                                                             tracing::debug!("[Debug] args_obj: {}", serde_json::to_string(&args_obj).unwrap_or_default());
 
                                                             // 解析命令：支持数组格式、字符串格式，以及空 args 情况
-                                                            let cmd_vec: Vec<String> = if args_obj.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+                                                            let cmd_vec: Vec<String> = if args_obj.as_object().is_none_or(|o| o.is_empty()) {
                                                                 // args 为空时使用静默成功命令，避免任务中断
                                                                 tracing::debug!("shell command args 为空，使用静默成功命令继续流程");
                                                                 vec!["powershell.exe".to_string(), "-Command".to_string(), "exit 0".to_string()]
@@ -649,8 +649,8 @@ pub fn create_codex_sse_stream(
                 if *c == '{' {
                     if depth == 0 { start_idx = i; }
                     depth += 1;
-                } else if *c == '}' {
-                    if depth > 0 {
+                } else if *c == '}'
+                    && depth > 0 {
                         depth -= 1;
                         if depth == 0 {
                             // Found a potential JSON object block [start_idx..=i]
@@ -661,7 +661,7 @@ pub fn create_codex_sse_stream(
                                     // Found a command! Identify type.
                                     // Case 1: "command": ["shell", ...] or ["ls", ...]
                                     if let Some(arr) = cmd_val.as_array() {
-                                        if let Some(first) = arr.get(0).and_then(|v| v.as_str()) {
+                                        if let Some(first) = arr.first().and_then(|v| v.as_str()) {
                                             if first == "shell" || first == "powershell" || first == "cmd" || first == "ls" || first == "git" || first == "echo" {
                                                 detected_cmd_type = "shell";
                                                 detected_cmd_val = Some(cmd_val.clone());
@@ -720,7 +720,6 @@ pub fn create_codex_sse_stream(
                             }
                         }
                     }
-                }
             }
 
             if let Some(cmd_val) = detected_cmd_val {

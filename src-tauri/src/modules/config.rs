@@ -27,8 +27,7 @@ pub fn load_app_config() -> Result<AppConfig, String> {
     if let Some(proxy) = v.get_mut("proxy") {
         let mut custom_mapping = proxy
             .get("custom_mapping")
-            .and_then(|m| m.as_object())
-            .map(|m| m.clone())
+            .and_then(|m| m.as_object()).cloned()
             .unwrap_or_default();
 
         // 迁移 Anthropic 映射
@@ -38,11 +37,10 @@ pub fn load_app_config() -> Result<AppConfig, String> {
         {
             for (k, v) in anthropic.iter() {
                 // 只有非系列字段才搬移。因为系列字段现在由 Preset 逻辑或内置表处理
-                if !k.ends_with("-series") {
-                    if !custom_mapping.contains_key(k) {
+                if !k.ends_with("-series")
+                    && !custom_mapping.contains_key(k) {
                         custom_mapping.insert(k.clone(), v.clone());
                     }
-                }
             }
             // 移除旧字段
             proxy.as_object_mut().unwrap().remove("anthropic_mapping");
@@ -55,11 +53,10 @@ pub fn load_app_config() -> Result<AppConfig, String> {
             .and_then(|m| m.as_object_mut())
         {
             for (k, v) in openai.iter() {
-                if !k.ends_with("-series") {
-                    if !custom_mapping.contains_key(k) {
+                if !k.ends_with("-series")
+                    && !custom_mapping.contains_key(k) {
                         custom_mapping.insert(k.clone(), v.clone());
                     }
-                }
             }
             // 移除旧字段
             proxy.as_object_mut().unwrap().remove("openai_mapping");

@@ -73,11 +73,11 @@ impl AxumServer {
                     })
                     .unwrap_or_else(|| {
                         // Default: {data_dir}/image_cache/
-                        let data_dir = dirs::data_local_dir()
+                        
+                        dirs::data_local_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
                             .join("com.lbjlaq.antigravity-tools")
-                            .join("image_cache");
-                        data_dir
+                            .join("image_cache")
                     });
 
                 let max_size_mb: u64 = std::env::var("CACHE_MAX_SIZE_MB")

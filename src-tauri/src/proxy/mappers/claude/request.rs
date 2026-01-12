@@ -251,14 +251,13 @@ pub fn transform_claude_request_in(
     let has_web_search_tool = claude_req
         .tools
         .as_ref()
-        .map(|tools| {
+        .is_some_and(|tools| {
             tools.iter().any(|t| {
                 t.is_web_search()
                     || t.name.as_deref() == Some("google_search")
                     || t.type_.as_deref() == Some("web_search_20250305")
             })
-        })
-        .unwrap_or(false);
+        });
 
     // 用于存储 tool_use id -> name 映射
     let mut tool_id_to_name: HashMap<String, String> = HashMap::new();
@@ -475,8 +474,7 @@ pub fn transform_claude_request_in(
 
         // Default to VALIDATED for backward compatibility
         let mode = tool_choice
-            .map(|tc| tc.to_gemini_mode())
-            .unwrap_or("VALIDATED");
+            .map_or("VALIDATED", |tc| tc.to_gemini_mode());
 
         // Build function calling config
         let mut function_calling_config = json!({
@@ -837,7 +835,7 @@ fn build_contents(
     let mut last_thought_signature: Option<String> = None;
 
     let _msg_count = messages.len();
-    for (_i, msg) in messages.iter().enumerate() {
+    for msg in messages.iter() {
         let role = if msg.role == "assistant" {
             "model"
         } else {
@@ -848,11 +846,10 @@ fn build_contents(
 
         match &msg.content {
             MessageContent::String(text) => {
-                if text != "(no content)" {
-                    if !text.trim().is_empty() {
+                if text != "(no content)"
+                    && !text.trim().is_empty() {
                         parts.push(json!({"text": text.trim()}));
                     }
-                }
             }
             MessageContent::Array(blocks) => {
                 for item in blocks {
@@ -941,7 +938,7 @@ fn build_contents(
                                 let cached_family = crate::proxy::SignatureCache::global()
                                     .get_signature_family(sig);
                                 if let Some(family) = cached_family {
-                                    if !is_model_compatible(&family, &mapped_model) {
+                                    if !is_model_compatible(&family, mapped_model) {
                                         tracing::warn!(
                                             "[Thinking-Compatibility] Incompatible signature detected (Family: {}, Target: {}). Dropping signature.",
                                             family, mapped_model
@@ -1016,9 +1013,8 @@ fn build_contents(
                                 .or_else(|| {
                                     // [NEW] Try layer 1 cache (Tool ID -> Signature)
                                     crate::proxy::SignatureCache::global().get_tool_signature(id)
-                                        .map(|s| {
+                                        .inspect(|_s| {
                                             tracing::info!("[Claude-Request] Recovered signature from cache for tool_id: {}", id);
-                                            s
                                         })
                                 })
                                 .or_else(|| {
@@ -1055,13 +1051,7 @@ fn build_contents(
                                 serde_json::Value::Array(arr) => arr
                                     .iter()
                                     .filter_map(|block| {
-                                        if let Some(text) =
-                                            block.get("text").and_then(|v| v.as_str())
-                                        {
-                                            Some(text)
-                                        } else {
-                                            None
-                                        }
+                                        block.get("text").and_then(|v| v.as_str()).map(|text| text)
                                     })
                                     .collect::<Vec<_>>()
                                     .join("\n"),
@@ -1130,7 +1120,7 @@ fn build_contents(
             } else {
                 // [Crucial Check] 即使有 thought 块，也必须保证它位于 parts 的首位 (Index 0)
                 // 且必须包含 thought: true 标记
-                let first_is_thought = parts.get(0).map_or(false, |p| {
+                let first_is_thought = parts.first().is_some_and(|p| {
                     (p.get("thought").is_some() || p.get("thoughtSignature").is_some())
                         && p.get("text").is_some() // 对于 v1internal，通常 text + thought: true 才是合规的思维块
                 });
@@ -1326,8 +1316,7 @@ fn validate_function_call_order(contents: &[Value]) -> Result<(), String> {
         let has_function_call = msg
             .get("parts")
             .and_then(|p| p.as_array())
-            .map(|parts| parts.iter().any(|p| p.get("functionCall").is_some()))
-            .unwrap_or(false);
+            .is_some_and(|parts| parts.iter().any(|p| p.get("functionCall").is_some()));
 
         if has_function_call {
             // Check previous message
@@ -1340,8 +1329,7 @@ fn validate_function_call_order(contents: &[Value]) -> Result<(), String> {
                 let prev_has_function_response = contents[i - 1]
                     .get("parts")
                     .and_then(|p| p.as_array())
-                    .map(|parts| parts.iter().any(|p| p.get("functionResponse").is_some()))
-                    .unwrap_or(false);
+                    .is_some_and(|parts| parts.iter().any(|p| p.get("functionResponse").is_some()));
 
                 // Function calls must follow user or functionResponse
                 if prev_role != "user" && !prev_has_function_response {
@@ -1352,9 +1340,7 @@ fn validate_function_call_order(contents: &[Value]) -> Result<(), String> {
                 }
             } else {
                 // First message is a functionCall - invalid
-                return Err(format!(
-                    "Invalid function call order at index 0: functionCall cannot be first message, must start with 'user'"
-                ));
+                return Err("Invalid function call order at index 0: functionCall cannot be first message, must start with 'user'".to_string());
             }
         }
     }
@@ -1569,9 +1555,9 @@ fn build_generation_config(
             };
 
             // [EPIC-011 Story-011-01] Gemini 3.x uses thinkingLevel, Gemini 2.5 uses thinkingBudget
-            if is_gemini_3_model(&mapped_model) {
+            if is_gemini_3_model(mapped_model) {
                 // Gemini 3.x: Map budget to thinkingLevel
-                let thinking_level = determine_thinking_level(&mapped_model, Some(budget as i32));
+                let thinking_level = determine_thinking_level(mapped_model, Some(budget as i32));
 
                 thinking_config["thinkingLevel"] = json!(thinking_level);
                 // Remove thinkingBudget if it was added (shouldn't exist for Gemini 3)

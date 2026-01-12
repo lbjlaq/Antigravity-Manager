@@ -257,7 +257,7 @@ impl ComplexityClassifier {
         }
 
         // Moderate: Multi-word but not complex (3-50 words)
-        if word_count >= 3 && word_count <= 50 {
+        if (3..=50).contains(&word_count) {
             return Ok(ComplexityLevel::Moderate);
         }
 
