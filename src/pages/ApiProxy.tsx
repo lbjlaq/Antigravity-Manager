@@ -32,6 +32,8 @@ import { cn } from '../utils/cn';
 import { useProxyModels } from '../hooks/useProxyModels';
 import GroupedSelect, { SelectOption } from '../components/common/GroupedSelect';
 import ConfigurationProfiles from '../components/proxy/ConfigurationProfiles';
+import { CacheMetricsCard } from '../components/proxy/CacheMetricsCard';
+import { TopSignaturesTable } from '../components/proxy/TopSignaturesTable';
 
 interface ProxyStatus {
     running: boolean;
@@ -1202,6 +1204,25 @@ print(response.text)`;
                             }}
                         />
                     </div>
+                )}
+
+                {/* Cache Performance Section */}
+                {appConfig && status.running && (
+                    <CollapsibleCard
+                        title="Cache Performance"
+                        icon={<Activity size={18} />}
+                        defaultExpanded={true}
+                    >
+                        <CacheMetricsCard />
+
+                        <div className="divider">Top Cached Signatures</div>
+
+                        <TopSignaturesTable />
+
+                        <div className="mt-4 text-sm text-gray-500">
+                            Cache metrics update every 5 seconds. Signature-based caching saves API costs by reusing responses for identical requests.
+                        </div>
+                    </CollapsibleCard>
                 )}
 
                 {/* 模型路由中心 */}

@@ -5,6 +5,9 @@ use crate::models::api_provider; // Story-024-02: Centralized API provider const
 use crate::proxy::mappers::common::gemini_api_validator::validate_gemini_request;
 use crate::proxy::mappers::common::gemini_detection::is_gemini_3_model;
 use crate::proxy::mappers::common::thinking_level_mapper::determine_thinking_level;
+use crate::proxy::mappers::gemini::budget_optimizer::{
+    QueryComplexityClassifier, BudgetRecommendationEngine,
+}; // Story-015-01: Adaptive budget optimization
 use serde_json::{json, Value};
 
 // 🆕 Story #24-01: Antigravity IDE identity markers (anti-detection)
@@ -32,6 +35,33 @@ fn get_openai_api_provider() -> u32 {
     );
 
     provider_id
+}
+
+/// Story-015-01: Extract query text from OpenAI messages for budget classification
+/// Concatenates all user messages to analyze query complexity
+fn extract_query_text(request: &OpenAIRequest) -> String {
+    request
+        .messages
+        .iter()
+        .filter(|msg| msg.role == "user")
+        .filter_map(|msg| {
+            msg.content.as_ref().map(|c| match c {
+                OpenAIContent::String(s) => s.clone(),
+                OpenAIContent::Array(blocks) => blocks
+                    .iter()
+                    .filter_map(|b| {
+                        if let OpenAIContentBlock::Text { text } = b {
+                            Some(text.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn transform_openai_request(
@@ -392,6 +422,37 @@ pub fn transform_openai_request(
                 }
             });
         }
+    } else if mapped_model.contains("gemini-2.5") && mapped_model.contains("thinking") {
+        // [Story-015-01] Gemini 2.5 Thinking: Adaptive budget optimization
+        // Extract query text for complexity classification
+        let query_text = extract_query_text(request);
+
+        // Classify query complexity
+        let classifier = QueryComplexityClassifier::new();
+        let classification = classifier.classify(&query_text);
+
+        // Recommend budget based on classification
+        // NOTE: adaptive_enabled defaults to false (safe rollout per Story-015-01)
+        // TODO: Pass ProxyConfig to this function to respect adaptive_budget_enabled flag
+        let engine = BudgetRecommendationEngine::new(false);
+        let thinking_budget = engine.recommend_budget(
+            classification.tier,
+            None, // user_override - could be extracted from request metadata if supported
+        );
+
+        // Apply thinking budget
+        gen_config["thinkingConfig"] = json!({
+            "includeThoughts": true,
+            "thinkingBudget": thinking_budget
+        });
+
+        tracing::info!(
+            "[OpenAI-Request] Gemini 2.5 adaptive thinkingBudget: {} (tier: {:?}, confidence: {:.2}, model: {})",
+            thinking_budget,
+            classification.tier,
+            classification.confidence,
+            mapped_model
+        );
     }
 
     if let Some(stop) = &request.stop {

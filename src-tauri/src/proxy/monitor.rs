@@ -1,10 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::RwLock;
 // 🆕 Story #8: Import for json! macro
 use serde_json;
+// 🆕 Story-015-01: Import budget metrics types
+use crate::proxy::mappers::gemini::budget_optimizer::{BudgetMetrics, BudgetMetricsTracker, BudgetTier};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyRequestLog {
@@ -186,6 +189,8 @@ pub struct ProxyMonitor {
     app_handle: Option<tauri::AppHandle>,
     // 🆕 Story #8 Step 3: Violation metrics integration
     pub violation_metrics: ViolationMetrics,
+    // 🆕 Story-015-01: Budget metrics tracker for adaptive budget optimization
+    pub budget_metrics_tracker: Arc<BudgetMetricsTracker>,
 }
 
 impl ProxyMonitor {
@@ -203,6 +208,8 @@ impl ProxyMonitor {
             app_handle,
             // 🆕 Story #8 Step 3: Initialize violation metrics
             violation_metrics: ViolationMetrics::new(),
+            // 🆕 Story-015-01: Initialize budget metrics tracker
+            budget_metrics_tracker: Arc::new(BudgetMetricsTracker::new()),
         }
     }
 
@@ -414,6 +421,62 @@ impl ProxyMonitor {
         }
 
         tracing::info!("Violation metrics reset successfully");
+    }
+
+    // 🆕 Story-015-01: Budget metrics tracking methods
+
+    /// Record budget metrics for a request
+    /// Should be called after receiving response with token usage data
+    pub fn record_budget_metrics(
+        &self,
+        tier: BudgetTier,
+        input_tokens: u64,
+        thinking_tokens: u64,
+        output_tokens: u64,
+        confidence: f64,
+    ) {
+        if !self.is_enabled() {
+            return;
+        }
+
+        self.budget_metrics_tracker.record_request(
+            tier,
+            input_tokens,
+            thinking_tokens,
+            output_tokens,
+            confidence,
+        );
+
+        // Emit event for real-time dashboard updates
+        if let Some(app) = &self.app_handle {
+            let _ = app.emit(
+                "proxy://budget-metrics",
+                serde_json::json!({
+                    "tier": tier.to_string(),
+                    "cost_savings": self.budget_metrics_tracker.calculate_cost_savings()
+                }),
+            );
+        }
+    }
+
+    /// Get budget metrics for a specific tier
+    pub fn get_budget_metrics_for_tier(&self, tier: BudgetTier) -> Option<BudgetMetrics> {
+        self.budget_metrics_tracker.get_metrics_for_tier(tier)
+    }
+
+    /// Get all budget metrics
+    pub fn get_all_budget_metrics(&self) -> std::collections::HashMap<BudgetTier, BudgetMetrics> {
+        self.budget_metrics_tracker.get_metrics()
+    }
+
+    /// Calculate cost savings percentage compared to baseline (all 32K budget)
+    pub fn get_budget_cost_savings(&self) -> f64 {
+        self.budget_metrics_tracker.calculate_cost_savings()
+    }
+
+    /// Get budget metrics tracker Arc for sharing with handlers
+    pub fn get_budget_tracker(&self) -> Arc<BudgetMetricsTracker> {
+        Arc::clone(&self.budget_metrics_tracker)
     }
 
     pub async fn clear(&self) {

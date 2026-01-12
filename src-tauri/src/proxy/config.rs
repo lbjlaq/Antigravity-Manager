@@ -383,6 +383,12 @@ pub struct ProxyConfig {
     /// Detection monitoring and alerting (Story-024-04)
     #[serde(default)]
     pub detection_alerts: DetectionAlertsConfig,
+
+    /// Enable adaptive thinking budget optimization (Story-015-01)
+    /// When enabled, queries are classified by complexity and assigned appropriate budgets
+    /// (SIMPLE: 4K, MODERATE: 16K, COMPLEX: 32K) to optimize cost-quality tradeoff
+    #[serde(default)]
+    pub adaptive_budget_enabled: bool,
 }
 
 /// 上游代理配置
@@ -413,6 +419,7 @@ impl Default for ProxyConfig {
             safety_threshold: None, // Default: OFF for backward compatibility
             user_agent_rotation: UserAgentConfig::default(),
             detection_alerts: DetectionAlertsConfig::default(),
+            adaptive_budget_enabled: false, // Story-015-01: Default to disabled for safe rollout
         }
     }
 }
