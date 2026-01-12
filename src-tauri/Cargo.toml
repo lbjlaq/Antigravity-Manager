@@ -5,6 +5,7 @@ description = "A Tauri App"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"
 edition = "2021"
+default-run = "antigravity_tools"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
