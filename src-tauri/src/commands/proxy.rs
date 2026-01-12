@@ -547,3 +547,37 @@ pub async fn clear_cache_metrics() -> Result<(), String> {
     monitor.clear().await;
     Ok(())
 }
+
+// ===== Story-013-06: Cost Analytics Commands =====
+
+/// Get analytics report for thinking level distribution and costs
+/// Story-013-06 AC4: Analytics API
+#[tauri::command]
+pub async fn get_analytics_report(
+    period: String,
+) -> Result<crate::proxy::analytics::AnalyticsReport, String> {
+    let report = crate::proxy::analytics::ANALYTICS
+        .generate_report(&period)
+        .await;
+    Ok(report)
+}
+
+/// Get cost breakdown for a specific model
+/// Story-013-06 AC4: Cost breakdown API
+#[tauri::command]
+pub async fn get_cost_breakdown(
+    model: String,
+) -> Result<crate::proxy::analytics::CostBreakdown, String> {
+    let breakdown = crate::proxy::analytics::ANALYTICS
+        .get_cost_breakdown(&model)
+        .await;
+    Ok(breakdown)
+}
+
+/// Reset analytics data
+/// Story-013-06: Analytics management
+#[tauri::command]
+pub async fn reset_analytics() -> Result<(), String> {
+    crate::proxy::analytics::ANALYTICS.reset().await;
+    Ok(())
+}

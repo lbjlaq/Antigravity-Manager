@@ -1559,6 +1559,17 @@ fn build_generation_config(
                     budget,
                     mapped_model
                 );
+
+                // [Story-013-06] Record analytics for cost tracking
+                tokio::spawn({
+                    let model = mapped_model.to_string();
+                    let level = thinking_level.to_string();
+                    async move {
+                        crate::proxy::analytics::ANALYTICS
+                            .record_request(&model, &level)
+                            .await;
+                    }
+                });
             } else {
                 // Gemini 2.5 and other models: Use thinkingBudget (backward compatibility)
                 thinking_config["thinkingBudget"] = json!(budget);
