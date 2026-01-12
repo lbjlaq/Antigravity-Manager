@@ -467,16 +467,12 @@ pub fn transform_openai_request(
 
 fn enforce_uppercase_types(value: &mut Value) {
     if let Value::Object(map) = value {
-        if let Some(type_val) = map.get_mut("type") {
-            if let Value::String(ref mut s) = type_val {
-                *s = s.to_uppercase();
-            }
+        if let Some(Value::String(ref mut s)) = map.get_mut("type") {
+            *s = s.to_uppercase();
         }
-        if let Some(properties) = map.get_mut("properties") {
-            if let Value::Object(ref mut props) = properties {
-                for v in props.values_mut() {
-                    enforce_uppercase_types(v);
-                }
+        if let Some(Value::Object(ref mut props)) = map.get_mut("properties") {
+            for v in props.values_mut() {
+                enforce_uppercase_types(v);
             }
         }
         if let Some(items) = map.get_mut("items") {

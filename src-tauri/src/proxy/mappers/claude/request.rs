@@ -211,10 +211,8 @@ pub fn get_model_id(model_name: &str) -> u32 {
 fn get_api_provider(model_name: &str) -> u32 {
     if model_name.starts_with("claude-") {
         API_PROVIDER_ANTHROPIC_VERTEX // 26
-    } else if model_name.starts_with("gemini-") {
-        API_PROVIDER_GEMINI // 0
     } else {
-        API_PROVIDER_GEMINI // Default
+        API_PROVIDER_GEMINI // 0 (Gemini models and default)
     }
 }
 
@@ -1492,9 +1490,7 @@ fn build_generation_config(
                 // [CRITICAL FIX] Apply model-specific thinking budget limits
                 if has_web_search || mapped_model.contains("gemini-2.5-flash") {
                     user_budget = user_budget.min(24576);
-                } else if mapped_model.contains("claude") {
-                    user_budget = user_budget.min(32000);
-                } else if mapped_model.contains("gemini") {
+                } else if mapped_model.contains("claude") || mapped_model.contains("gemini") {
                     user_budget = user_budget.min(32000);
                 }
 
@@ -1536,9 +1532,7 @@ fn build_generation_config(
                 // Apply model-specific limits to optimal budget
                 let clamped_budget = if has_web_search || mapped_model.contains("gemini-2.5-flash") {
                     optimal_budget.min(24576)
-                } else if mapped_model.contains("claude") {
-                    optimal_budget.min(32000)
-                } else if mapped_model.contains("gemini") {
+                } else if mapped_model.contains("claude") || mapped_model.contains("gemini") {
                     optimal_budget.min(32000)
                 } else {
                     optimal_budget
@@ -1644,9 +1638,7 @@ fn build_generation_config(
                 let clamped_budget = if has_web_search || mapped_model.contains("gemini-2.5-flash")
                 {
                     budget.min(24576)
-                } else if mapped_model.contains("claude") {
-                    budget.min(32000)
-                } else if mapped_model.contains("gemini") {
+                } else if mapped_model.contains("claude") || mapped_model.contains("gemini") {
                     budget.min(32000)
                 } else {
                     budget

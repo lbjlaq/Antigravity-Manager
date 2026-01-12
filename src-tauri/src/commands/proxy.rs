@@ -342,11 +342,9 @@ fn extract_model_ids(value: &serde_json::Value) -> Vec<String> {
             }
         }
         serde_json::Value::Object(map) => {
-            if let Some(data) = map.get("data") {
-                if let serde_json::Value::Array(arr) = data {
-                    for item in arr {
-                        push_from_item(&mut out, item);
-                    }
+            if let Some(serde_json::Value::Array(arr)) = map.get("data") {
+                for item in arr {
+                    push_from_item(&mut out, item);
                 }
             }
             if let Some(models) = map.get("models") {

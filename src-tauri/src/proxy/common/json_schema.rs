@@ -37,19 +37,17 @@ fn flatten_refs(map: &mut serde_json::Map<String, Value>, defs: &serde_json::Map
         // 解析引用名 (例如 #/$defs/MyType -> MyType)
         let ref_name = ref_path.split('/').next_back().unwrap_or(&ref_path);
 
-        if let Some(def_schema) = defs.get(ref_name) {
+        if let Some(Value::Object(def_map)) = defs.get(ref_name) {
             // 将定义的内容合并到当前 map
-            if let Value::Object(def_map) = def_schema {
-                for (k, v) in def_map {
-                    // 仅当当前 map 没有该 key 时才插入 (避免覆盖)
-                    // 但通常 $ref 节点不应该有其他属性
-                    map.entry(k.clone()).or_insert_with(|| v.clone());
-                }
-
-                // 递归处理刚刚合并进来的内容中可能包含的 $ref
-                // 注意：这里可能会无限递归如果存在循环引用，但工具定义通常是 DAG
-                flatten_refs(map, defs);
+            for (k, v) in def_map {
+                // 仅当当前 map 没有该 key 时才插入 (避免覆盖)
+                // 但通常 $ref 节点不应该有其他属性
+                map.entry(k.clone()).or_insert_with(|| v.clone());
             }
+
+            // 递归处理刚刚合并进来的内容中可能包含的 $ref
+            // 注意：这里可能会无限递归如果存在循环引用，但工具定义通常是 DAG
+            flatten_refs(map, defs);
         }
     }
 
@@ -228,24 +226,22 @@ fn clean_json_schema_recursive(value: &mut Value) {
             // 7. [FIX #374] 确保 enum 值全部为字符串
             // Gemini v1internal 严格要求 enum 数组中的所有元素必须是 TYPE_STRING
             // MCP 工具定义可能包含数字或布尔值的 enum，需要转换
-            if let Some(enum_val) = map.get_mut("enum") {
-                if let Value::Array(arr) = enum_val {
-                    for item in arr.iter_mut() {
-                        match item {
-                            Value::String(_) => {} // 已经是字符串，保持不变
-                            Value::Number(n) => {
-                                *item = Value::String(n.to_string());
-                            }
-                            Value::Bool(b) => {
-                                *item = Value::String(b.to_string());
-                            }
-                            Value::Null => {
-                                *item = Value::String("null".to_string());
-                            }
-                            _ => {
-                                // 复杂类型转为 JSON 字符串
-                                *item = Value::String(item.to_string());
-                            }
+            if let Some(Value::Array(arr)) = map.get_mut("enum") {
+                for item in arr.iter_mut() {
+                    match item {
+                        Value::String(_) => {} // 已经是字符串，保持不变
+                        Value::Number(n) => {
+                            *item = Value::String(n.to_string());
+                        }
+                        Value::Bool(b) => {
+                            *item = Value::String(b.to_string());
+                        }
+                        Value::Null => {
+                            *item = Value::String("null".to_string());
+                        }
+                        _ => {
+                            // 复杂类型转为 JSON 字符串
+                            *item = Value::String(item.to_string());
                         }
                     }
                 }
