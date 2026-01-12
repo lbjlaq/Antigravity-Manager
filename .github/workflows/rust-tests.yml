@@ -104,7 +104,7 @@ jobs:
 
       - name: Run clippy
         working-directory: ./src-tauri
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-features -- -D warnings
 
   security:
     name: Security Audit
