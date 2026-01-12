@@ -161,8 +161,14 @@ fn test_claude_mapper_no_magic_numbers() {
     let _anthropic = api_provider::ANTHROPIC_VERTEX;
     let _google = api_provider::GOOGLE_VERTEX;
 
-    assert_eq!(_anthropic, 26, "Claude mapper must use ANTHROPIC_VERTEX constant");
-    assert_eq!(_google, 32, "Claude mapper must use GOOGLE_VERTEX constant for Gemini fallback");
+    assert_eq!(
+        _anthropic, 26,
+        "Claude mapper must use ANTHROPIC_VERTEX constant"
+    );
+    assert_eq!(
+        _google, 32,
+        "Claude mapper must use GOOGLE_VERTEX constant for Gemini fallback"
+    );
 }
 
 #[test]
@@ -336,11 +342,13 @@ fn test_openai_mapper_constants_uniqueness() {
 fn test_openai_mapper_no_zero_provider() {
     // Verify OpenAI mapper doesn't use 0 as provider
     assert_ne!(
-        api_provider::OPENAI, 0,
+        api_provider::OPENAI,
+        0,
         "OpenAI direct endpoint must not use 0 as provider"
     );
     assert_ne!(
-        api_provider::OPENAI_AZURE, 0,
+        api_provider::OPENAI_AZURE,
+        0,
         "OpenAI Azure endpoint must not use 0 as provider"
     );
 }
@@ -403,8 +411,16 @@ fn test_all_provider_constants_unique() {
 #[test]
 fn test_all_provider_constants_non_zero() {
     // Verify no provider constant is 0 (reserved for unknown/error)
-    assert_ne!(api_provider::ANTHROPIC_VERTEX, 0, "ANTHROPIC_VERTEX must not be 0");
-    assert_ne!(api_provider::GOOGLE_VERTEX, 0, "GOOGLE_VERTEX must not be 0");
+    assert_ne!(
+        api_provider::ANTHROPIC_VERTEX,
+        0,
+        "ANTHROPIC_VERTEX must not be 0"
+    );
+    assert_ne!(
+        api_provider::GOOGLE_VERTEX,
+        0,
+        "GOOGLE_VERTEX must not be 0"
+    );
     assert_ne!(api_provider::OPENAI, 0, "OPENAI must not be 0");
     assert_ne!(api_provider::OPENAI_AZURE, 0, "OPENAI_AZURE must not be 0");
 }
@@ -462,19 +478,23 @@ fn test_constants_match_documentation() {
     // - OPENAI_AZURE = 2 (OpenAI via Azure)
 
     assert_eq!(
-        api_provider::ANTHROPIC_VERTEX, 26,
+        api_provider::ANTHROPIC_VERTEX,
+        26,
         "ANTHROPIC_VERTEX must match documented value (26)"
     );
     assert_eq!(
-        api_provider::GOOGLE_VERTEX, 32,
+        api_provider::GOOGLE_VERTEX,
+        32,
         "GOOGLE_VERTEX must match documented value (32)"
     );
     assert_eq!(
-        api_provider::OPENAI, 1,
+        api_provider::OPENAI,
+        1,
         "OPENAI must match documented value (1)"
     );
     assert_eq!(
-        api_provider::OPENAI_AZURE, 2,
+        api_provider::OPENAI_AZURE,
+        2,
         "OPENAI_AZURE must match documented value (2)"
     );
 }

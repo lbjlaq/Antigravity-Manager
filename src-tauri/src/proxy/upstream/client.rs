@@ -62,8 +62,8 @@ impl UpstreamClient {
 
         // If user-agent rotation is disabled, use static user-agent
         if user_agent_pool.is_none() {
-            let user_agent = std::env::var("CLAUDE_USER_AGENT")
-                .unwrap_or_else(|_| platform::build_user_agent());
+            let user_agent =
+                std::env::var("CLAUDE_USER_AGENT").unwrap_or_else(|_| platform::build_user_agent());
             tracing::info!("Using static User-Agent: {}", user_agent);
             builder = builder.user_agent(user_agent);
         }

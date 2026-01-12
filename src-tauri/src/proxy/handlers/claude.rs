@@ -971,28 +971,32 @@ pub async fn handle_messages(
                             // Story-013-05: Cache successful non-streaming thinking responses
                             if can_use_cache {
                                 if let Some(ref cache) = state.response_cache {
-                                    let messages_val = serde_json::to_value(&request.messages).unwrap_or_default();
-                                    let thinking_level = if let Some(ref output_config) = request.output_config {
-                                        output_config.effort.as_deref().unwrap_or("NONE")
-                                    } else if request.thinking.is_some() {
-                                        "ENABLED"
-                                    } else {
-                                        "NONE"
-                                    };
+                                    let messages_val =
+                                        serde_json::to_value(&request.messages).unwrap_or_default();
+                                    let thinking_level =
+                                        if let Some(ref output_config) = request.output_config {
+                                            output_config.effort.as_deref().unwrap_or("NONE")
+                                        } else if request.thinking.is_some() {
+                                            "ENABLED"
+                                        } else {
+                                            "NONE"
+                                        };
                                     let temperature = request.temperature.unwrap_or(0.7);
                                     let top_p = request.top_p.unwrap_or(0.95);
                                     let max_tokens = request.max_tokens.unwrap_or(8192) as i32;
 
-                                    let cache_key = crate::proxy::response_cache::generate_cache_key(
-                                        &request.model,
-                                        &messages_val,
-                                        thinking_level,
-                                        temperature,
-                                        top_p,
-                                        max_tokens,
-                                    );
+                                    let cache_key =
+                                        crate::proxy::response_cache::generate_cache_key(
+                                            &request.model,
+                                            &messages_val,
+                                            thinking_level,
+                                            temperature,
+                                            top_p,
+                                            max_tokens,
+                                        );
 
-                                    let response_val = serde_json::to_value(&full_response).unwrap_or_default();
+                                    let response_val =
+                                        serde_json::to_value(&full_response).unwrap_or_default();
                                     cache.put(cache_key, response_val);
                                 }
                             }
@@ -1116,8 +1120,10 @@ pub async fn handle_messages(
                 // Story-013-05: Cache successful non-streaming thinking responses
                 if can_use_cache {
                     if let Some(ref cache) = state.response_cache {
-                        let messages_val = serde_json::to_value(&request.messages).unwrap_or_default();
-                        let thinking_level = if let Some(ref output_config) = request.output_config {
+                        let messages_val =
+                            serde_json::to_value(&request.messages).unwrap_or_default();
+                        let thinking_level = if let Some(ref output_config) = request.output_config
+                        {
                             output_config.effort.as_deref().unwrap_or("NONE")
                         } else if request.thinking.is_some() {
                             "ENABLED"
@@ -1137,7 +1143,8 @@ pub async fn handle_messages(
                             max_tokens,
                         );
 
-                        let response_val = serde_json::to_value(&claude_response).unwrap_or_default();
+                        let response_val =
+                            serde_json::to_value(&claude_response).unwrap_or_default();
                         cache.put(cache_key, response_val);
                     }
                 }

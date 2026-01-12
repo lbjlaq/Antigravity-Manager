@@ -201,7 +201,10 @@ pub struct DetectionAlertsConfig {
 
     /// Alert thresholds per event type
     #[serde(default)]
-    pub thresholds: HashMap<crate::proxy::detection::DetectionEventType, crate::proxy::detection::AlertThreshold>,
+    pub thresholds: HashMap<
+        crate::proxy::detection::DetectionEventType,
+        crate::proxy::detection::AlertThreshold,
+    >,
 
     /// Notification channels configuration
     #[serde(default)]

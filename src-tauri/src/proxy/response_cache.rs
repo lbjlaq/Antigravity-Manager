@@ -364,10 +364,7 @@ mod tests {
         let messages = json!([{"role": "user", "content": "Test"}]);
         let key1 = generate_cache_key("gemini-3-flash", &messages, "MEDIUM", 0.7, 0.9, 1000);
         let key2 = generate_cache_key("gemini-3-flash", &messages, "MEDIUM", 0.7, 0.9, 1000);
-        assert_eq!(
-            key1, key2,
-            "Same parameters should produce same cache key"
-        );
+        assert_eq!(key1, key2, "Same parameters should produce same cache key");
     }
 
     #[test]
@@ -398,10 +395,7 @@ mod tests {
         let messages = json!([{"role": "user", "content": "Test"}]);
         let key1 = generate_cache_key("gemini-3-flash", &messages, "MEDIUM", 0.7, 0.9, 1000);
         let key2 = generate_cache_key("gemini-3-pro", &messages, "MEDIUM", 0.7, 0.9, 1000);
-        assert_ne!(
-            key1, key2,
-            "Different models should produce different keys"
-        );
+        assert_ne!(key1, key2, "Different models should produce different keys");
     }
 
     #[test]

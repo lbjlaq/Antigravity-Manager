@@ -21,9 +21,7 @@ fn test_user_agent_pool_default_size() {
 #[test]
 fn test_user_agent_pool_browser_diversity() {
     let pool = UserAgentPool::new(RotationStrategy::Random);
-    let agents: Vec<String> = (0..pool.size())
-        .map(|_| pool.get_user_agent())
-        .collect();
+    let agents: Vec<String> = (0..pool.size()).map(|_| pool.get_user_agent()).collect();
 
     let has_chrome = agents.iter().any(|ua| ua.contains("Chrome"));
     let has_firefox = agents.iter().any(|ua| ua.contains("Firefox"));
@@ -187,7 +185,11 @@ fn test_empty_custom_agents_fallback_to_default() {
 
 #[test]
 fn test_invalid_custom_agents_fallback_to_default() {
-    let invalid_agents = vec!["".to_string(), "short".to_string(), "no mozilla".to_string()];
+    let invalid_agents = vec![
+        "".to_string(),
+        "short".to_string(),
+        "no mozilla".to_string(),
+    ];
 
     let pool = UserAgentPool::with_custom_agents(invalid_agents, RotationStrategy::Random);
     assert!(
@@ -209,7 +211,9 @@ fn test_user_agent_validation() {
     // Invalid user-agents
     assert!(!UserAgentPool::validate_user_agent("")); // Empty
     assert!(!UserAgentPool::validate_user_agent("short")); // Too short
-    assert!(!UserAgentPool::validate_user_agent("no mozilla here but long enough string to pass length check")); // No Mozilla
+    assert!(!UserAgentPool::validate_user_agent(
+        "no mozilla here but long enough string to pass length check"
+    )); // No Mozilla
     assert!(!UserAgentPool::validate_user_agent(&"x".repeat(600))); // Too long
 }
 
@@ -250,7 +254,10 @@ fn test_rotation_strategy_default() {
 #[test]
 fn test_user_agent_config_default() {
     let config = UserAgentConfig::default();
-    assert!(config.enabled, "User-agent rotation should be enabled by default");
+    assert!(
+        config.enabled,
+        "User-agent rotation should be enabled by default"
+    );
     assert_eq!(config.strategy, RotationStrategy::Random);
     assert!(config.custom_agents.is_empty());
 }

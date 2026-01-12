@@ -298,10 +298,7 @@ impl NotificationSender {
             _ => reqwest::Method::POST,
         };
 
-        let mut request = self
-            .http_client
-            .request(method, &config.url)
-            .json(&payload);
+        let mut request = self.http_client.request(method, &config.url).json(&payload);
 
         // Add custom headers
         for (key, value) in &config.headers {
@@ -624,7 +621,9 @@ mod tests {
             Some(&2)
         );
         assert_eq!(
-            stats.events_by_type.get(&DetectionEventType::IdeTypeMissing),
+            stats
+                .events_by_type
+                .get(&DetectionEventType::IdeTypeMissing),
             Some(&1)
         );
     }

@@ -13,7 +13,6 @@ pub mod audio; // 音频处理模块 (PR #311)
 pub mod budget_optimizer; // Adaptive budget optimization (Story-008-01)
 pub mod cache; // 图片缓存 (Story-007-04)
 pub mod cache_monitor; // Signature cache monitoring (Story-008-02)
-pub mod response_cache; // Thinking response caching (Story-013-05)
 pub mod common; // 公共工具
 pub mod detection; // Detection event tracking (Story-024-04 Part 1)
 pub mod errors; // 错误处理工具 (Story-007-03)
@@ -23,6 +22,7 @@ pub mod middleware; // Axum 中间件
 pub mod monitor; // 监控
 pub mod providers; // Extra upstream providers (z.ai, etc.)
 pub mod rate_limit; // 限流跟踪
+pub mod response_cache; // Thinking response caching (Story-013-05)
 pub mod session_manager; // 会话指纹管理
 pub mod signature_cache; // Signature Cache (v3.3.16)
 pub mod sticky_config; // 粘性调度配置

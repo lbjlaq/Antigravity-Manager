@@ -50,9 +50,7 @@ pub async fn get_recent_detection_events(
 /// This is useful for testing or when resetting the monitoring state.
 /// In production, events are automatically cleaned up after 30 days.
 #[tauri::command]
-pub async fn clear_detection_events(
-    state: State<'_, ProxyServiceState>,
-) -> Result<(), String> {
+pub async fn clear_detection_events(state: State<'_, ProxyServiceState>) -> Result<(), String> {
     let detection_lock = state.detection_monitor.read().await;
     let monitor = detection_lock
         .as_ref()

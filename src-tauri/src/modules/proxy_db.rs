@@ -262,11 +262,26 @@ pub fn migrate_stats_table() -> Result<(), String> {
     .map_err(|e| format!("Failed to create proxy_stats table: {}", e))?;
 
     // Add detection columns to existing table (if needed)
-    let _ = conn.execute("ALTER TABLE proxy_stats ADD COLUMN detection_events_total INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE proxy_stats ADD COLUMN detection_events_critical INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE proxy_stats ADD COLUMN detection_events_high INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE proxy_stats ADD COLUMN detection_events_medium INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE proxy_stats ADD COLUMN detection_events_low INTEGER DEFAULT 0", []);
+    let _ = conn.execute(
+        "ALTER TABLE proxy_stats ADD COLUMN detection_events_total INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE proxy_stats ADD COLUMN detection_events_critical INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE proxy_stats ADD COLUMN detection_events_high INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE proxy_stats ADD COLUMN detection_events_medium INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE proxy_stats ADD COLUMN detection_events_low INTEGER DEFAULT 0",
+        [],
+    );
 
     // Insert initial row (id=1, single-row table pattern)
     conn.execute("INSERT OR IGNORE INTO proxy_stats (id) VALUES (1)", [])

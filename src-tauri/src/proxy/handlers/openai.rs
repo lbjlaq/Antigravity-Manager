@@ -72,7 +72,8 @@ pub async fn handle_chat_completions(
 
     // Story-013-05: Check response cache for non-streaming thinking requests
     let cache_enabled = state.response_cache.is_some();
-    let can_use_cache = cache_enabled && !openai_req.stream && openai_req.reasoning_effort.is_some();
+    let can_use_cache =
+        cache_enabled && !openai_req.stream && openai_req.reasoning_effort.is_some();
 
     if can_use_cache {
         if let Some(ref cache) = state.response_cache {
@@ -311,7 +312,8 @@ pub async fn handle_chat_completions(
             // Story-013-05: Cache successful non-streaming thinking responses
             if can_use_cache {
                 if let Some(ref cache) = state.response_cache {
-                    let messages_val = serde_json::to_value(&openai_req.messages).unwrap_or_default();
+                    let messages_val =
+                        serde_json::to_value(&openai_req.messages).unwrap_or_default();
                     let thinking_level = openai_req.reasoning_effort.as_deref().unwrap_or("NONE");
                     let temperature = openai_req.temperature.unwrap_or(0.7);
                     let top_p = openai_req.top_p.unwrap_or(0.95);

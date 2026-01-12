@@ -103,9 +103,9 @@ impl UserAgentPool {
         // Default pool: 4 Chrome, 3 Firefox, 2 Safari, 2 Edge
         let weights = vec![
             10, 10, 10, 10, // Chrome (4 agents) - 40%
-            8, 8, 9,        // Firefox (3 agents) - 25%
-            10, 10,         // Safari (2 agents) - 20%
-            7, 8,           // Edge (2 agents) - 15%
+            8, 8, 9, // Firefox (3 agents) - 25%
+            10, 10, // Safari (2 agents) - 20%
+            7, 8, // Edge (2 agents) - 15%
         ];
 
         // Adjust weights if pool size differs from default
@@ -185,7 +185,9 @@ mod tests {
         // Check for different browser types
         let has_chrome = agents.iter().any(|ua| ua.contains("Chrome"));
         let has_firefox = agents.iter().any(|ua| ua.contains("Firefox"));
-        let has_safari = agents.iter().any(|ua| ua.contains("Safari") && !ua.contains("Chrome"));
+        let has_safari = agents
+            .iter()
+            .any(|ua| ua.contains("Safari") && !ua.contains("Chrome"));
         let has_edge = agents.iter().any(|ua| ua.contains("Edg/"));
 
         assert!(has_chrome, "Pool must include Chrome user-agents");
@@ -230,12 +232,8 @@ mod tests {
     #[test]
     fn test_round_robin_sequence() {
         let pool = UserAgentPool::new(RotationStrategy::RoundRobin);
-        let first_cycle: Vec<String> = (0..pool.size())
-            .map(|_| pool.get_user_agent())
-            .collect();
-        let second_cycle: Vec<String> = (0..pool.size())
-            .map(|_| pool.get_user_agent())
-            .collect();
+        let first_cycle: Vec<String> = (0..pool.size()).map(|_| pool.get_user_agent()).collect();
+        let second_cycle: Vec<String> = (0..pool.size()).map(|_| pool.get_user_agent()).collect();
 
         // Second cycle should match first cycle
         assert_eq!(
@@ -404,9 +402,15 @@ mod tests {
         let agents = default_pool();
 
         // Count each browser type
-        let chrome_count = agents.iter().filter(|ua| ua.contains("Chrome") && !ua.contains("Edg/")).count();
+        let chrome_count = agents
+            .iter()
+            .filter(|ua| ua.contains("Chrome") && !ua.contains("Edg/"))
+            .count();
         let firefox_count = agents.iter().filter(|ua| ua.contains("Firefox")).count();
-        let safari_count = agents.iter().filter(|ua| ua.contains("Safari") && !ua.contains("Chrome")).count();
+        let safari_count = agents
+            .iter()
+            .filter(|ua| ua.contains("Safari") && !ua.contains("Chrome"))
+            .count();
         let edge_count = agents.iter().filter(|ua| ua.contains("Edg/")).count();
 
         assert_eq!(chrome_count, 4, "Should have 4 Chrome variants");

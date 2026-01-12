@@ -73,10 +73,10 @@ pub struct CostBreakdown {
 /// Cost multipliers for thinking levels
 /// Based on estimated relative costs (to be calibrated with real data)
 const COST_MULTIPLIERS: &[(&str, f64)] = &[
-    ("MINIMAL", 1.0),  // Base cost
-    ("LOW", 1.5),      // 1.5x base
-    ("MEDIUM", 2.0),   // 2.0x base (Flash exclusive)
-    ("HIGH", 3.0),     // 3.0x base
+    ("MINIMAL", 1.0), // Base cost
+    ("LOW", 1.5),     // 1.5x base
+    ("MEDIUM", 2.0),  // 2.0x base (Flash exclusive)
+    ("HIGH", 3.0),    // 3.0x base
 ];
 
 /// Base cost per request (estimated, in USD)

@@ -77,8 +77,12 @@ fn test_gemini_2_0_flash_exp_has_ideType() {
     let result = wrap_request(&body, "test-project", "gemini-2.0-flash-exp");
 
     // Check that request.metadata exists
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -92,8 +96,12 @@ fn test_gemini_2_5_flash_has_ideType() {
 
     let result = wrap_request(&body, "test-project", "gemini-2.5-flash");
 
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -107,8 +115,12 @@ fn test_gemini_2_5_flash_lite_has_ideType() {
 
     let result = wrap_request(&body, "test-project", "gemini-2.5-flash-lite");
 
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -122,8 +134,12 @@ fn test_gemini_2_5_pro_has_ideType() {
 
     let result = wrap_request(&body, "test-project", "gemini-2.5-pro");
 
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -137,8 +153,12 @@ fn test_gemini_for_google_2_5_pro_has_ideType() {
 
     let result = wrap_request(&body, "test-project", "gemini-for-google-2.5-pro");
 
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -178,8 +198,12 @@ fn test_gpt_4o_has_ideType() {
     let result = transform_openai_request(&req, "test-project", "gemini-2.5-flash")
         .expect("transform should succeed");
 
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -215,8 +239,12 @@ fn test_gpt_4o_mini_has_ideType() {
     let result = transform_openai_request(&req, "test-project", "gemini-2.5-flash")
         .expect("transform should succeed");
 
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -252,8 +280,12 @@ fn test_gpt_4_turbo_has_ideType() {
     let result = transform_openai_request(&req, "test-project", "gemini-2.5-flash")
         .expect("transform should succeed");
 
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -289,8 +321,12 @@ fn test_gpt_3_5_turbo_has_ideType() {
     let result = transform_openai_request(&req, "test-project", "gemini-2.5-flash")
         .expect("transform should succeed");
 
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -326,8 +362,12 @@ fn test_o1_preview_has_ideType() {
     let result = transform_openai_request(&req, "test-project", "gemini-2.5-flash")
         .expect("transform should succeed");
 
-    let request = result.get("request").expect("result should have 'request' field");
-    let metadata = request.get("metadata").expect("request should have 'metadata' field");
+    let request = result
+        .get("request")
+        .expect("result should have 'request' field");
+    let metadata = request
+        .get("metadata")
+        .expect("request should have 'metadata' field");
 
     validate_metadata(metadata);
 }
@@ -447,9 +487,18 @@ fn test_metadata_format_matches_claude_implementation() {
     let metadata = &result["request"]["metadata"];
 
     // Verify field names (camelCase, not snake_case)
-    assert!(metadata.get("ideType").is_some(), "field must be 'ideType' (camelCase)");
-    assert!(metadata.get("ideVersion").is_some(), "field must be 'ideVersion' (camelCase)");
-    assert!(metadata.get("architecture").is_some(), "field must be 'architecture' (not 'arch')");
+    assert!(
+        metadata.get("ideType").is_some(),
+        "field must be 'ideType' (camelCase)"
+    );
+    assert!(
+        metadata.get("ideVersion").is_some(),
+        "field must be 'ideVersion' (camelCase)"
+    );
+    assert!(
+        metadata.get("architecture").is_some(),
+        "field must be 'architecture' (not 'arch')"
+    );
 
     // Verify values match constants
     assert_eq!(metadata["ideType"], "ANTIGRAVITY");
