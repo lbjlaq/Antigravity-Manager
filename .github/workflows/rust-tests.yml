@@ -109,9 +109,6 @@ jobs:
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./src-tauri
 
     steps:
       - name: Checkout repository
@@ -124,7 +121,9 @@ jobs:
           toolchain: stable
           override: true
 
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
       - name: Run cargo audit
-        uses: actions-rs/audit-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: ./src-tauri
+        run: cargo audit
