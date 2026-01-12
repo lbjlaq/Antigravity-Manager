@@ -152,16 +152,42 @@ impl QueryComplexityClassifier {
         Self {
             confidence_threshold: 0.7,
             technical_keywords: vec![
-                "algorithm", "architecture", "optimize", "implement",
-                "debug", "refactor", "design pattern", "scalability",
-                "performance", "security", "database", "api", "endpoint",
-                "authentication", "authorization", "encryption", "cache",
-                "distributed", "microservice", "kubernetes", "docker",
+                "algorithm",
+                "architecture",
+                "optimize",
+                "implement",
+                "debug",
+                "refactor",
+                "design pattern",
+                "scalability",
+                "performance",
+                "security",
+                "database",
+                "api",
+                "endpoint",
+                "authentication",
+                "authorization",
+                "encryption",
+                "cache",
+                "distributed",
+                "microservice",
+                "kubernetes",
+                "docker",
             ],
             multi_step_indicators: vec![
-                "compare", "analyze", "evaluate", "pros and cons",
-                "step by step", "first", "then", "finally", "next",
-                "explain", "describe", "list", "enumerate",
+                "compare",
+                "analyze",
+                "evaluate",
+                "pros and cons",
+                "step by step",
+                "first",
+                "then",
+                "finally",
+                "next",
+                "explain",
+                "describe",
+                "list",
+                "enumerate",
             ],
         }
     }
@@ -229,10 +255,7 @@ impl QueryComplexityClassifier {
     /// Heuristic-based classification using rule-based logic
     fn heuristic_classify(&self, features: &QueryFeatures) -> BudgetTier {
         // COMPLEX indicators (highest priority)
-        if features.has_code_blocks
-            || features.token_count > 200
-            || features.sentence_count > 10
-        {
+        if features.has_code_blocks || features.token_count > 200 || features.sentence_count > 10 {
             return BudgetTier::Complex;
         }
 
@@ -320,25 +343,16 @@ impl BudgetRecommendationEngine {
     /// 1. User override (if provided)
     /// 2. Feature flag check (if disabled, return default 32K)
     /// 3. Tier-based budget (if enabled)
-    pub fn recommend_budget(
-        &self,
-        tier: BudgetTier,
-        user_override: Option<u32>,
-    ) -> u32 {
+    pub fn recommend_budget(&self, tier: BudgetTier, user_override: Option<u32>) -> u32 {
         // User override takes precedence
         if let Some(budget) = user_override {
-            tracing::debug!(
-                "[BudgetOptimizer] Using user override: {} tokens",
-                budget
-            );
+            tracing::debug!("[BudgetOptimizer] Using user override: {} tokens", budget);
             return budget;
         }
 
         // Feature flag check
         if !self.adaptive_enabled {
-            tracing::debug!(
-                "[BudgetOptimizer] Adaptive budget disabled, using default 32K"
-            );
+            tracing::debug!("[BudgetOptimizer] Adaptive budget disabled, using default 32K");
             return 32000; // Default fixed budget
         }
 
@@ -359,10 +373,7 @@ impl BudgetRecommendationEngine {
         }
 
         if budget > 32000 {
-            return Err(format!(
-                "Budget {} exceeds maximum 32K tokens",
-                budget
-            ));
+            return Err(format!("Budget {} exceeds maximum 32K tokens", budget));
         }
 
         Ok(budget)
@@ -412,13 +423,15 @@ impl BudgetMetricsTracker {
 
         // Update rolling average confidence
         let prev_total = entry.classification_confidence_avg * (entry.request_count - 1) as f64;
-        entry.classification_confidence_avg = (prev_total + confidence) / entry.request_count as f64;
+        entry.classification_confidence_avg =
+            (prev_total + confidence) / entry.request_count as f64;
 
         // Update thinking utilization (average of actual_thinking / budget_allocated)
         let budget = tier.to_token_budget() as f64;
         let utilization = thinking_tokens as f64 / budget;
         let prev_util_total = entry.avg_thinking_utilization * (entry.request_count - 1) as f64;
-        entry.avg_thinking_utilization = (prev_util_total + utilization) / entry.request_count as f64;
+        entry.avg_thinking_utilization =
+            (prev_util_total + utilization) / entry.request_count as f64;
 
         entry.last_updated = chrono::Utc::now();
 
@@ -547,7 +560,8 @@ mod tests {
     #[test]
     fn test_classify_complex_query_system_design() {
         let classifier = QueryComplexityClassifier::new();
-        let query = "Design a distributed caching architecture for a high-traffic e-commerce platform. \
+        let query =
+            "Design a distributed caching architecture for a high-traffic e-commerce platform. \
                      Consider scalability, fault tolerance, and data consistency. \
                      Explain the trade-offs between different caching strategies.";
         let result = classifier.classify(query);
@@ -561,16 +575,22 @@ mod tests {
     #[test]
     fn test_classify_uncertain_defaults_to_complex() {
         let classifier = QueryComplexityClassifier::with_threshold(0.95); // Very high threshold
-        // Use query that's borderline but would be MODERATE with normal threshold
-        // 45 tokens, 3 sentences → right at the SIMPLE boundary
-        let result = classifier.classify("Explain how authentication works in web applications. \
+                                                                          // Use query that's borderline but would be MODERATE with normal threshold
+                                                                          // 45 tokens, 3 sentences → right at the SIMPLE boundary
+        let result = classifier.classify(
+            "Explain how authentication works in web applications. \
                                           What are the main security considerations? \
-                                          Compare session-based vs token-based approaches.");
+                                          Compare session-based vs token-based approaches.",
+        );
 
         // With high threshold (0.95), borderline queries default to COMPLEX for safety
         // This query would be MODERATE with standard threshold but has confidence < 0.95
         assert_eq!(result.tier, BudgetTier::Complex);
-        assert!(result.confidence < 0.95, "Expected confidence < 0.95, got {}", result.confidence);
+        assert!(
+            result.confidence < 0.95,
+            "Expected confidence < 0.95, got {}",
+            result.confidence
+        );
     }
 
     #[test]
