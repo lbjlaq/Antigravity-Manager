@@ -249,16 +249,18 @@ phase_2_stories:
     focus: "Flash-exclusive MEDIUM level (10001-20000 tokens)"
 
   story_013_02:
-    title: "Safety Settings Enhancement"
+    title: "Safety Settings Configuration & Error Handling"
     priority: "P1"
     effort: "2 days"
-    focus: "Content filtering + harm categories"
+    focus: "Configurable thresholds (BLOCK_NONE/LOW/MEDIUM/HIGH) + enhanced error logging when content blocked"
+    scope_clarified: "2026-01-12 - PO Decision: Make thresholds configurable + improve error handling"
 
   story_013_03:
-    title: "Streaming Optimization"
+    title: "TTFT Metrics Collection"
     priority: "P1"
     effort: "1 day"
-    focus: "TTFT + progressive rendering"
+    focus: "Instrument and measure Time To First Token (p50/p95/p99), dashboard for performance observability"
+    scope_clarified: "2026-01-12 - PO Decision: Add metrics collection, not optimization (already at 100%)"
 ```
 
 **Phase 3: Optimization & Polish** (P2, 1 week):
