@@ -1,4 +1,5 @@
 use crate::proxy::config::{ProxyAuthMode, ProxyConfig};
+use crate::models::config::AppConfig; // Assuming AuthConfig might be here or just use ProxyConfig
 
 #[derive(Debug, Clone)]
 pub struct ProxySecurityConfig {
@@ -30,6 +31,21 @@ impl ProxySecurityConfig {
     }
 }
 
+/// Thread-safe wrapper for security state
+pub struct SecurityState {
+    pub config: tokio::sync::RwLock<ProxySecurityConfig>,
+}
+
+impl SecurityState {
+    pub fn new(_auth_config: Option<crate::models::config::AppConfig>, security_config: ProxySecurityConfig) -> Self {
+        // Note: The previous code passed auth_config and security_config separately.
+        // We will just use the security_config for now as it contains the relevant fields.
+        Self {
+            config: tokio::sync::RwLock::new(security_config),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,4 +73,3 @@ mod tests {
         ));
     }
 }
-

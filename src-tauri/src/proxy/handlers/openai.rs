@@ -4,6 +4,7 @@ use base64::Engine as _;
 use bytes::Bytes;
 use serde_json::{json, Value};
 use tracing::{debug, error, info}; // Import Engine trait for encode method
+use futures::TryStreamExt;
 
 use crate::proxy::mappers::openai::{
     transform_openai_request, transform_openai_response, OpenAIRequest,

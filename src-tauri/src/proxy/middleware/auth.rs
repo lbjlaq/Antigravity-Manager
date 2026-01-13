@@ -7,13 +7,13 @@ use axum::{
     response::Response,
 };
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
-use crate::proxy::{ProxyAuthMode, ProxySecurityConfig};
+use crate::proxy::{ProxyAuthMode};
+use crate::proxy::security::SecurityState;
 
 /// API Key 认证中间件
 pub async fn auth_middleware(
-    State(security): State<Arc<RwLock<ProxySecurityConfig>>>,
+    State(security_state): State<Arc<SecurityState>>,
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
@@ -32,7 +32,7 @@ pub async fn auth_middleware(
         return Ok(next.run(request).await);
     }
 
-    let security = security.read().await.clone();
+    let security = security_state.config.read().await.clone();
     let effective_mode = security.effective_auth_mode();
 
     if matches!(effective_mode, ProxyAuthMode::Off) {
