@@ -43,6 +43,7 @@ export interface DeviceProfile {
     mac_machine_id: string;
     dev_device_id: string;
     sqm_id: string;
+    service_machine_id?: string;
 }
 
 export interface DeviceProfileVersion {
@@ -52,4 +53,3 @@ export interface DeviceProfileVersion {
     profile: DeviceProfile;
     is_current?: boolean;
 }
-

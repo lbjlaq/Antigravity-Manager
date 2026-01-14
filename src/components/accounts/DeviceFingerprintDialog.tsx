@@ -141,6 +141,7 @@ export default function DeviceFingerprintDialog({ account, onClose }: DeviceFing
                 <div><span className="font-semibold">macMachineId:</span> {profile.mac_machine_id}</div>
                 <div><span className="font-semibold">devDeviceId:</span> {profile.dev_device_id}</div>
                 <div><span className="font-semibold">sqmId:</span> {profile.sqm_id}</div>
+                <div><span className="font-semibold">serviceMachineId:</span> {profile.service_machine_id || '空'}</div>
             </div>
         );
     };
@@ -274,6 +275,7 @@ function HistoryRow({ id, label, createdAt, profile, onRestore, onDelete, isCurr
                     <div>macMachineId: {profile.mac_machine_id}</div>
                     <div>devDeviceId: {profile.dev_device_id}</div>
                     <div>sqmId: {profile.sqm_id}</div>
+                    <div>serviceMachineId: {profile.service_machine_id || '空'}</div>
                 </div>
             </div>
             <div className="flex gap-2 ml-2">
@@ -312,6 +314,7 @@ function ConfirmDialog({ profile, type, onConfirm, onCancel, loading }: { profil
                     <div><span className="font-semibold">macMachineId:</span> {profile.mac_machine_id}</div>
                     <div><span className="font-semibold">devDeviceId:</span> {profile.dev_device_id}</div>
                     <div><span className="font-semibold">sqmId:</span> {profile.sqm_id}</div>
+                    <div><span className="font-semibold">serviceMachineId:</span> {profile.service_machine_id || '空'}</div>
                 </div>
                 <div className="mt-5 flex gap-3 justify-center">
                     <button className="btn btn-sm min-w-[100px]" onClick={onCancel} disabled={!!loading}>取消</button>

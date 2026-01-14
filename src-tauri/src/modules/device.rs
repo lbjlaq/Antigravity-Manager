@@ -95,6 +95,135 @@ pub fn get_state_db_path() -> Result<PathBuf, String> {
     Ok(dir.join("state.vscdb"))
 }
 
+fn get_machine_id_path() -> Result<PathBuf, String> {
+    // 1) --user-data-dir 参数
+    if let Some(user_data_dir) = process::get_user_data_dir_from_process() {
+        return Ok(user_data_dir.join("machineid"));
+    }
+
+    // 2) 便携模式（基于可执行文件的 data/user-data）
+    if let Some(exe_path) = process::get_antigravity_executable_path() {
+        if let Some(parent) = exe_path.parent() {
+            return Ok(parent.join("data").join("user-data").join("machineid"));
+        }
+    }
+
+    // 3) 标准安装位置
+    #[cfg(target_os = "macos")]
+    {
+        let home = dirs::home_dir().ok_or("无法获取 Home 目录")?;
+        return Ok(home.join("Library/Application Support/Antigravity/machineid"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let appdata =
+            std::env::var("APPDATA").map_err(|_| "无法获取 APPDATA 环境变量".to_string())?;
+        return Ok(PathBuf::from(appdata).join("Antigravity\\machineid"));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let home = dirs::home_dir().ok_or("无法获取 Home 目录")?;
+        return Ok(home.join(".config/Antigravity/machineid"));
+    }
+
+    #[allow(unreachable_code)]
+    Err("无法确定 machineid 路径".to_string())
+}
+
+/// UUID v4 格式正则验证（与官方 Antigravity 一致）
+fn is_valid_uuid(value: &str) -> bool {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+    static UUID_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$").unwrap()
+    });
+    UUID_RE.is_match(value.trim())
+}
+
+/// 验证并规范化 serviceMachineId（必须是有效 UUID）
+fn validate_service_machine_id(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if is_valid_uuid(trimmed) {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+fn read_machine_id_file() -> Option<String> {
+    let path = get_machine_id_path().ok()?;
+    let content = fs::read_to_string(&path).ok()?;
+    validate_service_machine_id(&content)
+}
+
+fn write_machine_id_file(service_id: &str) -> Result<(), String> {
+    let path = get_machine_id_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建 machineid 目录失败: {}", e))?;
+    }
+    fs::write(&path, service_id).map_err(|e| format!("写入 machineid 失败: {}", e))?;
+    Ok(())
+}
+
+fn read_state_service_machine_id_value() -> Option<String> {
+    let db_path = get_state_db_path().ok()?;
+    if !db_path.exists() {
+        return None;
+    }
+    let conn = Connection::open(&db_path).ok()?;
+    let value: Result<String, _> = conn.query_row(
+        "SELECT value FROM ItemTable WHERE key = 'storage.serviceMachineId'",
+        [],
+        |row| row.get(0),
+    );
+    value.ok().and_then(|v| validate_service_machine_id(&v))
+}
+
+fn generate_service_machine_id() -> String {
+    Uuid::new_v4().to_string()
+}
+
+/// 获取 serviceMachineId（官方优先级：数据库 → 文件 → 生成）
+pub fn get_service_machine_id() -> String {
+    // 1. 优先从数据库读取
+    if let Some(id) = read_state_service_machine_id_value() {
+        return id;
+    }
+    // 2. 其次从 machineid 文件读取
+    if let Some(id) = read_machine_id_file() {
+        // 同步到数据库
+        let _ = sync_state_service_machine_id_value(&id);
+        return id;
+    }
+    // 3. 生成新的并写入
+    let new_id = generate_service_machine_id();
+    if let Err(e) = write_machine_id_file(&new_id) {
+        logger::log_warn(&format!("写入 machineid 失败: {}", e));
+    }
+    let _ = sync_state_service_machine_id_value(&new_id);
+    new_id
+}
+
+/// 确保 profile 有有效的 serviceMachineId（使用 UUID 格式验证，每个账号独立）
+pub fn ensure_service_machine_id(profile: &mut DeviceProfile) -> bool {
+    match validate_service_machine_id(&profile.service_machine_id) {
+        Some(value) => {
+            if value != profile.service_machine_id {
+                profile.service_machine_id = value;
+                return true;
+            }
+            false
+        }
+        None => {
+            // 直接生成新的 UUID（每个账号独立）
+            profile.service_machine_id = generate_service_machine_id();
+            true
+        }
+    }
+}
+
 /// 备份 storage.json，返回备份文件路径
 #[allow(dead_code)]
 pub fn backup_storage(storage_path: &Path) -> Result<PathBuf, String> {
@@ -136,11 +265,15 @@ pub fn read_profile(storage_path: &Path) -> Result<DeviceProfile, String> {
         None
     };
 
+    // serviceMachineId 使用官方优先级：数据库 → 文件 → 生成（不从 storage.json 读取）
+    let service_machine_id = get_service_machine_id();
+
     Ok(DeviceProfile {
         machine_id: get_field("machineId").ok_or("缺少 telemetry.machineId")?,
         mac_machine_id: get_field("macMachineId").ok_or("缺少 telemetry.macMachineId")?,
         dev_device_id: get_field("devDeviceId").ok_or("缺少 telemetry.devDeviceId")?,
         sqm_id: get_field("sqmId").ok_or("缺少 telemetry.sqmId")?,
+        service_machine_id,
     })
 }
 
@@ -202,93 +335,60 @@ pub fn write_profile(storage_path: &Path, profile: &DeviceProfile) -> Result<(),
         );
     }
 
-    // 同步 storage.serviceMachineId（与 devDeviceId 一致），放在根级别
-    if let Some(map) = json.as_object_mut() {
-        map.insert(
-            "storage.serviceMachineId".to_string(),
-            Value::String(profile.dev_device_id.clone()),
-        );
-    }
+    // serviceMachineId 使用官方优先级获取或验证（不写入 storage.json）
+    let service_machine_id = match validate_service_machine_id(&profile.service_machine_id) {
+        Some(value) => value,
+        None => {
+            let generated = get_service_machine_id();
+            logger::log_warn("serviceMachineId 无效，已从官方来源获取或生成新值");
+            generated
+        }
+    };
 
     let updated = serde_json::to_string_pretty(&json)
         .map_err(|e| format!("序列化 storage.json 失败: {}", e))?;
     fs::write(storage_path, updated).map_err(|e| format!("写入 storage.json 失败: {}", e))?;
     logger::log_info("已写入设备指纹到 storage.json");
 
+    if let Err(e) = write_machine_id_file(&service_machine_id) {
+        logger::log_warn(&format!("写入 machineid 失败: {}", e));
+    }
+
     // 同步 state.vscdb 的 ItemTable.storage.serviceMachineId
-    let _ = sync_state_service_machine_id_value(&profile.dev_device_id);
+    let _ = sync_state_service_machine_id_value(&service_machine_id);
     Ok(())
 }
 
-/// 仅补充/同步 serviceMachineId，不改动其他字段
+/// 同步 serviceMachineId 到 machineid 文件和数据库（不操作 storage.json）
 #[allow(dead_code)]
-pub fn sync_service_machine_id(storage_path: &Path, service_id: &str) -> Result<(), String> {
-    let content =
-        fs::read_to_string(storage_path).map_err(|e| format!("读取 storage.json 失败: {}", e))?;
-    let mut json: Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析 storage.json 失败: {}", e))?;
+pub fn sync_service_machine_id(_storage_path: &Path, service_id: &str) -> Result<(), String> {
+    let service_id = validate_service_machine_id(service_id).ok_or("serviceMachineId 无效（非 UUID 格式）")?;
 
-    if let Some(map) = json.as_object_mut() {
-        map.insert(
-            "storage.serviceMachineId".to_string(),
-            Value::String(service_id.to_string()),
-        );
+    if let Err(e) = write_machine_id_file(&service_id) {
+        logger::log_warn(&format!("写入 machineid 失败: {}", e));
     }
 
-    let updated = serde_json::to_string_pretty(&json)
-        .map_err(|e| format!("序列化 storage.json 失败: {}", e))?;
-    fs::write(storage_path, updated).map_err(|e| format!("写入 storage.json 失败: {}", e))?;
-    logger::log_info("已同步 storage.serviceMachineId 到 storage.json");
-
-    let _ = sync_state_service_machine_id_value(service_id);
+    sync_state_service_machine_id_value(&service_id)?;
+    logger::log_info("已同步 serviceMachineId 到 machineid 文件和数据库");
     Ok(())
 }
 
-/// 从现有 storage.json 读取 serviceMachineId（无则用 telemetry.devDeviceId），回写缺失项并同步 state.vscdb
+/// 确保 serviceMachineId 已同步（使用官方优先级：数据库 → 文件 → 生成）
 #[allow(dead_code)]
-pub fn sync_service_machine_id_from_storage(storage_path: &Path) -> Result<(), String> {
-    if !storage_path.exists() {
-        return Err("storage.json 不存在，无法同步 serviceMachineId".to_string());
+pub fn sync_service_machine_id_from_storage(_storage_path: &Path) -> Result<(), String> {
+    // 使用官方优先级获取 serviceMachineId，不再从 storage.json 读取
+    let service_id = get_service_machine_id();
+    
+    // 确保已写入 machineid 文件
+    if let Err(e) = write_machine_id_file(&service_id) {
+        logger::log_warn(&format!("写入 machineid 失败: {}", e));
     }
-    let content = fs::read_to_string(storage_path).map_err(|e| format!("读取 storage.json 失败: {}", e))?;
-    let mut json: Value = serde_json::from_str(&content).map_err(|e| format!("解析 storage.json 失败: {}", e))?;
-
-    let service_id = json
-        .get("storage.serviceMachineId")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .or_else(|| {
-            json.get("telemetry")
-                .and_then(|t| t.get("devDeviceId"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-        .or_else(|| {
-            json.get("telemetry.devDeviceId")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-        .ok_or("storage.json 中缺少 storage.serviceMachineId 和 telemetry.devDeviceId")?;
-
-    let mut dirty = false;
-    if json
-        .get("storage.serviceMachineId")
-        .and_then(|v| v.as_str())
-        .is_none()
-    {
-        if let Some(map) = json.as_object_mut() {
-            map.insert("storage.serviceMachineId".to_string(), Value::String(service_id.clone()));
-            dirty = true;
-        }
-    }
-
-    if dirty {
-        let updated = serde_json::to_string_pretty(&json).map_err(|e| format!("序列化 storage.json 失败: {}", e))?;
-        fs::write(storage_path, updated).map_err(|e| format!("写入 storage.json 失败: {}", e))?;
-        logger::log_info("已补充 storage.serviceMachineId 到 storage.json");
-    }
-
-    sync_state_service_machine_id_value(&service_id)
+    
+    // 确保已写入数据库
+    sync_state_service_machine_id_value(&service_id)?;
+    
+    logger::log_info("已确保 serviceMachineId 同步到 machineid 文件和数据库");
+    Ok(())
 }
 
 fn sync_state_service_machine_id_value(service_id: &str) -> Result<(), String> {
@@ -322,13 +422,31 @@ pub fn load_global_original() -> Option<DeviceProfile> {
         let path = dir.join(GLOBAL_BASELINE);
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(profile) = serde_json::from_str::<DeviceProfile>(&content) {
+                if let Ok(mut profile) = serde_json::from_str::<DeviceProfile>(&content) {
+                    // 如果原始备份里没有 serviceMachineId（旧版本备份），尝试从当前系统获取补充
+                    // 假设当前系统还没被乱改，或者至少比随机生成要好
+                    if !is_valid_uuid(&profile.service_machine_id) {
+                        let sys_id = get_service_machine_id();
+                        logger::log_info(&format!("原始备份缺少 serviceMachineId，已从系统补充: {}", sys_id));
+                        profile.service_machine_id = sys_id;
+                        
+                        // 回写更新原始备份文件，确保以后能永久记住这个 ID
+                        let _ = save_global_original_force(&profile);
+                    }
                     return Some(profile);
                 }
             }
         }
     }
     None
+}
+
+/// 强制保存原始指纹（覆盖）
+fn save_global_original_force(profile: &DeviceProfile) -> Result<(), String> {
+    let dir = get_data_dir()?;
+    let path = dir.join(GLOBAL_BASELINE);
+    let content = serde_json::to_string_pretty(profile).map_err(|e| format!("序列化原始指纹失败: {}", e))?;
+    fs::write(&path, content).map_err(|e| format!("更新原始指纹失败: {}", e))
 }
 
 pub fn save_global_original(profile: &DeviceProfile) -> Result<(), String> {
@@ -394,6 +512,7 @@ pub fn generate_profile() -> DeviceProfile {
         mac_machine_id: new_standard_machine_id(),
         dev_device_id: Uuid::new_v4().to_string(),
         sqm_id: format!("{{{}}}", Uuid::new_v4().to_string().to_uppercase()),
+        service_machine_id: generate_service_machine_id(),
     }
 }
 

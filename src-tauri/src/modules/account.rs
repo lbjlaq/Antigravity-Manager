@@ -392,26 +392,31 @@ pub async fn switch_account(account_id: &str) -> Result<(), String> {
 
     // 4. 写入设备指纹（缺失则生成并绑定），仅在切换时改 storage
     let storage_path = device::get_storage_path()?;
-    let profile_to_apply = {
+    let (mut profile_to_apply, from_account) = {
         // 优先账户绑定，其次全局原始，否则现采集/生成
         if let Some(p) = account.device_profile.clone() {
-            p
+            (p, true)
         } else if let Some(global) = device::load_global_original() {
-            global
+            (global, false)
         } else {
             // 捕获当前 storage 为原始指纹
             let current =
                 device::read_profile(&storage_path).unwrap_or_else(|_| device::generate_profile());
             let _ = device::save_global_original(&current);
-            current
+            (current, false)
         }
     };
+    device::ensure_service_machine_id(&mut profile_to_apply);
+    if from_account {
+        account.device_profile = Some(profile_to_apply.clone());
+    }
     crate::modules::logger::log_info(&format!(
-        "写入设备指纹到 storage.json: machineId={}, macMachineId={}, devDeviceId={}, sqmId={}",
+        "写入设备指纹到 storage.json: machineId={}, macMachineId={}, devDeviceId={}, sqmId={}, serviceMachineId={}",
         profile_to_apply.machine_id,
         profile_to_apply.mac_machine_id,
         profile_to_apply.dev_device_id,
-        profile_to_apply.sqm_id
+        profile_to_apply.sqm_id,
+        profile_to_apply.service_machine_id
     ));
     device::write_profile(&storage_path, &profile_to_apply)?;
 
@@ -500,6 +505,8 @@ pub fn bind_device_profile_with_profile(account_id: &str, profile: DeviceProfile
 }
 
 fn apply_profile_to_account(account: &mut Account, profile: DeviceProfile, label: Option<String>, add_history: bool) -> Result<(), String> {
+    let mut profile = profile;
+    crate::modules::device::ensure_service_machine_id(&mut profile);
     account.device_profile = Some(profile.clone());
     if add_history {
         // 清除 current 标记
@@ -527,7 +534,7 @@ pub fn list_device_versions(account_id: &str) -> Result<DeviceProfiles, String> 
 pub fn restore_device_version(account_id: &str, version_id: &str) -> Result<DeviceProfile, String> {
     let mut account = load_account(account_id)?;
 
-    let target_profile = if version_id == "baseline" {
+    let mut target_profile = if version_id == "baseline" {
         crate::modules::device::load_global_original().ok_or("未找到全局原始指纹")?
     } else if let Some(v) = account.device_history.iter().find(|v| v.id == version_id) {
         v.profile.clone()
@@ -537,6 +544,7 @@ pub fn restore_device_version(account_id: &str, version_id: &str) -> Result<Devi
         return Err("未找到对应的指纹版本".to_string());
     };
 
+    crate::modules::device::ensure_service_machine_id(&mut target_profile);
     account.device_profile = Some(target_profile.clone());
     for h in account.device_history.iter_mut() {
         h.is_current = h.id == version_id;
@@ -566,12 +574,14 @@ pub fn delete_device_version(account_id: &str, version_id: &str) -> Result<(), S
 pub fn apply_device_profile(account_id: &str) -> Result<DeviceProfile, String> {
     use crate::modules::device;
     let mut account = load_account(account_id)?;
-    let profile = account
+    let mut profile = account
         .device_profile
         .clone()
         .ok_or("该账号尚未绑定设备指纹")?;
+    device::ensure_service_machine_id(&mut profile);
     let storage_path = device::get_storage_path()?;
     device::write_profile(&storage_path, &profile)?;
+    account.device_profile = Some(profile.clone());
     account.update_last_used();
     save_account(&account)?;
     Ok(profile)
@@ -582,6 +592,8 @@ pub fn restore_original_device() -> Result<String, String> {
     if let Some(current_id) = get_current_account_id()? {
         if let Ok(mut account) = load_account(&current_id) {
             if let Some(original) = crate::modules::device::load_global_original() {
+                let mut original = original;
+                crate::modules::device::ensure_service_machine_id(&mut original);
                 account.device_profile = Some(original);
                 for h in account.device_history.iter_mut() {
                     h.is_current = false;

@@ -109,6 +109,8 @@ pub struct DeviceProfile {
     pub mac_machine_id: String,
     pub dev_device_id: String,
     pub sqm_id: String,
+    #[serde(default)]
+    pub service_machine_id: String,
 }
 
 /// 指纹历史版本
