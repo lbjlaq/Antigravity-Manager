@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import ModalDialog from '../common/ModalDialog';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../../utils/request';
-import { Trash2, Search, X } from 'lucide-react';
+import { Trash2, Search, X, ChevronLeft, ChevronRight } from 'lucide-react';
+
 import { AppConfig } from '../../types/config';
 import { formatCompactNumber } from '../../utils/format';
-import { useVirtualizer } from '@tanstack/react-virtual';
+
 
 interface ProxyRequestLog {
     id: string;
@@ -35,115 +36,91 @@ interface ProxyMonitorProps {
     className?: string;
 }
 
-// Virtualized Log Table Component
-interface VirtualizedLogTableProps {
+// Log Table Component
+interface LogTableProps {
     logs: ProxyRequestLog[];
     loading: boolean;
-    hasMore: boolean;
-    loadMore: () => void;
     onLogClick: (log: ProxyRequestLog) => void;
     t: any;
 }
 
-const VirtualizedLogTable: React.FC<VirtualizedLogTableProps> = ({
+const LogTable: React.FC<LogTableProps> = ({
     logs,
     loading,
-    hasMore,
-    loadMore,
     onLogClick,
     t
 }) => {
-    const parentRef = useRef<HTMLDivElement>(null);
-
-    const rowVirtualizer = useVirtualizer({
-        count: logs.length,
-        getScrollElement: () => parentRef.current,
-        estimateSize: () => 36, // Row height
-        overscan: 5,
-    });
-
-    const virtualItems = rowVirtualizer.getVirtualItems();
-
     return (
-        <>
-            <div ref={parentRef} className="flex-1 overflow-auto bg-white dark:bg-base-100">
-                <table className="table table-xs w-full">
-                    <thead className="bg-gray-50 dark:bg-base-200 text-gray-500 sticky top-0 z-10">
-                        <tr>
-                            <th style={{ width: '80px' }}>{t('monitor.table.status')}</th>
-                            <th style={{ width: '80px' }}>{t('monitor.table.method')}</th>
-                            <th style={{ width: '200px' }}>{t('monitor.table.model')}</th>
-                            <th style={{ width: '150px' }}>{t('monitor.table.account')}</th>
-                            <th>{t('monitor.table.path')}</th>
-                            <th className="text-right" style={{ width: '100px' }}>{t('monitor.table.usage')}</th>
-                            <th className="text-right" style={{ width: '100px' }}>{t('monitor.table.duration')}</th>
-                            <th className="text-right" style={{ width: '100px' }}>{t('monitor.table.time')}</th>
+        <div 
+            className="flex-1 overflow-y-auto overflow-x-auto bg-white dark:bg-base-100"
+            style={{
+                minHeight: '200px',
+                maxHeight: 'calc(100vh - 320px)'
+            }}
+        >
+            <table className="table table-xs w-full">
+                <thead className="bg-gray-50 dark:bg-base-200 text-gray-500 sticky top-0 z-10">
+                    <tr>
+                        <th style={{ width: '60px' }}>{t('monitor.table.status')}</th>
+                        <th style={{ width: '60px' }}>{t('monitor.table.method')}</th>
+                        <th style={{ width: '180px' }}>{t('monitor.table.model')}</th>
+                        <th style={{ width: '140px' }}>{t('monitor.table.account')}</th>
+                        <th>{t('monitor.table.path')}</th>
+                        <th className="text-right" style={{ width: '90px' }}>{t('monitor.table.usage')}</th>
+                        <th className="text-right" style={{ width: '80px' }}>{t('monitor.table.duration')}</th>
+                        <th className="text-right" style={{ width: '80px' }}>{t('monitor.table.time')}</th>
+                    </tr>
+                </thead>
+                <tbody className="font-mono text-gray-700 dark:text-gray-300">
+                    {logs.map((log) => (
+                        <tr
+                            key={log.id}
+                            className="hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer"
+                            onClick={() => onLogClick(log)}
+                        >
+                            <td style={{ width: '60px' }}>
+                                <span className={`badge badge-xs text-white border-none ${log.status >= 200 && log.status < 400 ? 'badge-success' : 'badge-error'}`}>
+                                    {log.status}
+                                </span>
+                            </td>
+                            <td className="font-bold" style={{ width: '60px' }}>{log.method}</td>
+                            <td className="text-blue-600 truncate" style={{ width: '180px', maxWidth: '180px' }}>
+                                {log.mapped_model && log.model !== log.mapped_model
+                                    ? `${log.model} => ${log.mapped_model}`
+                                    : (log.model || '-')}
+                            </td>
+                            <td className="text-gray-600 dark:text-gray-400 truncate text-[10px]" style={{ width: '140px', maxWidth: '140px' }}>
+                                {log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-'}
+                            </td>
+                            <td className="truncate" style={{ maxWidth: '280px' }}>{log.url}</td>
+                            <td className="text-right text-[9px]" style={{ width: '90px' }}>
+                                {log.input_tokens != null && <div>I: {formatCompactNumber(log.input_tokens)}</div>}
+                                {log.output_tokens != null && <div>O: {formatCompactNumber(log.output_tokens)}</div>}
+                            </td>
+                            <td className="text-right" style={{ width: '80px' }}>{log.duration}ms</td>
+                            <td className="text-right text-[10px]" style={{ width: '80px' }}>
+                                {new Date(log.timestamp).toLocaleTimeString()}
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody className="font-mono text-gray-700 dark:text-gray-300" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
-                        {virtualItems.map((virtualRow) => {
-                            const log = logs[virtualRow.index];
-                            return (
-                                <tr
-                                    key={log.id}
-                                    className="hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer"
-                                    style={{
-                                        position: 'absolute',
-                                        top: 0,
-                                        left: 0,
-                                        width: '100%',
-                                        height: `${virtualRow.size}px`,
-                                        transform: `translateY(${virtualRow.start}px)`,
-                                    }}
-                                    onClick={() => onLogClick(log)}
-                                >
-                                    <td style={{ width: '80px' }}>
-                                        <span className={`badge badge-xs text-white border-none ${log.status >= 200 && log.status < 400 ? 'badge-success' : 'badge-error'}`}>
-                                            {log.status}
-                                        </span>
-                                    </td>
-                                    <td className="font-bold" style={{ width: '80px' }}>{log.method}</td>
-                                    <td className="text-blue-600 truncate" style={{ width: '200px', maxWidth: '200px' }}>
-                                        {log.mapped_model && log.model !== log.mapped_model
-                                            ? `${log.model} => ${log.mapped_model}`
-                                            : (log.model || '-')}
-                                    </td>
-                                    <td className="text-gray-600 dark:text-gray-400 truncate text-[10px]" style={{ width: '150px', maxWidth: '150px' }}>
-                                        {log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-'}
-                                    </td>
-                                    <td className="truncate" style={{ maxWidth: '300px' }}>{log.url}</td>
-                                    <td className="text-right text-[9px]" style={{ width: '100px' }}>
-                                        {log.input_tokens != null && <div>I: {formatCompactNumber(log.input_tokens)}</div>}
-                                        {log.output_tokens != null && <div>O: {formatCompactNumber(log.output_tokens)}</div>}
-                                    </td>
-                                    <td className="text-right" style={{ width: '100px' }}>{log.duration}ms</td>
-                                    <td className="text-right text-[10px]" style={{ width: '100px' }}>
-                                        {new Date(log.timestamp).toLocaleTimeString()}
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
-            </div>
-
-            {/* Loading indicator - outside scroll container */}
+                    ))}
+                </tbody>
+            </table>
+            
+            {/* Loading indicator */}
             {loading && (
-                <div className="flex items-center justify-center p-4 bg-white dark:bg-base-100 border-t border-gray-200 dark:border-base-300">
+                <div className="flex items-center justify-center p-4 bg-white dark:bg-base-100">
                     <div className="loading loading-spinner loading-md"></div>
                     <span className="ml-3 text-sm text-gray-500">{t('common.loading') || 'Loading...'}</span>
                 </div>
             )}
-
-            {/* Load more button - outside scroll container */}
-            {!loading && hasMore && logs.length > 0 && (
-                <div className="flex justify-center p-4 bg-white dark:bg-base-100 border-t border-gray-200 dark:border-base-300">
-                    <button onClick={loadMore} className="btn btn-sm btn-outline">
-                        {t('common.load_more') || 'Load More'}
-                    </button>
+            
+            {/* Empty state */}
+            {!loading && logs.length === 0 && (
+                <div className="flex items-center justify-center p-8 text-gray-400">
+                    {t('monitor.table.empty') || '暂无请求记录'}
                 </div>
             )}
-        </>
+        </div>
     );
 };
 
@@ -158,12 +135,14 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
 
     // Pagination state
-    const [pageSize] = useState(20);
-    const [hasMore, setHasMore] = useState(true);
+    const PAGE_SIZE_OPTIONS = [50, 100, 200, 500];
+    const [pageSize, setPageSize] = useState(100);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [totalCount, setTotalCount] = useState(0);
     const [loading, setLoading] = useState(false);
     const [loadingDetail, setLoadingDetail] = useState(false);
 
-    const loadData = async (append = false) => {
+    const loadData = async (page = 1, searchFilter = filter) => {
         if (loading) return;
         setLoading(true);
 
@@ -183,10 +162,26 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                 await invoke('set_proxy_monitor_enabled', { enabled: config.proxy.enable_logging });
             }
 
-            // Use paginated query
-            const offset = append ? logs.length : 0;
+            // Determine if filtering by errors only
+            const errorsOnly = searchFilter === '__ERROR__';
+            const actualFilter = errorsOnly ? '' : searchFilter;
+
+            // Get count with filter
+            const count = await Promise.race([
+                invoke<number>('get_proxy_logs_count_filtered', {
+                    filter: actualFilter,
+                    errorsOnly: errorsOnly
+                }),
+                timeoutPromise
+            ]) as number;
+            setTotalCount(count);
+
+            // Use filtered paginated query
+            const offset = (page - 1) * pageSize;
             const history = await Promise.race([
-                invoke<ProxyRequestLog[]>('get_proxy_logs_paginated', {
+                invoke<ProxyRequestLog[]>('get_proxy_logs_filtered', {
+                    filter: actualFilter,
+                    errorsOnly: errorsOnly,
                     limit: pageSize,
                     offset: offset
                 }),
@@ -194,12 +189,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
             ]) as ProxyRequestLog[];
 
             if (Array.isArray(history)) {
-                if (append) {
-                    setLogs(prev => [...prev, ...history]);
-                } else {
-                    setLogs(history);
-                }
-                setHasMore(history.length === pageSize);
+                setLogs(history);
             }
 
             const currentStats = await Promise.race([
@@ -219,8 +209,13 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         }
     };
 
-    const loadMore = () => {
-        loadData(true);
+    const totalPages = Math.ceil(totalCount / pageSize);
+
+    const goToPage = (page: number) => {
+        if (page >= 1 && page <= totalPages && page !== currentPage) {
+            setCurrentPage(page);
+            loadData(page, filter);
+        }
     };
 
     const toggleLogging = async () => {
@@ -286,18 +281,25 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         };
     }, []);
 
-    const filteredLogs = logs
-        .filter(log =>
-            log.url.toLowerCase().includes(filter.toLowerCase()) ||
-            log.method.toLowerCase().includes(filter.toLowerCase()) ||
-            (log.model && log.model.toLowerCase().includes(filter.toLowerCase())) ||
-            log.status.toString().includes(filter)
-        )
-        .sort((a, b) => b.timestamp - a.timestamp);
+    // Reload when pageSize changes
+    useEffect(() => {
+        setCurrentPage(1);
+        loadData(1, filter);
+    }, [pageSize]);
+
+    // Reload when filter changes (search based on all logs)
+    useEffect(() => {
+        setCurrentPage(1);
+        loadData(1, filter);
+    }, [filter]);
+
+    // Logs are already filtered and sorted by backend
+    // Just use logs directly as filteredLogs for compatibility
+    const filteredLogs = logs;
 
     const quickFilters = [
         { label: t('monitor.filters.all'), value: '' },
-        { label: t('monitor.filters.error'), value: '40' },
+        { label: t('monitor.filters.error'), value: '__ERROR__' },
         { label: t('monitor.filters.chat'), value: 'completions' },
         { label: t('monitor.filters.gemini'), value: 'gemini' },
         { label: t('monitor.filters.claude'), value: 'claude' },
@@ -377,12 +379,10 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                 </div>
             </div>
 
-            <VirtualizedLogTable
+            <LogTable
                 logs={filteredLogs}
                 loading={loading}
-                hasMore={hasMore}
-                loadMore={loadMore}
-                onLogClick={async (log) => {
+                onLogClick={async (log: ProxyRequestLog) => {
                     setLoadingDetail(true);
                     try {
                         const detail = await invoke<ProxyRequestLog>('get_proxy_log_detail', { logId: log.id });
@@ -396,6 +396,46 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                 }}
                 t={t}
             />
+
+            {/* Pagination Controls */}
+            <div className="flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-base-200 border-t border-gray-200 dark:border-base-300 text-xs">
+                <div className="flex items-center gap-2 whitespace-nowrap">
+                    <span className="text-gray-500">Per page</span>
+                    <select
+                        value={pageSize}
+                        onChange={(e) => setPageSize(Number(e.target.value))}
+                        className="select select-xs select-bordered w-16"
+                    >
+                        {PAGE_SIZE_OPTIONS.map(size => (
+                            <option key={size} value={size}>{size}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => goToPage(currentPage - 1)}
+                        disabled={currentPage <= 1 || loading}
+                        className="btn btn-xs btn-ghost"
+                    >
+                        <ChevronLeft size={14} />
+                    </button>
+                    <span className="text-gray-600 dark:text-gray-400 min-w-[80px] text-center">
+                        {currentPage} / {totalPages || 1}
+                    </span>
+                    <button
+                        onClick={() => goToPage(currentPage + 1)}
+                        disabled={currentPage >= totalPages || loading}
+                        className="btn btn-xs btn-ghost"
+                    >
+                        <ChevronRight size={14} />
+                    </button>
+                </div>
+
+                <div className="text-gray-500">
+                    Total {totalCount} records
+                </div>
+            </div>
 
             {selectedLog && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setSelectedLog(null)}>
