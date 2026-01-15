@@ -509,11 +509,24 @@ impl TokenManager {
             let quota_b = b.remaining_quota.unwrap_or(0);
             quota_b.cmp(&quota_a)  // Descending: higher percentage first
         });
-
+        
+        // 【调试日志】打印排序后的账号顺序
+        tracing::info!(
+            "🔄 [Token Rotation] Accounts: {:?}",
+            tokens_snapshot.iter().map(|t| format!(
+                "{}(protected={:?})", 
+                t.email, t.protected_models
+            )).collect::<Vec<_>>()
+        );
 
         // 0. 读取当前调度配置
         let scheduling = self.sticky_config.read().await.clone();
         use crate::proxy::sticky_config::SchedulingMode;
+        
+        // 【新增】检查配额保护是否启用（如果关闭，则忽略 protected_models 检查）
+        let quota_protection_enabled = crate::modules::config::load_app_config()
+            .map(|cfg| cfg.quota_protection.enabled)
+            .unwrap_or(false);
 
         // 【优化 Issue #284】将锁操作移到循环外，避免重复获取锁
         // 预先获取 last_used_account 的快照，避免在循环中多次加锁
@@ -553,11 +566,11 @@ impl TokenManager {
                                 bound_token.email, reset_sec
                             );
                             self.session_accounts.remove(sid);
-                        } else if !attempted.contains(&bound_id) && !bound_token.protected_models.contains(target_model) {
+                        } else if !attempted.contains(&bound_id) && !(quota_protection_enabled && bound_token.protected_models.contains(target_model)) {
                             // 3. 账号可用且未被标记为尝试失败，优先复用
                             tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
                             target_token = Some(bound_token.clone());
-                        } else if bound_token.protected_models.contains(target_model) {
+                        } else if quota_protection_enabled && bound_token.protected_models.contains(target_model) {
                             tracing::debug!("Sticky Session: Bound account {} is quota-protected for model {}, unbinding and switching.", bound_token.email, target_model);
                             self.session_accounts.remove(sid);
                         }
@@ -570,18 +583,19 @@ impl TokenManager {
             }
 
             // 模式 B: 原子化 60s 全局锁定 (针对无 session_id 情况的默认保护)
-            if target_token.is_none() && !rotate && quota_group != "image_gen" {
+            // 【修复】性能优先模式应跳过 60s 锁定；
+            if target_token.is_none() && !rotate && quota_group != "image_gen" && scheduling.mode != SchedulingMode::PerformanceFirst {
                 // 【优化】使用预先获取的快照，不再在循环内加锁
                 if let Some((account_id, last_time)) = &last_used_account_id {
                     // [FIX #3] 60s 锁定逻辑应检查 `attempted` 集合，避免重复尝试失败的账号
                     if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
                         if let Some(found) = tokens_snapshot.iter().find(|t| &t.account_id == account_id) {
                             // 【修复】检查限流状态和配额保护，避免复用已被锁定的账号
-                            if !self.is_rate_limited_by_account_id(&found.account_id) && !found.protected_models.contains(target_model) { // Changed to account_id
+                            if !self.is_rate_limited_by_account_id(&found.account_id) && !(quota_protection_enabled && found.protected_models.contains(target_model)) {
                                 tracing::debug!("60s Window: Force reusing last account: {}", found.email);
                                 target_token = Some(found.clone());
                             } else {
-                                if self.is_rate_limited_by_account_id(&found.account_id) { // Changed to account_id
+                                if self.is_rate_limited_by_account_id(&found.account_id) {
                                     tracing::debug!("60s Window: Last account {} is rate-limited, skipping", found.email);
                                 } else {
                                     tracing::debug!("60s Window: Last account {} is quota-protected for model {}, skipping", found.email, target_model);
@@ -602,7 +616,7 @@ impl TokenManager {
                         }
 
                         // 【新增 #621】模型级限流检查
-                        if candidate.protected_models.contains(target_model) {
+                        if quota_protection_enabled && candidate.protected_models.contains(target_model) {
                             tracing::debug!("Account {} is quota-protected for model {}, skipping", candidate.email, target_model);
                             continue;
                         }
@@ -629,23 +643,29 @@ impl TokenManager {
             } else if target_token.is_none() {
                 // 模式 C: 纯轮询模式 (Round-robin) 或强制轮换
                 let start_idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
+                tracing::info!("🔄 [Mode C] Round-robin from idx {}, total: {}", start_idx, total);
                 for offset in 0..total {
                     let idx = (start_idx + offset) % total;
                     let candidate = &tokens_snapshot[idx];
+                    
                     if attempted.contains(&candidate.account_id) {
+                        tracing::debug!("  [{}] {} - SKIP: already attempted", idx, candidate.email);
                         continue;
                     }
 
                     // 【新增 #621】模型级限流检查
-                    if candidate.protected_models.contains(target_model) {
+                    if quota_protection_enabled && candidate.protected_models.contains(target_model) {
+                        tracing::info!("  ⛔ {} - SKIP: quota-protected for {}", candidate.email, target_model);
                         continue;
                     }
 
                     // 【新增】主动避开限流或 5xx 锁定的账号
                     if self.is_rate_limited_by_account_id(&candidate.account_id) { // Changed to account_id
+                        tracing::info!("  ⏳ {} - SKIP: rate-limited", candidate.email);
                         continue;
                     }
 
+                    tracing::debug!("  [{}] {} - SELECTED", idx, candidate.email);
                     target_token = Some(candidate.clone());
                     
                     if rotate {
