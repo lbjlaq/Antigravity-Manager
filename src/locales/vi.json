@@ -362,7 +362,11 @@
             "btn_regenerate": "Tạo mới Key",
             "btn_copy": "Sao chép",
             "btn_copied": "Đã chép",
+            "btn_edit": "Chỉnh sửa",
+            "btn_save": "Lưu",
             "warning_key": "Lưu ý: Giữ API key của bạn an toàn. Đừng chia sẻ nó.",
+            "api_key_invalid": "Định dạng khóa API không hợp lệ, phải bắt đầu bằng sk- và có ít nhất 10 ký tự",
+            "api_key_updated": "Đã cập nhật khóa API",
             "auth": {
                 "title": "Xác thực (Authorization)",
                 "title_tooltip": "Kiểm soát xem request đến có cần xác thực hay không, và route nào được bảo vệ.",

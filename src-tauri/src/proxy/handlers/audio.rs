@@ -101,7 +101,7 @@ pub async fn handle_audio_transcription(
     // 6. 获取 Token 和上游客户端
     let token_manager = state.token_manager;
     let (access_token, project_id, email) = token_manager
-        .get_token("text", false, None)
+        .get_token("text", false, None, &model)
         .await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))?;
 

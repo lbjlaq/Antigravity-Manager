@@ -362,9 +362,13 @@
             "api_key": "API Key",
             "api_key_tooltip": "Shared secret used by clients when proxy authorization is enabled. Regenerating the key immediately invalidates the old one.",
             "btn_regenerate": "Regenerate Key",
+            "btn_edit": "Edit",
+            "btn_save": "Save",
             "btn_copy": "Copy",
             "btn_copied": "Copied",
             "warning_key": "Note: Keep your API key secure. Do not share it.",
+            "api_key_invalid": "Invalid API key format, must start with sk- and be at least 10 characters long",
+            "api_key_updated": "API key updated",
             "auth": {
                 "title": "Authorization",
                 "title_tooltip": "Controls whether incoming requests must be authenticated, and which routes are protected.",

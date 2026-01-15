@@ -362,9 +362,13 @@
             "api_key": "API 密钥",
             "api_key_tooltip": "启用鉴权后，客户端访问代理所需的共享密钥。重新生成会立即使旧密钥失效。",
             "btn_regenerate": "重新生成密钥",
+            "btn_edit": "编辑",
+            "btn_save": "保存",
             "btn_copy": "复制",
             "btn_copied": "已复制",
             "warning_key": "注意：请妥善保管您的 API 密钥，不要泄露给他人。",
+            "api_key_invalid": "API 密钥格式无效,必须以 sk- 开头且长度至少 10 个字符",
+            "api_key_updated": "API 密钥已更新",
             "auth": {
                 "title": "访问授权",
                 "title_tooltip": "控制代理是否需要鉴权，以及哪些路由需要提供 API 密钥。",

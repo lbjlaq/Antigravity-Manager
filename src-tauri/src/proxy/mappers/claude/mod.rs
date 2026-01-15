@@ -27,6 +27,7 @@ pub fn create_claude_sse_stream(
     email: String,
     session_id: Option<String>, // [NEW v3.3.17] Session ID for signature caching
     scaling_enabled: bool, // [NEW] Flag for context usage scaling
+    context_limit: u32,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     use async_stream::stream;
     use bytes::BytesMut;
@@ -36,31 +37,47 @@ pub fn create_claude_sse_stream(
         let mut state = StreamingState::new();
         state.session_id = session_id; // Set session ID for signature caching
         state.scaling_enabled = scaling_enabled; // Set scaling enabled flag
+        state.context_limit = context_limit;
         let mut buffer = BytesMut::new();
 
-        while let Some(chunk_result) = gemini_stream.next().await {
-            match chunk_result {
-                Ok(chunk) => {
-                    buffer.extend_from_slice(&chunk);
+        loop {
+            // [NEW] 15秒心跳保活: 如果长时间无数据，发送 ping 包
+            let next_chunk = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                gemini_stream.next()
+            ).await;
 
-                    // Process complete lines
-                    while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
-                        let line_raw = buffer.split_to(pos + 1);
-                        if let Ok(line_str) = std::str::from_utf8(&line_raw) {
-                            let line = line_str.trim();
-                            if line.is_empty() { continue; }
+            match next_chunk {
+                Ok(Some(chunk_result)) => {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            buffer.extend_from_slice(&chunk);
 
-                            if let Some(sse_chunks) = process_sse_line(line, &mut state, &trace_id, &email) {
-                                for sse_chunk in sse_chunks {
-                                    yield Ok(sse_chunk);
+                            // Process complete lines
+                            while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
+                                let line_raw = buffer.split_to(pos + 1);
+                                if let Ok(line_str) = std::str::from_utf8(&line_raw) {
+                                    let line = line_str.trim();
+                                    if line.is_empty() { continue; }
+
+                                    if let Some(sse_chunks) = process_sse_line(line, &mut state, &trace_id, &email) {
+                                        for sse_chunk in sse_chunks {
+                                            yield Ok(sse_chunk);
+                                        }
+                                    }
                                 }
                             }
                         }
+                        Err(e) => {
+                            yield Err(format!("Stream error: {}", e));
+                            break;
+                        }
                     }
                 }
-                Err(e) => {
-                    yield Err(format!("Stream error: {}", e));
-                    break;
+                Ok(None) => break, // Stream 正常结束
+                Err(_) => {
+                    // 超时，发送心跳包 (SSE Comment 格式)
+                    yield Ok(Bytes::from(": ping\n\n"));
                 }
             }
         }

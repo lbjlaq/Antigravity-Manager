@@ -225,7 +225,7 @@ impl SignatureCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread::sleep;
+
 
     #[test]
     fn test_tool_signature_cache() {

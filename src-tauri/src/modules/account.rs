@@ -59,6 +59,12 @@ pub fn load_account_index() -> Result<AccountIndex, String> {
     let content = fs::read_to_string(&index_path)
         .map_err(|e| format!("读取账号索引失败: {}", e))?;
     
+    // 如果文件内容为空，视为新索引
+    if content.trim().is_empty() {
+        crate::modules::logger::log_warn("账号索引文件内容为空，正在初始化新索引");
+        return Ok(AccountIndex::new());
+    }
+    
     let index: AccountIndex = serde_json::from_str(&content)
         .map_err(|e| format!("解析账号索引失败: {}", e))?;
         
@@ -626,61 +632,49 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
     // --- 配额保护逻辑开始 ---
     if let Ok(config) = crate::modules::config::load_app_config() {
         if config.quota_protection.enabled {
-            let mut min_percentage = 101; 
-            let mut min_model_name = String::new();
-            let mut has_models = false;
-            
             if let Some(ref q) = account.quota {
+                let threshold = config.quota_protection.threshold_percentage as i32;
+
+
                 for model in &q.models {
                     // 仅对用户勾选的模型进行监控
                     if !config.quota_protection.monitored_models.contains(&model.name) {
                         continue;
                     }
                     
-                    has_models = true;
-                    if model.percentage < min_percentage {
-                        min_percentage = model.percentage;
-                        min_model_name = model.name.clone();
+                    if model.percentage <= threshold {
+                        // 触发模型级保护
+                        if !account.protected_models.contains(&model.name) {
+                            crate::modules::logger::log_info(&format!(
+                                "[Quota] 触发模型保护: {} ({} 剩余 {}% <= 阈值 {}%)",
+                                account.email, model.name, model.percentage, threshold
+                            ));
+                            account.protected_models.insert(model.name.clone());
+
+                        }
+                    } else {
+                        // 自动恢复单个模型
+                        if account.protected_models.contains(&model.name) {
+                            crate::modules::logger::log_info(&format!(
+                                "[Quota] 模型保护恢复: {} ({} 额度已恢复至 {}%)",
+                                account.email, model.name, model.percentage
+                            ));
+                            account.protected_models.remove(&model.name);
+
+                        }
                     }
                 }
-            }
 
-            if has_models {
-                let threshold = config.quota_protection.threshold_percentage as i32;
-                
-                if min_percentage <= threshold {
-                    // 触发保护
-                    let is_already_protected = account.proxy_disabled && 
-                        account.proxy_disabled_reason.as_ref().map_or(false, |r| r.contains("quota_protection"));
-                    
-                    if !account.proxy_disabled || is_already_protected {
-                        if !account.proxy_disabled {
-                            crate::modules::logger::log_info(&format!(
-                                "[Quota] 触发保护: {} ({} 剩余 {}% <= 阈值 {}%)",
-                                account.email, min_model_name, min_percentage, threshold
-                            ));
-                        }
-                        account.proxy_disabled = true;
-                        account.proxy_disabled_at = Some(chrono::Utc::now().timestamp());
-                        account.proxy_disabled_reason = Some(format!(
-                            "quota_protection: {} ({}% <= {}%)",
-                            min_model_name, min_percentage, threshold
-                        ));
-                    }
-                } else {
-                    // 检查是否需要自动恢复
-                    let is_protected = account.proxy_disabled && 
-                        account.proxy_disabled_reason.as_ref().map_or(false, |r| r.contains("quota_protection"));
-                        
-                    if is_protected {
-                        crate::modules::logger::log_info(&format!(
-                            "[Quota] 自动恢复: {} (监控模型最低额度已恢复至 {}%)",
-                            account.email, min_percentage
-                        ));
-                        account.proxy_disabled = false;
-                        account.proxy_disabled_reason = None;
-                        account.proxy_disabled_at = None;
-                    }
+                // [兼容性] 如果该账号之前是因为账号级配额保护被禁用的，现在迁移到模型级
+                if account.proxy_disabled && 
+                   account.proxy_disabled_reason.as_ref().map_or(false, |r| r == "quota_protection") {
+                    crate::modules::logger::log_info(&format!(
+                        "[Quota] 迁移账号 {} 从账号级保护到模型级保护",
+                        account.email
+                    ));
+                    account.proxy_disabled = false;
+                    account.proxy_disabled_reason = None;
+                    account.proxy_disabled_at = None;
                 }
             }
         }

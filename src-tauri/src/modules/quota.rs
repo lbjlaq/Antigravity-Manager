@@ -224,6 +224,7 @@ pub async fn fetch_quota_with_cache(
 }
 
 /// 查询账号配额逻辑
+#[allow(dead_code)]
 pub async fn fetch_quota_inner(access_token: &str, email: &str) -> crate::error::AppResult<(QuotaData, Option<String>)> {
     fetch_quota_with_cache(access_token, email, None).await
 }
@@ -330,57 +331,120 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
         let mut warmup_items = Vec::new();
         let mut has_near_ready_models = false;
 
-        for account in &target_accounts {
-            let (token, pid) = match get_valid_token_for_warmup(account).await {
-                Ok(t) => t,
-                Err(e) => {
-                    crate::modules::logger::log_warn(&format!("[Warmup] 账号 {} 准备失败: {}", account.email, e));
-                    continue;
-                }
-            };
+        // 并发获取配额（每批5个）
+        let batch_size = 5;
+        for batch in target_accounts.chunks(batch_size) {
+            let mut handles = Vec::new();
+            for account in batch {
+                let account = account.clone();
+                let handle = tokio::spawn(async move {
+                    let (token, pid) = match get_valid_token_for_warmup(&account).await {
+                        Ok(t) => t,
+                        Err(_) => return None,
+                    };
+                    let quota = fetch_quota_with_cache(&token, &account.email, Some(&pid)).await.ok();
+                    Some((account.email.clone(), token, pid, quota))
+                });
+                handles.push(handle);
+            }
 
-            // 获取最新实时配额
-            if let Ok((fresh_quota, _)) = fetch_quota_with_cache(&token, &account.email, Some(&pid)).await {
-                let mut account_warmed_series = std::collections::HashSet::new();
-                for m in fresh_quota.models {
-                    if m.percentage >= 100 {
-                        // 1. 映射逻辑
-                        let model_to_ping = if m.name == "gemini-2.5-flash" { "gemini-3-flash".to_string() } else { m.name.clone() };
-                        
-                        // 2. 严格白名单过滤
-                        match model_to_ping.as_str() {
-                            "gemini-3-flash" | "claude-sonnet-4-5" | "gemini-3-pro-high" | "gemini-3-pro-image" => {
-                                if !account_warmed_series.contains(&model_to_ping) {
-                                    warmup_items.push((account.email.clone(), model_to_ping.clone(), token.clone(), pid.clone(), m.percentage));
-                                    account_warmed_series.insert(model_to_ping);
+            for handle in handles {
+                if let Ok(Some((email, token, pid, Some((fresh_quota, _))))) = handle.await {
+                    let mut account_warmed_series = std::collections::HashSet::new();
+                    for m in fresh_quota.models {
+                        if m.percentage >= 100 {
+                            let model_to_ping = if m.name == "gemini-2.5-flash" { "gemini-3-flash".to_string() } else { m.name.clone() };
+                            
+                            match model_to_ping.as_str() {
+                                "gemini-3-flash" | "claude-sonnet-4-5" | "gemini-3-pro-high" | "gemini-3-pro-image" => {
+                                    if !account_warmed_series.contains(&model_to_ping) {
+                                        warmup_items.push((email.clone(), model_to_ping.clone(), token.clone(), pid.clone(), m.percentage));
+                                        account_warmed_series.insert(model_to_ping);
+                                    }
                                 }
+                                _ => continue,
                             }
-                            _ => continue,
+                        } else if m.percentage >= NEAR_READY_THRESHOLD {
+                            has_near_ready_models = true;
                         }
-                    } else if m.percentage >= NEAR_READY_THRESHOLD {
-                        has_near_ready_models = true;
                     }
                 }
             }
         }
 
         if !warmup_items.is_empty() {
+            let total_before = warmup_items.len();
+            
+            // 过滤掉4小时内已预热的模型
+            warmup_items.retain(|(email, model, _, _, _)| {
+                let history_key = format!("{}:{}:100", email, model);
+                !crate::modules::scheduler::check_cooldown(&history_key, 14400)
+            });
+            
+            if warmup_items.is_empty() {
+                let skipped = total_before;
+                crate::modules::logger::log_info(&format!("[Warmup] 返回前端: 所有模型均在冷却期内，跳过 {} 个", skipped));
+                return Ok(format!("所有模型均在4小时冷却期内，已跳过 {} 个", skipped));
+            }
+            
             let total = warmup_items.len();
+            let skipped = total_before - total;
+            
+            if skipped > 0 {
+                crate::modules::logger::log_info(&format!(
+                    "[Warmup] 已跳过 {} 个冷却期内的模型，将预热 {} 个",
+                    skipped, total
+                ));
+            }
+            
+            crate::modules::logger::log_info(&format!(
+                "[Warmup] 🔥 启动手动预热: {} 个模型",
+                total
+            ));
+            
             tokio::spawn(async move {
                 let mut success = 0;
-                let round_total = warmup_items.len();
-                for (idx, (email, model, token, pid, pct)) in warmup_items.into_iter().enumerate() {
-                    if warmup_model_directly(&token, &model, &pid, &email, pct).await {
-                        success += 1;
+                let batch_size = 3;
+                let now_ts = chrono::Utc::now().timestamp();
+                
+                for (batch_idx, batch) in warmup_items.chunks(batch_size).enumerate() {
+                    let mut handles = Vec::new();
+                    
+                    for (email, model, token, pid, pct) in batch.iter() {
+                        let email = email.clone();
+                        let model = model.clone();
+                        let token = token.clone();
+                        let pid = pid.clone();
+                        let pct = *pct;
+                        
+                        let handle = tokio::spawn(async move {
+                            let result = warmup_model_directly(&token, &model, &pid, &email, pct).await;
+                            (result, email, model)
+                        });
+                        handles.push(handle);
                     }
-                    if idx < round_total - 1 {
+                    
+                    for handle in handles {
+                        match handle.await {
+                            Ok((true, email, model)) => {
+                                success += 1;
+                                let history_key = format!("{}:{}:100", email, model);
+                                crate::modules::scheduler::record_warmup_history(&history_key, now_ts);
+                            }
+                            _ => {}
+                        }
+                    }
+                    
+                    if batch_idx < (warmup_items.len() + batch_size - 1) / batch_size - 1 {
                         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     }
                 }
+                
                 crate::modules::logger::log_info(&format!("[Warmup] 预热任务完成: 成功 {}/{}", success, total));
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        let _ = crate::modules::account::refresh_all_quotas_logic().await;
+                let _ = crate::modules::account::refresh_all_quotas_logic().await;
             });
+            crate::modules::logger::log_info(&format!("[Warmup] 返回前端: 已启动 {} 个模型的预热任务", total));
             return Ok(format!("已启动 {} 个模型的预热任务", total));
         }
 

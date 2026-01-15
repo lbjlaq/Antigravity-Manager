@@ -4,6 +4,28 @@
 use super::models::*;
 use super::utils::to_claude_usage;
 
+/// [FIX #547] Helper function to coerce string values to boolean
+/// Gemini sometimes sends boolean parameters as strings (e.g., "true", "-n", "false")
+fn coerce_to_bool(value: &serde_json::Value) -> Option<serde_json::Value> {
+    match value {
+        serde_json::Value::Bool(_) => Some(value.clone()), // Already boolean
+        serde_json::Value::String(s) => {
+            let lower = s.to_lowercase();
+            if lower == "true" || lower == "yes" || lower == "1" || lower == "-n" {
+                Some(serde_json::json!(true))
+            } else if lower == "false" || lower == "no" || lower == "0" {
+                Some(serde_json::json!(false))
+            } else {
+                None // Unknown string, can't coerce
+            }
+        }
+        serde_json::Value::Number(n) => {
+            Some(serde_json::json!(n.as_i64().map(|i| i != 0).unwrap_or(false)))
+        }
+        _ => None,
+    }
+}
+
 /// Known parameter remappings for Gemini → Claude compatibility
 /// [FIX] Gemini sometimes uses different parameter names than specified in tool schema
 fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
@@ -16,6 +38,14 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
         // [IMPROVED] Case-insensitive matching for tool names
         match tool_name.to_lowercase().as_str() {
             "grep" => {
+                // [FIX #546] Gemini hallucination: maps parameter description to "description" field
+                if let Some(desc) = obj.remove("description") {
+                    if !obj.contains_key("pattern") {
+                        obj.insert("pattern".to_string(), desc);
+                        tracing::debug!("[Response] Remapped Grep: description → pattern");
+                    }
+                }
+
                 // Gemini uses "query", Claude Code expects "pattern"
                 if let Some(query) = obj.remove("query") {
                     if !obj.contains_key("pattern") {
@@ -44,8 +74,72 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                         tracing::debug!("[Response] Remapped Grep: default path → \".\"");
                     }
                 }
+
+                // [FIX] Remap "includes" (array) -> "include" (string)
+                if let Some(includes) = obj.remove("includes") {
+                    if !obj.contains_key("include") {
+                        let include_str = if let Some(arr) = includes.as_array() {
+                            // Join with comma? Or take first? Claude Code expects a single glob string.
+                            // Trying comma separation which is common for multi-glob
+                             arr.iter()
+                                .filter_map(|v| v.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        } else if let Some(s) = includes.as_str() {
+                            s.to_string()
+                        } else {
+                            String::new()
+                        };
+                        
+                        if !include_str.is_empty() {
+                            obj.insert("include".to_string(), serde_json::json!(include_str));
+                            tracing::debug!("[Response] Remapped Grep: includes → include(\"{}\")", include_str);
+                        }
+                    }
+                }
+
+                // [FIX] Remap "ignore_case" -> "ignoreCase"
+                if let Some(ignore_case) = obj.remove("ignore_case") {
+                    if !obj.contains_key("ignoreCase") {
+                        obj.insert("ignoreCase".to_string(), ignore_case);
+                        tracing::debug!("[Response] Remapped Grep: ignore_case → ignoreCase");
+                    }
+                }
+
+                // [FIX #547] Handle "-n" parameter sent as string instead of boolean
+                // Gemini sometimes sends Unix-style flags as parameter names
+                if let Some(n_val) = obj.remove("-n") {
+                    if let Some(bool_val) = coerce_to_bool(&n_val) {
+                        // "-n" in grep usually means "line numbers" - map to appropriate param
+                        if !obj.contains_key("lineNumbers") {
+                            obj.insert("lineNumbers".to_string(), bool_val);
+                            tracing::debug!("[Response] Remapped Grep: -n → lineNumbers");
+                        }
+                    }
+                }
+
+                // [FIX #547] Coerce all known boolean parameters from string to bool
+                let bool_params = ["ignoreCase", "lineNumbers", "caseSensitive", "regex", "wholeWord"];
+                for param in bool_params {
+                    if let Some(val) = obj.get(param).cloned() {
+                        if val.is_string() {
+                            if let Some(bool_val) = coerce_to_bool(&val) {
+                                obj.insert(param.to_string(), bool_val);
+                                tracing::debug!("[Response] Coerced Grep param '{}' from string to bool", param);
+                            }
+                        }
+                    }
+                }
             }
             "glob" => {
+                // [FIX #546] Gemini hallucination: maps parameter description to "description" field
+                if let Some(desc) = obj.remove("description") {
+                    if !obj.contains_key("pattern") {
+                        obj.insert("pattern".to_string(), desc);
+                        tracing::debug!("[Response] Remapped Glob: description → pattern");
+                    }
+                }
+
                 // Gemini uses "query", Claude Code expects "pattern"
                 if let Some(query) = obj.remove("query") {
                     if !obj.contains_key("pattern") {
@@ -107,6 +201,7 @@ pub struct NonStreamingProcessor {
     trailing_signature: Option<String>,
     pub has_tool_call: bool,
     pub scaling_enabled: bool,
+    pub context_limit: u32,
 }
 
 impl NonStreamingProcessor {
@@ -118,13 +213,15 @@ impl NonStreamingProcessor {
             thinking_signature: None,
             trailing_signature: None,
             has_tool_call: false,
-            scaling_enabled: false, // Default to false, set in process
+            scaling_enabled: false, 
+            context_limit: 1_048_576, // Default to 1M
         }
     }
 
     /// 处理 Gemini 响应并转换为 Claude 响应
-    pub fn process(&mut self, gemini_response: &GeminiResponse, scaling_enabled: bool) -> ClaudeResponse {
+    pub fn process(&mut self, gemini_response: &GeminiResponse, scaling_enabled: bool, context_limit: u32) -> ClaudeResponse {
         self.scaling_enabled = scaling_enabled;
+        self.context_limit = context_limit;
         // 获取 parts
         let empty_parts = vec![];
         let parts = gemini_response
@@ -344,10 +441,52 @@ impl NonStreamingProcessor {
             return;
         }
 
-        self.content_blocks.push(ContentBlock::Text {
-            text: self.text_builder.clone(),
-        });
+        let mut current_text = self.text_builder.clone();
         self.text_builder.clear();
+
+        // [NEW] MCP XML Bridge: 循环解析文本中可能存在的 XML 标签
+        while let Some(start_idx) = current_text.find("<mcp__") {
+            if let Some(tag_end_idx) = current_text[start_idx..].find('>') {
+                let actual_tag_end = start_idx + tag_end_idx;
+                let tool_name = &current_text[start_idx + 1..actual_tag_end];
+                let end_tag = format!("</{}>", tool_name);
+
+                if let Some(close_idx) = current_text.find(&end_tag) {
+                    // 1. 处理标签前的文本
+                    if start_idx > 0 {
+                        self.content_blocks.push(ContentBlock::Text {
+                            text: current_text[..start_idx].to_string(),
+                        });
+                    }
+
+                    // 2. 解析 XML 内容并转换为 ToolUse
+                    let input_str = &current_text[actual_tag_end + 1..close_idx];
+                    let input_json: serde_json::Value = serde_json::from_str(input_str.trim())
+                        .unwrap_or_else(|_| serde_json::json!({ "input": input_str.trim() }));
+
+                    self.content_blocks.push(ContentBlock::ToolUse {
+                        id: format!("{}-xml", tool_name),
+                        name: tool_name.to_string(),
+                        input: input_json,
+                        signature: None,
+                        cache_control: None,
+                    });
+                    self.has_tool_call = true;
+
+                    // 3. 继续处理剩余文本
+                    current_text = current_text[close_idx + end_tag.len()..].to_string();
+                    continue;
+                }
+            }
+            // 如果 XML 格式不完整, 退出循环并按普通文本处理
+            break;
+        }
+
+        if !current_text.is_empty() {
+            self.content_blocks.push(ContentBlock::Text {
+                text: current_text,
+            });
+        }
     }
 
     /// 刷新 thinking builder
@@ -387,7 +526,7 @@ impl NonStreamingProcessor {
         let usage = gemini_response
             .usage_metadata
             .as_ref()
-            .map(|u| to_claude_usage(u, self.scaling_enabled))
+            .map(|u| to_claude_usage(u, self.scaling_enabled, self.context_limit))
             .unwrap_or(Usage {
                 input_tokens: 0,
                 output_tokens: 0,
@@ -412,9 +551,9 @@ impl NonStreamingProcessor {
 }
 
 /// 转换 Gemini 响应为 Claude 响应 (公共接口)
-pub fn transform_response(gemini_response: &GeminiResponse, scaling_enabled: bool) -> Result<ClaudeResponse, String> {
+pub fn transform_response(gemini_response: &GeminiResponse, scaling_enabled: bool, context_limit: u32) -> Result<ClaudeResponse, String> {
     let mut processor = NonStreamingProcessor::new();
-    Ok(processor.process(gemini_response, scaling_enabled))
+    Ok(processor.process(gemini_response, scaling_enabled, context_limit))
 }
 
 #[cfg(test)]
@@ -450,7 +589,7 @@ mod tests {
             response_id: Some("resp_123".to_string()),
         };
 
-        let result = transform_response(&gemini_resp, false);
+        let result = transform_response(&gemini_resp, false, 1_000_000);
         assert!(result.is_ok());
 
         let claude_resp = result.unwrap();
@@ -500,7 +639,7 @@ mod tests {
             response_id: Some("resp_456".to_string()),
         };
 
-        let result = transform_response(&gemini_resp, false);
+        let result = transform_response(&gemini_resp, false, 1_000_000);
         assert!(result.is_ok());
 
         let claude_resp = result.unwrap();

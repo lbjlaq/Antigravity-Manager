@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use super::{token::TokenData, quota::QuotaData};
 
 /// 账号数据结构
@@ -33,6 +34,9 @@ pub struct Account {
     /// Unix timestamp when the proxy was disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_disabled_at: Option<i64>,
+    /// 受配额保护禁用的模型列表 [NEW #621]
+    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
+    pub protected_models: HashSet<String>,
     pub created_at: i64,
     pub last_used: i64,
 }
@@ -54,6 +58,7 @@ impl Account {
             proxy_disabled: false,
             proxy_disabled_reason: None,
             proxy_disabled_at: None,
+            protected_models: HashSet::new(),
             created_at: now,
             last_used: now,
         }

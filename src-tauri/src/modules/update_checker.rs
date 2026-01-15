@@ -101,7 +101,7 @@ pub async fn check_for_updates() -> Result<UpdateInfo, String> {
     })
 }
 
-/// Compare two semantic versions (e.g., "3.3.27" vs "3.3.26")
+/// Compare two semantic versions (e.g., "3.3.30" vs "3.3.29")
 fn compare_versions(latest: &str, current: &str) -> bool {
     let parse_version = |v: &str| -> Vec<u32> {
         v.split('.')
@@ -119,7 +119,7 @@ fn compare_versions(latest: &str, current: &str) -> bool {
         if latest_part > current_part {
             return true;
         } else if latest_part < current_part {
-            return false; // e.g. local: 3.3.27, remote: 3.3.27 => false
+            return false; // e.g. local: 3.3.30, remote: 3.3.30 => false
         }
     }
 
@@ -192,11 +192,11 @@ mod tests {
 
     #[test]
     fn test_compare_versions() {
-        assert!(compare_versions("3.3.24", "3.3.23"));
-        assert!(compare_versions("3.4.0", "3.3.24"));
-        assert!(compare_versions("4.0.0", "3.3.24"));
-        assert!(!compare_versions("3.3.23", "3.3.24"));
-        assert!(!compare_versions("3.3.24", "3.3.24"));
+        assert!(compare_versions("3.3.33", "3.3.32"));
+        assert!(compare_versions("3.4.0", "3.3.32"));
+        assert!(compare_versions("4.0.0", "3.3.32"));
+        assert!(!compare_versions("3.3.31", "3.3.32"));
+        assert!(!compare_versions("3.3.32", "3.3.32"));
     }
 
     #[test]

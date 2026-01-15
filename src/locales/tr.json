@@ -329,6 +329,8 @@
             "btn_copy": "Kopyala",
             "btn_copied": "Kopyalandı",
             "warning_key": "Not: API anahtarınızı güvende tutun. Paylaşmayın.",
+            "api_key_invalid": "Geçersiz API anahtarı formatı, sk- ile başlamalı ve en az 10 karakter uzunluğunda olmalıdır",
+            "api_key_updated": "API anahtarı güncellendi",
             "auth": {
                 "title": "Yetkilendirme",
                 "title_tooltip": "Gelen isteklerin kimlik doğrulamasının gerekli olup olmadığını ve hangi rotaların korunduğunu kontrol eder.",
@@ -362,6 +364,8 @@
                     "title": "Model Eşleme",
                     "title_tooltip": "Mevcut z.ai model kimliklerini alın ve gelen Anthropic/Claude model adlarının z.ai model kimliklerine nasıl çevrileceğini yapılandırın.",
                     "refresh": "Modelleri getir",
+            "btn_edit": "Düzenle",
+            "btn_save": "Kaydet",
                     "refreshing": "Getiriliyor...",
                     "hint": "Kullanılabilir modeller: {{count}}. Bir öneri seçin veya özel model kimliği yazın.",
                     "error": "Modeller getirilemedi: {{error}}",

@@ -69,6 +69,7 @@ where
     };
 
     let mut content = String::new();
+    let mut reasoning_content = String::new();
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut finish_reason: Option<String> = None;
 
@@ -91,6 +92,11 @@ where
                     // 累积 content
                     if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                         content.push_str(text);
+                    }
+
+                    // 累积 reasoning_content (思考过程)
+                    if let Some(reasoning) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
+                        reasoning_content.push_str(reasoning);
                     }
 
                     // 累积 tool_calls
@@ -141,7 +147,7 @@ where
             role: "assistant".to_string(),
             content: if content.is_empty() { None } else { Some(OpenAIContent::String(content)) },
             tool_calls: Some(tool_calls),
-            reasoning_content: None,
+            reasoning_content: if reasoning_content.is_empty() { None } else { Some(reasoning_content) },
             tool_call_id: None,
             name: None,
         }
@@ -150,7 +156,7 @@ where
             role: "assistant".to_string(),
             content: Some(OpenAIContent::String(content)),
             tool_calls: None,
-            reasoning_content: None,
+            reasoning_content: if reasoning_content.is_empty() { None } else { Some(reasoning_content) },
             tool_call_id: None,
             name: None,
         }

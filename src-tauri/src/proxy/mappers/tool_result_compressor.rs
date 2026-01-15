@@ -22,6 +22,7 @@ const SNAPSHOT_MAX_CHARS: usize = 16_000;
 const SNAPSHOT_HEAD_RATIO: f64 = 0.7;
 
 /// 浏览器快照尾部保留比例
+#[allow(dead_code)]
 const SNAPSHOT_TAIL_RATIO: f64 = 0.3;
 
 /// 压缩工具结果文本
@@ -35,23 +36,36 @@ pub fn compact_tool_result_text(text: &str, max_chars: usize) -> String {
         return text.to_string();
     }
     
+    // [NEW] 针对可能的 HTML 内容进行深度预处理
+    let cleaned_text = if text.contains("<html") || text.contains("<body") || text.contains("<!DOCTYPE") {
+        let cleaned = deep_clean_html(text);
+        debug!("[ToolCompressor] Deep cleaned HTML, reduced {} -> {} chars", text.len(), cleaned.len());
+        cleaned
+    } else {
+        text.to_string()
+    };
+
+    if cleaned_text.len() <= max_chars {
+        return cleaned_text;
+    }
+
     // 1. 检测大文件提示模式
-    if let Some(compacted) = compact_saved_output_notice(text, max_chars) {
+    if let Some(compacted) = compact_saved_output_notice(&cleaned_text, max_chars) {
         debug!("[ToolCompressor] Detected saved output notice, compacted to {} chars", compacted.len());
         return compacted;
     }
     
     // 2. 检测浏览器快照模式
-    if text.len() > SNAPSHOT_DETECTION_THRESHOLD {
-        if let Some(compacted) = compact_browser_snapshot(text, max_chars) {
+    if cleaned_text.len() > SNAPSHOT_DETECTION_THRESHOLD {
+        if let Some(compacted) = compact_browser_snapshot(&cleaned_text, max_chars) {
             debug!("[ToolCompressor] Detected browser snapshot, compacted to {} chars", compacted.len());
             return compacted;
         }
     }
     
-    // 3. 通用截断
-    debug!("[ToolCompressor] Using simple truncation for {} chars", text.len());
-    truncate_text(text, max_chars)
+    // 3. 结构化截断
+    debug!("[ToolCompressor] Using structured truncation for {} chars", cleaned_text.len());
+    truncate_text_safe(&cleaned_text, max_chars)
 }
 
 /// 压缩"输出已保存到文件"类型的提示
@@ -103,7 +117,7 @@ fn compact_saved_output_notice(text: &str, max_chars: usize) -> Option<String> {
     ));
     
     let result = compact_lines.join("\n");
-    Some(truncate_text(&result, max_chars))
+    Some(truncate_text_safe(&result, max_chars))
 }
 
 /// 压缩浏览器快照 (头+尾保留策略)
@@ -160,20 +174,74 @@ fn compact_browser_snapshot(text: &str, max_chars: usize) -> Option<String> {
         )
     };
     
-    Some(truncate_text(&summarized, max_chars))
+    Some(truncate_text_safe(&summarized, max_chars))
 }
 
-/// 通用文本截断
-/// 
-/// 在指定位置截断文本并添加截断提示
-fn truncate_text(text: &str, max_chars: usize) -> String {
+/// 安全的文本截断 (尽量不在标签中间截断)
+fn truncate_text_safe(text: &str, max_chars: usize) -> String {
     if text.len() <= max_chars {
         return text.to_string();
     }
     
-    let truncated = &text[..max_chars];
-    let omitted = text.len() - max_chars;
+    // 尝试寻找一个安全的截断点 (不在 < 和 > 之间)
+    let mut split_pos = max_chars;
+    
+    // 向前查找是否有未闭合的标签开始符
+    let sub = &text[..max_chars];
+    if let Some(last_open) = sub.rfind('<') {
+        if let Some(last_close) = sub.rfind('>') {
+            if last_open > last_close {
+                // 截断点在标签中间，回退到标签开始前
+                split_pos = last_open;
+            }
+        } else {
+            // 只有开始没有结束，回退到标签开始前
+            split_pos = last_open;
+        }
+    }
+    
+    // 也要避免在 JSON 大括号中间截断
+    if let Some(last_open_brace) = sub.rfind('{') {
+        if let Some(last_close_brace) = sub.rfind('}') {
+            if last_open_brace > last_close_brace {
+                // 可能在 JSON 中间，如果距离截断点较近，尝试回退
+                if max_chars - last_open_brace < 100 {
+                    split_pos = split_pos.min(last_open_brace);
+                }
+            }
+        }
+    }
+
+    let truncated = &text[..split_pos];
+    let omitted = text.len() - split_pos;
     format!("{}\n...[truncated {} chars]", truncated, omitted)
+}
+
+/// 深度清理 HTML (移除 style, script, base64 等)
+fn deep_clean_html(html: &str) -> String {
+    let mut result = html.to_string();
+    
+    // 1. 移除 <style>...</style> 及其内容
+    if let Ok(re) = Regex::new(r"(?is)<style\b[^>]*>.*?</style>") {
+        result = re.replace_all(&result, "[style omitted]").to_string();
+    }
+    
+    // 2. 移除 <script>...</script> 及其内容
+    if let Ok(re) = Regex::new(r"(?is)<script\b[^>]*>.*?</script>") {
+        result = re.replace_all(&result, "[script omitted]").to_string();
+    }
+    
+    // 3. 移除 inline Base64 数据 (如 src="data:image/png;base64,...")
+    if let Ok(re) = Regex::new(r#"(?i)data:[^;/]+/[^;]+;base64,[A-Za-z0-9+/=]+"#) {
+        result = re.replace_all(&result, "[base64 omitted]").to_string();
+    }
+
+    // 4. 移除冗余的空白字符
+    if let Ok(re) = Regex::new(r"\n\s*\n") {
+        result = re.replace_all(&result, "\n").to_string();
+    }
+    
+    result
 }
 
 /// 清理工具结果 content blocks
@@ -268,7 +336,7 @@ mod tests {
     #[test]
     fn test_truncate_text() {
         let text = "a".repeat(300_000);
-        let result = truncate_text(&text, 200_000);
+        let result = truncate_text_safe(&text, 200_000);
         assert!(result.len() < 210_000); // 包含截断提示
         assert!(result.contains("[truncated"));
         assert!(result.contains("100000 chars]"));
@@ -277,7 +345,7 @@ mod tests {
     #[test]
     fn test_truncate_text_no_truncation() {
         let text = "short text";
-        let result = truncate_text(text, 1000);
+        let result = truncate_text_safe(text, 1000);
         assert_eq!(result, text);
     }
 

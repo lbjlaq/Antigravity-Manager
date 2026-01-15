@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import ModalDialog from '../common/ModalDialog';
 import { useTranslation } from 'react-i18next';
@@ -6,6 +6,7 @@ import { request as invoke } from '../../utils/request';
 import { Trash2, Search, X } from 'lucide-react';
 import { AppConfig } from '../../types/config';
 import { formatCompactNumber } from '../../utils/format';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 interface ProxyRequestLog {
     id: string;
@@ -33,6 +34,119 @@ interface ProxyStats {
 interface ProxyMonitorProps {
     className?: string;
 }
+
+// Virtualized Log Table Component
+interface VirtualizedLogTableProps {
+    logs: ProxyRequestLog[];
+    loading: boolean;
+    hasMore: boolean;
+    loadMore: () => void;
+    onLogClick: (log: ProxyRequestLog) => void;
+    t: any;
+}
+
+const VirtualizedLogTable: React.FC<VirtualizedLogTableProps> = ({
+    logs,
+    loading,
+    hasMore,
+    loadMore,
+    onLogClick,
+    t
+}) => {
+    const parentRef = useRef<HTMLDivElement>(null);
+
+    const rowVirtualizer = useVirtualizer({
+        count: logs.length,
+        getScrollElement: () => parentRef.current,
+        estimateSize: () => 36, // Row height
+        overscan: 5,
+    });
+
+    const virtualItems = rowVirtualizer.getVirtualItems();
+
+    return (
+        <>
+            <div ref={parentRef} className="flex-1 overflow-auto bg-white dark:bg-base-100">
+                <table className="table table-xs w-full">
+                    <thead className="bg-gray-50 dark:bg-base-200 text-gray-500 sticky top-0 z-10">
+                        <tr>
+                            <th style={{ width: '80px' }}>{t('monitor.table.status')}</th>
+                            <th style={{ width: '80px' }}>{t('monitor.table.method')}</th>
+                            <th style={{ width: '200px' }}>{t('monitor.table.model')}</th>
+                            <th style={{ width: '150px' }}>{t('monitor.table.account')}</th>
+                            <th>{t('monitor.table.path')}</th>
+                            <th className="text-right" style={{ width: '100px' }}>{t('monitor.table.usage')}</th>
+                            <th className="text-right" style={{ width: '100px' }}>{t('monitor.table.duration')}</th>
+                            <th className="text-right" style={{ width: '100px' }}>{t('monitor.table.time')}</th>
+                        </tr>
+                    </thead>
+                    <tbody className="font-mono text-gray-700 dark:text-gray-300" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+                        {virtualItems.map((virtualRow) => {
+                            const log = logs[virtualRow.index];
+                            return (
+                                <tr
+                                    key={log.id}
+                                    className="hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer"
+                                    style={{
+                                        position: 'absolute',
+                                        top: 0,
+                                        left: 0,
+                                        width: '100%',
+                                        height: `${virtualRow.size}px`,
+                                        transform: `translateY(${virtualRow.start}px)`,
+                                    }}
+                                    onClick={() => onLogClick(log)}
+                                >
+                                    <td style={{ width: '80px' }}>
+                                        <span className={`badge badge-xs text-white border-none ${log.status >= 200 && log.status < 400 ? 'badge-success' : 'badge-error'}`}>
+                                            {log.status}
+                                        </span>
+                                    </td>
+                                    <td className="font-bold" style={{ width: '80px' }}>{log.method}</td>
+                                    <td className="text-blue-600 truncate" style={{ width: '200px', maxWidth: '200px' }}>
+                                        {log.mapped_model && log.model !== log.mapped_model
+                                            ? `${log.model} => ${log.mapped_model}`
+                                            : (log.model || '-')}
+                                    </td>
+                                    <td className="text-gray-600 dark:text-gray-400 truncate text-[10px]" style={{ width: '150px', maxWidth: '150px' }}>
+                                        {log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-'}
+                                    </td>
+                                    <td className="truncate" style={{ maxWidth: '300px' }}>{log.url}</td>
+                                    <td className="text-right text-[9px]" style={{ width: '100px' }}>
+                                        {log.input_tokens != null && <div>I: {formatCompactNumber(log.input_tokens)}</div>}
+                                        {log.output_tokens != null && <div>O: {formatCompactNumber(log.output_tokens)}</div>}
+                                    </td>
+                                    <td className="text-right" style={{ width: '100px' }}>{log.duration}ms</td>
+                                    <td className="text-right text-[10px]" style={{ width: '100px' }}>
+                                        {new Date(log.timestamp).toLocaleTimeString()}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Loading indicator - outside scroll container */}
+            {loading && (
+                <div className="flex items-center justify-center p-4 bg-white dark:bg-base-100 border-t border-gray-200 dark:border-base-300">
+                    <div className="loading loading-spinner loading-md"></div>
+                    <span className="ml-3 text-sm text-gray-500">{t('common.loading') || 'Loading...'}</span>
+                </div>
+            )}
+
+            {/* Load more button - outside scroll container */}
+            {!loading && hasMore && logs.length > 0 && (
+                <div className="flex justify-center p-4 bg-white dark:bg-base-100 border-t border-gray-200 dark:border-base-300">
+                    <button onClick={loadMore} className="btn btn-sm btn-outline">
+                        {t('common.load_more') || 'Load More'}
+                    </button>
+                </div>
+            )}
+        </>
+    );
+};
+
 
 export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const { t } = useTranslation();
@@ -127,22 +241,49 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     useEffect(() => {
         loadData();
         let unlistenFn: (() => void) | null = null;
+        let updateTimeout: number | null = null;
+        let pendingLogs: ProxyRequestLog[] = [];
+
         const setupListener = async () => {
             unlistenFn = await listen<ProxyRequestLog>('proxy://request', (event) => {
                 const newLog = event.payload;
-                setLogs(prev => [newLog, ...prev].slice(0, 1000));
-                setStats((prev: ProxyStats) => {
-                    const isSuccess = newLog.status >= 200 && newLog.status < 400;
-                    return {
-                        total_requests: prev.total_requests + 1,
-                        success_count: prev.success_count + (isSuccess ? 1 : 0),
-                        error_count: prev.error_count + (isSuccess ? 0 : 1),
-                    };
-                });
+
+                // 移除 body 以减少内存占用
+                const logSummary = {
+                    ...newLog,
+                    request_body: undefined,
+                    response_body: undefined
+                };
+
+                // 添加到待处理队列
+                pendingLogs.push(logSummary);
+
+                // 防抖:每 500ms 批量更新一次
+                if (updateTimeout) clearTimeout(updateTimeout);
+                updateTimeout = setTimeout(() => {
+                    if (pendingLogs.length > 0) {
+                        setLogs(prev => [...pendingLogs, ...prev].slice(0, 100)); // 1000 → 100
+
+                        // 批量更新统计
+                        setStats((prev: ProxyStats) => {
+                            const successCount = pendingLogs.filter(log => log.status >= 200 && log.status < 400).length;
+                            return {
+                                total_requests: prev.total_requests + pendingLogs.length,
+                                success_count: prev.success_count + successCount,
+                                error_count: prev.error_count + (pendingLogs.length - successCount),
+                            };
+                        });
+
+                        pendingLogs = [];
+                    }
+                }, 500);
             });
         };
         setupListener();
-        return () => { if (unlistenFn) unlistenFn(); };
+        return () => {
+            if (unlistenFn) unlistenFn();
+            if (updateTimeout) clearTimeout(updateTimeout);
+        };
     }, []);
 
     const filteredLogs = logs
@@ -236,76 +377,25 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-auto bg-white dark:bg-base-100">
-                <table className="table table-xs w-full">
-                    <thead className="bg-gray-50 dark:bg-base-200 text-gray-500 sticky top-0">
-                        <tr>
-                            <th>{t('monitor.table.status')}</th>
-                            <th>{t('monitor.table.method')}</th>
-                            <th>{t('monitor.table.model')}</th>
-                            <th>{t('monitor.table.account')}</th>
-                            <th>{t('monitor.table.path')}</th>
-                            <th className="text-right">{t('monitor.table.usage')}</th>
-                            <th className="text-right">{t('monitor.table.duration')}</th>
-                            <th className="text-right">{t('monitor.table.time')}</th>
-                        </tr>
-                    </thead>
-                    <tbody className="font-mono text-gray-700 dark:text-gray-300">
-                        {filteredLogs.map(log => (
-                            <tr key={log.id} className="hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer" onClick={async () => {
-                                setLoadingDetail(true);
-                                try {
-                                    const detail = await invoke<ProxyRequestLog>('get_proxy_log_detail', { logId: log.id });
-                                    setSelectedLog(detail);
-                                } catch (e) {
-                                    console.error('Failed to load log detail', e);
-                                    setSelectedLog(log); // Fallback to summary data
-                                } finally {
-                                    setLoadingDetail(false);
-                                }
-                            }}>
-                                <td><span className={`badge badge-xs text-white border-none ${log.status >= 200 && log.status < 400 ? 'badge-success' : 'badge-error'}`}>{log.status}</span></td>
-                                <td className="font-bold">{log.method}</td>
-                                <td className="text-blue-600 truncate max-w-[180px]">
-                                    {log.mapped_model && log.model !== log.mapped_model
-                                        ? `${log.model} => ${log.mapped_model}`
-                                        : (log.model || '-')}
-                                </td>
-                                <td className="text-gray-600 dark:text-gray-400 truncate max-w-[120px] text-[10px]">
-                                    {log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-'}
-                                </td>
-                                <td className="truncate max-w-[240px]">{log.url}</td>
-                                <td className="text-right text-[9px]">
-                                    {log.input_tokens != null && <div>I: {formatCompactNumber(log.input_tokens)}</div>}
-                                    {log.output_tokens != null && <div>O: {formatCompactNumber(log.output_tokens)}</div>}
-                                </td>
-                                <td className="text-right">{log.duration}ms</td>
-                                <td className="text-right text-[10px]">{new Date(log.timestamp).toLocaleTimeString()}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-
-                {/* Loading indicator */}
-                {loading && (
-                    <div className="flex items-center justify-center p-8">
-                        <div className="loading loading-spinner loading-md"></div>
-                        <span className="ml-3 text-sm text-gray-500">{t('common.loading') || 'Loading...'}</span>
-                    </div>
-                )}
-
-                {/* Load more button */}
-                {!loading && hasMore && filteredLogs.length > 0 && (
-                    <div className="flex justify-center p-4 border-t border-gray-200 dark:border-base-300">
-                        <button
-                            onClick={loadMore}
-                            className="btn btn-sm btn-outline"
-                        >
-                            {t('common.load_more') || 'Load More'}
-                        </button>
-                    </div>
-                )}
-            </div>
+            <VirtualizedLogTable
+                logs={filteredLogs}
+                loading={loading}
+                hasMore={hasMore}
+                loadMore={loadMore}
+                onLogClick={async (log) => {
+                    setLoadingDetail(true);
+                    try {
+                        const detail = await invoke<ProxyRequestLog>('get_proxy_log_detail', { logId: log.id });
+                        setSelectedLog(detail);
+                    } catch (e) {
+                        console.error('Failed to load log detail', e);
+                        setSelectedLog(log);
+                    } finally {
+                        setLoadingDetail(false);
+                    }
+                }}
+                t={t}
+            />
 
             {selectedLog && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setSelectedLog(null)}>

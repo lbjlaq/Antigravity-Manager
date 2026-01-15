@@ -531,7 +531,7 @@ pub async fn handle_messages(
         let session_id = Some(session_id_str.as_str());
 
         let force_rotate_token = attempt > 0;
-        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id).await {
+        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id, &config.final_model).await {
             Ok(t) => t,
             Err(e) => {
                 let safe_message = if e.contains("invalid_grant") {
@@ -672,6 +672,9 @@ pub async fn handle_messages(
             // [智能限流] 请求成功，重置该账号的连续失败计数
             token_manager.mark_account_success(&email);
             
+                // Determine context limit based on model
+                let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&request_with_mapped.model);
+
             // 处理流式响应
             if actual_stream {
                 let stream = response.bytes_stream();
@@ -682,7 +685,8 @@ pub async fn handle_messages(
                     trace_id.clone(), 
                     email.clone(),
                     Some(session_id_str.clone()),
-                    scaling_enabled
+                    scaling_enabled,
+                    context_limit
                 );
 
                 // [FIX #530/#529] Peek first chunk to detect empty response and allow retry
@@ -777,8 +781,11 @@ pub async fn handle_messages(
                     Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Convert error: {}", e)).into_response(),
                 };
                 
+                // Determine context limit based on model
+                let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&request_with_mapped.model);
+
                 // 转换
-                let claude_response = match transform_response(&gemini_response, scaling_enabled) {
+                let claude_response = match transform_response(&gemini_response, scaling_enabled, context_limit) {
                     Ok(r) => r,
                     Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Transform error: {}", e)).into_response(),
                 };
@@ -832,6 +839,7 @@ pub async fn handle_messages(
                 || error_text.contains("failed to deserialise") // [New] JSON structure issues
                 )
         {
+            // Existing logic for thinking signature...
             retried_without_thinking = true;
             
             // 使用 WARN 级别,因为这不应该经常发生(已经主动过滤过)
@@ -889,6 +897,23 @@ pub async fn handle_messages(
             }
             continue;
         } else {
+            // 5. 增强的 400 错误处理: Prompt Too Long 友好提示
+            if status_code == 400 && (error_text.contains("too long") || error_text.contains("exceeds") || error_text.contains("limit")) {
+                 return (
+                    StatusCode::BAD_REQUEST,
+                    [("X-Account-Email", email.as_str())],
+                    Json(json!({
+                        "id": "err_prompt_too_long",
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "Prompt is too long (server-side context limit reached).",
+                            "suggestion": "Please: 1) Executive '/compact' in Claude Code 2) Reduce conversation history 3) Switch to gemini-1.5-pro (2M context limit)"
+                        }
+                    }))
+                ).into_response();
+            }
+
             // 不可重试的错误，直接返回
             error!("[{}] Non-retryable error {}: {}", trace_id, status_code, error_text);
             return (status, [("X-Account-Email", email.as_str())], error_text).into_response();

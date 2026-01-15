@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod tests {
     use crate::proxy::mappers::claude::models::{
-        ClaudeRequest, Message, MessageContent, ContentBlock, ThinkingConfig, Tool
+        ClaudeRequest, Message, MessageContent, ContentBlock, ThinkingConfig
     };
     use crate::proxy::mappers::claude::request::transform_claude_request_in;
     use crate::proxy::mappers::claude::thinking_utils::{analyze_conversation_state, close_tool_loop_for_thinking};
     use serde_json::json;
-    use std::sync::{Arc, Mutex};
+
     
     // ==================================================================================
     // 场景一：首次 Thinking 请求 (P0-2 Fix)

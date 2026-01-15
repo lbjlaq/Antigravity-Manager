@@ -219,8 +219,11 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
 
     // 3. 构建请求体
     // [FIX PR #368] 检测 Gemini 3 Pro thinking 模型，注入 thinkingBudget 配置
+    // 加入 Claude thinking 模型支援
     let is_gemini_3_thinking = mapped_model.contains("gemini-3") && 
         (mapped_model.ends_with("-high") || mapped_model.ends_with("-low") || mapped_model.contains("-pro"));
+    let is_claude_thinking = mapped_model.ends_with("-thinking");
+    let is_thinking_model = is_gemini_3_thinking || is_claude_thinking;
 
     let mut gen_config = json!({
         "maxOutputTokens": request.max_tokens.unwrap_or(64000),
@@ -233,13 +236,13 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
         gen_config["candidateCount"] = json!(n);
     }
 
-    // [FIX PR #368] 为 Gemini 3 Pro 注入 thinkingConfig (使用 thinkingBudget 而非 thinkingLevel)
-    if is_gemini_3_thinking {
+    // [FIX PR #368] 为 thinking 模型注入 thinkingConfig (使用 thinkingBudget 而非 thinkingLevel)
+    if is_thinking_model {
         gen_config["thinkingConfig"] = json!({
             "includeThoughts": true,
             "thinkingBudget": 16000
         });
-        tracing::debug!("[OpenAI-Request] Injected thinkingConfig for Gemini 3 Pro: thinkingBudget=16000");
+        tracing::debug!("[OpenAI-Request] Injected thinkingConfig for model {}: thinkingBudget=16000", mapped_model);
     }
 
 

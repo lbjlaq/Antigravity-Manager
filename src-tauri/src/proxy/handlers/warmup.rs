@@ -162,7 +162,6 @@ pub async fn handle_warmup(
     }
 
     // ===== 步骤 4: 处理响应 =====
-    let start_time = std::time::Instant::now();
     match result {
         Ok(response) => {
             let status = response.status();

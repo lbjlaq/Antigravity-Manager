@@ -72,7 +72,7 @@ pub async fn handle_chat_completions(
         // 4. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
         let (access_token, project_id, email) = match token_manager
-            .get_token(&config.request_type, attempt > 0, Some(&session_id))
+            .get_token(&config.request_type, attempt > 0, Some(&session_id), &config.final_model)
             .await
         {
             Ok(t) => t,
@@ -582,7 +582,7 @@ pub async fn handle_completions(
         );
 
         let (access_token, project_id, email) =
-            match token_manager.get_token(&config.request_type, false, None).await {
+            match token_manager.get_token(&config.request_type, false, None, &config.final_model).await {
                 Ok(t) => t,
                 Err(e) => {
                     return Err((
@@ -793,7 +793,7 @@ pub async fn handle_images_generations(
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
 
-    let (access_token, project_id, email) = match token_manager.get_token("image_gen", false, None).await
+    let (access_token, project_id, email) = match token_manager.get_token("image_gen", false, None, "dall-e-3").await
     {
         Ok(t) => t,
         Err(e) => {
@@ -1047,7 +1047,7 @@ pub async fn handle_images_edits(
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
     // Fix: Proper get_token call with correct signature and unwrap (using image_gen quota)
-    let (access_token, project_id, email) = match token_manager.get_token("image_gen", false, None).await
+    let (access_token, project_id, email) = match token_manager.get_token("image_gen", false, None, "dall-e-3").await
     {
         Ok(t) => t,
         Err(e) => {

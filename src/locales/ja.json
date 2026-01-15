@@ -329,6 +329,8 @@
             "btn_copy": "コピー",
             "btn_copied": "コピーしました",
             "warning_key": "注意: APIキーを安全に保管してください。他人に共有しないでください。",
+            "api_key_invalid": "APIキーの形式が無効です。sk- で始まり、10文字以上である必要があります",
+            "api_key_updated": "APIキーが更新されました",
             "auth": {
                 "title": "認証",
                 "title_tooltip": "着信リクエストの認証が必要かどうか、およびどのルートを保護するかを制御します。",
@@ -362,6 +364,8 @@
                     "title": "モデルマッピング",
                     "title_tooltip": "利用可能なz.aiモデルIDを取得し、Claudeモデル名がどのようにz.aiモデルIDに翻訳されるかを構成します。",
                     "refresh": "モデルを取得",
+            "btn_edit": "編集",
+            "btn_save": "保存",
                     "refreshing": "取得中...",
                     "hint": "利用可能なモデル: {{count}}。提案を選択するか、カスタムモデルIDを入力してください。",
                     "error": "モデルの取得に失敗しました: {{error}}",

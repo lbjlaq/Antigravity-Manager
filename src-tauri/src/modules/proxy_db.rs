@@ -194,6 +194,7 @@ pub fn cleanup_old_logs(days: i64) -> Result<usize, String> {
 }
 
 /// Limit maximum log count (keep newest N records)
+#[allow(dead_code)]
 pub fn limit_max_logs(max_count: usize) -> Result<usize, String> {
     let db_path = get_proxy_db_path()?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;

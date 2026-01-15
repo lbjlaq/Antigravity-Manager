@@ -180,14 +180,6 @@ pub async fn fetch_account_quota(
         let _ = instance.token_manager.reload_account(&account_id).await;
     }
 
-    // 6. 联动预热 (根据配置)
-    if let Ok(config) = crate::modules::config::load_app_config() {
-        if config.scheduled_warmup.enabled {
-            let account = crate::modules::load_account(&account_id).unwrap_or(account);
-            crate::modules::scheduler::trigger_warmup_for_account(&account).await;
-        }
-    }
-
     Ok(quota)
 }
 
@@ -204,17 +196,6 @@ pub async fn refresh_all_quotas(
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
         let _ = instance.token_manager.reload_all_accounts().await;
-    }
-
-    // 联动预热 (根据配置)
-    if let Ok(config) = crate::modules::config::load_app_config() {
-        if config.scheduled_warmup.enabled {
-            if let Ok(accounts) = crate::modules::list_accounts() {
-                for acc in accounts {
-                    crate::modules::scheduler::trigger_warmup_for_account(&acc).await;
-                }
-            }
-        }
     }
 
     Ok(stats)
@@ -334,6 +315,8 @@ pub async fn save_config(
         instance.axum_server.update_security(&config.proxy).await;
         // 更新 z.ai 配置
         instance.axum_server.update_zai(&config.proxy).await;
+        // 更新实验性配置
+        instance.axum_server.update_experimental(&config.proxy).await;
         tracing::debug!("已同步热更新反代服务配置");
     }
 

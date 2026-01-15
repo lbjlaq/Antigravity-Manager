@@ -265,8 +265,19 @@ pub fn transform_claude_request_in(
     // 用于存储 tool_use id -> name 映射
     let mut tool_id_to_name: HashMap<String, String> = HashMap::new();
 
-    // 1. System Instruction (注入动态身份防护)
-    let system_instruction = build_system_instruction(&claude_req.system, &claude_req.model);
+    // 检测是否有 mcp__ 开头的工具
+    let has_mcp_tools = claude_req
+        .tools
+        .as_ref()
+        .map(|tools| {
+            tools.iter().any(|t| {
+                t.name.as_deref().map(|n| n.starts_with("mcp__")).unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+
+    // 1. System Instruction (注入动态身份防护 & MCP XML 协议)
+    let system_instruction = build_system_instruction(&claude_req.system, &claude_req.model, has_mcp_tools);
 
     //  Map model name (Use standard mapping)
     // [IMPROVED] 提取 web search 模型为常量，便于维护
@@ -571,7 +582,7 @@ fn has_valid_signature_for_function_calls(
 }
 
 /// 构建 System Instruction (支持动态身份映射与 Prompt 隔离)
-fn build_system_instruction(system: &Option<SystemPrompt>, _model_name: &str) -> Option<Value> {
+fn build_system_instruction(system: &Option<SystemPrompt>, _model_name: &str, has_mcp_tools: bool) -> Option<Value> {
     let mut parts = Vec::new();
 
     // [NEW] Antigravity 身份指令 (原始简化版)
@@ -609,16 +620,39 @@ fn build_system_instruction(system: &Option<SystemPrompt>, _model_name: &str) ->
     if let Some(sys) = system {
         match sys {
             SystemPrompt::String(text) => {
-                parts.push(json!({"text": text}));
+                // [NEW] 过滤 Claude Code 注入的超长 CLI 规则说明 (通常 > 2000 字符)
+                if text.len() > 1000 && text.contains("You are an interactive CLI tool") {
+                    tracing::info!("[Claude-Request] Filtering out long redundant Claude Code system instruction (len: {})", text.len());
+                } else {
+                    parts.push(json!({"text": text}));
+                }
             }
             SystemPrompt::Array(blocks) => {
                 for block in blocks {
                     if block.block_type == "text" {
-                        parts.push(json!({"text": block.text}));
+                        // [NEW] 过滤数组形式的超长指令
+                        if block.text.len() > 1000 && block.text.contains("You are an interactive CLI tool") {
+                            tracing::info!("[Claude-Request] Filtering out long redundant Claude Code system block (len: {})", block.text.len());
+                        } else {
+                            parts.push(json!({"text": block.text}));
+                        }
                     }
                 }
             }
         }
+    }
+
+    // [NEW] MCP XML Bridge: 如果存在 mcp__ 开头的工具，注入专用的调用协议
+    // 这能有效规避部分 MCP 链路在标准的 tool_use 协议下解析不稳的问题
+    if has_mcp_tools {
+        let mcp_xml_prompt = "\n\
+        ==== MCP XML 工具调用协议 (Workaround) ====\n\
+        当你需要调用名称以 `mcp__` 开头的 MCP 工具时：\n\
+        1) 优先尝试 XML 格式调用：输出 `<mcp__tool_name>{\"arg\":\"value\"}</mcp__tool_name>`。\n\
+        2) 必须直接输出 XML 块，无需 markdown 包装，内容为 JSON 格式的入参。\n\
+        3) 这种方式具有更高的连通性和容错性，适用于大型结果返回场景。\n\
+        ===========================================";
+        parts.push(json!({"text": mcp_xml_prompt}));
     }
 
     // 如果用户没有提供任何系统提示词,添加结束标记
@@ -645,8 +679,26 @@ fn build_contents(
     let mut last_thought_signature: Option<String> = None;
     // Track pending tool_use IDs for recovery
     let mut pending_tool_use_ids: Vec<String> = Vec::new();
+    
+    // [NEW] 用于识别并过滤 Claude Code 重复回显的任务指令
+    let mut last_user_task_text_normalized: Option<String> = None;
+    let mut previous_was_tool_result = false;
 
     let _msg_count = messages.len();
+
+    // [FIX #632] Pre-scan all messages to identify all tool_result IDs that ALREADY exist in the conversation.
+    // This prevents Elastic-Recovery from injecting duplicate results if they are present later in the chain.
+    let mut existing_tool_result_ids = std::collections::HashSet::new();
+    for msg in messages {
+        if let MessageContent::Array(blocks) = &msg.content {
+            for block in blocks {
+                if let ContentBlock::ToolResult { tool_use_id, .. } = block {
+                    existing_tool_result_ids.insert(tool_use_id.clone());
+                }
+            }
+        }
+    }
+
     for (_i, msg) in messages.iter().enumerate() {
         let role = if msg.role == "assistant" {
             // Proactive Tool Chain Repair:
@@ -656,23 +708,27 @@ fn build_contents(
             if !pending_tool_use_ids.is_empty() {
                 tracing::warn!("[Elastic-Recovery] Detected interrupted tool chain (Assistant -> Assistant). Injecting synthetic User message for IDs: {:?}", pending_tool_use_ids);
                 
-                let synthetic_parts: Vec<serde_json::Value> = pending_tool_use_ids.iter().map(|id| {
-                    let name = tool_id_to_name.get(id).cloned().unwrap_or(id.clone());
-                    json!({
-                        "functionResponse": {
-                            "name": name,
-                            "response": {
-                                "result": "Tool execution interrupted. No result provided."
-                            },
-                            "id": id
-                        }
-                    })
-                }).collect();
+                let synthetic_parts: Vec<serde_json::Value> = pending_tool_use_ids.iter()
+                    .filter(|id| !existing_tool_result_ids.contains(*id)) // [FIX #632] Only inject if ID is truly missing
+                    .map(|id| {
+                        let name = tool_id_to_name.get(id).cloned().unwrap_or(id.clone());
+                        json!({
+                            "functionResponse": {
+                                "name": name,
+                                "response": {
+                                    "result": "Tool execution interrupted. No result provided."
+                                },
+                                "id": id
+                            }
+                        })
+                    }).collect();
 
-                contents.push(json!({
-                    "role": "user",
-                    "parts": synthetic_parts
-                }));
+                if !synthetic_parts.is_empty() {
+                    contents.push(json!({
+                        "role": "user",
+                        "parts": synthetic_parts
+                    }));
+                }
                 // Clear pending IDs as we have handled them
                 pending_tool_use_ids.clear();
             }
@@ -699,7 +755,25 @@ fn build_contents(
                     match item {
                         ContentBlock::Text { text } => {
                             if text != "(no content)" {
+                                // [NEW] 任务去重逻辑: 如果当前是 User 消息，且紧跟在 ToolResult 之后，
+                                // 检查该文本是否与上一轮任务描述完全一致。
+                                if role == "user" && previous_was_tool_result {
+                                    if let Some(last_task) = &last_user_task_text_normalized {
+                                        let current_normalized = text.replace(|c: char| c.is_whitespace(), "");
+                                        if !current_normalized.is_empty() && current_normalized == *last_task {
+                                            tracing::info!("[Claude-Request] Dropping duplicated task text echo (len: {})", text.len());
+                                            continue;
+                                        }
+                                    }
+                                }
+                                
                                 parts.push(json!({"text": text}));
+                                
+                                // 记录最近一次 User 任务文本用于后续比对
+                                if role == "user" {
+                                    last_user_task_text_normalized = Some(text.replace(|c: char| c.is_whitespace(), ""));
+                                }
+                                previous_was_tool_result = false;
                             }
                         }
                         ContentBlock::Thinking { thinking, signature, .. } => {
@@ -941,24 +1015,27 @@ fn build_contents(
                                 }
                             }
 
-                            let mut part = json!({
-                                "functionResponse": {
-                                    "name": func_name,
-                                    "response": {"result": merged_content},
-                                    "id": tool_use_id
+                                parts.push(json!({
+                                    "functionResponse": {
+                                        "name": func_name,
+                                        "response": {"result": merged_content},
+                                        "id": tool_use_id
+                                    }
+                                }));
+                                
+                                // [FIX] Tool Result 也需要回填签名（如果上下文中有）
+                                if let Some(sig) = last_thought_signature.as_ref() {
+                                    // [FIX #545] Encode raw signature to Base64 for Gemini
+                                    use base64::Engine;
+                                    let encoded_sig = base64::engine::general_purpose::STANDARD.encode(sig);
+                                    if let Some(last_part) = parts.last_mut() {
+                                        last_part["thoughtSignature"] = json!(encoded_sig);
+                                    }
                                 }
-                            });
-
-                            // [修复] Tool Result 也需要回填签名（如果上下文中有）
-                            if let Some(sig) = last_thought_signature.as_ref() {
-                                // [FIX #545] Encode raw signature to Base64 for Gemini
-                                use base64::Engine;
-                                let encoded_sig = base64::engine::general_purpose::STANDARD.encode(sig);
-                                part["thoughtSignature"] = json!(encoded_sig);
+                                
+                                // 标记状态，用于下一条 User 消息的去重判断
+                                previous_was_tool_result = true;
                             }
-
-                            parts.push(part);
-                        }
                         // ContentBlock::RedactedThinking handled above at line 583
                         ContentBlock::ServerToolUse { .. } | ContentBlock::WebSearchToolResult { .. } => {
                             // 搜索结果 block 不应由客户端发回给上游 (已由 tool_result 替代)

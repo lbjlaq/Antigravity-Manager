@@ -39,6 +39,7 @@ pub struct AxumServer {
     proxy_state: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
     security_state: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,
     zai_state: Arc<RwLock<crate::proxy::ZaiConfig>>,
+    experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
 }
 
 impl AxumServer {
@@ -67,6 +68,12 @@ impl AxumServer {
         let mut zai = self.zai_state.write().await;
         *zai = config.zai.clone();
         tracing::info!("z.ai 配置已热更新");
+    }
+
+    pub async fn update_experimental(&self, config: &crate::proxy::config::ProxyConfig) {
+        let mut exp = self.experimental.write().await;
+        *exp = config.experimental.clone();
+        tracing::info!("实验性配置已热更新");
     }
     /// 启动 Axum 服务器
     pub async fn start(
@@ -106,7 +113,7 @@ impl AxumServer {
             provider_rr: provider_rr.clone(),
             zai_vision_mcp: zai_vision_mcp_state,
             monitor: monitor.clone(),
-            experimental: experimental_state,
+            experimental: experimental_state.clone(),
         };
 
 
@@ -203,6 +210,7 @@ impl AxumServer {
             proxy_state,
             security_state,
             zai_state,
+            experimental: experimental_state.clone(),
         };
 
         // 在新任务中启动服务器
