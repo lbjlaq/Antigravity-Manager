@@ -60,7 +60,13 @@ pub fn start_scheduler(app_handle: tauri::AppHandle) {
                 let now_ts = Utc::now().timestamp();
 
                 for model in fresh_quota.models {
-                    let history_key = format!("{}:{}:100", account.email, model.name);
+                    let model_to_ping = if model.name == "gemini-2.5-flash" {
+                        "gemini-3-flash".to_string()
+                    } else {
+                        model.name.clone()
+                    };
+
+                    let history_key = format!("{}:{}:100", account.email, model_to_ping);
                     
                     // 核心逻辑：检测 100% 额度
                     if model.percentage == 100 {
@@ -74,13 +80,6 @@ pub fn start_scheduler(app_handle: tauri::AppHandle) {
                         // 记录到历史
                         history.insert(history_key.clone(), now_ts);
                         drop(history);
-
-                        // 模型名称映射
-                        let model_to_ping = if model.name == "gemini-2.5-flash" {
-                            "gemini-3-flash".to_string()
-                        } else {
-                            model.name.clone()
-                        };
 
                         // 仅对用户配置的模型进行预热
                         if app_config.scheduled_warmup.monitored_models.contains(&model_to_ping) {
@@ -185,7 +184,14 @@ pub async fn trigger_warmup_for_account(account: &Account) {
     let mut tasks_to_run = Vec::new();
 
     for model in fresh_quota.models {
-        let history_key = format!("{}:{}:100", account.email, model.name);
+        // 模型名称映射（提前到history_key构建之前）
+        let model_to_ping = if model.name == "gemini-2.5-flash" {
+            "gemini-3-flash".to_string()
+        } else {
+            model.name.clone()
+        };
+
+        let history_key = format!("{}:{}:100", account.email, model_to_ping);
         
         if model.percentage == 100 {
             // 检查历史，避免重复预热
@@ -194,14 +200,8 @@ pub async fn trigger_warmup_for_account(account: &Account) {
                 if history.contains_key(&history_key) {
                     continue;
                 }
-                history.insert(history_key, now_ts);
+                history.insert(history_key.clone(), now_ts);
             }
-
-            let model_to_ping = if model.name == "gemini-2.5-flash" {
-                "gemini-3-flash".to_string()
-            } else {
-                model.name.clone()
-            };
 
             // 仅对用户勾选的模型进行预热
             let Ok(app_config) = config::load_app_config() else {
