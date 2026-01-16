@@ -322,24 +322,7 @@ pub async fn handle_messages(
     let zai_enabled = zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
     let google_accounts = state.token_manager.len();
 
-    let use_zai = if !zai_enabled {
-        false
-    } else {
-        match zai.dispatch_mode {
-            crate::proxy::ZaiDispatchMode::Off => false,
-            crate::proxy::ZaiDispatchMode::Exclusive => true,
-            crate::proxy::ZaiDispatchMode::Fallback => google_accounts == 0,
-            crate::proxy::ZaiDispatchMode::Pooled => {
-                // Treat z.ai as exactly one extra slot in the pool.
-                // No strict guarantees: it may get 0 requests if selection never hits.
-                let total = google_accounts.saturating_add(1).max(1);
-                let slot = state.provider_rr.fetch_add(1, Ordering::Relaxed) % total;
-                slot == 0
-            }
-        }
-    };
-
-    // [CRITICAL REFACTOR] 优先解析并过滤 Thinking 块，确保 z.ai 也是用修复后的 Body
+    // [CRITICAL REFACTOR] 优先解析请求以获取模型信息(用于智能兜底判断)
     let mut request: crate::proxy::mappers::claude::models::ClaudeRequest = match serde_json::from_value(body) {
         Ok(r) => r,
         Err(e) => {
@@ -353,6 +336,44 @@ pub async fn handle_messages(
                     }
                 }))
             ).into_response();
+        }
+    };
+
+    // [Issue #703 Fix] 智能兜底判断:需要归一化模型名用于配额保护检查
+    let normalized_model = crate::proxy::common::model_mapping::normalize_to_standard_id(&request.model)
+        .unwrap_or_else(|| request.model.clone());
+
+    let use_zai = if !zai_enabled {
+        false
+    } else {
+        match zai.dispatch_mode {
+            crate::proxy::ZaiDispatchMode::Off => false,
+            crate::proxy::ZaiDispatchMode::Exclusive => true,
+            crate::proxy::ZaiDispatchMode::Fallback => {
+                if google_accounts == 0 {
+                    // 没有 Google 账号,使用兜底
+                    tracing::info!("[{}] No Google accounts available, using fallback provider", trace_id);
+                    true
+                } else {
+                    // [Issue #703 Fix] 智能判断:检查是否有可用的 Google 账号
+                    let has_available = state.token_manager.has_available_account("claude", &normalized_model).await;
+                    if !has_available {
+                        tracing::info!(
+                            "[{}] All Google accounts unavailable (rate-limited or quota-protected for {}), using fallback provider",
+                            trace_id,
+                            request.model
+                        );
+                    }
+                    !has_available
+                }
+            }
+            crate::proxy::ZaiDispatchMode::Pooled => {
+                // Treat z.ai as exactly one extra slot in the pool.
+                // No strict guarantees: it may get 0 requests if selection never hits.
+                let total = google_accounts.saturating_add(1).max(1);
+                let slot = state.provider_rr.fetch_add(1, Ordering::Relaxed) % total;
+                slot == 0
+            }
         }
     };
 

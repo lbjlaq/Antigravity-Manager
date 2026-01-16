@@ -179,47 +179,70 @@ fn sort_thinking_blocks_first(messages: &mut [Message]) {
     for msg in messages.iter_mut() {
         if msg.role == "assistant" {
             if let MessageContent::Array(blocks) = &mut msg.content {
-                // Check if reordering is needed (any thinking block not at start)
-                let mut found_non_thinking = false;
-                let mut needs_reorder = false;
+                // [FIX #709] Triple-stage partition: [Thinking, Text, ToolUse]
+                // This ensures protocol compliance while maintaining logical order.
                 
-                for block in blocks.iter() {
+                let mut thinking_blocks: Vec<ContentBlock> = Vec::new();
+                let mut text_blocks: Vec<ContentBlock> = Vec::new();
+                let mut tool_blocks: Vec<ContentBlock> = Vec::new();
+                let mut other_blocks: Vec<ContentBlock> = Vec::new();
+                
+                let original_len = blocks.len();
+                let mut needs_reorder = false;
+                let mut saw_non_thinking = false;
+
+                for (_i, block) in blocks.iter().enumerate() {
                     match block {
                         ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {
-                            if found_non_thinking {
+                            if saw_non_thinking {
                                 needs_reorder = true;
-                                break;
                             }
                         }
-                        _ => {
-                            found_non_thinking = true;
+                        ContentBlock::Text { .. } => {
+                            saw_non_thinking = true;
                         }
+                        ContentBlock::ToolUse { .. } => {
+                            saw_non_thinking = true;
+                            // Check if tool is after text (this is normal, but we want a strict group order)
+                        }
+                        _ => saw_non_thinking = true,
                     }
                 }
-                
-                if needs_reorder {
-                    tracing::warn!(
-                        "[FIX #564] Detected thinking blocks after non-thinking blocks. Reordering to fix protocol violation."
-                    );
-                    
-                    // Partition: thinking blocks first, then other blocks (maintain order within groups)
-                    let mut thinking_blocks: Vec<ContentBlock> = Vec::new();
-                    let mut other_blocks: Vec<ContentBlock> = Vec::new();
-                    
+
+                if needs_reorder || original_len > 1 {
+                    // For safety, we always perform the triple partition if there's more than one block.
+                    // This also handles empty text block filtering.
                     for block in blocks.drain(..) {
                         match &block {
                             ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {
                                 thinking_blocks.push(block);
+                            }
+                            ContentBlock::Text { text } => {
+                                // Filter out purely empty or structural text like "(no content)"
+                                if !text.trim().is_empty() && text != "(no content)" {
+                                    text_blocks.push(block);
+                                }
+                            }
+                            ContentBlock::ToolUse { .. } => {
+                                tool_blocks.push(block);
                             }
                             _ => {
                                 other_blocks.push(block);
                             }
                         }
                     }
-                    
-                    // Reconstruct: thinking first, then others
+
+                    // Reconstruct in strict order: Thinking -> Text/Other -> Tool
                     blocks.extend(thinking_blocks);
+                    blocks.extend(text_blocks);
                     blocks.extend(other_blocks);
+                    blocks.extend(tool_blocks);
+
+                    if needs_reorder {
+                        tracing::warn!(
+                            "[FIX #709] Reordered assistant messages to [Thinking, Text, Tool] structure."
+                        );
+                    }
                 }
             }
         }
@@ -227,6 +250,38 @@ fn sort_thinking_blocks_first(messages: &mut [Message]) {
 }
 
 /// 转换 Claude 请求为 Gemini v1internal 格式
+
+/// [FIX #709] Reorder serialized Gemini parts to ensure thinking blocks are first
+fn reorder_gemini_parts(parts: &mut Vec<Value>) {
+    if parts.len() <= 1 {
+        return;
+    }
+
+    let mut thinking_parts = Vec::new();
+    let mut text_parts = Vec::new();
+    let mut tool_parts = Vec::new();
+    let mut other_parts = Vec::new();
+
+    for part in parts.drain(..) {
+        if part.get("thought").and_then(|t| t.as_bool()) == Some(true) {
+            thinking_parts.push(part);
+        } else if part.get("functionCall").is_some() {
+            tool_parts.push(part);
+        } else if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+            // Filter empty text parts that might have been created during merging
+            if !text.trim().is_empty() && text != "(no content)" {
+                text_parts.push(part);
+            }
+        } else {
+            other_parts.push(part);
+        }
+    }
+
+    parts.extend(thinking_parts);
+    parts.extend(text_parts);
+    parts.extend(other_parts);
+    parts.extend(tool_parts);
+}
 
 pub fn transform_claude_request_in(
     claude_req: &ClaudeRequest,
@@ -620,9 +675,16 @@ fn build_system_instruction(system: &Option<SystemPrompt>, _model_name: &str, ha
     if let Some(sys) = system {
         match sys {
             SystemPrompt::String(text) => {
-                // [NEW] 过滤 Claude Code 注入的超长 CLI 规则说明 (通常 > 2000 字符)
-                if text.len() > 1000 && text.contains("You are an interactive CLI tool") {
-                    tracing::info!("[Claude-Request] Filtering out long redundant Claude Code system instruction (len: {})", text.len());
+                // [FIX] 过滤 OpenCode 默认提示词，但保留用户自定义指令 (Instructions from: ...)
+                if text.contains("You are an interactive CLI tool") {
+                    // 提取用户自定义指令部分
+                    if let Some(idx) = text.find("Instructions from:") {
+                        let custom_part = &text[idx..];
+                        tracing::info!("[Claude-Request] Extracted custom instructions (len: {}), filtered default prompt", custom_part.len());
+                        parts.push(json!({"text": custom_part}));
+                    } else {
+                        tracing::info!("[Claude-Request] Filtering out OpenCode default system instruction (len: {})", text.len());
+                    }
                 } else {
                     parts.push(json!({"text": text}));
                 }
@@ -630,9 +692,15 @@ fn build_system_instruction(system: &Option<SystemPrompt>, _model_name: &str, ha
             SystemPrompt::Array(blocks) => {
                 for block in blocks {
                     if block.block_type == "text" {
-                        // [NEW] 过滤数组形式的超长指令
-                        if block.text.len() > 1000 && block.text.contains("You are an interactive CLI tool") {
-                            tracing::info!("[Claude-Request] Filtering out long redundant Claude Code system block (len: {})", block.text.len());
+                        // [FIX] 过滤 OpenCode 默认提示词，但保留用户自定义指令
+                        if block.text.contains("You are an interactive CLI tool") {
+                            if let Some(idx) = block.text.find("Instructions from:") {
+                                let custom_part = &block.text[idx..];
+                                tracing::info!("[Claude-Request] Extracted custom instructions from block (len: {})", custom_part.len());
+                                parts.push(json!({"text": custom_part}));
+                            } else {
+                                tracing::info!("[Claude-Request] Filtering out OpenCode default system block (len: {})", block.text.len());
+                            }
                         } else {
                             parts.push(json!({"text": block.text}));
                         }
@@ -742,6 +810,10 @@ fn build_contents(
         // Track tool results in the current turn to identify missing ones
         let mut current_turn_tool_result_ids = std::collections::HashSet::new();
 
+        // Track if we have already seen non-thinking content in this message.
+        // Anthropic/Gemini protocol: Thinking blocks MUST come first.
+        let mut saw_non_thinking = false;
+
         match &msg.content {
             MessageContent::String(text) => {
                 if text != "(no content)" {
@@ -768,6 +840,7 @@ fn build_contents(
                                 }
                                 
                                 parts.push(json!({"text": text}));
+                                saw_non_thinking = true;
                                 
                                 // 记录最近一次 User 任务文本用于后续比对
                                 if role == "user" {
@@ -781,12 +854,13 @@ fn build_contents(
                             
                             // [HOTFIX] Gemini Protocol Enforcement: Thinking block MUST be the first block.
                             // If we already have content (like Text), we must downgrade this thinking block to Text.
-                            if !parts.is_empty() {
+                            if saw_non_thinking || !parts.is_empty() {
                                 tracing::warn!("[Claude-Request] Thinking block found at non-zero index (prev parts: {}). Downgrading to Text.", parts.len());
                                 if !thinking.is_empty() {
                                     parts.push(json!({
                                         "text": thinking
                                     }));
+                                    saw_non_thinking = true;
                                 }
                                 continue;
                             }
@@ -857,6 +931,7 @@ fn build_contents(
                             parts.push(json!({
                                 "text": format!("[Redacted Thinking: {}]", data)
                             }));
+                            saw_non_thinking = true;
                             continue;
                         }
                         ContentBlock::Image { source, .. } => {
@@ -867,6 +942,7 @@ fn build_contents(
                                         "data": source.data
                                     }
                                 }));
+                                saw_non_thinking = true;
                             }
                         }
                         ContentBlock::Document { source, .. } => {
@@ -877,6 +953,7 @@ fn build_contents(
                                         "data": source.data
                                     }
                                 }));
+                                saw_non_thinking = true;
                             }
                         }
                         ContentBlock::ToolUse { id, name, input, signature, .. } => {
@@ -887,6 +964,7 @@ fn build_contents(
                                     "id": id
                                 }
                             });
+                            saw_non_thinking = true;
                             
                             // Track pending tool use
                             if role == "model" {
@@ -1175,6 +1253,11 @@ fn merge_adjacent_roles(mut contents: Vec<Value>) -> Vec<Value> {
             if let Some(current_parts) = current_msg.get_mut("parts").and_then(|p| p.as_array_mut()) {
                 if let Some(next_parts) = msg.get("parts").and_then(|p| p.as_array()) {
                     current_parts.extend(next_parts.clone());
+                    
+                    // [FIX #709] Core Fix: After merging parts from adjacent messages, 
+                    // we must RE-SORT them to ensure any thinking blocks from the 
+                    // second message are moved to the very front of the combined array.
+                    reorder_gemini_parts(current_parts);
                 }
             }
         } else {

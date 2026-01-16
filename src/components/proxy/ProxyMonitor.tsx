@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import ModalDialog from '../common/ModalDialog';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../../utils/request';
-import { Trash2, Search, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Trash2, Search, X, Copy, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 
 import { AppConfig } from '../../types/config';
 import { formatCompactNumber } from '../../utils/format';
@@ -51,7 +51,7 @@ const LogTable: React.FC<LogTableProps> = ({
     t
 }) => {
     return (
-        <div 
+        <div
             className="flex-1 overflow-y-auto overflow-x-auto bg-white dark:bg-base-100"
             style={{
                 minHeight: '200px',
@@ -105,7 +105,8 @@ const LogTable: React.FC<LogTableProps> = ({
                     ))}
                 </tbody>
             </table>
-            
+
+
             {/* Loading indicator */}
             {loading && (
                 <div className="flex items-center justify-center p-4 bg-white dark:bg-base-100">
@@ -113,7 +114,8 @@ const LogTable: React.FC<LogTableProps> = ({
                     <span className="ml-3 text-sm text-gray-500">{t('common.loading') || 'Loading...'}</span>
                 </div>
             )}
-            
+
+
             {/* Empty state */}
             {!loading && logs.length === 0 && (
                 <div className="flex items-center justify-center p-8 text-gray-400">
@@ -133,6 +135,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const [selectedLog, setSelectedLog] = useState<ProxyRequestLog | null>(null);
     const [isLoggingEnabled, setIsLoggingEnabled] = useState(false);
     const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+    const [copiedRequestId, setCopiedRequestId] = useState<string | null>(null);
 
     // Pagination state
     const PAGE_SIZE_OPTIONS = [50, 100, 200, 500];
@@ -281,6 +284,10 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         };
     }, []);
 
+    useEffect(() => {
+        setCopiedRequestId(null);
+    }, [selectedLog?.id]);
+
     // Reload when pageSize changes
     useEffect(() => {
         setCurrentPage(1);
@@ -328,6 +335,28 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
             return <pre className="text-[10px] font-mono whitespace-pre-wrap text-gray-700 dark:text-gray-300">{JSON.stringify(obj, null, 2)}</pre>;
         } catch (e) {
             return <pre className="text-[10px] font-mono whitespace-pre-wrap text-gray-700 dark:text-gray-300">{body}</pre>;
+        }
+    };
+
+    const getCopyPayload = (body: string) => {
+        try {
+            const obj = JSON.parse(body);
+            return JSON.stringify(obj, null, 2);
+        } catch (e) {
+            return body;
+        }
+    };
+
+    const handleCopyRequest = async () => {
+        if (!selectedLog?.request_body) return;
+        try {
+            await navigator.clipboard.writeText(getCopyPayload(selectedLog.request_body));
+            setCopiedRequestId(selectedLog.id);
+            setTimeout(() => {
+                setCopiedRequestId((current) => (current === selectedLog.id ? null : current));
+            }, 2000);
+        } catch (e) {
+            console.error('Failed to copy request payload', e);
         }
     };
 
@@ -497,11 +526,62 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                             {/* Payloads */}
                             <div className="space-y-4">
                                 <div>
-                                    <h3 className="text-xs font-bold uppercase text-gray-400 mb-2 flex items-center gap-2">{t('monitor.details.request_payload')}</h3>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h3 className="text-xs font-bold uppercase text-gray-400 flex items-center gap-2">{t('monitor.details.request_payload')}</h3>
+                                        <button
+                                            type="button"
+                                            className="btn btn-ghost btn-xs gap-1"
+                                            onClick={handleCopyRequest}
+                                            disabled={!selectedLog.request_body}
+                                            title={copiedRequestId === selectedLog.id ? t('proxy.config.btn_copied') : t('proxy.config.btn_copy')}
+                                            aria-label={t('proxy.config.btn_copy')}
+                                        >
+                                            {copiedRequestId === selectedLog.id ? (
+                                                <CheckCircle size={12} className="text-green-500" />
+                                            ) : (
+                                                <Copy size={12} />
+                                            )}
+                                            <span className="text-[10px]">
+                                                {copiedRequestId === selectedLog.id ? t('proxy.config.btn_copied') : t('proxy.config.btn_copy')}
+                                            </span>
+                                        </button>
+                                    </div>
                                     <div className="bg-gray-50 dark:bg-base-300 rounded-lg p-3 border border-gray-100 dark:border-base-300 overflow-hidden">{formatBody(selectedLog.request_body)}</div>
                                 </div>
                                 <div>
-                                    <h3 className="text-xs font-bold uppercase text-gray-400 mb-2 flex items-center gap-2">{t('monitor.details.response_payload')}</h3>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h3 className="text-xs font-bold uppercase text-gray-400 flex items-center gap-2">{t('monitor.details.response_payload')}</h3>
+                                        <button
+                                            type="button"
+                                            className="btn btn-ghost btn-xs gap-1"
+                                            onClick={async () => {
+                                                if (!selectedLog.response_body) return;
+                                                try {
+                                                    await navigator.clipboard.writeText(getCopyPayload(selectedLog.response_body));
+                                                    setCopiedRequestId(selectedLog.id ? `${selectedLog.id}-response` : null);
+                                                    setTimeout(() => {
+                                                        setCopiedRequestId((current) =>
+                                                            current === `${selectedLog.id}-response` ? null : current
+                                                        );
+                                                    }, 2000);
+                                                } catch (e) {
+                                                    console.error('Failed to copy response payload', e);
+                                                }
+                                            }}
+                                            disabled={!selectedLog.response_body}
+                                            title={copiedRequestId === `${selectedLog.id}-response` ? t('proxy.config.btn_copied') : t('proxy.config.btn_copy')}
+                                            aria-label={t('proxy.config.btn_copy')}
+                                        >
+                                            {copiedRequestId === `${selectedLog.id}-response` ? (
+                                                <CheckCircle size={12} className="text-green-500" />
+                                            ) : (
+                                                <Copy size={12} />
+                                            )}
+                                            <span className="text-[10px]">
+                                                {copiedRequestId === `${selectedLog.id}-response` ? t('proxy.config.btn_copied') : t('proxy.config.btn_copy')}
+                                            </span>
+                                        </button>
+                                    </div>
                                     <div className="bg-gray-50 dark:bg-base-300 rounded-lg p-3 border border-gray-100 dark:border-base-300 overflow-hidden">{formatBody(selectedLog.response_body)}</div>
                                 </div>
                             </div>

@@ -48,7 +48,11 @@
         "switch_to_turkish": "Türkçe'ye Geç",
         "switch_to_turkish_short": "TR",
         "switch_to_vietnamese": "Vietnamca'ya Geç",
-        "switch_to_vietnamese_short": "VI"
+        "switch_to_vietnamese_short": "VI",
+        "switch_to_russian": "Rusça'ya Geç",
+        "switch_to_russian_short": "RU",
+        "switch_to_portuguese": "Portekizce'ye Geç",
+        "switch_to_portuguese_short": "PT"
     },
     "dashboard": {
         "hello": "Merhaba, Kullanıcı 👋",
@@ -262,7 +266,17 @@
             "clear_logs": "Log Önbelleğini Temizle",
             "clear_logs_title": "Log Temizleme Onayı",
             "clear_logs_msg": "Tüm log önbellek dosyalarını temizlemek istediğinizden emin misiniz?",
-            "logs_cleared": "Log önbelleği temizlendi"
+            "logs_cleared": "Log önbelleği temizlendi",
+            "http_api_title": "HTTP API Servisi",
+            "http_api_desc": "Harici programlar (örn. VS Code eklentileri) için yerel HTTP arayüzü sağlar.",
+            "http_api_enabled": "HTTP API'yi Etkinleştir",
+            "http_api_enabled_desc": "Etkinleştirildiğinde, harici programlar HTTP arayüzü üzerinden hesapları yönetebilir",
+            "http_api_port": "Dinleme Portu",
+            "http_api_port_desc": "Port değiştirildikten sonra uygulamanın yeniden başlatılması gerekir. Port çakışması durumunda başka bir kullanılabilir port kullanın.",
+            "http_api_port_placeholder": "Varsayılan port 19527",
+            "http_api_port_invalid": "Geçersiz port numarası (aralık: 1024-65535)",
+            "http_api_settings_saved": "HTTP API ayarları kaydedildi, uygulamak için yeniden başlatma gerekli",
+            "http_api_restart_required": "⚠️ Uygulamak için yeniden başlatma gerekli"
         },
         "about": {
             "title": "Hakkında",
@@ -326,6 +340,8 @@
             "api_key": "API Anahtarı",
             "api_key_tooltip": "Proxy yetkilendirmesi etkinleştirildiğinde istemciler tarafından kullanılan paylaşılan gizli anahtar. Anahtarı yeniden oluşturmak eskisini hemen geçersiz kılar.",
             "btn_regenerate": "Anahtarı Yeniden Oluştur",
+            "btn_edit": "Düzenle",
+            "btn_save": "Kaydet",
             "btn_copy": "Kopyala",
             "btn_copied": "Kopyalandı",
             "warning_key": "Not: API anahtarınızı güvende tutun. Paylaşmayın.",
@@ -364,8 +380,8 @@
                     "title": "Model Eşleme",
                     "title_tooltip": "Mevcut z.ai model kimliklerini alın ve gelen Anthropic/Claude model adlarının z.ai model kimliklerine nasıl çevrileceğini yapılandırın.",
                     "refresh": "Modelleri getir",
-            "btn_edit": "Düzenle",
-            "btn_save": "Kaydet",
+                    "btn_edit": "Düzenle",
+                    "btn_save": "Kaydet",
                     "refreshing": "Getiriliyor...",
                     "hint": "Kullanılabilir modeller: {{count}}. Bir öneri seçin veya özel model kimliği yazın.",
                     "error": "Modeller getirilemedi: {{error}}",
@@ -631,6 +647,20 @@
         "dialog": {
             "clear_title": "Proxy Loglarını Temizle",
             "clear_msg": "Tüm proxy loglarını temizlemek istediğinizden emin misiniz? Bu işlem geri alınamaz."
+        }
+    },
+    "update_notification": {
+        "title": "Yeni Sürüm Mevcut",
+        "message": "Optimizasyonlar ve iyileştirmeler içeren yeni bir sürüm hazır. Mevcut: v{{current}}",
+        "action": "Şimdi Güncelle"
+    },
+    "errors": {
+        "stream": {
+            "timeout_error": "İstek zaman aşımına uğradı, lütfen ağ bağlantınızı kontrol edin",
+            "connection_error": "Bağlantı hatası, lütfen ağ veya proxy ayarlarınızı kontrol edin",
+            "decode_error": "Ağ kararsız, veri iletimi kesildi. Deneyin: 1) Ağı kontrol edin 2) Proxy'yi değiştirin 3) Tekrar deneyin",
+            "stream_error": "Akış iletim hatası, lütfen daha sonra tekrar deneyin",
+            "unknown_error": "Bilinmeyen bir hata oluştu, lütfen daha sonra tekrar deneyin"
         }
     }
 }

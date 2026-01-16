@@ -497,7 +497,11 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
     
     tokio::spawn(async move {
         for (name, pct) in models_to_warm {
-            warmup_model_directly(&token, &name, &pid, &email, pct).await;
+            if warmup_model_directly(&token, &name, &pid, &email, pct).await {
+                let history_key = format!("{}:{}:100", email, name);
+                let now_ts = chrono::Utc::now().timestamp();
+                crate::modules::scheduler::record_warmup_history(&history_key, now_ts);
+            }
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
         let _ = crate::modules::account::refresh_all_quotas_logic().await;

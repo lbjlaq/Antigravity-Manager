@@ -16,7 +16,7 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
         request.model, mapped_model, config.request_type, config.image_config.is_some());
     
     // 1. 提取所有 System Message 并注入补丁
-    let system_instructions: Vec<String> = request.messages.iter()
+    let mut system_instructions: Vec<String> = request.messages.iter()
         .filter(|msg| msg.role == "system")
         .filter_map(|msg| {
             msg.content.as_ref().map(|c| match c {
@@ -33,6 +33,14 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
             })
         })
         .collect();
+
+    // [NEW] 如果请求中包含 instructions 字段，优先使用它
+    if let Some(inst) = &request.instructions {
+        if !inst.is_empty() {
+            system_instructions.insert(0, inst.clone());
+        }
+    }
+
 
 
 
@@ -67,9 +75,26 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
             };
 
             let mut parts = Vec::new();
-            
+
+            // Handle reasoning_content (thinking)
+            if let Some(reasoning) = &msg.reasoning_content {
+                if !reasoning.is_empty() {
+                    let mut thought_part = json!({
+                        "text": reasoning,
+                        "thought": true,
+                    });
+                    if let Some(ref sig) = global_thought_sig {
+                        thought_part["thoughtSignature"] = json!(sig);
+                    }
+                    parts.push(thought_part);
+                }
+            }
+
             // Handle content (multimodal or text)
-            if let Some(content) = &msg.content {
+            // [FIX] Skip standard content mapping for tool/function roles to avoid duplicate parts
+            // These are handled below in the "Handle tool response" section.
+            let is_tool_role = msg.role == "tool" || msg.role == "function";
+            if let (Some(content), false) = (&msg.content, is_tool_role) {
                 match content {
                     OpenAIContent::String(s) => {
                         if !s.is_empty() {
@@ -163,7 +188,8 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
                     let mut func_call_part = json!({
                         "functionCall": {
                             "name": if tc.function.name == "local_shell_call" { "shell" } else { &tc.function.name },
-                            "args": args
+                            "args": args,
+                            "id": &tc.id,
                         }
                     });
 
@@ -192,7 +218,8 @@ pub fn transform_openai_request(request: &OpenAIRequest, project_id: &str, mappe
                 parts.push(json!({
                     "functionResponse": {
                        "name": final_name,
-                       "response": { "result": content_val }
+                       "response": { "result": content_val },
+                       "id": msg.tool_call_id.clone().unwrap_or_default()
                     }
                 }));
             }

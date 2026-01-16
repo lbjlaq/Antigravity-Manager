@@ -79,6 +79,10 @@ pub async fn handle_warmup(
 
     let body: Value = if is_claude {
         // Claude 模型：使用 transform_claude_request_in 转换
+        let session_id = format!("warmup_{}_{}", 
+            chrono::Utc::now().timestamp_millis(),
+            &uuid::Uuid::new_v4().to_string()[..8]
+        );
         let claude_request = crate::proxy::mappers::claude::models::ClaudeRequest {
             model: req.model.clone(),
             messages: vec![crate::proxy::mappers::claude::models::Message {
@@ -94,7 +98,9 @@ pub async fn handle_warmup(
             top_p: None,
             top_k: None,
             tools: None,
-            metadata: None,
+            metadata: Some(crate::proxy::mappers::claude::models::Metadata {
+                user_id: Some(session_id),
+            }),
             thinking: None,
             output_config: None,
         };
@@ -119,19 +125,30 @@ pub async fn handle_warmup(
         }
     } else {
         // Gemini 模型：使用 wrap_request
+        let session_id = format!("warmup_{}_{}", 
+            chrono::Utc::now().timestamp_millis(),
+            &uuid::Uuid::new_v4().to_string()[..8]
+        );
+
         let base_request = if is_image {
             json!({
                 "model": req.model,
                 "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
                 "generationConfig": {
                     "maxOutputTokens": 10,
+                    "temperature": 0,
                     "responseModalities": ["TEXT"]
-                }
+                },
+                "session_id": session_id
             })
         } else {
             json!({
                 "model": req.model,
-                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}]
+                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
+                "generationConfig": {
+                    "temperature": 0
+                },
+                "session_id": session_id
             })
         };
 

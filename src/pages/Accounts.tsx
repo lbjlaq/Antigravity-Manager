@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { save } from '@tauri-apps/plugin-dialog';
+import { save, open } from '@tauri-apps/plugin-dialog';
 import { request as invoke } from '../utils/request';
 import { join } from '@tauri-apps/api/path';
-import { Search, RefreshCw, Download, Trash2, LayoutGrid, List, ToggleLeft, ToggleRight, Sparkles } from 'lucide-react';
+import { Search, RefreshCw, Download, Upload, Trash2, LayoutGrid, List, ToggleLeft, ToggleRight, Sparkles } from 'lucide-react';
 import { useAccountStore } from '../stores/useAccountStore';
 import { useConfigStore } from '../stores/useConfigStore';
 import AccountTable from '../components/accounts/AccountTable';
@@ -504,6 +504,68 @@ function Accounts() {
         }
     };
 
+    const handleImportJson = async () => {
+        try {
+            const selected = await open({
+                multiple: false,
+                filters: [{
+                    name: 'JSON',
+                    extensions: ['json']
+                }]
+            });
+            if (!selected || typeof selected !== 'string') return;
+
+            const content: string = await invoke('read_text_file', { path: selected });
+
+            let importData: Array<{ email?: string; refresh_token?: string }>;
+            try {
+                importData = JSON.parse(content);
+            } catch {
+                showToast(t('accounts.import_invalid_format'), 'error');
+                return;
+            }
+
+            if (!Array.isArray(importData) || importData.length === 0) {
+                showToast(t('accounts.import_invalid_format'), 'error');
+                return;
+            }
+
+            const validEntries = importData.filter(
+                item => item.refresh_token && typeof item.refresh_token === 'string' && item.refresh_token.startsWith('1//')
+            );
+
+            if (validEntries.length === 0) {
+                showToast(t('accounts.import_invalid_format'), 'error');
+                return;
+            }
+
+            let successCount = 0;
+            let failCount = 0;
+
+            for (const entry of validEntries) {
+                try {
+                    await addAccount(entry.email || '', entry.refresh_token!);
+                    successCount++;
+                } catch (error) {
+                    console.error('Import account failed:', error);
+                    failCount++;
+                }
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            if (failCount === 0) {
+                showToast(t('accounts.import_success', { count: successCount }), 'success');
+            } else if (successCount > 0) {
+                showToast(t('accounts.import_partial', { success: successCount, fail: failCount }), 'warning');
+            } else {
+                showToast(t('accounts.import_fail', { error: 'All accounts failed to import' }), 'error');
+            }
+        } catch (error) {
+            console.error('Import failed:', error);
+            showToast(t('accounts.import_fail', { error: String(error) }), 'error');
+        }
+    };
+
     const handleViewDetails = (accountId: string) => {
         const account = accounts.find(a => a.id === accountId);
         if (account) {
@@ -705,6 +767,17 @@ function Accounts() {
                         <Sparkles className={`w-3.5 h-3.5 ${isWarmuping ? 'animate-pulse' : ''}`} />
                         <span className="hidden xl:inline">
                             {isWarmuping ? t('common.loading') : (selectedIds.size > 0 ? t('accounts.warmup_selected', { count: selectedIds.size }) : t('accounts.warmup_all', '一键预热'))}
+                        </span>
+                    </button>
+
+                    <button
+                        className="px-2.5 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 text-xs font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 transition-colors flex items-center gap-1.5"
+                        onClick={handleImportJson}
+                        title={t('accounts.import_json')}
+                    >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span className="hidden lg:inline">
+                            {t('accounts.import_json')}
                         </span>
                     </button>
 

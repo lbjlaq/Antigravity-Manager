@@ -637,29 +637,35 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
 
 
                 for model in &q.models {
+                    // 归一化模型名到标准 ID
+                    let standard_id = match crate::proxy::common::model_mapping::normalize_to_standard_id(&model.name) {
+                        Some(id) => id,
+                        None => continue, // 不是受保护的 3 个模型之一,跳过
+                    };
+                    
                     // 仅对用户勾选的模型进行监控
-                    if !config.quota_protection.monitored_models.contains(&model.name) {
+                    if !config.quota_protection.monitored_models.contains(&standard_id) {
                         continue;
                     }
                     
                     if model.percentage <= threshold {
                         // 触发模型级保护
-                        if !account.protected_models.contains(&model.name) {
+                        if !account.protected_models.contains(&standard_id) {
                             crate::modules::logger::log_info(&format!(
-                                "[Quota] 触发模型保护: {} ({} 剩余 {}% <= 阈值 {}%)",
-                                account.email, model.name, model.percentage, threshold
+                                "[Quota] 触发模型保护: {} ({} [{}] 剩余 {}% <= 阈值 {}%)",
+                                account.email, standard_id, model.name, model.percentage, threshold
                             ));
-                            account.protected_models.insert(model.name.clone());
+                            account.protected_models.insert(standard_id.clone());
 
                         }
                     } else {
                         // 自动恢复单个模型
-                        if account.protected_models.contains(&model.name) {
+                        if account.protected_models.contains(&standard_id) {
                             crate::modules::logger::log_info(&format!(
-                                "[Quota] 模型保护恢复: {} ({} 额度已恢复至 {}%)",
-                                account.email, model.name, model.percentage
+                                "[Quota] 模型保护恢复: {} ({} [{}] 额度已恢复至 {}%)",
+                                account.email, standard_id, model.name, model.percentage
                             ));
-                            account.protected_models.remove(&model.name);
+                            account.protected_models.remove(&standard_id);
 
                         }
                     }

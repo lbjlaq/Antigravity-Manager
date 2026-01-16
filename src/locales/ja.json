@@ -48,7 +48,11 @@
         "switch_to_turkish": "トルコ語に切り替え",
         "switch_to_turkish_short": "TR",
         "switch_to_vietnamese": "ベトナム語に切り替え",
-        "switch_to_vietnamese_short": "VI"
+        "switch_to_vietnamese_short": "VI",
+        "switch_to_russian": "ロシア語に切り替え",
+        "switch_to_russian_short": "RU",
+        "switch_to_portuguese": "ポルトガル語に切り替え",
+        "switch_to_portuguese_short": "PT"
     },
     "dashboard": {
         "hello": "こんにちは 👋",
@@ -326,6 +330,8 @@
             "api_key": "APIキー",
             "api_key_tooltip": "プロキシ認証が有効な場合にクライアントが使用する共通の秘密キー。キーを再生成すると古いキーは即座に無効になります。",
             "btn_regenerate": "キーを再生成",
+            "btn_edit": "編集",
+            "btn_save": "保存",
             "btn_copy": "コピー",
             "btn_copied": "コピーしました",
             "warning_key": "注意: APIキーを安全に保管してください。他人に共有しないでください。",
@@ -364,8 +370,8 @@
                     "title": "モデルマッピング",
                     "title_tooltip": "利用可能なz.aiモデルIDを取得し、Claudeモデル名がどのようにz.aiモデルIDに翻訳されるかを構成します。",
                     "refresh": "モデルを取得",
-            "btn_edit": "編集",
-            "btn_save": "保存",
+                    "btn_edit": "編集",
+                    "btn_save": "保存",
                     "refreshing": "取得中...",
                     "hint": "利用可能なモデル: {{count}}。提案を選択するか、カスタムモデルIDを入力してください。",
                     "error": "モデルの取得に失敗しました: {{error}}",
@@ -631,6 +637,20 @@
         "dialog": {
             "clear_title": "プロキシログをクリア",
             "clear_msg": "すべてのプロキシログをクリアしてもよろしいですか？この操作は取り消せません。"
+        }
+    },
+    "update_notification": {
+        "title": "新しいバージョンが利用可能です",
+        "message": "最適化と改善が含まれた新しいバージョンの準備ができました。現在のバージョン: v{{current}}",
+        "action": "今すぐ更新"
+    },
+    "errors": {
+        "stream": {
+            "timeout_error": "リクエストがタイムアウトしました。ネットワーク接続を確認してください",
+            "connection_error": "接続に失敗しました。ネットワークまたはプロキシ設定を確認してください",
+            "decode_error": "ネットワークが不安定で、データ転送が中断されました。試してください：1）ネットワークを確認する 2）プロキシを切り替える 3）再試行する",
+            "stream_error": "ストリーム転送エラーが発生しました。後でもう一度お試しください",
+            "unknown_error": "不明なエラーが発生しました。後でもう一度お試しください"
         }
     }
 }

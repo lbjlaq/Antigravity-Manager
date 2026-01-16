@@ -90,6 +90,11 @@ pub fn start_scheduler(app_handle: tauri::AppHandle) {
 
             // 扫描每个账号的每个模型
             for account in &accounts {
+                // Skip disabled accounts
+                if account.proxy_disabled {
+                    continue;
+                }
+
                 // 获取有效 token
                 let Ok((token, pid)) = quota::get_valid_token_for_warmup(account).await else {
                     continue;

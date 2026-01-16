@@ -43,10 +43,10 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     // Gemini 协议映射表
     m.insert("gemini-2.5-flash-lite", "gemini-2.5-flash-lite");
     m.insert("gemini-2.5-flash-thinking", "gemini-2.5-flash-thinking");
-    m.insert("gemini-3-pro-low", "gemini-3-pro-low");
-    m.insert("gemini-3-pro-high", "gemini-3-pro-high");
+    m.insert("gemini-3-pro-low", "gemini-3-pro-preview");
+    m.insert("gemini-3-pro-high", "gemini-3-pro-preview");
     m.insert("gemini-3-pro-preview", "gemini-3-pro-preview");
-    m.insert("gemini-3-pro", "gemini-3-pro");  // [FIX PR #368] 添加基础模型支持
+    m.insert("gemini-3-pro", "gemini-3-pro-preview");  // [FIX PR #368] 统一映射到 preview
     m.insert("gemini-2.5-flash", "gemini-2.5-flash");
     m.insert("gemini-3-flash", "gemini-3-flash");
     m.insert("gemini-3-pro-image", "gemini-3-pro-image");
@@ -64,6 +64,12 @@ pub fn map_claude_model_to_gemini(input: &str) -> String {
     // 2. Pass-through known prefixes (gemini-, -thinking) to support dynamic suffixes
     if input.starts_with("gemini-") || input.contains("thinking") {
         return input.to_string();
+    }
+
+    // [NEW] Intelligent fallback based on model keywords
+    let lower = input.to_lowercase();
+    if lower.contains("opus") {
+        return "gemini-3-pro-preview".to_string();
     }
 
     // 3. Fallback to default
@@ -175,6 +181,36 @@ pub fn resolve_model_route(
         crate::modules::logger::log_info(&format!("[Router] 系统默认映射: {} -> {}", original_model, result));
     }
     result
+}
+
+/// Normalize any physical model name to one of the 3 standard protection IDs.
+/// This ensures quota protection works consistently regardless of API versioning or request variations.
+/// 
+/// Standard IDs:
+/// - `gemini-3-flash`: All Flash variants (1.5-flash, 2.5-flash, 3-flash, etc.)
+/// - `gemini-3-pro-high`: All Pro variants (1.5-pro, 2.5-pro, etc.)
+/// - `claude-sonnet-4-5`: All Claude Sonnet variants (3-5-sonnet, sonnet-4-5, etc.)
+/// 
+/// Returns `None` if the model doesn't match any of the 3 protected categories.
+pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
+    let lower = model_name.to_lowercase();
+    
+    // Gemini Flash variants
+    if lower.contains("flash") && lower.contains("gemini") {
+        return Some("gemini-3-flash".to_string());
+    }
+    
+    // Gemini Pro variants (including thinking models)
+    if lower.contains("gemini") && (lower.contains("pro") || lower.contains("1.5-pro") || lower.contains("2.5-pro")) {
+        return Some("gemini-3-pro-preview".to_string());
+    }
+    
+    // Claude Sonnet variants
+    if lower.contains("claude") && lower.contains("sonnet") {
+        return Some("claude-sonnet-4-5".to_string());
+    }
+    
+    None
 }
 
 #[cfg(test)]

@@ -67,6 +67,23 @@ pub fn run() {
             // 启动智能调度器
             modules::scheduler::start_scheduler(app.handle().clone());
             
+            // 启动 HTTP API 服务器（供外部程序调用，如 VS Code 插件）
+            match modules::http_api::load_settings() {
+                Ok(settings) if settings.enabled => {
+                    modules::http_api::spawn_server(settings.port);
+                    info!("HTTP API server started on port {}", settings.port);
+                }
+                Ok(_) => {
+                    info!("HTTP API server is disabled in settings");
+                }
+                Err(e) => {
+                    // 加载失败时使用默认端口
+                    error!("Failed to load HTTP API settings: {}, using default port", e);
+                    modules::http_api::spawn_server(modules::http_api::DEFAULT_PORT);
+                    info!("HTTP API server started on port {}", modules::http_api::DEFAULT_PORT);
+                }
+            }
+            
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -117,6 +134,7 @@ pub fn run() {
             commands::import_custom_db,
             commands::sync_account_from_db,
             commands::save_text_file,
+            commands::read_text_file,
             commands::clear_log_cache,
             commands::open_data_folder,
             commands::get_data_dir_path,
@@ -157,6 +175,9 @@ pub fn run() {
             // 预热命令
             commands::warm_up_all_accounts,
             commands::warm_up_account,
+            // HTTP API 设置命令
+            commands::get_http_api_settings,
+            commands::save_http_api_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

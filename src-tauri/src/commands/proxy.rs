@@ -74,6 +74,7 @@ pub async fn start_proxy_service(
     let accounts_dir = app_data_dir.clone();
     
     let token_manager = Arc::new(TokenManager::new(accounts_dir));
+    token_manager.start_auto_cleanup(); // 启动限流记录自动清理后台任务
     // 同步 UI 传递的调度配置
     token_manager.update_sticky_config(config.scheduling.clone()).await;
     

@@ -51,7 +51,11 @@
         "switch_to_turkish": "Switch to Turkish",
         "switch_to_turkish_short": "TR",
         "switch_to_vietnamese": "Switch to Vietnamese",
-        "switch_to_vietnamese_short": "VI"
+        "switch_to_vietnamese_short": "VI",
+        "switch_to_russian": "Switch to Russian",
+        "switch_to_russian_short": "RU",
+        "switch_to_portuguese": "Switch to Portuguese",
+        "switch_to_portuguese_short": "PT"
     },
     "dashboard": {
         "hello": "Hello, User 👋",
@@ -98,6 +102,11 @@
         "refresh_all": "Refresh All",
         "refresh_selected": "Refresh ({{count}})",
         "export_selected": "Export ({{count}})",
+        "import_json": "Import",
+        "import_success": "Successfully imported {{count}} accounts",
+        "import_partial": "Import completed: {{success}} succeeded, {{fail}} failed",
+        "import_fail": "Import failed: {{error}}",
+        "import_invalid_format": "Invalid JSON format, please ensure the file contains email and refresh_token fields",
         "delete_selected": "Delete ({{count}})",
         "current": "Current",
         "current_badge": "Current",
@@ -298,7 +307,17 @@
             "clear_logs": "Clear Logs Cache",
             "clear_logs_title": "Clear Logs Confirmation",
             "clear_logs_msg": "Are you sure you want to clear all log cache files?",
-            "logs_cleared": "Logs cache cleared"
+            "logs_cleared": "Logs cache cleared",
+            "http_api_title": "HTTP API Service",
+            "http_api_desc": "Provides local HTTP interface for external programs (e.g. VS Code plugins).",
+            "http_api_enabled": "Enable HTTP API",
+            "http_api_enabled_desc": "When enabled, external programs can manage accounts via HTTP interface",
+            "http_api_port": "Listen Port",
+            "http_api_port_desc": "Restart required after changing port. If port conflict occurs, please use another available port.",
+            "http_api_port_placeholder": "Default port 19527",
+            "http_api_port_invalid": "Invalid port number (range: 1024-65535)",
+            "http_api_settings_saved": "HTTP API settings saved, restart required to apply",
+            "http_api_restart_required": "⚠️ Restart required to apply"
         },
         "about": {
             "title": "About",

@@ -47,6 +47,22 @@ impl TokenManager {
             session_accounts: Arc::new(DashMap::new()),
         }
     }
+
+    /// 启动限流记录自动清理后台任务（每60秒检查并清除过期记录）
+    pub fn start_auto_cleanup(&self) {
+        let tracker = self.rate_limit_tracker.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let cleaned = tracker.cleanup_expired();
+                if cleaned > 0 {
+                    tracing::info!("🧹 Auto-cleanup: Removed {} expired rate limit record(s)", cleaned);
+                }
+            }
+        });
+        tracing::info!("✅ Rate limit auto-cleanup task started (interval: 60s)");
+    }
     
     /// 从主应用账号目录加载所有账号
     pub async fn load_accounts(&self) -> Result<usize, String> {
@@ -509,11 +525,24 @@ impl TokenManager {
             let quota_b = b.remaining_quota.unwrap_or(0);
             quota_b.cmp(&quota_a)  // Descending: higher percentage first
         });
-
+        
+        // 【调试日志】打印排序后的账号顺序
+        tracing::info!(
+            "🔄 [Token Rotation] Accounts: {:?}",
+            tokens_snapshot.iter().map(|t| format!(
+                "{}(protected={:?})", 
+                t.email, t.protected_models
+            )).collect::<Vec<_>>()
+        );
 
         // 0. 读取当前调度配置
         let scheduling = self.sticky_config.read().await.clone();
         use crate::proxy::sticky_config::SchedulingMode;
+        
+        // 【新增】检查配额保护是否启用（如果关闭，则忽略 protected_models 检查）
+        let quota_protection_enabled = crate::modules::config::load_app_config()
+            .map(|cfg| cfg.quota_protection.enabled)
+            .unwrap_or(false);
 
         // 【优化 Issue #284】将锁操作移到循环外，避免重复获取锁
         // 预先获取 last_used_account 的快照，避免在循环中多次加锁
@@ -534,6 +563,10 @@ impl TokenManager {
             // ===== 【核心】粘性会话与智能调度逻辑 =====
             let mut target_token: Option<ProxyToken> = None;
             
+            // 归一化目标模型名为标准 ID，用于配额保护检查
+            let normalized_target = crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+            
             // 模式 A: 粘性会话处理 (CacheFirst 或 Balance 且有 session_id)
             if !rotate && session_id.is_some() && scheduling.mode != SchedulingMode::PerformanceFirst {
                 let sid = session_id.unwrap();
@@ -553,12 +586,12 @@ impl TokenManager {
                                 bound_token.email, reset_sec
                             );
                             self.session_accounts.remove(sid);
-                        } else if !attempted.contains(&bound_id) && !bound_token.protected_models.contains(target_model) {
+                        } else if !attempted.contains(&bound_id) && !(quota_protection_enabled && bound_token.protected_models.contains(&normalized_target)) {
                             // 3. 账号可用且未被标记为尝试失败，优先复用
                             tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
                             target_token = Some(bound_token.clone());
-                        } else if bound_token.protected_models.contains(target_model) {
-                            tracing::debug!("Sticky Session: Bound account {} is quota-protected for model {}, unbinding and switching.", bound_token.email, target_model);
+                        } else if quota_protection_enabled && bound_token.protected_models.contains(&normalized_target) {
+                            tracing::debug!("Sticky Session: Bound account {} is quota-protected for model {} [{}], unbinding and switching.", bound_token.email, normalized_target, target_model);
                             self.session_accounts.remove(sid);
                         }
                     } else {
@@ -570,21 +603,22 @@ impl TokenManager {
             }
 
             // 模式 B: 原子化 60s 全局锁定 (针对无 session_id 情况的默认保护)
-            if target_token.is_none() && !rotate && quota_group != "image_gen" {
+            // 【修复】性能优先模式应跳过 60s 锁定；
+            if target_token.is_none() && !rotate && quota_group != "image_gen" && scheduling.mode != SchedulingMode::PerformanceFirst {
                 // 【优化】使用预先获取的快照，不再在循环内加锁
                 if let Some((account_id, last_time)) = &last_used_account_id {
                     // [FIX #3] 60s 锁定逻辑应检查 `attempted` 集合，避免重复尝试失败的账号
                     if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
                         if let Some(found) = tokens_snapshot.iter().find(|t| &t.account_id == account_id) {
                             // 【修复】检查限流状态和配额保护，避免复用已被锁定的账号
-                            if !self.is_rate_limited_by_account_id(&found.account_id) && !found.protected_models.contains(target_model) { // Changed to account_id
+                            if !self.is_rate_limited_by_account_id(&found.account_id) && !(quota_protection_enabled && found.protected_models.contains(&normalized_target)) {
                                 tracing::debug!("60s Window: Force reusing last account: {}", found.email);
                                 target_token = Some(found.clone());
                             } else {
-                                if self.is_rate_limited_by_account_id(&found.account_id) { // Changed to account_id
+                                if self.is_rate_limited_by_account_id(&found.account_id) {
                                     tracing::debug!("60s Window: Last account {} is rate-limited, skipping", found.email);
                                 } else {
-                                    tracing::debug!("60s Window: Last account {} is quota-protected for model {}, skipping", found.email, target_model);
+                                    tracing::debug!("60s Window: Last account {} is quota-protected for model {} [{}], skipping", found.email, normalized_target, target_model);
                                 }
                             }
                         }
@@ -602,8 +636,8 @@ impl TokenManager {
                         }
 
                         // 【新增 #621】模型级限流检查
-                        if candidate.protected_models.contains(target_model) {
-                            tracing::debug!("Account {} is quota-protected for model {}, skipping", candidate.email, target_model);
+                        if quota_protection_enabled && candidate.protected_models.contains(&normalized_target) {
+                            tracing::debug!("Account {} is quota-protected for model {} [{}], skipping", candidate.email, normalized_target, target_model);
                             continue;
                         }
 
@@ -629,23 +663,29 @@ impl TokenManager {
             } else if target_token.is_none() {
                 // 模式 C: 纯轮询模式 (Round-robin) 或强制轮换
                 let start_idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
+                tracing::info!("🔄 [Mode C] Round-robin from idx {}, total: {}", start_idx, total);
                 for offset in 0..total {
                     let idx = (start_idx + offset) % total;
                     let candidate = &tokens_snapshot[idx];
+                    
                     if attempted.contains(&candidate.account_id) {
+                        tracing::debug!("  [{}] {} - SKIP: already attempted", idx, candidate.email);
                         continue;
                     }
 
                     // 【新增 #621】模型级限流检查
-                    if candidate.protected_models.contains(target_model) {
+                    if quota_protection_enabled && candidate.protected_models.contains(&normalized_target) {
+                        tracing::info!("  ⛔ {} - SKIP: quota-protected for {} [{}]", candidate.email, normalized_target, target_model);
                         continue;
                     }
 
                     // 【新增】主动避开限流或 5xx 锁定的账号
                     if self.is_rate_limited_by_account_id(&candidate.account_id) { // Changed to account_id
+                        tracing::info!("  ⏳ {} - SKIP: rate-limited", candidate.email);
                         continue;
                     }
 
+                    tracing::debug!("  [{}] {} - SELECTED", idx, candidate.email);
                     target_token = Some(candidate.clone());
                     
                     if rotate {
@@ -989,17 +1029,6 @@ impl TokenManager {
         );
     }
     
-    /// 检查账号是否在限流中
-    /// 参数为 email，内部会自动转换为 account_id
-    pub fn is_rate_limited(&self, email: &str) -> bool {
-        // 【替代方案】转换 email -> account_id
-        if let Some(account_id) = self.email_to_account_id(email) {
-            self.rate_limit_tracker.is_rate_limited(&account_id)
-        } else {
-            // Fallback: 如果找不到，直接用email查询(兼容旧数据)
-            self.rate_limit_tracker.is_rate_limited(email)
-        }
-    }
 
     /// 检查账号是否在限流中 (直接使用 account_id)
     pub fn is_rate_limited_by_account_id(&self, account_id: &str) -> bool {
@@ -1038,6 +1067,72 @@ impl TokenManager {
     /// 下次失败时从最短的锁定时间开始（智能限流）。
     pub fn mark_account_success(&self, account_id: &str) {
         self.rate_limit_tracker.mark_success(account_id);
+    }
+    
+    /// 检查是否有可用的 Google 账号
+    /// 
+    /// 用于"仅兜底"模式的智能判断:当所有 Google 账号不可用时才使用外部提供商。
+    /// 
+    /// # 参数
+    /// - `quota_group`: 配额组("claude" 或 "gemini"),暂未使用但保留用于未来扩展
+    /// - `target_model`: 目标模型名称(已归一化),用于配额保护检查
+    /// 
+    /// # 返回值
+    /// - `true`: 至少有一个可用账号(未限流且未被配额保护)
+    /// - `false`: 所有账号都不可用(被限流或被配额保护)
+    /// 
+    /// # 示例
+    /// ```ignore
+    /// // 检查是否有可用账号处理 claude-sonnet 请求
+    /// let has_available = token_manager.has_available_account("claude", "claude-sonnet-4-20250514").await;
+    /// if !has_available {
+    ///     // 切换到外部提供商
+    /// }
+    /// ```
+    pub async fn has_available_account(&self, _quota_group: &str, target_model: &str) -> bool {
+        // 检查配额保护是否启用
+        let quota_protection_enabled = crate::modules::config::load_app_config()
+            .map(|cfg| cfg.quota_protection.enabled)
+            .unwrap_or(false);
+        
+        // 遍历所有账号,检查是否有可用的
+        for entry in self.tokens.iter() {
+            let token = entry.value();
+            
+            // 1. 检查是否被限流
+            if self.is_rate_limited_by_account_id(&token.account_id) {
+                tracing::debug!(
+                    "[Fallback Check] Account {} is rate-limited, skipping",
+                    token.email
+                );
+                continue;
+            }
+            
+            // 2. 检查是否被配额保护(如果启用)
+            if quota_protection_enabled && token.protected_models.contains(target_model) {
+                tracing::debug!(
+                    "[Fallback Check] Account {} is quota-protected for model {}, skipping",
+                    token.email,
+                    target_model
+                );
+                continue;
+            }
+            
+            // 找到至少一个可用账号
+            tracing::debug!(
+                "[Fallback Check] Found available account: {} for model {}",
+                token.email,
+                target_model
+            );
+            return true;
+        }
+        
+        // 所有账号都不可用
+        tracing::info!(
+            "[Fallback Check] No available Google accounts for model {}, fallback should be triggered",
+            target_model
+        );
+        false
     }
     
     /// 从账号文件获取配额刷新时间

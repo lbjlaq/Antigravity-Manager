@@ -38,11 +38,14 @@ pub struct RateLimitInfo {
     pub model: Option<String>,
 }
 
+/// 失败计数过期时间：1小时（超过此时间未失败则重置计数）
+const FAILURE_COUNT_EXPIRY_SECONDS: u64 = 3600;
+
 /// 限流跟踪器
 pub struct RateLimitTracker {
     limits: DashMap<String, RateLimitInfo>,
-    /// 连续失败计数（用于智能指数退避）
-    failure_counts: DashMap<String, u32>,
+    /// 连续失败计数（用于智能指数退避），带时间戳用于自动过期
+    failure_counts: DashMap<String, (u32, SystemTime)>,
 }
 
 impl RateLimitTracker {
@@ -190,11 +193,19 @@ impl RateLimitTracker {
                 if s < 2 { 2 } else { s }
             },
             None => {
-                // 获取连续失败次数，用于指数退避
+                // 获取连续失败次数，用于指数退避（带自动过期逻辑）
                 let failure_count = {
-                    let mut count = self.failure_counts.entry(account_id.to_string()).or_insert(0);
-                    *count += 1;
-                    *count
+                    let now = SystemTime::now();
+                    let mut entry = self.failure_counts.entry(account_id.to_string()).or_insert((0, now));
+                    // 检查是否超过过期时间，如果是则重置计数
+                    let elapsed = now.duration_since(entry.1).unwrap_or(Duration::from_secs(0)).as_secs();
+                    if elapsed > FAILURE_COUNT_EXPIRY_SECONDS {
+                        tracing::debug!("账号 {} 失败计数已过期（{}秒），重置为 0", account_id, elapsed);
+                        *entry = (0, now);
+                    }
+                    entry.0 += 1;
+                    entry.1 = now;
+                    entry.0
                 };
                 
                 match reason {

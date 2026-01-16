@@ -61,6 +61,14 @@ function Settings() {
         downloadUrl: string;
     } | null>(null);
 
+    // HTTP API settings state
+    const [httpApiSettings, setHttpApiSettings] = useState<{
+        enabled: boolean;
+        port: number;
+    }>({ enabled: true, port: 19527 });
+    const [httpApiPortInput, setHttpApiPortInput] = useState('19527');
+    const [httpApiSettingsChanged, setHttpApiSettingsChanged] = useState(false);
+
     useEffect(() => {
         loadConfig();
 
@@ -86,6 +94,14 @@ function Settings() {
                 setFormData(prev => ({ ...prev, auto_launch: enabled }));
             })
             .catch(err => console.error('Failed to get auto launch status:', err));
+
+        // 加载 HTTP API 设置
+        invoke<{ enabled: boolean; port: number }>('get_http_api_settings')
+            .then(settings => {
+                setHttpApiSettings(settings);
+                setHttpApiPortInput(String(settings.port));
+            })
+            .catch(err => console.error('Failed to load HTTP API settings:', err));
     }, [loadConfig]);
 
     useEffect(() => {
@@ -278,6 +294,8 @@ function Settings() {
                                     <option value="ja">日本語</option>
                                     <option value="tr">Türkçe</option>
                                     <option value="vi">Tiếng Việt</option>
+                                    <option value="pt">Português</option>
+                                    <option value="ru">Русский</option>
                                 </select>
                             </div>
 
@@ -608,13 +626,92 @@ function Settings() {
                                 </p>
                             </div>
 
+                            {/* HTTP API 设置 */}
+                            <div className="border-t border-gray-200 dark:border-base-200 pt-4">
+                                <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.advanced.http_api_title')}</h3>
+                                <div className="bg-gray-50 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-lg p-4 space-y-4">
+                                    <p className="text-sm text-gray-600 dark:text-gray-400">{t('settings.advanced.http_api_desc')}</p>
+
+                                    {/* 启用开关 */}
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <div className="font-medium text-gray-900 dark:text-base-content">{t('settings.advanced.http_api_enabled')}</div>
+                                            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{t('settings.advanced.http_api_enabled_desc')}</p>
+                                        </div>
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="sr-only peer"
+                                                checked={httpApiSettings.enabled}
+                                                onChange={(e) => {
+                                                    setHttpApiSettings(prev => ({ ...prev, enabled: e.target.checked }));
+                                                    setHttpApiSettingsChanged(true);
+                                                }}
+                                            />
+                                            <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                                        </label>
+                                    </div>
+
+                                    {/* 端口配置 */}
+                                    {httpApiSettings.enabled && (
+                                        <div className="mt-4">
+                                            <label className="block text-sm font-medium text-gray-900 dark:text-base-content mb-2">{t('settings.advanced.http_api_port')}</label>
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="number"
+                                                    className="w-32 px-4 py-2 border border-gray-200 dark:border-base-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-base-content bg-white dark:bg-base-200"
+                                                    min="1024"
+                                                    max="65535"
+                                                    value={httpApiPortInput}
+                                                    onChange={(e) => {
+                                                        setHttpApiPortInput(e.target.value);
+                                                        const port = parseInt(e.target.value);
+                                                        if (port >= 1024 && port <= 65535) {
+                                                            setHttpApiSettings(prev => ({ ...prev, port }));
+                                                            setHttpApiSettingsChanged(true);
+                                                        }
+                                                    }}
+                                                    placeholder={t('settings.advanced.http_api_port_placeholder')}
+                                                />
+                                                <button
+                                                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    disabled={!httpApiSettingsChanged}
+                                                    onClick={async () => {
+                                                        const port = parseInt(httpApiPortInput);
+                                                        if (port < 1024 || port > 65535) {
+                                                            showToast(t('settings.advanced.http_api_port_invalid'), 'error');
+                                                            return;
+                                                        }
+                                                        try {
+                                                            await invoke('save_http_api_settings', {
+                                                                settings: httpApiSettings
+                                                            });
+                                                            setHttpApiSettingsChanged(false);
+                                                            showToast(t('settings.advanced.http_api_settings_saved'), 'success');
+                                                        } catch (error) {
+                                                            showToast(`${t('common.error')}: ${error}`, 'error');
+                                                        }
+                                                    }}
+                                                >
+                                                    {t('common.save')}
+                                                </button>
+                                            </div>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.advanced.http_api_port_desc')}</p>
+                                            {httpApiSettingsChanged && (
+                                                <p className="text-sm text-orange-500 dark:text-orange-400 mt-2">{t('settings.advanced.http_api_restart_required')}</p>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
                             <div className="border-t border-gray-200 dark:border-base-200 pt-4">
                                 <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.advanced.logs_title')}</h3>
                                 <div className="bg-gray-50 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-lg p-3 mb-3">
                                     <p className="text-sm text-gray-600 dark:text-gray-400">{t('settings.advanced.logs_desc')}</p>
                                 </div>
                                 <div className="badge badge-primary badge-outline gap-2 font-mono">
-                                    v3.3.32
+                                    v3.3.33
                                 </div>
                                 <div className="flex items-center gap-4">
                                     <button
@@ -716,7 +813,7 @@ function Settings() {
                                         <h3 className="text-3xl font-black text-gray-900 dark:text-base-content tracking-tight mb-2">Antigravity Tools</h3>
                                         <div className="flex items-center justify-center gap-2 text-sm">
                                             <span className="px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-medium border border-blue-200 dark:border-blue-800">
-                                                v3.3.32
+                                                v3.3.33
                                             </span>
                                             <span className="text-gray-400 dark:text-gray-600">•</span>
                                             <span className="text-gray-500 dark:text-gray-400">Professional Account Management</span>

@@ -7,9 +7,25 @@ pub fn get_proxy_db_path() -> Result<PathBuf, String> {
     Ok(data_dir.join("proxy_logs.db"))
 }
 
-pub fn init_db() -> Result<(), String> {
+fn connect_db() -> Result<Connection, String> {
     let db_path = get_proxy_db_path()?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    // Enable WAL mode for better concurrency
+    conn.pragma_update(None, "journal_mode", "WAL").map_err(|e| e.to_string())?;
+    
+    // Set busy timeout to 5000ms to avoid "database is locked" errors
+    conn.pragma_update(None, "busy_timeout", 5000).map_err(|e| e.to_string())?;
+    
+    // Synchronous NORMAL is faster and safe enough for WAL
+    conn.pragma_update(None, "synchronous", "NORMAL").map_err(|e| e.to_string())?;
+    
+    Ok(conn)
+}
+
+pub fn init_db() -> Result<(), String> {
+    // connect_db will initialize WAL mode and other pragmas
+    let conn = connect_db()?;
     
     conn.execute(
         "CREATE TABLE IF NOT EXISTS request_logs (
@@ -48,8 +64,7 @@ pub fn init_db() -> Result<(), String> {
 }
 
 pub fn save_log(log: &ProxyRequestLog) -> Result<(), String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
 
     conn.execute(
         "INSERT INTO request_logs (id, timestamp, method, url, status, duration, model, error, request_body, response_body, input_tokens, output_tokens, account_email, mapped_model)
@@ -77,8 +92,7 @@ pub fn save_log(log: &ProxyRequestLog) -> Result<(), String> {
 
 /// Get logs summary (without large request_body and response_body fields) with pagination
 pub fn get_logs_summary(limit: usize, offset: usize) -> Result<Vec<ProxyRequestLog>, String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
 
     let mut stmt = conn.prepare(
         "SELECT id, timestamp, method, url, status, duration, model, error, 
@@ -121,8 +135,7 @@ pub fn get_logs(limit: usize) -> Result<Vec<ProxyRequestLog>, String> {
 }
 
 pub fn get_stats() -> Result<crate::proxy::monitor::ProxyStats, String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
 
     // Optimized: Use single query instead of three separate queries
     let (total_requests, success_count, error_count): (u64, u64, u64) = conn.query_row(
@@ -144,8 +157,7 @@ pub fn get_stats() -> Result<crate::proxy::monitor::ProxyStats, String> {
 
 /// Get single log detail (with request_body and response_body)
 pub fn get_log_detail(log_id: &str) -> Result<ProxyRequestLog, String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
 
     let mut stmt = conn.prepare(
         "SELECT id, timestamp, method, url, status, duration, model, error, 
@@ -177,8 +189,7 @@ pub fn get_log_detail(log_id: &str) -> Result<ProxyRequestLog, String> {
 
 /// Cleanup old logs (keep last N days)
 pub fn cleanup_old_logs(days: i64) -> Result<usize, String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
     
     let cutoff_timestamp = chrono::Utc::now().timestamp() - (days * 24 * 3600);
     
@@ -196,8 +207,7 @@ pub fn cleanup_old_logs(days: i64) -> Result<usize, String> {
 /// Limit maximum log count (keep newest N records)
 #[allow(dead_code)]
 pub fn limit_max_logs(max_count: usize) -> Result<usize, String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
     
     let deleted = conn.execute(
         "DELETE FROM request_logs WHERE id NOT IN (
@@ -212,16 +222,14 @@ pub fn limit_max_logs(max_count: usize) -> Result<usize, String> {
 }
 
 pub fn clear_logs() -> Result<(), String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
     conn.execute("DELETE FROM request_logs", []).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Get total count of logs in database
 pub fn get_logs_count() -> Result<u64, String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
     
     let count: u64 = conn.query_row(
         "SELECT COUNT(*) FROM request_logs",
@@ -236,8 +244,7 @@ pub fn get_logs_count() -> Result<u64, String> {
 /// filter: search text to match in url, method, model, or status
 /// errors_only: if true, only count logs with status < 200 or >= 400
 pub fn get_logs_count_filtered(filter: &str, errors_only: bool) -> Result<u64, String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
     
     let filter_pattern = format!("%{}%", filter);
     
@@ -265,8 +272,7 @@ pub fn get_logs_count_filtered(filter: &str, errors_only: bool) -> Result<u64, S
 /// filter: search text to match in url, method, model, or status
 /// errors_only: if true, only return logs with status < 200 or >= 400
 pub fn get_logs_filtered(filter: &str, errors_only: bool, limit: usize, offset: usize) -> Result<Vec<ProxyRequestLog>, String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
 
     let filter_pattern = format!("%{}%", filter);
     
@@ -365,8 +371,7 @@ pub fn get_logs_filtered(filter: &str, errors_only: bool, limit: usize, offset: 
 
 /// Get all logs with full details for export
 pub fn get_all_logs_for_export() -> Result<Vec<ProxyRequestLog>, String> {
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
 
     let mut stmt = conn.prepare(
         "SELECT id, timestamp, method, url, status, duration, model, error, 
@@ -408,8 +413,7 @@ pub fn get_logs_by_ids(ids: &[String]) -> Result<Vec<ProxyRequestLog>, String> {
         return Ok(Vec::new());
     }
     
-    let db_path = get_proxy_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    let conn = connect_db()?;
     
     // Build placeholders for IN clause
     let placeholders: Vec<String> = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect();
