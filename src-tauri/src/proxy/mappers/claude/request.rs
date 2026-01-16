@@ -137,19 +137,11 @@ pub fn transform_claude_request_in(
     // 1. System Instruction (注入动态身份防护)
     let system_instruction = build_system_instruction(&claude_req.system, &claude_req.model);
 
-    //  Map model name (Use standard mapping)
-    // [IMPROVED] 提取 web search 模型为常量，便于维护
-    const WEB_SEARCH_FALLBACK_MODEL: &str = "gemini-2.5-flash";
-
-    let mapped_model = if has_web_search_tool {
-        tracing::debug!(
-            "[Claude-Request] Web search tool detected, using fallback model: {}",
-            WEB_SEARCH_FALLBACK_MODEL
-        );
-        WEB_SEARCH_FALLBACK_MODEL.to_string()
-    } else {
-        crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model)
-    };
+    // Map model name using standard mapping
+    // [REMOVED] Web search fallback logic has been removed
+    // External websearch (e.g., Tavily) is handled by the client, not this proxy
+    // All models (Opus, Sonnet, thinking variants) are now passed through as-is
+    let mapped_model = crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model);
     
     // 将 Claude 工具转为 Value 数组以便探测联网
     let tools_val: Option<Vec<Value>> = claude_req.tools.as_ref().map(|list| {

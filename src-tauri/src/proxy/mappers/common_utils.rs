@@ -59,21 +59,13 @@ pub fn resolve_request_config(
     // 仅在用户显式请求联网时启用：1) -online 后缀 2) 携带联网工具定义
     let enable_networking = is_online_suffix || has_networking_tool;
 
-    // The final model to send upstream should be the MAPPED model, 
-    // but if searching, we MUST ensure the model name is one the backend associates with search.
-    // Force a stable search model for search requests.
-    let mut final_model = mapped_model.trim_end_matches("-online").to_string();
-    if enable_networking {
-        // [FIX] Only gemini-2.5-flash supports googleSearch tool
-        // All other models (including Gemini 3 Pro, thinking models, Claude aliases) must downgrade
-        if final_model != "gemini-2.5-flash" {
-            tracing::info!(
-                "[Common-Utils] Downgrading {} to gemini-2.5-flash for web search (only gemini-2.5-flash supports googleSearch)",
-                final_model
-            );
-            final_model = "gemini-2.5-flash".to_string();
-        }
-    }
+    // The final model to send upstream should be the MAPPED model
+    // Strip -online suffix if present
+    let final_model = mapped_model.trim_end_matches("-online").to_string();
+
+    // [REMOVED] Model downgrade logic for websearch has been removed
+    // External websearch (e.g., Tavily) is handled by the client, not this proxy
+    // All models (Opus, Sonnet, thinking variants) are now passed through as-is
 
     RequestConfig {
         request_type: if enable_networking {
@@ -305,6 +297,31 @@ mod tests {
         let config = resolve_request_config("gemini-3-pro-image", "gemini-3-pro-image", &None);
         assert_eq!(config.request_type, "image_gen");
         assert!(!config.inject_google_search);
+    }
+
+    #[test]
+    fn test_thinking_model_no_downgrade_with_websearch() {
+        // Ensure thinking models are NOT downgraded when websearch tool is present
+        let tools = Some(vec![json!({
+            "name": "web_search"
+        })]);
+
+        // Claude Opus 4.5 thinking should stay as-is
+        let config = resolve_request_config(
+            "claude-opus-4-5-thinking",
+            "claude-opus-4-5-thinking",
+            &tools
+        );
+        assert_eq!(config.final_model, "claude-opus-4-5-thinking");
+        assert_eq!(config.request_type, "web_search");
+
+        // Claude Sonnet 4.5 should also stay as-is
+        let config2 = resolve_request_config(
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-5",
+            &tools
+        );
+        assert_eq!(config2.final_model, "claude-sonnet-4-5");
     }
 
     #[test]
