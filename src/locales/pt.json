@@ -37,7 +37,7 @@
         "dashboard": "Painel",
         "accounts": "Contas",
         "proxy": "Proxy da API",
-        "call_records": "Registros de Chamadas",
+        "call_records": "Logs de API",
         "settings": "Configurações",
         "theme_to_dark": "Alternar para Modo Escuro",
         "theme_to_light": "Alternar para Modo Claro",

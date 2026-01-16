@@ -37,7 +37,7 @@
         "dashboard": "仪表盘",
         "accounts": "账号管理",
         "proxy": "API 反代",
-        "call_records": "记录",
+        "call_records": "API 记录",
         "settings": "设置",
         "theme_to_dark": "切换到深色模式",
         "theme_to_light": "切换到浅色模式",

@@ -36,7 +36,7 @@
         "dashboard": "ダッシュボード",
         "accounts": "アカウント",
         "proxy": "APIプロキシ",
-        "call_records": "呼び出し記録",
+        "call_records": "API ログ",
         "settings": "設定",
         "theme_to_dark": "ダークモードに切り替え",
         "theme_to_light": "ライトモードに切り替え",

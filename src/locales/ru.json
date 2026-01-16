@@ -37,7 +37,7 @@
         "dashboard": "Дашборд",
         "accounts": "Аккаунты",
         "proxy": "API Прокси",
-        "call_records": "Записи вызовов",
+        "call_records": "API Логи",
         "settings": "Настройки",
         "theme_to_dark": "Переключить на темную тему",
         "theme_to_light": "Переключить на светлую тему",
