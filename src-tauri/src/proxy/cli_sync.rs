@@ -4,6 +4,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::fs;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum CliApp {
     Claude,
@@ -93,7 +98,11 @@ pub fn check_cli_installed(app: &CliApp) -> (bool, Option<String>) {
     
     // 1. 使用 which 检测
     let which_output = if cfg!(target_os = "windows") {
-        Command::new("where").arg(cmd).output()
+        let mut c = Command::new("where");
+        c.arg(cmd);
+        #[cfg(target_os = "windows")]
+        c.creation_flags(CREATE_NO_WINDOW);
+        c.output()
     } else {
         Command::new("which").arg(cmd).output()
     };
@@ -103,7 +112,12 @@ pub fn check_cli_installed(app: &CliApp) -> (bool, Option<String>) {
     }
 
     // 2. 获取版本
-    let version_output = Command::new(cmd).arg("--version").output();
+    let mut ver_cmd = Command::new(cmd);
+    ver_cmd.arg("--version");
+    #[cfg(target_os = "windows")]
+    ver_cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let version_output = ver_cmd.output();
     let version = match version_output {
         Ok(out) if out.status.success() => {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
