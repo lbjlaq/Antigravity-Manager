@@ -16,6 +16,7 @@ mod tests {
     fn setup_app(api_key: &str) -> Router {
         let config = ProxySecurityConfig {
             api_key: api_key.to_string(),
+            auth_mode: crate::proxy::ProxyAuthMode::Strict,
             ..Default::default()
         };
         let state = Arc::new(RwLock::new(config));
