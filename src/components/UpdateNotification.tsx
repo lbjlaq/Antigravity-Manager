@@ -53,8 +53,8 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
       if (update) {
         let downloaded = 0;
         let contentLength = 0;
-        
-        await update.downloadAndInstall((event) => {
+
+        await update.downloadAndInstall((event: any) => {
           switch (event.event) {
             case 'Started':
               contentLength = event.data.contentLength || 0;
@@ -132,7 +132,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
               </div>
               <div>
                 <h3 className="font-bold text-gray-800 dark:text-white leading-tight">
-                  {updateState === 'ready' 
+                  {updateState === 'ready'
                     ? t('update_notification.ready', '更新完成')
                     : t('update_notification.title')}
                 </h3>
@@ -171,7 +171,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
           {updateState === 'downloading' && (
             <div className="mb-4">
               <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                <div 
+                <div
                   className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-300"
                   style={{ width: `${downloadProgress}%` }}
                 />

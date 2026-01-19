@@ -551,7 +551,9 @@
                 "title": "实验性设置 (Experimental)",
                 "title_tooltip": "探索性功能，可能在未来版本中调整或移除。",
                 "enable_usage_scaling": "启用用量缩放",
-                "enable_usage_scaling_tooltip": "针对 Claude 兼容协议。当总输入超过 30k Token 时开启激进缩放，防止在大上下文下频繁触发客户端压缩。注意：开启后客户端显示的用量不再代表实际计费点数。"
+                "enable_usage_scaling_tooltip": "针对 Claude 兼容协议。当总输入超过 30k Token 时开启激进缩放，防止在大上下文下频繁触发客户端压缩。注意：开启后客户端显示的用量不再代表实际计费点数。",
+                "enable_model_polling": "启用智能模型轮询",
+                "enable_model_polling_tooltip": "当主模型的所有账号不可用（额度耗尽或被限流）时，自动尝试备选模型（如 Gemini 2.5 Pro/Flash）。使用 5 分钟熔断机制避免重复尝试失败的模型，显著减少错误日志和响应延迟。"
             }
         },
         "example": {

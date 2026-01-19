@@ -452,6 +452,174 @@ pub async fn handle_messages(
         let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id, &config.final_model).await {
             Ok(t) => t,
             Err(e) => {
+                // ===== [模型轮询] 当主模型账号全部不可用时，尝试备选模型 =====
+                let polling_enabled = state.experimental.read().await.enable_model_polling;
+                
+                if polling_enabled {
+                    // 触发主模型熔断（5分钟）
+                    token_manager.trip_model_circuit_breaker(&request_for_body.model, 300);
+                    
+                    // 获取备选模型列表
+                    let fallback_models = crate::proxy::common::model_fallback::get_fallback_models(&request_for_body.model);
+                    
+                    tracing::info!(
+                        "[{}] 🔄 主模型 {} 不可用，启动模型轮询，尝试备选模型: {:?}",
+                        trace_id, request_for_body.model, fallback_models
+                    );
+                    
+                    // 尝试每个备选模型
+                    for fallback_model in fallback_models {
+                        // 检查备选模型是否也被熔断
+                        if token_manager.is_model_circuit_broken(fallback_model) {
+                            tracing::debug!("[{}] 备选模型 {} 处于熔断状态，跳过", trace_id, fallback_model);
+                            continue;
+                        }
+                        
+                        // 创建一个使用备选模型的请求副本
+                        let mut fallback_request = request_for_body.clone();
+                        fallback_request.model = fallback_model.to_string();
+                        
+                        // 备选模型（特别是 Gemini）可能不支持 Thinking，需要清理
+                        if fallback_model.contains("flash") || fallback_model.contains("gemini") {
+                            fallback_request.thinking = None;
+                            // 清理历史 Thinking 块
+                            for msg in fallback_request.messages.iter_mut() {
+                                if let crate::proxy::mappers::claude::models::MessageContent::Array(blocks) = &mut msg.content {
+                                    blocks.retain(|b| !matches!(b, 
+                                        crate::proxy::mappers::claude::models::ContentBlock::Thinking { .. } |
+                                        crate::proxy::mappers::claude::models::ContentBlock::RedactedThinking { .. }
+                                    ));
+                                }
+                            }
+                        }
+                        
+                        // 重新获取配置和尝试获取 token
+                        let fallback_config = crate::proxy::mappers::common_utils::resolve_request_config(
+                            &fallback_request.model, 
+                            &fallback_request.model, 
+                            &None
+                        );
+                        
+                        match token_manager.get_token(&fallback_config.request_type, false, session_id, &fallback_config.final_model).await {
+                            Ok((fb_token, fb_project, fb_email)) => {
+                                tracing::info!(
+                                    "[{}] ✅ 轮询成功！使用备选模型: {} (账号: {})",
+                                    trace_id, fallback_model, fb_email
+                                );
+                                
+                                // 直接处理备选模型请求
+                                let fallback_mapped_model = fallback_model.to_string();
+                                let gemini_body = match transform_claude_request_in(&fallback_request, &fb_project, false) {
+                                    Ok(b) => b,
+                                    Err(transform_err) => {
+                                        tracing::error!("[{}] 备选模型转换失败: {}", trace_id, transform_err);
+                                        continue;
+                                    }
+                                };
+                                
+                                let client_wants_stream = request.stream;
+                                let method = "streamGenerateContent";
+                                let query = Some("alt=sse");
+                                let extra_headers = std::collections::HashMap::new();
+                                
+                                // 调用上游
+                                match upstream.call_v1_internal_with_headers(method, &fb_token, gemini_body, query, extra_headers).await {
+                                    Ok(response) => {
+                                        if response.status().is_success() {
+                                            token_manager.mark_account_success(&fb_email);
+                                            
+                                            let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&fallback_mapped_model);
+                                            let stream = response.bytes_stream();
+                                            let gemini_stream = Box::pin(stream);
+                                            let mut claude_stream = create_claude_sse_stream(
+                                                gemini_stream, 
+                                                trace_id.clone(), 
+                                                fb_email.clone(),
+                                                Some(session_id_str.clone()),
+                                                scaling_enabled,
+                                                context_limit
+                                            );
+                                            
+                                            let first_chunk = claude_stream.next().await;
+                                            
+                                            match first_chunk {
+                                                Some(Ok(bytes)) if !bytes.is_empty() => {
+                                                    let stream_rest = claude_stream;
+                                                    let combined_stream = Box::pin(
+                                                        futures::stream::once(async move { Ok(bytes) })
+                                                            .chain(stream_rest.map(|result| -> Result<Bytes, std::io::Error> {
+                                                                match result {
+                                                                    Ok(b) => Ok(b),
+                                                                    Err(e) => Ok(Bytes::from(format!("data: {{\"error\":\"{}\"}}\n\n", e))),
+                                                                }
+                                                            }))
+                                                    );
+                                                    
+                                                    if client_wants_stream {
+                                                        return Response::builder()
+                                                            .status(StatusCode::OK)
+                                                            .header(header::CONTENT_TYPE, "text/event-stream")
+                                                            .header(header::CACHE_CONTROL, "no-cache")
+                                                            .header(header::CONNECTION, "keep-alive")
+                                                            .header("X-Account-Email", &fb_email)
+                                                            .header("X-Mapped-Model", &fallback_mapped_model)
+                                                            .header("X-Fallback-Model", "true")
+                                                            .body(Body::from_stream(combined_stream))
+                                                            .unwrap();
+                                                    } else {
+                                                        use crate::proxy::mappers::claude::collect_stream_to_json;
+                                                        match collect_stream_to_json(combined_stream).await {
+                                                            Ok(full_response) => {
+                                                                return Response::builder()
+                                                                    .status(StatusCode::OK)
+                                                                    .header(header::CONTENT_TYPE, "application/json")
+                                                                    .header("X-Account-Email", &fb_email)
+                                                                    .header("X-Mapped-Model", &fallback_mapped_model)
+                                                                    .header("X-Fallback-Model", "true")
+                                                                    .body(Body::from(serde_json::to_string(&full_response).unwrap()))
+                                                                    .unwrap();
+                                                            }
+                                                            Err(collect_err) => {
+                                                                tracing::warn!("[{}] 备选模型响应收集失败: {}", trace_id, collect_err);
+                                                                continue;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                _ => {
+                                                    tracing::warn!("[{}] 备选模型 {} 返回空响应", trace_id, fallback_model);
+                                                    continue;
+                                                }
+                                            }
+                                        } else {
+                                            let status_code = response.status().as_u16();
+                                            tracing::warn!("[{}] 备选模型 {} 请求失败: HTTP {}", trace_id, fallback_model, status_code);
+                                            if status_code == 429 || status_code == 503 {
+                                                token_manager.trip_model_circuit_breaker(fallback_model, 300);
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    Err(upstream_err) => {
+                                        tracing::warn!("[{}] 备选模型 {} 上游调用失败: {}", trace_id, fallback_model, upstream_err);
+                                        continue;
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                tracing::debug!("[{}] 备选模型 {} 也无可用账号，继续尝试下一个", trace_id, fallback_model);
+                                token_manager.trip_model_circuit_breaker(fallback_model, 300);
+                                continue;
+                            }
+                        }
+                    }
+                    
+                    // 所有备选模型都失败，尝试智谱兜底（需要 z.ai 配置）
+                    let zhipu_models = crate::proxy::common::model_fallback::get_zhipu_fallback_models();
+                    tracing::info!("[{}] 所有备选模型不可用，智谱兜底: {:?}（需 z.ai 配置）", trace_id, zhipu_models);
+                }
+                
+                // 原有错误处理
                 let safe_message = if e.contains("invalid_grant") {
                     "OAuth refresh failed (invalid_grant): refresh_token likely revoked/expired; reauthorize account(s) to restore service.".to_string()
                 } else {

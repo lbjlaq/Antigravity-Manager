@@ -551,7 +551,9 @@
                 "title": "Experimental Settings",
                 "title_tooltip": "Exploratory features that may be adjusted or removed in future versions.",
                 "enable_usage_scaling": "Enable Usage Scaling",
-                "enable_usage_scaling_tooltip": "For Claude protocol. Enables aggressive scaling when total input exceeds 30k tokens to prevent frequent client-side compression. Note: Reported usage will not reflect actual billing after enabling."
+                "enable_usage_scaling_tooltip": "For Claude protocol. Enables aggressive scaling when total input exceeds 30k tokens to prevent frequent client-side compression. Note: Reported usage will not reflect actual billing after enabling.",
+                "enable_model_polling": "Enable Smart Model Polling",
+                "enable_model_polling_tooltip": "When all accounts for the primary model are unavailable (quota exhausted or rate-limited), automatically try fallback models (e.g., Gemini 2.5 Pro/Flash). Uses a 5-minute circuit breaker to avoid repeated attempts on failed models, significantly reducing error logs and response latency."
             }
         },
         "example": {

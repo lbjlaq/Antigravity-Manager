@@ -3,5 +3,6 @@
 // pub mod error;
 // pub mod rate_limiter;
 pub mod model_mapping;
+pub mod model_fallback;
 pub mod utils;
 pub mod json_schema;

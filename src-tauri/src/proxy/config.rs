@@ -135,6 +135,11 @@ pub struct ExperimentalConfig {
     /// 用于解决客户端因 Gemini 上下文过大而错误触发压缩的问题
     #[serde(default = "default_true")]
     pub enable_usage_scaling: bool,
+
+    /// 启用智能模型轮询 (Model Polling)
+    /// 当主模型所有账号不可用时，自动尝试备选模型（如 Gemini 2.5 Pro/Flash）
+    #[serde(default)]
+    pub enable_model_polling: bool,
 }
 
 impl Default for ExperimentalConfig {
@@ -144,9 +149,11 @@ impl Default for ExperimentalConfig {
             enable_tool_loop_recovery: true,
             enable_cross_model_checks: true,
             enable_usage_scaling: true,
+            enable_model_polling: false, // 默认关闭
         }
     }
 }
+
 
 fn default_true() -> bool { true }
 

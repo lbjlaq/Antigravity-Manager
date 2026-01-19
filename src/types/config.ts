@@ -68,6 +68,7 @@ export interface PinnedQuotaModelsConfig {
 
 export interface ExperimentalConfig {
     enable_usage_scaling: boolean;
+    enable_model_polling?: boolean;
 }
 
 export interface AppConfig {

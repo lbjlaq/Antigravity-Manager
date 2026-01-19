@@ -33,6 +33,9 @@ pub struct TokenManager {
     sticky_config: Arc<tokio::sync::RwLock<StickySessionConfig>>, // 新增：调度配置
     session_accounts: Arc<DashMap<String, String>>, // 新增：会话与账号映射 (SessionID -> AccountID)
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>, // [FIX #820] 优先使用的账号ID（固定账号模式）
+    /// 模型熔断器：model_id -> 熔断到期时间
+    /// 当某模型的所有账号都不可用时，触发熔断，5分钟内不再尝试该模型
+    model_circuit_breaker: Arc<DashMap<String, std::time::Instant>>,
 }
 
 impl TokenManager {
@@ -47,6 +50,7 @@ impl TokenManager {
             sticky_config: Arc::new(tokio::sync::RwLock::new(StickySessionConfig::default())),
             session_accounts: Arc::new(DashMap::new()),
             preferred_account_id: Arc::new(tokio::sync::RwLock::new(None)), // [FIX #820]
+            model_circuit_breaker: Arc::new(DashMap::new()),
         }
     }
 
@@ -1458,6 +1462,76 @@ impl TokenManager {
     /// 获取当前优先使用的账号ID
     pub async fn get_preferred_account(&self) -> Option<String> {
         self.preferred_account_id.read().await.clone()
+    }
+
+    // ===== 模型熔断器方法 (Model Circuit Breaker) =====
+
+    /// 检查模型是否处于熔断状态
+    /// 如果熔断已过期，自动清除并返回 false
+    pub fn is_model_circuit_broken(&self, model: &str) -> bool {
+        let normalized = crate::proxy::common::model_mapping::normalize_to_standard_id(model)
+            .unwrap_or_else(|| model.to_string());
+        
+        if let Some(expires_at) = self.model_circuit_breaker.get(&normalized) {
+            if std::time::Instant::now() < *expires_at {
+                tracing::debug!("⚡ Model {} is circuit-broken, will retry in {:?}", 
+                    normalized, expires_at.duration_since(std::time::Instant::now()));
+                return true;
+            } else {
+                // 熔断已过期，清除
+                drop(expires_at);
+                self.model_circuit_breaker.remove(&normalized);
+                tracing::info!("✅ Model {} circuit breaker expired, retrying", normalized);
+            }
+        }
+        false
+    }
+
+    /// 触发模型熔断
+    /// duration_secs: 熔断持续时间（秒），默认 300 秒 (5 分钟)
+    pub fn trip_model_circuit_breaker(&self, model: &str, duration_secs: u64) {
+        let normalized = crate::proxy::common::model_mapping::normalize_to_standard_id(model)
+            .unwrap_or_else(|| model.to_string());
+        
+        let expires_at = std::time::Instant::now() + std::time::Duration::from_secs(duration_secs);
+        self.model_circuit_breaker.insert(normalized.clone(), expires_at);
+        
+        tracing::warn!(
+            "⚡ Model {} circuit breaker TRIPPED! Will not retry for {} seconds",
+            normalized, duration_secs
+        );
+    }
+
+    /// 手动重置模型熔断状态
+    #[allow(dead_code)]
+    pub fn reset_model_circuit_breaker(&self, model: &str) {
+        let normalized = crate::proxy::common::model_mapping::normalize_to_standard_id(model)
+            .unwrap_or_else(|| model.to_string());
+        
+        if self.model_circuit_breaker.remove(&normalized).is_some() {
+            tracing::info!("✅ Model {} circuit breaker manually reset", normalized);
+        }
+    }
+
+    /// 清除所有模型熔断状态
+    #[allow(dead_code)]
+    pub fn clear_all_circuit_breakers(&self) {
+        let count = self.model_circuit_breaker.len();
+        self.model_circuit_breaker.clear();
+        if count > 0 {
+            tracing::info!("✅ Cleared {} model circuit breaker(s)", count);
+        }
+    }
+
+    /// 获取所有当前熔断的模型列表
+    #[allow(dead_code)]
+    pub fn get_circuit_broken_models(&self) -> Vec<String> {
+        let now = std::time::Instant::now();
+        self.model_circuit_breaker
+            .iter()
+            .filter(|entry| *entry.value() > now)
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 }
 
