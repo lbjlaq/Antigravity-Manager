@@ -1,6 +1,6 @@
 use crate::proxy::config::{ProxyAuthMode, ProxyConfig};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProxySecurityConfig {
     pub auth_mode: ProxyAuthMode,
     pub api_key: String,

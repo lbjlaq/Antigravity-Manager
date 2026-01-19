@@ -4,13 +4,12 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
         middleware::from_fn_with_state,
-        response::Response,
         routing::get,
         Router,
     };
     use std::sync::Arc;
     use tokio::sync::RwLock;
-    use tower::ServiceExt; // for oneshot
+    use tower::util::ServiceExt; // for oneshot
     use crate::proxy::{middleware::auth::auth_middleware, ProxySecurityConfig};
 
     // Helper to setup the app with the auth middleware

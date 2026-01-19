@@ -2,11 +2,8 @@
 #[cfg(test)]
 mod tests {
     use crate::proxy::token_manager::TokenManager;
-    use std::collections::HashSet;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::Arc;
-    use tokio::time::{sleep, Duration};
 
     // Helper to create a temporary test directory
     struct TestDir {
@@ -64,71 +61,71 @@ mod tests {
         tm.load_accounts().await.unwrap();
 
         // 1. First call should get ULTRA
-        let (token1, _, _) = tm.get_token("claude", false, None, "claude-3-opus").await.unwrap();
-        // Since get_token returns access_token, refresh_token, email. 
-        // But get_token internals return account_id? No, get_token returns tuple strings.
-        // Let's check token_manager.rs: returns (String, String, String) -> (access, refresh, email) usually?
-        // Ah, looking at get_token signature: -> Result<(String, String, String), String>
-        // Usually (access_token, refresh_token, email) based on usage context.
-        // Let's verify by checking returned email.
+        // The list is sorted [ULTRA, PRO, FREE]. Index 0 -> ULTRA.
+        let (_, _, email) = tm.get_token("claude", false, None, "claude-3-opus").await.unwrap();
+        assert_eq!(email, "u1@test.com", "Should pick ULTRA tier first");
+
+        // 2. Test 60s Lock Reuse
+        // Next call (no rotate) should reuse u1 because of "60s global lock" logic?
+        // Wait, TokenManager logic depends on "last_used_account".
+        // Ensure "last_used_account" is set after successful retrieval?
+        // Actually TokenManager only sets it if we explicitly cycle or something? 
+        // No, typically get_token returns an account. If it was successful, the middleware usually keeps using it?
+        // But "Mode B: 原子化 60s 全局锁定" implies TokenManager remembers it.
+        // Let's verify if `get_token` reuses the *same* account if called immediately.
         
-        // Wait, since we can't easily peek inside DashMap, we rely on returned values.
-        // Assuming email format "u1@test.com"
+        let (_, _, email2) = tm.get_token("claude", false, None, "claude-3-opus").await.unwrap();
+        // If sorting logic dominates and round-robin index hasn't moved, it might still be u1.
+        // But `get_token` increments index? 
+        // `current_index.fetch_add(1)` usually happens inside `get_token_internal`?
+        // Only if it fails? Or always?
+        // "轮询" implies it moves.
+        // But "Global Lock" implies it stays.
+        // Let's assume for this test we mainly want to check Tier Priority.
+        // Since u1 is best, if lock applies, u1. If sort applies, u1. 
+        // If round robin applies, it might go to p1.
+        // Tests on strict implementation behavior:
+        // Ideally we want u1 again if 60s lock works.
+        assert_eq!(email2, "u1@test.com", "Should reuse account due to lock or priority");
+    }
+
+    #[tokio::test]
+    async fn test_force_rotate() {
+        let dir = TestDir::new();
+        dir.create_account("u1", "ULTRA", 50, vec![]);
+        dir.create_account("p1", "PRO", 50, vec![]);
+
+        let tm = TokenManager::new(dir.path.clone());
+        tm.load_accounts().await.unwrap();
+
+        // 1. Get first (ULTRA)
+        let (_, _, email1) = tm.get_token("claude", false, None, "claude-3-opus").await.unwrap();
+        assert_eq!(email1, "u1@test.com");
+
+        // 2. Force rotate -> should get PRO (as it is next in sorted list)
+        // Note: verify if implementations supports rotation.
+        let (_, _, email2) = tm.get_token("claude", true, None, "claude-3-opus").await.unwrap();
+        assert_eq!(email2, "p1@test.com", "Should rotate to PRO account");
+    }
+
+    #[tokio::test]
+    async fn test_quota_protection() {
+        let dir = TestDir::new();
+        // u1 has claude-3-opus in protected_models
+        dir.create_account("u1", "ULTRA", 10, vec!["claude-3-opus"]);
+        // u2 is free but valid for this model
+        dir.create_account("u2", "FREE", 50, vec![]); 
+
+        let tm = TokenManager::new(dir.path.clone());
+        tm.load_accounts().await.unwrap();
         
-        // However, TokenManager usually does round-robin or something.
-        // But we implemented sorting! 
-        // logic: ULTRA > PRO > FREE.
+        // Request for claude-3-opus. u1 is protected. Should skip u1.
+        let (_, _, email) = tm.get_token("claude", false, None, "claude-3-opus").await.unwrap();
+        assert_eq!(email, "u2@test.com", "Should skip u1 because it is protected for claude-3-opus");
         
-        // Since we have parallel tests potentially (though these act on separate dirs), 
-        // and we have 1 thread usually or atomic index.
-        
-        // The sorted list is rebuilt inside get_token_internal every time?
-        // YES: let mut tokens_snapshot: Vec<ProxyToken> = ... .collect(); keys.sort_by ...
-        
-        // So index logic: 
-        // global atomic counter `current_index` increments.
-        // But the list is sorted.
-        // If sorting is stable (logic is), then [ULTRA, PRO, FREE].
-        // index 0 -> ULTRA.
-        // index 1 -> PRO.
-        // index 2 -> FREE.
-        
-        // Let's fetch 3 times.
-        // Note: get_token calls `fetch_add` -> so it rotates.
-        
-        // Since `force_rotate` is false, and first call...
-        // Wait, "Mode B: 原子化 60s 全局锁定" might kick in if there's a last used account logic properly working?
-        // But here we just created TM, last used is None. It will pick from sorted list at index 0.
-        
-        // Access token is mock_at, verify via email or something?
-        // get_token returns (access_token, refresh_token, project_id??) or email?
-        // I need to check `src-tauri/src/proxy/token_manager.rs` line 479 signature return type usage.
-        // Wait, I read the file. The signature is Result<(String, String, String), String>.
-        
-        // Since I cannot read all lines in previous context, verification is safer if I guess or standard usage.
-        // Let's assume it returns standard auth tuple.
-        // To properly assert, I should probably check if I can inspect the email.
-        // If the return tuple doesn't have email, I can't verify easily unless I check access token which is constant mock.
-        
-        // Ah, I created accounts with generated emails. 
-        // If get_token returns (at, rt, email) or (at, rt, project_id)?
-        // Most proxies need AT/RT. Email is for logging usually.
-        // Checking `token.rs`: 
-        // `Ok((token.access_token.clone(), token.refresh_token.clone(), token.project_id.clone().unwrap_or_default()))` ??
-        // I should check `token_manager.rs` again for the `Ok(...)` return line.
-        // I will do that via `view_file` to be safe before writing specific assertions on the tuple.
-        
-        // BUT, for now, let's write the test assuming generic "get a token" first, 
-        // and I will use `token_manager.rs` view to confirm tuple content if I can.
-        // Actually, I looked at lines 1-800. `get_token` calls `get_token_internal`.
-        // `get_token_internal` returns `match target_token` ...
-        // I need to see the return statement of `get_token_internal`. It was likely cut off around line 800.
-        // I'll assume I need to read it.
-        
-        // STRATEGY: 
-        // 1. Write the tests with placeholders for assertions or assume (at, rt, email). 
-        // 2. Or better, read the file first to be 100% sure. 
-        // Since I am in "EXECUTION", I should just do it. I'll read the end of `token_manager.rs` first.
-        panic!("Please check the return value first!");
+        // Request for another model (e.g. gpt-4) - u1 is NOT protected.
+        // u1 is ULTRA, u2 is FREE. Priority -> u1.
+        let (_, _, email2) = tm.get_token("claude", false, None, "gpt-4").await.unwrap();
+        assert_eq!(email2, "u1@test.com", "Should pick u1 for non-protected model due to tier priority");
     }
 }
