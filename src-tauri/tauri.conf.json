@@ -39,5 +39,20 @@
     "macOS": {
       "entitlements": "Entitlements.plist"
     }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/lbjlaq/Antigravity-Manager/releases/latest/download/updater.json"
+      ],
+      "dialog": true,
+      "pubkey": "RWSQvAJOE+udAGSUoZB7Y7EhAGOyZkB1zHaKwRYfldgig5rIF+PVUDbo"
+    },
+    "process": null,
+    "fs": null,
+    "dialog": null,
+    "opener": null,
+    "single-instance": null
   }
 }

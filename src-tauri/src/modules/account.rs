@@ -387,25 +387,26 @@ pub async fn switch_account(account_id: &str) -> Result<(), String> {
         save_account(&account)?;
     }
     
-    // 3. Close Antigravity (increase timeout to 20s)
+    // 3. Get storage path while process is potentially running (to capture --user-data-dir)
+    let storage_path = device::get_storage_path()?;
+
+    // 4. Close Antigravity (increase timeout to 20s)
     if process::is_antigravity_running() {
         process::close_antigravity(20)?;
     }
 
-    // 4. Write device profile (generate/bind if missing), only update storage on switch
-    let storage_path = device::get_storage_path()?;
+    // 5. Write device profile (generate/bind if missing), only update storage on switch
     let profile_to_apply = {
-        // Prefer account-bound, then global original, else capture/generate
         if let Some(p) = account.device_profile.clone() {
             p
-        } else if let Some(global) = device::load_global_original() {
-            global
         } else {
-            // Capture current storage as original profile
-            let current =
-                device::read_profile(&storage_path).unwrap_or_else(|_| device::generate_profile());
-            let _ = device::save_global_original(&current);
-            current
+            // [FIX] If no bound profile, generate and bind one for isolation
+            // This ensures each account gets a unique fingerprint upon first switch
+            crate::modules::logger::log_info(&format!("Account {} has no bound fingerprint, generating new one for isolation...", account.email));
+            let new_profile = device::generate_profile();
+            // Bind to account and save
+            apply_profile_to_account(&mut account, new_profile.clone(), Some("auto_generated".to_string()), true)?;
+            new_profile
         }
     };
     crate::modules::logger::log_info(&format!(

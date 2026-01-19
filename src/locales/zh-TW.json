@@ -39,6 +39,7 @@
         "dashboard": "儀表板",
         "accounts": "帳號管理",
         "proxy": "API 反向代理",
+        "token_stats": "統計",
         "call_records": "流量日誌",
         "settings": "設定",
         "theme_to_dark": "切換到深色模式",
@@ -784,5 +785,24 @@
             "stream_error": "資料流傳輸錯誤,請稍後重試",
             "unknown_error": "發生未知錯誤,請稍後重試"
         }
+    },
+    "token_stats": {
+        "title": "Token 消費統計",
+        "hourly": "小時",
+        "daily": "日",
+        "weekly": "週",
+        "total_tokens": "總 Token",
+        "input_tokens": "輸入 Token",
+        "output_tokens": "輸出 Token",
+        "accounts_used": "活躍帳號",
+        "usage_trend": "Token 使用趨勢",
+        "input": "輸入",
+        "output": "輸出",
+        "no_data": "暫無數據",
+        "by_account": "分帳號統計",
+        "account_details": "帳號詳細統計",
+        "account": "帳號",
+        "requests": "請求數",
+        "total": "合計"
     }
 }

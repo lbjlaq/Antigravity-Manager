@@ -39,6 +39,7 @@
         "dashboard": "Tổng quan",
         "accounts": "Tài khoản",
         "proxy": "API Proxy",
+        "token_stats": "Thống kê",
         "call_records": "Nhật ký lưu lượng",
         "settings": "Cài đặt",
         "theme_to_dark": "Chuyển sang Chế độ Tối",
@@ -754,6 +755,7 @@
             "request_payload": "Payload Yêu cầu",
             "response_payload": "Payload Phản hồi",
             "duration": "Thời gian xử lý",
+            "token_stats": "Token Stats",
             "tokens": "Tokens (I/O)",
             "time": "Thời điểm",
             "model": "Model",
@@ -762,6 +764,25 @@
             "mapped_model": "Model Đã Ánh xạ",
             "account_used": "Tài khoản Sử dụng",
             "payload_empty": "Không có Payload"
+        },
+        "token_stats": {
+            "title": "Token Usage Stats",
+            "hourly": "Hourly",
+            "daily": "Daily",
+            "weekly": "Weekly",
+            "total_tokens": "Total Tokens",
+            "input_tokens": "Input Tokens",
+            "output_tokens": "Output Tokens",
+            "accounts_used": "Active Accounts",
+            "usage_trend": "Usage Trend",
+            "by_account": "Stats by Account",
+            "account_details": "Account Details",
+            "account": "Account",
+            "requests": "Requests",
+            "input": "Input",
+            "output": "Output",
+            "total": "Total",
+            "no_data": "No Data"
         },
         "dialog": {
             "clear_title": "Xóa Logs Proxy",
@@ -781,5 +802,24 @@
             "stream_error": "Lỗi truyền stream, vui lòng thử lại sau",
             "unknown_error": "Đã xảy ra lỗi không xác định, vui lòng thử lại sau"
         }
+    },
+    "token_stats": {
+        "title": "Thống kê Token",
+        "hourly": "Hàng giờ",
+        "daily": "Hàng ngày",
+        "weekly": "Hàng tuần",
+        "total_tokens": "Tổng Token",
+        "input_tokens": "Token đầu vào",
+        "output_tokens": "Token đầu ra",
+        "accounts_used": "Tài khoản hoạt động",
+        "usage_trend": "Xu hướng sử dụng",
+        "input": "Đầu vào",
+        "output": "Đầu ra",
+        "no_data": "Không có dữ liệu",
+        "by_account": "Thống kê theo tài khoản",
+        "account_details": "Chi tiết tài khoản",
+        "account": "Tài khoản",
+        "requests": "Yêu cầu",
+        "total": "Tổng cộng"
     }
 }

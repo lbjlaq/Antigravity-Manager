@@ -39,6 +39,7 @@
         "dashboard": "ダッシュボード",
         "accounts": "アカウント",
         "proxy": "APIプロキシ",
+        "token_stats": "統計",
         "call_records": "トラフィックログ",
         "settings": "設定",
         "theme_to_dark": "ダークモードに切り替え",
@@ -801,5 +802,24 @@
             "stream_error": "ストリーム転送エラーが発生しました。後でもう一度お試しください",
             "unknown_error": "不明なエラーが発生しました。後でもう一度お試しください"
         }
+    },
+    "token_stats": {
+        "title": "トークン統計",
+        "hourly": "時間単位",
+        "daily": "日単位",
+        "weekly": "週単位",
+        "total_tokens": "総トークン",
+        "input_tokens": "入力トークン",
+        "output_tokens": "出力トークン",
+        "accounts_used": "アクティブアカウント",
+        "usage_trend": "使用傾向",
+        "input": "入力",
+        "output": "出力",
+        "no_data": "データなし",
+        "by_account": "アカウント別",
+        "account_details": "アカウント詳細",
+        "account": "アカウント",
+        "requests": "リクエスト数",
+        "total": "合計"
     }
 }

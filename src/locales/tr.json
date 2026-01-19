@@ -38,6 +38,7 @@
         "dashboard": "Kontrol Paneli",
         "accounts": "Hesaplar",
         "proxy": "API Proxy",
+        "token_stats": "İstatistikler",
         "call_records": "Trafik Günlükleri",
         "settings": "Ayarlar",
         "theme_to_dark": "Karanlık Moda Geç",
@@ -724,6 +725,8 @@
             "request_payload": "İstek Yükü",
             "response_payload": "Yanıt Yükü",
             "duration": "Süre",
+            "token_stats": "Token Stats",
+            "settings": "Settings",
             "tokens": "Token'lar (G/Ç)",
             "time": "Zaman",
             "model": "Model",
@@ -751,5 +754,24 @@
             "stream_error": "Akış iletim hatası, lütfen daha sonra tekrar deneyin",
             "unknown_error": "Bilinmeyen bir hata oluştu, lütfen daha sonra tekrar deneyin"
         }
+    },
+    "token_stats": {
+        "title": "Token İstatistikleri",
+        "hourly": "Saatlik",
+        "daily": "Günlük",
+        "weekly": "Haftalık",
+        "total_tokens": "Toplam Token",
+        "input_tokens": "Giriş Tokenleri",
+        "output_tokens": "Çıkış Tokenleri",
+        "accounts_used": "Aktif Hesaplar",
+        "usage_trend": "Kullanım Trendi",
+        "input": "Giriş",
+        "output": "Çıkış",
+        "no_data": "Veri Yok",
+        "by_account": "Hesap İstatistikleri",
+        "account_details": "Hesap Detayları",
+        "account": "Hesap",
+        "requests": "İstekler",
+        "total": "Toplam"
     }
 }

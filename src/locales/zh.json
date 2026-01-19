@@ -40,7 +40,7 @@
         "accounts": "账号管理",
         "proxy": "API 反代",
         "call_records": "流量日志",
-        "token_stats": "Token 统计",
+        "token_stats": "统计",
         "settings": "设置",
         "theme_to_dark": "切换到深色模式",
         "theme_to_light": "切换到浅色模式",
@@ -789,5 +789,24 @@
             "stream_error": "数据流传输错误,请稍后重试",
             "unknown_error": "发生未知错误,请稍后重试"
         }
+    },
+    "token_stats": {
+        "title": "Token 消费统计",
+        "hourly": "小时",
+        "daily": "日",
+        "weekly": "周",
+        "total_tokens": "总 Token",
+        "input_tokens": "输入 Token",
+        "output_tokens": "输出 Token",
+        "accounts_used": "活跃账号",
+        "usage_trend": "Token 使用趋势",
+        "input": "输入",
+        "output": "输出",
+        "no_data": "暂无数据",
+        "by_account": "分账号统计",
+        "account_details": "账号详细统计",
+        "account": "账号",
+        "requests": "请求数",
+        "total": "合计"
     }
 }

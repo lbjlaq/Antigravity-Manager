@@ -116,9 +116,9 @@ pub fn backup_storage(storage_path: &Path) -> Result<PathBuf, String> {
 #[allow(dead_code)]
 pub fn read_profile(storage_path: &Path) -> Result<DeviceProfile, String> {
     let content =
-        fs::read_to_string(storage_path).map_err(|e| format!("read_failed: {}", e))?;
+        fs::read_to_string(storage_path).map_err(|e| format!("read_failed ({:?}): {}", storage_path, e))?;
     let json: Value =
-        serde_json::from_str(&content).map_err(|e| format!("parse_failed: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("parse_failed ({:?}): {}", storage_path, e))?;
 
     // Supports nested telemetry or flat telemetry.xxx
     let get_field = |key: &str| -> Option<String> {
@@ -212,8 +212,8 @@ pub fn write_profile(storage_path: &Path, profile: &DeviceProfile) -> Result<(),
 
     let updated = serde_json::to_string_pretty(&json)
         .map_err(|e| format!("serialize_failed: {}", e))?;
-    fs::write(storage_path, updated).map_err(|e| format!("write_failed: {}", e))?;
-    logger::log_info("device_profile_written");
+    fs::write(storage_path, updated).map_err(|e| format!("write_failed ({:?}): {}", storage_path, e))?;
+    logger::log_info(&format!("device_profile_written to {:?}", storage_path));
 
     // Sync ItemTable.storage.serviceMachineId in state.vscdb
     let _ = sync_state_service_machine_id_value(&profile.dev_device_id);

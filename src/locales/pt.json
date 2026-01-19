@@ -39,6 +39,7 @@
         "dashboard": "Painel",
         "accounts": "Contas",
         "proxy": "Proxy da API",
+        "token_stats": "Estatísticas",
         "call_records": "Registros de Tráfego",
         "settings": "Configurações",
         "theme_to_dark": "Alternar para Modo Escuro",
@@ -757,6 +758,7 @@
             "request_payload": "Carga da Solicitação",
             "response_payload": "Carga da Resposta",
             "duration": "Duração",
+            "token_stats": "Token Stats",
             "tokens": "Tokens (E/S)",
             "time": "Tempo",
             "model": "Modelo",
@@ -784,5 +786,24 @@
             "stream_error": "Erro na transmissão de stream, por favor tente novamente mais tarde",
             "unknown_error": "Erro desconhecido ocorreu, por favor tente novamente mais tarde"
         }
+    },
+    "token_stats": {
+        "title": "Estatísticas de Token",
+        "hourly": "Por Hora",
+        "daily": "Diário",
+        "weekly": "Semanal",
+        "total_tokens": "Total de Tokens",
+        "input_tokens": "Tokens de Entrada",
+        "output_tokens": "Tokens de Saída",
+        "accounts_used": "Contas Ativas",
+        "usage_trend": "Tendência de Uso",
+        "input": "Entrada",
+        "output": "Saída",
+        "no_data": "Sem Dados",
+        "by_account": "Por Conta",
+        "account_details": "Detalhes da Conta",
+        "account": "Conta",
+        "requests": "Requisições",
+        "total": "Total"
     }
 }

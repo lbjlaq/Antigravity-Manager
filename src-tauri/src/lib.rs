@@ -49,6 +49,11 @@ pub fn run() {
 
     // Initialize logger
     logger::init_logger();
+
+    // Initialize token stats database
+    if let Err(e) = modules::token_stats::init_db() {
+        error!("Failed to initialize token stats database: {}", e);
+    }
     
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

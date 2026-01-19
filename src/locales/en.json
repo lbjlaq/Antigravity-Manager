@@ -40,7 +40,7 @@
         "accounts": "Accounts",
         "proxy": "API Proxy",
         "call_records": "Traffic Logs",
-        "token_stats": "Token Stats",
+        "token_stats": "Statistics",
         "settings": "Settings",
         "theme_to_dark": "Switch to Dark Mode",
         "theme_to_light": "Switch to Light Mode",
@@ -789,5 +789,24 @@
             "stream_error": "Stream transmission error, please retry later",
             "unknown_error": "Unknown error occurred, please retry later"
         }
+    },
+    "token_stats": {
+        "title": "Token Usage Statistics",
+        "hourly": "Hourly",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "total_tokens": "Total Tokens",
+        "input_tokens": "Input Tokens",
+        "output_tokens": "Output Tokens",
+        "accounts_used": "Active Accounts",
+        "usage_trend": "Token Usage Trend",
+        "input": "Input",
+        "output": "Output",
+        "no_data": "No Data",
+        "by_account": "Account Statistics",
+        "account_details": "Account Details",
+        "account": "Account",
+        "requests": "Requests",
+        "total": "Total"
     }
 }
