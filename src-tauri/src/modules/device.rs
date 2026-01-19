@@ -48,7 +48,7 @@ pub fn get_storage_path() -> Result<PathBuf, String> {
         }
     }
 
-    // 3) 标准安装位置
+    // 3) Standard installation location
     #[cfg(target_os = "macos")]
     {
         let home = dirs::home_dir().ok_or("无法获取 Home 目录")?;
@@ -224,9 +224,9 @@ pub fn write_profile(storage_path: &Path, profile: &DeviceProfile) -> Result<(),
 #[allow(dead_code)]
 pub fn sync_service_machine_id(storage_path: &Path, service_id: &str) -> Result<(), String> {
     let content =
-        fs::read_to_string(storage_path).map_err(|e| format!("读取 storage.json 失败: {}", e))?;
+        fs::read_to_string(storage_path).map_err(|e| format!("read_failed: {}", e))?;
     let mut json: Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析 storage.json 失败: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("parse_failed: {}", e))?;
 
     if let Some(map) = json.as_object_mut() {
         map.insert(
