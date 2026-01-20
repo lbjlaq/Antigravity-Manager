@@ -141,32 +141,45 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     },
 
     switchToEarliestResetAccount: async () => {
-        const { accounts, currentAccount, switchAccount } = get();
-        if (accounts.length === 0) return null;
+        set({ loading: true, error: null });
+        try {
+            const { accounts, currentAccount, switchAccount } = get();
+            if (accounts.length === 0) {
+                set({ loading: false, error: null });
+                return null;
+            }
 
-        // 1. 计算每个账号的"最早完全恢复时间"
-        // 我们定义一个账号的"完全恢复时间"为该账号下所有模型中 reset_time 最晚的那个。
-        // 因为只有当最晚的模型也重置了，这个账号才算完全可用。
-        const accountResetTimes = accounts
-            .filter(acc => acc.id !== currentAccount?.id && !acc.disabled)
-            .map(acc => {
-                const modelResetTimes = acc.quota?.models
-                    .map(m => new Date(m.reset_time).getTime())
-                    .filter(t => !isNaN(t)) || [];
+            // 1. 计算每个账号的"最早完全恢复时间"
+            // 我们定义一个账号的"完全恢复时间"为该账号下所有模型中 reset_time 最晚的那个。
+            // 因为只有当最晚的模型也重置了，这个账号才算完全可用。
+            const accountResetTimes = accounts
+                .filter(acc => acc.id !== currentAccount?.id && !acc.disabled)
+                .map(acc => {
+                    const modelResetTimes = acc.quota?.models
+                        .map(m => new Date(m.reset_time).getTime())
+                        .filter(t => !isNaN(t)) || [];
 
-                // 如果没有模型数据，假定它是已重置的 (0)
-                const maxResetTime = modelResetTimes.length > 0 ? Math.max(...modelResetTimes) : 0;
-                return { account: acc, resetTime: maxResetTime };
-            });
+                    // 如果没有模型数据，假定它是已重置的 (0)
+                    const maxResetTime = modelResetTimes.length > 0 ? Math.max(...modelResetTimes) : 0;
+                    return { account: acc, resetTime: maxResetTime };
+                });
 
-        if (accountResetTimes.length === 0) return null;
+            if (accountResetTimes.length === 0) {
+                set({ loading: false, error: null });
+                return null;
+            }
 
-        // 2. 找到这些"完全恢复时间"中最早的那个账号
-        accountResetTimes.sort((a, b) => a.resetTime - b.resetTime);
-        const bestTarget = accountResetTimes[0].account;
+            // 2. 找到这些"完全恢复时间"中最早的那个账号
+            accountResetTimes.sort((a, b) => a.resetTime - b.resetTime);
+            const bestTarget = accountResetTimes[0].account;
 
-        await switchAccount(bestTarget.id);
-        return bestTarget;
+            await switchAccount(bestTarget.id);
+            set({ loading: false, error: null });
+            return bestTarget;
+        } catch (error) {
+            set({ loading: false, error: String(error) });
+            throw error;
+        }
     },
 
     /**
