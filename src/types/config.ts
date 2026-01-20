@@ -11,10 +11,12 @@ export interface ProxyConfig {
     api_key: string;
     auto_start: boolean;
     custom_mapping?: Record<string, string>;
+    enable_fallback_mapping?: boolean;
     request_timeout: number;
     enable_logging: boolean;
     upstream_proxy: UpstreamProxyConfig;
     zai?: ZaiConfig;
+    fallback_provider?: FallbackProviderConfig;
     scheduling?: StickySessionConfig;
     experimental?: ExperimentalConfig;
 }
@@ -27,6 +29,14 @@ export interface StickySessionConfig {
 }
 
 export type ZaiDispatchMode = 'off' | 'exclusive' | 'pooled' | 'fallback';
+
+export interface FallbackProviderConfig {
+    enabled?: boolean;
+    base_url?: string;
+    api_key?: string;
+    dispatch_mode?: 'off' | 'fallback' | 'pooled' | 'exclusive';
+    auto_switch_back?: boolean;
+}
 
 export interface ZaiMcpConfig {
     enabled: boolean;

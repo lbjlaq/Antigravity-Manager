@@ -1256,6 +1256,93 @@ print(response.text)`;
                                 </div>
                             </CollapsibleCard>
 
+                            {/* Generic Fallback Provider */}
+                            <CollapsibleCard
+                                title={t('proxy.fallback_provider.title')}
+                                icon={<Layers size={18} className="text-green-500" />}
+                                enabled={!!appConfig.proxy.fallback_provider?.enabled}
+                                onToggle={(checked) => updateProxyConfig({ fallback_provider: { ...(appConfig.proxy.fallback_provider || {}), enabled: checked } })}
+                            >
+                                <div className="space-y-3">
+                                    <div>
+                                        <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                                            {t('proxy.fallback_provider.base_url')}
+                                        </label>
+                                        <input
+                                            type="text"
+                                            className="input input-sm w-full mt-1"
+                                            value={appConfig.proxy.fallback_provider?.base_url || ''}
+                                            onChange={(e) => {
+                                                const updated = {
+                                                    ...appConfig.proxy.fallback_provider,
+                                                    base_url: e.target.value
+                                                };
+                                                updateProxyConfig({ fallback_provider: updated });
+                                            }}
+                                            placeholder="https://api.openai.com"
+                                        />
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                                            {t('proxy.fallback_provider.api_key')}
+                                        </label>
+                                        <input
+                                            type="password"
+                                            className="input input-sm w-full mt-1"
+                                            value={appConfig.proxy.fallback_provider?.api_key || ''}
+                                            onChange={(e) => {
+                                                const updated = {
+                                                    ...appConfig.proxy.fallback_provider,
+                                                    api_key: e.target.value
+                                                };
+                                                updateProxyConfig({ fallback_provider: updated });
+                                            }}
+                                        />
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                                            {t('proxy.fallback_provider.dispatch_mode')}
+                                        </label>
+                                        <select
+                                            className="select select-sm w-full mt-1"
+                                            value={appConfig.proxy.fallback_provider?.dispatch_mode || 'off'}
+                                            onChange={(e) => {
+                                                const updated = {
+                                                    ...appConfig.proxy.fallback_provider,
+                                                    dispatch_mode: e.target.value as 'off' | 'fallback' | 'pooled' | 'exclusive'
+                                                };
+                                                updateProxyConfig({ fallback_provider: updated });
+                                            }}
+                                        >
+                                            <option value="off">{t('proxy.fallback_provider.mode.off')}</option>
+                                            <option value="fallback">{t('proxy.fallback_provider.mode.fallback')}</option>
+                                            <option value="pooled">{t('proxy.fallback_provider.mode.pooled')}</option>
+                                            <option value="exclusive">{t('proxy.fallback_provider.mode.exclusive')}</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="checkbox"
+                                            className="checkbox checkbox-sm"
+                                            checked={appConfig.proxy.fallback_provider?.auto_switch_back || false}
+                                            onChange={(e) => {
+                                                const updated = {
+                                                    ...appConfig.proxy.fallback_provider,
+                                                    auto_switch_back: e.target.checked
+                                                };
+                                                updateProxyConfig({ fallback_provider: updated });
+                                            }}
+                                        />
+                                        <label className="text-xs text-gray-700 dark:text-gray-300">
+                                            {t('proxy.fallback_provider.auto_switch_back')}
+                                        </label>
+                                    </div>
+                                </div>
+                            </CollapsibleCard>
+
                             {/* Account Scheduling & Rotation */}
                             <CollapsibleCard
                                 title={t('proxy.config.scheduling.title')}
@@ -1474,6 +1561,20 @@ print(response.text)`;
                                             <ArrowRight size={14} /> {t('proxy.router.custom_mappings')}
                                         </h3>
                                     </div>
+                                    
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <input
+                                            type="checkbox"
+                                            className="checkbox checkbox-sm checkbox-primary"
+                                            checked={appConfig.proxy.enable_fallback_mapping || false}
+                                            onChange={(e) => updateProxyConfig({ enable_fallback_mapping: e.target.checked })}
+                                        />
+                                        <label className="text-sm">
+                                            <span className="font-semibold">{t('proxy.model_mapping.fallback_mode.title')}</span>
+                                            <span className="text-xs text-gray-500 ml-2">{t('proxy.model_mapping.fallback_mode.description')}</span>
+                                        </label>
+                                    </div>
+                                    
                                     <div className="flex flex-col gap-4">
                                         {/* 当前映射列表 (置顶 2 列) */}
                                         <div className="w-full flex flex-col">

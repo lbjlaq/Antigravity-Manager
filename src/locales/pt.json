@@ -534,6 +534,19 @@
                 "clear_bindings": "Limpar Vinculações de Sessão",
                 "clear_bindings_tooltip": "Redefinir todas as vinculações sessão-conta, forçando contas a serem reatribuídas na próxima solicitação."
             },
+            "fallback_provider": {
+                "title": "Provedor de Fallback Genérico",
+                "base_url": "URL Base",
+                "api_key": "Chave API",
+                "dispatch_mode": "Modo de Despacho",
+                "auto_switch_back": "Voltar automaticamente quando o primário recuperar",
+                "mode": {
+                    "off": "Desligado",
+                    "fallback": "Apenas Fallback",
+                    "pooled": "Agrupado",
+                    "exclusive": "Exclusivo"
+                }
+            },
             "experimental": {
                 "title": "Configurações Experimentais",
                 "title_tooltip": "Recursos exploratórios que podem ser ajustados ou removidos em versões futuras.",
@@ -656,6 +669,12 @@
             "route_to": "Rotear Para",
             "select_target_model": "Selecionar Modelo de Destino",
             "original_placeholder": "Original (ex: gpt-4 ou gpt-4*)"
+        },
+        "model_mapping": {
+            "fallback_mode": {
+                "title": "Modo de Fallback Inteligente",
+                "description": "Aplicar mapeamento apenas quando modelo indisponível"
+            }
         },
         "multi_protocol": {
             "title": "Suporte Multi-Protocolo",

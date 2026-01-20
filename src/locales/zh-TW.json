@@ -542,6 +542,19 @@
                 "fixed_account_set": "固定帳戶模式已啟用",
                 "account_changed": "帳戶已變更為：{{email}}"
             },
+            "fallback_provider": {
+                "title": "通用兜底提供商",
+                "base_url": "服務位址",
+                "api_key": "API 金鑰",
+                "dispatch_mode": "調度模式",
+                "auto_switch_back": "主服務恢復後自動回切",
+                "mode": {
+                    "off": "關閉",
+                    "fallback": "僅兜底",
+                    "pooled": "池化",
+                    "exclusive": "專屬"
+                }
+            },
             "experimental": {
                 "title": "實驗性設定 (Experimental)",
                 "title_tooltip": "探索性功能，可能在未來版本中調整或移除。",
@@ -661,6 +674,12 @@
             "default_suffix": "（預設）",
             "select_target_model": "選擇目標模型",
             "original_placeholder": "原始名 (如 gpt-4 或 gpt-4*)"
+        },
+        "model_mapping": {
+            "fallback_mode": {
+                "title": "智慧兜底模式",
+                "description": "僅在模型不可用時套用映射"
+            }
         },
         "examples": {
             "title": "使用示例"

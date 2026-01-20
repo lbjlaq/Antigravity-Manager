@@ -509,6 +509,19 @@
                 "fixed_account_set": "Sabit hesap modu etkinleştirildi",
                 "account_changed": "Hesap şuna değiştirildi: {{email}}"
             },
+            "fallback_provider": {
+                "title": "Genel Yedek Sağlayıcı",
+                "base_url": "Temel URL",
+                "api_key": "API Anahtarı",
+                "dispatch_mode": "Dağıtım Modu",
+                "auto_switch_back": "Birincil kurtarıldığında otomatik geri dön",
+                "mode": {
+                    "off": "Kapalı",
+                    "fallback": "Yalnızca Yedek",
+                    "pooled": "Havuzlanmış",
+                    "exclusive": "Özel"
+                }
+            },
             "experimental": {
                 "title": "Deneysel Ayarlar",
                 "title_tooltip": "Gelecek sürümlerde ayarlanabilecek veya kaldırılabilecek keşifsel özellikler.",
@@ -631,6 +644,12 @@
             "route_to": "Şuna Yönlendir",
             "select_target_model": "Hedef Model Seç",
             "original_placeholder": "Orijinal (örn: gpt-4 veya gpt-4*)"
+        },
+        "model_mapping": {
+            "fallback_mode": {
+                "title": "Akıllı Yedek Modu",
+                "description": "Yalnızca model kullanılamadığında eşleme uygula"
+            }
         },
         "multi_protocol": {
             "title": "Çoklu Protokol Desteği",

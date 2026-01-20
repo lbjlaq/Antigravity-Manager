@@ -539,6 +539,19 @@
                 "account_changed": "Tài khoản đã thay đổi thành: {{email}}",
                 "clear_bindings_tooltip": "Ngắt ngay lập tức tất cả các mối quan hệ liên kết giữa phiên và tài khoản, buộc lần yêu cầu tiếp theo phải phân bổ lại tài khoản."
             },
+            "fallback_provider": {
+                "title": "Nhà Cung Cấp Dự Phòng Chung",
+                "base_url": "URL Cơ Sở",
+                "api_key": "Khóa API",
+                "dispatch_mode": "Chế Độ Điều Phối",
+                "auto_switch_back": "Tự động chuyển lại khi chính phục hồi",
+                "mode": {
+                    "off": "Tắt",
+                    "fallback": "Chỉ Dự Phòng",
+                    "pooled": "Gộp Chung",
+                    "exclusive": "Độc Quyền"
+                }
+            },
             "experimental": {
                 "title": "Cài đặt thử nghiệm",
                 "title_tooltip": "Các tính năng mang tính khám phá, có thể được điều chỉnh hoặc loại bỏ trong các phiên bản tương lai.",
@@ -661,6 +674,12 @@
             "route_to": "Điều hướng tới",
             "select_target_model": "Chọn Model Đích",
             "original_placeholder": "Gốc (ví dụ: gpt-4 hoặc gpt-4*)"
+        },
+        "model_mapping": {
+            "fallback_mode": {
+                "title": "Chế Độ Dự Phòng Thông Minh",
+                "description": "Chỉ áp dụng ánh xạ khi mô hình không khả dụng"
+            }
         },
         "multi_protocol": {
             "title": "Hỗ trợ đa giao thức",

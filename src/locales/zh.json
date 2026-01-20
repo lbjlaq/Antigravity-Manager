@@ -540,6 +540,19 @@
                 "clear_bindings": "清除会话绑定",
                 "clear_bindings_tooltip": "立即断开所有会话与账号的绑定关系，强制下一次请求重新分配账号。"
             },
+            "fallback_provider": {
+                "title": "通用兜底提供商",
+                "base_url": "服务地址",
+                "api_key": "API 密钥",
+                "dispatch_mode": "调度模式",
+                "auto_switch_back": "主服务恢复后自动回切",
+                "mode": {
+                    "off": "关闭",
+                    "fallback": "仅兜底",
+                    "pooled": "池化",
+                    "exclusive": "专属"
+                }
+            },
             "experimental": {
                 "title": "实验性设置 (Experimental)",
                 "title_tooltip": "探索性功能，可能在未来版本中调整或移除。",
@@ -656,9 +669,13 @@
             "current_list": "当前映射列表 (Custom List)",
             "no_custom_mapping": "暂无自定义精确映射",
             "gemini3_only_warning": "⚠️ 仅支持 Gemini 3 系列",
-            "default_suffix": "（默认）",
-            "select_target_model": "选择目标模型",
-            "original_placeholder": "原始名 (如 gpt-4 或 gpt-4*)"
+            "select_target_model": "选择目标模型"
+        },
+        "model_mapping": {
+            "fallback_mode": {
+                "title": "智能兜底模式",
+                "description": "仅在模型不可用时应用映射"
+            }
         },
         "examples": {
             "title": "使用示例"

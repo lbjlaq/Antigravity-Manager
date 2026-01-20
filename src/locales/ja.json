@@ -557,6 +557,19 @@
                 "fixed_account_set": "固定アカウントモードが有効",
                 "account_changed": "アカウントが次へ変更されました：{{email}}"
             },
+            "fallback_provider": {
+                "title": "汎用フォールバックプロバイダー",
+                "base_url": "ベースURL",
+                "api_key": "APIキー",
+                "dispatch_mode": "ディスパッチモード",
+                "auto_switch_back": "プライマリ復旧時に自動切り替え",
+                "mode": {
+                    "off": "オフ",
+                    "fallback": "フォールバックのみ",
+                    "pooled": "プール",
+                    "exclusive": "専用"
+                }
+            },
             "experimental": {
                 "title": "実験設定 (Experimental)",
                 "title_tooltip": "探索的な機能であり、将来のバージョンで調整または削除される可能性があります。",
@@ -679,6 +692,12 @@
             "route_to": "ルーティング先",
             "select_target_model": "ターゲットモデルを選択",
             "original_placeholder": "元の名称 (例: gpt-4 または gpt-4*)"
+        },
+        "model_mapping": {
+            "fallback_mode": {
+                "title": "スマートフォールバックモード",
+                "description": "モデルが利用不可の場合のみマッピングを適用"
+            }
         },
         "multi_protocol": {
             "title": "マルチプロトコルサポート",

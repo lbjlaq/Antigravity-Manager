@@ -540,6 +540,19 @@
                 "clear_bindings": "Clear Session Bindings",
                 "clear_bindings_tooltip": "Hard reset all session-account bindings, forcing accounts to be re-assigned on next request."
             },
+            "fallback_provider": {
+                "title": "Generic Fallback Provider",
+                "base_url": "Base URL",
+                "api_key": "API Key",
+                "dispatch_mode": "Dispatch Mode",
+                "auto_switch_back": "Auto switch back when primary recovers",
+                "mode": {
+                    "off": "Off",
+                    "fallback": "Fallback Only",
+                    "pooled": "Pooled",
+                    "exclusive": "Exclusive"
+                }
+            },
             "experimental": {
                 "title": "Experimental Settings",
                 "title_tooltip": "Exploratory features that may be adjusted or removed in future versions.",
@@ -662,6 +675,12 @@
             "route_to": "Route To",
             "select_target_model": "Select Target Model",
             "original_placeholder": "Original (e.g. gpt-4 or gpt-4*)"
+        },
+        "model_mapping": {
+            "fallback_mode": {
+                "title": "Smart Fallback Mode",
+                "description": "Apply mapping only when model unavailable"
+            }
         },
         "multi_protocol": {
             "title": "Multi-Protocol Support",
