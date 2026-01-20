@@ -91,7 +91,8 @@
             "refresh_error": "刷新失败",
             "export_no_accounts": "没有可导出的账号",
             "export_success": "导出成功! 文件已保存至: {{path}}",
-            "export_error": "导出失败"
+            "export_error": "导出失败",
+            "switch_earliest_reset_success": "已切换到最早重置账号: {{email}}"
         }
     },
     "accounts": {
@@ -131,6 +132,7 @@
         "no_data": "无数据",
         "last_used": "最后使用",
         "reset_time": "重置时间",
+        "switch_earliest_reset": "切换到最早重置账号",
         "switch_to": "切换到此账号",
         "actions": "操作",
         "device_fingerprint": "设备指纹",

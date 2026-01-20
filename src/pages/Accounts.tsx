@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { request as invoke } from '../utils/request';
 import { join } from '@tauri-apps/api/path';
-import { Search, RefreshCw, Download, Upload, Trash2, LayoutGrid, List, ToggleLeft, ToggleRight, Sparkles } from 'lucide-react';
+import { Search, RefreshCw, Download, Upload, Trash2, LayoutGrid, List, ToggleLeft, ToggleRight, Sparkles, Clock } from 'lucide-react';
 import { useAccountStore } from '../stores/useAccountStore';
 import { useConfigStore } from '../stores/useConfigStore';
 import AccountTable from '../components/accounts/AccountTable';
@@ -15,9 +15,6 @@ import Pagination from '../components/common/Pagination';
 import { showToast } from '../components/common/ToastContainer';
 import { Account } from '../types/account';
 import { cn } from '../utils/cn';
-
-// ... (省略中间代码)
-
 
 type FilterType = 'all' | 'pro' | 'ultra' | 'free';
 type ViewMode = 'list' | 'grid';
@@ -40,6 +37,7 @@ function Accounts() {
         reorderAccounts,
         warmUpAccounts,
         warmUpAccount,
+        switchToEarliestResetAccount,
     } = useAccountStore();
     const { config } = useConfigStore();
 
@@ -106,6 +104,19 @@ function Accounts() {
         } finally {
             setIsWarmuping(false);
             setRefreshingIds(new Set());
+        }
+    };
+
+    const handleSwitchEarliestReset = async () => {
+        try {
+            const bestAccount = await switchToEarliestResetAccount();
+            if (bestAccount) {
+                showToast(t('dashboard.toast.switch_earliest_reset_success', { email: bestAccount.email }), 'success');
+            } else {
+                showToast(t('accounts.no_data'), 'info');
+            }
+        } catch (error) {
+            showToast(`${t('dashboard.toast.switch_error')}: ${error}`, 'error');
         }
     };
 
@@ -778,6 +789,17 @@ function Accounts() {
                         <Sparkles className={`w-3.5 h-3.5 ${isWarmuping ? 'animate-pulse' : ''}`} />
                         <span className="hidden xl:inline">
                             {isWarmuping ? t('common.loading') : (selectedIds.size > 0 ? t('accounts.warmup_selected', { count: selectedIds.size }) : t('accounts.warmup_all', '一键预热'))}
+                        </span>
+                    </button>
+
+                    <button
+                        className="px-2.5 py-2 bg-purple-500 text-white text-xs font-medium rounded-lg hover:bg-purple-600 transition-colors flex items-center gap-1.5 shadow-sm"
+                        onClick={handleSwitchEarliestReset}
+                        title={t('accounts.switch_earliest_reset')}
+                    >
+                        <Clock className="w-3.5 h-3.5" />
+                        <span className="hidden xl:inline">
+                            {t('accounts.switch_earliest_reset')}
                         </span>
                     </button>
 

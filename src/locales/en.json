@@ -91,7 +91,8 @@
             "refresh_error": "Refresh failed",
             "export_no_accounts": "No accounts to export",
             "export_success": "Export successful! File saved to: {{path}}",
-            "export_error": "Export failed"
+            "export_error": "Export failed",
+            "switch_earliest_reset_success": "Switched to earliest reset account: {{email}}"
         }
     },
     "accounts": {
@@ -131,6 +132,7 @@
         "no_data": "No Data",
         "last_used": "Last Used",
         "reset_time": "Reset Time",
+        "switch_earliest_reset": "Switch to Earliest Reset",
         "switch_to": "Switch to this account",
         "actions": "Actions",
         "device_fingerprint": "Device Fingerprint",
