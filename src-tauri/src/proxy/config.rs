@@ -102,6 +102,50 @@ pub struct ZaiConfig {
     pub mcp: ZaiMcpConfig,
 }
 
+/// 通用外部提供商配置 (Generic External Provider)
+/// 复用 ZaiConfig 架构，支持任意 OpenAI 兼容服务
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FallbackProviderConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_fallback_base_url")]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub dispatch_mode: ZaiDispatchMode,
+    #[serde(default)]
+    pub model_mapping: HashMap<String, String>,
+    /// 主服务恢复后自动回切
+    #[serde(default)]
+    pub auto_switch_back: bool,
+    /// 健康检查间隔(秒)
+    #[serde(default = "default_health_check_interval")]
+    pub health_check_interval_secs: u64,
+}
+
+impl Default for FallbackProviderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_fallback_base_url(),
+            api_key: String::new(),
+            dispatch_mode: ZaiDispatchMode::Off,
+            model_mapping: HashMap::new(),
+            auto_switch_back: true,
+            health_check_interval_secs: default_health_check_interval(),
+        }
+    }
+}
+
+fn default_fallback_base_url() -> String {
+    "https://api.openai.com".to_string()
+}
+
+fn default_health_check_interval() -> u64 {
+    60
+}
+
 impl Default for ZaiConfig {
     fn default() -> Self {
         Self {
@@ -201,6 +245,14 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub zai: ZaiConfig,
 
+    /// 通用兜底提供商配置 (Generic Fallback Provider)
+    #[serde(default)]
+    pub fallback_provider: FallbackProviderConfig,
+
+    /// 仅在模型不可用时启用映射 (Smart Fallback Mapping)
+    #[serde(default)]
+    pub enable_fallback_mapping: bool,
+
     /// 账号调度配置 (粘性会话/限流重试)
     #[serde(default)]
     pub scheduling: crate::proxy::sticky_config::StickySessionConfig,
@@ -223,16 +275,18 @@ impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            allow_lan_access: false, // 默认仅本机访问，隐私优先
+            allow_lan_access: false,
             auth_mode: ProxyAuthMode::default(),
             port: 8045,
             api_key: format!("sk-{}", uuid::Uuid::new_v4().simple()),
             auto_start: false,
             custom_mapping: std::collections::HashMap::new(),
             request_timeout: default_request_timeout(),
-            enable_logging: true, // 默认开启，支持 token 统计功能
+            enable_logging: true,
             upstream_proxy: UpstreamProxyConfig::default(),
             zai: ZaiConfig::default(),
+            fallback_provider: FallbackProviderConfig::default(),
+            enable_fallback_mapping: false,
             scheduling: crate::proxy::sticky_config::StickySessionConfig::default(),
             experimental: ExperimentalConfig::default(),
         }

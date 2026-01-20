@@ -154,9 +154,82 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
 /// # 参数
 /// - `original_model`: 原始模型名称
 /// - `custom_mapping`: 用户自定义映射表
+/// - `enable_fallback_mapping`: 是否启用智能回退映射
+/// - `token_manager`: Token管理器引用（用于检查账号可用性）
 /// 
 /// # 返回
 /// 映射后的目标模型名称
+pub async fn resolve_model_route_async(
+    original_model: &str,
+    custom_mapping: &std::collections::HashMap<String, String>,
+    enable_fallback_mapping: bool,
+    token_manager: Option<&crate::proxy::TokenManager>,
+) -> String {
+    // 1. 精确匹配 (最高优先级)
+    if let Some(target) = custom_mapping.get(original_model) {
+        // 如果启用智能回退映射，检查模型是否可用
+        if enable_fallback_mapping {
+            if let Some(tm) = token_manager {
+                let has_available = tm.has_available_account("", target).await;
+                if !has_available {
+                    // 模型不可用，应用自定义映射
+                    crate::modules::logger::log_info(&format!(
+                        "[Router] 智能回退: {} -> {} (原模型 {} 无可用账号)",
+                        original_model, target, target
+                    ));
+                    return target.clone();
+                } else {
+                    // 模型可用，返回原始模型
+                    crate::modules::logger::log_info(&format!(
+                        "[Router] 智能回退: 保持原模型 {} (有可用账号)",
+                        original_model
+                    ));
+                    return original_model.to_string();
+                }
+            }
+        }
+        crate::modules::logger::log_info(&format!("[Router] 精确映射: {} -> {}", original_model, target));
+        return target.clone();
+    }
+    
+    // 2. 通配符匹配
+    for (pattern, target) in custom_mapping.iter() {
+        if pattern.contains('*') && wildcard_match(pattern, original_model) {
+            // 如果启用智能回退映射，检查模型是否可用
+            if enable_fallback_mapping {
+                if let Some(tm) = token_manager {
+                    let has_available = tm.has_available_account("", target).await;
+                    if !has_available {
+                        // 模型不可用，应用自定义映射
+                        crate::modules::logger::log_info(&format!(
+                            "[Router] 智能回退: {} -> {} (规则: {}, 原模型无可用账号)",
+                            original_model, target, pattern
+                        ));
+                        return target.clone();
+                    } else {
+                        // 模型可用，返回原始模型
+                        crate::modules::logger::log_info(&format!(
+                            "[Router] 智能回退: 保持原模型 {} (有可用账号)",
+                            original_model
+                        ));
+                        return original_model.to_string();
+                    }
+                }
+            }
+            crate::modules::logger::log_info(&format!("[Router] 通配符映射: {} -> {} (规则: {})", original_model, target, pattern));
+            return target.clone();
+        }
+    }
+    
+    // 3. 系统默认映射
+    let result = map_claude_model_to_gemini(original_model);
+    if result != original_model {
+        crate::modules::logger::log_info(&format!("[Router] 系统默认映射: {} -> {}", original_model, result));
+    }
+    result
+}
+
+/// 同步版本的模型路由解析（保持向后兼容）
 pub fn resolve_model_route(
     original_model: &str,
     custom_mapping: &std::collections::HashMap<String, String>,

@@ -6,23 +6,23 @@ pub mod token_manager;
 pub mod project_resolver;
 pub mod server;
 pub mod security;
+pub mod health_checker;
 
-// 新架构模块
-pub mod mappers;           // 协议转换器
-pub mod handlers;          // API 端点处理器
-pub mod middleware;        // Axum 中间件
-pub mod upstream;          // 上游客户端
-pub mod common;            // 公共工具
-pub mod providers;         // Extra upstream providers (z.ai, etc.)
-pub mod zai_vision_mcp;    // Built-in Vision MCP server state
-pub mod zai_vision_tools;  // Built-in Vision MCP tools (z.ai vision API)
-pub mod monitor;           // 监控
-pub mod rate_limit;        // 限流跟踪
-pub mod sticky_config;     // 粘性调度配置
-pub mod session_manager;   // 会话指纹管理
-pub mod audio;             // 音频处理模块
-pub mod signature_cache;   // Signature Cache (v3.3.16)
-pub mod cli_sync;          // CLI 配置同步 (v3.3.35)
+pub mod mappers;
+pub mod handlers;
+pub mod middleware;
+pub mod upstream;
+pub mod common;
+pub mod providers;
+pub mod zai_vision_mcp;
+pub mod zai_vision_tools;
+pub mod monitor;
+pub mod rate_limit;
+pub mod sticky_config;
+pub mod session_manager;
+pub mod audio;
+pub mod signature_cache;
+pub mod cli_sync;
 
 
 pub use config::ProxyConfig;

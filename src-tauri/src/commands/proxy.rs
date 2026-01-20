@@ -101,6 +101,8 @@ pub async fn start_proxy_service(
             config.upstream_proxy.clone(),
             crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
             config.zai.clone(),
+            config.fallback_provider.clone(),
+            config.enable_fallback_mapping,
             monitor.clone(),
             config.experimental.clone(),
 

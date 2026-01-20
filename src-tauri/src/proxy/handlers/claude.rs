@@ -293,7 +293,6 @@ pub async fn handle_messages(
     }
 
     if use_zai {
-        // 重新序列化修复后的请求体
         let new_body = match serde_json::to_value(&request) {
             Ok(v) => v,
             Err(e) => {
@@ -306,6 +305,52 @@ pub async fn handle_messages(
             &state,
             axum::http::Method::POST,
             "/v1/messages",
+            &headers,
+            new_body,
+        )
+        .await;
+    }
+
+    let fallback_provider = state.fallback_provider.read().await.clone();
+    let fallback_enabled = fallback_provider.enabled;
+    
+    let use_fallback_provider = if !use_zai && fallback_enabled {
+        match fallback_provider.dispatch_mode {
+            crate::proxy::ZaiDispatchMode::Off => false,
+            crate::proxy::ZaiDispatchMode::Exclusive => true,
+            crate::proxy::ZaiDispatchMode::Fallback => {
+                let has_available = state.token_manager.has_available_account("claude", &normalized_model).await;
+                if !has_available {
+                    tracing::info!(
+                        "[{}] All Google accounts unavailable, using fallback provider",
+                        trace_id
+                    );
+                }
+                !has_available
+            },
+            crate::proxy::ZaiDispatchMode::Pooled => {
+                let total = google_accounts.saturating_add(1).max(1);
+                let slot = state.fallback_rr.fetch_add(1, Ordering::Relaxed) % total;
+                slot == 0
+            },
+        }
+    } else {
+        false
+    };
+
+    if use_fallback_provider {
+        let new_body = match serde_json::to_value(&request) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("Failed to serialize request for fallback provider: {}", e);
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        };
+
+        return crate::proxy::providers::fallback_provider::forward_to_fallback_provider(
+            &state,
+            axum::http::Method::POST,
+            "/v1/chat/completions",
             &headers,
             new_body,
         )
@@ -430,11 +475,21 @@ pub async fn handle_messages(
     let mut last_email: Option<String> = None;
     
     for attempt in 0..max_attempts {
-        // 2. 模型路由解析
-        let mut mapped_model = crate::proxy::common::model_mapping::resolve_model_route(
-            &request_for_body.model,
-            &*state.custom_mapping.read().await,
-        );
+        // 2. 模型路由解析（支持智能回退映射）
+        let enable_fallback = *state.enable_fallback_mapping.read().await;
+        let mut mapped_model = if enable_fallback {
+            crate::proxy::common::model_mapping::resolve_model_route_async(
+                &request_for_body.model,
+                &*state.custom_mapping.read().await,
+                true,
+                Some(&token_manager),
+            ).await
+        } else {
+            crate::proxy::common::model_mapping::resolve_model_route(
+                &request_for_body.model,
+                &*state.custom_mapping.read().await,
+            )
+        };
         
         // 将 Claude 工具转为 Value 数组以便探测联网
         let tools_val: Option<Vec<Value>> = request_for_body.tools.as_ref().map(|list| {

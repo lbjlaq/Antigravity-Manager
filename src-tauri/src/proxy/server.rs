@@ -19,17 +19,20 @@ pub struct AppState {
     pub token_manager: Arc<TokenManager>,
     pub custom_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
     #[allow(dead_code)]
-    pub request_timeout: u64, // API 请求超时(秒)
+    pub request_timeout: u64,
     #[allow(dead_code)]
-    pub thought_signature_map: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>, // 思维链签名映射 (ID -> Signature)
+    pub thought_signature_map: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
     #[allow(dead_code)]
     pub upstream_proxy: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
     pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     pub zai: Arc<RwLock<crate::proxy::ZaiConfig>>,
+    pub fallback_provider: Arc<RwLock<crate::proxy::config::FallbackProviderConfig>>,
     pub provider_rr: Arc<AtomicUsize>,
+    pub fallback_rr: Arc<AtomicUsize>,
     pub zai_vision_mcp: Arc<crate::proxy::zai_vision_mcp::ZaiVisionMcpState>,
     pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
     pub experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
+    pub enable_fallback_mapping: Arc<RwLock<bool>>,
 }
 
 /// Axum 服务器实例
@@ -39,6 +42,8 @@ pub struct AxumServer {
     proxy_state: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
     security_state: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,
     zai_state: Arc<RwLock<crate::proxy::ZaiConfig>>,
+    fallback_provider_state: Arc<RwLock<crate::proxy::config::FallbackProviderConfig>>,
+    enable_fallback_mapping_state: Arc<RwLock<bool>>,
     experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
 }
 
@@ -70,6 +75,18 @@ impl AxumServer {
         tracing::info!("z.ai 配置已热更新");
     }
 
+    pub async fn update_fallback_provider(&self, config: &crate::proxy::config::ProxyConfig) {
+        let mut fallback = self.fallback_provider_state.write().await;
+        *fallback = config.fallback_provider.clone();
+        tracing::info!("Fallback provider 配置已热更新");
+    }
+
+    pub async fn update_fallback_mapping(&self, config: &crate::proxy::config::ProxyConfig) {
+        let mut enabled = self.enable_fallback_mapping_state.write().await;
+        *enabled = config.enable_fallback_mapping;
+        tracing::info!("Fallback mapping 配置已热更新: {}", config.enable_fallback_mapping);
+    }
+
     pub async fn update_experimental(&self, config: &crate::proxy::config::ProxyConfig) {
         let mut exp = self.experimental.write().await;
         *exp = config.experimental.clone();
@@ -85,23 +102,28 @@ impl AxumServer {
         upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
         security_config: crate::proxy::ProxySecurityConfig,
         zai_config: crate::proxy::ZaiConfig,
+        fallback_provider_config: crate::proxy::config::FallbackProviderConfig,
+        enable_fallback_mapping: bool,
         monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
         experimental_config: crate::proxy::config::ExperimentalConfig,
 
     ) -> Result<(Self, tokio::task::JoinHandle<()>), String> {
         let custom_mapping_state = Arc::new(tokio::sync::RwLock::new(custom_mapping));
-	        let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
-	        let security_state = Arc::new(RwLock::new(security_config));
-	        let zai_state = Arc::new(RwLock::new(zai_config));
-	        let provider_rr = Arc::new(AtomicUsize::new(0));
-	        let zai_vision_mcp_state =
-	            Arc::new(crate::proxy::zai_vision_mcp::ZaiVisionMcpState::new());
-	        let experimental_state = Arc::new(RwLock::new(experimental_config));
+        let proxy_state = Arc::new(tokio::sync::RwLock::new(upstream_proxy.clone()));
+        let security_state = Arc::new(RwLock::new(security_config));
+        let zai_state = Arc::new(RwLock::new(zai_config));
+        let fallback_provider_state = Arc::new(RwLock::new(fallback_provider_config));
+        let enable_fallback_mapping_state = Arc::new(RwLock::new(enable_fallback_mapping));
+        let provider_rr = Arc::new(AtomicUsize::new(0));
+        let fallback_rr = Arc::new(AtomicUsize::new(0));
+        let zai_vision_mcp_state =
+            Arc::new(crate::proxy::zai_vision_mcp::ZaiVisionMcpState::new());
+        let experimental_state = Arc::new(RwLock::new(experimental_config));
 
-	        let state = AppState {
-	            token_manager: token_manager.clone(),
-	            custom_mapping: custom_mapping_state.clone(),
-	            request_timeout: 300, // 5分钟超时
+        let state = AppState {
+            token_manager: token_manager.clone(),
+            custom_mapping: custom_mapping_state.clone(),
+            request_timeout: 300,
             thought_signature_map: Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
@@ -110,10 +132,13 @@ impl AxumServer {
                 upstream_proxy.clone(),
             ))),
             zai: zai_state.clone(),
+            fallback_provider: fallback_provider_state.clone(),
             provider_rr: provider_rr.clone(),
+            fallback_rr: fallback_rr.clone(),
             zai_vision_mcp: zai_vision_mcp_state,
             monitor: monitor.clone(),
             experimental: experimental_state.clone(),
+            enable_fallback_mapping: enable_fallback_mapping_state.clone(),
         };
 
 
@@ -210,6 +235,8 @@ impl AxumServer {
             proxy_state,
             security_state,
             zai_state,
+            fallback_provider_state,
+            enable_fallback_mapping_state,
             experimental: experimental_state.clone(),
         };
 
