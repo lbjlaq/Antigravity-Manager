@@ -25,7 +25,7 @@ Selects the rule with highest specificity (most non-wildcard characters).
 
 | Rule | Specificity | Request `claude-opus-4-5-thinking` |
 |------|-------------|------------------------------------|
-| `claude-opus*thinking` | 20 | ✓ Selected |
+| `claude-opus*thinking` | 19 | ✓ Selected |
 | `claude-opus-*` | 12 | - |
 
 ### Multi-Wildcard Support (NEW)

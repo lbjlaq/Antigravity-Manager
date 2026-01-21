@@ -133,6 +133,8 @@ pub async fn get_all_dynamic_models(
 
 /// Wildcard matching - supports multiple wildcards
 ///
+/// **Note**: Matching is **case-sensitive**. Pattern `GPT-4*` will NOT match `gpt-4-turbo`.
+///
 /// Examples:
 /// - `gpt-4*` matches `gpt-4`, `gpt-4-turbo` ✓
 /// - `claude-*-sonnet-*` matches `claude-3-5-sonnet-20241022` ✓
@@ -199,7 +201,7 @@ pub fn resolve_model_route(
 
     for (pattern, target) in custom_mapping.iter() {
         if pattern.contains('*') && wildcard_match(pattern, original_model) {
-            let specificity = pattern.len() - pattern.matches('*').count();
+            let specificity = pattern.chars().count() - pattern.matches('*').count();
             if best_match.is_none() || specificity > best_match.unwrap().2 {
                 best_match = Some((pattern.as_str(), target.as_str(), specificity));
             }
@@ -308,6 +310,12 @@ mod tests {
         assert_eq!(
             resolve_model_route("claude-thinking-extended", &custom),
             "has-thinking"
+        );
+
+        // Negative case: *thinking* should NOT match models without "thinking"
+        assert_eq!(
+            resolve_model_route("random-model-name", &custom),
+            "claude-sonnet-4-5"  // Falls back to system default
         );
     }
 
