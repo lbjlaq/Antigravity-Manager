@@ -197,6 +197,9 @@ pub fn resolve_model_route(
     }
     
     // 2. Wildcard match - most specific (highest non-wildcard chars) wins
+    // Note: When multiple patterns have the SAME specificity, HashMap iteration order
+    // determines the result (non-deterministic). Users can avoid this by making patterns
+    // more specific. Future improvement: use IndexMap + frontend sorting for full control.
     let mut best_match: Option<(&str, &str, usize)> = None;
 
     for (pattern, target) in custom_mapping.iter() {
