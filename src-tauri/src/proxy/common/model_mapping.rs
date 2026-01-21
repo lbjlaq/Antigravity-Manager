@@ -131,21 +131,48 @@ pub async fn get_all_dynamic_models(
     sorted_ids
 }
 
-/// 通配符匹配辅助函数
-/// 支持简单的 * 通配符匹配
-/// 
-/// # 示例
-/// - `gpt-4*` 匹配 `gpt-4`, `gpt-4-turbo`, `gpt-4-0613` 等
-/// - `claude-3-5-sonnet-*` 匹配所有 3.5 sonnet 版本
-/// - `*-thinking` 匹配所有以 `-thinking` 结尾的模型
+/// Wildcard matching - supports multiple wildcards
+///
+/// Examples:
+/// - `gpt-4*` matches `gpt-4`, `gpt-4-turbo` ✓
+/// - `claude-*-sonnet-*` matches `claude-3-5-sonnet-20241022` ✓
+/// - `*-thinking` matches `claude-opus-4-5-thinking` ✓
+/// - `a*b*c` matches `a123b456c` ✓
 fn wildcard_match(pattern: &str, text: &str) -> bool {
-    if let Some(star_pos) = pattern.find('*') {
-        let prefix = &pattern[..star_pos];
-        let suffix = &pattern[star_pos + 1..];
-        text.starts_with(prefix) && text.ends_with(suffix)
-    } else {
-        pattern == text
+    let parts: Vec<&str> = pattern.split('*').collect();
+
+    // No wildcard - exact match
+    if parts.len() == 1 {
+        return pattern == text;
     }
+
+    let mut text_pos = 0;
+
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue; // Skip empty segments from consecutive wildcards
+        }
+
+        if i == 0 {
+            // First segment must match start
+            if !text[text_pos..].starts_with(part) {
+                return false;
+            }
+            text_pos += part.len();
+        } else if i == parts.len() - 1 {
+            // Last segment must match end
+            return text[text_pos..].ends_with(part);
+        } else {
+            // Middle segments - find next occurrence
+            if let Some(pos) = text[text_pos..].find(part) {
+                text_pos += pos + part.len();
+            } else {
+                return false;
+            }
+        }
+    }
+
+    true
 }
 
 /// 核心模型路由解析引擎
@@ -167,12 +194,24 @@ pub fn resolve_model_route(
         return target.clone();
     }
     
-    // 2. 通配符匹配
+    // 2. Wildcard match - most specific (highest non-wildcard chars) wins
+    let mut best_match: Option<(&str, &str, usize)> = None;
+
     for (pattern, target) in custom_mapping.iter() {
         if pattern.contains('*') && wildcard_match(pattern, original_model) {
-            crate::modules::logger::log_info(&format!("[Router] 通配符映射: {} -> {} (规则: {})", original_model, target, pattern));
-            return target.clone();
+            let specificity = pattern.len() - pattern.matches('*').count();
+            if best_match.is_none() || specificity > best_match.unwrap().2 {
+                best_match = Some((pattern.as_str(), target.as_str(), specificity));
+            }
         }
+    }
+
+    if let Some((pattern, target, _)) = best_match {
+        crate::modules::logger::log_info(&format!(
+            "[Router] Wildcard match: {} -> {} (rule: {})",
+            original_model, target, pattern
+        ));
+        return target.to_string();
     }
     
     // 3. 系统默认映射
@@ -232,5 +271,58 @@ mod tests {
             map_claude_model_to_gemini("unknown-model"),
             "claude-sonnet-4-5"
         );
+    }
+
+    #[test]
+    fn test_wildcard_priority() {
+        let mut custom = HashMap::new();
+        custom.insert("gpt*".to_string(), "fallback".to_string());
+        custom.insert("gpt-4*".to_string(), "specific".to_string());
+        custom.insert("claude-opus-*".to_string(), "opus-default".to_string());
+        custom.insert("claude-opus*thinking".to_string(), "opus-thinking".to_string());
+
+        // More specific pattern wins
+        assert_eq!(resolve_model_route("gpt-4-turbo", &custom), "specific");
+        assert_eq!(resolve_model_route("gpt-3.5", &custom), "fallback");
+        // Suffix constraint is more specific than prefix-only
+        assert_eq!(resolve_model_route("claude-opus-4-5-thinking", &custom), "opus-thinking");
+        assert_eq!(resolve_model_route("claude-opus-4", &custom), "opus-default");
+    }
+
+    #[test]
+    fn test_multi_wildcard_support() {
+        let mut custom = HashMap::new();
+        custom.insert("claude-*-sonnet-*".to_string(), "sonnet-versioned".to_string());
+        custom.insert("gpt-*-*".to_string(), "gpt-multi".to_string());
+        custom.insert("*thinking*".to_string(), "has-thinking".to_string());
+
+        // Multi-wildcard patterns should work
+        assert_eq!(
+            resolve_model_route("claude-3-5-sonnet-20241022", &custom),
+            "sonnet-versioned"
+        );
+        assert_eq!(
+            resolve_model_route("gpt-4-turbo-preview", &custom),
+            "gpt-multi"
+        );
+        assert_eq!(
+            resolve_model_route("claude-thinking-extended", &custom),
+            "has-thinking"
+        );
+    }
+
+    #[test]
+    fn test_wildcard_edge_cases() {
+        let mut custom = HashMap::new();
+        custom.insert("prefix*".to_string(), "prefix-match".to_string());
+        custom.insert("*".to_string(), "catch-all".to_string());
+        custom.insert("a*b*c".to_string(), "multi-wild".to_string());
+
+        // Specificity: "prefix*" (6) > "*" (0)
+        assert_eq!(resolve_model_route("prefix-anything", &custom), "prefix-match");
+        // Catch-all has lowest specificity
+        assert_eq!(resolve_model_route("random-model", &custom), "catch-all");
+        // Multi-wildcard: "a*b*c" (3)
+        assert_eq!(resolve_model_route("a-test-b-foo-c", &custom), "multi-wild");
     }
 }
