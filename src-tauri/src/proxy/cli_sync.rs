@@ -327,7 +327,22 @@ pub fn sync_config(app: &CliApp, proxy_url: &str, api_key: &str) -> Result<(), S
                     let env = json.as_object_mut().unwrap().entry("env").or_insert(serde_json::json!({}));
                     if let Some(env_obj) = env.as_object_mut() {
                         env_obj.insert("ANTHROPIC_BASE_URL".to_string(), Value::String(proxy_url.to_string()));
-                        env_obj.insert("ANTHROPIC_API_KEY".to_string(), Value::String(api_key.to_string()));
+                        
+                        if !api_key.is_empty() {
+                            env_obj.insert("ANTHROPIC_API_KEY".to_string(), Value::String(api_key.to_string()));
+                            // [FIX] Avoid conflict: remove ANTHROPIC_AUTH_TOKEN if it exists
+                            env_obj.remove("ANTHROPIC_AUTH_TOKEN");
+                            
+                            // [FIX] Cleanup potential model overrides from other providers (e.g. MiniMax)
+                            // This ensures Claude CLI uses its default models or ones compatible with our proxy
+                            env_obj.remove("ANTHROPIC_MODEL");
+                            env_obj.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+                            env_obj.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
+                            env_obj.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+                        } else {
+                            // If API Key is empty (e.g. restore/reset), remove it to avoid empty string value
+                            env_obj.remove("ANTHROPIC_API_KEY");
+                        }
                     }
                     content = serde_json::to_string_pretty(&json).unwrap();
                 }
