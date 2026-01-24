@@ -29,6 +29,7 @@ pub fn create_claude_sse_stream(
     scaling_enabled: bool, // [NEW] Flag for context usage scaling
     context_limit: u32,
     estimated_prompt_tokens: Option<u32>, // [FIX] Estimated tokens for calibrator learning
+    message_count: usize, // [NEW] Message count for Rewind detection
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     use async_stream::stream;
     use bytes::BytesMut;
@@ -40,6 +41,7 @@ pub fn create_claude_sse_stream(
         state.scaling_enabled = scaling_enabled; // Set scaling enabled flag
         state.context_limit = context_limit;
         state.estimated_prompt_tokens = estimated_prompt_tokens; // [FIX] Pass estimated tokens
+        state.message_count = message_count; // [NEW] Pass message count for Rewind detection
         let mut buffer = BytesMut::new();
 
         loop {
@@ -89,7 +91,7 @@ pub fn create_claude_sse_stream(
         // we must provide a fallback to prevent 0-token errors on client side.
         if state.has_thinking && !state.has_content {
             tracing::warn!("[{}] Stream interrupted after thinking (No Content). Triggering recovery...", trace_id);
-            
+
             // 1. Force close thinking block if open
             if state.current_block_type() == crate::proxy::mappers::claude::streaming::BlockType::Thinking {
                let close_chunks = state.end_block();
@@ -102,11 +104,11 @@ pub fn create_claude_sse_stream(
             // We use a new text block for this.
             let recovery_msg = "\n\n[System] Upstream model interrupted after thinking. (Recovered by Antigravity)";
             let start_chunks = state.start_block(
-                crate::proxy::mappers::claude::streaming::BlockType::Text, 
+                crate::proxy::mappers::claude::streaming::BlockType::Text,
                 serde_json::json!({ "type": "text", "text": recovery_msg })
             );
             for chunk in start_chunks { yield Ok(chunk); }
-            
+
             let stop_chunks = state.end_block();
             for chunk in stop_chunks { yield Ok(chunk); }
 
@@ -246,12 +248,12 @@ fn process_sse_line(line: &str, state: &mut StreamingState, trace_id: &str, emai
             } else {
                 String::new()
             };
-            
+
              tracing::info!(
-                 "[{}] ✓ Stream completed | Account: {} | In: {} tokens | Out: {} tokens{}", 
+                 "[{}] ✓ Stream completed | Account: {} | In: {} tokens | Out: {} tokens{}",
                  trace_id,
                  email,
-                 u.prompt_token_count.unwrap_or(0).saturating_sub(cached_tokens), 
+                 u.prompt_token_count.unwrap_or(0).saturating_sub(cached_tokens),
                  u.candidates_token_count.unwrap_or(0),
                  cache_info
              );
@@ -428,7 +430,7 @@ mod tests {
         let mut state = StreamingState::new();
 
         let test_data = r#"data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{},"modelVersion":"test","responseId":"123"}"#;
-        
+
         let result = process_sse_line(test_data, &mut state, "test_id", "test@example.com");
         assert!(result.is_some());
 
@@ -449,7 +451,7 @@ mod tests {
     #[tokio::test]
     async fn test_thinking_only_interruption_recovery() {
         use futures::StreamExt;
-        
+
         // 1. 模拟一个只发送 Thinking 然后就结束的流
         let mock_stream = async_stream::stream! {
             // 发送 Thinking 块
@@ -463,7 +465,7 @@ mod tests {
                 "responseId": "msg_interrupted"
             });
             yield Ok(bytes::Bytes::from(format!("data: {}\n\n", thinking_json)));
-            
+
             // 然后突然结束 (没有 Text, 没有 Usage, 直接 None)
         };
 
@@ -475,7 +477,8 @@ mod tests {
             None,
             false,
             1_000,
-            None
+            None,
+            0,
         );
 
         // 3. 收集输出
@@ -490,10 +493,10 @@ mod tests {
         // 4. 验证恢复逻辑
         // 必须包含 Thinking
         assert!(output.contains("Thinking..."));
-        
+
         // 必须包含恢复的系统提示
         assert!(output.contains("Recovered by Antigravity"));
-        
+
         // 必须包含模拟的 Usage
         assert!(output.contains("\"usage\":"));
         assert!(output.contains("\"output_tokens\":100")); // Should contain the recovery usage

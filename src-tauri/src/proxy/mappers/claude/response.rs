@@ -157,10 +157,11 @@ pub struct NonStreamingProcessor {
     pub context_limit: u32,
     pub session_id: Option<String>,
     pub model_name: String,
+    pub message_count: usize, // [NEW] Message count for Rewind detection
 }
 
 impl NonStreamingProcessor {
-    pub fn new(session_id: Option<String>, model_name: String) -> Self {
+    pub fn new(session_id: Option<String>, model_name: String, message_count: usize) -> Self {
         Self {
             content_blocks: Vec::new(),
             text_builder: String::new(),
@@ -172,6 +173,7 @@ impl NonStreamingProcessor {
             context_limit: 1_048_576, // Default to 1M
             session_id,
             model_name,
+            message_count,
         }
     }
 
@@ -249,7 +251,7 @@ impl NonStreamingProcessor {
         if let Some(sig) = &signature {
             if let Some(s_id) = &self.session_id {
                 crate::proxy::SignatureCache::global()
-                    .cache_session_signature(s_id, sig.to_string());
+                    .cache_session_signature(s_id, sig.to_string(), self.message_count);
                 crate::proxy::SignatureCache::global()
                     .cache_thinking_family(sig.to_string(), self.model_name.clone());
                 tracing::debug!(
@@ -542,8 +544,9 @@ pub fn transform_response(
     context_limit: u32,
     session_id: Option<String>,
     model_name: String,
+    message_count: usize,
 ) -> Result<ClaudeResponse, String> {
-    let mut processor = NonStreamingProcessor::new(session_id, model_name);
+    let mut processor = NonStreamingProcessor::new(session_id, model_name, message_count);
     Ok(processor.process(gemini_response, scaling_enabled, context_limit))
 }
 
@@ -586,6 +589,7 @@ mod tests {
             1_000_000,
             None,
             "gemini-2.5-flash".to_string(),
+            0,
         );
         assert!(result.is_ok());
 
@@ -642,6 +646,7 @@ mod tests {
             1_000_000,
             None,
             "gemini-2.5-flash".to_string(),
+            0,
         );
         assert!(result.is_ok());
 

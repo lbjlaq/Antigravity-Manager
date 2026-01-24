@@ -6,9 +6,9 @@ use tracing::{debug, error, info};
 use crate::proxy::mappers::gemini::{wrap_request, unwrap_response};
 use crate::proxy::server::AppState;
 use crate::proxy::session_manager::SessionManager;
- 
+
 const MAX_RETRY_ATTEMPTS: usize = 3;
- 
+
 /// 处理 generateContent 和 streamGenerateContent
 /// 路径参数: model_name, method (e.g. "gemini-pro", "generateContent")
 pub async fn handle_generate(
@@ -36,7 +36,7 @@ pub async fn handle_generate(
     let token_manager = state.token_manager;
     let pool_size = token_manager.len();
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size).max(1);
-    
+
     let mut last_error = String::new();
     let mut last_email: Option<String> = None;
 
@@ -60,8 +60,8 @@ pub async fn handle_generate(
         });
 
         let config = crate::proxy::mappers::common_utils::resolve_request_config(
-            &model_name, 
-            &mapped_model, 
+            &model_name,
+            &mapped_model,
             &tools_val,
             None,  // size (not applicable for Gemini native protocol)
             None   // quality
@@ -70,6 +70,12 @@ pub async fn handle_generate(
         // 4. 获取 Token (使用准确的 request_type)
         // 提取 SessionId (粘性指纹)
         let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
+        // 获取Gemini请求的消息数量
+        let request_message_count = body
+            .get("contents")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.len())
+            .unwrap_or(0);
 
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
         let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, attempt > 0, Some(&session_id), &config.final_model).await {
@@ -109,10 +115,11 @@ pub async fn handle_generate(
                 use axum::response::Response;
                 use bytes::{Bytes, BytesMut};
                 use futures::StreamExt;
-                
+
                 let mut response_stream = response.bytes_stream();
                 let mut buffer = BytesMut::new();
                 let s_id = session_id.clone(); // Clone for stream closure
+                let msg_count = request_message_count; // Copy for stream closure
 
                 // [FIX #859] Implement peek logic for Gemini stream to prevent 0-token 200 OK
                 let mut first_chunk = None;
@@ -174,14 +181,14 @@ pub async fn handle_generate(
                             if let Ok(line_str) = std::str::from_utf8(&line_raw) {
                                 let line = line_str.trim();
                                 if line.is_empty() { continue; }
-                                
+
                                 if line.starts_with("data: ") {
                                     let json_part = line.trim_start_matches("data: ").trim();
                                     if json_part == "[DONE]" {
                                         yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
                                         continue;
                                     }
-                                    
+
                                     match serde_json::from_str::<Value>(json_part) {
                                         Ok(mut json) => {
                                             // [FIX #765] Extract thoughtSignature from stream
@@ -197,7 +204,7 @@ pub async fn handle_generate(
                                                         if let Some(parts) = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                                                             for part in parts {
                                                                 if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
-                                                                    crate::proxy::SignatureCache::global().cache_session_signature(&s_id, sig.to_string());
+                                                                    crate::proxy::SignatureCache::global().cache_session_signature(&s_id, sig.to_string(), msg_count);
                                                                     debug!("[Gemini-SSE] Cached signature (len: {}) for session: {}", sig.len(), s_id);
                                                                 }
                                                             }
@@ -231,7 +238,7 @@ pub async fn handle_generate(
                         }
                     }
                 };
-                
+
                 let body = Body::from_stream(stream);
                 return Ok(Response::builder()
                     .header("Content-Type", "text/event-stream")
@@ -263,7 +270,7 @@ pub async fn handle_generate(
                         if let Some(parts) = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                             for part in parts {
                                 if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
-                                    crate::proxy::SignatureCache::global().cache_session_signature(&session_id, sig.to_string());
+                                    crate::proxy::SignatureCache::global().cache_session_signature(&session_id, sig.to_string(), request_message_count);
                                     debug!("[Gemini-Response] Cached signature (len: {}) for session: {}", sig.len(), session_id);
                                 }
                             }
@@ -281,7 +288,7 @@ pub async fn handle_generate(
         let retry_after = response.headers().get("Retry-After").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
         let error_text = response.text().await.unwrap_or_else(|_| format!("HTTP {}", status_code));
         last_error = format!("HTTP {}: {}", status_code, error_text);
- 
+
         // 只有 429 (限流), 529 (过载), 503, 403 (权限) 和 401 (认证失效) 触发账号轮换
         if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 || status_code == 403 || status_code == 401 {
             // 记录限流信息 (全局同步)
@@ -298,7 +305,7 @@ pub async fn handle_generate(
         }
 
         // [NEW] 处理 400 错误 (Thinking 签名失效)
-        if status_code == 400 
+        if status_code == 400
             && (error_text.contains("Invalid `signature`")
                 || error_text.contains("thinking.signature")
                 || error_text.contains("Invalid signature")
@@ -308,7 +315,7 @@ pub async fn handle_generate(
                 "[Gemini] Signature error detected on account {}, retrying without thinking",
                 email
             );
-            
+
             // 追加修复提示词到请求体的最后一条内容
             if let Some(contents) = body.get_mut("contents").and_then(|v| v.as_array_mut()) {
                 if let Some(last_content) = contents.last_mut() {
@@ -320,10 +327,10 @@ pub async fn handle_generate(
                     }
                 }
             }
-            
+
             continue; // 重试
         }
- 
+
         // 404 等由于模型配置或路径错误的 HTTP 异常，直接报错，不进行无效轮换
         error!("Gemini Upstream non-retryable error {}: {}", status_code, error_text);
         return Ok((status, [("X-Account-Email", email.as_str())], error_text).into_response());
@@ -374,6 +381,6 @@ pub async fn handle_count_tokens(State(state): State<AppState>, Path(_model_name
     let model_group = "gemini";
     let (_access_token, _project_id, _) = state.token_manager.get_token(model_group, false, None, "gemini").await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)))?;
-    
+
     Ok(Json(json!({"totalTokens": 0})))
 }

@@ -197,12 +197,33 @@ pub fn filter_invalid_thinking_blocks_with_family(
                             return false;
                         }
                     };
-                    
-                    // 2. Family compatibility check (Prevents SONNET-Thinking sig being sent to OPUS-Thinking)
+
+                    // 2. Family compatibility check (Prevents SONNET-Thinking sig being sent to OPUS-Thinking) - also strips unverified sigs after restart
                     if let Some(target) = target_family {
-                        if let Some(origin_family) = get_signature_family(sig) {
-                            if origin_family != target {
-                                warn!("[Thinking-Sanitizer] Dropping signature from family '{}' for target '{}'", origin_family, target);
+                        // Some clients send empty signature placeholders. Treat them as "unknown" and
+                        // keep them rather than forcing a cache lookup (family cache ignores <50 len)
+                        if sig.is_empty() {
+                            return true;
+                        }
+                        match get_signature_family(sig) {
+                            Some(origin_family) if origin_family == target => {
+                                // Family match -> keep
+                            }
+                            Some(origin_family) => {
+                                // Family mismatch -> strip
+                                warn!(
+                                    "[Thinking-Sanitizer] Dropping signature from family '{}' for target '{}'",
+                                    origin_family, target
+                                );
+                                stripped_count += 1;
+                                return false;
+                            }
+                            None => {
+                                // Cache miss -> strip (unverified after restart)
+                                info!(
+                                    "[Thinking-Sanitizer] Dropping unverified signature (cache miss, len={})",
+                                    sig.len()
+                                );
                                 stripped_count += 1;
                                 return false;
                             }

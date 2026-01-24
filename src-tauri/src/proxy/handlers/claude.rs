@@ -820,6 +820,7 @@ pub async fn handle_messages(
                 // [FIX #530/#529/#859] Enhanced Peek logic to handle heartbeats and slow start
                 // We must pre-read until we find a MEANINGFUL content block (like message_start).
                 // If we only get heartbeats (ping) and then the stream dies, we should rotate account.
+                let message_count = request.messages.len();
                 let mut claude_stream = create_claude_sse_stream(
                     gemini_stream,
                     trace_id.clone(),
@@ -827,7 +828,8 @@ pub async fn handle_messages(
                     Some(session_id_str.clone()),
                     scaling_enabled,
                     context_limit,
-                    Some(raw_estimated) // [FIX] Pass estimated tokens for calibrator learning
+                    Some(raw_estimated), // [FIX] Pass estimated tokens for calibrator learning
+                    message_count, // [NEW] Pass message count for Rewind detection
                 );
 
                 let mut first_data_chunk = None;
@@ -964,7 +966,7 @@ pub async fn handle_messages(
                 // 转换
                 // [FIX #765] Pass session_id and model_name for signature caching
                 let s_id_owned = session_id.map(|s| s.to_string());
-                let claude_response = match transform_response(&gemini_response, scaling_enabled, context_limit, s_id_owned, request_with_mapped.model.clone()) {
+                let claude_response = match transform_response(&gemini_response, scaling_enabled, context_limit, s_id_owned, request_with_mapped.model.clone(), request.messages.len()) {
                     Ok(r) => r,
                     Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Transform error: {}", e)).into_response(),
                 };

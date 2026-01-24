@@ -169,7 +169,7 @@ mod test_fixes {
     fn test_wrap_request_with_signature() {
         let session_id = "test-session-sig";
         let signature = "test-signature-must-be-longer-than-fifty-characters-to-be-cached-by-signature-cache-12345"; // > 50 chars
-        crate::proxy::SignatureCache::global().cache_session_signature(session_id, signature.to_string());
+        crate::proxy::SignatureCache::global().cache_session_signature(session_id, signature.to_string(), 1);
 
         let body = json!({
             "model": "gemini-pro",
