@@ -18,7 +18,9 @@ services:
     shm_size: '2gb'
     volumes:
       - antigravity_data:/home/antigravity/.antigravity_tools
+      - antigravity_config:/home/antigravity/.config/Antigravity
     restart: unless-stopped
 
 volumes:
   antigravity_data:
+  antigravity_config:

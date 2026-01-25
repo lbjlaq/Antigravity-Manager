@@ -25,7 +25,11 @@ echo "$VNC_PASSWORD" | vncpasswd -f > "$HOME/.vnc/passwd"
 chmod 600 "$HOME/.vnc/passwd"
 
 echo "Checking for Antigravity Tools..."
-CURRENT_VERSION=$(dpkg -s antigravity-tools 2>/dev/null | grep "Version:" | awk '{print "v"$2}' || echo "none")
+if dpkg -s antigravity-tools >/dev/null 2>&1; then
+    CURRENT_VERSION=$(dpkg -s antigravity-tools | grep "Version:" | awk '{print "v"$2}')
+else
+    CURRENT_VERSION="none"
+fi
 
 ARCH=$(dpkg --print-architecture)
 echo "Detected architecture: $ARCH"
@@ -39,9 +43,15 @@ if [ "${RATE_LIMIT:-0}" -gt 5 ]; then
         | cut -d '"' -f 4 || echo "")
 
     if [ -n "$LATEST_URL" ]; then
-        LATEST_VERSION=$(echo "$LATEST_URL" | grep -oP 'v[\d.]+' | head -1)
+        # Try to extract version, handle both v1.2.3 and 1.2.3 formats
+        LATEST_VERSION=$(echo "$LATEST_URL" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        # Ensure v prefix
+        if [[ "$LATEST_VERSION" != v* ]] && [ -n "$LATEST_VERSION" ]; then
+            LATEST_VERSION="v$LATEST_VERSION"
+        fi
 
-        if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
+        # Force update if not installed or version mismatch
+        if [ ! -f "/usr/bin/antigravity_tools" ] || [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
             echo "Updating $CURRENT_VERSION -> $LATEST_VERSION"
             wget -q --timeout=60 "$LATEST_URL" -O /tmp/ag.deb
             sudo apt-get update -qq && sudo apt-get install -y /tmp/ag.deb

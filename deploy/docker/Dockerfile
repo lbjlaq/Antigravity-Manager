@@ -44,7 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --uid $USER_UID --gid $USER_GID -m $USERNAME \
     && echo "$USERNAME ALL=(ALL) NOPASSWD:/usr/bin/apt-get,/usr/bin/dpkg,/bin/rm" > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME \
-    && mkdir -p /home/$USERNAME/.vnc /home/$USERNAME/.mozilla /home/$USERNAME/.antigravity_tools \
+    && mkdir -p /home/$USERNAME/.vnc /home/$USERNAME/.mozilla /home/$USERNAME/.antigravity_tools /home/$USERNAME/.config/Antigravity/User/globalStorage \
+    && echo "{}" > /home/$USERNAME/.config/Antigravity/User/globalStorage/storage.json \
     && chown -R $USERNAME:$USERNAME /home/$USERNAME \
     && apt-get autoremove -y \
     && apt-get clean \
