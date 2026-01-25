@@ -72,22 +72,35 @@ pub fn inject_token(
     // 1. Open database
     let conn = Connection::open(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
 
-    // 2. Read current data
-    let current_data: String = conn
-        .query_row(
-            "SELECT value FROM ItemTable WHERE key = ?",
-            ["jetskiStateSync.agentManagerInitState"],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("Failed to read data: {}", e))?;
+    // Ensure table exists for fresh installs
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT);",
+        [],
+    )
+    .map_err(|e| format!("Failed to create ItemTable: {}", e))?;
 
-    // 3. Base64 decode
-    let blob = general_purpose::STANDARD
-        .decode(&current_data)
-        .map_err(|e| format!("Base64 decoding failed: {}", e))?;
+    // 2. Read current data
+    let current_data_result: Result<String, _> = conn.query_row(
+        "SELECT value FROM ItemTable WHERE key = ?",
+        ["jetskiStateSync.agentManagerInitState"],
+        |row| row.get(0),
+    );
+
+    // 3. Handle data (decode if exists, else empty)
+    let blob = match current_data_result {
+        Ok(data) => general_purpose::STANDARD
+            .decode(&data)
+            .map_err(|e| format!("Base64 decoding failed: {}", e))?,
+        Err(rusqlite::Error::QueryReturnedNoRows) => Vec::new(),
+        Err(e) => return Err(format!("Failed to read data: {}", e)),
+    };
 
     // 4. Remove old Field 6
-    let clean_data = protobuf::remove_field(&blob, 6)?;
+    let clean_data = if blob.is_empty() {
+        Vec::new()
+    } else {
+        protobuf::remove_field(&blob, 6)?
+    };
 
     // 5. Create new Field 6
     let new_field = protobuf::create_oauth_field(access_token, refresh_token, expiry);
