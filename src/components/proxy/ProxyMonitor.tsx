@@ -57,7 +57,7 @@ const LogTable: React.FC<LogTableProps> = ({
             className="flex-1 overflow-y-auto overflow-x-auto bg-white dark:bg-base-100"
         >
             <table className="table table-xs w-full">
-                <thead className="bg-gray-50 dark:bg-base-200 text-gray-500 sticky top-0 z-10">
+                <thead className="bg-gray-50 dark:bg-base-200 text-gray-500 dark:text-gray-400 sticky top-0 z-10 border-b border-gray-100 dark:border-base-200">
                     <tr>
                         <th style={{ width: '60px' }}>{t('monitor.table.status')}</th>
                         <th style={{ width: '60px' }}>{t('monitor.table.method')}</th>
@@ -70,11 +70,11 @@ const LogTable: React.FC<LogTableProps> = ({
                         <th className="text-right" style={{ width: '80px' }}>{t('monitor.table.time')}</th>
                     </tr>
                 </thead>
-                <tbody className="font-mono text-gray-700 dark:text-gray-300">
+                <tbody className="font-mono text-gray-700 dark:text-base-content">
                     {logs.map((log) => (
                         <tr
                             key={log.id}
-                            className="hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer"
+                            className="border-b border-gray-100 dark:border-base-200 hover:bg-gray-50 dark:hover:bg-base-200 cursor-pointer transition-colors"
                             onClick={() => onLogClick(log)}
                         >
                             <td style={{ width: '60px' }}>
@@ -122,13 +122,13 @@ const LogTable: React.FC<LogTableProps> = ({
             {loading && (
                 <div className="flex items-center justify-center p-4 bg-white dark:bg-base-100">
                     <div className="loading loading-spinner loading-md"></div>
-                    <span className="ml-3 text-sm text-gray-500">{t('common.loading') || 'Loading...'}</span>
+                    <span className="ml-3 text-sm text-gray-500 dark:text-gray-400">{t('common.loading') || 'Loading...'}</span>
                 </div>
             )}
 
             {/* Empty state */}
             {!loading && logs.length === 0 && (
-                <div className="flex items-center justify-center p-8 text-gray-400">
+                <div className="flex items-center justify-center p-8 text-gray-400 dark:text-gray-500">
                     {t('monitor.table.empty') || '暂无请求记录'}
                 </div>
             )}
@@ -435,14 +435,14 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     };
 
     return (
-        <div className={`flex flex-col bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 overflow-hidden ${className || 'h-[400px]'}`}>
-            <div className="p-3 border-b border-gray-100 dark:border-base-200 space-y-3 bg-gray-50/30 dark:bg-base-200/30">
+        <div className={`flex flex-col bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 overflow-hidden ${className || 'flex-1'}`}>
+            <div className="p-3 border-b border-gray-100 dark:border-base-200 space-y-3 bg-gray-50 dark:bg-base-200">
                 <div className="flex items-center gap-4">
                     <button
                         onClick={toggleLogging}
                         className={`btn btn-sm gap-2 px-4 border font-bold ${isLoggingEnabled
-                            ? 'bg-red-500 border-red-600 text-white animate-pulse'
-                            : 'bg-white dark:bg-base-200 border-gray-300 text-gray-600'
+                            ? 'bg-red-500 border-red-600 text-white animate-pulse shadow-sm'
+                            : 'bg-white dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-600 dark:text-gray-300'
                             }`}
                     >
                         <div className={`w-2.5 h-2.5 rounded-full ${isLoggingEnabled ? 'bg-white' : 'bg-gray-400'}`} />
@@ -450,20 +450,20 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                     </button>
 
                     <div className="relative flex-1">
-                        <Search className="absolute left-2.5 top-2 text-gray-400" size={14} />
+                        <Search className="absolute left-2.5 top-2 text-gray-400 dark:text-gray-500" size={14} />
                         <input
                             type="text"
                             placeholder={t('monitor.filters.placeholder')}
-                            className="input input-sm input-bordered w-full pl-9 text-xs"
+                            className="input input-sm input-bordered w-full pl-9 text-xs bg-white dark:bg-base-100 border-gray-200 dark:border-base-300 text-gray-900 dark:text-base-content placeholder-gray-400 dark:placeholder-gray-500"
                             value={filter}
                             onChange={(e) => setFilter(e.target.value)}
                         />
                     </div>
 
                     <div className="relative">
-                        <User className="absolute left-2.5 top-2 text-gray-400 z-10" size={14} />
+                        <User className="absolute left-2.5 top-2 text-gray-400 dark:text-gray-500 z-10" size={14} />
                         <select
-                            className="select select-sm select-bordered pl-8 text-xs min-w-[140px] max-w-[220px]"
+                            className="select select-sm select-bordered pl-8 text-xs min-w-[140px] max-w-[220px] bg-white dark:bg-base-100 border-gray-200 dark:border-base-300 text-gray-900 dark:text-base-content"
                             value={accountFilter}
                             onChange={(e) => setAccountFilter(e.target.value)}
                             title={t('monitor.filters.by_account')}
@@ -483,22 +483,22 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                         <span className="text-red-500">{formatCompactNumber(stats.error_count)} ERR</span>
                     </div>
 
-                    <button onClick={() => loadData(currentPage, filter)} className="btn btn-sm btn-ghost text-gray-400" title={t('common.refresh') || 'Refresh'}>
+                    <button onClick={() => loadData(currentPage, filter)} className="btn btn-sm btn-ghost text-gray-400 dark:text-gray-500" title={t('common.refresh') || 'Refresh'}>
                         <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
                     </button>
-                    <button onClick={clearLogs} className="btn btn-sm btn-ghost text-gray-400">
+                    <button onClick={clearLogs} className="btn btn-sm btn-ghost text-gray-400 dark:text-gray-500">
                         <Trash2 size={16} />
                     </button>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase">{t('monitor.filters.quick_filters')}</span>
+                    <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">{t('monitor.filters.quick_filters')}</span>
                     {quickFilters.map(q => (
-                        <button key={q.label} onClick={() => setFilter(q.value)} className={`px-2 py-0.5 rounded-full text-[10px] border ${filter === q.value ? 'bg-blue-500 text-white' : 'bg-white dark:bg-base-200 text-gray-500'}`}>
+                        <button key={q.label} onClick={() => setFilter(q.value)} className={`px-2 py-0.5 rounded-full text-[10px] border transition-colors ${filter === q.value ? 'bg-blue-500 text-white border-blue-600 shadow-sm' : 'bg-white dark:bg-base-200 border-gray-200 dark:border-base-300 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-base-300'}`}>
                             {q.label}
                         </button>
                     ))}
-                    {(filter || accountFilter) && <button onClick={() => { setFilter(''); setAccountFilter(''); }} className="text-[10px] text-blue-500"> {t('monitor.filters.reset')} </button>}
+                    {(filter || accountFilter) && <button onClick={() => { setFilter(''); setAccountFilter(''); }} className="text-[10px] text-blue-500 dark:text-blue-400 hover:underline"> {t('monitor.filters.reset')} </button>}
                 </div>
             </div>
 
@@ -523,11 +523,11 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
             {/* Pagination Controls */}
             <div className="flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-base-200 border-t border-gray-200 dark:border-base-300 text-xs">
                 <div className="flex items-center gap-2 whitespace-nowrap">
-                    <span className="text-gray-500">Per page</span>
+                    <span className="text-gray-500 dark:text-gray-400">Per page</span>
                     <select
                         value={pageSize}
                         onChange={(e) => setPageSize(Number(e.target.value))}
-                        className="select select-xs select-bordered w-16"
+                        className="select select-xs select-bordered w-16 bg-white dark:bg-base-100 border-gray-200 dark:border-base-300 text-gray-900 dark:text-base-content"
                     >
                         {PAGE_SIZE_OPTIONS.map(size => (
                             <option key={size} value={size}>{size}</option>
@@ -555,7 +555,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                     </button>
                 </div>
 
-                <div className="text-gray-500">
+                <div className="text-gray-500 dark:text-gray-400">
                     Total {totalCount} records
                 </div>
             </div>
@@ -564,42 +564,42 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setSelectedLog(null)}>
                     <div className="bg-white dark:bg-base-100 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-200 dark:border-base-300" onClick={e => e.stopPropagation()}>
                         {/* Modal Header */}
-                        <div className="px-4 py-3 border-b border-gray-100 dark:border-slate-700 flex items-center justify-between bg-gray-50 dark:bg-slate-900">
+                        <div className="px-4 py-3 border-b border-gray-100 dark:border-base-200 flex items-center justify-between bg-gray-50 dark:bg-base-200">
                             <div className="flex items-center gap-3">
                                 {loadingDetail && <div className="loading loading-spinner loading-sm"></div>}
                                 <span className={`badge badge-sm text-white border-none ${selectedLog.status >= 200 && selectedLog.status < 400 ? 'badge-success' : 'badge-error'}`}>{selectedLog.status}</span>
-                                <span className="font-mono font-bold text-gray-900 dark:text-white text-sm">{selectedLog.method}</span>
-                                <span className="text-xs text-gray-500 dark:text-slate-400 font-mono truncate max-w-md hidden sm:inline">{selectedLog.url}</span>
+                                <span className="font-mono font-bold text-gray-900 dark:text-base-content text-sm">{selectedLog.method}</span>
+                                <span className="text-xs text-gray-500 dark:text-gray-400 font-mono truncate max-w-md hidden sm:inline">{selectedLog.url}</span>
                             </div>
-                            <button onClick={() => setSelectedLog(null)} className="btn btn-ghost btn-sm btn-circle text-gray-500 dark:text-slate-400 hover:dark:bg-slate-800"><X size={18} /></button>
+                            <button onClick={() => setSelectedLog(null)} className="btn btn-ghost btn-sm btn-circle text-gray-500 dark:text-gray-400"><X size={18} /></button>
                         </div>
 
                         {/* Modal Content */}
-                        <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-white dark:bg-slate-900">
+                        <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-white dark:bg-base-100">
                             {/* Metadata Section */}
-                            <div className="bg-gray-50 dark:bg-slate-800 p-5 rounded-xl border border-gray-200 dark:border-slate-700 shadow-inner">
+                            <div className="bg-gray-50 dark:bg-base-200 p-5 rounded-xl border border-gray-200 dark:border-base-300 shadow-inner">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-y-5 gap-x-10">
                                     <div className="space-y-1.5">
-                                        <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.time')}</span>
-                                        <span className="font-mono font-semibold text-gray-900 dark:text-white text-xs">{new Date(selectedLog.timestamp).toLocaleString()}</span>
+                                        <span className="block text-gray-500 dark:text-gray-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.time')}</span>
+                                        <span className="font-mono font-semibold text-gray-900 dark:text-base-content text-xs">{new Date(selectedLog.timestamp).toLocaleString()}</span>
                                     </div>
                                     <div className="space-y-1.5">
-                                        <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.duration')}</span>
-                                        <span className="font-mono font-semibold text-gray-900 dark:text-white text-xs">{selectedLog.duration}ms</span>
+                                        <span className="block text-gray-500 dark:text-gray-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.duration')}</span>
+                                        <span className="font-mono font-semibold text-gray-900 dark:text-base-content text-xs">{selectedLog.duration}ms</span>
                                     </div>
                                     <div className="space-y-1.5">
-                                        <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.tokens')}</span>
+                                        <span className="block text-gray-500 dark:text-gray-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.tokens')}</span>
                                         <div className="font-mono text-[11px] flex gap-2">
                                             <span className="text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/40 px-2.5 py-1 rounded-md border border-blue-200 dark:border-blue-800/50 font-bold">In: {formatCompactNumber(selectedLog.input_tokens ?? 0)}</span>
                                             <span className="text-green-700 dark:text-green-300 bg-green-100 dark:bg-green-900/40 px-2.5 py-1 rounded-md border border-green-200 dark:border-green-800/50 font-bold">Out: {formatCompactNumber(selectedLog.output_tokens ?? 0)}</span>
                                         </div>
                                     </div>
                                 </div>
-                                <div className="mt-5 pt-5 border-t border-gray-200 dark:border-slate-700">
+                                <div className="mt-5 pt-5 border-t border-gray-200 dark:border-base-300">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                                         {selectedLog.protocol && (
                                             <div className="space-y-1.5">
-                                                <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.protocol')}</span>
+                                                <span className="block text-gray-500 dark:text-gray-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.protocol')}</span>
                                                 <span className={`inline-block px-2.5 py-1 rounded-md font-mono font-black text-xs uppercase ${
                                                     selectedLog.protocol === 'openai' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50' :
                                                     selectedLog.protocol === 'anthropic' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-400 border border-orange-200 dark:border-orange-800/50' :
@@ -611,21 +611,21 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                                             </div>
                                         )}
                                         <div className="space-y-1.5">
-                                            <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.model')}</span>
+                                            <span className="block text-gray-500 dark:text-gray-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.model')}</span>
                                             <span className="font-mono font-black text-blue-600 dark:text-blue-400 break-all text-sm">{selectedLog.model || '-'}</span>
                                         </div>
                                         {selectedLog.mapped_model && selectedLog.model !== selectedLog.mapped_model && (
                                             <div className="space-y-1.5">
-                                                <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.mapped_model')}</span>
+                                                <span className="block text-gray-500 dark:text-gray-400 uppercase font-black text-[10px] tracking-widest">{t('monitor.details.mapped_model')}</span>
                                                 <span className="font-mono font-black text-green-600 dark:text-green-400 break-all text-sm">{selectedLog.mapped_model}</span>
                                             </div>
                                         )}
                                     </div>
                                 </div>
                                 {selectedLog.account_email && (
-                                    <div className="mt-5 pt-5 border-t border-gray-200 dark:border-slate-700">
-                                        <span className="block text-gray-500 dark:text-slate-400 uppercase font-black text-[10px] tracking-widest mb-2">{t('monitor.details.account_used')}</span>
-                                        <span className="font-mono font-semibold text-gray-900 dark:text-white text-xs">{selectedLog.account_email}</span>
+                                    <div className="mt-5 pt-5 border-t border-gray-200 dark:border-base-300">
+                                        <span className="block text-gray-500 dark:text-gray-400 uppercase font-black text-[10px] tracking-widest mb-2">{t('monitor.details.account_used')}</span>
+                                        <span className="font-mono font-semibold text-gray-900 dark:text-base-content text-xs">{selectedLog.account_email}</span>
                                     </div>
                                 )}
                             </div>
