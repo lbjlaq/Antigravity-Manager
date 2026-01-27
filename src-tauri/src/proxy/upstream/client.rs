@@ -8,10 +8,12 @@ use tokio::time::Duration;
 // Cloud Code v1internal endpoints (fallback order: prod → daily)
 // 优先使用稳定的 prod 端点，避免影响缓存命中率
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
-const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
+const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
+const V1_INTERNAL_SANDBOX_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 2] = [
-    V1_INTERNAL_BASE_URL_PROD,   // 优先使用生产环境（稳定）
+    // V1_INTERNAL_BASE_URL_PROD,   // 优先使用生产环境（稳定）, 暂时屏蔽，以修复反代429/503
     V1_INTERNAL_BASE_URL_DAILY,  // 备用测试环境（新功能）
+    V1_INTERNAL_SANDBOX_BASE_URL_DAILY, // 备用沙箱测试环境
 ];
 
 pub struct UpstreamClient {
