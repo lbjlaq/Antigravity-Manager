@@ -13,6 +13,7 @@ use tokio::sync::RwLock;
 use std::sync::atomic::AtomicUsize;
 use futures::TryFutureExt;
 use serde::{Deserialize, Serialize};
+use url::Url;
 use crate::modules::{account, logger, proxy_db, config, token_stats, migration};
 use crate::models::{Account, AppConfig, QuotaData, DeviceProfile};
 
@@ -805,16 +806,77 @@ struct SubmitCodeRequest {
 }
 
 async fn admin_submit_oauth_code(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Json(payload): Json<SubmitCodeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state.account_service.submit_oauth_code(payload.code, payload.state).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
-    Ok(StatusCode::OK)
+    // 1. 尝试提交给本地监听器 (Tauri 模式)
+    let submit_result = state.account_service.submit_oauth_code(payload.code.clone(), payload.state.clone()).await;
+
+    match submit_result {
+        Ok(_) => {
+            logger::log_info("[API] OAuth code submitted to active listener");
+            Ok(StatusCode::OK)
+        },
+        Err(e) if e.contains("No active OAuth flow") => {
+            // 2. 如果没有活跃的监听器 (Docker/Web 模式下手动提交)，则尝试直接交换 Token
+            logger::log_info("[API] No active listener found, attempting direct token exchange (Web/Docker mode)");
+            
+            let port = state.security.read().await.port;
+            let host = headers.get("host").and_then(|h| h.to_str().ok());
+            let proto = headers.get("x-forwarded-proto").and_then(|h| h.to_str().ok());
+            let redirect_uri = get_oauth_redirect_uri(port, host, proto);
+
+            // 清理 code (处理可能包含的 URL)
+            let code = if payload.code.starts_with("http") {
+                if let Ok(url) = Url::parse(&payload.code) {
+                    url.query_pairs()
+                        .find(|(k, _)| k == "code")
+                        .map(|(_, v)| v.to_string())
+                        .unwrap_or(payload.code)
+                } else {
+                    payload.code
+                }
+            } else {
+                payload.code
+            };
+
+            match state.token_manager.exchange_code(&code, &redirect_uri).await {
+                Ok(refresh_token) => {
+                     // 获取并保存账号
+                     match state.token_manager.get_user_info(&refresh_token).await {
+                        Ok(user_info) => {
+                             if let Err(e) = state.token_manager.add_account(&user_info.email, &refresh_token).await {
+                                logger::log_error(&format!("[API] Failed to save account (manual submit): {}", e));
+                                Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))
+                             } else {
+                                logger::log_info(&format!("[API] Account added successfully via manual submit: {}", user_info.email));
+                                Ok(StatusCode::OK)
+                             }
+                        }
+                        Err(e) => {
+                            logger::log_error(&format!("[API] Failed to get user info (manual submit): {}", e));
+                             Err((StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))
+                        }
+                     }
+                },
+                Err(e) => {
+                    logger::log_error(&format!("[API] Direct OAuth exchange failed: {}", e));
+                    Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse { error: format!("Token exchange failed: {}", e) }),
+                    ))
+                }
+            }
+        },
+        Err(e) => {
+            // 其他错误 (如 state mismatch)
+             Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            ))
+        }
+    }
 }
 
 #[derive(Deserialize)]

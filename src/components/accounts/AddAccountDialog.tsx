@@ -366,17 +366,37 @@ function AddAccountDialog({ onAdd }: AddAccountDialogProps) {
     const handleManualSubmit = async () => {
         if (!manualCode.trim()) return;
 
+        setStatus('loading');
+        setMessage(t('accounts.add.tabs.oauth') + '...');
+
         try {
             await invoke('submit_oauth_code', { code: manualCode.trim(), state: null });
-            // The existing flow (startOAuthLogin) will pick this up and complete.
+
+            // If we are here, it means the submission was successful (either via listener or fallback).
+            // We should refresh the list and close the dialog.
+
+            // Note: If the listener picked it up, 'oauth-callback-received' event might also fire,
+            // but refreshing twice is harmless. 
+            // The critical part is handling the fallback case (Web/Docker) where no event fires.
+
+            await fetchAccounts();
+
+            setStatus('success');
+            setMessage(`${t('accounts.add.tabs.oauth')} ${t('common.success')}!`);
             setManualCode('');
+
+            setTimeout(() => {
+                setIsOpen(false);
+                resetState();
+            }, 1500);
+
         } catch (error) {
+            setStatus('error');
             let errStr = String(error);
             // If no flow is active, we might want to try starting one and then submitting, 
             // but for now let's just show error.
             if (errStr.includes("No active OAuth flow")) {
                 setMessage(t('accounts.add.oauth.error_no_flow'));
-                setStatus('error');
             } else {
                 setMessage(`${t('common.error')}: ${errStr}`);
             }
