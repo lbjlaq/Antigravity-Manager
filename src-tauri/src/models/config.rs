@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::proxy::ProxyConfig;
+use serde::{Deserialize, Serialize};
 
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -7,16 +7,16 @@ pub struct AppConfig {
     pub language: String,
     pub theme: String,
     pub auto_refresh: bool,
-    pub refresh_interval: i32,  // minutes
+    pub refresh_interval: i32, // minutes
     pub auto_sync: bool,
-    pub sync_interval: i32,  // minutes
+    pub sync_interval: i32, // minutes
     pub default_export_path: Option<String>,
     #[serde(default)]
     pub proxy: ProxyConfig,
     pub antigravity_executable: Option<String>, // [NEW] Manually specified Antigravity executable path
-    pub antigravity_args: Option<Vec<String>>, // [NEW] Antigravity startup arguments
+    pub antigravity_args: Option<Vec<String>>,  // [NEW] Antigravity startup arguments
     #[serde(default)]
-    pub auto_launch: bool,  // Launch on startup
+    pub auto_launch: bool, // Launch on startup
     #[serde(default)]
     pub scheduled_warmup: ScheduledWarmupConfig, // [NEW] Scheduled warmup configuration
     #[serde(default)]
@@ -40,10 +40,17 @@ pub struct ScheduledWarmupConfig {
 
 fn default_warmup_models() -> Vec<String> {
     vec![
-        "gemini-3-flash".to_string(),
+        "gemini-2.5-pro".to_string(),
+        "gemini-2.5-flash-thinking".to_string(),
         "claude-sonnet-4-5".to_string(),
         "gemini-3-pro-high".to_string(),
+        "gemini-3-flash".to_string(),
+        "claude-sonnet-4-5-thinking".to_string(),
         "gemini-3-pro-image".to_string(),
+        "gemini-2.5-flash-lite".to_string(),
+        "gemini-2.5-flash".to_string(),
+        "gemini-3-pro-low".to_string(),
+        "claude-opus-4-5-thinking".to_string(),
     ]
 }
 
@@ -67,7 +74,7 @@ impl Default for ScheduledWarmupConfig {
 pub struct QuotaProtectionConfig {
     /// Whether quota protection is enabled
     pub enabled: bool,
-    
+
     /// Reserved quota percentage (1-99)
     pub threshold_percentage: u32,
 

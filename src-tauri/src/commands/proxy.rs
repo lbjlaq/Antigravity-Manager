@@ -287,7 +287,7 @@ pub async fn get_proxy_status(
                     running: true,
                     port: instance.config.port,
                     base_url: format!("http://127.0.0.1:{}", instance.config.port),
-                    active_accounts: instance.token_manager.len(),
+                    active_accounts: instance.token_manager.effective_len().await,
                 }),
                 None => Ok(ProxyStatus {
                     running: false,

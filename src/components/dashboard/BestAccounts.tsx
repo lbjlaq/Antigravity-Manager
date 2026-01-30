@@ -4,7 +4,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Progress } from '../ui/progress';
 import { Badge } from '../ui/badge';
 import { cn } from '../../lib/utils';
+import { formatTimeRemaining } from '../../utils/format';
 import { useTranslation } from 'react-i18next';
+import { memo } from 'react';
 
 interface BestAccountsProps {
     accounts: Account[];
@@ -12,27 +14,35 @@ interface BestAccountsProps {
     onSwitch?: (accountId: string) => void;
 }
 
-import { memo } from 'react';
-// ... imports
-
-// ... interface
-
 const BestAccounts = function BestAccounts({ accounts, currentAccountId, onSwitch }: BestAccountsProps) {
     const { t } = useTranslation();
 
     const candidates = accounts
         .filter(a => a.id !== currentAccountId && !a.disabled)
         .map(a => {
-            const geminiPro = a.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-pro-high')?.percentage || 0;
-            const claude = a.quota?.models.find(m => m.name.toLowerCase().includes('claude'))?.percentage || 0;
-            const geminiFlash = a.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-flash')?.percentage || 0;
+            const getModel = (namePart: string) => a.quota?.models.find(m => m.name.toLowerCase().includes(namePart));
+            
+            const geminiProModel = a.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-pro-high');
+            const claudeModel = getModel('claude');
+            const geminiFlashModel = a.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-flash');
+
+            const geminiPro = geminiProModel?.percentage || 0;
+            const claude = claudeModel?.percentage || 0;
+            const geminiFlash = geminiFlashModel?.percentage || 0;
             
             const score = (geminiPro * 0.4) + (claude * 0.4) + (geminiFlash * 0.2);
             
             return {
                 ...a,
                 score: Math.round(score),
-                metrics: { geminiPro, claude, geminiFlash }
+                metrics: { 
+                    geminiPro, 
+                    geminiProReset: geminiProModel?.reset_time,
+                    claude, 
+                    claudeReset: claudeModel?.reset_time,
+                    geminiFlash,
+                    geminiFlashReset: geminiFlashModel?.reset_time
+                }
             };
         })
         .filter(a => a.score > 10)
@@ -82,10 +92,18 @@ const BestAccounts = function BestAccounts({ accounts, currentAccountId, onSwitc
                                 </div>
                                 
                                 <div className="grid grid-cols-3 gap-4">
+                                    {/* Gemini Pro */}
                                     <div className="space-y-2">
-                                        <div className="flex justify-between text-[10px] uppercase font-bold text-zinc-500">
+                                        <div className="flex justify-between items-end text-[10px] uppercase font-bold text-zinc-500">
                                             <span>Gemini</span>
-                                            <span className={account.metrics.geminiPro > 50 ? "text-emerald-400" : "text-zinc-600"}>{account.metrics.geminiPro}%</span>
+                                            <div className="flex items-center gap-1.5 leading-none">
+                                                {account.metrics.geminiProReset && (
+                                                    <span className="font-mono text-[9px] text-zinc-600 dark:text-zinc-600 normal-case">
+                                                        {formatTimeRemaining(account.metrics.geminiProReset)}
+                                                    </span>
+                                                )}
+                                                <span className={account.metrics.geminiPro > 50 ? "text-emerald-400" : "text-zinc-600"}>{account.metrics.geminiPro}%</span>
+                                            </div>
                                         </div>
                                         <Progress 
                                             value={account.metrics.geminiPro} 
@@ -96,10 +114,19 @@ const BestAccounts = function BestAccounts({ accounts, currentAccountId, onSwitc
                                             )} 
                                         />
                                     </div>
+
+                                    {/* Claude */}
                                     <div className="space-y-2">
-                                        <div className="flex justify-between text-[10px] uppercase font-bold text-zinc-500">
+                                        <div className="flex justify-between items-end text-[10px] uppercase font-bold text-zinc-500">
                                             <span>Claude</span>
-                                            <span className={account.metrics.claude > 50 ? "text-cyan-400" : "text-zinc-600"}>{account.metrics.claude}%</span>
+                                            <div className="flex items-center gap-1.5 leading-none">
+                                                {account.metrics.claudeReset && (
+                                                    <span className="font-mono text-[9px] text-zinc-600 dark:text-zinc-600 normal-case">
+                                                        {formatTimeRemaining(account.metrics.claudeReset)}
+                                                    </span>
+                                                )}
+                                                <span className={account.metrics.claude > 50 ? "text-cyan-400" : "text-zinc-600"}>{account.metrics.claude}%</span>
+                                            </div>
                                         </div>
                                         <Progress 
                                             value={account.metrics.claude} 
@@ -110,10 +137,19 @@ const BestAccounts = function BestAccounts({ accounts, currentAccountId, onSwitc
                                             )} 
                                         />
                                     </div>
+
+                                    {/* Flash */}
                                     <div className="space-y-2">
-                                        <div className="flex justify-between text-[10px] uppercase font-bold text-zinc-500">
+                                        <div className="flex justify-between items-end text-[10px] uppercase font-bold text-zinc-500">
                                             <span>Flash</span>
-                                            <span className={account.metrics.geminiFlash > 50 ? "text-amber-400" : "text-zinc-600"}>{account.metrics.geminiFlash}%</span>
+                                            <div className="flex items-center gap-1.5 leading-none">
+                                                {account.metrics.geminiFlashReset && (
+                                                    <span className="font-mono text-[9px] text-zinc-600 dark:text-zinc-600 normal-case">
+                                                        {formatTimeRemaining(account.metrics.geminiFlashReset)}
+                                                    </span>
+                                                )}
+                                                <span className={account.metrics.geminiFlash > 50 ? "text-amber-400" : "text-zinc-600"}>{account.metrics.geminiFlash}%</span>
+                                            </div>
                                         </div>
                                         <Progress 
                                             value={account.metrics.geminiFlash} 

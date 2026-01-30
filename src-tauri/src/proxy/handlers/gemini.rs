@@ -95,12 +95,17 @@ pub async fn handle_generate(
         let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
 
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email, _wait_ms) = match token_manager.get_token(&config.request_type, attempt > 0, Some(&session_id), &config.final_model).await {
+        let token_lease = match token_manager.get_token(&config.request_type, attempt > 0, Some(&session_id), &config.final_model).await {
             Ok(t) => t,
             Err(e) => {
                 return Err((StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)));
             }
         };
+
+        // Extract values using TokenLease
+        let access_token = token_lease.access_token.clone();
+        let project_id = token_lease.project_id.clone();
+        let email = token_lease.email.clone();
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
@@ -373,6 +378,25 @@ pub async fn handle_generate(
 
         // 执行退避
         if apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await {
+            // [FEEDBACK-LOOP] Report 429 to TokenManager
+            if status_code == 429 {
+                // We need account_id, but here we only have email easily accessible or we iterate.
+                // Best effort: use email to find account or just ignore if complexity is high.
+                // However, TokenLease has account_id. But wait, this loop might not have TokenLease in scope?
+                // `handle_generate` gets token inside the loop or before?
+                // No, inside the loop: `let token_lease = ...`. So we have `token_lease.account_id`.
+                // Wait, `token_lease` is created inside the loop.
+                // `last_email` is used if fallback. 
+                // But `token_lease` is dropped at end of loop iteration?
+                // Let's check `handle_generate` scope.
+                
+                // Correction: `token_lease` is created at line 98.
+                // `apply_retry_strategy` is at line 375.
+                // `token_lease` IS in scope here!
+                // We can use `token_lease.account_id`.
+                token_manager.report_429_penalty(&token_lease.account_id);
+            }
+
             // 判断是否需要轮换账号
             if !should_rotate_account(status_code) {
                 debug!("[{}] Keeping same account for status {} (Gemini server-side issue)", trace_id, status_code);
@@ -455,7 +479,7 @@ pub async fn handle_get_model(Path(model_name): Path<String>) -> impl IntoRespon
 
 pub async fn handle_count_tokens(State(state): State<AppState>, Path(_model_name): Path<String>, Json(_body): Json<Value>) -> Result<impl IntoResponse, (StatusCode, String)> {
     let model_group = "gemini";
-    let (_access_token, _project_id, _, _wait_ms) = state.token_manager.get_token(model_group, false, None, "gemini").await
+    let _token_lease = state.token_manager.get_token(model_group, false, None, "gemini").await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)))?;
     
     Ok(Json(json!({"totalTokens": 0})))

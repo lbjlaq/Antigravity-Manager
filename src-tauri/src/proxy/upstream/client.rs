@@ -4,25 +4,40 @@
 use reqwest::{header, Client, Response, StatusCode};
 use serde_json::Value;
 use tokio::time::Duration;
+use tokio::sync::RwLock;
 
-// Cloud Code v1internal endpoints (fallback order: Sandbox → Daily → Prod)
-// 优先使用 Sandbox/Daily 环境以避免 Prod环境的 429 错误 (Ref: Issue #1176)
+// Cloud Code v1internal endpoints (fallback order: Prod -> Daily -> Sandbox)
+// 优先使用 Prod 环境以确保最稳定的服务体验 (Restored to original behavior)
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 const V1_INTERNAL_BASE_URL_SANDBOX: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 
 const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
-    V1_INTERNAL_BASE_URL_SANDBOX, // 优先级 1: Sandbox (已知有效且稳定)
+    V1_INTERNAL_BASE_URL_PROD,    // 优先级 1: Prod (官方生产环境，最稳定)
     V1_INTERNAL_BASE_URL_DAILY,   // 优先级 2: Daily (备用)
-    V1_INTERNAL_BASE_URL_PROD,    // 优先级 3: Prod (仅作为兜底)
+    V1_INTERNAL_BASE_URL_SANDBOX, // 优先级 3: Sandbox (仅测试用，可能不稳定)
 ];
 
 pub struct UpstreamClient {
-    http_client: Client,
+    http_client: RwLock<Client>,
 }
 
 impl UpstreamClient {
     pub fn new(proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>) -> Self {
+        let client = Self::build_http_client(proxy_config);
+        Self { http_client: RwLock::new(client) }
+    }
+
+    /// [NEW] 重建并热更新内部 HTTP 客户端
+    pub async fn rebuild_client(&self, proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>) {
+        let new_client = Self::build_http_client(proxy_config);
+        let mut writer = self.http_client.write().await;
+        *writer = new_client;
+        tracing::info!("UpstreamClient underlying HTTP client has been reloaded");
+    }
+
+    /// 内部构建 HTTP Client 的逻辑
+    fn build_http_client(proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>) -> Client {
         let mut builder = Client::builder()
             // Connection settings (优化连接复用，减少建立开销)
             .connect_timeout(Duration::from_secs(20))
@@ -41,9 +56,7 @@ impl UpstreamClient {
             }
         }
 
-        let http_client = builder.build().expect("Failed to create HTTP client");
-
-        Self { http_client }
+        builder.build().expect("Failed to create HTTP client")
     }
 
     /// 构建 v1internal URL
@@ -124,13 +137,15 @@ impl UpstreamClient {
 
         let mut last_err: Option<String> = None;
 
+        // 获取 Client 读锁
+        let client_guard = self.http_client.read().await;
+
         // 遍历所有端点，失败时自动切换
         for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
             let url = Self::build_url(base_url, method, query_string);
             let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
 
-            let response = self
-                .http_client
+            let response = client_guard
                 .post(&url)
                 .headers(headers.clone())
                 .json(&body)
@@ -187,25 +202,6 @@ impl UpstreamClient {
         Err(last_err.unwrap_or_else(|| "All endpoints failed".to_string()))
     }
 
-    /// 调用 v1internal API（带 429 重试,支持闭包）
-    /// 
-    /// 带容错和重试的核心请求逻辑
-    /// 
-    /// # Arguments
-    /// * `method` - API method (e.g., "generateContent")
-    /// * `query_string` - Optional query string (e.g., "?alt=sse")
-    /// * `get_credentials` - 闭包，获取凭证（支持账号轮换）
-    /// * `build_body` - 闭包，接收 project_id 构建请求体
-    /// * `max_attempts` - 最大重试次数
-    /// 
-    /// # Returns
-    /// HTTP Response
-    // 已移除弃用的重试方法 (call_v1_internal_with_retry)
-
-    // 已移除弃用的辅助方法 (parse_retry_delay)
-
-    // 已移除弃用的辅助方法 (parse_duration_ms)
-
     /// 获取可用模型列表
     /// 
     /// 获取远端模型列表，支持多端点自动 Fallback
@@ -231,13 +227,13 @@ impl UpstreamClient {
         );
 
         let mut last_err: Option<String> = None;
+        let client_guard = self.http_client.read().await;
 
         // 遍历所有端点，失败时自动切换
         for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
             let url = Self::build_url(base_url, "fetchAvailableModels", None);
 
-            let response = self
-                .http_client
+            let response = client_guard
                 .post(&url)
                 .headers(headers.clone())
                 .json(&serde_json::json!({}))

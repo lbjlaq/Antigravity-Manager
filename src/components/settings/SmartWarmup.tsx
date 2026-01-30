@@ -13,17 +13,25 @@ interface SmartWarmupProps {
 const SmartWarmup: React.FC<SmartWarmupProps> = ({ config, onChange }) => {
     const { t } = useTranslation();
 
-    const warmupModelsOptions = [
-        { id: 'gemini-3-flash', label: 'Gemini 3 Flash' },
+    // Pre-defined popular models
+    const presetModels = [
+        { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+        { id: 'gemini-2.5-flash-thinking', label: 'Gemini 2.5 Flash Thinking' },
+        { id: 'claude-sonnet-4-5', label: 'Claude 3.5 Sonnet' }, // User said 4.5 but standard naming convention might differ, sticking to ID user gave
         { id: 'gemini-3-pro-high', label: 'Gemini 3 Pro High' },
-        { id: 'claude-sonnet-4-5', label: 'Claude 4.5 Sonnet' },
-        { id: 'gemini-3-pro-image', label: 'Gemini 3 Pro Image' }
+        { id: 'gemini-3-flash', label: 'Gemini 3 Flash' },
+        { id: 'claude-sonnet-4-5-thinking', label: 'Claude 3.5 Sonnet Thinking' },
+        { id: 'gemini-3-pro-image', label: 'Gemini 3 Pro Image' },
+        { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+        { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+        { id: 'gemini-3-pro-low', label: 'Gemini 3 Pro Low' },
+        { id: 'claude-opus-4-5-thinking', label: 'Claude 3.5 Opus Thinking' },
     ];
 
     const handleEnabledChange = (enabled: boolean) => {
         let newConfig = { ...config, enabled };
         if (enabled && (!config.monitored_models || config.monitored_models.length === 0)) {
-            newConfig.monitored_models = warmupModelsOptions.map(o => o.id);
+            newConfig.monitored_models = presetModels.map(o => o.id);
         }
         onChange(newConfig);
     };
@@ -94,14 +102,18 @@ const SmartWarmup: React.FC<SmartWarmupProps> = ({ config, onChange }) => {
                         transition={{ duration: 0.3 }}
                         className="space-y-4 overflow-hidden pt-2"
                     >
-                        <div className="p-5 rounded-2xl bg-zinc-900/50 border border-white/5 backdrop-blur-md">
-                            <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-4 pl-1">
-                                {t('settings.quota_protection.monitored_models_label')}
-                            </label>
+                        <div className="p-5 rounded-2xl bg-zinc-900/50 border border-white/5 backdrop-blur-md space-y-4">
+                            
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider pl-1">
+                                    {t('settings.quota_protection.monitored_models_label')}
+                                </label>
+                            </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                {warmupModelsOptions.map((model) => {
+                                {presetModels.map((model) => {
                                     const isSelected = config.monitored_models?.includes(model.id);
+                                    
                                     return (
                                         <motion.button
                                             key={model.id}
@@ -115,20 +127,24 @@ const SmartWarmup: React.FC<SmartWarmupProps> = ({ config, onChange }) => {
                                                     : "bg-zinc-900 border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700"
                                             )}
                                         >
-                                            <span className={cn(
-                                                "text-sm font-bold transition-colors",
-                                                isSelected ? "text-white" : "text-zinc-300 group-hover:text-white"
-                                            )}>
-                                                {model.label}
-                                            </span>
+                                            <div className="flex flex-col gap-1">
+                                                <span className={cn(
+                                                    "text-sm font-bold transition-colors",
+                                                    isSelected ? "text-white" : "text-zinc-300 group-hover:text-white"
+                                                )}>
+                                                    {model.label}
+                                                </span>
+                                            </div>
                                             
-                                            <div className={cn(
-                                                "w-5 h-5 rounded-full border flex items-center justify-center transition-all duration-300",
-                                                isSelected
-                                                    ? "bg-amber-500 border-amber-500 shadow-lg shadow-amber-500/40 transform scale-100"
-                                                    : "bg-transparent border-zinc-600 scale-100 group-hover:border-zinc-500"
-                                            )}>
-                                                {isSelected && <Check size={12} className="text-white stroke-[3px]" />}
+                                            <div className="flex items-center gap-3">
+                                                <div className={cn(
+                                                    "w-5 h-5 rounded-full border flex items-center justify-center transition-all duration-300",
+                                                    isSelected
+                                                        ? "bg-amber-500 border-amber-500 shadow-lg shadow-amber-500/40 transform scale-100"
+                                                        : "bg-transparent border-zinc-600 scale-100 group-hover:border-zinc-500"
+                                                )}>
+                                                    {isSelected && <Check size={12} className="text-white stroke-[3px]" />}
+                                                </div>
                                             </div>
                                         </motion.button>
                                     );

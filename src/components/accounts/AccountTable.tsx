@@ -129,8 +129,8 @@ function SortableAccountRow({
     };
 
     return (
-        <div ref={setNodeRef} style={style} className={cn(
-            "group relative grid grid-cols-[28px_28px_240px_1fr_100px_auto] gap-2 items-center px-2 py-1 mb-[1px] rounded-md transition-all duration-200",
+        <div ref={setNodeRef} style={style} id={account.id} className={cn(
+            "group relative grid grid-cols-[28px_28px_320px_1fr_100px_auto] gap-2 items-center px-2 py-1 mb-[1px] rounded-md transition-all duration-200",
             "border border-white/5 bg-zinc-900/40 backdrop-blur-sm",
             "hover:border-white/10 hover:bg-zinc-900/60 hover:translate-x-0.5",
             isCurrent && "border-indigo-500/30 bg-indigo-500/5 hover:bg-indigo-500/10",
@@ -170,7 +170,7 @@ function SortableAccountRow({
                     })()}
 
                     <span className={cn(
-                        "font-bold text-sm truncate tracking-wide font-mono",
+                        "font-bold text-sm tracking-wide font-mono break-all",
                         isCurrent ? "text-indigo-300" : "text-zinc-200"
                     )} title={account.email}>{account.email}</span>
                 </div>
@@ -198,12 +198,19 @@ function SortableAccountRow({
                         if (!m) return null;
                         
                         return (
-                            <div key={modelId} className="flex items-center gap-2 text-[10px]" title={m.reset_time ? `${t('common.reset')}: ${formatTimeRemaining(m.reset_time)}` : undefined}>
+                            <div key={modelId} className="flex items-center gap-2 text-[10px]" title={m.reset_time ? `${t('common.reset')}: ${new Date(m.reset_time).toLocaleString()}` : undefined}>
                                 <span className="w-12 font-bold text-zinc-500 shrink-0 text-right">{getModelLabel(modelId)}</span>
-                                <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden border border-white/5">
-                                    <div className={cn("h-full rounded-full", getColorClass(m.percentage))} style={{ width: `${m.percentage}%` }} />
+                                <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden border border-white/5 relative group/bar">
+                                    <div className={cn("h-full rounded-full transition-all duration-500", getColorClass(m.percentage))} style={{ width: `${m.percentage}%` }} />
                                 </div>
-                                <span className={cn("w-8 font-mono text-right", getTimeColorClass(m.reset_time))}>{m.percentage}%</span>
+                                <div className="flex flex-col items-end w-20 leading-none">
+                                     <span className={cn("font-mono font-bold", getTimeColorClass(m.reset_time))}>{m.percentage}%</span>
+                                     {m.reset_time && (
+                                         <span className="text-[10px] text-zinc-400 font-mono mt-0.5 whitespace-nowrap">
+                                             {formatTimeRemaining(m.reset_time)}
+                                         </span>
+                                     )}
+                                </div>
                             </div>
                         );
                     });
@@ -275,6 +282,14 @@ function SortableAccountRow({
 // ===================================
 // Main Component
 // ===================================
+// Custom modifier to restrict drag to vertical axis
+const restrictToVerticalAxis = ({ transform }: { transform: any }) => {
+    return {
+        ...transform,
+        x: 0,
+    };
+};
+
 const AccountTable = memo(function AccountTable({
     accounts, selectedIds, refreshingIds, onToggleSelect, onToggleAll,
     currentAccountId, switchingAccountId, onSwitch, onRefresh, onViewDevice,
@@ -282,18 +297,36 @@ const AccountTable = memo(function AccountTable({
 }: AccountTableProps) {
     const { t } = useTranslation();
     const [activeId, setActiveId] = useState<string | null>(null);
+    const [draggedWidth, setDraggedWidth] = useState<number | undefined>(undefined);
+
     const sensors = useSensors(
-        useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-        useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+        useSensor(PointerSensor, { 
+            activationConstraint: { 
+                distance: 5 // Reduced from 8 to make it slightly more responsive but still allow clicks
+            } 
+        }),
+        useSensor(KeyboardSensor, { 
+            coordinateGetter: sortableKeyboardCoordinates 
+        })
     );
 
     const accountIds = useMemo(() => accounts.map(a => a.id), [accounts]);
     const activeAccount = useMemo(() => accounts.find(a => a.id === activeId), [accounts, activeId]);
 
-    const handleDragStart = (event: DragStartEvent) => setActiveId(event.active.id as string);
+    const handleDragStart = (event: DragStartEvent) => {
+        const id = event.active.id as string;
+        setActiveId(id);
+        const node = document.getElementById(id);
+        if (node) {
+            setDraggedWidth(node.offsetWidth);
+        }
+    };
+
     const handleDragEnd = (event: DragEndEvent) => {
         const { active, over } = event;
         setActiveId(null);
+        setDraggedWidth(undefined);
+
         if (over && active.id !== over.id && onReorder) {
             const oldIndex = accountIds.indexOf(active.id as string);
             const newIndex = accountIds.indexOf(over.id as string);
@@ -311,10 +344,16 @@ const AccountTable = memo(function AccountTable({
     }
 
     return (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <DndContext 
+            sensors={sensors} 
+            collisionDetection={closestCenter} 
+            onDragStart={handleDragStart} 
+            onDragEnd={handleDragEnd}
+            modifiers={[restrictToVerticalAxis]} // Restrict horizontal movement
+        >
             <div className="w-full">
                 {/* Header Row */}
-                <div className="grid grid-cols-[28px_28px_240px_1fr_100px_auto] gap-2 px-2 py-1.5 mb-1 text-[9px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-900/80 backdrop-blur border-b border-white/5 sticky top-0 z-20">
+                <div className="grid grid-cols-[28px_28px_320px_1fr_100px_auto] gap-2 px-2 py-1.5 mb-1 text-[9px] font-bold text-zinc-500 uppercase tracking-widest bg-zinc-900/80 backdrop-blur border-b border-white/5 sticky top-0 z-20">
                     <div className="text-center">#</div>
                     <div className="flex justify-center">
                         <div 
@@ -360,15 +399,52 @@ const AccountTable = memo(function AccountTable({
                 </SortableContext>
             </div>
 
-            {/* Drag Overlay */}
-            <DragOverlay>
+            {/* Drag Overlay - Matching the Row Layout exactly */}
+            <DragOverlay dropAnimation={{
+                duration: 250,
+                easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)',
+            }}>
                 {activeAccount ? (
-                     <div className="grid grid-cols-[40px_40px_280px_1fr_160px_auto] gap-4 items-center p-3 rounded-xl border border-indigo-500/50 bg-zinc-900/90 shadow-2xl backdrop-blur-xl">
-                        {/* Simplified content for drag overlay */}
-                         <div className="flex justify-center"><GripVertical className="w-5 h-5 text-indigo-500" /></div>
-                         <div className="flex justify-center"><div className="w-5 h-5 rounded border border-indigo-500 bg-indigo-500/20" /></div>
-                         <div className="font-bold text-sm text-indigo-300 font-mono">{activeAccount.email}</div>
-                         <div className="text-xs text-zinc-500">Dragging...</div>
+                     <div 
+                        style={{ width: draggedWidth }}
+                        className={cn(
+                        "grid grid-cols-[28px_28px_320px_1fr_100px_auto] gap-2 items-center px-2 py-1 rounded-md shadow-2xl brightness-110",
+                        "border border-indigo-500/50 bg-zinc-900/95 backdrop-blur-xl",
+                    )}>
+                        {/* Drag Handle */}
+                        <div className="flex justify-center">
+                            <div className="p-1 text-indigo-400 cursor-grabbing">
+                                <GripVertical className="w-5 h-5" />
+                            </div>
+                        </div>
+
+                        {/* Checkbox Placeholder */}
+                        <div className="flex justify-center">
+                             <div className="w-5 h-5 rounded border border-zinc-600 bg-transparent opacity-50" />
+                        </div>
+
+                        {/* Email & Info */}
+                        <div className="flex flex-col min-w-0 pr-4">
+                            <div className="flex items-center gap-2 mb-1">
+                                <span className="font-bold text-sm tracking-wide font-mono break-all text-indigo-100">
+                                    {activeAccount.email}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Quota Placeholder (Simulated) */}
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 opacity-50">
+                             <div className="col-span-2 h-1.5 bg-zinc-800 rounded-full w-full" />
+                             <div className="col-span-2 h-1.5 bg-zinc-800 rounded-full w-3/4" />
+                        </div>
+
+                        {/* Date Placeholder */}
+                        <div className="flex flex-col text-right opacity-50">
+                            <span className="text-xs font-mono text-zinc-500">...</span>
+                        </div>
+
+                        {/* Actions Placeholder */}
+                        <div className="w-10" />
                      </div>
                 ) : null}
             </DragOverlay>

@@ -50,27 +50,35 @@ const SidebarItem = memo(({
     <button
         onClick={onClick}
         className={cn(
-            "w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-colors duration-200 group relative",
+            "w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl transition-all duration-200 group relative overflow-hidden",
             active 
-                ? "text-white" 
+                ? "text-white shadow-lg shadow-indigo-500/20" 
                 : "text-zinc-500 hover:text-zinc-300 hover:bg-white/5"
         )}
     >
-        {/* Unified Active Indicator (Border + Background + Shadow) */}
+        {/* Active Gradient Background */}
         {active && (
             <motion.div 
                 layoutId="sidebarActiveItem"
-                className="absolute inset-0 bg-white/5 border border-white/10 shadow-lg shadow-black/20 rounded-xl overflow-hidden" 
+                className="absolute inset-0 bg-gradient-to-r from-indigo-500 to-purple-500" 
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            >
-                <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 to-transparent opacity-100" />
-            </motion.div>
+            />
+        )}
+
+        {/* Shine Effect for Active State */}
+        {active && (
+            <motion.div
+                initial={{ x: '-100%' }}
+                animate={{ x: '200%' }}
+                transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
+                className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent skew-x-12"
+            />
         )}
         
         {/* Icon Container */}
         <div className={cn(
             "relative z-10 p-2 rounded-lg transition-colors duration-200",
-            active ? "bg-indigo-500 text-white" : "bg-zinc-800/50 text-zinc-500 group-hover:text-zinc-300 group-hover:bg-zinc-800"
+            active ? "bg-white/20 text-white" : "bg-zinc-800/50 text-zinc-500 group-hover:text-zinc-300 group-hover:bg-zinc-800"
         )}>
             <Icon className="h-4 w-4" />
         </div>
@@ -84,7 +92,7 @@ const SidebarItem = memo(({
                 initial={{ opacity: 0, x: -10 }} 
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.2 }}
-                className="absolute right-3 text-zinc-500 z-10"
+                className="absolute right-3 text-white/50 z-10"
             >
                 <ChevronRight className="h-4 w-4" />
             </motion.div>
@@ -98,21 +106,19 @@ const SettingsCard = ({ title, icon: Icon, children, className, description }: {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
         className={cn(
-            "rounded-2xl border border-white/5 bg-zinc-900/40 backdrop-blur-xl p-6 shadow-xl relative",
+            "rounded-2xl border border-zinc-200 dark:border-white/5 bg-white/50 dark:bg-zinc-900/30 backdrop-blur-md p-6 shadow-sm hover:shadow-md transition-all duration-300 relative overflow-hidden group",
             className
         )}
     >
-        {/* Background Clipping Container for Decorative Blobs */}
-        <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none z-0">
-             <div className="absolute -top-20 -right-20 w-64 h-64 bg-indigo-500/5 rounded-full blur-3xl" />
-        </div>
+        {/* Background Decoration */}
+        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-bl-full -mr-10 -mt-10 transition-transform group-hover:scale-110" />
 
         <div className="flex items-start gap-4 mb-6 relative z-10">
-            <div className="p-3 rounded-xl bg-zinc-800/50 border border-white/5 text-indigo-400 shadow-inner">
+            <div className="p-3 rounded-xl bg-indigo-50 dark:bg-zinc-800/50 border border-indigo-100 dark:border-white/5 text-indigo-600 dark:text-indigo-400 shadow-sm">
                 <Icon className="h-5 w-5" />
             </div>
             <div className="space-y-1">
-                <h3 className="text-lg font-bold text-white tracking-tight">{title}</h3>
+                <h3 className="text-lg font-bold text-zinc-900 dark:text-white tracking-tight">{title}</h3>
                 {description && <p className="text-sm text-zinc-500">{description}</p>}
             </div>
         </div>
@@ -200,55 +206,59 @@ export const Settings = () => {
     };
 
     return (
-        <div className="flex h-full w-full bg-black text-zinc-100 overflow-hidden font-sans selection:bg-indigo-500/30">
-            {/* 1. SIDEBAR NAVIGATION */}
-            <aside className="w-72 flex-shrink-0 border-r border-white/5 bg-zinc-950/50 backdrop-blur-xl flex flex-col">
-                <div className="p-6 pb-2">
-                    <h2 className="px-2 text-xs font-bold text-zinc-500 uppercase tracking-widest mb-6">
-                        {t('settings.configuration', 'SYSTEM CONFIG')}
-                    </h2>
-                    <div className="space-y-2">
-                        {SECTIONS.map((section) => (
-                           <SidebarItem 
-                                key={section.id} 
-                                active={activeTab === section.id} 
-                                icon={section.icon} 
-                                label={t(section.label)} 
-                                onClick={() => setActiveTab(section.id)} 
-                            />
-                        ))}
-                    </div>
-                </div>
-            </aside>
+        <div className="h-full flex flex-col p-5 gap-4 max-w-7xl mx-auto w-full">
+            {/* Main Glass Card */}
+            <div className="flex-1 h-full min-h-0 relative flex flex-col">
+                <div className="h-full bg-white dark:bg-zinc-900/40 backdrop-blur-xl rounded-2xl border border-zinc-200 dark:border-white/5 flex overflow-hidden shadow-2xl">
+                    
+                    {/* 1. SIDEBAR navigation */}
+                    <aside className="w-64 flex-shrink-0 border-r border-zinc-200 dark:border-white/5 bg-zinc-50/50 dark:bg-black/20 flex flex-col">
+                        <div className="p-6">
+                            <h2 className="px-4 text-xs font-bold text-zinc-400 uppercase tracking-widest mb-4">
+                                {t('settings.configuration', 'SYSTEM CONFIG')}
+                            </h2>
+                            <div className="space-y-1">
+                                {SECTIONS.map((section) => (
+                                   <SidebarItem 
+                                        key={section.id} 
+                                        active={activeTab === section.id} 
+                                        icon={section.icon} 
+                                        label={t(section.label)} 
+                                        onClick={() => setActiveTab(section.id)} 
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    </aside>
 
-            {/* 2. MAIN CONTENT AREA */}
-            <main className="flex-1 h-full overflow-hidden relative flex flex-col bg-gradient-to-br from-zinc-950 to-zinc-900">
-                 {/* Decorative Background Elements */}
-                <div className="absolute top-0 left-0 w-full h-96 bg-indigo-500/10 blur-[100px] pointer-events-none" />
-
-                {/* Header Bar */}
-                <header className="flex-shrink-0 px-8 py-6 border-b border-white/5 bg-zinc-900/30 backdrop-blur-md flex items-center justify-between z-20">
-                    <div>
-                         <motion.h1 
-                            key={activeTab}
-                            initial={{ opacity: 0, y: -10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="text-2xl font-bold text-white tracking-tight"
-                        >
-                            {t(SECTIONS.find(s => s.id === activeTab)?.label || 'Settings')}
-                        </motion.h1>
-                        <p className="text-zinc-500 text-sm mt-1">
-                            {t('settings.manage_preferences', 'Manage your application preferences')}
-                        </p>
-                    </div>
-                    <Button 
-                        onClick={handleSave} 
-                        className="bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20 border border-indigo-500/50 transition-all active:scale-95"
-                    >
-                        <Save className="mr-2 h-4 w-4" />
-                        {t('settings.save')}
-                    </Button>
-                </header>
+                     {/* 2. MAIN CONTENT AREA */}
+                    <main className="flex-1 h-full overflow-hidden relative flex flex-col bg-white/50 dark:bg-transparent">
+                         {/* Header inside content area */}
+                        <header className="flex-shrink-0 px-8 py-8 border-b border-zinc-200 dark:border-white/5 flex items-center justify-between bg-white/50 dark:bg-transparent backdrop-blur-sm sticky top-0 z-10">
+                            <div>
+                                 <motion.h2 
+                                    key={activeTab}
+                                    initial={{ opacity: 0, x: -10 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight"
+                                >
+                                    {t(SECTIONS.find(s => s.id === activeTab)?.label || 'Settings')}
+                                </motion.h2>
+                                <p className="text-zinc-500 text-sm mt-1">
+                                    {SECTIONS.find(s => s.id === activeTab)?.desc}
+                                </p>
+                            </div>
+                            <Button 
+                                onClick={handleSave} 
+                                className="group relative px-5 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 active:scale-95 transition-all text-white font-medium shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_30px_rgba(99,102,241,0.5)] overflow-hidden border-none"
+                            >
+                                <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
+                                <div className="relative flex items-center gap-2">
+                                     <Save className="h-4 w-4" />
+                                     <span>{t('settings.save')}</span>
+                                </div>
+                            </Button>
+                        </header>
 
                 {/* Scrollable Content */}
                 <div className="flex-1 overflow-y-auto p-8 relative z-10 custom-scrollbar">
@@ -277,10 +287,10 @@ export const Settings = () => {
                                                             updateLanguage(val);
                                                         }}
                                                     >
-                                                        <SelectTrigger className="bg-zinc-950/50 border-white/10 text-white">
+                                                        <SelectTrigger className="bg-zinc-50 dark:bg-zinc-900/50 border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white">
                                                             <SelectValue />
                                                         </SelectTrigger>
-                                                        <SelectContent className="bg-zinc-900 border-white/10 text-white">
+                                                        <SelectContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white">
                                                             <SelectItem value="zh">简体中文</SelectItem>
                                                             <SelectItem value="en">English</SelectItem>
                                                             <SelectItem value="ru">Русский</SelectItem>
@@ -297,10 +307,10 @@ export const Settings = () => {
                                                             updateTheme(val);
                                                         }}
                                                     >
-                                                        <SelectTrigger className="bg-zinc-950/50 border-white/10 text-white">
+                                                        <SelectTrigger className="bg-zinc-50 dark:bg-zinc-900/50 border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white">
                                                             <SelectValue />
                                                         </SelectTrigger>
-                                                        <SelectContent className="bg-zinc-900 border-white/10 text-white">
+                                                        <SelectContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white">
                                                             <SelectItem value="light">{t('settings.general.theme_light')}</SelectItem>
                                                             <SelectItem value="dark">{t('settings.general.theme_dark')}</SelectItem>
                                                             <SelectItem value="system">{t('settings.general.theme_system')}</SelectItem>
@@ -363,9 +373,10 @@ export const Settings = () => {
                                             </div>
                                             <div className="flex items-center gap-4 pt-2 pl-2">
                                                 <Label className="w-40 text-zinc-400">{t('settings.account.refresh_interval')}</Label>
+
                                                 <Input 
                                                     type="number" 
-                                                    className="w-24 bg-zinc-950/50 border-white/10"
+                                                    className="w-24 bg-zinc-50 dark:bg-zinc-900/50 border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white"
                                                     value={formData.refresh_interval}
                                                     onChange={(e) => setFormData({ ...formData, refresh_interval: Number(e.target.value) })}
                                                 />
@@ -388,7 +399,7 @@ export const Settings = () => {
                                                     <Label className="w-40 text-zinc-400">{t('settings.account.sync_interval')}</Label>
                                                     <Input 
                                                         type="number" 
-                                                        className="w-24 bg-zinc-950/50 border-white/10"
+                                                        className="w-24 bg-zinc-50 dark:bg-zinc-900/50 border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white"
                                                         value={formData.sync_interval}
                                                         onChange={(e) => setFormData({ ...formData, sync_interval: Number(e.target.value) })} 
                                                     />
@@ -424,7 +435,7 @@ export const Settings = () => {
                                                             ...formData,
                                                             proxy: { ...formData.proxy, upstream_proxy: { ...formData.proxy.upstream_proxy, url: e.target.value } }
                                                         })}
-                                                        className="bg-zinc-950/50 border-white/10"
+                                                        className="bg-zinc-50 dark:bg-zinc-900/50 border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white"
                                                         placeholder={t('proxy.config.upstream_proxy.url_placeholder')}
                                                     />
                                                 </div>
@@ -469,7 +480,7 @@ export const Settings = () => {
                                               <div>
                                                 <Label className="mb-2 block text-zinc-400">{t('settings.advanced.data_dir')}</Label>
                                                 <div className="flex gap-2">
-                                                    <Input readOnly value={dataDirPath} className="bg-zinc-950/50 border-white/10 text-zinc-300" />
+                                                    <Input readOnly value={dataDirPath} className="bg-zinc-50 dark:bg-zinc-900/50 border-zinc-200 dark:border-white/10 text-zinc-500 dark:text-zinc-400" />
                                                     {isTauri() && (
                                                         <Button variant="outline" className="border-white/10 bg-white/5 hover:bg-white/10" onClick={() => invoke('open_data_folder')}>
                                                             {t('settings.advanced.open_btn')}
@@ -492,7 +503,7 @@ export const Settings = () => {
                                             <div>
                                                 <h3 className="text-4xl font-black text-white tracking-tighter mb-2">Antigravity Tools</h3>
                                                 <div className="flex items-center justify-center gap-3 text-sm">
-                                                    <span className="px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-400 font-medium border border-indigo-500/30 shadow-[0_0_15px_rgba(99,102,241,0.2)]">v4.0.8</span>
+                                                    <span className="px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-400 font-medium border border-indigo-500/30 shadow-[0_0_15px_rgba(99,102,241,0.2)]">v5.0.0</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -539,6 +550,8 @@ export const Settings = () => {
                     </div>
                 </div>
             </main>
+                </div>
+            </div>
 
             {/* --- MODALS (Preserved) --- */}
 

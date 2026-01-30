@@ -151,7 +151,10 @@ pub async fn handle_chat_completions(
 
         // 4. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email, _wait_ms) = match token_manager
+        // 4. 获取 Token (使用准确的 request_type)
+        // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
+        // [REFAC] Use TokenLease for RAII management
+        let token_lease = match token_manager
             .get_token(
                 &config.request_type,
                 attempt > 0,
@@ -172,6 +175,11 @@ pub async fn handle_chat_completions(
                     .into_response());
             }
         };
+
+        // Extract values for use, but keep lease alive
+        let access_token = token_lease.access_token.clone();
+        let project_id = token_lease.project_id.clone();
+        let email = token_lease.email.clone();
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
@@ -236,6 +244,9 @@ pub async fn handle_chat_completions(
 
         let status = response.status();
         if status.is_success() {
+            // [FIX] 标记成功以重置限流计数器并清除特定模型锁
+            token_manager.mark_account_success(&email, Some(&mapped_model));
+
             // 5. 处理流式 vs 非流式
             if actual_stream {
                 use crate::proxy::mappers::openai::streaming::create_openai_sse_stream;
@@ -320,6 +331,8 @@ pub async fn handle_chat_completions(
                             );
                             last_error = "Timeout waiting for first data".to_string();
                             retry_this_account = true;
+                            // [OPTIMIZATION] Avoid immediate hot retry loop
+                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                             break;
                         }
                     }
@@ -347,7 +360,7 @@ pub async fn handle_chat_completions(
                         .header("X-Account-Email", &email)
                         .header("X-Mapped-Model", &mapped_model)
                         .body(body)
-                        .unwrap()
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to build value: {}", e)))?
                         .into_response());
                 } else {
                     // 客户端请求非流式，但内部强制转为流式
@@ -985,7 +998,7 @@ pub async fn handle_completions(
         // 重试时强制轮换，除非只是简单的网络抖动但 Claude 逻辑里 attempt > 0 总是 force_rotate
         let force_rotate = attempt > 0;
 
-        let (access_token, project_id, email, _wait_ms) = match token_manager
+        let token_lease = match token_manager
             .get_token(
                 &config.request_type,
                 force_rotate,
@@ -1004,6 +1017,11 @@ pub async fn handle_completions(
                     .into_response()
             }
         };
+
+        // Extract values using TokenLease
+        let access_token = token_lease.access_token.clone();
+        let project_id = token_lease.project_id.clone();
+        let email = token_lease.email.clone();
 
         last_email = Some(email.clone());
 
@@ -1052,7 +1070,7 @@ pub async fn handle_completions(
         let status = response.status();
         if status.is_success() {
             // [智能限流] 请求成功，重置该账号的连续失败计数
-            token_manager.mark_account_success(&email);
+            token_manager.mark_account_success(&email, Some(&mapped_model));
 
             if list_response {
                 use axum::body::Body;
@@ -1460,7 +1478,7 @@ pub async fn handle_images_generations(
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
 
-    let (access_token, project_id, email, _wait_ms) = match token_manager
+    let token_lease = match token_manager
         .get_token("image_gen", false, None, "dall-e-3")
         .await
     {
@@ -1472,6 +1490,11 @@ pub async fn handle_images_generations(
             ))
         }
     };
+    
+    // Extract values using TokenLease
+    let access_token = token_lease.access_token.clone();
+    let project_id = token_lease.project_id.clone();
+    let email = token_lease.email.clone();
 
     info!("✓ Using account: {} for image generation", email);
 
@@ -1733,7 +1756,7 @@ pub async fn handle_images_edits(
     // 1. Get Upstream & Token
     let upstream = state.upstream.clone();
     let token_manager = state.token_manager;
-    let (access_token, project_id, email, _wait_ms) = match token_manager
+    let token_lease = match token_manager
         .get_token("image_gen", false, None, "dall-e-3")
         .await
     {
@@ -1745,6 +1768,11 @@ pub async fn handle_images_edits(
             ))
         }
     };
+
+    // Extract values using TokenLease
+    let access_token = token_lease.access_token.clone();
+    let project_id = token_lease.project_id.clone();
+    let email = token_lease.email.clone();
 
     // 2. Prepare Config (Aspect Ratio / Size)
     // Priority: aspect_ratio param > size param

@@ -1,5 +1,5 @@
 {
-  "version": "0.0.1",
+  "version": "5.0.0",
   "name": "antigravity-tools",
   "type": "module",
   "private": true,
@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:debug": "RUST_LOG=debug npm run tauri dev"
+    "tauri:debug": "RUST_LOG=debug npm run tauri dev",
+    "set-version": "node scripts/set-version.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

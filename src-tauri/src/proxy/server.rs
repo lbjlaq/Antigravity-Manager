@@ -134,6 +134,7 @@ pub struct AxumServer {
     debug_logging: Arc<RwLock<crate::proxy::config::DebugLoggingConfig>>,
     pub cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
     pub is_running: Arc<RwLock<bool>>,
+    pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>, // [NEW] Upstream client handle for hot-reloading
 }
 
 impl AxumServer {
@@ -148,8 +149,12 @@ impl AxumServer {
     /// 更新代理配置
     pub async fn update_proxy(&self, new_config: crate::proxy::config::UpstreamProxyConfig) {
         let mut proxy = self.proxy_state.write().await;
-        *proxy = new_config;
-        tracing::info!("上游代理配置已热更新");
+        *proxy = new_config.clone();
+        
+        // [FIX] 同时更新底层的 reqwest Client
+        self.upstream.rebuild_client(Some(new_config)).await;
+        
+        tracing::info!("上游代理配置已热更新 (包括底层 HTTP Client)");
     }
 
     pub async fn update_security(&self, config: &crate::proxy::config::ProxyConfig) {
@@ -209,6 +214,11 @@ impl AxumServer {
             let debug_logging_state = Arc::new(RwLock::new(debug_logging));
             let is_running_state = Arc::new(RwLock::new(true));
 
+            // [FIX] Create upstream client once and share between AppState and AxumServer
+            let upstream_client = Arc::new(crate::proxy::upstream::client::UpstreamClient::new(Some(
+                upstream_proxy.clone(),
+            )));
+
 	        let state = AppState {
 	            token_manager: token_manager.clone(),
 	            custom_mapping: custom_mapping_state.clone(),
@@ -217,9 +227,7 @@ impl AxumServer {
                 std::collections::HashMap::new(),
             )),
             upstream_proxy: proxy_state.clone(),
-            upstream: Arc::new(crate::proxy::upstream::client::UpstreamClient::new(Some(
-                upstream_proxy.clone(),
-            ))),
+            upstream: upstream_client.clone(),
             zai: zai_state.clone(),
             provider_rr: provider_rr.clone(),
             zai_vision_mcp: zai_vision_mcp_state,
@@ -480,6 +488,7 @@ impl AxumServer {
             debug_logging: debug_logging_state.clone(),
             cloudflared_state,
             is_running: is_running_state,
+            upstream: upstream_client, // [NEW] Store upstream client handle
         };
 
         // 在新任务中启动服务器
