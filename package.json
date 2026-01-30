@@ -1,5 +1,5 @@
 {
-  "version": "5.0.0",
+  "version": "5.0.1",
   "name": "antigravity-tools",
   "type": "module",
   "private": true,
@@ -9,7 +9,13 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:debug": "RUST_LOG=debug npm run tauri dev",
-    "set-version": "node scripts/set-version.js"
+    "version:sync": "node scripts/sync-version.js sync",
+    "version:get": "node scripts/sync-version.js get",
+    "version:set": "node scripts/sync-version.js set",
+    "version:major": "node scripts/sync-version.js major",
+    "version:minor": "node scripts/sync-version.js minor",
+    "version:patch": "node scripts/sync-version.js patch",
+    "prerelease": "npm run version:sync"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

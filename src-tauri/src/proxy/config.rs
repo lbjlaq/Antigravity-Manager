@@ -245,6 +245,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub upstream_proxy: UpstreamProxyConfig,
 
+    /// [NEW] 自定义 User-Agent 覆盖 (用于绕过某些检测)
+    #[serde(default)]
+    pub user_agent_override: Option<String>,
+
     /// z.ai provider configuration (Anthropic-compatible).
     #[serde(default)]
     pub zai: ZaiConfig,
@@ -288,6 +292,7 @@ impl Default for ProxyConfig {
             enable_logging: true, // 默认开启，支持 token 统计功能
             debug_logging: DebugLoggingConfig::default(),
             upstream_proxy: UpstreamProxyConfig::default(),
+            user_agent_override: None, // [NEW] 默认使用动态 User-Agent
             zai: ZaiConfig::default(),
             scheduling: crate::proxy::sticky_config::StickySessionConfig::default(),
             experimental: ExperimentalConfig::default(),

@@ -35,6 +35,10 @@ src-tauri/.env
 .env.*
 environment/
 
+# Tauri signing keys (NEVER COMMIT!)
+.tauri-keys/
+*.key
+
 # Python virtual environments and test files
 .venv*/
 venv/

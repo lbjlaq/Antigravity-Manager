@@ -18,6 +18,7 @@ pub mod cloudflared;
 pub mod integration;
 pub mod account_service;
 pub mod http_api;
+pub mod cache; // [NEW] Antigravity cache clearing module
 
 use crate::models;
 

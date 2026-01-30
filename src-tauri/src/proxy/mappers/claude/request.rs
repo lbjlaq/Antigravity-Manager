@@ -1689,11 +1689,18 @@ fn build_generation_config(
 
             if let Some(budget_tokens) = thinking.budget_tokens {
                 let mut budget = budget_tokens;
-                // gemini-2.5-flash 上限 24576
-                let is_flash_model =
-                    has_web_search || claude_req.model.contains("gemini-2.5-flash");
+                // [FIX Issue #1355] All Flash models have 24576 thinking budget limit
+                // This includes gemini-2.0-flash, gemini-2.5-flash, and future flash variants
+                let is_flash_model = has_web_search 
+                    || claude_req.model.to_lowercase().contains("flash");
                 if is_flash_model {
                     budget = budget.min(24576);
+                    if budget_tokens > 24576 {
+                        tracing::info!(
+                            "[Generation-Config] Capped thinking_budget from {} to 24576 for Flash model",
+                            budget_tokens
+                        );
+                    }
                 }
                 thinking_config["thinkingBudget"] = json!(budget);
             }

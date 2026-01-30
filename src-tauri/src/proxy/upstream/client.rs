@@ -6,26 +6,43 @@ use serde_json::Value;
 use tokio::time::Duration;
 use tokio::sync::RwLock;
 
-// Cloud Code v1internal endpoints (fallback order: Prod -> Daily -> Sandbox)
-// 优先使用 Prod 环境以确保最稳定的服务体验 (Restored to original behavior)
+// Cloud Code v1internal endpoints (fallback order: Sandbox → Daily → Prod)
+// 优先使用 Sandbox/Daily 环境以避免 Prod环境的 429/403 错误 (Ref: Issue #1176)
 const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 const V1_INTERNAL_BASE_URL_SANDBOX: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 
 const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
-    V1_INTERNAL_BASE_URL_PROD,    // 优先级 1: Prod (官方生产环境，最稳定)
+    V1_INTERNAL_BASE_URL_SANDBOX, // 优先级 1: Sandbox (已知有效且稳定，避免 VALIDATION_REQUIRED)
     V1_INTERNAL_BASE_URL_DAILY,   // 优先级 2: Daily (备用)
-    V1_INTERNAL_BASE_URL_SANDBOX, // 优先级 3: Sandbox (仅测试用，可能不稳定)
+    V1_INTERNAL_BASE_URL_PROD,    // 优先级 3: Prod (仅作为兜底)
 ];
 
 pub struct UpstreamClient {
     http_client: RwLock<Client>,
+    user_agent_override: RwLock<Option<String>>,
 }
 
 impl UpstreamClient {
     pub fn new(proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>) -> Self {
         let client = Self::build_http_client(proxy_config);
-        Self { http_client: RwLock::new(client) }
+        Self { 
+            http_client: RwLock::new(client),
+            user_agent_override: RwLock::new(None),
+        }
+    }
+
+    /// [NEW] 设置动态 User-Agent 覆盖
+    pub async fn set_user_agent_override(&self, ua: Option<String>) {
+        let mut lock = self.user_agent_override.write().await;
+        *lock = ua.clone();
+        tracing::info!("UpstreamClient User-Agent override updated: {:?}", ua);
+    }
+
+    /// [NEW] 获取当前生效的 User-Agent
+    async fn get_effective_user_agent(&self) -> String {
+        let ua_override = self.user_agent_override.read().await;
+        ua_override.as_ref().cloned().unwrap_or_else(|| crate::constants::USER_AGENT.clone())
     }
 
     /// [NEW] 重建并热更新内部 HTTP 客户端
@@ -117,9 +134,12 @@ impl UpstreamClient {
             header::HeaderValue::from_str(&format!("Bearer {}", access_token))
                 .map_err(|e| e.to_string())?,
         );
+        
+        // [NEW] Используем динамический User-Agent с поддержкой override
+        let effective_ua = self.get_effective_user_agent().await;
         headers.insert(
             header::USER_AGENT,
-            header::HeaderValue::from_str(crate::constants::USER_AGENT.as_str())
+            header::HeaderValue::from_str(&effective_ua)
                 .unwrap_or_else(|e| {
                     tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
                     header::HeaderValue::from_static("antigravity")
@@ -217,9 +237,12 @@ impl UpstreamClient {
             header::HeaderValue::from_str(&format!("Bearer {}", access_token))
                 .map_err(|e| e.to_string())?,
         );
+        
+        // [NEW] Используем динамический User-Agent с поддержкой override
+        let effective_ua = self.get_effective_user_agent().await;
         headers.insert(
             header::USER_AGENT,
-            header::HeaderValue::from_str(crate::constants::USER_AGENT.as_str())
+            header::HeaderValue::from_str(&effective_ua)
                 .unwrap_or_else(|e| {
                     tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
                     header::HeaderValue::from_static("antigravity")

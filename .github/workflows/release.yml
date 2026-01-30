@@ -4,9 +4,47 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 5.1.0)'
+        required: false
+        type: string
+
+env:
+  # Extract version from tag or input
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
 jobs:
+  # Sync version before build (only on workflow_dispatch with version input)
+  prepare:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.version != ''
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      
+      - name: Sync version across all files
+        run: node scripts/sync-version.js set ${{ github.event.inputs.version }}
+      
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "chore: bump version to ${{ github.event.inputs.version }}"
+          git tag -a "v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
+          git push origin HEAD --tags
+
   release:
+    needs: [prepare]
+    if: always() && (needs.prepare.result == 'success' || needs.prepare.result == 'skipped')
     permissions:
       contents: write
     strategy:
@@ -31,6 +69,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version && format('v{0}', github.event.inputs.version) || github.ref }}
 
       - name: Install dependencies (Linux)
         if: startsWith(matrix.platform, 'ubuntu')
@@ -64,10 +104,22 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Antigravity Tools ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
+          tagName: ${{ env.VERSION }}
+          releaseName: "Antigravity Tools ${{ env.VERSION }}"
+          releaseBody: |
+            ## 🚀 Antigravity Tools ${{ env.VERSION }}
+            
+            ### 📦 Installation
+            - **Windows**: Download `.msi` or `.exe` installer
+            - **macOS**: Download `.dmg` (Universal) or platform-specific build
+            - **Linux**: Download `.deb` or `.AppImage`
+            
+            ### 🔄 Auto-Update
+            Existing installations will be notified automatically.
+            
+            ---
+            [Full Changelog](https://github.com/${{ github.repository }}/compare/...v${{ env.VERSION }})
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
           tauriScript: npm run tauri

@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "antigravity_tools"
-version = "4.0.9"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-stream",
