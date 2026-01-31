@@ -9,6 +9,8 @@ pub mod proxy;
 pub mod autostart;
 // 导出 cloudflared 命令
 pub mod cloudflared;
+// 导出 security 命令 (IP blacklist/whitelist)
+pub mod security;
 
 /// 列出所有账号
 #[tauri::command]

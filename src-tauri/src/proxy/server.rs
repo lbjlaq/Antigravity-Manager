@@ -129,6 +129,7 @@ pub struct AxumServer {
     custom_mapping: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
     proxy_state: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
     security_state: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,
+    pub security_monitor_state: Arc<RwLock<crate::proxy::config::SecurityMonitorConfig>>, // [NEW] IP filtering state
     zai_state: Arc<RwLock<crate::proxy::ZaiConfig>>,
     experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
     debug_logging: Arc<RwLock<crate::proxy::config::DebugLoggingConfig>>,
@@ -179,6 +180,13 @@ impl AxumServer {
         let mut dbg_cfg = self.debug_logging.write().await;
         *dbg_cfg = config.debug_logging.clone();
         tracing::info!("调试日志配置已热更新");
+    }
+
+    /// Update security monitor config (IP blacklist/whitelist)
+    pub async fn update_security_monitor(&self, config: &crate::proxy::config::ProxyConfig) {
+        let mut sec_mon = self.security_monitor_state.write().await;
+        *sec_mon = config.security_monitor.clone();
+        tracing::info!("[Security] IP filtering 配置已热更新");
     }
 
     pub async fn set_running(&self, running: bool) {
@@ -248,8 +256,19 @@ impl AxumServer {
         use crate::proxy::handlers;
         use crate::proxy::middleware::{
             auth_middleware, admin_auth_middleware, monitor_middleware, 
-            service_status_middleware, cors_layer
+            service_status_middleware, cors_layer, ip_filter_middleware,
+            create_security_state, SecurityState
         };
+
+        // Create security monitor state for IP filtering
+        let security_monitor_state: SecurityState = Arc::new(RwLock::new(
+            crate::proxy::config::SecurityMonitorConfig::default()
+        ));
+
+        // Initialize security database
+        if let Err(e) = crate::modules::security_db::init_db() {
+            tracing::warn!("[Security] Failed to initialize security database: {}", e);
+        }
 
         // 1. 构建主 AI 代理路由 (遵循 auth_mode 配置)
         let proxy_routes = Router::new()
@@ -445,7 +464,11 @@ impl AxumServer {
             .merge(proxy_routes)
             // 公开路由 (无需鉴权)
             .route("/auth/callback", get(handle_oauth_callback))
+            // 健康检查端点 (无需 IP 过滤)
+            .route("/healthz", get(health_check_handler))
             // 应用全局监控与状态层 (外层)
+            .layer(axum::middleware::from_fn(ip_filter_middleware))
+            .layer(axum::Extension(security_monitor_state.clone()))
             .layer(axum::middleware::from_fn_with_state(state.clone(), service_status_middleware))
             .layer(cors_layer())
             .layer(DefaultBodyLimit::max(max_body_size)) // 放宽 body 大小限制
@@ -479,6 +502,7 @@ impl AxumServer {
             custom_mapping: custom_mapping_state.clone(),
             proxy_state,
             security_state,
+            security_monitor_state: security_monitor_state.clone(), // [NEW] IP filtering state
             zai_state,
             experimental: experimental_state.clone(),
             debug_logging: debug_logging_state.clone(),

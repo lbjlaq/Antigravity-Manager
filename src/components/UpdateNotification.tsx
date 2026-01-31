@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Download, Sparkles, Loader2, CheckCircle, ExternalLink } from 'lucide-react';
+import { X, Download, Loader2, CheckCircle, ExternalLink, ArrowRight, Rocket } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { request as invoke } from '../utils/request';
 import { useTranslation } from 'react-i18next';
@@ -83,14 +83,13 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
           await tauriRelaunch();
         }, 1500);
       } else {
-        console.warn('Native updater returned null, falling back to manual download');
-        showToast(t('update_notification.fallback_manual', 'Auto-update not ready, opening download page...'), 'info');
+        showToast(t('update_notification.fallback_manual', 'Opening download page...'), 'info');
         setUpdateState('available');
         handleManualDownload();
       }
     } catch (error) {
       console.error('Auto update failed:', error);
-      showToast(t('update_notification.auto_failed', 'Auto-update failed, opening download page...'), 'error');
+      showToast(t('update_notification.auto_failed', 'Auto-update failed'), 'error');
       setUpdateState('available');
       handleManualDownload();
     }
@@ -118,94 +117,113 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
     <AnimatePresence>
       {isVisible && (
         <motion.div
-          initial={{ opacity: 0, x: 100, scale: 0.95 }}
-          animate={{ opacity: 1, x: 0, scale: 1 }}
-          exit={{ opacity: 0, x: 100, scale: 0.95 }}
-          transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-          className="fixed top-20 right-6 z-[100] w-80"
+          initial={{ opacity: 0, y: -20, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -20, scale: 0.95 }}
+          transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+          className="fixed top-20 right-6 z-[100]"
         >
-          <div className="bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
-            {/* Glow Effects */}
-            <div className="absolute -top-10 -right-10 w-32 h-32 bg-blue-500/20 rounded-full blur-3xl pointer-events-none" />
-            <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-purple-500/20 rounded-full blur-3xl pointer-events-none" />
+          {/* Main Card */}
+          <div className="relative w-[340px] overflow-hidden rounded-2xl bg-zinc-950 border border-zinc-800 shadow-2xl shadow-black/50">
+            {/* Gradient Border Effect */}
+            <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-indigo-500/20 via-purple-500/10 to-pink-500/20 opacity-50" />
+            
+            {/* Content Container */}
+            <div className="relative">
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 pb-3">
+                <div className="flex items-center gap-3">
+                  <motion.div 
+                    animate={{ rotate: updateState === 'ready' ? 0 : [0, 10, -10, 0] }}
+                    transition={{ repeat: updateState === 'ready' ? 0 : Infinity, duration: 2 }}
+                    className={`p-2 rounded-xl ${
+                      updateState === 'ready' 
+                        ? 'bg-emerald-500/20' 
+                        : 'bg-gradient-to-br from-indigo-500 to-purple-600'
+                    }`}
+                  >
+                    {updateState === 'ready' ? (
+                      <CheckCircle className="w-5 h-5 text-emerald-400" />
+                    ) : updateState === 'downloading' ? (
+                      <Loader2 className="w-5 h-5 text-white animate-spin" />
+                    ) : (
+                      <Rocket className="w-5 h-5 text-white" />
+                    )}
+                  </motion.div>
+                  <div>
+                    <h3 className="font-bold text-white text-sm">
+                      {updateState === 'ready'
+                        ? t('update_notification.ready', 'Ready to restart')
+                        : updateState === 'downloading'
+                        ? t('update_notification.downloading', 'Downloading...')
+                        : t('update_notification.title', 'Update Available')}
+                    </h3>
+                    <p className="text-xs text-zinc-500">
+                      {updateState === 'downloading' 
+                        ? `${downloadProgress}% complete`
+                        : 'New version is ready'}
+                    </p>
+                  </div>
+                </div>
 
-            {/* Header */}
-            <div className="relative z-10 flex items-start justify-between p-4 border-b border-white/5">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-gradient-to-br from-blue-500 to-purple-500 shadow-lg shadow-blue-500/25">
-                  {updateState === 'ready' ? (
-                    <CheckCircle className="w-5 h-5 text-white" />
-                  ) : (
-                    <Sparkles className="w-5 h-5 text-white" />
-                  )}
-                </div>
-                <div>
-                  <h3 className="font-bold text-white text-sm">
-                    {updateState === 'ready'
-                      ? t('update_notification.ready', 'Update Ready')
-                      : t('update_notification.title', 'New Update Available')}
-                  </h3>
-                  {updateInfo && (
-                    <span className="inline-block mt-1 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
-                      v{updateInfo.latest_version}
-                    </span>
-                  )}
-                </div>
+                {!isProcessing && (
+                  <button
+                    onClick={handleClose}
+                    className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-all"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
 
-              {!isProcessing && (
-                <button
-                  onClick={handleClose}
-                  className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+              {/* Version Info */}
+              {updateInfo && (
+                <div className="mx-4 mb-3 p-3 rounded-xl bg-zinc-900/80 border border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <div className="text-center">
+                      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Current</div>
+                      <div className="font-mono text-sm text-zinc-400">v{updateInfo.current_version}</div>
+                    </div>
+                    <div className="flex items-center gap-2 px-3">
+                      <ArrowRight className="w-4 h-4 text-zinc-600" />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">New</div>
+                      <div className="font-mono text-sm text-emerald-400 font-bold">v{updateInfo.latest_version}</div>
+                    </div>
+                  </div>
+                </div>
               )}
-            </div>
-
-            {/* Content */}
-            <div className="relative z-10 p-4 space-y-4">
-              {/* Message */}
-              <p className="text-sm text-zinc-400">
-                {updateState === 'downloading' && t('update_notification.downloading', 'Downloading update...')}
-                {updateState === 'ready' && t('update_notification.restarting', 'Restarting application...')}
-                {updateState === 'available' && updateInfo && (
-                  <>
-                    {t('update_notification.message', { current: updateInfo.current_version })}
-                  </>
-                )}
-              </p>
 
               {/* Progress Bar */}
               {updateState === 'downloading' && (
-                <div className="space-y-2">
-                  <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden border border-white/5">
+                <div className="mx-4 mb-3">
+                  <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                     <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: `${downloadProgress}%` }}
-                      className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full"
+                      className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full"
                       transition={{ duration: 0.3 }}
                     />
                   </div>
-                  <p className="text-[10px] text-zinc-500 text-center font-mono">{downloadProgress}%</p>
                 </div>
               )}
 
               {/* Actions */}
               {updateState === 'available' && (
-                <div className="flex gap-2">
+                <div className="p-4 pt-1 flex gap-2">
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={handleAutoUpdate}
-                    className="flex-1 py-2.5 bg-gradient-to-r from-blue-500 to-indigo-500 text-white text-sm font-bold rounded-xl shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 transition-all flex items-center justify-center gap-2"
+                    className="flex-1 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-bold rounded-xl hover:from-indigo-600 hover:to-purple-700 transition-all flex items-center justify-center gap-2"
                   >
                     <Download className="w-4 h-4" />
                     {t('update_notification.auto_update', 'Update Now')}
                   </motion.button>
                   <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
                     onClick={handleManualDownload}
                     className="p-2.5 bg-zinc-800 text-zinc-400 rounded-xl hover:bg-zinc-700 hover:text-white transition-all"
                     title={t('update_notification.manual_download', 'Download manually')}
@@ -215,35 +233,22 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
                 </div>
               )}
 
-              {/* Processing State */}
-              {isProcessing && (
-                <div className="flex items-center justify-center gap-3 py-2">
-                  {updateState === 'downloading' && (
-                    <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
-                  )}
-                  {updateState === 'ready' && (
+              {/* Ready State */}
+              {updateState === 'ready' && (
+                <div className="p-4 pt-1">
+                  <div className="flex items-center justify-center gap-2 py-2 text-emerald-400 text-sm">
                     <motion.div
                       initial={{ scale: 0 }}
                       animate={{ scale: 1 }}
-                      className="p-2 rounded-full bg-emerald-500/20"
+                      transition={{ type: 'spring', stiffness: 300 }}
                     >
-                      <CheckCircle className="w-5 h-5 text-emerald-400" />
+                      <CheckCircle className="w-5 h-5" />
                     </motion.div>
-                  )}
+                    <span className="font-medium">{t('update_notification.restarting', 'Restarting...')}</span>
+                  </div>
                 </div>
               )}
             </div>
-
-            {/* Footer - Version Comparison */}
-            {updateInfo && updateState === 'available' && (
-              <div className="relative z-10 px-4 pb-4">
-                <div className="flex items-center justify-center gap-2 text-[10px] text-zinc-600">
-                  <span className="font-mono">v{updateInfo.current_version}</span>
-                  <span>→</span>
-                  <span className="font-mono text-emerald-500">v{updateInfo.latest_version}</span>
-                </div>
-              </div>
-            )}
           </div>
         </motion.div>
       )}

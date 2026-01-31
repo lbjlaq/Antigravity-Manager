@@ -38,7 +38,7 @@ export const Select = ({
 
     return (
         <SelectContext.Provider value={{ value, onChange: handleChange, open, setOpen }}>
-            <div className="relative">{children}</div>
+            <div className={cn("relative", open && "z-[100]")}>{children}</div>
         </SelectContext.Provider>
     );
 };

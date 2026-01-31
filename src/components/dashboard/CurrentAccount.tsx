@@ -39,7 +39,7 @@ const CurrentAccount = function CurrentAccount({ account, onSwitch }: CurrentAcc
     const claudeModel = account.quota?.models.find(m => m.name === 'claude-sonnet-4-5-thinking');
 
     const getTierBadge = () => {
-        const tier = account.quota?.subscription_tier?.toLowerCase() || '';
+        const tier = (account.quota?.subscription_tier || '').toLowerCase();
         if (tier.includes('ultra')) {
             return (
                 <Badge className="bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 flex items-center gap-1">
@@ -52,13 +52,13 @@ const CurrentAccount = function CurrentAccount({ account, onSwitch }: CurrentAcc
                     <Diamond className="w-3 h-3 fill-current" /> PRO
                 </Badge>
             );
-        } else {
-            return (
-                <Badge variant="outline" className="border-zinc-700 text-zinc-400 flex items-center gap-1">
-                    <Circle className="w-3 h-3" /> FREE
-                </Badge>
-            );
         }
+        // Always show FREE badge for free/unknown tier
+        return (
+            <Badge variant="outline" className="border-zinc-600 text-zinc-400 bg-zinc-800/50 flex items-center gap-1">
+                <Circle className="w-3 h-3" /> FREE
+            </Badge>
+        );
     };
 
     const copyToClipboard = async () => {
@@ -92,7 +92,7 @@ const CurrentAccount = function CurrentAccount({ account, onSwitch }: CurrentAcc
                             <Zap className="w-4 h-4 text-amber-500" />
                             {t('dashboard.current_account')}
                          </CardTitle>
-                         <div className="flex-shrink-0 scale-90 origin-right">
+                         <div className="flex-shrink-0">
                             {getTierBadge()}
                          </div>
                     </div>

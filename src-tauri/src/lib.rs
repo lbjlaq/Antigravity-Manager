@@ -395,6 +395,24 @@ pub fn run() {
             modules::log_bridge::is_debug_console_enabled,
             modules::log_bridge::get_debug_console_logs,
             modules::log_bridge::clear_debug_console_logs,
+            // Security commands (IP blacklist/whitelist)
+            commands::security::security_init_db,
+            commands::security::security_get_blacklist,
+            commands::security::security_add_to_blacklist,
+            commands::security::security_remove_from_blacklist,
+            commands::security::security_remove_from_blacklist_by_id,
+            commands::security::security_is_ip_blacklisted,
+            commands::security::security_get_whitelist,
+            commands::security::security_add_to_whitelist,
+            commands::security::security_remove_from_whitelist,
+            commands::security::security_remove_from_whitelist_by_id,
+            commands::security::security_is_ip_whitelisted,
+            commands::security::security_get_access_logs,
+            commands::security::security_cleanup_logs,
+            commands::security::security_clear_all_logs,
+            commands::security::security_get_stats,
+            commands::security::get_security_config,
+            commands::security::update_security_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

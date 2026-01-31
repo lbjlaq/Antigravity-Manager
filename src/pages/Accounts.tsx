@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { request as invoke } from '../utils/request';
 import { join } from '@tauri-apps/api/path';
-import { Search, RefreshCw, Download, Upload, Trash2, LayoutGrid, List, Sparkles } from 'lucide-react';
+import { Search, RefreshCw, Download, Upload, Trash2, LayoutGrid, List, Sparkles, Users } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAccountStore } from '../stores/useAccountStore';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -647,7 +647,7 @@ function Accounts() {
 
     return (
         <div className="h-full flex flex-col p-5 gap-4 max-w-7xl mx-auto w-full">
-            {/* 测试按钮 - 在最顶部 */}
+            {/* Hidden file input for import */}
             <input
                 ref={fileInputRef}
                 type="file"
@@ -656,43 +656,33 @@ function Accounts() {
                 onChange={handleFileChange}
             />
 
-            {/* Top Toolbar: Glassmorphism Redesign */}
-            <div className="flex-none px-6 py-6 mb-6">
-                <div className="flex flex-col gap-6">
-                    {/* Title & Stats */}
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 tracking-tight">
-                                {t('nav.accounts')}
-                            </h1>
-                            <p className="text-zinc-500 mt-1 font-mono text-xs tracking-wide">
-                                {t('accounts.stats_active', { count: searchedAccounts.length })} • {t('accounts.stats_premium', { count: searchedAccounts.filter(a => a.quota?.subscription_tier?.toLowerCase().includes('pro') || a.quota?.subscription_tier?.toLowerCase().includes('ultra')).length })}
-                            </p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                             {/* Add Account Button - Prominent */}
-                             <AddAccountDialog onAdd={handleAddAccount}>
-                                <button className="group relative px-5 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 active:scale-95 transition-all text-white font-medium shadow-[0_0_20px_rgba(99,102,241,0.3)] hover:shadow-[0_0_30px_rgba(99,102,241,0.5)] overflow-hidden">
-                                     <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
-                                     <div className="relative flex items-center gap-2">
-                                        <div className="w-5 h-5 rounded-full border-2 border-white/30 flex items-center justify-center group-hover:border-white/50 transition-colors">
-                                            <span className="text-lg leading-none -mt-0.5">+</span>
-                                        </div>
-                                        <span>{t('accounts.add_account')}</span>
-                                     </div>
-                                </button>
-                             </AddAccountDialog>
-                        </div>
-                    </div>
-
-                </div>
-            </div>
-
-            {/* Combined Card: Toolbar + Accounts List */}
+            {/* Combined Card: Header + Toolbar + Accounts List */}
             <div className="flex-1 min-h-0 relative flex flex-col" ref={containerRef}>
                 <div className="h-full bg-white dark:bg-zinc-900/40 backdrop-blur-xl rounded-2xl border border-white/5 flex flex-col overflow-hidden shadow-2xl">
                     
-                    {/* Toolbar Header */}
+                    {/* Compact Header with Title + Stats + Add Button */}
+                    <div className="flex-none flex items-center justify-between px-5 py-4 border-b border-white/5 bg-gradient-to-r from-zinc-900/80 to-zinc-900/40">
+                        <div className="flex items-center gap-4">
+                            {/* Icon */}
+                            <div className="p-2.5 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/20">
+                                <Users className="w-5 h-5 text-white" />
+                            </div>
+                            {/* Title & Stats */}
+                            <div>
+                                <h1 className="text-xl font-bold text-white tracking-tight">
+                                    {t('nav.accounts')}
+                                </h1>
+                                <p className="text-xs text-zinc-500 mt-0.5">
+                                    {searchedAccounts.length} {t('common.accounts', 'accounts active')}
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Add Account Button - Dashboard Style */}
+                        <AddAccountDialog onAdd={handleAddAccount} />
+                    </div>
+                    
+                    {/* Toolbar */}
                     <div className="flex-none flex items-center gap-2 lg:gap-4 p-3 border-b border-white/5 bg-white/5">
                         {/* Search Input */}
                         <div className="relative group min-w-[180px] lg:min-w-[280px]">

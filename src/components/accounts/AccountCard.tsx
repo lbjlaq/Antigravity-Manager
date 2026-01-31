@@ -132,8 +132,8 @@ const AccountCard = memo(function AccountCard({
                         )}
 
                         {/* Subscription Tier */}
-                        {account.quota?.subscription_tier && (() => {
-                            const tier = account.quota.subscription_tier.toLowerCase();
+                        {(() => {
+                            const tier = (account.quota?.subscription_tier || '').toLowerCase();
                             if (tier.includes('ultra')) {
                                 return (
                                     <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 text-[9px] font-bold text-purple-300 uppercase tracking-wider">
@@ -146,13 +146,12 @@ const AccountCard = memo(function AccountCard({
                                         <Diamond className="w-2.5 h-2.5" /> PRO
                                     </span>
                                 );
-                            } else {
-                                return (
-                                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-800/50 border border-white/5 text-[9px] font-bold text-zinc-500 uppercase tracking-wider">
-                                        <Circle className="w-2.5 h-2.5" /> FREE
-                                    </span>
-                                );
                             }
+                            return (
+                                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-800/50 border border-zinc-600/50 text-[9px] font-bold text-zinc-400 uppercase tracking-wider">
+                                    <Circle className="w-2.5 h-2.5" /> FREE
+                                </span>
+                            );
                         })()}
 
                         {/* Forbidden Badge */}

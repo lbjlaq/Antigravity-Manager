@@ -176,6 +176,104 @@ fn default_false() -> bool {
     false
 }
 
+// ============================================================================
+// SECURITY MONITOR CONFIG
+// ============================================================================
+
+/// IP Blacklist configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlacklistConfig {
+    /// Enable IP blacklist filtering
+    #[serde(default)]
+    pub enabled: bool,
+    /// Auto-block after N failed attempts (0 = disabled)
+    #[serde(default)]
+    pub auto_block_threshold: u32,
+    /// Auto-block duration in seconds (default: 1 hour)
+    #[serde(default = "default_block_duration")]
+    pub auto_block_duration: u64,
+}
+
+impl Default for BlacklistConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_block_threshold: 0,
+            auto_block_duration: default_block_duration(),
+        }
+    }
+}
+
+fn default_block_duration() -> u64 {
+    3600 // 1 hour
+}
+
+/// IP Whitelist configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhitelistConfig {
+    /// Enable IP whitelist filtering
+    #[serde(default)]
+    pub enabled: bool,
+    /// Whitelist-only mode: only whitelisted IPs can access
+    #[serde(default)]
+    pub strict_mode: bool,
+    /// Whitelist takes priority over blacklist
+    #[serde(default = "default_true")]
+    pub priority_over_blacklist: bool,
+}
+
+impl Default for WhitelistConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strict_mode: false,
+            priority_over_blacklist: true,
+        }
+    }
+}
+
+/// Access logging configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccessLogConfig {
+    /// Enable access logging
+    #[serde(default)]
+    pub enabled: bool,
+    /// Log retention days (0 = forever)
+    #[serde(default = "default_log_retention_days")]
+    pub retention_days: u32,
+    /// Only log blocked requests
+    #[serde(default)]
+    pub blocked_only: bool,
+}
+
+impl Default for AccessLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            retention_days: default_log_retention_days(),
+            blocked_only: false,
+        }
+    }
+}
+
+fn default_log_retention_days() -> u32 {
+    30
+}
+
+/// Security monitor configuration (IP filtering, access logging)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SecurityMonitorConfig {
+    /// IP blacklist settings
+    #[serde(default)]
+    pub blacklist: BlacklistConfig,
+    /// IP whitelist settings
+    #[serde(default)]
+    pub whitelist: WhitelistConfig,
+    /// Access log settings
+    #[serde(default)]
+    pub access_log: AccessLogConfig,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DebugLoggingConfig {
     #[serde(default)]
@@ -260,6 +358,10 @@ pub struct ProxyConfig {
     /// 实验性功能配置
     #[serde(default)]
     pub experimental: ExperimentalConfig,
+
+    /// Security monitor configuration (IP blacklist/whitelist, access logging)
+    #[serde(default)]
+    pub security_monitor: SecurityMonitorConfig,
 }
 
 /// 上游代理配置
@@ -290,6 +392,7 @@ impl Default for ProxyConfig {
             zai: ZaiConfig::default(),
             scheduling: crate::proxy::sticky_config::StickySessionConfig::default(),
             experimental: ExperimentalConfig::default(),
+            security_monitor: SecurityMonitorConfig::default(),
         }
     }
 }

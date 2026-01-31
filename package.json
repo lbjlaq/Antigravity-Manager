@@ -1,5 +1,5 @@
 {
-  "version": "5.0.2",
+  "version": "5.0.3",
   "name": "antigravity-tools",
   "type": "module",
   "private": true,
@@ -9,7 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev --no-default-features",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.conf.dev.json -- --no-default-features",
     "tauri:debug": "RUST_LOG=debug npm run tauri dev",
     "version:sync": "node scripts/sync-version.js sync",
     "version:get": "node scripts/sync-version.js get",

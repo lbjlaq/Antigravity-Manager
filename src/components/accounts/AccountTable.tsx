@@ -166,11 +166,11 @@ function SortableAccountRow({
                     {isSelectedForProxy && <span className="px-1.5 py-0.5 rounded bg-green-500/20 text-green-300 text-[9px] font-bold border border-green-500/20">SELECTED</span>}
 
                     {/* Subscription Tier */}
-                    {account.quota?.subscription_tier && (() => {
-                         const tier = account.quota.subscription_tier.toLowerCase();
+                    {(() => {
+                         const tier = (account.quota?.subscription_tier || '').toLowerCase();
                          if (tier.includes('ultra')) return <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 text-[9px] font-bold border border-purple-500/20">ULTRA</span>;
                          if (tier.includes('pro')) return <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[9px] font-bold border border-blue-500/20">PRO</span>;
-                         return <span className="px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400 text-[9px] font-bold border border-white/5">FREE</span>;
+                         return <span className="px-1.5 py-0.5 rounded bg-zinc-700/50 text-zinc-400 text-[9px] font-bold border border-zinc-600/50">FREE</span>;
                     })()}
 
                     <span className={cn(

@@ -132,8 +132,8 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                         )}
 
                         {/* 订阅类型徽章 */}
-                        {account.quota?.subscription_tier && (() => {
-                            const tier = account.quota.subscription_tier.toLowerCase();
+                        {(() => {
+                            const tier = (account.quota?.subscription_tier || '').toLowerCase();
                             if (tier.includes('ultra')) {
                                 return (
                                     <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 text-white text-[10px] font-bold shadow-sm hover:scale-105 transition-transform cursor-default">
@@ -148,14 +148,13 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                         PRO
                                     </span>
                                 );
-                            } else {
-                                return (
-                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-400 text-[10px] font-bold shadow-sm border border-gray-200 dark:border-white/10 hover:bg-gray-200 transition-colors cursor-default">
-                                        <Circle className="w-2.5 h-2.5" />
-                                        FREE
-                                    </span>
-                                );
                             }
+                            return (
+                                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-700/50 text-zinc-400 text-[10px] font-bold border border-zinc-600/50 cursor-default">
+                                    <Circle className="w-2.5 h-2.5" />
+                                    FREE
+                                </span>
+                            );
                         })()}
                     </div>
                 </div>

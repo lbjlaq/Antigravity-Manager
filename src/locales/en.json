@@ -61,7 +61,8 @@
         "switch_to_portuguese": "Switch to Portuguese",
         "switch_to_portuguese_short": "PT",
         "switch_to_korean": "Switch to Korean",
-        "switch_to_korean_short": "KO"
+        "switch_to_korean_short": "KO",
+        "security": "Security"
     },
     "dashboard": {
         "hello": "Hello, User 👋",

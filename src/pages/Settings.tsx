@@ -108,14 +108,14 @@ const SettingsCard = ({ title, icon: Icon, children, className, description }: {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
         className={cn(
-            "rounded-2xl border border-zinc-200 dark:border-white/5 bg-white/50 dark:bg-zinc-900/30 backdrop-blur-md p-6 shadow-sm hover:shadow-md transition-all duration-300 relative overflow-hidden group",
+            "rounded-2xl border border-zinc-200 dark:border-white/5 bg-white/50 dark:bg-zinc-900/30 backdrop-blur-md p-6 shadow-sm hover:shadow-md transition-all duration-300 relative group",
             className
         )}
     >
         {/* Background Decoration */}
-        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-bl-full -mr-10 -mt-10 transition-transform group-hover:scale-110" />
+        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-bl-full -mr-10 -mt-10 transition-transform group-hover:scale-110 pointer-events-none overflow-hidden" />
 
-        <div className="flex items-start gap-4 mb-6 relative z-10">
+        <div className="flex items-start gap-4 mb-6 relative">
             <div className="p-3 rounded-xl bg-indigo-50 dark:bg-zinc-800/50 border border-indigo-100 dark:border-white/5 text-indigo-600 dark:text-indigo-400 shadow-sm">
                 <Icon className="h-5 w-5" />
             </div>
@@ -124,7 +124,7 @@ const SettingsCard = ({ title, icon: Icon, children, className, description }: {
                 {description && <p className="text-sm text-zinc-500">{description}</p>}
             </div>
         </div>
-        <div className="relative z-10">
+        <div className="relative">
             {children}
         </div>
     </motion.div>
@@ -587,57 +587,123 @@ export const Settings = () => {
                                 )}
 
                                 {activeTab === 'about' && (
-                                     <div className="flex flex-col items-center justify-center space-y-8 animate-in fade-in zoom-in-95 duration-500 py-10">
-                                        <div className="text-center space-y-6 relative">
-                                            <div className="absolute inset-0 bg-indigo-500/20 rounded-full blur-[60px] animate-pulse"></div>
-                                            <div className="relative inline-block group">
-                                                <div className="absolute inset-0 bg-indigo-500/30 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-500"></div>
-                                                <img src="/icon.png" alt="Logo" className="relative w-32 h-32 rounded-3xl shadow-2xl transform group-hover:scale-105 transition-all duration-500 bg-zinc-900 object-cover ring-1 ring-white/10" />
-                                            </div>
-                                            <div>
-                                                <h3 className="text-4xl font-black text-white tracking-tighter mb-2">Antigravity Tools</h3>
-                                                <div className="flex items-center justify-center gap-3 text-sm">
-                                                    <span className="px-3 py-1 rounded-full bg-indigo-500/20 text-indigo-400 font-medium border border-indigo-500/30 shadow-[0_0_15px_rgba(99,102,241,0.2)]">v{appVersion || '5.0.2'}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 w-full max-w-3xl">
-                                             {[
-                                                { icon: User, label: t('settings.about.author'), value: "GofMan5", color: "text-blue-400", bg: "bg-blue-500/10" },
-                                                { icon: MessageCircle, label: t('settings.about.telegram'), value: "@GofMan5", color: "text-blue-400", bg: "bg-blue-500/10", href: "https://t.me/GofMan5" },
-                                                { icon: Github, label: t('settings.about.github'), value: "GitHub", color: "text-white", bg: "bg-zinc-800", href: "https://github.com/GofMan5/Antigravity-Manager" }
-                                            ].map((item, i) => (
-                                                <div 
-                                                    key={i} 
-                                                    className={cn(
-                                                        "group flex flex-col items-center justify-center p-6 rounded-2xl border border-white/5 bg-zinc-900/50 hover:bg-zinc-900 hover:border-indigo-500/30 transition-all duration-300 cursor-pointer relative overflow-hidden",
-                                                        item.href ? "cursor-pointer" : ""
-                                                    )}
-                                                >
-                                                    {item.href ? (
-                                                        <a href={item.href} target="_blank" rel="noreferrer" className="flex flex-col items-center gap-4 w-full h-full relative z-10">
-                                                            <div className={cn("p-4 rounded-2xl transition-transform group-hover:scale-110 shadow-lg", item.bg)}><item.icon className={cn("w-8 h-8", item.color)} /></div>
-                                                            <div className="text-center space-y-1">
-                                                                <div className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">{item.label}</div>
-                                                                <div className="font-bold text-lg text-white group-hover:text-indigo-300 transition-colors">{item.value}</div>
-                                                            </div>
-                                                        </a>
-                                                    ) : (
-                                                        <div className="flex flex-col items-center gap-4 w-full h-full relative z-10">
-                                                            <div className={cn("p-4 rounded-2xl transition-transform group-hover:scale-110 shadow-lg", item.bg)}><item.icon className={cn("w-8 h-8", item.color)} /></div>
-                                                            <div className="text-center space-y-1">
-                                                                <div className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">{item.label}</div>
-                                                                <div className="font-bold text-lg text-white group-hover:text-indigo-300 transition-colors">{item.value}</div>
-                                                            </div>
+                                    <motion.div 
+                                        initial={{ opacity: 0, y: 20 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="space-y-6"
+                                    >
+                                        {/* Hero Card */}
+                                        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 p-[1px]">
+                                            <div className="relative rounded-3xl bg-zinc-950 p-8">
+                                                {/* Background effects */}
+                                                <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/20 rounded-full blur-3xl" />
+                                                <div className="absolute bottom-0 left-0 w-48 h-48 bg-purple-500/20 rounded-full blur-3xl" />
+                                                
+                                                <div className="relative flex items-center gap-6">
+                                                    {/* Logo */}
+                                                    <div className="relative group">
+                                                        <div className="absolute inset-0 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-2xl blur-xl opacity-50 group-hover:opacity-75 transition-opacity" />
+                                                        <img 
+                                                            src="/icon.png" 
+                                                            alt="Logo" 
+                                                            className="relative w-20 h-20 rounded-2xl shadow-2xl ring-2 ring-white/10 group-hover:ring-white/20 transition-all" 
+                                                        />
+                                                    </div>
+                                                    
+                                                    {/* Info */}
+                                                    <div className="flex-1">
+                                                        <h2 className="text-2xl font-bold text-white mb-1">Antigravity Manager</h2>
+                                                        <p className="text-zinc-400 text-sm mb-3">Advanced API Proxy & Account Management</p>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs font-semibold border border-indigo-500/30">
+                                                                v{appVersion || '5.0.3'}
+                                                            </span>
+                                                            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30">
+                                                                Stable
+                                                            </span>
+                                                            <span className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-400 text-xs font-mono border border-zinc-700">
+                                                                Tauri v2 + React 18
+                                                            </span>
                                                         </div>
-                                                    )}
-                                                    {/* Glow effect on hover */}
-                                                    <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/0 to-white/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                                                    </div>
+
+                                                    {/* Check Update Button */}
+                                                    <button 
+                                                        onClick={() => showToast(t('settings.about.latest_version', 'You\'re up to date!'), 'success')}
+                                                        className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium border border-white/10 hover:border-white/20 transition-all flex items-center gap-2"
+                                                    >
+                                                        <RefreshCw className="w-4 h-4" />
+                                                        {t('settings.about.check_update', 'Check Update')}
+                                                    </button>
                                                 </div>
-                                            ))}
+                                            </div>
                                         </div>
-                                    </div>
+
+                                        {/* Info Grid */}
+                                        <div className="grid grid-cols-3 gap-4">
+                                            {/* Author */}
+                                            <div className="group p-5 rounded-2xl bg-zinc-900/50 border border-zinc-800 hover:border-indigo-500/30 transition-all">
+                                                <div className="flex items-center gap-3 mb-3">
+                                                    <div className="p-2.5 rounded-xl bg-blue-500/10">
+                                                        <User className="w-5 h-5 text-blue-400" />
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">{t('settings.about.author', 'Author')}</div>
+                                                        <div className="text-white font-bold">GofMan5</div>
+                                                    </div>
+                                                </div>
+                                                <p className="text-xs text-zinc-500">Creator & Maintainer</p>
+                                            </div>
+
+                                            {/* Telegram */}
+                                            <a 
+                                                href="https://t.me/GofMan5" 
+                                                target="_blank" 
+                                                rel="noreferrer"
+                                                className="group p-5 rounded-2xl bg-zinc-900/50 border border-zinc-800 hover:border-blue-500/30 hover:bg-blue-500/5 transition-all cursor-pointer"
+                                            >
+                                                <div className="flex items-center gap-3 mb-3">
+                                                    <div className="p-2.5 rounded-xl bg-blue-500/10 group-hover:bg-blue-500/20 transition-colors">
+                                                        <MessageCircle className="w-5 h-5 text-blue-400" />
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">{t('settings.about.telegram', 'Telegram')}</div>
+                                                        <div className="text-white font-bold group-hover:text-blue-400 transition-colors">@GofMan5</div>
+                                                    </div>
+                                                </div>
+                                                <p className="text-xs text-zinc-500">Support & Updates</p>
+                                            </a>
+
+                                            {/* GitHub */}
+                                            <a 
+                                                href="https://github.com/GofMan5/Antigravity-Manager" 
+                                                target="_blank" 
+                                                rel="noreferrer"
+                                                className="group p-5 rounded-2xl bg-zinc-900/50 border border-zinc-800 hover:border-zinc-600 hover:bg-zinc-800/50 transition-all cursor-pointer"
+                                            >
+                                                <div className="flex items-center gap-3 mb-3">
+                                                    <div className="p-2.5 rounded-xl bg-zinc-800 group-hover:bg-zinc-700 transition-colors">
+                                                        <Github className="w-5 h-5 text-white" />
+                                                    </div>
+                                                    <div>
+                                                        <div className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">{t('settings.about.github', 'GitHub')}</div>
+                                                        <div className="text-white font-bold group-hover:text-zinc-300 transition-colors">Source Code</div>
+                                                    </div>
+                                                </div>
+                                                <p className="text-xs text-zinc-500">Star & Contribute</p>
+                                            </a>
+                                        </div>
+
+                                        {/* Footer */}
+                                        <div className="text-center pt-4 border-t border-zinc-800">
+                                            <p className="text-xs text-zinc-600">
+                                                {t('settings.about.copyright', '© 2025-2026 Antigravity. All rights reserved.')}
+                                            </p>
+                                            <p className="text-[10px] text-zinc-700 mt-1">
+                                                Made with ❤️ for developers
+                                            </p>
+                                        </div>
+                                    </motion.div>
                                 )}
                             </motion.div>
                         </AnimatePresence>
