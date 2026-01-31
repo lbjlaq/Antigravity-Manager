@@ -1,13 +1,13 @@
+// File: src/components/dashboard/CurrentAccount.tsx
+// Premium Current Account Card - Clean & Functional
+
 import { memo, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '../ui/card';
-import { Progress } from '../ui/progress';
+import { Mail, Zap, Copy, Check, ArrowRight, Gem, Diamond, Circle, Bot, Image } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Account } from '@/entities/account';
+import { cn } from '@/shared/lib';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
-import { Mail, Zap, CheckCircle, Gem, Diamond, Circle, Copy, Check } from 'lucide-react';
-import { Account } from '@/entities/account';
-import { useTranslation } from 'react-i18next';
-import { cn } from '@/shared/lib';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 
 interface CurrentAccountProps {
     account: Account | null | undefined;
@@ -20,48 +20,78 @@ const CurrentAccount = function CurrentAccount({ account, onSwitch }: CurrentAcc
 
     if (!account) {
         return (
-            <Card className="bg-zinc-900 border-white/10">
-                <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2 text-zinc-100">
-                         <CheckCircle className="w-4 h-4 text-green-500" />
-                         {t('dashboard.current_account')}
-                    </CardTitle>
-                </CardHeader>
-                <CardContent className="text-center py-6 text-sm text-zinc-500">
-                    {t('dashboard.no_active_account')}
-                </CardContent>
-            </Card>
+            <div className="p-8 rounded-2xl border border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/50">
+                <div className="text-center space-y-3">
+                    <div className="w-12 h-12 mx-auto rounded-xl bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center">
+                        <Mail className="w-6 h-6 text-zinc-400" />
+                    </div>
+                    <div>
+                        <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
+                            {t('dashboard.no_active_account')}
+                        </p>
+                        <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+                            {t('dashboard.add_account_hint', 'Add an account to get started')}
+                        </p>
+                    </div>
+                </div>
+            </div>
         );
     }
 
-    const geminiProModel = account.quota?.models.find(m => m.name === 'gemini-3-pro-high');
-    const geminiFlashModel = account.quota?.models.find(m => m.name === 'gemini-3-flash');
-    const claudeModel = account.quota?.models.find(m => m.name === 'claude-sonnet-4-5-thinking');
+    const models = [
+        { 
+            key: 'gemini-pro',
+            name: 'Gemini Pro', 
+            icon: Zap,
+            model: account.quota?.models.find(m => m.name === 'gemini-3-pro-high'),
+            color: 'emerald'
+        },
+        { 
+            key: 'claude',
+            name: 'Claude 4.5', 
+            icon: Bot,
+            model: account.quota?.models.find(m => m.name === 'claude-sonnet-4-5-thinking'),
+            color: 'cyan'
+        },
+        { 
+            key: 'gemini-flash',
+            name: 'Gemini Flash', 
+            icon: Zap,
+            model: account.quota?.models.find(m => m.name === 'gemini-3-flash'),
+            color: 'amber'
+        },
+        { 
+            key: 'gemini-image',
+            name: 'Gemini Image', 
+            icon: Image,
+            model: account.quota?.models.find(m => m.name === 'gemini-3-pro-image'),
+            color: 'purple'
+        },
+    ].filter(m => m.model);
 
     const getTierBadge = () => {
         const tier = (account.quota?.subscription_tier || '').toLowerCase();
         if (tier.includes('ultra')) {
             return (
-                <Badge className="bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 flex items-center gap-1">
-                    <Gem className="w-3 h-3 fill-current" /> ULTRA
+                <Badge className="bg-purple-500/10 text-purple-400 border-purple-500/20 gap-1">
+                    <Gem className="w-3 h-3" /> ULTRA
                 </Badge>
             );
         } else if (tier.includes('pro')) {
             return (
-                <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/20 flex items-center gap-1">
-                    <Diamond className="w-3 h-3 fill-current" /> PRO
+                <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 gap-1">
+                    <Diamond className="w-3 h-3" /> PRO
                 </Badge>
             );
         }
-        // Always show FREE badge for free/unknown tier
         return (
-            <Badge variant="outline" className="border-zinc-600 text-zinc-400 bg-zinc-800/50 flex items-center gap-1">
+            <Badge variant="outline" className="border-zinc-600 text-zinc-400 bg-zinc-800/50 gap-1">
                 <Circle className="w-3 h-3" /> FREE
             </Badge>
         );
     };
 
-    const copyToClipboard = async () => {
+    const copyEmail = async () => {
         try {
             await navigator.clipboard.writeText(account.email);
             setCopied(true);
@@ -71,140 +101,116 @@ const CurrentAccount = function CurrentAccount({ account, onSwitch }: CurrentAcc
         }
     };
 
-    // Helper to truncate email: donald20...@...shop
-    const truncateEmail = (email: string) => {
-        if (email.length <= 25) return email;
-        const [name, domain] = email.split('@');
-        const halfName = name.slice(0, Math.min(8, name.length));
-        const shortDomain = domain.length > 10 ? '...' + domain.slice(-8) : domain;
-        return `${halfName}...@${shortDomain}`;
+    const getColorClasses = (color: string, percentage: number) => {
+        const isLow = percentage < 30;
+        const colors: Record<string, { bar: string; text: string }> = {
+            emerald: { 
+                bar: isLow ? 'from-amber-500 to-amber-400' : 'from-emerald-500 to-emerald-400',
+                text: isLow ? 'text-amber-400' : 'text-emerald-400'
+            },
+            cyan: { 
+                bar: isLow ? 'from-amber-500 to-amber-400' : 'from-cyan-500 to-cyan-400',
+                text: isLow ? 'text-amber-400' : 'text-cyan-400'
+            },
+            amber: { 
+                bar: isLow ? 'from-red-500 to-red-400' : 'from-amber-500 to-amber-400',
+                text: isLow ? 'text-red-400' : 'text-amber-400'
+            },
+            purple: { 
+                bar: isLow ? 'from-amber-500 to-amber-400' : 'from-purple-500 to-purple-400',
+                text: isLow ? 'text-amber-400' : 'text-purple-400'
+            },
+        };
+        return colors[color] || colors.emerald;
     };
 
     return (
-        <TooltipProvider>
-            <Card className="h-full flex flex-col relative overflow-hidden shadow-xl border-white/5 bg-zinc-900 transition-all duration-300 hover:border-white/10 group">
-                 {/* Background Decoration */}
-                 <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent pointer-events-none" />
-                 
-                <CardHeader className="relative z-10 pb-2 pt-6 px-6 border-b border-white/5">
-                    <div className="flex flex-row items-center justify-between">
-                         <CardTitle className="text-sm font-medium flex items-center gap-2 text-zinc-400 uppercase tracking-wider">
-                            <Zap className="w-4 h-4 text-amber-500" />
+        <div className="rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-amber-500/10">
+                        <Zap className="w-4 h-4 text-amber-500" />
+                    </div>
+                    <div>
+                        <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">
                             {t('dashboard.current_account')}
-                         </CardTitle>
-                         <div className="flex-shrink-0">
-                            {getTierBadge()}
-                         </div>
+                        </h3>
                     </div>
-                </CardHeader>
+                </div>
+                {getTierBadge()}
+            </div>
 
-                <CardContent className="relative z-10 space-y-6 flex-1 pt-6 px-6">
-                    {/* User Info Block */}
-                    <div className="flex items-center gap-4 group/email">
-                        <div className="p-3 bg-white/5 rounded-xl border border-white/5 group-hover/email:border-white/10 transition-colors">
-                            <Mail className="w-5 h-5 text-zinc-400" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-0.5">Account ID</div>
-                            <div className="flex items-center gap-2">
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <div className="text-lg font-bold text-zinc-100 truncate font-mono tracking-tight">
-                                            {truncateEmail(account.email)}
-                                        </div>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" className="bg-zinc-950 border-zinc-800 text-zinc-300">
-                                        <p>{account.email}</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                                
-                                <Button 
-                                    variant="ghost" 
-                                    size="icon" 
-                                    className="h-6 w-6 text-zinc-500 hover:text-zinc-200 hover:bg-white/5 rounded-md transition-all opacity-0 group-hover/email:opacity-100"
-                                    onClick={copyToClipboard}
-                                >
-                                    {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-                                </Button>
-                            </div>
+            {/* Content */}
+            <div className="p-6 space-y-6">
+                {/* Email Row */}
+                <div className="flex items-center gap-4 group">
+                    <div className="p-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+                        <Mail className="w-5 h-5 text-zinc-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-0.5">
+                            Account ID
+                        </p>
+                        <div className="flex items-center gap-2">
+                            <p className="text-base font-bold text-zinc-900 dark:text-white font-mono truncate">
+                                {account.email}
+                            </p>
+                            <button
+                                onClick={copyEmail}
+                                className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors opacity-0 group-hover:opacity-100"
+                            >
+                                {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
                         </div>
                     </div>
+                </div>
 
-                    <div className="space-y-5">
-                        {/* Compact Quota Grid */}
-                        {geminiProModel && (
-                            <div className="space-y-2">
-                                 <div className="flex justify-between items-end">
-                                    <span className="text-xs font-medium text-zinc-400">Gemini 3 Pro</span>
-                                    <span className={cn("text-sm font-bold", geminiProModel.percentage >= 50 ? "text-emerald-400" : "text-amber-500")}>
-                                        {geminiProModel.percentage}%
+                {/* Quota Bars */}
+                <div className="space-y-4">
+                    {models.map(({ key, name, icon: Icon, model, color }) => {
+                        if (!model) return null;
+                        const colorClasses = getColorClasses(color, model.percentage);
+                        
+                        return (
+                            <div key={key} className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <Icon className="w-3.5 h-3.5 text-zinc-400" />
+                                        <span className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                                            {name}
+                                        </span>
+                                    </div>
+                                    <span className={cn("text-sm font-bold tabular-nums", colorClasses.text)}>
+                                        {model.percentage}%
                                     </span>
                                 </div>
-                                <Progress 
-                                    value={geminiProModel.percentage} 
-                                    className="h-2 bg-zinc-800 rounded-full" 
-                                    indicatorClassName={cn(
-                                        "rounded-full bg-gradient-to-r", 
-                                        geminiProModel.percentage >= 50 ? "from-emerald-600 to-emerald-400" : "from-orange-600 to-orange-400"
-                                    )} 
-                                />
-                            </div>
-                        )}
-
-                        {claudeModel && (
-                            <div className="space-y-2">
-                                 <div className="flex justify-between items-end">
-                                    <span className="text-xs font-medium text-zinc-400">Claude 4.5</span>
-                                    <span className={cn("text-sm font-bold", claudeModel.percentage >= 50 ? "text-cyan-400" : "text-amber-500")}>
-                                        {claudeModel.percentage}%
-                                    </span>
+                                <div className="h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden">
+                                    <div
+                                        className={cn("h-full rounded-full bg-gradient-to-r transition-all duration-500", colorClasses.bar)}
+                                        style={{ width: `${model.percentage}%` }}
+                                    />
                                 </div>
-                                <Progress 
-                                    value={claudeModel.percentage} 
-                                    className="h-2 bg-zinc-800 rounded-full" 
-                                    indicatorClassName={cn(
-                                        "rounded-full bg-gradient-to-r",
-                                        claudeModel.percentage >= 50 ? "from-cyan-600 to-cyan-400" : "from-orange-600 to-orange-400"
-                                    )}
-                                />
                             </div>
-                        )}
+                        );
+                    })}
+                </div>
+            </div>
 
-                        {geminiFlashModel && (
-                             <div className="space-y-2">
-                                 <div className="flex justify-between items-end">
-                                    <span className="text-xs font-medium text-zinc-400">Gemini 3 Flash</span>
-                                    <span className={cn("text-sm font-bold", geminiFlashModel.percentage >= 50 ? "text-amber-400" : "text-amber-500")}>
-                                        {geminiFlashModel.percentage}%
-                                    </span>
-                                </div>
-                                <Progress 
-                                    value={geminiFlashModel.percentage} 
-                                    className="h-2 bg-zinc-800 rounded-full" 
-                                    indicatorClassName={cn(
-                                        "rounded-full bg-gradient-to-r",
-                                        geminiFlashModel.percentage >= 50 ? "from-amber-600 to-amber-400" : "from-orange-600 to-orange-400"
-                                    )}
-                                />
-                            </div>
-                        )}
-                    </div>
-                </CardContent>
-
-                {onSwitch && (
-                    <CardFooter className="pt-4 pb-6 px-6 bg-white/[0.02] border-t border-white/5">
-                        <Button 
-                            variant="outline" 
-                            size="default"
-                            className="w-full h-10 font-semibold border-zinc-700 bg-transparent hover:bg-zinc-800 text-zinc-300 hover:text-white transition-all active:scale-[0.98]" 
-                            onClick={onSwitch}
-                        >
-                            {t('dashboard.switch_account')}
-                        </Button>
-                    </CardFooter>
-                )}
-            </Card>
-        </TooltipProvider>
+            {/* Footer */}
+            {onSwitch && (
+                <div className="px-6 py-4 bg-zinc-50 dark:bg-zinc-800/50 border-t border-zinc-100 dark:border-zinc-800">
+                    <Button
+                        variant="outline"
+                        className="w-full h-10 font-medium border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 gap-2"
+                        onClick={onSwitch}
+                    >
+                        {t('dashboard.switch_account')}
+                        <ArrowRight className="w-4 h-4" />
+                    </Button>
+                </div>
+            )}
+        </div>
     );
 };
 

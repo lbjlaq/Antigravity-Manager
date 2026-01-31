@@ -450,7 +450,7 @@ function AddAccountDialog({ onAdd, children }: AddAccountDialogProps) {
             ) : (
                 <button
                     type="button"
-                    className="px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-sm font-bold rounded-xl hover:shadow-lg hover:shadow-indigo-500/25 transition-all flex items-center gap-2 hover:scale-[1.02] active:scale-[0.98]"
+                    className="px-4 py-2 flex items-center gap-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-900 dark:hover:text-white transition-colors"
                     onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
