@@ -6,14 +6,14 @@ import { createBrowserRouter } from 'react-router-dom';
 // Layout
 import Layout from '@/components/layout/Layout';
 
-// Pages
-import Dashboard from '@/pages/Dashboard';
-import Accounts from '@/pages/Accounts';
-import Settings from '@/pages/Settings';
-import ApiProxy from '@/pages/ApiProxy';
-import Monitor from '@/pages/Monitor';
-import TokenStats from '@/pages/TokenStats';
-import Security from '@/pages/Security';
+// Pages (FSD)
+import { DashboardPage } from '@/pages/dashboard';
+import { AccountsPage } from '@/pages/accounts';
+import { SettingsPage } from '@/pages/settings';
+import { ApiProxyPage } from '@/pages/api-proxy';
+import { SecurityPage } from '@/pages/security';
+import { TokenStatsPage } from '@/pages/token-stats';
+import { MonitorPage } from '@/pages/monitor';
 
 export const router = createBrowserRouter([
   {
@@ -22,31 +22,31 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <Dashboard />,
+        element: <DashboardPage />,
       },
       {
         path: 'accounts',
-        element: <Accounts />,
+        element: <AccountsPage />,
       },
       {
         path: 'api-proxy',
-        element: <ApiProxy />,
+        element: <ApiProxyPage />,
       },
       {
         path: 'monitor',
-        element: <Monitor />,
+        element: <MonitorPage />,
       },
       {
         path: 'token-stats',
-        element: <TokenStats />,
+        element: <TokenStatsPage />,
       },
       {
         path: 'security',
-        element: <Security />,
+        element: <SecurityPage />,
       },
       {
         path: 'settings',
-        element: <Settings />,
+        element: <SettingsPage />,
       },
     ],
   },
