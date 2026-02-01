@@ -6,11 +6,8 @@ import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Users, ArrowRight, Download, RefreshCw, LayoutDashboard } from 'lucide-react';
 
-import { DashboardSkeleton } from '@/components/dashboard/DashboardSkeleton';
-import CurrentAccount from '@/components/dashboard/CurrentAccount';
-import BestAccounts from '@/components/dashboard/BestAccounts';
-import AddAccountDialog from '@/components/accounts/AddAccountDialog';
-import { StatsRow } from '@/components/dashboard/StatsRow';
+import { DashboardSkeleton, CurrentAccount, BestAccounts, StatsRow } from '@/widgets/dashboard';
+import { AddAccountDialog } from '@/features/accounts';
 import { Button } from '@/shared/ui';
 
 import { useDashboard } from '../model';

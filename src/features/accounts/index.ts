@@ -46,3 +46,6 @@ export type {
   DeviceProfile, 
   DeviceProfileVersion 
 } from '@/entities/account';
+
+// UI components
+export * from './ui';

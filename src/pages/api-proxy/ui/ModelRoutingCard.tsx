@@ -14,7 +14,8 @@ import {
     Check,
     X
 } from 'lucide-react';
-import GroupedSelect, { SelectOption } from '@/components/common/GroupedSelect';
+import { GroupedSelect } from '@/shared/ui/grouped-select';
+import type { SelectOption } from '@/shared/ui/grouped-select';
 import type { AppConfig } from '@/entities/config';
 
 interface ModelRoutingCardProps {

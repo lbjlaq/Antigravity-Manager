@@ -5,8 +5,7 @@ import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Shield, Monitor } from 'lucide-react';
 
-import QuotaProtection from '@/components/settings/QuotaProtection';
-import PinnedQuotaModels from '@/components/settings/PinnedQuotaModels';
+import { QuotaProtection, PinnedQuotaModels } from '@/features/settings';
 import { SettingsCard } from '../SettingsCard';
 import type { AppConfig } from '@/entities/config';
 

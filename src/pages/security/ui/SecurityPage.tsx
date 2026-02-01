@@ -12,7 +12,7 @@ import { BlacklistTab } from './BlacklistTab';
 import { WhitelistTab } from './WhitelistTab';
 import { LogsTab } from './LogsTab';
 import { SettingsTab } from './SettingsTab';
-import { AddIpDialog } from '@/components/security/AddIpDialog';
+import { AddIpDialog } from '@/features/security';
 
 export const SecurityPage = memo(function SecurityPage() {
     const security = useSecurity();

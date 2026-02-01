@@ -15,7 +15,7 @@ import {
   MoreHorizontal
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useConfigStore } from '@/stores/useConfigStore';
+import { useConfigStore } from '@/entities/config';
 import { isLinux, cn } from '@/shared/lib';
 import { memo, useCallback, useState, useEffect, useRef } from 'react';
 import { getVersion } from '@tauri-apps/api/app';

@@ -21,5 +21,11 @@ export {
   isWindows,
 } from './lib';
 
+// Hooks
+export { useProxyModels, type ProxyModel } from './hooks';
+
+// Config
+export { i18n } from './config';
+
 // UI - re-export for convenience
 export * from './ui';

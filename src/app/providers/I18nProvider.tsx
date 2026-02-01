@@ -3,7 +3,7 @@
 
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import '@/shared/i18n'; // Initialize i18n
+import '@/shared/config/i18n'; // Initialize i18n
 
 interface I18nProviderProps {
   children: React.ReactNode;

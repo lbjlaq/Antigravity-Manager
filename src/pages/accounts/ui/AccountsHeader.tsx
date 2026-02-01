@@ -3,7 +3,7 @@ import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Users } from 'lucide-react';
 
-import AddAccountDialog from '@/components/accounts/AddAccountDialog';
+import { AddAccountDialog } from '@/features/accounts';
 
 interface AccountsHeaderProps {
   accountCount: number;

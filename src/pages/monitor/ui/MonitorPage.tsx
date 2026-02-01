@@ -1,7 +1,7 @@
 // File: src/pages/monitor/ui/MonitorPage.tsx
 // Main Monitor page component
 
-import { ProxyMonitor } from '@/components/proxy/ProxyMonitor';
+import { ProxyMonitor } from '@/widgets/proxy';
 
 export function MonitorPage() {
     return (

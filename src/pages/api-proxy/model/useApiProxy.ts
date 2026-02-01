@@ -7,7 +7,7 @@ import { invoke } from '@/shared/api';
 import { copyToClipboard } from '@/shared/lib';
 import type { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig, CircuitBreakerConfig } from '@/entities/config';
 import { showToast } from '@/shared/ui';
-import { useProxyModels } from '@/hooks/useProxyModels';
+import { useProxyModels } from '@/shared/hooks';
 import type { ProxyStatus, CloudflaredStatus, ProtocolType, CloudflaredMode } from '../lib/constants';
 import { MODEL_PRESETS } from '../lib/constants';
 

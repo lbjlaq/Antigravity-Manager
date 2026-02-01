@@ -4,7 +4,7 @@
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Ban, CheckCircle } from 'lucide-react';
-import type { SecurityMonitorConfig } from '@/types/security';
+import type { SecurityMonitorConfig } from '@/entities/security';
 
 interface SettingsTabProps {
     config: SecurityMonitorConfig;

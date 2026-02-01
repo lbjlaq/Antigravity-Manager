@@ -4,7 +4,7 @@
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Shield, Ban, Hash } from 'lucide-react';
-import type { SecurityStats } from '@/types/security';
+import type { SecurityStats } from '@/entities/security';
 
 interface SecurityHeaderProps {
     stats: SecurityStats | null;

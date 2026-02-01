@@ -18,10 +18,9 @@ import {
 import { isTauri, cn } from '@/shared/lib';
 import { CollapsibleCard } from './CollapsibleCard';
 import { HelpTooltip } from '@/shared/ui';
-import DebouncedSlider from '@/components/common/DebouncedSlider';
-import CircuitBreaker from '@/components/settings/CircuitBreaker';
-import SchedulingSettings from '@/components/settings/SchedulingSettings';
-import { CliSyncCard } from '@/components/proxy/CliSyncCard';
+import { DebouncedSlider } from '@/shared/ui/debounced-slider';
+import { CircuitBreaker, SchedulingSettings } from '@/features/settings';
+import { CliSyncCard } from '@/features/proxy';
 import type { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig, CircuitBreakerConfig } from '@/entities/config';
 import type { ProxyStatus, CloudflaredStatus, CloudflaredMode } from '../lib/constants';
 

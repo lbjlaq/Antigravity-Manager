@@ -1,8 +1,7 @@
 // File: src/pages/accounts/ui/AccountsPage.tsx
 import { memo } from 'react';
 
-import AccountTable from '@/components/accounts/AccountTable';
-import AccountGrid from '@/components/accounts/AccountGrid';
+import { AccountTable, AccountGrid } from '@/widgets/accounts';
 import { Pagination } from '@/shared/ui';
 
 import { useAccountsPage } from '../model';

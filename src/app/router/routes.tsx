@@ -3,8 +3,8 @@
 
 import { createBrowserRouter } from 'react-router-dom';
 
-// Layout
-import Layout from '@/components/layout/Layout';
+// Layout (FSD)
+import { Layout } from '@/widgets/layout';
 
 // Pages (FSD)
 import { DashboardPage } from '@/pages/dashboard';

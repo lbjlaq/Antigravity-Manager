@@ -10,7 +10,7 @@ import { router } from './router';
 import { QueryProvider, I18nProvider } from './providers';
 
 // FSD imports
-import { useConfigStore } from '@/stores/useConfigStore';
+import { useConfigStore } from '@/entities/config';
 import { useDebugConsole } from '@/widgets/debug-console';
 import { isTauri } from '@/shared/lib';
 import { invoke } from '@/shared/api';
@@ -18,10 +18,9 @@ import { showToast } from '@/shared/ui';
 import { accountKeys } from '@/features/accounts';
 
 // Global components
-import ThemeManager from '@/components/common/ThemeManager';
-import { AdminAuthGuard } from '@/components/common/AdminAuthGuard';
+import { UpdateNotification } from '@/widgets/update-notification';
+import { ThemeManager, AdminAuthGuard } from '@/app/providers';
 import { DebugConsole } from '@/widgets/debug-console';
-import { UpdateNotification } from '@/components/UpdateNotification';
 
 function AppContent() {
   const { config, loadConfig } = useConfigStore();

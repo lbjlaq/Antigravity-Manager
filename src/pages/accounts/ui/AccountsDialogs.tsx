@@ -3,8 +3,7 @@ import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { ModalDialog } from '@/shared/ui';
-import AccountDetailsDialog from '@/components/accounts/AccountDetailsDialog';
-import DeviceFingerprintDialog from '@/components/accounts/DeviceFingerprintDialog';
+import { AccountDetailsDialog, DeviceFingerprintDialog } from '@/features/accounts/ui';
 import type { Account } from '@/entities/account';
 
 interface AccountsDialogsProps {
@@ -65,10 +64,13 @@ export const AccountsDialogs = memo(function AccountsDialogs({
         account={detailsAccount}
         onClose={onCloseDetails}
       />
-      <DeviceFingerprintDialog
-        account={deviceAccount}
-        onClose={onCloseDevice}
-      />
+      {deviceAccount && (
+        <DeviceFingerprintDialog
+          accountId={deviceAccount.id}
+          accountEmail={deviceAccount.email}
+          onClose={onCloseDevice}
+        />
+      )}
 
       <ModalDialog
         isOpen={!!deleteConfirmId || isBatchDelete}

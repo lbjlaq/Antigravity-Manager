@@ -3,9 +3,7 @@
 
 import { useTokenStats } from '../model';
 import { TokenStatsHeader } from './TokenStatsHeader';
-import { StatsSummary } from '@/components/stats/StatsSummary';
-import { StatsCharts } from '@/components/stats/StatsCharts';
-import { RequestHealthCards } from '@/components/stats/RequestHealthCards';
+import { StatsSummary, StatsCharts, RequestHealthCards } from '@/widgets/stats';
 
 export function TokenStatsPage() {
     const stats = useTokenStats();

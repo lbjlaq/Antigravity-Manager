@@ -21,3 +21,6 @@ export type {
   CloudflaredConfig,
   CloudflaredStatus,
 } from './types';
+
+// Model (store)
+export { useConfigStore } from './model';

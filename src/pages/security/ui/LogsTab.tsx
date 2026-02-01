@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { FileText } from 'lucide-react';
 import { cn } from '@/shared/lib';
-import type { AccessLogEntry } from '@/types/security';
+import type { AccessLogEntry } from '@/entities/security';
 
 interface LogsTabProps {
     accessLogs: AccessLogEntry[];

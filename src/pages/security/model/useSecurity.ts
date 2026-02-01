@@ -14,7 +14,7 @@ import type {
     SecurityMonitorConfig,
     AddToBlacklistRequest,
     AddToWhitelistRequest,
-} from '@/types/security';
+} from '@/entities/security';
 import type { SecurityTab } from '../lib/constants';
 
 export function useSecurity() {

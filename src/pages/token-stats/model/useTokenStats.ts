@@ -3,8 +3,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { invoke } from '@/shared/api';
-import type { ProxyStats } from '@/components/stats/RequestHealthCards';
-import type { PieDataPoint } from '@/components/stats/StatsCharts';
+import type { ProxyStats, PieDataPoint } from '@/widgets/stats';
 import type {
     TokenStatsAggregated,
     AccountTokenStats,

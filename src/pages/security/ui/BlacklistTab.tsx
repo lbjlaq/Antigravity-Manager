@@ -4,7 +4,7 @@
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Shield, Ban, Hash, Clock, Trash2 } from 'lucide-react';
-import type { IpBlacklistEntry } from '@/types/security';
+import type { IpBlacklistEntry } from '@/entities/security';
 
 interface BlacklistTabProps {
     blacklist: IpBlacklistEntry[];

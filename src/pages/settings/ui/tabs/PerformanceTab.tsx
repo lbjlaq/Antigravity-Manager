@@ -5,7 +5,7 @@ import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Zap } from 'lucide-react';
 
-import SmartWarmup from '@/components/settings/SmartWarmup';
+import { SmartWarmup } from '@/features/settings';
 import { SettingsCard } from '../SettingsCard';
 import type { AppConfig } from '@/entities/config';
 

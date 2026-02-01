@@ -18,9 +18,9 @@ pub struct TrayTexts {
 /// Load translations from JSON
 fn load_translations(lang: &str) -> HashMap<String, String> {
     let json_content = match lang {
-        "en" | "en-US" => include_str!("../../../src/locales/en.json"),
-        "tr" | "tr-TR" => include_str!("../../../src/locales/tr.json"),
-        _ => include_str!("../../../src/locales/zh.json"),
+        "en" | "en-US" => include_str!("../../../src/shared/config/i18n/locales/en.json"),
+        "tr" | "tr-TR" => include_str!("../../../src/shared/config/i18n/locales/tr.json"),
+        _ => include_str!("../../../src/shared/config/i18n/locales/zh.json"),
     };
     
     let v: Value = serde_json::from_str(json_content)

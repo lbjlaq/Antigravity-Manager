@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { Ban, CheckCircle, FileText, Settings } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '@/shared/lib';
-import type { SecurityStats } from '@/types/security';
+import type { SecurityStats } from '@/entities/security';
 import type { SecurityTab } from '../lib/constants';
 
 interface SecurityTabsProps {

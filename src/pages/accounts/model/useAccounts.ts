@@ -24,7 +24,7 @@ import {
   useWarmUpAccounts,
 } from '@/features/accounts';
 import type { Account } from '@/entities/account';
-import { useConfigStore } from '@/stores/useConfigStore';
+import { useConfigStore } from '@/entities/config';
 
 export type FilterType = 'all' | 'pro' | 'ultra' | 'free';
 export type ViewMode = 'list' | 'grid';

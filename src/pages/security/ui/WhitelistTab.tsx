@@ -4,7 +4,7 @@
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { ShieldCheck, CheckCircle, Trash2 } from 'lucide-react';
-import type { IpWhitelistEntry } from '@/types/security';
+import type { IpWhitelistEntry } from '@/entities/security';
 
 interface WhitelistTabProps {
     whitelist: IpWhitelistEntry[];
