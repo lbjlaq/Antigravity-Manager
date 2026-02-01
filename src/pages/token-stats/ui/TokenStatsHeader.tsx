@@ -4,7 +4,7 @@
 import { useTranslation } from 'react-i18next';
 import { Clock, Calendar, CalendarDays, RefreshCw } from 'lucide-react';
 import { cn } from '@/shared/lib';
-import { Button } from '@/components/ui/button';
+import { Button } from '@/shared/ui';
 import type { TimeRange } from '../lib/constants';
 import { TIME_RANGES } from '../lib/constants';
 

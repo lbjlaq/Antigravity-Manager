@@ -6,8 +6,7 @@ import { Mail, Zap, Copy, Check, ArrowRight, Gem, Diamond, Circle, Bot, Image } 
 import { useTranslation } from 'react-i18next';
 import { Account } from '@/entities/account';
 import { cn } from '@/shared/lib';
-import { Badge } from '../ui/badge';
-import { Button } from '../ui/button';
+import { Badge, Button } from '@/shared/ui';
 
 interface CurrentAccountProps {
     account: Account | null | undefined;

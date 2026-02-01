@@ -19,6 +19,7 @@ import { useConfigStore } from '@/stores/useConfigStore';
 import { isLinux, cn } from '@/shared/lib';
 import { memo, useCallback, useState, useEffect, useRef } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
+import { DebugConsoleButton } from '@/widgets/debug-console';
 
 const Navbar = function Navbar() {
   const location = useLocation();
@@ -214,6 +215,7 @@ const Navbar = function Navbar() {
 
         {/* ACTIONS (RIGHT) */}
         <div className="flex items-center gap-1" data-tauri-drag-region>
+          <DebugConsoleButton />
           <button 
             onClick={toggleTheme}
             className="p-2 rounded-lg text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"

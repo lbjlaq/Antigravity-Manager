@@ -1,7 +1,9 @@
 // File: src/pages/security/ui/SecurityPage.tsx
-// Main Security page component
+// Security page - redesigned to match Accounts page style
 
+import { memo } from 'react';
 import { AnimatePresence } from 'framer-motion';
+
 import { useSecurity } from '../model';
 import { SecurityHeader } from './SecurityHeader';
 import { SecurityTabs } from './SecurityTabs';
@@ -12,75 +14,78 @@ import { LogsTab } from './LogsTab';
 import { SettingsTab } from './SettingsTab';
 import { AddIpDialog } from '@/components/security/AddIpDialog';
 
-export function SecurityPage() {
+export const SecurityPage = memo(function SecurityPage() {
     const security = useSecurity();
 
     return (
-        <div className="h-full flex flex-col p-5 gap-4 max-w-5xl mx-auto w-full overflow-y-auto">
-            {/* Header Card */}
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-gray-200 dark:border-zinc-800 p-5 shadow-sm">
-                <SecurityHeader stats={security.stats} />
-                <SecurityTabs
-                    activeTab={security.activeTab}
-                    stats={security.stats}
-                    onTabChange={security.setActiveTab}
-                />
-            </div>
+        <div className="h-full flex flex-col p-5 gap-4 max-w-7xl mx-auto w-full">
+            {/* Main Card - Single container like Accounts */}
+            <div className="flex-1 min-h-0 relative flex flex-col">
+                <div className="h-full bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 flex flex-col overflow-hidden">
+                    
+                    {/* Header */}
+                    <SecurityHeader stats={security.stats} />
 
-            {/* Content Card */}
-            <div className="flex-1 bg-white dark:bg-zinc-900 rounded-2xl border border-gray-200 dark:border-zinc-800 shadow-sm overflow-hidden flex flex-col">
-                {/* Toolbar */}
-                <SecurityToolbar
-                    activeTab={security.activeTab}
-                    blacklistCount={security.blacklist.length}
-                    whitelistCount={security.whitelist.length}
-                    logsCount={security.accessLogs.length}
-                    onAddClick={() => security.setIsAddDialogOpen(true)}
-                    onRefreshLogs={security.loadAccessLogs}
-                    onClearLogs={security.handleClearLogs}
-                />
+                    {/* Tabs in toolbar style */}
+                    <SecurityTabs
+                        activeTab={security.activeTab}
+                        stats={security.stats}
+                        onTabChange={security.setActiveTab}
+                    />
 
-                {/* Content */}
-                <div className="flex-1 overflow-y-auto p-5">
-                    {security.isLoading ? (
-                        <div className="space-y-3">
-                            {[...Array(3)].map((_, i) => (
-                                <div key={i} className="h-16 bg-gray-100 dark:bg-zinc-800 rounded-xl animate-pulse" />
-                            ))}
-                        </div>
-                    ) : (
-                        <AnimatePresence mode="wait">
-                            {security.activeTab === 'blacklist' && (
-                                <BlacklistTab
-                                    blacklist={security.blacklist}
-                                    onRemove={security.handleRemoveFromBlacklist}
-                                    formatExpiresAt={security.formatExpiresAt}
-                                />
-                            )}
+                    {/* Toolbar */}
+                    <SecurityToolbar
+                        activeTab={security.activeTab}
+                        blacklistCount={security.blacklist.length}
+                        whitelistCount={security.whitelist.length}
+                        logsCount={security.accessLogs.length}
+                        onAddClick={() => security.setIsAddDialogOpen(true)}
+                        onRefreshLogs={security.loadAccessLogs}
+                        onClearLogs={security.handleClearLogs}
+                    />
 
-                            {security.activeTab === 'whitelist' && (
-                                <WhitelistTab
-                                    whitelist={security.whitelist}
-                                    onRemove={security.handleRemoveFromWhitelist}
-                                    formatTimestamp={security.formatTimestamp}
-                                />
-                            )}
+                    {/* Content Area */}
+                    <div className="flex-1 min-h-0 overflow-y-auto p-4">
+                        {security.isLoading ? (
+                            <div className="space-y-3">
+                                {[...Array(5)].map((_, i) => (
+                                    <div key={i} className="h-14 bg-zinc-100 dark:bg-zinc-800 rounded-lg animate-pulse" />
+                                ))}
+                            </div>
+                        ) : (
+                            <AnimatePresence mode="wait">
+                                {security.activeTab === 'blacklist' && (
+                                    <BlacklistTab
+                                        blacklist={security.blacklist}
+                                        onRemove={security.handleRemoveFromBlacklist}
+                                        formatExpiresAt={security.formatExpiresAt}
+                                    />
+                                )}
 
-                            {security.activeTab === 'logs' && (
-                                <LogsTab
-                                    accessLogs={security.accessLogs}
-                                    formatTimestamp={security.formatTimestamp}
-                                />
-                            )}
+                                {security.activeTab === 'whitelist' && (
+                                    <WhitelistTab
+                                        whitelist={security.whitelist}
+                                        onRemove={security.handleRemoveFromWhitelist}
+                                        formatTimestamp={security.formatTimestamp}
+                                    />
+                                )}
 
-                            {security.activeTab === 'settings' && security.config && (
-                                <SettingsTab
-                                    config={security.config}
-                                    onSaveConfig={security.handleSaveConfig}
-                                />
-                            )}
-                        </AnimatePresence>
-                    )}
+                                {security.activeTab === 'logs' && (
+                                    <LogsTab
+                                        accessLogs={security.accessLogs}
+                                        formatTimestamp={security.formatTimestamp}
+                                    />
+                                )}
+
+                                {security.activeTab === 'settings' && security.config && (
+                                    <SettingsTab
+                                        config={security.config}
+                                        onSaveConfig={security.handleSaveConfig}
+                                    />
+                                )}
+                            </AnimatePresence>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -94,4 +99,6 @@ export function SecurityPage() {
             />
         </div>
     );
-}
+});
+
+export default SecurityPage;

@@ -11,7 +11,7 @@ import CurrentAccount from '@/components/dashboard/CurrentAccount';
 import BestAccounts from '@/components/dashboard/BestAccounts';
 import AddAccountDialog from '@/components/accounts/AddAccountDialog';
 import { StatsRow } from '@/components/dashboard/StatsRow';
-import { Button } from '@/components/ui/button';
+import { Button } from '@/shared/ui';
 
 import { useDashboard } from '../model';
 import { containerVariants, itemVariants } from '../lib';

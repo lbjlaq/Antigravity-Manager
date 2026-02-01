@@ -11,6 +11,7 @@ import { QueryProvider, I18nProvider } from './providers';
 
 // FSD imports
 import { useConfigStore } from '@/stores/useConfigStore';
+import { useDebugConsole } from '@/widgets/debug-console';
 import { isTauri } from '@/shared/lib';
 import { invoke } from '@/shared/api';
 import { showToast } from '@/components/common/ToastContainer';
@@ -19,11 +20,12 @@ import { accountKeys } from '@/features/accounts';
 // Global components
 import ThemeManager from '@/components/common/ThemeManager';
 import { AdminAuthGuard } from '@/components/common/AdminAuthGuard';
-import DebugConsole from '@/components/debug/DebugConsole';
+import { DebugConsole } from '@/widgets/debug-console';
 import { UpdateNotification } from '@/components/UpdateNotification';
 
 function AppContent() {
   const { config, loadConfig } = useConfigStore();
+  const checkDebugConsoleEnabled = useDebugConsole(s => s.checkEnabled);
   const queryClient = useQueryClient();
 
   // Invalidate accounts queries (replaces fetchCurrentAccount/fetchAccounts)
@@ -34,7 +36,8 @@ function AppContent() {
   // Load config on mount
   useEffect(() => {
     loadConfig();
-  }, [loadConfig]);
+    checkDebugConsoleEnabled();
+  }, [loadConfig, checkDebugConsoleEnabled]);
 
   // Listen for tray events
   useEffect(() => {

@@ -1,4 +1,6 @@
 // File: src/pages/settings/ui/tabs/PerformanceTab.tsx
+// Performance settings tab - unified style
+
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Zap } from 'lucide-react';
@@ -16,7 +18,7 @@ export const PerformanceTab = memo(function PerformanceTab({ formData, onUpdate 
   const { t } = useTranslation();
 
   return (
-    <SettingsCard title={t('settings.performance.smart_warmup')} icon={Zap}>
+    <SettingsCard title={t('settings.performance.smart_warmup')} icon={Zap} description="Pre-warm accounts to reduce latency">
       <SmartWarmup
         config={formData.scheduled_warmup}
         onChange={(newConfig) => onUpdate({ scheduled_warmup: newConfig })}
