@@ -1,8 +1,10 @@
 // File: src/shared/ui/toast/Toast.tsx
-// Toast notification component
+// Toast notification component - redesigned with modern style
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import { CheckCircle, XCircle, Info, AlertTriangle, X } from 'lucide-react';
+import { cn } from '@/shared/lib';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -14,53 +16,132 @@ export interface ToastProps {
     onClose: (id: string) => void;
 }
 
+const TOAST_CONFIG = {
+    success: {
+        icon: CheckCircle,
+        barColor: 'bg-emerald-500',
+        iconBg: 'bg-emerald-100 dark:bg-emerald-900/30',
+        iconColor: 'text-emerald-600 dark:text-emerald-400',
+        progressColor: 'bg-emerald-500',
+    },
+    error: {
+        icon: XCircle,
+        barColor: 'bg-rose-500',
+        iconBg: 'bg-rose-100 dark:bg-rose-900/30',
+        iconColor: 'text-rose-600 dark:text-rose-400',
+        progressColor: 'bg-rose-500',
+    },
+    warning: {
+        icon: AlertTriangle,
+        barColor: 'bg-amber-500',
+        iconBg: 'bg-amber-100 dark:bg-amber-900/30',
+        iconColor: 'text-amber-600 dark:text-amber-400',
+        progressColor: 'bg-amber-500',
+    },
+    info: {
+        icon: Info,
+        barColor: 'bg-indigo-500',
+        iconBg: 'bg-indigo-100 dark:bg-indigo-900/30',
+        iconColor: 'text-indigo-600 dark:text-indigo-400',
+        progressColor: 'bg-indigo-500',
+    },
+};
+
 export const Toast = ({ id, message, type, duration = 3000, onClose }: ToastProps) => {
-    const [isVisible, setIsVisible] = useState(false);
+    const [isPaused, setIsPaused] = useState(false);
+    const [progress, setProgress] = useState(100);
+    const [startTime, setStartTime] = useState(Date.now());
+    const [remainingTime, setRemainingTime] = useState(duration);
 
+    const config = TOAST_CONFIG[type];
+    const Icon = config.icon;
+
+    const handleClose = useCallback(() => {
+        onClose(id);
+    }, [id, onClose]);
+
+    // Progress bar logic with pause support
     useEffect(() => {
-        requestAnimationFrame(() => setIsVisible(true));
+        if (duration <= 0) return;
 
-        if (duration > 0) {
-            const timer = setTimeout(() => {
-                setIsVisible(false);
-                setTimeout(() => onClose(id), 300);
-            }, duration);
-            return () => clearTimeout(timer);
+        if (isPaused) {
+            // Save remaining time when paused
+            const elapsed = Date.now() - startTime;
+            setRemainingTime(prev => Math.max(0, prev - elapsed));
+            return;
         }
-    }, [duration, id, onClose]);
 
-    const getIcon = () => {
-        switch (type) {
-            case 'success': return <CheckCircle className="w-5 h-5 text-green-500" />;
-            case 'error': return <XCircle className="w-5 h-5 text-red-500" />;
-            case 'warning': return <AlertTriangle className="w-5 h-5 text-yellow-500" />;
-            case 'info': default: return <Info className="w-5 h-5 text-blue-500" />;
-        }
-    };
+        // Reset start time when resuming
+        setStartTime(Date.now());
 
-    const getStyles = () => {
-        switch (type) {
-            case 'success': return 'border-green-200 dark:border-green-900/30 bg-white dark:bg-zinc-900';
-            case 'error': return 'border-red-200 dark:border-red-900/30 bg-white dark:bg-zinc-900';
-            case 'warning': return 'border-yellow-200 dark:border-yellow-900/30 bg-white dark:bg-zinc-900';
-            case 'info': default: return 'border-blue-200 dark:border-blue-900/30 bg-white dark:bg-zinc-900';
-        }
-    };
+        const interval = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const newProgress = Math.max(0, ((remainingTime - elapsed) / duration) * 100);
+            setProgress(newProgress);
+
+            if (newProgress <= 0) {
+                clearInterval(interval);
+                handleClose();
+            }
+        }, 16); // ~60fps
+
+        return () => clearInterval(interval);
+    }, [duration, isPaused, startTime, remainingTime, handleClose]);
 
     return (
-        <div
-            className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border transition-all duration-300 transform ${getStyles()} ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}
-            style={{ minWidth: '300px' }}
+        <motion.div
+            layout
+            initial={{ opacity: 0, x: 50, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 50, scale: 0.95 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            onMouseEnter={() => setIsPaused(true)}
+            onMouseLeave={() => {
+                setIsPaused(false);
+                setStartTime(Date.now());
+            }}
+            className={cn(
+                "relative flex overflow-hidden rounded-lg shadow-lg border",
+                "bg-white dark:bg-zinc-900",
+                "border-zinc-200 dark:border-zinc-800",
+                "min-w-[280px] max-w-[380px]"
+            )}
         >
-            {getIcon()}
-            <p className="flex-1 text-sm font-medium text-zinc-700 dark:text-zinc-200">{message}</p>
-            <button
-                onClick={() => { setIsVisible(false); setTimeout(() => onClose(id), 300); }}
-                className="text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
-            >
-                <X className="w-4 h-4" />
-            </button>
-        </div>
+            {/* Left color bar */}
+            <div className={cn("w-1 shrink-0", config.barColor)} />
+
+            {/* Content */}
+            <div className="flex-1 flex items-center gap-3 px-3 py-3">
+                {/* Icon with background */}
+                <div className={cn("p-1.5 rounded-full shrink-0", config.iconBg)}>
+                    <Icon className={cn("w-4 h-4", config.iconColor)} />
+                </div>
+
+                {/* Message */}
+                <p className="flex-1 text-sm font-medium text-zinc-700 dark:text-zinc-200 leading-tight">
+                    {message}
+                </p>
+
+                {/* Close button */}
+                <button
+                    onClick={handleClose}
+                    className="p-1 rounded-md text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors shrink-0"
+                >
+                    <X className="w-3.5 h-3.5" />
+                </button>
+            </div>
+
+            {/* Progress bar */}
+            {duration > 0 && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-zinc-100 dark:bg-zinc-800">
+                    <motion.div
+                        className={cn("h-full", config.progressColor)}
+                        style={{ width: `${progress}%` }}
+                        transition={{ duration: 0 }}
+                    />
+                </div>
+            )}
+        </motion.div>
     );
 };
 
