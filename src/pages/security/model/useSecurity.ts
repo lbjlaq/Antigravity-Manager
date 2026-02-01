@@ -1,7 +1,7 @@
 // File: src/pages/security/model/useSecurity.ts
 // Business logic hook for Security page
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatDistanceToNow } from 'date-fns';
 import { invoke } from '@/shared/api';
@@ -17,12 +17,18 @@ import type {
 } from '@/entities/security';
 import type { SecurityTab } from '../lib/constants';
 
+const LOGS_PER_PAGE = 50;
+
 export function useSecurity() {
     const { t } = useTranslation();
     const [activeTab, setActiveTab] = useState<SecurityTab>('blacklist');
     const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    // Search & Pagination State
+    const [searchQuery, setSearchQuery] = useState('');
+    const [logPage, setLogPage] = useState(1);
+    
     // Data states
     const [blacklist, setBlacklist] = useState<IpBlacklistEntry[]>([]);
     const [whitelist, setWhitelist] = useState<IpWhitelistEntry[]>([]);
@@ -41,13 +47,24 @@ export function useSecurity() {
         loadStats();
     }, []);
 
-    // Load data based on active tab
+    // Load data based on active tab or pagination/search changes
     useEffect(() => {
         if (activeTab === 'blacklist') loadBlacklist();
         else if (activeTab === 'whitelist') loadWhitelist();
         else if (activeTab === 'logs') loadAccessLogs();
         else if (activeTab === 'settings') loadConfig();
-    }, [activeTab]);
+    }, [activeTab, logPage]); // Reload logs when page changes
+
+    // Debounced search for logs (simplified effect for now)
+    useEffect(() => {
+        if (activeTab === 'logs') {
+            const timer = setTimeout(() => {
+                setLogPage(1); // Reset to page 1 on search
+                loadAccessLogs(); 
+            }, 500);
+            return () => clearTimeout(timer);
+        }
+    }, [searchQuery]);
 
     const loadBlacklist = useCallback(async () => {
         setIsLoading(true);
@@ -76,8 +93,14 @@ export function useSecurity() {
     const loadAccessLogs = useCallback(async () => {
         setIsLoading(true);
         try {
+            const offset = (logPage - 1) * LOGS_PER_PAGE;
             const data = await invoke<AccessLogEntry[]>('security_get_access_logs', {
-                request: { limit: 50, offset: 0, blockedOnly: false },
+                request: { 
+                    limit: LOGS_PER_PAGE, 
+                    offset, 
+                    blockedOnly: false,
+                    ipFilter: searchQuery || undefined // Apply search filter
+                },
             });
             setAccessLogs(data);
         } catch (e) {
@@ -85,7 +108,7 @@ export function useSecurity() {
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [logPage, searchQuery]);
 
     const loadStats = useCallback(async () => {
         try {
@@ -183,6 +206,7 @@ export function useSecurity() {
         try {
             await invoke('security_clear_all_logs');
             showToast(t('security.logs_cleared', 'Access logs cleared'), 'success');
+            setLogPage(1);
             loadAccessLogs();
             loadStats();
         } catch (e) {
@@ -219,21 +243,47 @@ export function useSecurity() {
         }
     }, [t]);
 
+    // Client-side filtering for Blacklist/Whitelist (until backend supports it if needed)
+    const filteredBlacklist = useMemo(() => {
+        if (!searchQuery) return blacklist;
+        const q = searchQuery.toLowerCase();
+        return blacklist.filter(item => 
+            item.ipPattern.includes(q) || 
+            item.reason?.toLowerCase().includes(q)
+        );
+    }, [blacklist, searchQuery]);
+
+    const filteredWhitelist = useMemo(() => {
+        if (!searchQuery) return whitelist;
+        const q = searchQuery.toLowerCase();
+        return whitelist.filter(item => 
+            item.ipPattern.includes(q) || 
+            item.description?.toLowerCase().includes(q)
+        );
+    }, [whitelist, searchQuery]);
+
     return {
         // State
         activeTab,
         isAddDialogOpen,
         isSubmitting,
-        blacklist,
-        whitelist,
+        blacklist: filteredBlacklist, // Return filtered list
+        whitelist: filteredWhitelist, // Return filtered list
         accessLogs,
         stats,
         config,
         isLoading,
+        
+        // Search & Pagination
+        searchQuery,
+        logPage,
+        hasMoreLogs: accessLogs.length === LOGS_PER_PAGE, // Simple check
 
         // Setters
         setActiveTab,
         setIsAddDialogOpen,
+        setSearchQuery,
+        setLogPage, // Expose for pagination
 
         // Actions
         loadBlacklist,

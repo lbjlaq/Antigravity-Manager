@@ -378,23 +378,33 @@ pub async fn handle_generate(
 
         // 执行退避
         if apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await {
-            // [FEEDBACK-LOOP] Report 429 to TokenManager
-            if status_code == 429 {
-                // We need account_id, but here we only have email easily accessible or we iterate.
-                // Best effort: use email to find account or just ignore if complexity is high.
-                // However, TokenLease has account_id. But wait, this loop might not have TokenLease in scope?
-                // `handle_generate` gets token inside the loop or before?
-                // No, inside the loop: `let token_lease = ...`. So we have `token_lease.account_id`.
-                // Wait, `token_lease` is created inside the loop.
-                // `last_email` is used if fallback. 
-                // But `token_lease` is dropped at end of loop iteration?
-                // Let's check `handle_generate` scope.
-                
-                // Correction: `token_lease` is created at line 98.
-                // `apply_retry_strategy` is at line 375.
-                // `token_lease` IS in scope here!
-                // We can use `token_lease.account_id`.
-                token_manager.report_429_penalty(&token_lease.account_id);
+            // [NEW] Circuit Breaker Reporting (402, 429, 401)
+            // Replaces old report_429_penalty logic
+            if status_code == 402 || status_code == 429 || status_code == 401 {
+                 token_manager.report_account_failure(&token_lease.account_id, status_code, &error_text);
+            }
+
+            // [NEW] Handle 403 VALIDATION_REQUIRED (Gemini Account Lock)
+            if status_code == 403 && error_text.contains("VALIDATION_REQUIRED") {
+                // Try extract URL
+                let validation_url = if let Ok(json) = serde_json::from_str::<Value>(&error_text) {
+                     json.get("error")
+                         .and_then(|e| e.get("details"))
+                         .and_then(|d| d.as_array())
+                         .and_then(|arr| arr.iter().find(|x| x.get("reason").and_then(|v| v.as_str()) == Some("VALIDATION_REQUIRED")))
+                         .and_then(|d| d.get("metadata"))
+                         .and_then(|m| m.get("validation_url"))
+                         .and_then(|v| v.as_str())
+                         .map(|s| s.to_string())
+                } else {
+                    None
+                };
+
+                if let Some(url) = validation_url {
+                    token_manager.report_account_validation_required(&token_lease.account_id, &url);
+                    // Mark as blocked immediately in local tracker to avoid using it
+                    token_manager.report_account_failure(&token_lease.account_id, 403, "VALIDATION_REQUIRED");
+                }
             }
 
             // 判断是否需要轮换账号

@@ -47,6 +47,8 @@ pub struct ProxyToken {
     pub protected_models: HashSet<String>, // [NEW #621]
     pub health_score: f32, // [NEW] 健康分数 (0.0 - 1.0)
     pub model_quotas: HashMap<String, i32>, // [NEW] Strict Model Quotas (Remaining %)
+    pub verification_needed: bool, // [NEW] Is manual verification required?
+    pub verification_url: Option<String>, // [NEW] Verify URL
 }
 
 
@@ -61,6 +63,9 @@ pub struct TokenManager {
     health_scores: Arc<DashMap<String, f32>>, // account_id -> health_score
     active_requests: Arc<DashMap<String, AtomicUsize>>, // [NEW] Least Connections tracking
     circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>, // [NEW] 熔断配置缓存
+    // [NEW] 熔断器：记录账号的失败状态 (AccountID -> (FailureTime, Reason))
+    // 用于在运行时快速剔除连续失败的账号 (402/429)
+    pub circuit_breaker: DashMap<String, (std::time::Instant, String)>,
 }
 
 impl TokenManager {
@@ -77,6 +82,7 @@ impl TokenManager {
             health_scores: Arc::new(DashMap::new()),
             active_requests: Arc::new(DashMap::new()),
             circuit_breaker_config: Arc::new(tokio::sync::RwLock::new(crate::models::CircuitBreakerConfig::default())),
+            circuit_breaker: DashMap::new(), // [NEW] Initialize
         }
     }
 
@@ -84,6 +90,7 @@ impl TokenManager {
     pub fn start_auto_cleanup(&self) {
         let tracker = self.rate_limit_tracker.clone();
         let session_map = self.session_accounts.clone(); // [FIX] Capture session map
+        let circuit_breaker_clone = self.circuit_breaker.clone(); // [NEW]
         
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
@@ -91,10 +98,29 @@ impl TokenManager {
 
             loop {
                 interval.tick().await;
-                let cleaned = tracker.cleanup_expired();
+                let cleaned = tracker.cleanup_expired(); // Assuming clean_expired returns count
                 if cleaned > 0 {
                     tracing::info!("🧹 Auto-cleanup: Removed {} expired rate limit record(s)", cleaned);
                 }
+                
+                // [NEW] 清理过期的 Circuit Breaker 记录
+                let now = std::time::Instant::now();
+                let mut cb_cleaned = 0;
+                circuit_breaker_clone.retain(|_, (fail_time, _)| {
+                    // 假设默认冻结 10 分钟 (后续可配置)
+                    // TODO: 读取 Config
+                    if now.duration_since(*fail_time).as_secs() > 600 {
+                         cb_cleaned += 1;
+                         false
+                    } else {
+                        true
+                    }
+                });
+                if cb_cleaned > 0 {
+                    tracing::info!("🔓 Circuit Breaker: Unblocked {} recovered accounts", cb_cleaned);
+                }
+
+
 
                 // Session Cleanup (Every 10 mins)
                 session_cleanup_interval += 1;
@@ -120,6 +146,70 @@ impl TokenManager {
             }
         });
         tracing::info!("✅ Rate limit & Session auto-cleanup task started");
+    }
+
+    /// [NEW] 更新熔断器配置 (运行时)
+    pub async fn update_circuit_breaker_config(&self, config: crate::models::CircuitBreakerConfig) {
+        let mut w = self.circuit_breaker_config.write().await;
+        *w = config;
+        tracing::info!("🛡️ Circuit Breaker config updated: enabled={}", w.enabled);
+    }
+
+    /// [NEW] 上报账号请求失败 (用于 Circuit Breaker)
+    /// 当上游返回 402, 429 或其他致命错误时调用
+    pub fn report_account_failure(&self, account_id: &str, status_code: u16, error_msg: &str) {
+        let should_block = match status_code {
+            402 => true, // Payment Required -> quota empty
+            429 => true, // Too Many Requests -> rate limit / quota
+            401 => true, // Unauthorized -> invalid token
+            _ => false,
+        };
+
+        if should_block {
+            let now = std::time::Instant::now();
+            self.circuit_breaker.insert(account_id.to_string(), (now, format!("Error {}: {}", status_code, error_msg)));
+            tracing::warn!("🚫 [Circuit Breaker] Blocking account {} due to error {}: {}", account_id, status_code, error_msg);
+        }
+    }
+
+    /// [NEW] Report account needing validation (Gemini 403 VALIDATION_REQUIRED)
+    pub fn report_account_validation_required(&self, account_id: &str, verification_url: &str) {
+        // 1. Update In-Memory
+        if let Some(mut token) = self.tokens.get_mut(account_id) {
+            token.verification_needed = true;
+            token.verification_url = Some(verification_url.to_string());
+            tracing::warn!("⚠️ Account {} marked as needing verification", token.email);
+        
+            // 2. Update On-Disk
+            let path = token.account_path.clone();
+            drop(token); // Avoid deadlock or hold
+
+            // Async file write not possible in sync method easily without spawning, 
+            // but we can spawn a task or rely on a helper.
+            // Since this is rare, spawning is fine.
+            let url = verification_url.to_string();
+            let aid = account_id.to_string();
+            
+            // We need to read-modify-write safely.
+             tokio::task::spawn_blocking(move || {
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        if let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            json["proxy_disabled"] = serde_json::Value::Bool(true);
+                            json["proxy_disabled_reason"] = serde_json::Value::String("verification_required".to_string());
+                            json["verification_needed"] = serde_json::Value::Bool(true);
+                            json["verification_url"] = serde_json::Value::String(url);
+                            
+                            if let Ok(new_content) = serde_json::to_string_pretty(&json) {
+                                let _ = std::fs::write(&path, new_content);
+                                tracing::info!("💾 Account {} updated on disk (Verification Required)", aid);
+                            }
+                        }
+                    },
+                    Err(e) => tracing::error!("Failed to update account file for verification: {}", e),
+                }
+            });
+        }
     }
     
     /// 从主应用账号目录加载所有账号
@@ -364,6 +454,8 @@ impl TokenManager {
             protected_models,
             health_score,
             model_quotas, // [NEW]
+            verification_needed: account.get("verification_needed").and_then(|v| v.as_bool()).unwrap_or(false),
+            verification_url: account.get("verification_url").and_then(|v| v.as_str()).map(|s| s.to_string()),
         }))
     }
 
@@ -695,8 +787,27 @@ impl TokenManager {
         let normalized_target = crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
             .unwrap_or_else(|| target_model.to_string());
         
+        // [NEW] 检查 Circuit Breaker 配置
+        let cb_enabled = self.circuit_breaker_config.read().await.enabled;
+
         tokens_snapshot.retain(|t| {
-            // 检查模型特定配额
+            // 0. [NEW] Circuit Breaker Check
+            if cb_enabled {
+                if let Some(fail_entry) = self.circuit_breaker.get(&t.account_id) {
+                     // Check duration (hardcoded 10 min for now, or read from config if async allows)
+                     let (fail_time, reason) = fail_entry.value();
+                     if fail_time.elapsed().as_secs() < 600 {
+                         tracing::debug!("  ⛔ {} - SKIP: Circuit Breaker blocked ({})", t.email, reason);
+                         return false;
+                     } else {
+                         // Expired, remove it
+                         drop(fail_entry);
+                         self.circuit_breaker.remove(&t.account_id);
+                     }
+                }
+            }
+
+            // 1. 检查模型特定配额
             // 逻辑: 如果 model_quotas 中存在该 key (不管是原始 key 还是 normalized key)，且 value <= 0，则剔除
             
             // case 1: check exact match
@@ -711,13 +822,36 @@ impl TokenManager {
                 }
             }
 
-            // case 3: fuzzy lookup (iterate keys) - fallback if needed, but exact/normalized should cover 99%
-            // 如果确实找不到 quota info，我们默认为可用 (保守策略)
+            // case 3: [NEW] Smart Fuzzy Match (Boundary-Aware)
+            // Prevent "gpt-4" (0%) from blocking "gpt-4o" (valid)
+            // Rule: Match only if one is a prefix of the other AND followed by a boundary (-, ., or end)
+            if !t.model_quotas.is_empty() {
+                let is_related = |a: &str, b: &str| -> bool {
+                    if a == b { return true; }
+                    if a.len() > b.len() {
+                        a.starts_with(b) && a.chars().nth(b.len()).map_or(false, |c| c == '-' || c == '.' || c == ':')
+                    } else {
+                        b.starts_with(a) && b.chars().nth(a.len()).map_or(false, |c| c == '-' || c == '.' || c == ':')
+                    }
+                };
+
+                for (quota_model, &pct) in &t.model_quotas {
+                    if pct <= 0 {
+                        // Check if this zero-quota model is strictly related to our target
+                        if is_related(target_model, quota_model) || is_related(normalized_target.as_str(), quota_model) {
+                            tracing::debug!("  ⛔ {} - SKIP: Zero quota for related model '{}' (Target: '{}')", t.email, quota_model, target_model);
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            // 如果确实找不到 quota info，我们默认为可用 (保守策略，但比之前严格)
             true
         });
 
         if tokens_snapshot.is_empty() {
-             return Err(format!("No accounts available with remaining quota > 0 for model '{}'", target_model));
+             return Err(format!("No accounts available with remaining quota > 0 (or healthy) for model '{}'", target_model));
         }
 
         // ===== 【优化】根据订阅等级和剩余配额排序 =====
@@ -1845,12 +1979,7 @@ impl TokenManager {
         tracing::debug!("Scheduling configuration updated: {:?}", *config);
     }
 
-    /// [NEW] 更新熔断器配置
-    pub async fn update_circuit_breaker_config(&self, config: crate::models::CircuitBreakerConfig) {
-        let mut lock = self.circuit_breaker_config.write().await;
-        *lock = config;
-        tracing::debug!("Circuit breaker configuration updated");
-    }
+
 
     /// [NEW] 获取熔断器配置
     pub async fn get_circuit_breaker_config(&self) -> crate::models::CircuitBreakerConfig {

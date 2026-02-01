@@ -39,9 +39,15 @@ export const SecurityPage = memo(function SecurityPage() {
                         blacklistCount={security.blacklist.length}
                         whitelistCount={security.whitelist.length}
                         logsCount={security.accessLogs.length}
+                        searchQuery={security.searchQuery}
+                        onSearchChange={security.setSearchQuery}
                         onAddClick={() => security.setIsAddDialogOpen(true)}
                         onRefreshLogs={security.loadAccessLogs}
                         onClearLogs={security.handleClearLogs}
+                        logPage={security.logPage}
+                        onNextPage={() => security.setLogPage(p => p + 1)}
+                        onPrevPage={() => security.setLogPage(p => Math.max(1, p - 1))}
+                        hasMoreLogs={security.hasMoreLogs}
                     />
 
                     {/* Content Area */}

@@ -966,6 +966,11 @@ pub async fn handle_messages(
             token_manager.mark_rate_limited_async(&email, status_code, retry_after.as_deref(), &error_text, Some(&request_with_mapped.model)).await;
         }
 
+        // [NEW] Circuit Breaker Reporting (402, 429, 401)
+        if status_code == 402 || status_code == 429 || status_code == 401 {
+             token_manager.report_account_failure(&token_lease.account_id, status_code, &error_text);
+        }
+
         // [NEW] Handle VALIDATION_REQUIRED (403) - temporarily block account
         if status_code == 403 && (
             error_text.contains("VALIDATION_REQUIRED") || 

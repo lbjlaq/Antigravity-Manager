@@ -34,12 +34,14 @@ import {
     Sparkles,
     MoreVertical,
     Clock,
+    ExternalLink, // [NEW]
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Account } from '@/entities/account';
 import { useTranslation } from 'react-i18next';
 import { cn, formatTimeRemaining } from '@/shared/lib';
 import { useConfigStore } from '@/entities/config';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 // ===================================
 // Constants - Fixed Column Widths
@@ -246,6 +248,19 @@ function SortableAccountRow({
                     <div className="flex items-center gap-1 mt-0.5">
                         {account.disabled && <span className="px-1 py-0.5 rounded bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-[7px] font-bold">DISABLED</span>}
                         {account.proxy_disabled && <span className="px-1 py-0.5 rounded bg-orange-100 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 text-[7px] font-bold">NO PROXY</span>}
+                        {account.verification_needed && (
+                             <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (account.verification_url) {
+                                        openUrl(account.verification_url).catch(() => window.open(account.verification_url, '_blank'));
+                                    }
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400 text-[8px] font-bold hover:bg-red-200 dark:hover:bg-red-500/30 transition-colors flex items-center gap-1 animate-pulse"
+                            >
+                                <ExternalLink className="w-2 h-2" /> VERIFY NEEDED
+                            </button>
+                        )}
                     </div>
                 )}
             </div>

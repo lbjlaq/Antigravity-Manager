@@ -19,6 +19,8 @@ export interface Account {
   validation_blocked?: boolean;
   validation_blocked_until?: number;
   validation_blocked_reason?: string;
+  verification_needed?: boolean;
+  verification_url?: string;
   created_at: number;
   last_used: number;
 }

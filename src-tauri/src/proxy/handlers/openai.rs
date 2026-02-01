@@ -460,6 +460,11 @@ pub async fn handle_chat_completions(
                 .await;
         }
 
+        // [NEW] Circuit Breaker Reporting (402, 429, 401)
+        if status_code == 402 || status_code == 429 || status_code == 401 {
+             token_manager.report_account_failure(&token_lease.account_id, status_code, &error_text);
+        }
+
         // 执行退避
         if apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await {
             // 判断是否需要轮换账号
