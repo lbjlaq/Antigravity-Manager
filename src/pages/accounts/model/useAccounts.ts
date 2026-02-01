@@ -158,15 +158,16 @@ export function useAccountsPage() {
     return accounts.filter(a => a.email.toLowerCase().includes(lowQuery));
   }, [accounts, searchQuery]);
 
-  const filterCounts = useMemo(() => ({
-    all: searchedAccounts.length,
-    pro: searchedAccounts.filter(a => a.quota?.subscription_tier?.toLowerCase().includes('pro')).length,
-    ultra: searchedAccounts.filter(a => a.quota?.subscription_tier?.toLowerCase().includes('ultra')).length,
-    free: searchedAccounts.filter(a => {
-      const tier = a.quota?.subscription_tier?.toLowerCase();
-      return tier && !tier.includes('pro') && !tier.includes('ultra');
-    }).length,
-  }), [searchedAccounts]);
+  const filterCounts = useMemo(() => {
+    const pro = searchedAccounts.filter(a => a.quota?.subscription_tier?.toLowerCase().includes('pro')).length;
+    const ultra = searchedAccounts.filter(a => a.quota?.subscription_tier?.toLowerCase().includes('ultra')).length;
+    return {
+      all: searchedAccounts.length,
+      pro,
+      ultra,
+      free: searchedAccounts.length - pro - ultra,
+    };
+  }, [searchedAccounts]);
 
   const filteredAccounts = useMemo(() => {
     let result = searchedAccounts;
@@ -177,7 +178,7 @@ export function useAccountsPage() {
     } else if (filter === 'free') {
       result = result.filter(a => {
         const tier = a.quota?.subscription_tier?.toLowerCase();
-        return tier && !tier.includes('pro') && !tier.includes('ultra');
+        return !tier?.includes('pro') && !tier?.includes('ultra');
       });
     }
     return result;

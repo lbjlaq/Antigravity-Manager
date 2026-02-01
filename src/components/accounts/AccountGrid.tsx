@@ -41,9 +41,9 @@ const AccountGrid = memo(({ accounts, selectedIds, refreshingIds, proxySelectedA
     const { t } = useTranslation();
     if (accounts.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center py-20 bg-zinc-900/40 backdrop-blur-xl border border-white/5 rounded-2xl">
-                <p className="text-zinc-500 mb-2">{t('accounts.empty.title')}</p>
-                <p className="text-sm text-zinc-600">{t('accounts.empty.desc')}</p>
+            <div className="flex flex-col items-center justify-center py-20 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl">
+                <p className="text-zinc-500 dark:text-zinc-500 mb-2">{t('accounts.empty.title')}</p>
+                <p className="text-sm text-zinc-400 dark:text-zinc-600">{t('accounts.empty.desc')}</p>
             </div>
         );
     }

@@ -93,7 +93,7 @@ export const AccountsPage = memo(function AccountsPage() {
 
       {/* Main Card */}
       <div className="flex-1 min-h-0 relative flex flex-col" ref={containerRef}>
-        <div className="h-full bg-white dark:bg-zinc-900/40 backdrop-blur-xl rounded-2xl border border-white/5 flex flex-col overflow-hidden shadow-2xl">
+        <div className="h-full bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 flex flex-col overflow-hidden">
           
           {/* Header */}
           <AccountsHeader

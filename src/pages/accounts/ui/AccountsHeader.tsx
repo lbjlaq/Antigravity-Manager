@@ -17,16 +17,16 @@ export const AccountsHeader = memo(function AccountsHeader({
   const { t } = useTranslation();
 
   return (
-    <div className="flex-none flex items-center justify-between px-5 py-4 border-b border-white/5 bg-gradient-to-r from-zinc-900/80 to-zinc-900/40">
-      <div className="flex items-center gap-4">
-        <div className="p-2.5 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/20">
-          <Users className="w-5 h-5 text-white" />
+    <div className="flex-none flex items-center justify-between px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="flex items-center gap-3">
+        <div className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800">
+          <Users className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">
+          <h1 className="text-lg font-semibold text-zinc-900 dark:text-white">
             {t('nav.accounts')}
           </h1>
-          <p className="text-xs text-zinc-500 mt-0.5">
+          <p className="text-xs text-zinc-500 dark:text-zinc-500">
             {accountCount} {t('common.accounts', 'accounts active')}
           </p>
         </div>
