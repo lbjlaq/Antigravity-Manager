@@ -1,0 +1,265 @@
+// Quota Protection Logic
+
+use super::manager::TokenManager;
+use std::path::PathBuf;
+
+impl TokenManager {
+    /// Check if account should be quota protected
+    pub(crate) async fn check_and_protect_quota(
+        &self,
+        account_json: &mut serde_json::Value,
+        account_path: &PathBuf,
+    ) -> bool {
+        let config = match crate::modules::config::load_app_config() {
+            Ok(cfg) => cfg.quota_protection,
+            Err(_) => return false,
+        };
+
+        if !config.enabled {
+            return false;
+        }
+
+        let quota = match account_json.get("quota") {
+            Some(q) => q.clone(),
+            None => return false,
+        };
+
+        let is_proxy_disabled = account_json
+            .get("proxy_disabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let reason = account_json
+            .get("proxy_disabled_reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if is_proxy_disabled {
+            if reason == "quota_protection" {
+                return self
+                    .check_and_restore_quota(account_json, account_path, &quota, &config)
+                    .await;
+            }
+            return true;
+        }
+
+        let models = match quota.get("models").and_then(|m| m.as_array()) {
+            Some(m) => m,
+            None => return false,
+        };
+
+        let threshold = config.threshold_percentage as i32;
+        let mut changed = false;
+
+        for model in models {
+            let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if !config.monitored_models.iter().any(|m| m == name) {
+                continue;
+            }
+
+            let percentage = model
+                .get("percentage")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as i32;
+            let account_id = account_json
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            if percentage <= threshold {
+                if self
+                    .trigger_quota_protection(
+                        account_json,
+                        &account_id,
+                        account_path,
+                        percentage,
+                        threshold,
+                        name,
+                    )
+                    .await
+                    .unwrap_or(false)
+                {
+                    changed = true;
+                }
+            } else {
+                let protected_models = account_json
+                    .get("protected_models")
+                    .and_then(|v| v.as_array());
+                let is_protected = protected_models
+                    .map_or(false, |arr| arr.iter().any(|m| m.as_str() == Some(name)));
+
+                if is_protected {
+                    if self
+                        .restore_quota_protection(account_json, &account_id, account_path, name)
+                        .await
+                        .unwrap_or(false)
+                    {
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        let _ = changed;
+        false
+    }
+
+    /// Calculate max remaining quota percentage
+    pub(crate) fn calculate_quota_stats(&self, quota: &serde_json::Value) -> Option<i32> {
+        let models = match quota.get("models").and_then(|m| m.as_array()) {
+            Some(m) => m,
+            None => return None,
+        };
+
+        let mut max_percentage = 0;
+        let mut has_data = false;
+
+        for model in models {
+            if let Some(pct) = model.get("percentage").and_then(|v| v.as_i64()) {
+                let pct_i32 = pct as i32;
+                if pct_i32 > max_percentage {
+                    max_percentage = pct_i32;
+                }
+                has_data = true;
+            }
+        }
+
+        if has_data {
+            Some(max_percentage)
+        } else {
+            None
+        }
+    }
+
+    /// Trigger quota protection for a specific model
+    async fn trigger_quota_protection(
+        &self,
+        account_json: &mut serde_json::Value,
+        account_id: &str,
+        account_path: &PathBuf,
+        current_val: i32,
+        threshold: i32,
+        model_name: &str,
+    ) -> Result<bool, String> {
+        if account_json.get("protected_models").is_none() {
+            account_json["protected_models"] = serde_json::Value::Array(Vec::new());
+        }
+
+        let protected_models = account_json["protected_models"].as_array_mut().unwrap();
+
+        if !protected_models
+            .iter()
+            .any(|m| m.as_str() == Some(model_name))
+        {
+            protected_models.push(serde_json::Value::String(model_name.to_string()));
+
+            tracing::info!(
+                "账号 {} 的模型 {} 因配额受限（{}% <= {}%）已被加入保护列表",
+                account_id,
+                model_name,
+                current_val,
+                threshold
+            );
+
+            let json_str = serde_json::to_string_pretty(account_json)
+                .map_err(|e| format!("序列化 JSON 失败: {}", e))?;
+
+            std::fs::write(account_path, json_str)
+                .map_err(|e| format!("写入文件失败: {}", e))?;
+
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    /// Check and restore quota from account-level protection
+    async fn check_and_restore_quota(
+        &self,
+        account_json: &mut serde_json::Value,
+        account_path: &PathBuf,
+        quota: &serde_json::Value,
+        config: &crate::models::QuotaProtectionConfig,
+    ) -> bool {
+        tracing::info!(
+            "正在迁移账号 {} 从全局配额保护模式至模型级保护模式",
+            account_json
+                .get("email")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+        );
+
+        account_json["proxy_disabled"] = serde_json::Value::Bool(false);
+        account_json["proxy_disabled_reason"] = serde_json::Value::Null;
+        account_json["proxy_disabled_at"] = serde_json::Value::Null;
+
+        let threshold = config.threshold_percentage as i32;
+        let mut protected_list = Vec::new();
+
+        if let Some(models) = quota.get("models").and_then(|m| m.as_array()) {
+            for model in models {
+                let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if !config.monitored_models.iter().any(|m| m == name) {
+                    continue;
+                }
+
+                let percentage = model
+                    .get("percentage")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0) as i32;
+                if percentage <= threshold {
+                    protected_list.push(serde_json::Value::String(name.to_string()));
+                }
+            }
+        }
+
+        account_json["protected_models"] = serde_json::Value::Array(protected_list);
+
+        if let Ok(json_str) = serde_json::to_string_pretty(account_json) {
+            if let Err(e) = std::fs::write(account_path, json_str) {
+                tracing::error!(
+                    "[check_and_restore_quota] Failed to write account file: {}",
+                    e
+                );
+            }
+        } else {
+            tracing::error!("[check_and_restore_quota] Failed to serialize account json");
+        }
+
+        false
+    }
+
+    /// Restore quota protection for a specific model
+    async fn restore_quota_protection(
+        &self,
+        account_json: &mut serde_json::Value,
+        account_id: &str,
+        account_path: &PathBuf,
+        model_name: &str,
+    ) -> Result<bool, String> {
+        if let Some(arr) = account_json
+            .get_mut("protected_models")
+            .and_then(|v| v.as_array_mut())
+        {
+            let original_len = arr.len();
+            arr.retain(|m| m.as_str() != Some(model_name));
+
+            if arr.len() < original_len {
+                tracing::info!(
+                    "账号 {} 的模型 {} 配额已恢复，移出保护列表",
+                    account_id,
+                    model_name
+                );
+                let json_str = serde_json::to_string_pretty(account_json)
+                    .map_err(|e| format!("序列化 JSON 失败: {}", e))?;
+
+                std::fs::write(account_path, json_str)
+                    .map_err(|e| format!("写入文件失败: {}", e))?;
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+}
