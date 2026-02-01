@@ -1239,20 +1239,20 @@ async fn admin_get_data_dir_path() -> impl IntoResponse {
 
 async fn admin_should_check_updates() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let settings = crate::modules::update_checker::load_update_settings()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
     let should = crate::modules::update_checker::should_check_for_updates(&settings);
     Ok(Json(should))
 }
 
 async fn admin_get_antigravity_path() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let path = crate::commands::get_antigravity_path(Some(true)).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let path = crate::commands::system::get_antigravity_path(Some(true)).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
     Ok(Json(path))
 }
 
 async fn admin_get_antigravity_args() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let args = crate::commands::get_antigravity_args().await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let args = crate::commands::system::get_antigravity_args().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
     Ok(Json(args))
 }
 
@@ -1534,16 +1534,16 @@ async fn admin_toggle_proxy_status(
 }
 
 async fn admin_warm_up_all_accounts() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let result = crate::commands::warm_up_all_accounts().await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let result = crate::commands::quota::warm_up_all_accounts().await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
     Ok(Json(result))
 }
 
 async fn admin_warm_up_account(
     Path(account_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let result = crate::commands::warm_up_account(account_id).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let result = crate::commands::quota::warm_up_account(account_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
     Ok(Json(result))
 }
 
@@ -1722,8 +1722,8 @@ async fn admin_delete_device_version(
 async fn admin_open_folder() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     // Note: In Web mode, this may not actually open a local folder unless the backend handles it.
     // For ABV_Refactor, the backend should use opener to open it on the server (the desktop).
-    crate::commands::open_data_folder().await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e }))
+    crate::commands::system::open_data_folder().await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
     })?;
     Ok(StatusCode::OK)
 }
