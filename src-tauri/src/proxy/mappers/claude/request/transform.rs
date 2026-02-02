@@ -126,8 +126,7 @@ pub fn transform_claude_request_in(
 
     // Check if target model supports thinking
     let target_model_supports_thinking = mapped_model.contains("-thinking")
-        || mapped_model.starts_with("claude-")
-        || mapped_model.contains("gemini-");
+        || mapped_model.starts_with("claude-");
 
     if is_thinking_enabled && !target_model_supports_thinking {
         tracing::warn!(

@@ -18,13 +18,16 @@ pub fn build_generation_config(
 
             if let Some(budget_tokens) = thinking.budget_tokens {
                 let mut budget = budget_tokens;
-                let is_flash_model = has_web_search 
-                    || claude_req.model.to_lowercase().contains("flash");
-                if is_flash_model {
+                let model_lower = claude_req.model.to_lowercase();
+                // [FIX] Cap budget for Flash models AND -thinking suffix models
+                let is_limited_model = has_web_search 
+                    || model_lower.contains("flash")
+                    || model_lower.ends_with("-thinking");
+                if is_limited_model {
                     budget = budget.min(24576);
                     if budget_tokens > 24576 {
                         tracing::info!(
-                            "[Generation-Config] Capped thinking_budget from {} to 24576 for Flash model",
+                            "[Generation-Config] Capped thinking_budget from {} to 24576 for limited model",
                             budget_tokens
                         );
                     }

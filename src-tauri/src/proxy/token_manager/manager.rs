@@ -22,6 +22,8 @@ pub struct TokenManager {
     pub(crate) active_requests: Arc<DashMap<String, AtomicUsize>>,
     pub(crate) circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>,
     pub circuit_breaker: DashMap<String, (std::time::Instant, String)>,
+    /// [FIX #820] Preferred account ID for fixed account mode
+    pub(crate) preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>,
 }
 
 impl TokenManager {
@@ -41,6 +43,7 @@ impl TokenManager {
                 crate::models::CircuitBreakerConfig::default(),
             )),
             circuit_breaker: DashMap::new(),
+            preferred_account_id: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -253,6 +256,26 @@ impl TokenManager {
         } else {
             self.tokens.len()
         }
+    }
+
+    // =========================================================================
+    // [FIX #820] Preferred Account Management
+    // =========================================================================
+
+    /// Set preferred account ID (fixed account mode)
+    pub async fn set_preferred_account(&self, account_id: Option<String>) {
+        let mut preferred = self.preferred_account_id.write().await;
+        if let Some(ref id) = account_id {
+            tracing::info!("[FIX #820] Preferred account set to: {}", id);
+        } else {
+            tracing::info!("[FIX #820] Preferred account cleared");
+        }
+        *preferred = account_id;
+    }
+
+    /// Get current preferred account ID
+    pub async fn get_preferred_account(&self) -> Option<String> {
+        self.preferred_account_id.read().await.clone()
     }
 }
 

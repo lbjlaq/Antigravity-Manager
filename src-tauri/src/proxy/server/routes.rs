@@ -67,6 +67,11 @@ pub fn build_admin_routes() -> Router<AppState> {
         .route("/proxy/session-bindings/clear", post(admin::clear_proxy_session_bindings))
         .route("/proxy/rate-limits", delete(admin::clear_all_rate_limits))
         .route("/proxy/rate-limits/:accountId", delete(admin::clear_rate_limit))
+        // [FIX #820] Preferred account
+        .route(
+            "/proxy/preferred-account",
+            get(admin::get_preferred_account).post(admin::set_preferred_account),
+        )
         // OAuth (Admin endpoints)
         .route("/accounts/oauth/prepare", post(admin::prepare_oauth_url))
         .route("/accounts/oauth/start", post(admin::start_oauth_login))
@@ -116,6 +121,7 @@ pub fn build_admin_routes() -> Router<AppState> {
         )
         // Account bulk operations
         .route("/accounts/bulk-delete", post(admin::delete_accounts))
+        .route("/accounts/export", post(admin::export_accounts))
         .route("/accounts/reorder", post(admin::reorder_accounts))
         .route("/accounts/:accountId/quota", get(admin::fetch_account_quota))
         .route("/accounts/:accountId/toggle-proxy", post(admin::toggle_proxy_status))

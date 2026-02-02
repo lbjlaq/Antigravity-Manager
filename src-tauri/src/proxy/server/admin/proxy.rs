@@ -513,3 +513,29 @@ pub async fn get_cli_config_content(
             )
         })
 }
+
+// ============================================================================
+// [FIX #820] Preferred Account Handlers
+// ============================================================================
+
+pub async fn get_preferred_account(State(state): State<AppState>) -> impl IntoResponse {
+    let pref = state.token_manager.get_preferred_account().await;
+    Json(pref)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPreferredAccountRequest {
+    pub account_id: Option<String>,
+}
+
+pub async fn set_preferred_account(
+    State(state): State<AppState>,
+    Json(payload): Json<SetPreferredAccountRequest>,
+) -> impl IntoResponse {
+    state
+        .token_manager
+        .set_preferred_account(payload.account_id)
+        .await;
+    StatusCode::OK
+}

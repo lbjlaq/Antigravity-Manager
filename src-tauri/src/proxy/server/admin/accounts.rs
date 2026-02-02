@@ -564,3 +564,27 @@ pub async fn warm_up_account(
         })?;
     Ok(Json(result))
 }
+
+// ============================================================================
+// Export Accounts Handler
+// ============================================================================
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportAccountsRequest {
+    pub account_ids: Vec<String>,
+}
+
+pub async fn export_accounts(
+    State(_state): State<AppState>,
+    Json(payload): Json<ExportAccountsRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let response = account::export_accounts_by_ids(&payload.account_ids).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    Ok(Json(response))
+}
