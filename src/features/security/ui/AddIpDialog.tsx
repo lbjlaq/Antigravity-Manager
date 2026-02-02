@@ -1,7 +1,8 @@
 // File: src/features/security/ui/AddIpDialog.tsx
 // Dialog for adding IP to blacklist/whitelist with glassmorphism style
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Shield, ShieldCheck, Clock, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -21,12 +22,12 @@ interface AddIpDialogProps {
 }
 
 const DURATION_OPTIONS = [
-  { label: '10 minutes', value: 600 },
-  { label: '1 hour', value: 3600 },
-  { label: '24 hours', value: 86400 },
-  { label: '7 days', value: 604800 },
-  { label: '30 days', value: 2592000 },
-  { label: 'Permanent', value: 0 },
+  { label: '10m', value: 600 },
+  { label: '1h', value: 3600 },
+  { label: '24h', value: 86400 },
+  { label: '7d', value: 604800 },
+  { label: '30d', value: 2592000 },
+  { label: '∞', value: 0 },
 ];
 
 export const AddIpDialog: React.FC<AddIpDialogProps> = ({
@@ -44,6 +45,25 @@ export const AddIpDialog: React.FC<AddIpDialogProps> = ({
   const [description, setDescription] = useState('');
   const [duration, setDuration] = useState(0); // 0 = permanent
   const [ipError, setIpError] = useState('');
+
+  // Handle Escape key
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      onClose();
+    }
+  }, [onClose]);
+
+  useEffect(() => {
+    if (isOpen) {
+      document.addEventListener('keydown', handleKeyDown);
+      // Prevent body scroll when modal is open
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.removeEventListener('keydown', handleKeyDown);
+        document.body.style.overflow = '';
+      };
+    }
+  }, [isOpen, handleKeyDown]);
 
   const validateIp = (value: string): boolean => {
     if (!value.trim()) {
@@ -108,18 +128,22 @@ export const AddIpDialog: React.FC<AddIpDialogProps> = ({
     onClose();
   };
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
-        <>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
             onClick={handleClose}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50"
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
           />
+
+          {/* Tauri drag region */}
+          <div data-tauri-drag-region className="fixed top-0 left-0 right-0 h-8 z-[110]" />
 
           {/* Dialog */}
           <motion.div
@@ -127,44 +151,39 @@ export const AddIpDialog: React.FC<AddIpDialogProps> = ({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md"
+            className="relative w-full max-w-md"
           >
-            <div className="relative bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
-              {/* Glow effects */}
+            <div className="relative bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl overflow-hidden">
+              {/* Subtle glow effects */}
               <div
-                className={`absolute -top-20 -right-20 w-40 h-40 rounded-full blur-3xl pointer-events-none ${
-                  isBlacklist ? 'bg-red-500/20' : 'bg-emerald-500/20'
-                }`}
-              />
-              <div
-                className={`absolute -bottom-20 -left-20 w-40 h-40 rounded-full blur-3xl pointer-events-none ${
-                  isBlacklist ? 'bg-orange-500/10' : 'bg-teal-500/10'
+                className={`absolute -top-20 -right-20 w-40 h-40 rounded-full blur-3xl pointer-events-none opacity-30 ${
+                  isBlacklist ? 'bg-rose-500' : 'bg-emerald-500'
                 }`}
               />
 
               {/* Header */}
-              <div className="relative z-10 flex items-center justify-between p-5 border-b border-white/5">
+              <div className="relative z-10 flex items-center justify-between p-4 border-b border-zinc-200 dark:border-zinc-800">
                 <div className="flex items-center gap-3">
                   <div
-                    className={`p-2.5 rounded-xl shadow-lg ${
+                    className={`p-2 rounded-lg ${
                       isBlacklist
-                        ? 'bg-gradient-to-br from-red-500 to-orange-500 shadow-red-500/25'
-                        : 'bg-gradient-to-br from-emerald-500 to-teal-500 shadow-emerald-500/25'
+                        ? 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400'
+                        : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
                     }`}
                   >
                     {isBlacklist ? (
-                      <Shield className="w-5 h-5 text-white" />
+                      <Shield className="w-5 h-5" />
                     ) : (
-                      <ShieldCheck className="w-5 h-5 text-white" />
+                      <ShieldCheck className="w-5 h-5" />
                     )}
                   </div>
                   <div>
-                    <h3 className="font-bold text-white text-base">
+                    <h3 className="font-semibold text-zinc-900 dark:text-white">
                       {isBlacklist
                         ? t('security.add_to_blacklist', 'Add to Blacklist')
                         : t('security.add_to_whitelist', 'Add to Whitelist')}
                     </h3>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">
                       {isBlacklist
                         ? t('security.block_ip_desc', 'Block IP from accessing the proxy')
                         : t('security.allow_ip_desc', 'Allow IP access in strict mode')}
@@ -173,17 +192,17 @@ export const AddIpDialog: React.FC<AddIpDialogProps> = ({
                 </div>
                 <button
                   onClick={handleClose}
-                  className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
+                  className="p-2 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
               {/* Form */}
-              <form onSubmit={handleSubmit} className="relative z-10 p-5 space-y-4">
+              <form onSubmit={handleSubmit} className="relative z-10 p-4 space-y-4">
                 {/* IP Pattern */}
                 <div>
-                  <label className="block text-sm font-medium text-zinc-300 mb-2">
+                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">
                     {t('security.ip_pattern', 'IP Address or CIDR')}
                   </label>
                   <input
@@ -195,14 +214,14 @@ export const AddIpDialog: React.FC<AddIpDialogProps> = ({
                     }}
                     onBlur={() => validateIp(ipPattern)}
                     placeholder="192.168.1.100 or 10.0.0.0/24"
-                    className={`w-full px-4 py-3 bg-zinc-800/50 border rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-2 transition-all font-mono ${
+                    className={`w-full px-3 py-2.5 bg-zinc-50 dark:bg-zinc-800 border rounded-lg text-zinc-900 dark:text-white placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 transition-all font-mono text-sm ${
                       ipError
-                        ? 'border-red-500/50 focus:ring-red-500/30'
-                        : 'border-white/10 focus:ring-blue-500/30 focus:border-blue-500/50'
+                        ? 'border-rose-300 dark:border-rose-500/50 focus:ring-rose-500/30'
+                        : 'border-zinc-200 dark:border-zinc-700 focus:ring-indigo-500/30 focus:border-indigo-500'
                     }`}
                   />
                   {ipError && (
-                    <div className="flex items-center gap-1.5 mt-2 text-xs text-red-400">
+                    <div className="flex items-center gap-1.5 mt-1.5 text-xs text-rose-600 dark:text-rose-400">
                       <AlertTriangle className="w-3.5 h-3.5" />
                       {ipError}
                     </div>
@@ -211,11 +230,11 @@ export const AddIpDialog: React.FC<AddIpDialogProps> = ({
 
                 {/* Reason (blacklist) or Description (whitelist) */}
                 <div>
-                  <label className="block text-sm font-medium text-zinc-300 mb-2">
+                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">
                     {isBlacklist
                       ? t('security.reason', 'Reason')
                       : t('security.description', 'Description')}
-                    <span className="text-zinc-600 ml-1">
+                    <span className="text-zinc-400 dark:text-zinc-500 font-normal ml-1">
                       ({t('common.optional', 'optional')})
                     </span>
                   </label>
@@ -230,27 +249,27 @@ export const AddIpDialog: React.FC<AddIpDialogProps> = ({
                         ? t('security.reason_placeholder', 'e.g., Suspicious activity')
                         : t('security.description_placeholder', 'e.g., Office network')
                     }
-                    className="w-full px-4 py-3 bg-zinc-800/50 border border-white/10 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50 transition-all"
+                    className="w-full px-3 py-2.5 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-white placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all text-sm"
                   />
                 </div>
 
                 {/* Duration (blacklist only) */}
                 {isBlacklist && (
                   <div>
-                    <label className="block text-sm font-medium text-zinc-300 mb-2">
-                      <Clock className="w-4 h-4 inline mr-1.5" />
+                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">
+                      <Clock className="w-4 h-4 inline mr-1.5 -mt-0.5" />
                       {t('security.block_duration', 'Block Duration')}
                     </label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-6 gap-1.5">
                       {DURATION_OPTIONS.map((option) => (
                         <button
                           key={option.value}
                           type="button"
                           onClick={() => setDuration(option.value)}
-                          className={`px-3 py-2 text-sm rounded-lg border transition-all ${
+                          className={`px-2 py-2 text-xs font-medium rounded-lg border transition-all ${
                             duration === option.value
-                              ? 'bg-red-500/20 border-red-500/50 text-red-300'
-                              : 'bg-zinc-800/30 border-white/5 text-zinc-400 hover:border-white/20'
+                              ? 'bg-rose-100 dark:bg-rose-900/30 border-rose-300 dark:border-rose-500/50 text-rose-700 dark:text-rose-300'
+                              : 'bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:border-zinc-300 dark:hover:border-zinc-600'
                           }`}
                         >
                           {option.label}
@@ -265,17 +284,17 @@ export const AddIpDialog: React.FC<AddIpDialogProps> = ({
                   <button
                     type="button"
                     onClick={handleClose}
-                    className="flex-1 px-4 py-3 bg-zinc-800 text-zinc-300 rounded-xl hover:bg-zinc-700 transition-colors"
+                    className="flex-1 px-4 py-2.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors font-medium text-sm"
                   >
                     {t('common.cancel', 'Cancel')}
                   </button>
                   <button
                     type="submit"
                     disabled={isSubmitting || !ipPattern.trim()}
-                    className={`flex-1 px-4 py-3 font-bold rounded-xl shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                    className={`flex-1 px-4 py-2.5 font-medium text-sm text-white rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                       isBlacklist
-                        ? 'bg-gradient-to-r from-red-500 to-orange-500 text-white shadow-red-500/25 hover:shadow-red-500/40'
-                        : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-emerald-500/25 hover:shadow-emerald-500/40'
+                        ? 'bg-rose-600 hover:bg-rose-500 focus:ring-2 focus:ring-rose-500/50'
+                        : 'bg-emerald-600 hover:bg-emerald-500 focus:ring-2 focus:ring-emerald-500/50'
                     }`}
                   >
                     {isSubmitting ? (
@@ -293,8 +312,9 @@ export const AddIpDialog: React.FC<AddIpDialogProps> = ({
               </form>
             </div>
           </motion.div>
-        </>
+        </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 };
