@@ -71,6 +71,7 @@ impl TokenManager {
                 .to_string();
 
             if percentage <= threshold {
+                // [FIX] Pass normalized standard_id instead of raw name for consistency
                 if self
                     .trigger_quota_protection(
                         account_json,
@@ -78,7 +79,7 @@ impl TokenManager {
                         account_path,
                         percentage,
                         threshold,
-                        name,
+                        &standard_id,
                     )
                     .await
                     .unwrap_or(false)

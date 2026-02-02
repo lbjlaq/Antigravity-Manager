@@ -59,17 +59,24 @@ export function useProxyStats() {
   });
 }
 
-export function useProxyLogs(filters?: { limit?: number; offset?: number; level?: string }) {
+export function useProxyLogs(filters?: { limit?: number; offset?: number; errorsOnly?: boolean; filter?: string }) {
   return useQuery({
     queryKey: proxyKeys.logs(filters),
-    queryFn: () => invoke<ProxyLog[]>('get_proxy_logs_filtered', filters),
+    // [FIX] Backend expects separate parameters: filter, errors_only, limit, offset
+    queryFn: () => invoke<ProxyLog[]>('get_proxy_logs_filtered', {
+      filter: filters?.filter ?? '',
+      errors_only: filters?.errorsOnly ?? false,
+      limit: filters?.limit ?? 100,
+      offset: filters?.offset ?? 0,
+    }),
   });
 }
 
 export function useProxyLogDetail(logId: string) {
   return useQuery({
     queryKey: proxyKeys.logDetail(logId),
-    queryFn: () => invoke<ProxyLog>('get_proxy_log_detail', { logId }),
+    // [FIX] Backend expects snake_case parameter 'log_id'
+    queryFn: () => invoke<ProxyLog>('get_proxy_log_detail', { log_id: logId }),
     enabled: !!logId,
   });
 }

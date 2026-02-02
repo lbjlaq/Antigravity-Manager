@@ -160,7 +160,34 @@ impl TokenManager {
             return Ok(None);
         }
 
-        // Quota protection check
+        // [FIX #1344] Check manual proxy disable BEFORE quota protection
+        // This ensures manually disabled accounts (non-quota reasons) are skipped first
+        let is_proxy_disabled = account
+            .get("proxy_disabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let disabled_reason = account
+            .get("proxy_disabled_reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if is_proxy_disabled && disabled_reason != "quota_protection" {
+            // Account was manually disabled (non-quota protection reason)
+            tracing::debug!(
+                "Account skipped due to manual disable: {:?} (email={}, reason={})",
+                path,
+                account
+                    .get("email")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unknown>"),
+                disabled_reason
+            );
+            return Ok(None);
+        }
+
+        // Quota protection check - only handles quota protection logic
+        // This allows auto-recovery of accounts whose quota has been restored
         if self.check_and_protect_quota(&mut account, path).await {
             tracing::debug!(
                 "Account skipped due to quota protection: {:?} (email={})",
@@ -173,7 +200,9 @@ impl TokenManager {
             return Ok(None);
         }
 
-        // Check proxy disabled status
+        // [Compatibility] Re-check proxy_disabled after quota protection migration
+        // If account was disabled by old quota protection but quota restored, above check clears it
+        // This ensures we don't load accounts that are still disabled
         if account
             .get("proxy_disabled")
             .and_then(|v| v.as_bool())

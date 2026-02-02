@@ -43,7 +43,8 @@ export function useWhitelist() {
 export function useAccessLogs(filters?: Partial<GetAccessLogsRequest>) {
   return useQuery({
     queryKey: securityKeys.accessLogs(filters),
-    queryFn: () => invoke<AccessLogEntry[]>('security_get_access_logs', { request: filters }),
+    // [FIX] Pass filters directly as 'request' parameter (Rust expects GetAccessLogsRequest)
+    queryFn: () => invoke<AccessLogEntry[]>('security_get_access_logs', filters ?? {}),
   });
 }
 

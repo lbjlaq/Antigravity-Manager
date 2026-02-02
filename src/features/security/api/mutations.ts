@@ -19,8 +19,9 @@ export function useAddToBlacklist() {
   const { t } = useTranslation();
 
   return useMutation({
+    // [FIX] Pass request object directly without extra wrapper
     mutationFn: (data: AddToBlacklistRequest) =>
-      invoke<OperationResult>('security_add_to_blacklist', { request: data }),
+      invoke<OperationResult>('security_add_to_blacklist', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: securityKeys.blacklist() });
       showToast(t('security.toast.added_blacklist', 'Added to blacklist'), 'success');
@@ -36,8 +37,9 @@ export function useAddToWhitelist() {
   const { t } = useTranslation();
 
   return useMutation({
+    // [FIX] Pass request object directly without extra wrapper
     mutationFn: (data: AddToWhitelistRequest) =>
-      invoke<OperationResult>('security_add_to_whitelist', { request: data }),
+      invoke<OperationResult>('security_add_to_whitelist', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: securityKeys.whitelist() });
       showToast(t('security.toast.added_whitelist', 'Added to whitelist'), 'success');
