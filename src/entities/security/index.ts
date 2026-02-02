@@ -16,4 +16,5 @@ export type {
   OperationResult,
   IpListType,
   SecurityTab,
+  IpTokenStats,
 } from './types';

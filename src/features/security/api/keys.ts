@@ -7,4 +7,6 @@ export const securityKeys = {
   whitelist: () => [...securityKeys.all, 'whitelist'] as const,
   accessLogs: (filters?: Record<string, unknown>) => [...securityKeys.all, 'logs', filters] as const,
   settings: () => [...securityKeys.all, 'settings'] as const,
+  stats: () => [...securityKeys.all, 'stats'] as const,
+  ipTokenStats: (hours: number) => [...securityKeys.all, 'ipTokenStats', hours] as const,
 };

@@ -3,7 +3,7 @@
 
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Ban, CheckCircle, FileText, Settings } from 'lucide-react';
+import { Ban, CheckCircle, FileText, Settings, BarChart3 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '@/shared/lib';
 import type { SecurityStats } from '@/entities/security';
@@ -19,6 +19,12 @@ export const SecurityTabs = memo(function SecurityTabs({ activeTab, stats, onTab
     const { t } = useTranslation();
 
     const tabs: { id: SecurityTab; label: string; icon: React.ElementType; count?: number }[] = [
+        {
+            id: 'stats',
+            label: t('security.stats', 'Stats'),
+            icon: BarChart3,
+            count: stats?.totalRequests,
+        },
         {
             id: 'blacklist',
             label: t('security.blacklist', 'Blacklist'),

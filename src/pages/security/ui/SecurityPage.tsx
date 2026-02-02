@@ -11,6 +11,7 @@ import { SecurityToolbar } from './SecurityToolbar';
 import { BlacklistTab } from './BlacklistTab';
 import { WhitelistTab } from './WhitelistTab';
 import { LogsTab } from './LogsTab';
+import { StatsTab } from './StatsTab';
 import { SettingsTab } from './SettingsTab';
 import { AddIpDialog } from '@/features/security';
 
@@ -33,22 +34,24 @@ export const SecurityPage = memo(function SecurityPage() {
                         onTabChange={security.setActiveTab}
                     />
 
-                    {/* Toolbar */}
-                    <SecurityToolbar
-                        activeTab={security.activeTab}
-                        blacklistCount={security.blacklist.length}
-                        whitelistCount={security.whitelist.length}
-                        logsCount={security.accessLogs.length}
-                        searchQuery={security.searchQuery}
-                        onSearchChange={security.setSearchQuery}
-                        onAddClick={() => security.setIsAddDialogOpen(true)}
-                        onRefreshLogs={security.loadAccessLogs}
-                        onClearLogs={security.handleClearLogs}
-                        logPage={security.logPage}
-                        onNextPage={() => security.setLogPage(p => p + 1)}
-                        onPrevPage={() => security.setLogPage(p => Math.max(1, p - 1))}
-                        hasMoreLogs={security.hasMoreLogs}
-                    />
+                    {/* Toolbar - hide for stats tab */}
+                    {security.activeTab !== 'stats' && (
+                        <SecurityToolbar
+                            activeTab={security.activeTab}
+                            blacklistCount={security.blacklist.length}
+                            whitelistCount={security.whitelist.length}
+                            logsCount={security.accessLogs.length}
+                            searchQuery={security.searchQuery}
+                            onSearchChange={security.setSearchQuery}
+                            onAddClick={() => security.setIsAddDialogOpen(true)}
+                            onRefreshLogs={security.loadAccessLogs}
+                            onClearLogs={security.handleClearLogs}
+                            logPage={security.logPage}
+                            onNextPage={() => security.setLogPage(p => p + 1)}
+                            onPrevPage={() => security.setLogPage(p => Math.max(1, p - 1))}
+                            hasMoreLogs={security.hasMoreLogs}
+                        />
+                    )}
 
                     {/* Content Area */}
                     <div className="flex-1 min-h-0 overflow-y-auto p-4">
@@ -60,6 +63,10 @@ export const SecurityPage = memo(function SecurityPage() {
                             </div>
                         ) : (
                             <AnimatePresence mode="wait">
+                                {security.activeTab === 'stats' && (
+                                    <StatsTab />
+                                )}
+
                                 {security.activeTab === 'blacklist' && (
                                     <BlacklistTab
                                         blacklist={security.blacklist}

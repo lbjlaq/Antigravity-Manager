@@ -94,4 +94,13 @@ export interface OperationResult {
 export type IpListType = 'blacklist' | 'whitelist';
 
 // Security tab type
-export type SecurityTab = 'blacklist' | 'whitelist' | 'logs' | 'settings';
+export type SecurityTab = 'blacklist' | 'whitelist' | 'logs' | 'stats' | 'settings';
+
+// IP Token Stats for analytics
+export interface IpTokenStats {
+  clientIp: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  requestCount: number;
+}

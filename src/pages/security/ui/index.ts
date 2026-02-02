@@ -6,4 +6,5 @@ export { SecurityToolbar } from './SecurityToolbar';
 export { BlacklistTab } from './BlacklistTab';
 export { WhitelistTab } from './WhitelistTab';
 export { LogsTab } from './LogsTab';
+export { StatsTab } from './StatsTab';
 export { SettingsTab } from './SettingsTab';

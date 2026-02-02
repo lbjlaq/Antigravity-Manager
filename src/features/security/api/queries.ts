@@ -15,6 +15,7 @@ export type {
   BlacklistConfig,
   WhitelistConfig,
   AccessLogConfig,
+  IpTokenStats,
 } from '@/entities/security';
 
 import type {
@@ -22,6 +23,8 @@ import type {
   IpWhitelistEntry,
   AccessLogEntry,
   SecurityMonitorConfig,
+  SecurityStats,
+  IpTokenStats,
   GetAccessLogsRequest,
 } from '@/entities/security';
 
@@ -43,7 +46,6 @@ export function useWhitelist() {
 export function useAccessLogs(filters?: Partial<GetAccessLogsRequest>) {
   return useQuery({
     queryKey: securityKeys.accessLogs(filters),
-    // [FIX] Pass filters directly as 'request' parameter (Rust expects GetAccessLogsRequest)
     queryFn: () => invoke<AccessLogEntry[]>('security_get_access_logs', filters ?? {}),
   });
 }
@@ -52,6 +54,24 @@ export function useSecurityConfig() {
   return useQuery({
     queryKey: securityKeys.settings(),
     queryFn: () => invoke<SecurityMonitorConfig>('get_security_config'),
+  });
+}
+
+// Security statistics
+export function useSecurityStats() {
+  return useQuery({
+    queryKey: securityKeys.stats(),
+    queryFn: () => invoke<SecurityStats>('security_get_stats'),
+    refetchInterval: 30000, // Auto-refresh every 30s
+  });
+}
+
+// IP Token usage statistics
+export function useIpTokenStats(hours: number = 24) {
+  return useQuery({
+    queryKey: securityKeys.ipTokenStats(hours),
+    queryFn: () => invoke<IpTokenStats[]>('security_get_ip_token_stats', { limit: 50, hours }),
+    refetchInterval: 60000, // Auto-refresh every 60s
   });
 }
 
