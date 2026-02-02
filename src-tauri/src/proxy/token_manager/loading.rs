@@ -61,6 +61,7 @@ impl TokenManager {
     }
 
     /// Load all accounts from the accounts directory
+    /// [FIX] Only loads accounts that exist in account_index.json to prevent resurrection
     pub async fn load_accounts(&self) -> Result<usize, String> {
         let accounts_dir = self.data_dir.join("accounts");
 
@@ -75,6 +76,17 @@ impl TokenManager {
             *last_used = None;
         }
 
+        // [FIX] Load valid account IDs from index FIRST to prevent loading deleted accounts
+        let valid_ids: HashSet<String> = match crate::modules::account::storage::load_account_index() {
+            Ok(index) => index.accounts.iter().map(|s| s.id.clone()).collect(),
+            Err(e) => {
+                tracing::warn!("Failed to load account index, falling back to directory scan: {}", e);
+                HashSet::new()
+            }
+        };
+
+        let use_index_filter = !valid_ids.is_empty();
+
         let entries = std::fs::read_dir(&accounts_dir)
             .map_err(|e| format!("读取账号目录失败: {}", e))?;
 
@@ -86,6 +98,21 @@ impl TokenManager {
 
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
+            }
+
+            // [FIX] Skip files not in account_index.json (orphaned/deleted accounts)
+            if use_index_filter {
+                let file_stem = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("");
+                
+                if !valid_ids.contains(file_stem) {
+                    tracing::debug!(
+                        "Skipping orphaned account file (not in index): {:?}",
+                        path
+                    );
+                    continue;
+                }
             }
 
             match self.load_single_account(&path).await {
