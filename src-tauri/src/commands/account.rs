@@ -34,8 +34,18 @@ pub async fn add_account(
         .await
         .map_err(AppError::Account)?;
 
-    // Auto-refresh quota after adding
-    let _ = internal_refresh_account_quota(&app, &mut account).await;
+    // Auto-refresh quota after adding (with timeout to prevent UI freeze)
+    let quota_result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        internal_refresh_account_quota(&app, &mut account)
+    ).await;
+    
+    if let Err(_) = quota_result {
+        modules::logger::log_warn(&format!(
+            "Quota refresh timeout for account: {}", 
+            account.email
+        ));
+    }
 
     // Reload token pool in proxy service
     let _ = crate::commands::proxy::reload_proxy_accounts(
@@ -52,13 +62,24 @@ pub async fn delete_account(
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     account_id: String,
 ) -> AppResult<()> {
+    modules::logger::log_info(&format!("Delete account request: {}", account_id));
+
+    // [FIX] Remove from TokenManager FIRST to prevent resurrection via persist_token()
+    {
+        let instance_lock = proxy_state.instance.read().await;
+        if let Some(instance) = instance_lock.as_ref() {
+            instance.token_manager.remove_account(&account_id);
+        }
+    }
+
+    // Now delete the account file and index entry
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app.clone())
     );
     service.delete_account(&account_id)
         .map_err(AppError::Account)?;
 
-    // Reload token pool
+    // Reload token pool (will not find the deleted account)
     let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
 
     Ok(())
@@ -75,7 +96,16 @@ pub async fn delete_accounts(
         "Batch delete request received: {} accounts",
         account_ids.len()
     ));
+
+    // [FIX] Remove from TokenManager FIRST to prevent resurrection via persist_token()
+    {
+        let instance_lock = proxy_state.instance.read().await;
+        if let Some(instance) = instance_lock.as_ref() {
+            instance.token_manager.remove_accounts(&account_ids);
+        }
+    }
     
+    // Now delete account files and index entries
     modules::account::delete_accounts(&account_ids)
         .map_err(|e| {
             modules::logger::log_error(&format!("Batch delete failed: {}", e));
@@ -85,7 +115,7 @@ pub async fn delete_accounts(
     // Force tray sync
     crate::modules::tray::update_tray_menus(&app);
 
-    // Reload token pool
+    // Reload token pool (will not find the deleted accounts)
     let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
 
     Ok(())

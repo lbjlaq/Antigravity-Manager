@@ -94,23 +94,41 @@ pub async fn sync_account_from_db(app: tauri::AppHandle) -> AppResult<Option<Acc
         }
     };
 
+    // [FIX] Check if ANY account in our index has this refresh token
+    // If yes, the account already exists - no need to import
+    // If no, and current account is different, user may have deleted it - don't resurrect!
+    let all_accounts = modules::account::list_accounts()
+        .await
+        .unwrap_or_default();
+    
+    let existing_account = all_accounts.iter()
+        .find(|acc| acc.token.refresh_token == db_refresh_token);
+    
+    if existing_account.is_some() {
+        // Account with this refresh token already exists in our index
+        return Ok(None);
+    }
+
     // Get current Manager account
     let curr_account = modules::account::get_current_account()
         .map_err(AppError::Account)?;
 
-    // Compare: if refresh token matches, no need to import
-    if let Some(acc) = curr_account {
-        if acc.token.refresh_token == db_refresh_token {
-            // Account unchanged, skip to save API quota
-            return Ok(None);
-        }
-        modules::logger::log_info(&format!(
-            "Account switch detected ({} -> new DB account), syncing...",
-            acc.email
-        ));
-    } else {
-        modules::logger::log_info("New login detected, auto-syncing...");
+    // If we have a current account but no account matches the DB token,
+    // it means the DB has a different account than what we have.
+    // This could be:
+    // 1. User logged into a NEW account in IDE -> should import
+    // 2. User deleted account from Manager but IDE still has it -> should NOT import
+    //
+    // We can't distinguish these cases, so we only auto-import if there's NO current account
+    if curr_account.is_some() {
+        modules::logger::log_info(
+            "Auto-sync: DB has different account but Manager has active account, skipping to prevent resurrection"
+        );
+        return Ok(None);
     }
+
+    // No current account - safe to import from IDE DB
+    modules::logger::log_info("New login detected (no current account), auto-syncing...");
 
     // Execute full import
     let account = import_from_db(app).await?;

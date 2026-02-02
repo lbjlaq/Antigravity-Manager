@@ -11,7 +11,6 @@ import {
   Users, 
   Ban, 
   CheckCircle,
-  Clock,
   TrendingUp,
   Zap,
   RefreshCw,
@@ -19,6 +18,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/shared/lib';
 import { useSecurityStats, useIpTokenStats } from '@/features/security/api';
+import type { IpTokenStats } from '@/entities/security';
 import { Skeleton } from '@/shared/ui';
 import { formatCompactNumber } from '@/shared/lib/format';
 
@@ -160,7 +160,7 @@ const IpTokenTable = memo(function IpTokenTable({
   }
 
   // Calculate max for progress bars
-  const maxTokens = Math.max(...ipStats.map(s => s.totalTokens));
+  const maxTokens = Math.max(...ipStats.map((s: IpTokenStats) => s.totalTokens));
 
   return (
     <div className="overflow-hidden rounded-lg border border-white/10">
@@ -176,7 +176,7 @@ const IpTokenTable = memo(function IpTokenTable({
       {/* Rows */}
       <div className="divide-y divide-white/5">
         <AnimatePresence mode="popLayout">
-          {ipStats.slice(0, 15).map((stat, index) => {
+          {ipStats.slice(0, 15).map((stat: IpTokenStats, index: number) => {
             const progressWidth = maxTokens > 0 ? (stat.totalTokens / maxTokens) * 100 : 0;
             
             return (
@@ -334,7 +334,7 @@ export const StatsTab = memo(function StatsTab() {
           </div>
           
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
-            {stats.topBlockedIps.slice(0, 10).map(([ip, count], index) => (
+            {stats.topBlockedIps.slice(0, 10).map(([ip, count]: [string, number], index: number) => (
               <motion.div
                 key={ip}
                 initial={{ opacity: 0, scale: 0.95 }}

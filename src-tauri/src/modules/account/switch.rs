@@ -13,9 +13,7 @@ pub async fn switch_account(
     use crate::modules::oauth;
 
     let index = {
-        let _lock = ACCOUNT_INDEX_LOCK
-            .lock()
-            .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+        let _lock = ACCOUNT_INDEX_LOCK.lock();
         load_account_index()?
     };
 
@@ -60,9 +58,7 @@ pub async fn switch_account(
 
     // 5. Update tool internal state
     {
-        let _lock = ACCOUNT_INDEX_LOCK
-            .lock()
-            .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+        let _lock = ACCOUNT_INDEX_LOCK.lock();
         let mut index = load_account_index()?;
         index.current_account_id = Some(account_id.to_string());
         save_account_index(&index)?;

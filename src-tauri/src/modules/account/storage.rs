@@ -172,9 +172,7 @@ pub fn get_current_account() -> Result<Option<Account>, String> {
 
 /// Set current active account ID.
 pub fn set_current_account_id(account_id: &str) -> Result<(), String> {
-    let _lock = super::crud::ACCOUNT_INDEX_LOCK
-        .lock()
-        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+    let _lock = super::crud::ACCOUNT_INDEX_LOCK.lock();
     let mut index = load_account_index()?;
     index.current_account_id = Some(account_id.to_string());
     save_account_index(&index)

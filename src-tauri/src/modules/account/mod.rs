@@ -15,7 +15,7 @@
 mod crud;
 mod device;
 mod quota;
-mod storage;
+pub mod storage;  // [FIX] Made public for TokenManager to check account index
 mod switch;
 
 // Re-export public API

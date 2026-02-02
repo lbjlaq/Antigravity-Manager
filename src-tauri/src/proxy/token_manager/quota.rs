@@ -4,12 +4,35 @@ use super::manager::TokenManager;
 use std::path::PathBuf;
 
 impl TokenManager {
+    /// [FIX] Check if account exists in index by extracting ID from path
+    fn account_exists_by_path(account_path: &PathBuf) -> bool {
+        let account_id = account_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        
+        if account_id.is_empty() {
+            return false;
+        }
+        
+        match crate::modules::account::storage::load_account_index() {
+            Ok(index) => index.accounts.iter().any(|s| s.id == account_id),
+            Err(_) => false,
+        }
+    }
+
     /// Check if account should be quota protected
     pub(crate) async fn check_and_protect_quota(
         &self,
         account_json: &mut serde_json::Value,
         account_path: &PathBuf,
     ) -> bool {
+        // [FIX] Check if account exists in index before any operations
+        if !Self::account_exists_by_path(account_path) {
+            tracing::warn!("check_and_protect_quota: Account {:?} not in index, skipping", account_path);
+            return false;
+        }
+
         let config = match crate::modules::config::load_app_config() {
             Ok(cfg) => cfg.quota_protection,
             Err(_) => return false,
@@ -147,6 +170,12 @@ impl TokenManager {
         threshold: i32,
         model_name: &str,
     ) -> Result<bool, String> {
+        // [FIX] Check if account exists in index before writing
+        if !Self::account_exists_by_path(account_path) {
+            tracing::warn!("trigger_quota_protection: Account {} not in index, skipping", account_id);
+            return Ok(false);
+        }
+
         if account_json.get("protected_models").is_none() {
             account_json["protected_models"] = serde_json::Value::Array(Vec::new());
         }
@@ -189,6 +218,12 @@ impl TokenManager {
         quota: &serde_json::Value,
         config: &crate::models::QuotaProtectionConfig,
     ) -> bool {
+        // [FIX] Check if account exists in index before writing
+        if !Self::account_exists_by_path(account_path) {
+            tracing::warn!("check_and_restore_quota: Account {:?} not in index, skipping", account_path);
+            return false;
+        }
+
         tracing::info!(
             "正在迁移账号 {} 从全局配额保护模式至模型级保护模式",
             account_json
@@ -246,6 +281,12 @@ impl TokenManager {
         account_path: &PathBuf,
         model_name: &str,
     ) -> Result<bool, String> {
+        // [FIX] Check if account exists in index before writing
+        if !Self::account_exists_by_path(account_path) {
+            tracing::warn!("restore_quota_protection: Account {} not in index, skipping", account_id);
+            return Ok(false);
+        }
+
         if let Some(arr) = account_json
             .get_mut("protected_models")
             .and_then(|v| v.as_array_mut())

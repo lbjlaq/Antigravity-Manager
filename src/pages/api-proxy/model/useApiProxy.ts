@@ -170,12 +170,14 @@ export function useApiProxy() {
             mode: 'Balance',
             max_wait_seconds: 60,
             selected_accounts: [],
-            selected_models: {}
+            selected_models: {},
+            strict_selected: false
         };
         const newScheduling: StickySessionConfig = {
             ...currentScheduling,
             ...updates,
-            selected_accounts: updates.selected_accounts ?? currentScheduling.selected_accounts ?? []
+            selected_accounts: updates.selected_accounts ?? currentScheduling.selected_accounts ?? [],
+            strict_selected: updates.strict_selected ?? currentScheduling.strict_selected ?? false
         };
         const newAppConfig = {
             ...appConfig,

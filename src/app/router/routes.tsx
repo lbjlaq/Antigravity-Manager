@@ -15,6 +15,7 @@ import { ApiProxyPage } from '@/pages/api-proxy';
 import { SecurityPage } from '@/pages/security';
 import { TokenStatsPage } from '@/pages/token-stats';
 import { MonitorPage } from '@/pages/monitor';
+import { LogsPage } from '@/pages/logs';
 
 // Lazy loaded pages (heavy components)
 const ConsolePage = lazy(() => import('@/pages/console/ui/ConsolePage'));
@@ -46,6 +47,10 @@ export const router = createBrowserRouter([
       {
         path: 'monitor',
         element: <MonitorPage />,
+      },
+      {
+        path: 'logs',
+        element: <LogsPage />,
       },
       {
         path: 'token-stats',

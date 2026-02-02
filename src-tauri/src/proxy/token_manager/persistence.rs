@@ -3,12 +3,26 @@
 use super::manager::{truncate_reason, TokenManager};
 
 impl TokenManager {
+    /// [FIX] Check if account exists in index before any file operation
+    fn account_exists_in_index(account_id: &str) -> bool {
+        match crate::modules::account::storage::load_account_index() {
+            Ok(index) => index.accounts.iter().any(|s| s.id == account_id),
+            Err(_) => false,
+        }
+    }
+
     /// Save project ID to account file
     pub(crate) async fn save_project_id(
         &self,
         account_id: &str,
         project_id: &str,
     ) -> Result<(), String> {
+        // [FIX] Check if account exists in index before saving
+        if !Self::account_exists_in_index(account_id) {
+            tracing::warn!("save_project_id: Account {} not in index, skipping", account_id);
+            return Ok(());
+        }
+
         let entry = self.tokens.get(account_id).ok_or("账号不存在")?;
 
         let path = &entry.account_path;
@@ -35,6 +49,12 @@ impl TokenManager {
         account_id: &str,
         token_response: &crate::modules::oauth::TokenResponse,
     ) -> Result<(), String> {
+        // [FIX] Check if account exists in index before saving
+        if !Self::account_exists_in_index(account_id) {
+            tracing::warn!("save_refreshed_token: Account {} not in index, skipping", account_id);
+            return Ok(());
+        }
+
         let entry = self.tokens.get(account_id).ok_or("账号不存在")?;
 
         let path = &entry.account_path;
@@ -68,6 +88,13 @@ impl TokenManager {
         account_id: &str,
         reason: &str,
     ) -> Result<(), String> {
+        // [FIX] Check if account exists in index before saving
+        if !Self::account_exists_in_index(account_id) {
+            tracing::warn!("disable_account: Account {} not in index, skipping", account_id);
+            self.tokens.remove(account_id);
+            return Ok(());
+        }
+
         let path = if let Some(entry) = self.tokens.get(account_id) {
             entry.account_path.clone()
         } else {
@@ -115,6 +142,13 @@ impl TokenManager {
         block_until: i64,
         reason: &str,
     ) -> Result<(), String> {
+        // [FIX] Check if account exists in index before saving
+        if !Self::account_exists_in_index(account_id) {
+            tracing::warn!("set_validation_block: Account {} not in index, skipping", account_id);
+            self.tokens.remove(account_id);
+            return Ok(());
+        }
+
         let path = if let Some(entry) = self.tokens.get(account_id) {
             entry.account_path.clone()
         } else {
@@ -221,6 +255,27 @@ impl TokenManager {
 
     /// Add a new account
     pub async fn add_account(&self, email: &str, refresh_token: &str) -> Result<(), String> {
+        // [FIX] Check if account exists in the index before adding
+        // This prevents resurrection of deleted accounts via persist_token race condition
+        let index = crate::modules::account::storage::load_account_index()
+            .map_err(|e| format!("Failed to load account index: {}", e))?;
+        
+        // If account with this email was recently deleted (not in index), skip
+        let email_exists = index.accounts.iter().any(|s| s.email == email);
+        if !email_exists {
+            // Check if we're trying to add a completely new account or resurrect a deleted one
+            // If email is not in index and we have no token for it, this is a new account - allow
+            // If email is not in index but we had a token, this might be resurrection - check carefully
+            let had_token = self.tokens.iter().any(|entry| entry.value().email == email);
+            if had_token {
+                tracing::warn!(
+                    "[FIX] Skipping add_account for deleted email: {} (token still in memory)",
+                    email
+                );
+                return Ok(());
+            }
+        }
+
         let token_info = crate::modules::oauth::refresh_access_token(refresh_token)
             .await
             .map_err(|e| format!("Invalid refresh token: {}", e))?;

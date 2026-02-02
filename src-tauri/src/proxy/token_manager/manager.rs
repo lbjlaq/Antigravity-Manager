@@ -227,6 +227,18 @@ impl TokenManager {
 
     /// Report account needing validation (Gemini 403 VALIDATION_REQUIRED)
     pub fn report_account_validation_required(&self, account_id: &str, verification_url: &str) {
+        // [FIX] Check if account exists in index before writing
+        let exists = match crate::modules::account::storage::load_account_index() {
+            Ok(index) => index.accounts.iter().any(|s| s.id == account_id),
+            Err(_) => false,
+        };
+        
+        if !exists {
+            tracing::warn!("report_account_validation_required: Account {} not in index, skipping", account_id);
+            self.tokens.remove(account_id);
+            return;
+        }
+
         if let Some(mut token) = self.tokens.get_mut(account_id) {
             token.verification_needed = true;
             token.verification_url = Some(verification_url.to_string());
@@ -346,6 +358,46 @@ impl TokenManager {
     /// Get current preferred account ID
     pub async fn get_preferred_account(&self) -> Option<String> {
         self.preferred_account_id.read().await.clone()
+    }
+
+    // =========================================================================
+    // [FIX] Account Removal - Prevent resurrection after delete
+    // =========================================================================
+
+    /// Remove account from TokenManager completely
+    /// 
+    /// This must be called BEFORE deleting the account file to prevent
+    /// race conditions where persist_token() could recreate the account.
+    pub fn remove_account(&self, account_id: &str) {
+        // Remove from token pool
+        if self.tokens.remove(account_id).is_some() {
+            tracing::info!("🗑️ Removed account {} from token pool", account_id);
+        }
+
+        // Remove health score
+        self.health_scores.remove(account_id);
+
+        // Remove from circuit breaker
+        self.circuit_breaker.remove(account_id);
+
+        // Remove active request counter
+        self.active_requests.remove(account_id);
+
+        // Clear any session bindings to this account
+        self.session_accounts.retain(|_, (aid, _)| aid != account_id);
+    }
+
+    /// Remove multiple accounts from TokenManager
+    pub fn remove_accounts(&self, account_ids: &[String]) {
+        for account_id in account_ids {
+            self.remove_account(account_id);
+        }
+        tracing::info!("🗑️ Batch removed {} accounts from token pool", account_ids.len());
+    }
+
+    /// Check if account exists in token pool
+    pub fn has_account(&self, account_id: &str) -> bool {
+        self.tokens.contains_key(account_id)
     }
 }
 

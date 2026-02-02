@@ -7,7 +7,7 @@ import {
   LayoutDashboard, 
   Users, 
   Globe, 
-  Activity, 
+  ScrollText, 
   Settings, 
   Sun, 
   Moon,
@@ -54,7 +54,7 @@ const Navbar = function Navbar() {
     { path: '/', label: t('nav.dashboard'), icon: LayoutDashboard },
     { path: '/accounts', label: t('nav.accounts'), icon: Users },
     { path: '/api-proxy', label: t('nav.proxy'), icon: Globe },
-    { path: '/monitor', label: t('nav.call_records'), icon: Activity },
+    { path: '/logs', label: t('nav.logs', 'Logs'), icon: ScrollText },
   ];
 
   // Secondary nav items (in dropdown) - Console only if enabled

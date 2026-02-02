@@ -9,6 +9,8 @@ export {
   useAccessLogs,
   useSecurityConfig,
   useSecuritySettings, // Legacy alias
+  useSecurityStats,
+  useIpTokenStats,
 } from './queries';
 
 // Re-export types from entities

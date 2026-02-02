@@ -1,9 +1,9 @@
 //! CRUD operations for accounts.
 
 use std::fs;
-use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use uuid::Uuid;
 
 use super::storage::{
@@ -11,7 +11,7 @@ use super::storage::{
 };
 use crate::models::{Account, AccountSummary, TokenData};
 
-/// Global account write lock to prevent corruption during concurrent operations.
+/// Global lock for account index mutations.
 pub static ACCOUNT_INDEX_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 /// Add account.
@@ -20,9 +20,7 @@ pub fn add_account(
     name: Option<String>,
     token: TokenData,
 ) -> Result<Account, String> {
-    let _lock = ACCOUNT_INDEX_LOCK
-        .lock()
-        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+    let _lock = ACCOUNT_INDEX_LOCK.lock();
     let mut index = load_account_index()?;
 
     if index.accounts.iter().any(|s| s.email == email) {
@@ -60,9 +58,7 @@ pub fn upsert_account(
     name: Option<String>,
     token: TokenData,
 ) -> Result<Account, String> {
-    let _lock = ACCOUNT_INDEX_LOCK
-        .lock()
-        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+    let _lock = ACCOUNT_INDEX_LOCK.lock();
     let mut index = load_account_index()?;
 
     let existing_account_id = index
@@ -122,9 +118,7 @@ pub fn upsert_account(
 
 /// Delete account.
 pub fn delete_account(account_id: &str) -> Result<(), String> {
-    let _lock = ACCOUNT_INDEX_LOCK
-        .lock()
-        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+    let _lock = ACCOUNT_INDEX_LOCK.lock();
     let mut index = load_account_index()?;
 
     let original_len = index.accounts.len();
@@ -153,9 +147,7 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
 
 /// Batch delete accounts (atomic index operation).
 pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
-    let _lock = ACCOUNT_INDEX_LOCK
-        .lock()
-        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+    let _lock = ACCOUNT_INDEX_LOCK.lock();
     let mut index = load_account_index()?;
 
     let accounts_dir = get_accounts_dir()?;
@@ -182,9 +174,7 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
 
 /// Reorder account list.
 pub fn reorder_accounts(account_ids: &[String]) -> Result<(), String> {
-    let _lock = ACCOUNT_INDEX_LOCK
-        .lock()
-        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+    let _lock = ACCOUNT_INDEX_LOCK.lock();
     let mut index = load_account_index()?;
 
     let id_to_summary: std::collections::HashMap<_, _> = index
