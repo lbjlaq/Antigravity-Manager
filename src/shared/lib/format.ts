@@ -37,9 +37,10 @@ export function formatBytes(bytes: number): string {
 
 /**
  * Get color based on quota percentage
+ * Thresholds: < 20% = error (red), 20-60% = warning (yellow), > 60% = success (green)
  */
 export function getQuotaColor(percentage: number): string {
-  if (percentage >= 50) return 'success';
+  if (percentage > 60) return 'success';
   if (percentage >= 20) return 'warning';
   return 'error';
 }

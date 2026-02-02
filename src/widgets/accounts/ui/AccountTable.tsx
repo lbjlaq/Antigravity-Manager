@@ -280,7 +280,7 @@ function SortableAccountRow({
                         
                         const timeRemaining = formatTimeRemaining(m.reset_time);
                         const isLow = m.percentage < 20;
-                        const isMedium = m.percentage >= 20 && m.percentage < 50;
+                        const isMedium = m.percentage >= 20 && m.percentage <= 60;
                         
                         return (
                             <div 
