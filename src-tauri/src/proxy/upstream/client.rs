@@ -55,12 +55,18 @@ impl UpstreamClient {
 
     /// 内部构建 HTTP Client 的逻辑
     fn build_http_client(proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>) -> Client {
+        // [PERF] Connection pool size configurable via env, default 64 for high-load scenarios
+        let pool_size: usize = std::env::var("ABV_POOL_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(64);
+
         let mut builder = Client::builder()
-            // Connection settings (优化连接复用，减少建立开销)
+            // Connection settings (optimized for high concurrency)
             .connect_timeout(Duration::from_secs(20))
-            .pool_max_idle_per_host(16)                  // 每主机最多 16 个空闲连接
-            .pool_idle_timeout(Duration::from_secs(90))  // 空闲连接保持 90 秒
-            .tcp_keepalive(Duration::from_secs(60))      // TCP 保活探测 60 秒
+            .pool_max_idle_per_host(pool_size)             // [PERF] Increased from 16 to 64
+            .pool_idle_timeout(Duration::from_secs(90))    // Keep idle connections for 90s
+            .tcp_keepalive(Duration::from_secs(60))        // TCP keepalive probe every 60s
             .timeout(Duration::from_secs(600))
             .user_agent(crate::constants::USER_AGENT.as_str());
 

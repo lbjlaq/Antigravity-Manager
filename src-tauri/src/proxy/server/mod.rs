@@ -12,7 +12,7 @@ pub mod types;
 pub use types::AppState;
 
 use crate::proxy::TokenManager;
-use std::collections::HashSet;
+use dashmap::DashSet;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -24,39 +24,38 @@ use tracing::{debug, error};
 // [FIX] Global queue for pending account reloads
 // When update_account_quota updates protected_models, account ID is added here
 // TokenManager checks and processes these accounts in get_token
+// 
+// [PERF] Using DashSet instead of std::sync::RwLock to avoid blocking tokio workers
 // =============================================================================
 
-static PENDING_RELOAD_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
+static PENDING_RELOAD_ACCOUNTS: OnceLock<DashSet<String>> = OnceLock::new();
 
-fn get_pending_reload_accounts() -> &'static std::sync::RwLock<HashSet<String>> {
-    PENDING_RELOAD_ACCOUNTS.get_or_init(|| std::sync::RwLock::new(HashSet::new()))
+fn get_pending_reload_accounts() -> &'static DashSet<String> {
+    PENDING_RELOAD_ACCOUNTS.get_or_init(DashSet::new)
 }
 
 /// Trigger account reload signal (called by update_account_quota)
 pub fn trigger_account_reload(account_id: &str) {
-    if let Ok(mut pending) = get_pending_reload_accounts().write() {
-        pending.insert(account_id.to_string());
-        tracing::debug!(
-            "[Quota] Queued account {} for TokenManager reload",
-            account_id
-        );
-    }
+    let pending = get_pending_reload_accounts();
+    pending.insert(account_id.to_string());
+    tracing::debug!(
+        "[Quota] Queued account {} for TokenManager reload",
+        account_id
+    );
 }
 
 /// Get and clear pending reload accounts (called by TokenManager)
 pub fn take_pending_reload_accounts() -> Vec<String> {
-    if let Ok(mut pending) = get_pending_reload_accounts().write() {
-        let accounts: Vec<String> = pending.drain().collect();
-        if !accounts.is_empty() {
-            tracing::debug!(
-                "[Quota] Taking {} pending accounts for reload",
-                accounts.len()
-            );
-        }
-        accounts
-    } else {
-        Vec::new()
+    let pending = get_pending_reload_accounts();
+    let accounts: Vec<String> = pending.iter().map(|r| r.clone()).collect();
+    if !accounts.is_empty() {
+        pending.clear();
+        tracing::debug!(
+            "[Quota] Taking {} pending accounts for reload",
+            accounts.len()
+        );
     }
+    accounts
 }
 
 /// Axum server instance
@@ -308,18 +307,52 @@ impl AxumServer {
             token_manager: token_manager.clone(),
         };
 
+        // [PERF] Connection limiter to prevent resource exhaustion under high load
+        // Default: 10K concurrent connections (configurable via ABV_MAX_CONNECTIONS env)
+        let max_connections: usize = std::env::var("ABV_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10_000);
+        let connection_semaphore = Arc::new(tokio::sync::Semaphore::new(max_connections));
+        tracing::info!(
+            "Connection limiter initialized: max {} concurrent connections",
+            max_connections
+        );
+
         // Start server in a new task
         let handle = tokio::spawn(async move {
             use hyper::server::conn::http1;
-            use hyper_util::rt::TokioIo;
+            use hyper::server::conn::http2;
+            use hyper_util::rt::{TokioExecutor, TokioIo};
             use hyper_util::service::TowerToHyperService;
+
+            // [PERF] Track active connections for monitoring
+            let active_connections = Arc::new(AtomicUsize::new(0));
 
             loop {
                 tokio::select! {
                     res = listener.accept() => {
                         match res {
                             Ok((stream, remote_addr)) => {
+                                // [PERF] Acquire semaphore permit before spawning
+                                let permit = match connection_semaphore.clone().try_acquire_owned() {
+                                    Ok(p) => p,
+                                    Err(_) => {
+                                        // Connection limit reached - reject gracefully
+                                        tracing::warn!(
+                                            "Connection limit reached ({} active), rejecting new connection from {}",
+                                            active_connections.load(std::sync::atomic::Ordering::Relaxed),
+                                            remote_addr
+                                        );
+                                        // Drop stream immediately to reject connection
+                                        drop(stream);
+                                        continue;
+                                    }
+                                };
+
                                 let io = TokioIo::new(stream);
+                                let active_count = active_connections.clone();
+                                active_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                                 // [FIX] Inject ConnectInfo for real IP extraction
                                 use tower::util::ServiceExt;
@@ -332,13 +365,23 @@ impl AxumServer {
                                 let service = TowerToHyperService::new(app_with_info);
 
                                 tokio::task::spawn(async move {
-                                    if let Err(err) = http1::Builder::new()
-                                        .serve_connection(io, service)
-                                        .with_upgrades()
-                                        .await
-                                    {
+                                    // [PERF] Try HTTP/2 first via auto-detection, fallback to HTTP/1.1
+                                    // Using hyper's auto HTTP version detection
+                                    let result = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+                                        .http1()
+                                        .keep_alive(true)
+                                        .http2()
+                                        .max_concurrent_streams(250)
+                                        .serve_connection_with_upgrades(io, service)
+                                        .await;
+
+                                    if let Err(err) = result {
                                         debug!("Connection handler finished or errored: {:?}", err);
                                     }
+
+                                    // [PERF] Release connection count and permit
+                                    active_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                                    drop(permit);
                                 });
                             }
                             Err(e) => {
