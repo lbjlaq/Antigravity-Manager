@@ -20,7 +20,7 @@ mod switch;
 
 // Re-export public API
 pub use crud::{
-    add_account, delete_account, delete_accounts, reorder_accounts, upsert_account,
+    add_account, delete_account, delete_accounts, export_accounts_by_ids, reorder_accounts, upsert_account,
 };
 pub use device::{
     apply_device_profile, bind_device_profile, bind_device_profile_with_profile,

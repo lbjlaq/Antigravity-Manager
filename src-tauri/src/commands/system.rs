@@ -30,6 +30,22 @@ pub async fn clear_log_cache() -> AppResult<()> {
         .map_err(AppError::Internal)
 }
 
+/// Clear Antigravity application cache
+/// Used to fix login failures, version validation errors, etc.
+#[tauri::command]
+pub async fn clear_antigravity_cache() -> Result<crate::modules::cache::ClearResult, String> {
+    crate::modules::cache::clear_antigravity_cache(None)
+}
+
+/// Get Antigravity cache paths list (for preview)
+#[tauri::command]
+pub async fn get_antigravity_cache_paths() -> Result<Vec<String>, String> {
+    Ok(crate::modules::cache::get_existing_cache_paths()
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect())
+}
+
 /// Open data folder in file explorer
 #[tauri::command]
 pub async fn open_data_folder() -> AppResult<()> {

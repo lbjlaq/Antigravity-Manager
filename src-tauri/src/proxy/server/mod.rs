@@ -12,11 +12,52 @@ pub mod types;
 pub use types::AppState;
 
 use crate::proxy::TokenManager;
+use std::collections::HashSet;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
+
+// =============================================================================
+// [FIX] Global queue for pending account reloads
+// When update_account_quota updates protected_models, account ID is added here
+// TokenManager checks and processes these accounts in get_token
+// =============================================================================
+
+static PENDING_RELOAD_ACCOUNTS: OnceLock<std::sync::RwLock<HashSet<String>>> = OnceLock::new();
+
+fn get_pending_reload_accounts() -> &'static std::sync::RwLock<HashSet<String>> {
+    PENDING_RELOAD_ACCOUNTS.get_or_init(|| std::sync::RwLock::new(HashSet::new()))
+}
+
+/// Trigger account reload signal (called by update_account_quota)
+pub fn trigger_account_reload(account_id: &str) {
+    if let Ok(mut pending) = get_pending_reload_accounts().write() {
+        pending.insert(account_id.to_string());
+        tracing::debug!(
+            "[Quota] Queued account {} for TokenManager reload",
+            account_id
+        );
+    }
+}
+
+/// Get and clear pending reload accounts (called by TokenManager)
+pub fn take_pending_reload_accounts() -> Vec<String> {
+    if let Ok(mut pending) = get_pending_reload_accounts().write() {
+        let accounts: Vec<String> = pending.drain().collect();
+        if !accounts.is_empty() {
+            tracing::debug!(
+                "[Quota] Taking {} pending accounts for reload",
+                accounts.len()
+            );
+        }
+        accounts
+    } else {
+        Vec::new()
+    }
+}
 
 /// Axum server instance
 #[derive(Clone)]
@@ -90,6 +131,14 @@ impl AxumServer {
         tracing::info!("[Security] IP filtering config hot-reloaded");
     }
 
+    /// Update User-Agent configuration (hot-reload)
+    pub async fn update_user_agent(&self, config: &crate::proxy::config::ProxyConfig) {
+        self.upstream
+            .set_user_agent_override(config.user_agent_override.clone())
+            .await;
+        tracing::info!("User-Agent config hot-reloaded: {:?}", config.user_agent_override);
+    }
+
     /// Set running state
     pub async fn set_running(&self, running: bool) {
         let mut r = self.is_running.write().await;
@@ -105,6 +154,7 @@ impl AxumServer {
         custom_mapping: std::collections::HashMap<String, String>,
         _request_timeout: u64,
         upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
+        user_agent_override: Option<String>,
         security_config: crate::proxy::ProxySecurityConfig,
         zai_config: crate::proxy::ZaiConfig,
         monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
@@ -128,6 +178,11 @@ impl AxumServer {
         let upstream_client = Arc::new(crate::proxy::upstream::client::UpstreamClient::new(Some(
             upstream_proxy.clone(),
         )));
+
+        // Initialize User-Agent override if configured
+        if user_agent_override.is_some() {
+            upstream_client.set_user_agent_override(user_agent_override).await;
+        }
 
         let state = AppState {
             token_manager: token_manager.clone(),

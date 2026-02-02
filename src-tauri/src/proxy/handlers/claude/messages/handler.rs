@@ -421,13 +421,20 @@ async fn handle_google_flow(
         // Error handling
         let status_code = status.as_u16();
         last_status = status;
-        let error_text = response.text().await.unwrap_or_else(|_| format!("HTTP {}", status));
+
+        // [FIX] Extract Retry-After header BEFORE consuming response body
+        let retry_after = response.headers()
+            .get("Retry-After")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+
+        let error_text = response.text().await.unwrap_or_else(|_| format!("HTTP {}", status_code));
         last_error = format!("HTTP {}: {}", status_code, error_text);
         debug!("[{}] Upstream Error Response: {}", trace_id, error_text);
 
         // Handle rate limiting
         if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
-            token_manager.mark_rate_limited_async(&email, status_code, None, &error_text, Some(&request_with_mapped.model)).await;
+            token_manager.mark_rate_limited_async(&email, status_code, retry_after.as_deref(), &error_text, Some(&request_with_mapped.model)).await;
         }
 
         if status_code == 402 || status_code == 429 || status_code == 401 {

@@ -294,6 +294,7 @@ pub fn run() {
             commands::account::switch_account,
             commands::account::get_current_account,
             commands::account::toggle_proxy_status,
+            commands::account::export_accounts,
             // Device fingerprint
             commands::device::get_device_profiles,
             commands::device::bind_device_profile,
@@ -330,6 +331,8 @@ pub fn run() {
             commands::system::save_text_file,
             commands::system::read_text_file,
             commands::system::clear_log_cache,
+            commands::system::clear_antigravity_cache,
+            commands::system::get_antigravity_cache_paths,
             commands::system::open_data_folder,
             commands::system::get_data_dir_path,
             commands::system::show_main_window,

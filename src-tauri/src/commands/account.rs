@@ -3,7 +3,7 @@
 //! CRUD operations for user accounts
 
 use crate::error::{AppError, AppResult};
-use crate::models::{Account, QuotaData};
+use crate::models::{Account, AccountExportResponse, QuotaData};
 use crate::modules;
 use tauri::Manager;
 
@@ -93,7 +93,10 @@ pub async fn delete_accounts(
 
 /// Reorder accounts list
 #[tauri::command]
-pub async fn reorder_accounts(account_ids: Vec<String>) -> AppResult<()> {
+pub async fn reorder_accounts(
+    app: tauri::AppHandle,
+    account_ids: Vec<String>,
+) -> AppResult<()> {
     modules::logger::log_info(&format!(
         "Account reorder request: {} accounts", 
         account_ids.len()
@@ -103,7 +106,13 @@ pub async fn reorder_accounts(account_ids: Vec<String>) -> AppResult<()> {
         .map_err(|e| {
             modules::logger::log_error(&format!("Account reorder failed: {}", e));
             AppError::Account(e)
-        })
+        })?;
+
+    // [FIX] Reload proxy accounts after reorder
+    let proxy_state = app.state::<crate::commands::proxy::ProxyServiceState>();
+    let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
+
+    Ok(())
 }
 
 /// Switch to a different account
@@ -146,6 +155,12 @@ pub async fn get_current_account() -> AppResult<Option<Account>> {
         modules::logger::log_info("   No current account set");
         Ok(None)
     }
+}
+
+/// Export accounts with refresh_token (for backup/migration)
+#[tauri::command]
+pub async fn export_accounts(account_ids: Vec<String>) -> Result<AccountExportResponse, String> {
+    modules::account::export_accounts_by_ids(&account_ids)
 }
 
 /// Toggle account proxy status (enable/disable for proxy service)

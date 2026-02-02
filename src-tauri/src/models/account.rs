@@ -142,3 +142,16 @@ pub struct DeviceProfileVersion {
     #[serde(default)]
     pub is_current: bool,
 }
+
+/// Account export item for backup/migration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountExportItem {
+    pub email: String,
+    pub refresh_token: String,
+}
+
+/// Account export response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountExportResponse {
+    pub accounts: Vec<AccountExportItem>,
+}

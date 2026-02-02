@@ -216,6 +216,7 @@ pub async fn ensure_admin_server(
             config.custom_mapping.clone(),
             config.request_timeout,
             config.upstream_proxy.clone(),
+            config.user_agent_override.clone(),
             crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
             config.zai.clone(),
             monitor,

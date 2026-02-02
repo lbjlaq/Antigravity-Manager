@@ -82,7 +82,12 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
         }
     }
 
-    save_account(&account)
+    save_account(&account)?;
+
+    // [FIX] Trigger TokenManager account reload signal
+    crate::proxy::server::trigger_account_reload(account_id);
+
+    Ok(())
 }
 
 /// Toggle proxy disabled status for an account.

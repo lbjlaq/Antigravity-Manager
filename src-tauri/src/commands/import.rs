@@ -6,6 +6,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::Account;
 use crate::modules;
 use super::account::internal_refresh_account_quota;
+use tauri::Manager;
 
 // ============================================================================
 // Import Commands
@@ -22,6 +23,10 @@ pub async fn import_v1_accounts(app: tauri::AppHandle) -> AppResult<Vec<Account>
     for mut account in accounts.clone() {
         let _ = internal_refresh_account_quota(&app, &mut account).await;
     }
+
+    // [FIX] Reload proxy accounts after import
+    let proxy_state = app.state::<crate::commands::proxy::ProxyServiceState>();
+    let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
 
     Ok(accounts)
 }
@@ -44,6 +49,10 @@ pub async fn import_from_db(app: tauri::AppHandle) -> AppResult<Account> {
     // Update tray
     crate::modules::tray::update_tray_menus(&app);
 
+    // [FIX] Reload proxy accounts after import
+    let proxy_state = app.state::<crate::commands::proxy::ProxyServiceState>();
+    let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
+
     Ok(account)
 }
 
@@ -65,6 +74,10 @@ pub async fn import_custom_db(app: tauri::AppHandle, path: String) -> AppResult<
 
     // Update tray
     crate::modules::tray::update_tray_menus(&app);
+
+    // [FIX] Reload proxy accounts after import
+    let proxy_state = app.state::<crate::commands::proxy::ProxyServiceState>();
+    let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
 
     Ok(account)
 }

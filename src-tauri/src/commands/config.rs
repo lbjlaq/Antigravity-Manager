@@ -49,6 +49,8 @@ pub async fn save_config(
         instance.axum_server.update_experimental(&config.proxy).await;
         // Update debug logging config
         instance.axum_server.update_debug_logging(&config.proxy).await;
+        // Update User-Agent config
+        instance.axum_server.update_user_agent(&config.proxy).await;
         // Update circuit breaker config
         instance.token_manager.update_circuit_breaker_config(config.circuit_breaker.clone()).await;
         // Update sticky scheduling config

@@ -215,3 +215,27 @@ pub fn reorder_accounts(account_ids: &[String]) -> Result<(), String> {
 
     save_account_index(&index)
 }
+
+/// Export accounts by IDs (for backup/migration)
+pub fn export_accounts_by_ids(account_ids: &[String]) -> Result<crate::models::AccountExportResponse, String> {
+    use crate::models::{AccountExportItem, AccountExportResponse};
+    
+    // Use blocking call since list_accounts is now async
+    let rt = tokio::runtime::Handle::try_current()
+        .map_err(|_| "No tokio runtime available".to_string())?;
+    
+    let accounts = rt.block_on(super::storage::list_accounts())?;
+    
+    let export_items: Vec<AccountExportItem> = accounts
+        .into_iter()
+        .filter(|acc| account_ids.contains(&acc.id))
+        .map(|acc| AccountExportItem {
+            email: acc.email,
+            refresh_token: acc.token.refresh_token,
+        })
+        .collect();
+
+    Ok(AccountExportResponse {
+        accounts: export_items,
+    })
+}
