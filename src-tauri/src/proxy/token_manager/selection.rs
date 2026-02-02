@@ -17,8 +17,9 @@ impl TokenManager {
         session_id: Option<&str>,
         target_model: &str,
     ) -> Result<TokenLease, String> {
-        // [FIX] Reduced timeout from 120s to 5s for faster deadlock detection
-        let timeout_duration = std::time::Duration::from_secs(5);
+        // [FIX] Timeout for deadlock detection - reduced from 120s to 5s
+        const TOKEN_ACQUISITION_TIMEOUT_SECS: u64 = 5;
+        let timeout_duration = std::time::Duration::from_secs(TOKEN_ACQUISITION_TIMEOUT_SECS);
         match tokio::time::timeout(
             timeout_duration,
             self.get_token_internal(quota_group, force_rotate, session_id, target_model),
@@ -26,10 +27,10 @@ impl TokenManager {
         .await
         {
             Ok(result) => result,
-            Err(_) => Err(
-                "Token acquisition timeout (120s) - system too busy or deadlock detected"
-                    .to_string(),
-            ),
+            Err(_) => Err(format!(
+                "Token acquisition timeout ({}s) - system too busy or deadlock detected",
+                TOKEN_ACQUISITION_TIMEOUT_SECS
+            )),
         }
     }
 
@@ -282,6 +283,13 @@ impl TokenManager {
 
         use crate::proxy::sticky_config::SchedulingMode;
 
+        // [FIX] Store original tokens for potential fallback when strict_selected=false
+        let all_tokens_backup = if scheduling.mode == SchedulingMode::Selected && !scheduling.strict_selected {
+            Some(tokens_snapshot.clone())
+        } else {
+            None
+        };
+
         if scheduling.mode == SchedulingMode::Selected {
             let selected_set: HashSet<&String> = scheduling.selected_accounts.iter().collect();
 
@@ -309,22 +317,38 @@ impl TokenManager {
             });
 
             if tokens_snapshot.is_empty() {
-                return Err(format!(
-                    "Selected mode is active but no valid accounts matches the selection for model '{}'.",
-                    target_model
-                ));
+                // [FIX] Handle strict_selected logic
+                if scheduling.strict_selected {
+                    // Strict mode: fail immediately, no fallback
+                    return Err(format!(
+                        "Selected mode (strict) is active but no valid accounts match the selection for model '{}'. No fallback allowed.",
+                        target_model
+                    ));
+                } else if let Some(backup) = all_tokens_backup {
+                    // Non-strict mode: fallback to all available accounts
+                    tracing::warn!(
+                        "🔄 [Selected Mode] No selected accounts available for model '{}', falling back to all {} accounts",
+                        target_model,
+                        backup.len()
+                    );
+                    tokens_snapshot = backup;
+                } else {
+                    return Err(format!(
+                        "Selected mode is active but no valid accounts match the selection for model '{}'.",
+                        target_model
+                    ));
+                }
+            } else {
+                tracing::debug!(
+                    "🎯 [Selected Mode] Using subset of {} accounts for model {}{}",
+                    tokens_snapshot.len(),
+                    target_model,
+                    if scheduling.strict_selected { " (strict)" } else { "" }
+                );
             }
-            tracing::debug!(
-                "🎯 [Selected Mode] Using subset of {} accounts for model {}",
-                tokens_snapshot.len(),
-                target_model
-            );
         }
 
-        // Check quota protection
-        let quota_protection_enabled = crate::modules::config::load_app_config()
-            .map(|cfg| cfg.quota_protection.enabled)
-            .unwrap_or(false);
+        // [FIX] quota_protection_enabled already loaded above (line ~66), reusing value
 
         let total = tokens_snapshot.len();
         let last_used_account_id = if quota_group != "image_gen" {
@@ -446,10 +470,13 @@ impl TokenManager {
                                 );
                                 t.clone()
                             } else {
+                                // [FIX] Use clear_expired_with_buffer instead of clear_all
+                                // This only clears records expiring within 5s, preserving
+                                // long-term QUOTA_EXHAUSTED locks to prevent cascade 429s
                                 tracing::warn!(
-                                    "Buffer delay failed. Executing optimistic reset..."
+                                    "Buffer delay failed. Executing safe optimistic reset (5s buffer)..."
                                 );
-                                self.rate_limit_tracker.clear_all();
+                                let cleared = self.rate_limit_tracker.clear_expired_with_buffer(5);
 
                                 let final_token = tokens_snapshot
                                     .iter()
@@ -457,7 +484,8 @@ impl TokenManager {
 
                                 if let Some(t) = final_token {
                                     tracing::info!(
-                                        "✅ Optimistic reset successful! Using account: {}",
+                                        "✅ Optimistic reset successful! Cleared {} record(s), using account: {}",
+                                        cleared,
                                         t.email
                                     );
                                     t.clone()
@@ -717,7 +745,14 @@ impl TokenManager {
         use crate::proxy::sticky_config::SchedulingMode;
 
         let total = tokens_snapshot.len();
-        let start_idx = self.current_index.fetch_add(1, Ordering::SeqCst) % total;
+        if total == 0 {
+            return None;
+        }
+
+        // [FIX] Safe modulo operation to prevent race condition when pool size changes
+        // Use wrapping arithmetic to handle index overflow gracefully
+        let raw_index = self.current_index.fetch_add(1, Ordering::SeqCst);
+        let start_idx = raw_index % total;
 
         for offset in 0..total {
             let idx = (start_idx + offset) % total;

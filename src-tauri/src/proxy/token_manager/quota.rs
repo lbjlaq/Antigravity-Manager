@@ -169,7 +169,9 @@ impl TokenManager {
             let json_str = serde_json::to_string_pretty(account_json)
                 .map_err(|e| format!("序列化 JSON 失败: {}", e))?;
 
-            std::fs::write(account_path, json_str)
+            // [FIX] Use tokio::fs::write instead of blocking std::fs::write
+            tokio::fs::write(account_path, json_str)
+                .await
                 .map_err(|e| format!("写入文件失败: {}", e))?;
 
             return Ok(true);
@@ -221,7 +223,8 @@ impl TokenManager {
         account_json["protected_models"] = serde_json::Value::Array(protected_list);
 
         if let Ok(json_str) = serde_json::to_string_pretty(account_json) {
-            if let Err(e) = std::fs::write(account_path, json_str) {
+            // [FIX] Use tokio::fs::write instead of blocking std::fs::write
+            if let Err(e) = tokio::fs::write(account_path, json_str).await {
                 tracing::error!(
                     "[check_and_restore_quota] Failed to write account file: {}",
                     e
@@ -258,7 +261,9 @@ impl TokenManager {
                 let json_str = serde_json::to_string_pretty(account_json)
                     .map_err(|e| format!("序列化 JSON 失败: {}", e))?;
 
-                std::fs::write(account_path, json_str)
+                // [FIX] Use tokio::fs::write instead of blocking std::fs::write
+                tokio::fs::write(account_path, json_str)
+                    .await
                     .map_err(|e| format!("写入文件失败: {}", e))?;
                 return Ok(true);
             }

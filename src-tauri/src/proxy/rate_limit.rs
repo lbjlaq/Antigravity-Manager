@@ -622,10 +622,55 @@ impl RateLimitTracker {
         self.limits.remove(account_id).is_some()
     }
 
+    /// [FIX] Clear only expired or nearly-expired rate limit records (optimistic reset)
+    ///
+    /// This is safer than clear_all() - only clears records that have expired or
+    /// will expire within the buffer_seconds threshold. Prevents clearing accounts
+    /// with long QUOTA_EXHAUSTED lockouts.
+    ///
+    /// # Arguments
+    /// * `buffer_seconds` - Also clear records expiring within this many seconds
+    ///
+    /// # Returns
+    /// Number of records cleared
+    pub fn clear_expired_with_buffer(&self, buffer_seconds: u64) -> usize {
+        let now = SystemTime::now();
+        let buffer = Duration::from_secs(buffer_seconds);
+        let threshold = now + buffer;
+        let mut count = 0;
+
+        self.limits.retain(|key, info| {
+            if info.reset_time <= threshold {
+                tracing::debug!(
+                    "🧹 Optimistic reset: Clearing expired/near-expired record for {}",
+                    key
+                );
+                count += 1;
+                false
+            } else {
+                true
+            }
+        });
+
+        if count > 0 {
+            tracing::info!(
+                "🔄 Optimistic reset: Cleared {} expired/near-expired rate limit record(s) (buffer: {}s)",
+                count,
+                buffer_seconds
+            );
+        }
+
+        count
+    }
+
     /// 清除所有限流记录 (乐观重置策略)
     ///
     /// 用于乐观重置机制,当所有账号都被限流但等待时间很短时,
     /// 清除所有限流记录以解决时序竞争条件
+    /// 
+    /// WARNING: This clears ALL records including long-term QUOTA_EXHAUSTED locks.
+    /// Prefer clear_expired_with_buffer() for safer optimistic reset.
+    #[allow(dead_code)]
     pub fn clear_all(&self) {
         let count = self.limits.len();
         self.limits.clear();
