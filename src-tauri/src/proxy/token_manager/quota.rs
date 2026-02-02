@@ -53,7 +53,10 @@ impl TokenManager {
 
         for model in models {
             let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if !config.monitored_models.iter().any(|m| m == name) {
+            // [FIX] Normalize model name to standard ID for proper matching
+            let standard_id = crate::proxy::common::model_mapping::normalize_to_standard_id(name)
+                .unwrap_or_else(|| name.to_string());
+            if !config.monitored_models.iter().any(|m| m == &standard_id) {
                 continue;
             }
 

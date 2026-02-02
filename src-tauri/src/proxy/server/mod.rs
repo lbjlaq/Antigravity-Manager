@@ -73,6 +73,8 @@ pub struct AxumServer {
     pub cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
     pub is_running: Arc<RwLock<bool>>,
     pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
+    /// [FIX] Exposed TokenManager for proxy service reuse
+    pub token_manager: Arc<TokenManager>,
 }
 
 impl AxumServer {
@@ -303,6 +305,7 @@ impl AxumServer {
             cloudflared_state,
             is_running: is_running_state,
             upstream: upstream_client,
+            token_manager: token_manager.clone(),
         };
 
         // Start server in a new task
@@ -315,9 +318,18 @@ impl AxumServer {
                 tokio::select! {
                     res = listener.accept() => {
                         match res {
-                            Ok((stream, _)) => {
+                            Ok((stream, remote_addr)) => {
                                 let io = TokioIo::new(stream);
-                                let service = TowerToHyperService::new(app.clone());
+
+                                // [FIX] Inject ConnectInfo for real IP extraction
+                                use tower::util::ServiceExt;
+                                use hyper::body::Incoming;
+                                let app_with_info = app.clone().map_request(move |mut req: axum::http::Request<Incoming>| {
+                                    req.extensions_mut().insert(axum::extract::ConnectInfo(remote_addr));
+                                    req
+                                });
+
+                                let service = TowerToHyperService::new(app_with_info);
 
                                 tokio::task::spawn(async move {
                                     if let Err(err) = http1::Builder::new()

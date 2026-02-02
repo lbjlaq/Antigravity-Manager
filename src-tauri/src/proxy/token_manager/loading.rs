@@ -7,6 +7,59 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 impl TokenManager {
+    /// Extract earliest reset time from account quota models
+    ///
+    /// Claude models (sonnet/opus) share the same reset time, so we prioritize claude series.
+    /// Returns Unix timestamp (seconds) for sorting comparison.
+    fn extract_earliest_reset_time(&self, account: &serde_json::Value) -> Option<i64> {
+        let models = account
+            .get("quota")
+            .and_then(|q| q.get("models"))
+            .and_then(|m| m.as_array())?;
+
+        let mut earliest_ts: Option<i64> = None;
+
+        // First pass: prioritize Claude models
+        for model in models {
+            let model_name = model.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if !model_name.contains("claude") {
+                continue;
+            }
+
+            if let Some(reset_time_str) = model.get("reset_time").and_then(|r| r.as_str()) {
+                if reset_time_str.is_empty() {
+                    continue;
+                }
+                // Parse ISO 8601 time string to timestamp
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(reset_time_str) {
+                    let ts = dt.timestamp();
+                    if earliest_ts.is_none() || ts < earliest_ts.unwrap() {
+                        earliest_ts = Some(ts);
+                    }
+                }
+            }
+        }
+
+        // Second pass: if no claude model time found, try any model
+        if earliest_ts.is_none() {
+            for model in models {
+                if let Some(reset_time_str) = model.get("reset_time").and_then(|r| r.as_str()) {
+                    if reset_time_str.is_empty() {
+                        continue;
+                    }
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(reset_time_str) {
+                        let ts = dt.timestamp();
+                        if earliest_ts.is_none() || ts < earliest_ts.unwrap() {
+                            earliest_ts = Some(ts);
+                        }
+                    }
+                }
+            }
+        }
+
+        earliest_ts
+    }
+
     /// Load all accounts from the accounts directory
     pub async fn load_accounts(&self) -> Result<usize, String> {
         let accounts_dir = self.data_dir.join("accounts");
@@ -283,10 +336,8 @@ impl TokenManager {
                 .get("verification_url")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            // [FIX] New fields for quota reset and validation blocking
-            reset_time: account
-                .get("reset_time")
-                .and_then(|v| v.as_i64()),
+            // [FIX] Extract reset_time from quota.models (not from root!)
+            reset_time: self.extract_earliest_reset_time(&account),
             validation_blocked: account
                 .get("validation_blocked")
                 .and_then(|v| v.as_bool())

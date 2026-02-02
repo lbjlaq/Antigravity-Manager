@@ -34,6 +34,12 @@ use std::sync::atomic::Ordering;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 
+/// Result type for streaming response that can signal retry needed
+enum StreamingResult {
+    Success(Response),
+    RetryNeeded(String), // Contains error message
+}
+
 /// Handle Claude messages request.
 pub async fn handle_messages(
     State(state): State<AppState>,
@@ -385,7 +391,8 @@ async fn handle_google_flow(
             let context_limit = crate::proxy::mappers::claude::utils::get_context_limit_for_model(&request_with_mapped.model);
 
             if actual_stream {
-                return handle_streaming_response(
+                // [FIX] Handle streaming with retry capability
+                match handle_streaming_response(
                     response,
                     &state,
                     &request,
@@ -401,9 +408,15 @@ async fn handle_google_flow(
                     client_wants_stream,
                     config.request_type.clone(),
                     attempt,
-                    &mut last_error,
                 )
-                .await;
+                .await
+                {
+                    StreamingResult::Success(resp) => return resp,
+                    StreamingResult::RetryNeeded(err) => {
+                        last_error = err;
+                        continue; // Retry with different account
+                    }
+                }
             } else {
                 return handle_non_streaming_response(
                     response,
@@ -431,6 +444,22 @@ async fn handle_google_flow(
         let error_text = response.text().await.unwrap_or_else(|_| format!("HTTP {}", status_code));
         last_error = format!("HTTP {}: {}", status_code, error_text);
         debug!("[{}] Upstream Error Response: {}", trace_id, error_text);
+
+        // [FIX] Debug logging for upstream response errors
+        if debug_logger::is_enabled(&debug_cfg) {
+            let payload = json!({
+                "kind": "upstream_response_error",
+                "protocol": "anthropic",
+                "trace_id": trace_id,
+                "original_model": request.model,
+                "mapped_model": request_with_mapped.model,
+                "request_type": config.request_type,
+                "attempt": attempt,
+                "status": status_code,
+                "error_text": error_text,
+            });
+            debug_logger::write_debug_payload(&debug_cfg, Some(&trace_id), "upstream_response_error", &payload).await;
+        }
 
         // Handle rate limiting
         if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
@@ -507,8 +536,7 @@ async fn handle_streaming_response(
     client_wants_stream: bool,
     request_type: String,
     attempt: usize,
-    last_error: &mut String,
-) -> Response {
+) -> StreamingResult {
     let meta = json!({
         "protocol": "anthropic",
         "trace_id": trace_id,
@@ -542,7 +570,6 @@ async fn handle_streaming_response(
 
     // Peek first chunk
     let mut first_data_chunk = None;
-    let mut retry_this_account = false;
 
     loop {
         match tokio::time::timeout(std::time::Duration::from_secs(60), claude_stream.next()).await {
@@ -552,31 +579,28 @@ async fn handle_streaming_response(
                 }
                 let text = String::from_utf8_lossy(&bytes);
                 if text.trim().starts_with(':') {
+                    debug!("[{}] Skipping peek heartbeat: {}", trace_id, text.trim());
                     continue;
                 }
                 first_data_chunk = Some(bytes);
                 break;
             }
             Ok(Some(Err(e))) => {
-                *last_error = format!("Stream error during peek: {}", e);
-                retry_this_account = true;
-                break;
+                // [FIX] Signal retry instead of returning 503
+                tracing::warn!("[{}] Stream error during peek: {}, retrying...", trace_id, e);
+                return StreamingResult::RetryNeeded(format!("Stream error during peek: {}", e));
             }
             Ok(None) => {
-                *last_error = "Empty response stream during peek".to_string();
-                retry_this_account = true;
-                break;
+                // [FIX] Signal retry instead of returning 503
+                tracing::warn!("[{}] Stream ended during peek (Empty Response), retrying...", trace_id);
+                return StreamingResult::RetryNeeded("Empty response stream during peek".to_string());
             }
             Err(_) => {
-                *last_error = "Timeout waiting for first data".to_string();
-                retry_this_account = true;
-                break;
+                // [FIX] Signal retry instead of returning 503
+                tracing::warn!("[{}] Timeout waiting for first data (60s), retrying...", trace_id);
+                return StreamingResult::RetryNeeded("Timeout waiting for first data".to_string());
             }
         }
-    }
-
-    if retry_this_account {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
 
     match first_data_chunk {
@@ -593,39 +617,49 @@ async fn handle_streaming_response(
             );
 
             if client_wants_stream {
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "text/event-stream")
-                    .header(header::CACHE_CONTROL, "no-cache")
-                    .header(header::CONNECTION, "keep-alive")
-                    .header("X-Accel-Buffering", "no")
-                    .header("X-Account-Email", email)
-                    .header("X-Mapped-Model", &request_with_mapped.model)
-                    .header("X-Context-Purified", if is_purified { "true" } else { "false" })
-                    .body(Body::from_stream(combined_stream))
-                    .unwrap()
+                StreamingResult::Success(
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/event-stream")
+                        .header(header::CACHE_CONTROL, "no-cache")
+                        .header(header::CONNECTION, "keep-alive")
+                        .header("X-Accel-Buffering", "no")
+                        .header("X-Account-Email", email)
+                        .header("X-Mapped-Model", &request_with_mapped.model)
+                        .header("X-Context-Purified", if is_purified { "true" } else { "false" })
+                        .body(Body::from_stream(combined_stream))
+                        .unwrap()
+                )
             } else {
                 use crate::proxy::mappers::claude::collect_stream_to_json;
 
                 match collect_stream_to_json(combined_stream).await {
                     Ok(full_response) => {
                         info!("[{}] Stream collected and converted to JSON", trace_id);
-                        Response::builder()
-                            .status(StatusCode::OK)
-                            .header(header::CONTENT_TYPE, "application/json")
-                            .header("X-Account-Email", email)
-                            .header("X-Mapped-Model", &request_with_mapped.model)
-                            .header("X-Context-Purified", if is_purified { "true" } else { "false" })
-                            .body(Body::from(serde_json::to_string(&full_response).unwrap()))
-                            .unwrap()
+                        StreamingResult::Success(
+                            Response::builder()
+                                .status(StatusCode::OK)
+                                .header(header::CONTENT_TYPE, "application/json")
+                                .header("X-Account-Email", email)
+                                .header("X-Mapped-Model", &request_with_mapped.model)
+                                .header("X-Context-Purified", if is_purified { "true" } else { "false" })
+                                .body(Body::from(serde_json::to_string(&full_response).unwrap()))
+                                .unwrap()
+                        )
                     }
                     Err(e) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, format!("Stream collection error: {}", e)).into_response()
+                        StreamingResult::Success(
+                            (StatusCode::INTERNAL_SERVER_ERROR, format!("Stream collection error: {}", e)).into_response()
+                        )
                     }
                 }
             }
         }
-        None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        None => {
+            // [FIX] Signal retry for empty stream instead of 503
+            tracing::warn!("[{}] Stream ended immediately (Empty Response), retrying...", trace_id);
+            StreamingResult::RetryNeeded("Empty response stream (None)".to_string())
+        }
     }
 }
 
