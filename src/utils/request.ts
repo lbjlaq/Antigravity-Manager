@@ -108,6 +108,24 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
 
   // System Extra
   'open_data_folder': { url: '/api/system/open-folder', method: 'POST' },
+
+  // Security / IP Management
+  'get_ip_access_logs': { url: '/api/security/logs', method: 'GET' },
+  'clear_ip_access_logs': { url: '/api/security/logs/clear', method: 'POST' },
+  'get_ip_stats': { url: '/api/security/stats', method: 'GET' },
+  'get_ip_token_stats': { url: '/api/security/token-stats', method: 'GET' },
+  'get_ip_blacklist': { url: '/api/security/blacklist', method: 'GET' },
+  'add_ip_to_blacklist': { url: '/api/security/blacklist', method: 'POST' },
+  'remove_ip_from_blacklist': { url: '/api/security/blacklist', method: 'DELETE' },
+  'clear_ip_blacklist': { url: '/api/security/blacklist/clear', method: 'POST' },
+  'check_ip_in_blacklist': { url: '/api/security/blacklist/check', method: 'GET' },
+  'get_ip_whitelist': { url: '/api/security/whitelist', method: 'GET' },
+  'add_ip_to_whitelist': { url: '/api/security/whitelist', method: 'POST' },
+  'remove_ip_from_whitelist': { url: '/api/security/whitelist', method: 'DELETE' },
+  'clear_ip_whitelist': { url: '/api/security/whitelist/clear', method: 'POST' },
+  'check_ip_in_whitelist': { url: '/api/security/whitelist/check', method: 'GET' },
+  'get_security_config': { url: '/api/security/config', method: 'GET' },
+  'update_security_config': { url: '/api/security/config', method: 'POST' },
 };
 
 export async function request<T>(cmd: string, args?: any): Promise<T> {
@@ -152,7 +170,7 @@ export async function request<T>(cmd: string, args?: any): Promise<T> {
     },
   };
 
-  if (mapping.method === 'GET' && args) {
+  if ((mapping.method === 'GET' || mapping.method === 'DELETE') && args) {
     const params = new URLSearchParams();
     Object.entries(args).forEach(([key, value]) => {
       if (value !== undefined && value !== null) {

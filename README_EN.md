@@ -261,9 +261,12 @@ print(response.choices[0].message.content)
             -   **Polishing**: Fixed missing translations for "Show all quotas" and OAuth authorization prompts.
         -   **[i18n] Background Task Translation Fix (PR #1421)**:
             -   **Translation Fix**: Resolved missing translations for background tasks (e.g., title generation), ensuring proper localization across all supported languages.
-        -   **[Bug Fix] Fix Language Switcher Malfunction (Fix Navbar Interaction)**:
             -   **Root Cause**: Resolved a `ref` conflict introduced during merge that caused incorrect click detection on mobile/desktop.
             -   **Outcome**: The language switcher menu now opens and interacts correctly.
+        -   **[Docker/Web Fix] Web IP Management Support (IP Security for Web)**:
+            -   **Feature Completion**: Fixed an issue where IP security features (Logs, Blacklist/Whitelist) were unavailable in Docker/Web mode due to missing backend routes.
+            -   **API Implementation**: Implemented proper RESTful management endpoints, ensuring the Web frontend can fully interact with the security module.
+            -   **UX Polish**: Optimized parameter handling for deletion operations, resolving issues where deleting blacklist/whitelist entries failed in certain browsers.
     *   **v4.0.12 (2026-02-01)**:
         -   **[Code Refactoring] Connector Service Optimization**:
             -   **Deep Optimization**: Rewrote the core logic of the connector service (`connector.rs`) to eliminate inefficient legacy code.
