@@ -3,10 +3,11 @@ on:
   push:
     tags:
       - "v*"
+      - "[0-9]*"
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., 5.1.0)'
+        description: "Version to release (e.g., 5.1.0)"
         required: false
         type: string
 
@@ -24,15 +25,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      
+
       - name: Sync version across all files
         run: node scripts/sync-version.js set ${{ github.event.inputs.version }}
-      
+
       - name: Commit and tag
         run: |
           git config user.name "github-actions[bot]"
@@ -104,15 +105,15 @@ jobs:
           releaseName: "Antigravity Tools ${{ env.VERSION }}"
           releaseBody: |
             ## 🚀 Antigravity Tools ${{ env.VERSION }}
-            
+
             ### 📦 Installation
             - **Windows**: Download `.msi` or `.exe` installer
             - **macOS**: Download `.dmg` (Universal) or platform-specific build
             - **Linux**: Download `.deb` or `.AppImage`
-            
+
             ### 🔄 Auto-Update
             Existing installations will be notified automatically.
-            
+
             ---
             [Full Changelog](https://github.com/${{ github.repository }}/compare/...v${{ env.VERSION }})
           releaseDraft: false
