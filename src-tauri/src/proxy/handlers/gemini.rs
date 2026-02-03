@@ -353,7 +353,7 @@ pub async fn handle_generate(
 
         // 处理错误并重试
         let status_code = status.as_u16();
-        let retry_after = response.headers().get("Retry-After").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
+        let _retry_after = response.headers().get("Retry-After").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
         let error_text = response.text().await.unwrap_or_else(|_| format!("HTTP {}", status_code));
         last_error = format!("HTTP {}: {}", status_code, error_text);
         if debug_logger::is_enabled(&debug_cfg) {

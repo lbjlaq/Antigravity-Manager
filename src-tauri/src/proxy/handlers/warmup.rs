@@ -75,31 +75,30 @@ pub async fn handle_warmup(
 
     // ===== 步骤 2: 根据模型类型构建请求体 =====
     let is_claude = req.model.to_lowercase().contains("claude");
-    let is_image = req.model.to_lowercase().contains("image");
+    
+    // [FIX] Use a distinct session ID for warmup to avoid polluting real conversation matching
+    let session_id = format!("warmup_{}", uuid::Uuid::new_v4());
 
     let body: Value = if is_claude {
         // Claude 模型：使用 transform_claude_request_in 转换
-        let session_id = format!("warmup_{}_{}", 
-            chrono::Utc::now().timestamp_millis(),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        );
         let claude_request = crate::proxy::mappers::claude::models::ClaudeRequest {
             model: req.model.clone(),
             messages: vec![crate::proxy::mappers::claude::models::Message {
                 role: "user".to_string(),
+                // [FIX] Use "Hello" instead of "ping" to pass strict model filters
                 content: crate::proxy::mappers::claude::models::MessageContent::String(
-                    "ping".to_string(),
+                    "Hello".to_string(),
                 ),
             }],
             max_tokens: Some(1),
             stream: false,
             system: None,
-            temperature: None,
+            temperature: Some(0.0), // Explicit 0.0 for stability
             top_p: None,
             top_k: None,
             tools: None,
             metadata: Some(crate::proxy::mappers::claude::models::Metadata {
-                user_id: Some(session_id),
+                user_id: Some(session_id.clone()),
             }),
             thinking: None,
             output_config: None,
@@ -127,35 +126,26 @@ pub async fn handle_warmup(
             }
         }
     } else {
-        // Gemini 模型：使用 wrap_request
-        let session_id = format!("warmup_{}_{}", 
-            chrono::Utc::now().timestamp_millis(),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        );
-
-        let base_request = if is_image {
-            json!({
-                "model": req.model,
-                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
-                "generationConfig": {
-                    "maxOutputTokens": 10,
-                    "temperature": 0,
-                    "responseModalities": ["TEXT"]
-                },
-                "session_id": session_id
-            })
-        } else {
-            json!({
-                "model": req.model,
-                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
-                "generationConfig": {
-                    "temperature": 0
-                },
-                "session_id": session_id
-            })
-        };
-
-        wrap_request(&base_request, &project_id, &req.model, Some(&session_id))
+        // Gemini 模型：使用 STANDARD payload format
+        // [FIX] Avoid wrap_request which might add incompatible fields for some models
+        // Use raw valid JSON for Gemini
+        
+        // Check if image model (needs different structure?) - No, text-only "Hello" is fine for most multimodal models
+        json!({
+            "model": req.model,
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": "Hello"}]
+            }],
+            "generationConfig": {
+                "maxOutputTokens": 1,
+                "temperature": 0.0
+            },
+            // Include session_id in a way that doesn't break schema (often ignored or passed in metadata)
+            // But for Gemini upstream, we often just need valid JSON.
+            // Some internal proxies expect `session_id` at top level.
+            "session_id": session_id
+        })
     };
 
     // ===== 步骤 3: 调用 UpstreamClient =====

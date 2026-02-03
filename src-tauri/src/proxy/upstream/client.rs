@@ -12,15 +12,20 @@ const V1_INTERNAL_BASE_URL_PROD: &str = "https://cloudcode-pa.googleapis.com/v1i
 const V1_INTERNAL_BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 const V1_INTERNAL_BASE_URL_SANDBOX: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal";
 
+use rand::Rng; // [FIX] Add rand for jitter
+
 const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
     V1_INTERNAL_BASE_URL_SANDBOX, // 优先级 1: Sandbox (已知有效且稳定，避免 VALIDATION_REQUIRED)
     V1_INTERNAL_BASE_URL_DAILY,   // 优先级 2: Daily (备用)
     V1_INTERNAL_BASE_URL_PROD,    // 优先级 3: Prod (仅作为兜底)
 ];
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 pub struct UpstreamClient {
     http_client: RwLock<Client>,
     user_agent_override: RwLock<Option<String>>,
+    preferred_endpoint_index: AtomicUsize, // [NEW] Sticky endpoint index
 }
 
 impl UpstreamClient {
@@ -29,6 +34,7 @@ impl UpstreamClient {
         Self { 
             http_client: RwLock::new(client),
             user_agent_override: RwLock::new(None),
+            preferred_endpoint_index: AtomicUsize::new(0),
         }
     }
 
@@ -166,10 +172,25 @@ impl UpstreamClient {
         // 获取 Client 读锁
         let client_guard = self.http_client.read().await;
 
+        // [FIX] Adaptive Routing: Start with preferred endpoint
+        // Create an ordered list of indices: [preferred, others...]
+        let current_preferred = self.preferred_endpoint_index.load(Ordering::Relaxed);
+        let mut indices: Vec<usize> = (0..V1_INTERNAL_BASE_URL_FALLBACKS.len()).collect();
+        
+        // Move preferred to front if valid
+        if current_preferred < indices.len() {
+            if let Some(pos) = indices.iter().position(|&x| x == current_preferred) {
+                indices.remove(pos);
+                indices.insert(0, current_preferred);
+            }
+        }
+
         // 遍历所有端点，失败时自动切换
-        for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
+        for (attempt_idx, &fallback_idx) in indices.iter().enumerate() {
+            let base_url = V1_INTERNAL_BASE_URL_FALLBACKS[fallback_idx];
             let url = Self::build_url(base_url, method, query_string);
-            let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
+            // Has next if this is not the last attempt
+            let has_next = attempt_idx + 1 < indices.len();
 
             let response = client_guard
                 .post(&url)
@@ -182,13 +203,24 @@ impl UpstreamClient {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_success() {
-                        if idx > 0 {
+                        // [FIX] Update preferred endpoint on success if different
+                        let current = self.preferred_endpoint_index.load(Ordering::Relaxed);
+                        if current != fallback_idx {
+                            self.preferred_endpoint_index.store(fallback_idx, Ordering::Relaxed);
+                            tracing::info!(
+                                "✨ Adaptive Routing: Switched preferred endpoint to {} (was {})",
+                                base_url,
+                                V1_INTERNAL_BASE_URL_FALLBACKS[current]
+                            );
+                        }
+
+                        if attempt_idx > 0 {
                             tracing::info!(
                                 "✓ Upstream fallback succeeded | Endpoint: {} | Status: {} | Attempt: {}/{}",
                                 base_url,
                                 status,
-                                idx + 1,
-                                V1_INTERNAL_BASE_URL_FALLBACKS.len()
+                                attempt_idx + 1,
+                                indices.len()
                             );
                         } else {
                             tracing::debug!("✓ Upstream request succeeded | Endpoint: {} | Status: {}", base_url, status);
@@ -205,6 +237,11 @@ impl UpstreamClient {
                             method
                         );
                         last_err = Some(format!("Upstream {} returned {}", base_url, status));
+                        
+                        // [FIX] Smart Jitter (50-250ms) to prevent thundering herd
+                        let jitter = rand::thread_rng().gen_range(50..250);
+                        tokio::time::sleep(Duration::from_millis(jitter)).await;
+                        
                         continue;
                     }
 
@@ -220,6 +257,11 @@ impl UpstreamClient {
                     if !has_next {
                         break;
                     }
+                    
+                    // [FIX] Smart Jitter (50-250ms)
+                    let jitter = rand::thread_rng().gen_range(50..250);
+                    tokio::time::sleep(Duration::from_millis(jitter)).await;
+                    
                     continue;
                 }
             }
@@ -258,8 +300,20 @@ impl UpstreamClient {
         let mut last_err: Option<String> = None;
         let client_guard = self.http_client.read().await;
 
+        // [FIX] Adaptive Routing for models
+        let current_preferred = self.preferred_endpoint_index.load(Ordering::Relaxed);
+        let mut indices: Vec<usize> = (0..V1_INTERNAL_BASE_URL_FALLBACKS.len()).collect();
+        
+        if current_preferred < indices.len() {
+            if let Some(pos) = indices.iter().position(|&x| x == current_preferred) {
+                indices.remove(pos);
+                indices.insert(0, current_preferred);
+            }
+        }
+
         // 遍历所有端点，失败时自动切换
-        for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
+        for (attempt_idx, &fallback_idx) in indices.iter().enumerate() {
+            let base_url = V1_INTERNAL_BASE_URL_FALLBACKS[fallback_idx];
             let url = Self::build_url(base_url, "fetchAvailableModels", None);
 
             let response = client_guard
@@ -273,7 +327,13 @@ impl UpstreamClient {
                 Ok(resp) => {
                     let status = resp.status();
                     if status.is_success() {
-                        if idx > 0 {
+                        // Update preferred on success
+                        let current = self.preferred_endpoint_index.load(Ordering::Relaxed);
+                        if current != fallback_idx {
+                            self.preferred_endpoint_index.store(fallback_idx, Ordering::Relaxed);
+                        }
+
+                        if attempt_idx > 0 {
                             tracing::info!(
                                 "✓ Upstream fallback succeeded for fetchAvailableModels | Endpoint: {} | Status: {}",
                                 base_url,
@@ -290,7 +350,7 @@ impl UpstreamClient {
                     }
 
                     // 如果有下一个端点且当前错误可重试，则切换
-                    let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
+                    let has_next = attempt_idx + 1 < indices.len();
                     if has_next && Self::should_try_next_endpoint(status) {
                         tracing::warn!(
                             "fetchAvailableModels returned {} at {}, trying next endpoint",
@@ -298,6 +358,11 @@ impl UpstreamClient {
                             base_url
                         );
                         last_err = Some(format!("Upstream error: {}", status));
+                        
+                        // [FIX] Smart Jitter (50-250ms)
+                        let jitter = rand::thread_rng().gen_range(50..250);
+                        tokio::time::sleep(Duration::from_millis(jitter)).await;
+                        
                         continue;
                     }
 
@@ -310,9 +375,14 @@ impl UpstreamClient {
                     last_err = Some(msg);
 
                     // 如果是最后一个端点，退出循环
-                    if idx + 1 >= V1_INTERNAL_BASE_URL_FALLBACKS.len() {
+                    if attempt_idx + 1 >= indices.len() {
                         break;
                     }
+                    
+                    // [FIX] Smart Jitter (50-250ms)
+                    let jitter = rand::thread_rng().gen_range(50..250);
+                    tokio::time::sleep(Duration::from_millis(jitter)).await;
+                    
                     continue;
                 }
             }

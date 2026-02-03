@@ -312,7 +312,7 @@ async fn handle_google_flow(
 
         // Progressive compression
         let mut is_purified = false;
-        let mut raw_estimated = 0u32;
+        let mut raw_estimated;
 
         if !retried_without_thinking && scaling_enabled {
             match apply_progressive_compression(
@@ -548,7 +548,7 @@ async fn handle_google_flow(
 
 async fn handle_streaming_response(
     response: reqwest::Response,
-    state: &AppState,
+    _state: &AppState,
     original_request: &crate::proxy::mappers::claude::models::ClaudeRequest,
     request_with_mapped: &crate::proxy::mappers::claude::models::ClaudeRequest,
     trace_id: &str,
@@ -595,9 +595,7 @@ async fn handle_streaming_response(
     );
 
     // Peek first chunk
-    let mut first_data_chunk = None;
-
-    loop {
+    let first_data_chunk = loop {
         match tokio::time::timeout(std::time::Duration::from_secs(60), claude_stream.next()).await {
             Ok(Some(Ok(bytes))) => {
                 if bytes.is_empty() {
@@ -608,8 +606,7 @@ async fn handle_streaming_response(
                     debug!("[{}] Skipping peek heartbeat: {}", trace_id, text.trim());
                     continue;
                 }
-                first_data_chunk = Some(bytes);
-                break;
+                break Some(bytes);
             }
             Ok(Some(Err(e))) => {
                 // [FIX] Signal retry instead of returning 503
@@ -627,7 +624,7 @@ async fn handle_streaming_response(
                 return StreamingResult::RetryNeeded("Timeout waiting for first data".to_string());
             }
         }
-    }
+    };
 
     match first_data_chunk {
         Some(bytes) => {

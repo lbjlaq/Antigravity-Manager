@@ -3,13 +3,15 @@ on:
   push:
     tags:
       - "v*"
-      - "[0-9]*"
   workflow_dispatch:
     inputs:
       version:
         description: "Version to release (e.g., 5.1.0)"
         required: false
         type: string
+
+permissions:
+  contents: write
 
 env:
   # Extract version from tag or input

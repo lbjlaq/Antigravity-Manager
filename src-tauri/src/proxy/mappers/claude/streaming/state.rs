@@ -247,6 +247,21 @@ impl StreamingState {
                 "[Streaming] Captured trailing signature (len: {}), caching for session.",
                 signature.len()
             );
+
+            // [FIX] Persist signature to global cache if session_id is available
+            if let Some(session_id) = &self.session_id {
+                crate::proxy::SignatureCache::global().cache_session_signature(
+                    session_id,
+                    signature.clone(),
+                    self.message_count,
+                );
+                tracing::info!(
+                     "[Streaming] Persisted signature to global cache for session: {} (msg_count={})",
+                     session_id,
+                     self.message_count
+                 );
+            }
+
             self.signatures.store(Some(signature));
         }
 
