@@ -158,6 +158,15 @@ impl TokenManager {
 
         // Filter tokens based on quota and circuit breaker
         tokens_snapshot.retain(|t| {
+            // [NEW] Verification required check (permanent block until manual verification)
+            if t.verification_needed {
+                tracing::debug!(
+                    "  ⛔ {} - SKIP: Verification required (permanent)",
+                    t.email
+                );
+                return false;
+            }
+
             // [FIX] Validation blocked check (VALIDATION_REQUIRED temporary block)
             if t.validation_blocked {
                 let now = chrono::Utc::now().timestamp();

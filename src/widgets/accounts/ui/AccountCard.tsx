@@ -1,4 +1,4 @@
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Fingerprint, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Fingerprint, Sparkles, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Account } from '@/entities/account';
 import { getQuotaColor, formatTimeRemaining, getTimeRemainingColor } from '@/shared/lib';
 import { cn } from '@/shared/lib';
@@ -158,6 +158,16 @@ export const AccountCard = memo(function AccountCard({
                         {account.quota?.is_forbidden && (
                             <span className="px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/20 text-[9px] font-bold text-rose-400 uppercase tracking-wider flex items-center gap-1">
                                 <Lock className="w-2.5 h-2.5" /> BANNED
+                            </span>
+                        )}
+
+                        {/* Verification Needed Badge (permanent, requires manual action) */}
+                        {account.verification_needed && (
+                            <span 
+                                className="px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-500/20 text-[9px] font-bold text-orange-400 uppercase tracking-wider flex items-center gap-1"
+                                title={account.verification_url || 'Account requires verification in Antigravity'}
+                            >
+                                <AlertTriangle className="w-2.5 h-2.5" /> VERIFY
                             </span>
                         )}
 
