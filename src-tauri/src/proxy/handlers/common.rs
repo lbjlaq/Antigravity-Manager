@@ -1,5 +1,6 @@
 use tokio::time::{sleep, Duration};
 use tracing::{debug, info};
+use rand::Rng;
 use axum::{http::StatusCode, response::{IntoResponse, Response}, Json, extract::State};
 use serde_json::{json, Value};
 use crate::proxy::server::AppState;
@@ -43,8 +44,8 @@ pub fn determine_retry_strategy(
                 let actual_delay = delay_ms.saturating_add(200).min(30_000); // 上限上调至 30s
                 RetryStrategy::FixedDelay(Duration::from_millis(actual_delay))
             } else {
-                // 否则使用线性退避：起始 5s，逐步增加
-                RetryStrategy::LinearBackoff { base_ms: 5000 }
+                // [FIX] Dynamic linear backoff: Start with 2s (was 5s) + Jitter
+                RetryStrategy::LinearBackoff { base_ms: 2000 }
             }
         }
 
@@ -101,29 +102,35 @@ pub async fn apply_retry_strategy(
 
         RetryStrategy::LinearBackoff { base_ms } => {
             let calculated_ms = base_ms * (attempt as u64 + 1);
+            let jitter = rand::thread_rng().gen_range(0..1000);
+            let final_ms = calculated_ms + jitter;
             info!(
-                "[{}] ⏱️ Retry with linear backoff: status={}, attempt={}/{}, delay={}ms",
+                "[{}] ⏱️ Retry with linear backoff: status={}, attempt={}/{}, delay={}ms (incl. {}ms jitter)",
                 trace_id,
                 status_code,
                 attempt + 1,
                 max_attempts,
-                calculated_ms
+                final_ms,
+                jitter
             );
-            sleep(Duration::from_millis(calculated_ms)).await;
+            sleep(Duration::from_millis(final_ms)).await;
             true
         }
 
         RetryStrategy::ExponentialBackoff { base_ms, max_ms } => {
             let calculated_ms = (base_ms * 2_u64.pow(attempt as u32)).min(max_ms);
+            let jitter = rand::thread_rng().gen_range(0..1000);
+            let final_ms = calculated_ms + jitter;
             info!(
-                "[{}] ⏱️ Retry with exponential backoff: status={}, attempt={}/{}, delay={}ms",
+                "[{}] ⏱️ Retry with exponential backoff: status={}, attempt={}/{}, delay={}ms (incl. {}ms jitter)",
                 trace_id,
                 status_code,
                 attempt + 1,
                 max_attempts,
-                calculated_ms
+                final_ms,
+                jitter
             );
-            sleep(Duration::from_millis(calculated_ms)).await;
+            sleep(Duration::from_millis(final_ms)).await;
             true
         }
     }

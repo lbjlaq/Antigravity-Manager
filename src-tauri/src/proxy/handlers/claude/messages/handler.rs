@@ -10,6 +10,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use tracing::{debug, error, info};
+use rand::Rng;
 
 use super::compression::apply_progressive_compression;
 use super::response::{
@@ -246,10 +247,24 @@ async fn handle_google_flow(
         let session_id = Some(session_id_str.as_str());
 
         let force_rotate_token = attempt > 0;
-        let token_lease = match token_manager
-            .get_token(&config.request_type, force_rotate_token, session_id, &config.final_model)
-            .await
-        {
+        let mut token_lease_result = Err("Initial".to_string());
+        // [FIX] Retry loop for token acquisition to handle transient pool exhaustion
+        for token_attempt in 0..3 {
+            token_lease_result = token_manager
+                .get_token(&config.request_type, force_rotate_token, session_id, &config.final_model)
+                .await;
+            
+            if token_lease_result.is_ok() {
+                break;
+            }
+            if token_attempt < 2 {
+                // [FIX] Quick jitter (100-500ms) for token acquisition races
+                let delay = rand::thread_rng().gen_range(100..500);
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
+        }
+
+        let token_lease = match token_lease_result {
             Ok(t) => t,
             Err(e) => {
                 let safe_message = if e.contains("invalid_grant") {
@@ -379,6 +394,12 @@ async fn handle_google_flow(
             Err(e) => {
                 last_error = e.clone();
                 debug!("Request failed on attempt {}/{}: {}", attempt + 1, max_attempts, e);
+                
+                // [FIX] Medium jitter (1-3s) for network errors
+                let delay = rand::thread_rng().gen_range(1000..3000);
+                debug!("Network error, waiting {}ms...", delay);
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                
                 continue;
             }
         };
@@ -414,6 +435,10 @@ async fn handle_google_flow(
                     StreamingResult::Success(resp) => return resp,
                     StreamingResult::RetryNeeded(err) => {
                         last_error = err;
+                        // [FIX] Medium-Heavy jitter (2-4s) for streaming interruptions
+                        let delay = rand::thread_rng().gen_range(2000..4000);
+                        debug!("Streaming retry needed, waiting {}ms...", delay);
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                         continue; // Retry with different account
                     }
                 }
@@ -466,7 +491,8 @@ async fn handle_google_flow(
             token_manager.mark_rate_limited_async(&email, status_code, retry_after.as_deref(), &error_text, Some(&request_with_mapped.model)).await;
         }
 
-        if status_code == 402 || status_code == 429 || status_code == 401 {
+        // [FIX] Don't block account in Circuit Breaker for 429 (handled by Smart Rate Limiter)
+        if status_code == 402 || status_code == 401 {
             token_manager.report_account_failure(&token_lease.account_id, status_code, &error_text);
         }
 

@@ -378,21 +378,22 @@ impl TokenManager {
             cb_enabled
         );
         
-        // [DIAG] Log details of each account
+        // [DIAG] Log details of each account (CHANGED TO INFO FOR DEBUGGING)
         for t in tokens_snapshot.iter() {
-            tracing::debug!(
-                "   📋 {} | v_needed:{} | v_blocked:{} | model_quotas: {:?}",
+            tracing::info!(
+                "   📋 {} | v_needed:{} | v_blocked:{} | quotas: {:?} | CB: {}",
                 t.email,
                 t.verification_needed,
                 t.validation_blocked,
-                t.model_quotas
+                t.model_quotas,
+                self.circuit_breaker.contains_key(&t.account_id)
             );
         }
 
         tokens_snapshot.retain(|t| {
             // [NEW] Verification required check (permanent block until manual verification)
             if t.verification_needed {
-                tracing::debug!(
+                tracing::info!(
                     "  ⛔ {} - SKIP: Verification required (permanent)",
                     t.email
                 );
@@ -403,7 +404,7 @@ impl TokenManager {
             if t.validation_blocked {
                 let now = chrono::Utc::now().timestamp();
                 if now < t.validation_blocked_until {
-                    tracing::debug!(
+                    tracing::info!(
                         "  ⛔ {} - SKIP: Validation blocked until {}",
                         t.email,
                         t.validation_blocked_until
@@ -425,10 +426,11 @@ impl TokenManager {
                 if let Some(fail_entry) = self.circuit_breaker.get(&t.account_id) {
                     let (fail_time, reason) = fail_entry.value();
                     if fail_time.elapsed().as_secs() < 600 {
-                        tracing::debug!(
-                            "  ⛔ {} - SKIP: Circuit Breaker blocked ({})",
+                        tracing::info!(
+                            "  ⛔ {} - SKIP: Circuit Breaker blocked ({}) [{}s remaining]",
                             t.email,
-                            reason
+                            reason,
+                            600 - fail_time.elapsed().as_secs()
                         );
                         return false;
                     } else {
@@ -441,7 +443,7 @@ impl TokenManager {
             // Model quota check
             if let Some(&pct) = t.model_quotas.get(target_model) {
                 if pct <= 0 {
-                    tracing::debug!(
+                    tracing::info!(
                         "  ⛔ {} - SKIP: Zero quota for target model '{}' (pct={})",
                         t.email, target_model, pct
                     );
@@ -452,7 +454,7 @@ impl TokenManager {
             if normalized_target != target_model {
                 if let Some(&pct) = t.model_quotas.get(normalized_target) {
                     if pct <= 0 {
-                        tracing::debug!(
+                        tracing::info!(
                             "  ⛔ {} - SKIP: Zero quota for normalized model '{}' (pct={})",
                             t.email, normalized_target, pct
                         );
@@ -479,7 +481,7 @@ impl TokenManager {
                     if pct <= 0 {
                         // Direct match always blocks
                         if quota_model == target_model || quota_model == normalized_target {
-                            tracing::debug!(
+                            tracing::info!(
                                 "  ⛔ {} - SKIP: Zero quota for exact model '{}' (pct={})",
                                 t.email, quota_model, pct
                             );
@@ -492,7 +494,7 @@ impl TokenManager {
                         if is_more_specific_variant(quota_model, target_model)
                             || is_more_specific_variant(quota_model, normalized_target)
                         {
-                            tracing::debug!(
+                            tracing::info!(
                                 "  ⛔ {} - SKIP: Zero quota for more-specific variant '{}' (target: '{}')",
                                 t.email, quota_model, target_model
                             );
