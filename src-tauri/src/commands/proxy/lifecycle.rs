@@ -65,12 +65,21 @@ pub async fn internal_start_proxy_service(
     
     let _monitor = state.monitor.read().await.as_ref().unwrap().clone();
     
-    // 2. Initialize Token Manager
-    let app_data_dir = crate::modules::account::get_data_dir()?;
-    let _ = crate::modules::account::get_accounts_dir()?;
-    let accounts_dir = app_data_dir.clone();
+    // 2. Ensure Admin Server is running (it holds the real TokenManager)
+    ensure_admin_server(config.clone(), state, integration.clone(), cloudflared_state.clone()).await?;
+
+    // Get the existing AxumServer and TokenManager
+    let (axum_server, token_manager) = {
+        let admin_lock = state.admin_server.read().await;
+        // SAFETY: ensure_admin_server called above guarantees this is Some
+        let server = admin_lock.as_ref()
+            .ok_or_else(|| "Final check: Admin server not initialized".to_string())?
+            .axum_server.clone();
+        (server.clone(), server.token_manager.clone())
+    };
     
-    let token_manager = Arc::new(TokenManager::new(accounts_dir));
+    // Update config on the existing TokenManager
+    // safe to call (will restart task if running)
     token_manager.start_auto_cleanup().await;
     token_manager.update_sticky_config(config.scheduling.clone()).await;
     
@@ -78,10 +87,7 @@ pub async fn internal_start_proxy_service(
     let app_config = crate::modules::config::load_app_config().unwrap_or_else(|_| crate::models::AppConfig::new());
     token_manager.update_circuit_breaker_config(app_config.circuit_breaker).await;
 
-    // Check and start admin server if not running
-    ensure_admin_server(config.clone(), state, integration.clone(), cloudflared_state.clone()).await?;
-
-    // 3. Load accounts
+    // 3. Load accounts (refresh from disk)
     let active_accounts = token_manager.load_accounts().await
         .unwrap_or(0);
     
@@ -100,8 +106,6 @@ pub async fn internal_start_proxy_service(
     }
 
     let mut instance_lock = state.instance.write().await;
-    let admin_lock = state.admin_server.read().await;
-    let axum_server = admin_lock.as_ref().unwrap().axum_server.clone();
     
     // Create service instance (logical start)
     let instance = ProxyServiceInstance {

@@ -360,7 +360,6 @@ impl TokenManager {
         None
     }
 
-    /// Filter tokens based on verification, validation, circuit breaker, quota, and rate limits
     fn filter_tokens(
         &self,
         tokens_snapshot: &mut Vec<ProxyToken>,
@@ -369,6 +368,26 @@ impl TokenManager {
         cb_enabled: bool,
     ) {
         let initial_count = tokens_snapshot.len();
+        
+        // [DIAG] Log initial state before filtering
+        tracing::info!(
+            "🔍 [Filter START] Model '{}' (normalized: '{}') | {} accounts in pool | CB enabled: {}",
+            target_model,
+            normalized_target,
+            initial_count,
+            cb_enabled
+        );
+        
+        // [DIAG] Log details of each account
+        for t in tokens_snapshot.iter() {
+            tracing::debug!(
+                "   📋 {} | v_needed:{} | v_blocked:{} | model_quotas: {:?}",
+                t.email,
+                t.verification_needed,
+                t.validation_blocked,
+                t.model_quotas
+            );
+        }
 
         tokens_snapshot.retain(|t| {
             // [NEW] Verification required check (permanent block until manual verification)
@@ -393,15 +412,10 @@ impl TokenManager {
                 }
             }
 
-            // [FIX] Check remaining_quota - accounts with zero quota should be skipped
-            if t.remaining_quota.map(|q| q <= 0).unwrap_or(false) {
-                tracing::debug!(
-                    "  ⛔ {} - SKIP: Zero remaining quota ({:?})",
-                    t.email,
-                    t.remaining_quota
-                );
-                return false;
-            }
+            // NOTE: remaining_quota check removed - it was too aggressive
+            // The model_quotas check below handles per-model quota correctly
+            // remaining_quota is max percentage across ALL models, which can be 0
+            // even if the target model has available quota
 
             // NOTE: Rate limit check is done later in select_round_robin() and try_60s_lock()
             // Cannot use is_rate_limited_sync() here as it causes blocking_read() deadlock in async context
@@ -427,6 +441,10 @@ impl TokenManager {
             // Model quota check
             if let Some(&pct) = t.model_quotas.get(target_model) {
                 if pct <= 0 {
+                    tracing::debug!(
+                        "  ⛔ {} - SKIP: Zero quota for target model '{}' (pct={})",
+                        t.email, target_model, pct
+                    );
                     return false;
                 }
             }
@@ -434,42 +452,52 @@ impl TokenManager {
             if normalized_target != target_model {
                 if let Some(&pct) = t.model_quotas.get(normalized_target) {
                     if pct <= 0 {
+                        tracing::debug!(
+                            "  ⛔ {} - SKIP: Zero quota for normalized model '{}' (pct={})",
+                            t.email, normalized_target, pct
+                        );
                         return false;
                     }
                 }
             }
 
             // Fuzzy match for related models
+            // [FIX] Only block if quota_model is MORE SPECIFIC (longer) than target
+            // This prevents "claude-opus-4: 0%" from blocking "claude-opus-4-5-thinking"
+            // But allows "claude-opus-4-5-thinking: 0%" to block "claude-opus-4-5-thinking"
             if !t.model_quotas.is_empty() {
-                let is_related = |a: &str, b: &str| -> bool {
-                    if a == b {
-                        return true;
-                    }
-                    if a.len() > b.len() {
-                        a.starts_with(b)
-                            && a.chars()
-                                .nth(b.len())
-                                .map_or(false, |c| c == '-' || c == '.' || c == ':')
-                    } else {
-                        b.starts_with(a)
-                            && b.chars()
-                                .nth(a.len())
-                                .map_or(false, |c| c == '-' || c == '.' || c == ':')
-                    }
+                // Check if target is a prefix of quota_model (quota_model is more specific)
+                let is_more_specific_variant = |quota_model: &str, target: &str| -> bool {
+                    quota_model.len() > target.len()
+                        && quota_model.starts_with(target)
+                        && quota_model.chars()
+                            .nth(target.len())
+                            .map_or(false, |c| c == '-' || c == '.' || c == ':')
                 };
 
                 for (quota_model, &pct) in &t.model_quotas {
-                    if pct <= 0
-                        && (is_related(target_model, quota_model)
-                            || is_related(normalized_target, quota_model))
-                    {
-                        tracing::debug!(
-                            "  ⛔ {} - SKIP: Zero quota for related model '{}' (Target: '{}')",
-                            t.email,
-                            quota_model,
-                            target_model
-                        );
-                        return false;
+                    if pct <= 0 {
+                        // Direct match always blocks
+                        if quota_model == target_model || quota_model == normalized_target {
+                            tracing::debug!(
+                                "  ⛔ {} - SKIP: Zero quota for exact model '{}' (pct={})",
+                                t.email, quota_model, pct
+                            );
+                            return false;
+                        }
+                        
+                        // Only block if quota_model is MORE specific variant of target
+                        // e.g., "gemini-2.5-pro-preview: 0%" blocks "gemini-2.5-pro"
+                        // But "gemini-2.5: 0%" does NOT block "gemini-2.5-pro"
+                        if is_more_specific_variant(quota_model, target_model)
+                            || is_more_specific_variant(quota_model, normalized_target)
+                        {
+                            tracing::debug!(
+                                "  ⛔ {} - SKIP: Zero quota for more-specific variant '{}' (target: '{}')",
+                                t.email, quota_model, target_model
+                            );
+                            return false;
+                        }
                     }
                 }
             }

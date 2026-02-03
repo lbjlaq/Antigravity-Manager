@@ -164,7 +164,7 @@ export function useApiProxy() {
         saveConfig(newConfig);
     }, [appConfig, saveConfig]);
 
-    const updateSchedulingConfig = useCallback((updates: Partial<StickySessionConfig>) => {
+    const updateSchedulingConfig = useCallback(async (updates: Partial<StickySessionConfig>) => {
         if (!appConfig) return;
         const currentScheduling = appConfig.proxy.scheduling || {
             mode: 'Balance',
@@ -184,6 +184,15 @@ export function useApiProxy() {
             proxy: { ...appConfig.proxy, scheduling: newScheduling }
         };
         saveConfig(newAppConfig);
+        
+        // [FIX] Sync scheduling config with running proxy service
+        try {
+            await invoke('update_proxy_scheduling_config', { config: newScheduling });
+            console.debug('[Scheduling] Config synced with running proxy service');
+        } catch (error) {
+            // Service may not be running - this is fine, config is saved for next start
+            console.debug('[Scheduling] Service not running, config saved for next start:', error);
+        }
     }, [appConfig, saveConfig]);
 
     const updateExperimentalConfig = useCallback((updates: Partial<ExperimentalConfig>) => {
