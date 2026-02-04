@@ -3,6 +3,7 @@ use tokio::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use dashmap::DashMap;
 use reqwest::Client;
+use futures::{stream, StreamExt};
 use std::time::Duration;
 use crate::proxy::config::{ProxyPoolConfig, ProxySelectionStrategy, ProxyEntry};
 
@@ -311,25 +312,29 @@ impl ProxyPoolManager {
                 .collect()
         };
 
-        let mut results = Vec::new();
-        for proxy in proxies_to_check {
-            let (is_healthy, latency) = self.check_proxy_health(&proxy).await;
-            results.push((proxy.id, is_healthy, latency));
-            
-            let latency_msg = if let Some(ms) = latency {
-                format!("{}ms", ms)
-            } else {
-                "-".to_string()
-            };
+        let concurrency_limit = 20usize;
+        let results = stream::iter(proxies_to_check)
+            .map(|proxy| async move {
+                let (is_healthy, latency) = self.check_proxy_health(&proxy).await;
+                let latency_msg = if let Some(ms) = latency {
+                    format!("{}ms", ms)
+                } else {
+                    "-".to_string()
+                };
 
-            tracing::info!(
-                "Proxy {} ({}) health check: {} (Latency: {})",
-                proxy.name,
-                proxy.url,
-                if is_healthy { "✓ OK" } else { "✗ FAILED" },
-                latency_msg
-            );
-        }
+                tracing::info!(
+                    "Proxy {} ({}) health check: {} (Latency: {})",
+                    proxy.name,
+                    proxy.url,
+                    if is_healthy { "✓ OK" } else { "✗ FAILED" },
+                    latency_msg
+                );
+
+                (proxy.id, is_healthy, latency)
+            })
+            .buffer_unordered(concurrency_limit)
+            .collect::<Vec<_>>()
+            .await;
 
         // 统一更新状态
         let mut config = self.config.write().await;
