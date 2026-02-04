@@ -90,7 +90,7 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
             // Scan each model for each account
             for account in &accounts {
                 // Skip disabled accounts
-                if account.proxy_disabled {
+                if account.disabled || account.proxy_disabled {
                     continue;
                 }
 
@@ -266,6 +266,10 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
 
 /// Trigger immediate smart warmup check for a single account
 pub async fn trigger_warmup_for_account(account: &Account) {
+    if account.disabled || account.proxy_disabled {
+        return;
+    }
+
     // Get valid token
     let Ok((token, pid)) = quota::get_valid_token_for_warmup(account).await else {
         return;

@@ -763,8 +763,32 @@ pub async fn toggle_proxy_status(
         if enable { "已启用" } else { "已禁用" }
     ));
 
-    // 4. 如果反代服务正在运行,重新加载账号池
-    let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
+    // 4. 如果反代服务正在运行,立刻同步到内存池（避免禁用后仍被选中）
+    {
+        let instance_lock = proxy_state.instance.read().await;
+        if let Some(instance) = instance_lock.as_ref() {
+            // 如果禁用的是当前固定账号，则自动关闭固定模式（内存 + 配置持久化）
+            if !enable {
+                let pref_id = instance.token_manager.get_preferred_account().await;
+                if pref_id.as_deref() == Some(&account_id) {
+                    instance.token_manager.set_preferred_account(None).await;
+
+                    if let Ok(mut cfg) = crate::modules::config::load_app_config() {
+                        if cfg.proxy.preferred_account_id.as_deref() == Some(&account_id) {
+                            cfg.proxy.preferred_account_id = None;
+                            let _ = crate::modules::config::save_app_config(&cfg);
+                        }
+                    }
+                }
+            }
+
+            instance
+                .token_manager
+                .reload_account(&account_id)
+                .await
+                .map_err(|e| format!("同步账号失败: {}", e))?;
+        }
+    }
 
     // 5. 更新托盘菜单
     crate::modules::tray::update_tray_menus(&app);

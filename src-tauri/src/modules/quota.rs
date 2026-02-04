@@ -332,7 +332,11 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
     let mut retry_count = 0;
     
     loop {
-        let target_accounts = crate::modules::account::list_accounts().unwrap_or_default();
+        let all_accounts = crate::modules::account::list_accounts().unwrap_or_default();
+        let target_accounts: Vec<_> = all_accounts
+            .into_iter()
+            .filter(|a| !a.disabled && !a.proxy_disabled)
+            .collect();
 
         if target_accounts.is_empty() {
             return Ok("No accounts available".to_string());
@@ -472,6 +476,10 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
     let accounts = crate::modules::account::list_accounts().unwrap_or_default();
     let account_owned = accounts.iter().find(|a| a.id == account_id).cloned().ok_or_else(|| "Account not found".to_string())?;
+
+    if account_owned.disabled || account_owned.proxy_disabled {
+        return Err("Account is disabled".to_string());
+    }
     
     let email = account_owned.email.clone();
     let (token, pid) = get_valid_token_for_warmup(&account_owned).await?;
