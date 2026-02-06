@@ -369,6 +369,9 @@ response = client.chat.completions.create(
         -   **[修复] 解决 Gemini 3 Pro / Gemini 2.0 Pro 系列型号由于 `thinking_budget` 越界导致的 HTTP 400 错误 (#1592)**:
             -   **全协议覆盖**: 修复逻辑已同步应用至 OpenAI、Claude 和 Gemini 原生协议映射层，确保所有协议下的思维模型都能正确识别并应用 24576 的安全预算限额。
             -   **自动适配**: 重构了协议转换逻辑，使其基于最终映射的模型型号进行动态限额，解决了 `gemini-3-pro` 等新型号的兼容性问题。
+        -   **[核心修复] Web Mode 登录验证修复 & 登出按钮 (PR #1603)**:
+            -   **登录验证**: 修复了 Web 模式下登录验证逻辑的异常，确保用户身份验证的稳定性。
+            -   **登出功能**: 在界面中新增/修复了登出按钮，完善了 Web 模式下的账户管理闭环。
     *   **v4.1.5 (2026-02-05)**:
         -   **[安全修复] 前端 API Key 存储迁移 (LocalStorage -> SessionStorage)**:
             -   **存储机制升级**: 将 Admin API Key 的存储位置从持久化的 `localStorage` 迁移至会话级的 `sessionStorage`，显著降低了在公共设备上的安全风险。
