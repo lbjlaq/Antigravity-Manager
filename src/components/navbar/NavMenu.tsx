@@ -26,8 +26,8 @@ export function NavMenu({ navItems }: NavMenuProps) {
 
     return (
         <>
-            {/* 文字胶囊 (≥ 1024px) */}
-            <nav className="hidden lg:flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
+            {/* 文字胶囊 (≥ 960px) */}
+            <nav className="max-[959px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
                 {visibleNavItems.map((item) => (
                     <Link
                         key={item.path}
@@ -52,8 +52,8 @@ export function NavMenu({ navItems }: NavMenuProps) {
                 ))}
             </nav>
 
-            {/* 图标胶囊 (820px - 1024px) - Logo 不显示文字 */}
-            <nav className="hidden min-[820px]:flex lg:hidden items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
+            {/* 图标胶囊 (880px - 960px) - Logo 显示文字 */}
+            <nav className="max-[879px]:hidden min-[960px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
                 {visibleNavItems.map((item) => (
                     <Link
                         key={item.path}
@@ -75,8 +75,8 @@ export function NavMenu({ navItems }: NavMenuProps) {
                 ))}
             </nav>
 
-            {/* 图标胶囊 (640px - 820px) - Logo 显示文字 */}
-            <nav className="hidden min-[640px]:flex min-[820px]:hidden items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
+            {/* 图标胶囊 (640px - 880px) - Logo 隐藏文字 */}
+            <nav className="max-[639px]:hidden min-[880px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
                 {visibleNavItems.map((item) => (
                     <Link
                         key={item.path}
@@ -98,8 +98,8 @@ export function NavMenu({ navItems }: NavMenuProps) {
                 ))}
             </nav>
 
-            {/* 图标胶囊 (480px - 640px) - Logo 隐藏文字 */}
-            <nav className="hidden min-[480px]:flex min-[640px]:hidden items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
+            {/* 图标胶囊 (480px - 640px) */}
+            <nav className="max-[479px]:hidden min-[640px]:hidden flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
                 {visibleNavItems.map((item) => (
                     <Link
                         key={item.path}
@@ -122,7 +122,7 @@ export function NavMenu({ navItems }: NavMenuProps) {
             </nav>
 
             {/* 图标+文字下拉 (375px - 480px) */}
-            <div className="hidden min-[375px]:block min-[480px]:hidden">
+            <div className="max-[374px]:hidden min-[480px]:hidden block">
                 <NavigationDropdown
                     navItems={visibleNavItems}
                     isActive={(path) => isActive(location.pathname, path)}

@@ -34,8 +34,8 @@ export function NavSettings({
 
     return (
         <>
-            {/* 独立按钮 (≥ 480px) */}
-            <div className="hidden min-[480px]:flex items-center gap-2">
+            {/* 独立按钮 (≥ 620px) */}
+            <div className="hidden min-[620px]:flex items-center gap-2">
                 {/* 主题切换按钮 */}
                 <button
                     onClick={onThemeToggle}
@@ -68,8 +68,8 @@ export function NavSettings({
                 )}
             </div>
 
-            {/* 更多菜单 (< 480px) */}
-            <div className="min-[480px]:hidden">
+            {/* 更多菜单 (< 620px) */}
+            <div className="min-[620px]:hidden">
                 <MoreDropdown
                     theme={theme}
                     currentLanguage={currentLanguage}

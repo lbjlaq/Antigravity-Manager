@@ -198,7 +198,7 @@ export function MoreDropdown({
     };
 
     return (
-        <div className="min-[480px]:hidden relative" ref={menuRef}>
+        <div className="relative" ref={menuRef}>
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className="w-10 h-10 rounded-full bg-gray-100 dark:bg-base-200 hover:bg-gray-200 dark:hover:bg-base-100 flex items-center justify-center transition-colors"
