@@ -226,7 +226,11 @@ pub fn resolve_model_route(
     for (pattern, target) in custom_mapping.iter() {
         if pattern.contains('*') && wildcard_match(pattern, original_model) {
             let specificity = pattern.chars().count() - pattern.matches('*').count();
-            if best_match.is_none() || specificity > best_match.unwrap().2 {
+            if best_match.is_none()
+                || specificity > best_match.unwrap().2
+                || (specificity == best_match.unwrap().2
+                    && pattern.as_str() > best_match.unwrap().0)
+            {
                 best_match = Some((pattern.as_str(), target.as_str(), specificity));
             }
         }

@@ -417,8 +417,6 @@ pub async fn handle_chat_completions(
             debug_logger::write_debug_payload(&debug_cfg, Some(&trace_id), "upstream_response_error", &payload).await;
         }
 
-        let strategy = determine_retry_strategy(status_code, &error_text, false);
-
         // Mark rate limited status
         if status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500 {
             token_manager
@@ -435,24 +433,6 @@ pub async fn handle_chat_completions(
         // Circuit Breaker Reporting
         if status_code == 402 || status_code == 429 || status_code == 401 {
              token_manager.report_account_failure(&token_lease.account_id, status_code, &error_text);
-        }
-
-        if apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await {
-            if !should_rotate_account(status_code) {
-                debug!(
-                    "[{}] Keeping same account for status {} (server-side issue)",
-                    trace_id, status_code
-                );
-            }
-
-            tracing::warn!(
-                "OpenAI Upstream {} on {} attempt {}/{}, rotating account",
-                status_code,
-                email,
-                attempt + 1,
-                max_attempts
-            );
-            continue;
         }
 
         // Handle 400 error (Thinking signature failure)
@@ -494,12 +474,9 @@ pub async fn handle_chat_completions(
         // 403/401 trigger account rotation
         if status_code == 403 || status_code == 401 {
             if status_code == 403 {
-                // Mark account as forbidden for ANY 403 response
+                // Refined 403 classification
                 if let Some(acc_id) = token_manager.get_account_id_by_email(&email) {
-                    // Special handling for VALIDATION_REQUIRED
-                    if error_text.contains("VALIDATION_REQUIRED") || 
-                       error_text.contains("verify your account") ||
-                       error_text.contains("validation_url") {
+                    if is_validation_required_error(&error_text) {
                         tracing::warn!(
                             "[OpenAI] VALIDATION_REQUIRED detected on account {}, temporarily blocking",
                             email
@@ -510,30 +487,55 @@ pub async fn handle_chat_completions(
                         if let Err(e) = token_manager.set_validation_block_public(&acc_id, block_until, &error_text).await {
                             tracing::error!("Failed to set validation block: {}", e);
                         }
-                    }
-                    
-                    // Mark as forbidden and remove from pool for ALL 403 responses
-                    tracing::warn!(
-                        "[OpenAI] 403 Forbidden on account {}, marking as forbidden and removing from pool",
-                        email
-                    );
-                    if let Err(e) = token_manager.set_forbidden(&acc_id, &error_text).await {
-                        tracing::error!("Failed to set forbidden status: {}", e);
+                    } else if is_permanent_forbidden_error(&error_text) {
+                        tracing::warn!(
+                            "[OpenAI] Permanent 403 detected on account {}, marking as forbidden",
+                            email
+                        );
+                        if let Err(e) = token_manager.set_forbidden(&acc_id, &error_text).await {
+                            tracing::error!("Failed to set forbidden status: {}", e);
+                        }
+                    } else {
+                        tracing::warn!(
+                            "[OpenAI] Transient/unknown 403 on account {}, rotating without permanent forbid",
+                            email
+                        );
                     }
                 }
             }
-            
-            if apply_retry_strategy(
+
+            if attempt + 1 < max_attempts {
+                let _ = apply_retry_strategy(
                 RetryStrategy::FixedDelay(Duration::from_millis(200)),
                 attempt,
                 max_attempts,
                 status_code,
                 &trace_id,
             )
-            .await
-            {
+                .await;
                 continue;
             }
+        }
+
+        let strategy = determine_retry_strategy(status_code, &error_text, false);
+        if attempt + 1 < max_attempts
+            && apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await
+        {
+            if !should_rotate_account(status_code) {
+                debug!(
+                    "[{}] Keeping same account for status {} (server-side issue)",
+                    trace_id, status_code
+                );
+            }
+
+            tracing::warn!(
+                "OpenAI Upstream {} on {} attempt {}/{}, rotating account",
+                status_code,
+                email,
+                attempt + 1,
+                max_attempts
+            );
+            continue;
         }
 
         // Non-retryable error
@@ -568,4 +570,22 @@ pub async fn handle_chat_completions(
         )
             .into_response())
     }
+}
+
+fn is_validation_required_error(error_text: &str) -> bool {
+    let lower = error_text.to_ascii_lowercase();
+    lower.contains("validation_required")
+        || lower.contains("verify your account")
+        || lower.contains("validation_url")
+}
+
+fn is_permanent_forbidden_error(error_text: &str) -> bool {
+    let lower = error_text.to_ascii_lowercase();
+
+    // Account-level hard failures (safe to mark forbidden)
+    lower.contains("account disabled")
+        || lower.contains("account suspended")
+        || lower.contains("account has been blocked")
+        || lower.contains("account banned")
+        || (lower.contains("policy") && lower.contains("violation"))
 }

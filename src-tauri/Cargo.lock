@@ -75,6 +75,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "pin-project",
+ "plist",
  "r2d2",
  "r2d2_sqlite",
  "rand 0.8.5",

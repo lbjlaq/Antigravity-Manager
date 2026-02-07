@@ -9,9 +9,160 @@ use axum::{
 };
 use base64::Engine as _;
 use serde_json::{json, Value};
-use tracing::info;
+use tracing::{info, warn};
+use tokio::time::Duration;
 
 use crate::proxy::server::AppState;
+use super::super::common::{apply_retry_strategy, determine_retry_strategy, RetryStrategy};
+
+const MAX_IMAGE_RETRY_ATTEMPTS: usize = 3;
+
+fn extract_images_from_response(gemini_resp: &Value, response_format: &str) -> Vec<Value> {
+    let raw = gemini_resp.get("response").unwrap_or(gemini_resp);
+    let mut images: Vec<Value> = Vec::new();
+
+    if let Some(parts) = raw
+        .get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|cand| cand.get("content"))
+        .and_then(|content| content.get("parts"))
+        .and_then(|p| p.as_array())
+    {
+        for part in parts {
+            if let Some(img) = part.get("inlineData") {
+                let data = img.get("data").and_then(|v| v.as_str()).unwrap_or("");
+                if data.is_empty() {
+                    continue;
+                }
+
+                if response_format == "url" {
+                    let mime_type = img
+                        .get("mimeType")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("image/png");
+                    images.push(json!({
+                        "url": format!("data:{};base64,{}", mime_type, data)
+                    }));
+                } else {
+                    images.push(json!({
+                        "b64_json": data
+                    }));
+                }
+            }
+        }
+    }
+
+    images
+}
+
+async fn execute_image_request_with_retry(
+    state: &AppState,
+    request_body: &Value,
+    mapped_model: &str,
+    trace_id: &str,
+) -> Result<(Value, String), String> {
+    let token_manager = state.token_manager.clone();
+    let upstream = state.upstream.clone();
+    let pool_size = token_manager.len();
+    let max_attempts = MAX_IMAGE_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
+    let mut last_error = String::new();
+
+    for attempt in 0..max_attempts {
+        let token_lease = token_manager
+            .get_token("image_gen", attempt > 0, None, mapped_model)
+            .await
+            .map_err(|e| format!("Token error: {}", e))?;
+
+        let email = token_lease.email.clone();
+        let access_token = token_lease.access_token.clone();
+        let project_id = token_lease.project_id.clone();
+
+        let mut effective_body = request_body.clone();
+        if let Some(obj) = effective_body.as_object_mut() {
+            obj.insert("project".to_string(), Value::String(project_id));
+        }
+
+        let response = match upstream
+            .call_v1_internal("generateContent", &access_token, effective_body, None)
+            .await
+        {
+            Ok(response) => response,
+            Err(e) => {
+                last_error = format!("Network error: {}", e);
+                if attempt + 1 < max_attempts {
+                    warn!(
+                        "[Images] Request failed on attempt {}/{}: {}",
+                        attempt + 1,
+                        max_attempts,
+                        e
+                    );
+                    continue;
+                }
+                return Err(last_error);
+            }
+        };
+
+        let status = response.status();
+        if status.is_success() {
+            let gemini_resp = response
+                .json::<Value>()
+                .await
+                .map_err(|e| format!("Parse error: {}", e))?;
+            token_manager.mark_account_success(&email, Some(mapped_model));
+            return Ok((gemini_resp, email));
+        }
+
+        let status_code = status.as_u16();
+        let retry_after = response
+            .headers()
+            .get("Retry-After")
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.to_string());
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| format!("HTTP {}", status_code));
+        last_error = format!("Upstream error {}: {}", status_code, error_text);
+
+        if matches!(status_code, 429 | 529 | 503 | 500) {
+            token_manager
+                .mark_rate_limited_async(
+                    &email,
+                    status_code,
+                    retry_after.as_deref(),
+                    &error_text,
+                    Some(mapped_model),
+                )
+                .await;
+        }
+
+        if status_code == 401 || status_code == 403 {
+            if attempt + 1 < max_attempts {
+                let _ = apply_retry_strategy(
+                    RetryStrategy::FixedDelay(Duration::from_millis(200)),
+                    attempt,
+                    max_attempts,
+                    status_code,
+                    trace_id,
+                )
+                .await;
+                continue;
+            }
+            return Err(last_error);
+        }
+
+        let strategy = determine_retry_strategy(status_code, &error_text, false);
+        if attempt + 1 < max_attempts
+            && apply_retry_strategy(strategy, attempt, max_attempts, status_code, trace_id).await
+        {
+            continue;
+        }
+
+        return Err(last_error);
+    }
+
+    Err(format!("All image attempts failed: {}", last_error))
+}
 
 /// OpenAI Images API: POST /v1/images/generations
 /// Handles image generation requests, converting to Gemini API format
@@ -79,145 +230,62 @@ pub async fn handle_images_generations(
         _ => {}
     }
 
-    // 4. Get Token
-    let upstream = state.upstream.clone();
-    let token_manager = state.token_manager;
+    let trace_id = format!("img_gen_{}", chrono::Utc::now().timestamp_subsec_millis());
 
-    let token_lease = match token_manager
-        .get_token("image_gen", false, None, "dall-e-3")
-        .await
-    {
-        Ok(t) => t,
-        Err(e) => {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!("Token error: {}", e),
-            ))
-        }
-    };
-
-    let access_token = token_lease.access_token.clone();
-    let project_id = token_lease.project_id.clone();
-    let email = token_lease.email.clone();
-
-    info!("✓ Using account: {} for image generation", email);
-
-    // 5. Send parallel requests (workaround for candidateCount > 1 not supported)
-    let mut tasks = Vec::new();
-
-    for _ in 0..n {
-        let upstream = upstream.clone();
-        let access_token = access_token.clone();
-        let project_id = project_id.clone();
-        let final_prompt = final_prompt.clone();
-        let image_config = image_config.clone();
-        let _response_format = response_format.to_string();
-
-        let model_to_use = "gemini-3-pro-image".to_string();
-
-        tasks.push(tokio::spawn(async move {
-            let gemini_body = json!({
-                "project": project_id,
-                "requestId": format!("agent-{}", uuid::Uuid::new_v4()),
-                "model": model_to_use,
-                "userAgent": "antigravity",
-                "requestType": "image_gen",
-                "request": {
-                    "contents": [{
-                        "role": "user",
-                        "parts": [{"text": final_prompt}]
-                    }],
-                    "generationConfig": {
-                        "candidateCount": 1,
-                        "imageConfig": image_config
-                    },
-                    "safetySettings": [
-                        { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
-                        { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
-                        { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
-                        { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-                        { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
-                    ]
-                }
-            });
-
-            match upstream
-                .call_v1_internal("generateContent", &access_token, gemini_body, None)
-                .await
-            {
-                Ok(response) => {
-                    let status = response.status();
-                    if !status.is_success() {
-                        let err_text = response.text().await.unwrap_or_default();
-                        return Err(format!("Upstream error {}: {}", status, err_text));
-                    }
-                    match response.json::<Value>().await {
-                        Ok(json) => Ok(json),
-                        Err(e) => Err(format!("Parse error: {}", e)),
-                    }
-                }
-                Err(e) => Err(format!("Network error: {}", e)),
-            }
-        }));
-    }
-
-    // 6. Collect results
     let mut images: Vec<Value> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+    let mut response_email: Option<String> = None;
 
-    for (idx, task) in tasks.into_iter().enumerate() {
-        match task.await {
-            Ok(result) => match result {
-                Ok(gemini_resp) => {
-                    let raw = gemini_resp.get("response").unwrap_or(&gemini_resp);
-                    if let Some(parts) = raw
-                        .get("candidates")
-                        .and_then(|c| c.get(0))
-                        .and_then(|cand| cand.get("content"))
-                        .and_then(|content| content.get("parts"))
-                        .and_then(|p| p.as_array())
-                    {
-                        for part in parts {
-                            if let Some(img) = part.get("inlineData") {
-                                let data = img.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                                if !data.is_empty() {
-                                    if response_format == "url" {
-                                        let mime_type = img
-                                            .get("mimeType")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("image/png");
-                                        images.push(json!({
-                                            "url": format!("data:{};base64,{}", mime_type, data)
-                                        }));
-                                    } else {
-                                        images.push(json!({
-                                            "b64_json": data
-                                        }));
-                                    }
-                                    tracing::debug!("[Images] Task {} succeeded", idx);
-                                }
-                            }
-                        }
-                    }
+    for idx in 0..n {
+        let gemini_body = json!({
+            "project": "bamboo-precept-lgxtn",
+            "requestId": format!("agent-{}", uuid::Uuid::new_v4()),
+            "model": "gemini-3-pro-image",
+            "userAgent": "antigravity",
+            "requestType": "image_gen",
+            "request": {
+                "contents": [{
+                    "role": "user",
+                    "parts": [{"text": final_prompt.clone()}]
+                }],
+                "generationConfig": {
+                    "candidateCount": 1,
+                    "imageConfig": image_config.clone()
+                },
+                "safetySettings": [
+                    { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF" },
+                    { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
+                    { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
+                    { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
+                    { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" }
+                ]
+            }
+        });
+
+        match execute_image_request_with_retry(&state, &gemini_body, "dall-e-3", &trace_id).await {
+            Ok((gemini_resp, email)) => {
+                if response_email.is_none() {
+                    response_email = Some(email);
                 }
-                Err(e) => {
-                    tracing::error!("[Images] Task {} failed: {}", idx, e);
-                    errors.push(e);
+                let extracted = extract_images_from_response(&gemini_resp, response_format);
+                if extracted.is_empty() {
+                    errors.push(format!("Task {}: No images generated", idx));
+                } else {
+                    images.extend(extracted);
                 }
-            },
+            }
             Err(e) => {
-                let err_msg = format!("Task join error: {}", e);
-                tracing::error!("[Images] Task {} join error: {}", idx, e);
-                errors.push(err_msg);
+                tracing::error!("[Images] Task {} failed after retries: {}", idx, e);
+                errors.push(format!("Task {}: {}", idx, e));
             }
         }
     }
 
     if images.is_empty() {
-        let error_msg = if !errors.is_empty() {
-            errors.join("; ")
-        } else {
+        let error_msg = if errors.is_empty() {
             "No images generated".to_string()
+        } else {
+            errors.join("; ")
         };
         tracing::error!("[Images] All {} requests failed. Errors: {}", n, error_msg);
         return Err((StatusCode::BAD_GATEWAY, error_msg));
@@ -244,9 +312,11 @@ pub async fn handle_images_generations(
         "data": images
     });
 
+    let response_email = response_email.unwrap_or_else(|| "unknown".to_string());
+
     Ok((
         StatusCode::OK,
-        [("X-Account-Email", email.as_str())],
+        [("X-Account-Email", response_email.as_str())],
         Json(openai_response),
     )
         .into_response())
@@ -356,27 +426,7 @@ pub async fn handle_images_edits(
         image_data.is_some()
     );
 
-    // 1. Get Upstream & Token
-    let upstream = state.upstream.clone();
-    let token_manager = state.token_manager;
-    let token_lease = match token_manager
-        .get_token("image_gen", false, None, "dall-e-3")
-        .await
-    {
-        Ok(t) => t,
-        Err(e) => {
-            return Err((
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!("Token error: {}", e),
-            ))
-        }
-    };
-
-    let access_token = token_lease.access_token.clone();
-    let project_id = token_lease.project_id.clone();
-    let email = token_lease.email.clone();
-
-    // 2. Prepare Config
+    // 1. Prepare Config
     let size_input = aspect_ratio.as_deref().or(Some(&size));
 
     let quality_input = match image_size_param.as_deref() {
@@ -435,7 +485,7 @@ pub async fn handle_images_edits(
 
     // 4. Construct Request Body
     let gemini_body = json!({
-        "project": project_id,
+        "project": "bamboo-precept-lgxtn",
         "requestId": format!("img-edit-{}", uuid::Uuid::new_v4()),
         "model": model,
         "userAgent": "antigravity",
@@ -464,82 +514,29 @@ pub async fn handle_images_edits(
         }
     });
 
-    // 5. Execute Requests (Parallel for n > 1)
-    let mut tasks = Vec::new();
-    for _ in 0..n {
-        let upstream = upstream.clone();
-        let access_token = access_token.clone();
-        let body = gemini_body.clone();
+    let trace_id = format!("img_edit_{}", chrono::Utc::now().timestamp_subsec_millis());
 
-        tasks.push(tokio::spawn(async move {
-            match upstream
-                .call_v1_internal("generateContent", &access_token, body, None)
-                .await
-            {
-                Ok(response) => {
-                    let status = response.status();
-                    if !status.is_success() {
-                        let err_text = response.text().await.unwrap_or_default();
-                        return Err(format!("Upstream error {}: {}", status, err_text));
-                    }
-                    match response.json::<Value>().await {
-                        Ok(json) => Ok(json),
-                        Err(e) => Err(format!("Parse error: {}", e)),
-                    }
-                }
-                Err(e) => Err(format!("Network error: {}", e)),
-            }
-        }));
-    }
-
-    // 6. Collect Results
+    // 5. Execute Requests with retry/rotation parity
     let mut images: Vec<Value> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+    let mut response_email: Option<String> = None;
 
-    for (idx, task) in tasks.into_iter().enumerate() {
-        match task.await {
-            Ok(result) => match result {
-                Ok(gemini_resp) => {
-                    let raw = gemini_resp.get("response").unwrap_or(&gemini_resp);
-                    if let Some(parts) = raw
-                        .get("candidates")
-                        .and_then(|c| c.get(0))
-                        .and_then(|cand| cand.get("content"))
-                        .and_then(|content| content.get("parts"))
-                        .and_then(|p| p.as_array())
-                    {
-                        for part in parts {
-                            if let Some(img) = part.get("inlineData") {
-                                let data = img.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                                if !data.is_empty() {
-                                    if response_format == "url" {
-                                        let mime_type = img
-                                            .get("mimeType")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("image/png");
-                                        images.push(json!({
-                                            "url": format!("data:{};base64,{}", mime_type, data)
-                                        }));
-                                    } else {
-                                        images.push(json!({
-                                            "b64_json": data
-                                        }));
-                                    }
-                                    tracing::debug!("[Images] Task {} succeeded", idx);
-                                }
-                            }
-                        }
-                    }
+    for idx in 0..n {
+        match execute_image_request_with_retry(&state, &gemini_body, "dall-e-3", &trace_id).await {
+            Ok((gemini_resp, email)) => {
+                if response_email.is_none() {
+                    response_email = Some(email);
                 }
-                Err(e) => {
-                    tracing::error!("[Images] Task {} failed: {}", idx, e);
-                    errors.push(e);
+                let extracted = extract_images_from_response(&gemini_resp, &response_format);
+                if extracted.is_empty() {
+                    errors.push(format!("Task {}: No images generated", idx));
+                } else {
+                    images.extend(extracted);
                 }
-            },
+            }
             Err(e) => {
-                let err_msg = format!("Task join error: {}", e);
-                tracing::error!("[Images] Task {} join error: {}", idx, e);
-                errors.push(err_msg);
+                tracing::error!("[Images] Task {} failed after retries: {}", idx, e);
+                errors.push(format!("Task {}: {}", idx, e));
             }
         }
     }
@@ -578,9 +575,11 @@ pub async fn handle_images_edits(
         "data": images
     });
 
+    let response_email = response_email.unwrap_or_else(|| "unknown".to_string());
+
     Ok((
         StatusCode::OK,
-        [("X-Account-Email", email.as_str())],
+        [("X-Account-Email", response_email.as_str())],
         Json(openai_response),
     )
         .into_response())

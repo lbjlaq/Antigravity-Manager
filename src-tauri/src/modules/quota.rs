@@ -362,13 +362,17 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                             let model_to_ping = m.name.clone();
                             
                             // [FIX] Removed hardcoded whitelist - use user config instead
-                            // Load user-configured monitored models
-                            let app_config = crate::modules::config::load_app_config().ok();
-                            let monitored_models = app_config
-                                .as_ref()
-                                .map(|c| &c.scheduled_warmup.monitored_models)
-                                .cloned()
-                                .unwrap_or_default();
+                            // [SAFE] Fail-closed: if config can't be loaded, skip warmup candidate
+                            let monitored_models = match crate::modules::config::load_app_config() {
+                                Ok(cfg) => cfg.scheduled_warmup.monitored_models,
+                                Err(e) => {
+                                    crate::modules::logger::log_warn(&format!(
+                                        "[Warmup] Failed to load app config, skipping warmup candidate {} for {}: {}",
+                                        model_to_ping, email, e
+                                    ));
+                                    continue;
+                                }
+                            };
                             
                             // Only warmup models in user's monitored list (or all if list is empty)
                             let should_warmup = monitored_models.is_empty() || monitored_models.contains(&model_to_ping);
@@ -489,12 +493,17 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
             let model_name = m.name.clone();
             
             // [FIX] Removed hardcoded whitelist - use user config instead
-            let app_config = crate::modules::config::load_app_config().ok();
-            let monitored_models = app_config
-                .as_ref()
-                .map(|c| &c.scheduled_warmup.monitored_models)
-                .cloned()
-                .unwrap_or_default();
+            // [SAFE] Fail-closed for single-account warmup too
+            let monitored_models = match crate::modules::config::load_app_config() {
+                Ok(cfg) => cfg.scheduled_warmup.monitored_models,
+                Err(e) => {
+                    crate::modules::logger::log_warn(&format!(
+                        "[Warmup] Failed to load app config for account {}, skipping model {}: {}",
+                        email, model_name, e
+                    ));
+                    continue;
+                }
+            };
             
             // Only warmup models in user's monitored list (or all if list is empty)
             let should_warmup = monitored_models.is_empty() || monitored_models.contains(&model_name);

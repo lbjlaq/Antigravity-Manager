@@ -382,8 +382,9 @@ impl TokenManager {
         // [DIAG] Log details of each account (CHANGED TO INFO FOR DEBUGGING)
         for t in tokens_snapshot.iter() {
             tracing::info!(
-                "   📋 {} | v_needed:{} | v_blocked:{} | quotas: {:?} | CB: {}",
+                "   📋 {} | forbidden:{} | v_needed:{} | v_blocked:{} | quotas: {:?} | CB: {}",
                 t.email,
+                t.is_forbidden,
                 t.verification_needed,
                 t.validation_blocked,
                 t.model_quotas,
@@ -392,6 +393,14 @@ impl TokenManager {
         }
 
         tokens_snapshot.retain(|t| {
+            if t.is_forbidden {
+                tracing::info!(
+                    "  ⛔ {} - SKIP: Forbidden account",
+                    t.email
+                );
+                return false;
+            }
+
             // [NEW] Verification required check (permanent block until manual verification)
             if t.verification_needed {
                 tracing::info!(

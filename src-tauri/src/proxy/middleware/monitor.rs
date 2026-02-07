@@ -152,6 +152,8 @@ pub async fn monitor_middleware(
                 let mut thinking_content = String::new();
                 let mut response_content = String::new();
                 let mut thinking_signature = String::new();
+                let mut openai_tool_calls: Vec<Value> = Vec::new();
+                let mut claude_tool_uses: Vec<Value> = Vec::new();
                 
                 for line in full_response.lines() {
                     if !line.starts_with("data: ") {
@@ -175,6 +177,12 @@ pub async fn monitor_middleware(
                                     if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
                                         response_content.push_str(content);
                                     }
+
+                                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                                        for tc in tool_calls {
+                                            openai_tool_calls.push(tc.clone());
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -192,6 +200,12 @@ pub async fn monitor_middleware(
                             // Text content
                             if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
                                 response_content.push_str(text);
+                            }
+                        }
+
+                        if let Some(content_block) = json.get("content_block") {
+                            if content_block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                                claude_tool_uses.push(content_block.clone());
                             }
                         }
                         
@@ -232,6 +246,12 @@ pub async fn monitor_middleware(
                 }
                 if !response_content.is_empty() {
                     consolidated.insert("content".to_string(), Value::String(response_content));
+                }
+                if !openai_tool_calls.is_empty() {
+                    consolidated.insert("tool_calls".to_string(), Value::Array(openai_tool_calls));
+                }
+                if !claude_tool_uses.is_empty() {
+                    consolidated.insert("tool_use".to_string(), Value::Array(claude_tool_uses));
                 }
                 if let Some(input) = log.input_tokens {
                     consolidated.insert("input_tokens".to_string(), Value::Number(input.into()));

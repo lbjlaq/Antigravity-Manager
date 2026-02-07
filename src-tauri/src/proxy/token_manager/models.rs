@@ -50,4 +50,5 @@ pub struct ProxyToken {
     pub reset_time: Option<i64>,        // [FIX] Quota reset timestamp for priority sorting
     pub validation_blocked: bool,       // [FIX] Temporary block for VALIDATION_REQUIRED
     pub validation_blocked_until: i64,  // [FIX] Timestamp until which account is blocked
+    pub is_forbidden: bool,
 }

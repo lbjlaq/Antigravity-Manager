@@ -434,13 +434,8 @@ impl TokenManager {
         // 2. Clear sticky session bindings for this account
         self.session_accounts.retain(|_, (aid, _)| aid != account_id);
 
-        // 3. Remove from active token pool to prevent selection
-        if let Some(mut token) = self.tokens.get_mut(account_id) {
-            // Update in-memory state
-            if let Some(ref mut quota) = token.remaining_quota {
-                *quota = 0; // Set remaining quota to 0
-            }
-        }
+        // 3. Remove from active token pool immediately to prevent any further selection
+        self.remove_account(account_id);
 
         let json_str = serde_json::to_string_pretty(&account)
             .map_err(|e| format!("Failed to serialize account JSON: {}", e))?;

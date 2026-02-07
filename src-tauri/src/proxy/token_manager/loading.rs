@@ -246,6 +246,24 @@ impl TokenManager {
             return Ok(None);
         }
 
+        // [FIX] Skip forbidden accounts (quota.is_forbidden) to prevent reselection after restart
+        if account
+            .get("quota")
+            .and_then(|q| q.get("is_forbidden"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            tracing::debug!(
+                "Skipping forbidden account file: {:?} (email={})",
+                path,
+                account
+                    .get("email")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unknown>")
+            );
+            return Ok(None);
+        }
+
         // Check validation block
         if account
             .get("validation_blocked")
@@ -402,6 +420,11 @@ impl TokenManager {
                 .get("validation_blocked_until")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0),
+            is_forbidden: account
+                .get("quota")
+                .and_then(|q| q.get("is_forbidden"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         }))
     }
 }
