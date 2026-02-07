@@ -522,6 +522,13 @@
     "branding": {
       "title": "Antigravity Tools",
       "subtitle": "プロフェッショナルなアカウント管理"
+    },
+    "global_system_prompt": {
+      "title": "グローバルシステムプロンプト",
+      "description": "すべてのAPIリクエストのsystemInstructionに自動的に挿入されるグローバルプロンプトを設定します。Antigravityのアイデンティティの後、クライアントのプロンプトの前に配置されます。",
+      "placeholder": "グローバルシステムプロンプトを入力...\n例: あなたはReactとRustに精通したシニアフルスタック開発者です。日本語で回答してください。",
+      "char_count": "{{count}} 文字",
+      "long_prompt_warning": "プロンプトが長すぎます（2000文字以上）。コンテキストウィンドウを大量に消費し、会話の長さが制限される可能性があります。"
     }
   },
   "tray": {
@@ -761,7 +768,10 @@
         "sync_confirm_title": "同期の確認",
         "sync_confirm_message": "現在のプロキシ設定に基づき、OpenCode の設定が上書きされます。続行しますか？",
         "restore_confirm": "OpenCode をデフォルト設定に復元しますか？",
-        "restore_backup_confirm": "バックアップから OpenCode の設定を復元しますか？"
+        "restore_backup_confirm": "バックアップから OpenCode の設定を復元しますか？",
+        "modal_title": "OpenCode モデルを選択",
+        "select_models": "同期するモデルを選択",
+        "btn_confirm_sync": "同期を確定"
       },
       "droid_sync": {
         "modal_title": "Droid にモデルを追加",
@@ -991,6 +1001,7 @@
       "title": "CLI 設定の一括同期",
       "subtitle": "現在の API エンドポイントとキーをローカルの AI CLI ツールに素早く同期します。",
       "card_title": "{{name}} 設定",
+      "model_select": "モデルを選択",
       "status": {
         "not_installed": "未インストール",
         "installed": "v{{version}}",
