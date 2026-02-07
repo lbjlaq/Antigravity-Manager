@@ -15,7 +15,6 @@ pub use response::transform_response;
 pub use streaming::{PartProcessor, StreamingState};
 pub use thinking_utils::{close_tool_loop_for_thinking, filter_invalid_thinking_blocks_with_family};
 pub use collector::collect_stream_to_json;
-use crate::proxy::common::client_adapter::ClientAdapter; // [NEW]
 
 use bytes::Bytes;
 use futures::Stream;
@@ -31,7 +30,6 @@ pub fn create_claude_sse_stream(
     context_limit: u32,
     estimated_prompt_tokens: Option<u32>, // [FIX] Estimated tokens for calibrator learning
     message_count: usize, // [NEW v4.0.0] Message count for rewind detection
-    client_adapter: Option<std::sync::Arc<dyn ClientAdapter>>, // [NEW] Adapter reference
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> {
     use async_stream::stream;
     use bytes::BytesMut;
@@ -44,7 +42,6 @@ pub fn create_claude_sse_stream(
         state.scaling_enabled = scaling_enabled; // Set scaling enabled flag
         state.context_limit = context_limit;
         state.estimated_prompt_tokens = estimated_prompt_tokens; // [FIX] Pass estimated tokens
-        state.set_client_adapter(client_adapter); // [NEW] Set adapter
         let mut buffer = BytesMut::new();
 
         loop {
@@ -482,7 +479,6 @@ mod tests {
             1_000,
             None,
             1, // message_count
-            None, // client_adapter
         );
 
         // 3. 收集输出

@@ -1,190 +1,236 @@
+// File: src-tauri/src/proxy/middleware/ip_filter.rs
+//! IP filtering middleware for Axum.
+//! Implements blacklist/whitelist checking with CIDR support.
+
 use axum::{
-    extract::{Request, State},
+    body::Body,
+    extract::ConnectInfo,
+    http::{Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
-    http::StatusCode,
-    body::Body,
+    Json,
 };
-use crate::proxy::server::AppState;
+use serde::Serialize;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
 use crate::modules::security_db;
+use crate::proxy::config::SecurityMonitorConfig;
 
-/// IP 黑白名单过滤中间件
-pub async fn ip_filter_middleware(
-    State(state): State<AppState>,
-    request: Request,
-    next: Next,
-) -> Response {
-    // 提取客户端 IP
-    let client_ip = extract_client_ip(&request);
-    
-    if let Some(ip) = &client_ip {
-        // 读取安全配置
-        let security_config = state.security.read().await;
-        
-        // 1. 检查白名单 (如果启用白名单模式,只允许白名单 IP)
-        if security_config.security_monitor.whitelist.enabled {
-            match security_db::is_ip_in_whitelist(ip) {
-                Ok(true) => {
-                    // 在白名单中,直接放行
-                    tracing::debug!("[IP Filter] IP {} is in whitelist, allowing", ip);
-                    return next.run(request).await;
-                }
-                Ok(false) => {
-                    // 不在白名单中,且启用了白名单模式,拒绝访问
-                    tracing::warn!("[IP Filter] IP {} not in whitelist, blocking", ip);
-                    return create_blocked_response(
-                        ip,
-                        "Access denied. Your IP is not in the whitelist.",
-                    );
-                }
-                Err(e) => {
-                    tracing::error!("[IP Filter] Failed to check whitelist: {}", e);
-                }
-            }
-        } else {
-            // 白名单优先模式: 如果在白名单中,跳过黑名单检查
-            if security_config.security_monitor.whitelist.whitelist_priority {
-                match security_db::is_ip_in_whitelist(ip) {
-                    Ok(true) => {
-                        tracing::debug!("[IP Filter] IP {} is in whitelist (priority mode), skipping blacklist check", ip);
-                        return next.run(request).await;
-                    }
-                    Ok(false) => {
-                        // 继续检查黑名单
-                    }
-                    Err(e) => {
-                        tracing::error!("[IP Filter] Failed to check whitelist: {}", e);
-                    }
+/// Shared security configuration state
+pub type SecurityState = Arc<RwLock<SecurityMonitorConfig>>;
+
+/// Blocked response payload
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BlockedResponse {
+    error: String,
+    reason: String,
+    blocked_until: Option<i64>,
+    ip: String,
+}
+
+/// Extract client IP from request (supports X-Forwarded-For, X-Real-IP)
+pub fn extract_client_ip(req: &Request<Body>, connect_info: Option<&ConnectInfo<SocketAddr>>) -> String {
+    // Priority 1: X-Forwarded-For header (first IP in chain)
+    if let Some(forwarded) = req.headers().get("x-forwarded-for") {
+        if let Ok(value) = forwarded.to_str() {
+            if let Some(first_ip) = value.split(',').next() {
+                let ip = first_ip.trim();
+                if !ip.is_empty() {
+                    return ip.to_string();
                 }
             }
         }
-
-        // 2. 检查黑名单
-        if security_config.security_monitor.blacklist.enabled {
-            match security_db::get_blacklist_entry_for_ip(ip) {
-                Ok(Some(entry)) => {
-                    tracing::warn!("[IP Filter] IP {} is in blacklist, blocking", ip);
-                    
-                    // 构建详细的封禁消息
-                    let reason = entry.reason.as_deref().unwrap_or("Malicious activity detected");
-                    let ban_type = if let Some(expires_at) = entry.expires_at {
-                        let now = chrono::Utc::now().timestamp();
-                        let remaining_seconds = expires_at - now;
-                        
-                        if remaining_seconds > 0 {
-                            let hours = remaining_seconds / 3600;
-                            let minutes = (remaining_seconds % 3600) / 60;
-                            
-                            if hours > 24 {
-                                let days = hours / 24;
-                                format!("Temporary ban. Please try again after {} day(s).", days)
-                            } else if hours > 0 {
-                                format!("Temporary ban. Please try again after {} hour(s) and {} minute(s).", hours, minutes)
-                            } else {
-                                format!("Temporary ban. Please try again after {} minute(s).", minutes)
-                            }
-                        } else {
-                            "Temporary ban (expired, will be removed soon).".to_string()
-                        }
-                    } else {
-                        "Permanent ban.".to_string()
-                    };
-                    
-                    let detailed_message = format!(
-                        "Access denied. Reason: {}. {}",
-                        reason,
-                        ban_type
-                    );
-                    
-                    // 记录被封禁的访问日志
-                    let log = security_db::IpAccessLog {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        client_ip: ip.clone(),
-                        timestamp: chrono::Utc::now().timestamp(),
-                        method: Some(request.method().to_string()),
-                        path: Some(request.uri().to_string()),
-                        user_agent: request
-                            .headers()
-                            .get("user-agent")
-                            .and_then(|v| v.to_str().ok())
-                            .map(|s| s.to_string()),
-                        status: Some(403),
-                        duration: Some(0),
-                        api_key_hash: None,
-                        blocked: true,
-                        block_reason: Some(format!("IP in blacklist: {}", reason)),
-                        username: None,
-                    };
-                    
-                    tokio::spawn(async move {
-                        if let Err(e) = security_db::save_ip_access_log(&log) {
-                            tracing::error!("[IP Filter] Failed to save blocked access log: {}", e);
-                        }
-                    });
-                    
-                    return create_blocked_response(
-                        ip,
-                        &detailed_message,
-                    );
-                }
-                Ok(None) => {
-                    // 不在黑名单中,放行
-                    tracing::debug!("[IP Filter] IP {} not in blacklist, allowing", ip);
-                }
-                Err(e) => {
-                    tracing::error!("[IP Filter] Failed to check blacklist: {}", e);
-                }
-            }
-        }
-    } else {
-        tracing::warn!("[IP Filter] Unable to extract client IP from request");
     }
 
-    // 放行请求
-    next.run(request).await
-}
-
-/// 从请求中提取客户端 IP
-fn extract_client_ip(request: &Request) -> Option<String> {
-    // 1. 优先从 X-Forwarded-For 提取 (取第一个 IP)
-    request
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-        .or_else(|| {
-            // 2. 备选从 X-Real-IP 提取
-            request
-                .headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .or_else(|| {
-            // 3. 最后尝试从 ConnectInfo 获取 (TCP 连接 IP)
-            // 这可以解决本地开发/测试时没有代理头导致 IP 获取失败的问题
-            request
-                .extensions()
-                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                .map(|info| info.0.ip().to_string())
-        })
-}
-
-/// 创建被封禁的响应
-fn create_blocked_response(ip: &str, message: &str) -> Response {
-    let body = serde_json::json!({
-        "error": {
-            "message": message,
-            "type": "ip_blocked",
-            "code": "ip_blocked",
-            "ip": ip,
+    // Priority 2: X-Real-IP header
+    if let Some(real_ip) = req.headers().get("x-real-ip") {
+        if let Ok(ip) = real_ip.to_str() {
+            let ip = ip.trim();
+            if !ip.is_empty() {
+                return ip.to_string();
+            }
         }
-    });
+    }
+
+    // Priority 3: Connection info (direct connection)
+    if let Some(info) = connect_info {
+        return info.0.ip().to_string();
+    }
+
+    // Fallback
+    "unknown".to_string()
+}
+
+/// IP filter middleware
+/// Note: ConnectInfo may not be available when using manual hyper server,
+/// so we make it optional and fall back to header-based IP extraction.
+pub async fn ip_filter_middleware(
+    connect_info: Option<ConnectInfo<SocketAddr>>,
+    security_state: axum::extract::Extension<SecurityState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    let client_ip = extract_client_ip(&req, connect_info.as_ref());
+    let path = req.uri().path().to_string();
+    let method = req.method().to_string();
+
+    // Read config values we need
+    let (blacklist_enabled, whitelist_enabled, strict_mode, access_log_enabled) = {
+        let config = security_state.read().await;
+        (
+            config.blacklist.enabled,
+            config.whitelist.enabled,
+            config.whitelist.strict_mode,
+            config.access_log.enabled,
+        )
+    };
+
+    // Skip filtering if both blacklist and whitelist are disabled
+    if !blacklist_enabled && !whitelist_enabled {
+        return next.run(req).await;
+    }
+
+    // Check whitelist first (if enabled and has priority)
+    if whitelist_enabled {
+        let is_whitelisted = security_db::is_ip_in_whitelist(&client_ip).unwrap_or(false);
+
+        if is_whitelisted {
+            // Whitelisted IPs bypass all checks
+            if access_log_enabled {
+                log_access(&client_ip, &path, &method, 200, false, None);
+            }
+            return next.run(req).await;
+        }
+
+        // Strict mode: only whitelisted IPs allowed
+        if strict_mode {
+            log_access(&client_ip, &path, &method, 403, true, Some("IP not in whitelist (strict mode)"));
+
+            tracing::warn!(
+                "[Security] Blocked request from non-whitelisted IP: {} (strict mode)",
+                client_ip
+            );
+
+            return create_blocked_response(
+                &client_ip,
+                "IP not in whitelist",
+                None,
+            );
+        }
+    }
+
+    // Check blacklist
+    if blacklist_enabled {
+        if let Ok(Some(entry)) = security_db::get_blacklist_entry_for_ip(&client_ip) {
+            let reason = if entry.reason.is_empty() {
+                "IP is blacklisted".to_string()
+            } else {
+                entry.reason.clone()
+            };
+
+            log_access(&client_ip, &path, &method, 403, true, Some(&reason));
+
+            tracing::warn!(
+                "[Security] Blocked request from blacklisted IP: {} (reason: {})",
+                client_ip,
+                reason
+            );
+
+            return create_blocked_response(&client_ip, &reason, entry.expires_at);
+        }
+    }
+
+    // IP passed all checks
+    let response = next.run(req).await;
     
-    (
-        StatusCode::FORBIDDEN,
-        [(axum::http::header::CONTENT_TYPE, "application/json")],
-        serde_json::to_string(&body).unwrap_or_else(|_| message.to_string()),
-    )
-        .into_response()
+    // Log successful access if enabled
+    if access_log_enabled {
+        let status = response.status().as_u16() as i32;
+        log_access(&client_ip, &path, &method, status, false, None);
+    }
+
+    response
+}
+
+/// Create a blocked response with JSON payload
+fn create_blocked_response(ip: &str, reason: &str, blocked_until: Option<i64>) -> Response {
+    let body = BlockedResponse {
+        error: "Forbidden".to_string(),
+        reason: reason.to_string(),
+        blocked_until,
+        ip: ip.to_string(),
+    };
+
+    (StatusCode::FORBIDDEN, Json(body)).into_response()
+}
+
+/// Log access to database (synchronous, fire-and-forget)
+fn log_access(
+    ip: &str,
+    path: &str,
+    method: &str,
+    status: i32,
+    blocked: bool,
+    reason: Option<&str>,
+) {
+    let _ = security_db::log_access(ip, path, method, status, blocked, reason, None);
+}
+
+/// Create security state from config
+pub fn create_security_state(config: &crate::proxy::config::ProxyConfig) -> SecurityState {
+    Arc::new(RwLock::new(config.security_monitor.clone()))
+}
+
+/// Update security state (for hot-reload)
+pub async fn update_security_state(state: &SecurityState, config: &crate::proxy::config::ProxyConfig) {
+    let mut guard = state.write().await;
+    *guard = config.security_monitor.clone();
+    tracing::debug!("[Security] Configuration hot-reloaded");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Request;
+
+    #[test]
+    fn test_extract_client_ip_direct() {
+        let req = Request::builder()
+            .uri("/test")
+            .body(Body::empty())
+            .expect("Failed to build request");
+
+        let addr: SocketAddr = "192.168.1.100:12345".parse().expect("Failed to parse addr");
+        let ip = extract_client_ip(&req, Some(&ConnectInfo(addr)));
+        assert_eq!(ip, "192.168.1.100");
+    }
+
+    #[test]
+    fn test_extract_client_ip_forwarded() {
+        let req = Request::builder()
+            .uri("/test")
+            .header("x-forwarded-for", "10.0.0.1, 192.168.1.1")
+            .body(Body::empty())
+            .expect("Failed to build request");
+
+        let addr: SocketAddr = "127.0.0.1:12345".parse().expect("Failed to parse addr");
+        let ip = extract_client_ip(&req, Some(&ConnectInfo(addr)));
+        assert_eq!(ip, "10.0.0.1");
+    }
+
+    #[test]
+    fn test_extract_client_ip_real_ip() {
+        let req = Request::builder()
+            .uri("/test")
+            .header("x-real-ip", "10.0.0.50")
+            .body(Body::empty())
+            .expect("Failed to build request");
+
+        let addr: SocketAddr = "127.0.0.1:12345".parse().expect("Failed to parse addr");
+        let ip = extract_client_ip(&req, Some(&ConnectInfo(addr)));
+        assert_eq!(ip, "10.0.0.50");
+    }
 }

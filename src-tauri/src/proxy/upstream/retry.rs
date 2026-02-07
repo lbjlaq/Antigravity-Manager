@@ -1,11 +1,11 @@
 // 429 重试策略
 // Duration 解析
 
-use regex::Regex;
 use once_cell::sync::Lazy;
+use regex::Regex;
 
 static DURATION_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"([\d.]+)\s*(ms|s|m|h)").unwrap()
+    Regex::new(r"([\d.]+)\s*(ms|s|m|h)").expect("Failed to compile static DURATION_RE")
 });
 
 /// 解析 Duration 字符串 (e.g., "1.5s", "200ms", "1h16m0.667s")

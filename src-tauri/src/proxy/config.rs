@@ -1,43 +1,66 @@
 use serde::{Deserialize, Serialize};
 // use std::path::PathBuf;
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::RwLock;
+use once_cell::sync::Lazy;
 
 // ============================================================================
-// 全局 Thinking Budget 配置存储
-// 用于在 request transform 函数中访问配置（无需修改函数签名）
+// [FIX #1592/#1602] THINKING BUDGET CONFIG
 // ============================================================================
-static GLOBAL_THINKING_BUDGET_CONFIG: OnceLock<RwLock<ThinkingBudgetConfig>> = OnceLock::new();
 
-/// 获取当前 Thinking Budget 配置
+/// Global thinking budget config
+static THINKING_BUDGET_CONFIG: Lazy<RwLock<ThinkingBudgetConfig>> = 
+    Lazy::new(|| RwLock::new(ThinkingBudgetConfig::default()));
+
+/// Get current thinking budget configuration
 pub fn get_thinking_budget_config() -> ThinkingBudgetConfig {
-    GLOBAL_THINKING_BUDGET_CONFIG
-        .get()
-        .and_then(|lock| lock.read().ok())
-        .map(|cfg| cfg.clone())
-        .unwrap_or_default()
+    THINKING_BUDGET_CONFIG.read().unwrap().clone()
 }
 
-/// 更新全局 Thinking Budget 配置
+/// Update thinking budget configuration
 pub fn update_thinking_budget_config(config: ThinkingBudgetConfig) {
-    if let Some(lock) = GLOBAL_THINKING_BUDGET_CONFIG.get() {
-        if let Ok(mut cfg) = lock.write() {
-            *cfg = config.clone();
-            tracing::info!(
-                "[Thinking-Budget] Global config updated: mode={:?}, custom_value={}",
-                config.mode,
-                config.custom_value
-            );
-        }
-    } else {
-        // 首次初始化
-        let _ = GLOBAL_THINKING_BUDGET_CONFIG.set(RwLock::new(config.clone()));
-        tracing::info!(
-            "[Thinking-Budget] Global config initialized: mode={:?}, custom_value={}",
-            config.mode,
-            config.custom_value
-        );
+    let mut guard = THINKING_BUDGET_CONFIG.write().unwrap();
+    *guard = config;
+}
+
+/// Controls how to handle the thinking_budget parameter from the caller
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingBudgetMode {
+    /// Auto limit: apply 24576 cap for specific models (Flash/Thinking)
+    Auto,
+    /// Custom: use configured custom_value (still capped at 24576 for Gemini)
+    Custom,
+    /// Passthrough: forward caller's value directly (use with caution)
+    Passthrough,
+}
+
+impl Default for ThinkingBudgetMode {
+    fn default() -> Self {
+        Self::Auto
     }
+}
+
+/// Thinking budget configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingBudgetConfig {
+    #[serde(default)]
+    pub mode: ThinkingBudgetMode,
+    #[serde(default = "default_thinking_budget_custom_value")]
+    pub custom_value: u32,
+}
+
+impl Default for ThinkingBudgetConfig {
+    fn default() -> Self {
+        Self {
+            mode: ThinkingBudgetMode::Auto,
+            custom_value: default_thinking_budget_custom_value(),
+        }
+    }
+}
+
+fn default_thinking_budget_custom_value() -> u32 {
+    24576 // [FIX #1592] Safe default for Gemini models
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,7 +217,7 @@ impl Default for ExperimentalConfig {
             enable_signature_cache: true,
             enable_tool_loop_recovery: true,
             enable_cross_model_checks: true,
-            enable_usage_scaling: false, // 默认关闭,回归透明模式
+            enable_usage_scaling: false,  // 默认关闭,回归透明模式
             context_compression_threshold_l1: 0.4,
             context_compression_threshold_l2: 0.55,
             context_compression_threshold_l3: 0.7,
@@ -202,58 +225,9 @@ impl Default for ExperimentalConfig {
     }
 }
 
-fn default_threshold_l1() -> f32 {
-    0.4
-}
-fn default_threshold_l2() -> f32 {
-    0.55
-}
-fn default_threshold_l3() -> f32 {
-    0.7
-}
-
-/// Thinking Budget 模式
-/// 控制如何处理调用方传入的 thinking_budget 参数
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ThinkingBudgetMode {
-    /// 自动限制：对特定模型（Flash/Thinking）应用 24576 上限
-    Auto,
-    /// 透传：完全使用调用方传入的值，不做任何修改
-    Passthrough,
-    /// 自定义：使用用户设定的固定值覆盖所有请求
-    Custom,
-}
-
-impl Default for ThinkingBudgetMode {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
-
-/// Thinking Budget 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThinkingBudgetConfig {
-    /// 模式选择
-    #[serde(default)]
-    pub mode: ThinkingBudgetMode,
-    /// 自定义固定值（仅在 mode=Custom 时生效）
-    #[serde(default = "default_thinking_budget_custom_value")]
-    pub custom_value: u32,
-}
-
-impl Default for ThinkingBudgetConfig {
-    fn default() -> Self {
-        Self {
-            mode: ThinkingBudgetMode::Auto,
-            custom_value: default_thinking_budget_custom_value(),
-        }
-    }
-}
-
-fn default_thinking_budget_custom_value() -> u32 {
-    24576
-}
+fn default_threshold_l1() -> f32 { 0.4 }
+fn default_threshold_l2() -> f32 { 0.55 }
+fn default_threshold_l3() -> f32 { 0.7 }
 
 fn default_true() -> bool {
     true
@@ -261,6 +235,104 @@ fn default_true() -> bool {
 
 fn default_false() -> bool {
     false
+}
+
+// ============================================================================
+// SECURITY MONITOR CONFIG
+// ============================================================================
+
+/// IP Blacklist configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlacklistConfig {
+    /// Enable IP blacklist filtering
+    #[serde(default)]
+    pub enabled: bool,
+    /// Auto-block after N failed attempts (0 = disabled)
+    #[serde(default)]
+    pub auto_block_threshold: u32,
+    /// Auto-block duration in seconds (default: 1 hour)
+    #[serde(default = "default_block_duration")]
+    pub auto_block_duration: u64,
+}
+
+impl Default for BlacklistConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_block_threshold: 0,
+            auto_block_duration: default_block_duration(),
+        }
+    }
+}
+
+fn default_block_duration() -> u64 {
+    3600 // 1 hour
+}
+
+/// IP Whitelist configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhitelistConfig {
+    /// Enable IP whitelist filtering
+    #[serde(default)]
+    pub enabled: bool,
+    /// Whitelist-only mode: only whitelisted IPs can access
+    #[serde(default)]
+    pub strict_mode: bool,
+    /// Whitelist takes priority over blacklist
+    #[serde(default = "default_true")]
+    pub priority_over_blacklist: bool,
+}
+
+impl Default for WhitelistConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strict_mode: false,
+            priority_over_blacklist: true,
+        }
+    }
+}
+
+/// Access logging configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccessLogConfig {
+    /// Enable access logging
+    #[serde(default)]
+    pub enabled: bool,
+    /// Log retention days (0 = forever)
+    #[serde(default = "default_log_retention_days")]
+    pub retention_days: u32,
+    /// Only log blocked requests
+    #[serde(default)]
+    pub blocked_only: bool,
+}
+
+impl Default for AccessLogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            retention_days: default_log_retention_days(),
+            blocked_only: false,
+        }
+    }
+}
+
+fn default_log_retention_days() -> u32 {
+    30
+}
+
+/// Security monitor configuration (IP filtering, access logging)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SecurityMonitorConfig {
+    /// IP blacklist settings
+    #[serde(default)]
+    pub blacklist: BlacklistConfig,
+    /// IP whitelist settings
+    #[serde(default)]
+    pub whitelist: WhitelistConfig,
+    /// Access log settings
+    #[serde(default)]
+    pub access_log: AccessLogConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,73 +348,6 @@ impl Default for DebugLoggingConfig {
         Self {
             enabled: false,
             output_dir: None,
-        }
-    }
-}
-
-/// IP 黑名单配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpBlacklistConfig {
-    /// 是否启用黑名单
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// 自定义封禁消息
-    #[serde(default = "default_block_message")]
-    pub block_message: String,
-}
-
-impl Default for IpBlacklistConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            block_message: default_block_message(),
-        }
-    }
-}
-
-fn default_block_message() -> String {
-    "Access denied".to_string()
-}
-
-/// IP 白名单配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpWhitelistConfig {
-    /// 是否启用白名单模式 (启用后只允许白名单IP访问)
-    #[serde(default)]
-    pub enabled: bool,
-
-    /// 白名单优先模式 (白名单IP跳过黑名单检查)
-    #[serde(default = "default_true")]
-    pub whitelist_priority: bool,
-}
-
-impl Default for IpWhitelistConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            whitelist_priority: true,
-        }
-    }
-}
-
-/// 安全监控配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecurityMonitorConfig {
-    /// IP 黑名单配置
-    #[serde(default)]
-    pub blacklist: IpBlacklistConfig,
-
-    /// IP 白名单配置
-    #[serde(default)]
-    pub whitelist: IpWhitelistConfig,
-}
-
-impl Default for SecurityMonitorConfig {
-    fn default() -> Self {
-        Self {
-            blacklist: IpBlacklistConfig::default(),
-            whitelist: IpWhitelistConfig::default(),
         }
     }
 }
@@ -372,7 +377,7 @@ pub struct ProxyConfig {
 
     /// API 密钥
     pub api_key: String,
-
+    
     /// Web UI 管理后台密码 (可选，如未设置则使用 api_key)
     pub admin_password: Option<String>,
 
@@ -399,13 +404,13 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub upstream_proxy: UpstreamProxyConfig,
 
+    /// [NEW] 自定义 User-Agent 覆盖 (用于绕过某些检测)
+    #[serde(default)]
+    pub user_agent_override: Option<String>,
+
     /// z.ai provider configuration (Anthropic-compatible).
     #[serde(default)]
     pub zai: ZaiConfig,
-
-    /// 自定义 User-Agent 请求头 (可选覆盖)
-    #[serde(default)]
-    pub user_agent_override: Option<String>,
 
     /// 账号调度配置 (粘性会话/限流重试)
     #[serde(default)]
@@ -415,11 +420,11 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub experimental: ExperimentalConfig,
 
-    /// 安全监控配置 (IP 黑白名单)
+    /// Security monitor configuration (IP blacklist/whitelist, access logging)
     #[serde(default)]
     pub security_monitor: SecurityMonitorConfig,
 
-    /// 固定账号模式的账号ID (Fixed Account Mode)
+    /// [FIX #820] Preferred account ID for fixed account mode
     /// - None: 使用轮询模式
     /// - Some(account_id): 固定使用指定账号
     #[serde(default)]
@@ -428,15 +433,6 @@ pub struct ProxyConfig {
     /// Saved User-Agent string (persisted even when override is disabled)
     #[serde(default)]
     pub saved_user_agent: Option<String>,
-
-    /// Thinking Budget 配置
-    /// 控制如何处理 AI 深度思考时的 Token 预算
-    #[serde(default)]
-    pub thinking_budget: ThinkingBudgetConfig,
-
-    /// 代理池配置
-    #[serde(default)]
-    pub proxy_pool: ProxyPoolConfig,
 }
 
 /// 上游代理配置
@@ -463,15 +459,13 @@ impl Default for ProxyConfig {
             enable_logging: true, // 默认开启，支持 token 统计功能
             debug_logging: DebugLoggingConfig::default(),
             upstream_proxy: UpstreamProxyConfig::default(),
+            user_agent_override: None,
             zai: ZaiConfig::default(),
             scheduling: crate::proxy::sticky_config::StickySessionConfig::default(),
             experimental: ExperimentalConfig::default(),
             security_monitor: SecurityMonitorConfig::default(),
-            preferred_account_id: None, // 默认使用轮询模式
-            user_agent_override: None,
+            preferred_account_id: None,
             saved_user_agent: None,
-            thinking_budget: ThinkingBudgetConfig::default(),
-            proxy_pool: ProxyPoolConfig::default(),
         }
     }
 }
@@ -507,76 +501,4 @@ impl ProxyConfig {
             "127.0.0.1"
         }
     }
-}
-
-
-/// 代理认证信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyAuth {
-    pub username: String,
-    #[serde(serialize_with = "crate::utils::crypto::serialize_password", deserialize_with = "crate::utils::crypto::deserialize_password")]
-    pub password: String,
-}
-
-/// 单个代理配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyEntry {
-    pub id: String,                    // 唯一标识
-    pub name: String,                  // 显示名称
-    pub url: String,                   // 代理地址 (http://, https://, socks5://)
-    pub auth: Option<ProxyAuth>,       // 认证信息 (可选)
-    pub enabled: bool,                 // 是否启用
-    pub priority: i32,                 // 优先级 (数字越小优先级越高)
-    pub tags: Vec<String>,             // 标签 (如 "美国", "住宅IP")
-    pub max_accounts: Option<usize>,   // 最大绑定账号数 (0 = 无限制)
-    pub health_check_url: Option<String>, // 健康检查 URL
-    pub last_check_time: Option<i64>,  // 上次检查时间
-    pub is_healthy: bool,              // 健康状态
-    pub latency: Option<u64>,          // 延迟 (毫秒) [NEW]
-}
-
-/// 代理池配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProxyPoolConfig {
-    pub enabled: bool,                 // 是否启用代理池
-    // pub mode: ProxyPoolMode,        // [REMOVED] 代理池模式，统一为 Hybrid 逻辑
-    pub proxies: Vec<ProxyEntry>,      // 代理列表
-    pub health_check_interval: u64,    // 健康检查间隔 (秒)
-    pub auto_failover: bool,           // 自动故障转移
-    pub strategy: ProxySelectionStrategy, // 代理选择策略
-    /// 账号到代理的绑定关系 (account_id -> proxy_id)，持久化存储
-    #[serde(default)]
-    pub account_bindings: HashMap<String, String>,
-}
-
-impl Default for ProxyPoolConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            // mode: ProxyPoolMode::Global,
-            proxies: Vec::new(),
-            health_check_interval: 300,
-            auto_failover: true,
-            strategy: ProxySelectionStrategy::Priority,
-            account_bindings: HashMap::new(),
-        }
-    }
-}
-
-
-
-/// 代理选择策略
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ProxySelectionStrategy {
-    /// 轮询: 依次使用
-    RoundRobin,
-    /// 随机: 随机选择
-    Random,
-    /// 优先级: 按 priority 字段排序
-    Priority,
-    /// 最少连接: 选择当前使用最少的代理
-    LeastConnections,
-    /// 加权轮询: 根据健康状态和优先级
-    WeightedRoundRobin,
 }

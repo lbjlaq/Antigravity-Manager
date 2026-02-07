@@ -1,429 +1,214 @@
-//! Security Database Module
-//! 安全监控相关的数据库操作
+// File: src-tauri/src/modules/security_db.rs
+//! Security database module for IP blacklist/whitelist management.
+//! Uses SQLite with WAL mode for concurrent access safety.
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
 
-/// IP 访问日志
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpAccessLog {
-    pub id: String,
-    pub client_ip: String,
-    pub timestamp: i64,
-    pub method: Option<String>,
-    pub path: Option<String>,
-    pub user_agent: Option<String>,
-    pub status: Option<i32>,
-    pub duration: Option<i64>,
-    pub api_key_hash: Option<String>,
-    pub blocked: bool,
-    pub block_reason: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-}
+/// Global database connection pool (single connection with mutex for thread safety)
+static DB_CONNECTION: Lazy<Mutex<Option<Connection>>> = Lazy::new(|| Mutex::new(None));
 
-/// IP 黑名单条目
+/// IP Blacklist entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IpBlacklistEntry {
-    pub id: String,
+    pub id: i64,
     pub ip_pattern: String,
-    pub reason: Option<String>,
+    pub reason: String,
     pub created_at: i64,
     pub expires_at: Option<i64>,
     pub created_by: String,
     pub hit_count: i64,
 }
 
-/// IP 白名单条目
+/// IP Whitelist entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IpWhitelistEntry {
-    pub id: String,
+    pub id: i64,
     pub ip_pattern: String,
-    pub description: Option<String>,
+    pub description: String,
     pub created_at: i64,
+    pub created_by: String,
 }
 
-/// IP 统计概览
+/// Access log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpStats {
-    pub total_requests: u64,
-    pub unique_ips: u64,
-    pub blocked_count: u64,
-    pub today_requests: u64,
-    pub blacklist_count: u64,
-    pub whitelist_count: u64,
+#[serde(rename_all = "camelCase")]
+pub struct AccessLogEntry {
+    pub id: i64,
+    pub ip_address: String,
+    pub path: String,
+    pub method: String,
+    pub status_code: i32,
+    pub blocked: bool,
+    pub block_reason: Option<String>,
+    pub timestamp: i64,
+    pub user_agent: Option<String>,
 }
 
-/// IP 访问排行
+/// Security statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpRanking {
-    pub client_ip: String,
-    pub request_count: u64,
-    pub last_seen: i64,
-    pub is_blocked: bool,
+#[serde(rename_all = "camelCase")]
+pub struct SecurityStats {
+    pub total_requests: i64,
+    pub blocked_requests: i64,
+    pub unique_ips: i64,
+    pub blacklist_count: i64,
+    pub whitelist_count: i64,
+    pub top_blocked_ips: Vec<(String, i64)>,
 }
 
-/// 获取安全数据库路径
-pub fn get_security_db_path() -> Result<PathBuf, String> {
-    let data_dir = crate::modules::account::get_data_dir()?;
+/// Get the security database path
+fn get_db_path() -> Result<PathBuf, String> {
+    let data_dir = crate::modules::account::get_data_dir()
+        .map_err(|e| format!("Failed to get data dir: {}", e))?;
     Ok(data_dir.join("security.db"))
 }
 
-/// 连接数据库
+/// Connect to the security database
 fn connect_db() -> Result<Connection, String> {
-    let db_path = get_security_db_path()?;
-    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-
+    let db_path = get_db_path()?;
+    let conn = Connection::open(&db_path)
+        .map_err(|e| format!("Failed to open security database: {}", e))?;
+    
     // Enable WAL mode for better concurrency
-    conn.pragma_update(None, "journal_mode", "WAL")
-        .map_err(|e| e.to_string())?;
-
-    // Set busy timeout
-    conn.pragma_update(None, "busy_timeout", 5000)
-        .map_err(|e| e.to_string())?;
-
-    conn.pragma_update(None, "synchronous", "NORMAL")
-        .map_err(|e| e.to_string())?;
-
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+        .map_err(|e| format!("Failed to set PRAGMA: {}", e))?;
+    
     Ok(conn)
 }
 
-/// 初始化安全数据库
+/// Initialize the security database schema
 pub fn init_db() -> Result<(), String> {
     let conn = connect_db()?;
-
-    // IP 访问日志表
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS ip_access_logs (
-            id TEXT PRIMARY KEY,
-            client_ip TEXT NOT NULL,
-            timestamp INTEGER NOT NULL,
-            method TEXT,
-            path TEXT,
-            user_agent TEXT,
-            status INTEGER,
-            duration INTEGER,
-            api_key_hash TEXT,
-            blocked INTEGER DEFAULT 0,
-            block_reason TEXT
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    // IP 黑名单表
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS ip_blacklist (
-            id TEXT PRIMARY KEY,
+    
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS ip_blacklist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip_pattern TEXT NOT NULL UNIQUE,
-            reason TEXT,
+            reason TEXT NOT NULL DEFAULT '',
             created_at INTEGER NOT NULL,
             expires_at INTEGER,
-            created_by TEXT DEFAULT 'manual',
-            hit_count INTEGER DEFAULT 0
-        )",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
+            created_by TEXT NOT NULL DEFAULT 'system',
+            hit_count INTEGER NOT NULL DEFAULT 0
+        );
 
-    // IP 白名单表
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS ip_whitelist (
-            id TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS ip_whitelist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip_pattern TEXT NOT NULL UNIQUE,
-            description TEXT,
-            created_at INTEGER NOT NULL
-        )",
-        [],
+            description TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL,
+            created_by TEXT NOT NULL DEFAULT 'system'
+        );
+
+        CREATE TABLE IF NOT EXISTS access_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip_address TEXT NOT NULL,
+            path TEXT NOT NULL,
+            method TEXT NOT NULL,
+            status_code INTEGER NOT NULL,
+            blocked INTEGER NOT NULL DEFAULT 0,
+            block_reason TEXT,
+            timestamp INTEGER NOT NULL,
+            user_agent TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_blacklist_ip ON ip_blacklist(ip_pattern);
+        CREATE INDEX IF NOT EXISTS idx_blacklist_expires ON ip_blacklist(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_whitelist_ip ON ip_whitelist(ip_pattern);
+        CREATE INDEX IF NOT EXISTS idx_access_log_ip ON access_log(ip_address);
+        CREATE INDEX IF NOT EXISTS idx_access_log_timestamp ON access_log(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_access_log_blocked ON access_log(blocked);
+        "#,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("Failed to create security tables: {}", e))?;
 
-    // 创建索引
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_ip_access_ip ON ip_access_logs (client_ip)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_ip_access_timestamp ON ip_access_logs (timestamp DESC)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_ip_access_blocked ON ip_access_logs (blocked)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_blacklist_pattern ON ip_blacklist (ip_pattern)",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Migration: Add username column to ip_access_logs
-    let _ = conn.execute("ALTER TABLE ip_access_logs ADD COLUMN username TEXT", []);
-
+    tracing::info!("[Security] Database initialized at {:?}", get_db_path()?);
     Ok(())
 }
 
 // ============================================================================
-// IP 访问日志操作
+// BLACKLIST OPERATIONS
 // ============================================================================
 
-/// 保存 IP 访问日志
-pub fn save_ip_access_log(log: &IpAccessLog) -> Result<(), String> {
-    let conn = connect_db()?;
-
-    conn.execute(
-        "INSERT INTO ip_access_logs (id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-        params![
-            log.id,
-            log.client_ip,
-            log.timestamp,
-            log.method,
-            log.path,
-            log.user_agent,
-            log.status,
-            log.duration,
-            log.api_key_hash,
-            log.blocked,
-            log.block_reason,
-            log.username,
-        ],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-/// 获取 IP 访问日志 (分页)
-pub fn get_ip_access_logs(
-    limit: usize,
-    offset: usize,
-    ip_filter: Option<&str>,
-    blocked_only: bool,
-) -> Result<Vec<IpAccessLog>, String> {
-    let conn = connect_db()?;
-
-    let sql = if blocked_only {
-        if let Some(ip) = ip_filter {
-            format!(
-                "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
-                 FROM ip_access_logs
-                 WHERE blocked = 1 AND client_ip LIKE '%{}%'
-                 ORDER BY timestamp DESC
-                 LIMIT {} OFFSET {}",
-                ip, limit, offset
-            )
-        } else {
-            format!(
-                "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
-                 FROM ip_access_logs
-                 WHERE blocked = 1
-                 ORDER BY timestamp DESC
-                 LIMIT {} OFFSET {}",
-                limit, offset
-            )
-        }
-    } else if let Some(ip) = ip_filter {
-        format!(
-            "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
-             FROM ip_access_logs
-             WHERE client_ip LIKE '%{}%'
-             ORDER BY timestamp DESC
-             LIMIT {} OFFSET {}",
-            ip, limit, offset
-        )
-    } else {
-        format!(
-            "SELECT id, client_ip, timestamp, method, path, user_agent, status, duration, api_key_hash, blocked, block_reason, username
-             FROM ip_access_logs
-             ORDER BY timestamp DESC
-             LIMIT {} OFFSET {}",
-            limit, offset
-        )
-    };
-
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-
-    let logs_iter = stmt
-        .query_map([], |row| {
-            Ok(IpAccessLog {
-                id: row.get(0)?,
-                client_ip: row.get(1)?,
-                timestamp: row.get(2)?,
-                method: row.get(3)?,
-                path: row.get(4)?,
-                user_agent: row.get(5)?,
-                status: row.get(6)?,
-                duration: row.get(7)?,
-                api_key_hash: row.get(8)?,
-                blocked: row.get::<_, i32>(9)? != 0,
-                block_reason: row.get(10)?,
-                username: row.get(11).unwrap_or(None),
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut logs = Vec::new();
-    for log in logs_iter {
-        logs.push(log.map_err(|e| e.to_string())?);
-    }
-    Ok(logs)
-}
-
-/// 获取 IP 统计概览
-pub fn get_ip_stats() -> Result<IpStats, String> {
-    let conn = connect_db()?;
-
-    let today_start = chrono::Utc::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .unwrap()
-        .and_utc()
-        .timestamp();
-
-    let (total_requests, unique_ips, blocked_count, today_requests): (u64, u64, u64, u64) = conn
-        .query_row(
-            "SELECT
-                COUNT(*) as total,
-                COUNT(DISTINCT client_ip) as unique_ips,
-                SUM(CASE WHEN blocked = 1 THEN 1 ELSE 0 END) as blocked,
-                SUM(CASE WHEN timestamp >= ?1 THEN 1 ELSE 0 END) as today
-             FROM ip_access_logs",
-            [today_start],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .map_err(|e| e.to_string())?;
-
-    let blacklist_count: u64 = conn
-        .query_row("SELECT COUNT(*) FROM ip_blacklist", [], |row| row.get(0))
-        .map_err(|e| e.to_string())?;
-
-    let whitelist_count: u64 = conn
-        .query_row("SELECT COUNT(*) FROM ip_whitelist", [], |row| row.get(0))
-        .map_err(|e| e.to_string())?;
-
-    Ok(IpStats {
-        total_requests,
-        unique_ips,
-        blocked_count,
-        today_requests,
-        blacklist_count,
-        whitelist_count,
-    })
-}
-
-/// 获取 TOP N IP 访问排行
-pub fn get_top_ips(limit: usize, hours: i64) -> Result<Vec<IpRanking>, String> {
-    let conn = connect_db()?;
-
-    let since = chrono::Utc::now().timestamp() - (hours * 3600);
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT client_ip, COUNT(*) as cnt, MAX(timestamp) as last_seen
-             FROM ip_access_logs
-             WHERE timestamp >= ?1
-             GROUP BY client_ip
-             ORDER BY cnt DESC
-             LIMIT ?2",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let rankings_iter = stmt
-        .query_map([since, limit as i64], |row| {
-            Ok(IpRanking {
-                client_ip: row.get(0)?,
-                request_count: row.get(1)?,
-                last_seen: row.get(2)?,
-                is_blocked: false, // 稍后填充
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut rankings = Vec::new();
-    for r in rankings_iter {
-        let mut ranking = r.map_err(|e| e.to_string())?;
-        // 检查是否在黑名单中
-        ranking.is_blocked = is_ip_in_blacklist(&ranking.client_ip)?;
-        rankings.push(ranking);
-    }
-
-    Ok(rankings)
-}
-
-/// 清理旧的 IP 访问日志
-pub fn cleanup_old_ip_logs(days: i64) -> Result<usize, String> {
-    let conn = connect_db()?;
-
-    let cutoff_timestamp = chrono::Utc::now().timestamp() - (days * 24 * 3600);
-
-    let deleted = conn
-        .execute(
-            "DELETE FROM ip_access_logs WHERE timestamp < ?1",
-            [cutoff_timestamp],
-        )
-        .map_err(|e| e.to_string())?;
-
-    // VACUUM to reclaim space
-    conn.execute("VACUUM", []).map_err(|e| e.to_string())?;
-
-    Ok(deleted)
-}
-
-// ============================================================================
-// 黑名单操作
-// ============================================================================
-
-/// 添加 IP 到黑名单
+/// Add IP to blacklist
 pub fn add_to_blacklist(
     ip_pattern: &str,
-    reason: Option<&str>,
+    reason: &str,
     expires_at: Option<i64>,
     created_by: &str,
-) -> Result<IpBlacklistEntry, String> {
-    let conn = connect_db()?;
+) -> Result<i64, String> {
+    if ip_pattern.trim().is_empty() {
+        return Err("IP pattern cannot be empty".to_string());
+    }
 
-    let id = uuid::Uuid::new_v4().to_string();
+    let conn = connect_db()?;
     let now = chrono::Utc::now().timestamp();
 
     conn.execute(
-        "INSERT INTO ip_blacklist (id, ip_pattern, reason, created_at, expires_at, created_by, hit_count)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
-        params![id, ip_pattern, reason, now, expires_at, created_by],
+        "INSERT OR REPLACE INTO ip_blacklist (ip_pattern, reason, created_at, expires_at, created_by, hit_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+        params![ip_pattern.trim(), reason, now, expires_at, created_by],
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| format!("Failed to add to blacklist: {}", e))?;
 
-    Ok(IpBlacklistEntry {
-        id,
-        ip_pattern: ip_pattern.to_string(),
-        reason: reason.map(|s| s.to_string()),
-        created_at: now,
-        expires_at,
-        created_by: created_by.to_string(),
-        hit_count: 0,
-    })
+    let id = conn.last_insert_rowid();
+    tracing::info!(
+        "[Security] Added to blacklist: {} (reason: {}, expires: {:?})",
+        ip_pattern,
+        reason,
+        expires_at
+    );
+
+    Ok(id)
 }
 
-/// 从黑名单移除
-pub fn remove_from_blacklist(id: &str) -> Result<(), String> {
+/// Remove IP from blacklist
+pub fn remove_from_blacklist(ip_pattern: &str) -> Result<bool, String> {
     let conn = connect_db()?;
+    let affected = conn
+        .execute(
+            "DELETE FROM ip_blacklist WHERE ip_pattern = ?1",
+            [ip_pattern],
+        )
+        .map_err(|e| format!("Failed to remove from blacklist: {}", e))?;
 
-    conn.execute("DELETE FROM ip_blacklist WHERE id = ?1", [id])
-        .map_err(|e| e.to_string())?;
+    if affected > 0 {
+        tracing::info!("[Security] Removed from blacklist: {}", ip_pattern);
+    }
 
-    Ok(())
+    Ok(affected > 0)
 }
 
-/// 获取黑名单列表
+/// Remove IP from blacklist by ID
+pub fn remove_from_blacklist_by_id(id: i64) -> Result<bool, String> {
+    let conn = connect_db()?;
+    let affected = conn
+        .execute("DELETE FROM ip_blacklist WHERE id = ?1", [id])
+        .map_err(|e| format!("Failed to remove from blacklist: {}", e))?;
+
+    if affected > 0 {
+        tracing::info!("[Security] Removed from blacklist by ID: {}", id);
+    }
+
+    Ok(affected > 0)
+}
+
+/// Get all blacklist entries (excluding expired)
 pub fn get_blacklist() -> Result<Vec<IpBlacklistEntry>, String> {
     let conn = connect_db()?;
+    let now = chrono::Utc::now().timestamp();
+
+    // Clean up expired entries first
+    let _ = conn.execute(
+        "DELETE FROM ip_blacklist WHERE expires_at IS NOT NULL AND expires_at < ?1",
+        [now],
+    );
 
     let mut stmt = conn
         .prepare(
@@ -431,9 +216,9 @@ pub fn get_blacklist() -> Result<Vec<IpBlacklistEntry>, String> {
              FROM ip_blacklist
              ORDER BY created_at DESC",
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Failed to prepare statement: {}", e))?;
 
-    let entries_iter = stmt
+    let entries = stmt
         .query_map([], |row| {
             Ok(IpBlacklistEntry {
                 id: row.get(0)?,
@@ -445,36 +230,29 @@ pub fn get_blacklist() -> Result<Vec<IpBlacklistEntry>, String> {
                 hit_count: row.get(6)?,
             })
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Failed to query blacklist: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
 
-    let mut entries = Vec::new();
-    for e in entries_iter {
-        entries.push(e.map_err(|e| e.to_string())?);
-    }
     Ok(entries)
 }
 
-/// 检查 IP 是否在黑名单中
+/// Check if IP is in blacklist (with CIDR support)
 pub fn is_ip_in_blacklist(ip: &str) -> Result<bool, String> {
     get_blacklist_entry_for_ip(ip).map(|entry| entry.is_some())
 }
 
-/// 获取 IP 对应的黑名单条目（如果存在）
+/// Get blacklist entry for IP (if exists)
 pub fn get_blacklist_entry_for_ip(ip: &str) -> Result<Option<IpBlacklistEntry>, String> {
     let conn = connect_db()?;
     let now = chrono::Utc::now().timestamp();
 
-    // 清理过期的黑名单条目
-    let _ = conn.execute(
-        "DELETE FROM ip_blacklist WHERE expires_at IS NOT NULL AND expires_at < ?1",
-        [now],
-    );
-
-    // 精确匹配
-    let entry_result = conn.query_row(
+    // Try exact match first
+    let entry_result: Result<IpBlacklistEntry, _> = conn.query_row(
         "SELECT id, ip_pattern, reason, created_at, expires_at, created_by, hit_count
-         FROM ip_blacklist WHERE ip_pattern = ?1",
-        [ip],
+         FROM ip_blacklist
+         WHERE ip_pattern = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
+        params![ip, now],
         |row| {
             Ok(IpBlacklistEntry {
                 id: row.get(0)?,
@@ -489,34 +267,339 @@ pub fn get_blacklist_entry_for_ip(ip: &str) -> Result<Option<IpBlacklistEntry>, 
     );
 
     if let Ok(entry) = entry_result {
-        // 增加命中计数
+        // Increment hit count
         let _ = conn.execute(
-            "UPDATE ip_blacklist SET hit_count = hit_count + 1 WHERE ip_pattern = ?1",
-            [ip],
+            "UPDATE ip_blacklist SET hit_count = hit_count + 1 WHERE id = ?1",
+            [entry.id],
         );
         return Ok(Some(entry));
     }
 
-    // CIDR 匹配
+    // Check CIDR patterns
     let entries = get_blacklist()?;
     for entry in entries {
-        if entry.ip_pattern.contains('/') {
-            if cidr_match(ip, &entry.ip_pattern) {
-                // 增加命中计数
-                let _ = conn.execute(
-                    "UPDATE ip_blacklist SET hit_count = hit_count + 1 WHERE id = ?1",
-                    [&entry.id],
-                );
-                return Ok(Some(entry));
-            }
+        if entry.ip_pattern.contains('/') && cidr_matches(&entry.ip_pattern, ip) {
+            // Increment hit count
+            let _ = conn.execute(
+                "UPDATE ip_blacklist SET hit_count = hit_count + 1 WHERE id = ?1",
+                [entry.id],
+            );
+            return Ok(Some(entry));
         }
     }
 
     Ok(None)
 }
 
-/// 简单的 CIDR 匹配
-fn cidr_match(ip: &str, cidr: &str) -> bool {
+// ============================================================================
+// WHITELIST OPERATIONS
+// ============================================================================
+
+/// Add IP to whitelist
+pub fn add_to_whitelist(
+    ip_pattern: &str,
+    description: &str,
+    created_by: &str,
+) -> Result<i64, String> {
+    if ip_pattern.trim().is_empty() {
+        return Err("IP pattern cannot be empty".to_string());
+    }
+
+    let conn = connect_db()?;
+    let now = chrono::Utc::now().timestamp();
+
+    conn.execute(
+        "INSERT OR REPLACE INTO ip_whitelist (ip_pattern, description, created_at, created_by)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![ip_pattern.trim(), description, now, created_by],
+    )
+    .map_err(|e| format!("Failed to add to whitelist: {}", e))?;
+
+    let id = conn.last_insert_rowid();
+    tracing::info!("[Security] Added to whitelist: {}", ip_pattern);
+
+    Ok(id)
+}
+
+/// Remove IP from whitelist
+pub fn remove_from_whitelist(ip_pattern: &str) -> Result<bool, String> {
+    let conn = connect_db()?;
+    let affected = conn
+        .execute(
+            "DELETE FROM ip_whitelist WHERE ip_pattern = ?1",
+            [ip_pattern],
+        )
+        .map_err(|e| format!("Failed to remove from whitelist: {}", e))?;
+
+    if affected > 0 {
+        tracing::info!("[Security] Removed from whitelist: {}", ip_pattern);
+    }
+
+    Ok(affected > 0)
+}
+
+/// Remove IP from whitelist by ID
+pub fn remove_from_whitelist_by_id(id: i64) -> Result<bool, String> {
+    let conn = connect_db()?;
+    let affected = conn
+        .execute("DELETE FROM ip_whitelist WHERE id = ?1", [id])
+        .map_err(|e| format!("Failed to remove from whitelist: {}", e))?;
+
+    if affected > 0 {
+        tracing::info!("[Security] Removed from whitelist by ID: {}", id);
+    }
+
+    Ok(affected > 0)
+}
+
+/// Get all whitelist entries
+pub fn get_whitelist() -> Result<Vec<IpWhitelistEntry>, String> {
+    let conn = connect_db()?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, ip_pattern, description, created_at, created_by
+             FROM ip_whitelist
+             ORDER BY created_at DESC",
+        )
+        .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+
+    let entries = stmt
+        .query_map([], |row| {
+            Ok(IpWhitelistEntry {
+                id: row.get(0)?,
+                ip_pattern: row.get(1)?,
+                description: row.get(2)?,
+                created_at: row.get(3)?,
+                created_by: row.get(4)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query whitelist: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(entries)
+}
+
+/// Check if IP is in whitelist (with CIDR support)
+pub fn is_ip_in_whitelist(ip: &str) -> Result<bool, String> {
+    let conn = connect_db()?;
+
+    // Try exact match first
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM ip_whitelist WHERE ip_pattern = ?1",
+            [ip],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to check whitelist: {}", e))?;
+
+    if count > 0 {
+        return Ok(true);
+    }
+
+    // Check CIDR patterns
+    let entries = get_whitelist()?;
+    for entry in entries {
+        if entry.ip_pattern.contains('/') && cidr_matches(&entry.ip_pattern, ip) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+// ============================================================================
+// ACCESS LOG OPERATIONS
+// ============================================================================
+
+/// Log an access attempt
+pub fn log_access(
+    ip_address: &str,
+    path: &str,
+    method: &str,
+    status_code: i32,
+    blocked: bool,
+    block_reason: Option<&str>,
+    user_agent: Option<&str>,
+) -> Result<i64, String> {
+    let conn = connect_db()?;
+    let now = chrono::Utc::now().timestamp();
+
+    conn.execute(
+        "INSERT INTO access_log (ip_address, path, method, status_code, blocked, block_reason, timestamp, user_agent)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![ip_address, path, method, status_code, blocked as i32, block_reason, now, user_agent],
+    )
+    .map_err(|e| format!("Failed to log access: {}", e))?;
+
+    Ok(conn.last_insert_rowid())
+}
+
+/// Get access logs with optional filters
+pub fn get_access_logs(
+    limit: i64,
+    offset: i64,
+    blocked_only: bool,
+    ip_filter: Option<&str>,
+) -> Result<Vec<AccessLogEntry>, String> {
+    let conn = connect_db()?;
+
+    let mut sql = String::from(
+        "SELECT id, ip_address, path, method, status_code, blocked, block_reason, timestamp, user_agent
+         FROM access_log WHERE 1=1",
+    );
+
+    if blocked_only {
+        sql.push_str(" AND blocked = 1");
+    }
+
+    if ip_filter.is_some() {
+        sql.push_str(" AND ip_address LIKE ?1");
+    }
+
+    sql.push_str(" ORDER BY timestamp DESC LIMIT ?2 OFFSET ?3");
+
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+
+    let entries: Vec<AccessLogEntry> = if let Some(ip) = ip_filter {
+        let pattern = format!("%{}%", ip);
+        stmt.query_map(params![pattern, limit, offset], |row| {
+            Ok(AccessLogEntry {
+                id: row.get(0)?,
+                ip_address: row.get(1)?,
+                path: row.get(2)?,
+                method: row.get(3)?,
+                status_code: row.get(4)?,
+                blocked: row.get::<_, i32>(5)? != 0,
+                block_reason: row.get(6)?,
+                timestamp: row.get(7)?,
+                user_agent: row.get(8)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query access logs: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect()
+    } else {
+        stmt.query_map(params![limit, offset], |row| {
+            Ok(AccessLogEntry {
+                id: row.get(0)?,
+                ip_address: row.get(1)?,
+                path: row.get(2)?,
+                method: row.get(3)?,
+                status_code: row.get(4)?,
+                blocked: row.get::<_, i32>(5)? != 0,
+                block_reason: row.get(6)?,
+                timestamp: row.get(7)?,
+                user_agent: row.get(8)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query access logs: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect()
+    };
+
+    Ok(entries)
+}
+
+/// Clear old access logs (older than specified days)
+pub fn cleanup_old_logs(days: i64) -> Result<i64, String> {
+    let conn = connect_db()?;
+    let cutoff = chrono::Utc::now().timestamp() - (days * 24 * 60 * 60);
+
+    let affected = conn
+        .execute("DELETE FROM access_log WHERE timestamp < ?1", [cutoff])
+        .map_err(|e| format!("Failed to cleanup logs: {}", e))?;
+
+    if affected > 0 {
+        tracing::info!("[Security] Cleaned up {} old access log entries", affected);
+    }
+
+    Ok(affected as i64)
+}
+
+/// Clear all access logs
+pub fn clear_all_logs() -> Result<i64, String> {
+    let conn = connect_db()?;
+    let affected = conn
+        .execute("DELETE FROM access_log", [])
+        .map_err(|e| format!("Failed to clear logs: {}", e))?;
+
+    tracing::info!("[Security] Cleared all {} access log entries", affected);
+    Ok(affected as i64)
+}
+
+// ============================================================================
+// STATISTICS
+// ============================================================================
+
+/// Get security statistics
+pub fn get_stats() -> Result<SecurityStats, String> {
+    let conn = connect_db()?;
+
+    let total_requests: i64 = conn
+        .query_row("SELECT COUNT(*) FROM access_log", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    let blocked_requests: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM access_log WHERE blocked = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let unique_ips: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT ip_address) FROM access_log",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let blacklist_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM ip_blacklist", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    let whitelist_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM ip_whitelist", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    // Top 10 blocked IPs
+    let mut stmt = conn
+        .prepare(
+            "SELECT ip_address, COUNT(*) as cnt FROM access_log
+             WHERE blocked = 1
+             GROUP BY ip_address
+             ORDER BY cnt DESC
+             LIMIT 10",
+        )
+        .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+
+    let top_blocked_ips: Vec<(String, i64)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| format!("Failed to query top blocked: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(SecurityStats {
+        total_requests,
+        blocked_requests,
+        unique_ips,
+        blacklist_count,
+        whitelist_count,
+        top_blocked_ips,
+    })
+}
+
+// ============================================================================
+// CIDR MATCHING UTILITIES
+// ============================================================================
+
+/// Check if an IP matches a CIDR pattern
+fn cidr_matches(cidr: &str, ip: &str) -> bool {
     let parts: Vec<&str> = cidr.split('/').collect();
     if parts.len() != 2 {
         return false;
@@ -528,21 +611,22 @@ fn cidr_match(ip: &str, cidr: &str) -> bool {
         Err(_) => return false,
     };
 
-    let ip_parts: Vec<u8> = ip
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    let net_parts: Vec<u8> = network
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
-
-    if ip_parts.len() != 4 || net_parts.len() != 4 {
+    if prefix_len > 32 {
         return false;
     }
 
-    let ip_u32 = u32::from_be_bytes([ip_parts[0], ip_parts[1], ip_parts[2], ip_parts[3]]);
-    let net_u32 = u32::from_be_bytes([net_parts[0], net_parts[1], net_parts[2], net_parts[3]]);
+    let network_octets = match parse_ipv4(network) {
+        Some(o) => o,
+        None => return false,
+    };
+
+    let ip_octets = match parse_ipv4(ip) {
+        Some(o) => o,
+        None => return false,
+    };
+
+    let network_int = octets_to_u32(&network_octets);
+    let ip_int = octets_to_u32(&ip_octets);
 
     let mask = if prefix_len == 0 {
         0
@@ -550,138 +634,72 @@ fn cidr_match(ip: &str, cidr: &str) -> bool {
         !0u32 << (32 - prefix_len)
     };
 
-    (ip_u32 & mask) == (net_u32 & mask)
+    (network_int & mask) == (ip_int & mask)
 }
 
-// ============================================================================
-// 白名单操作
-// ============================================================================
-
-/// 添加 IP 到白名单
-pub fn add_to_whitelist(ip_pattern: &str, description: Option<&str>) -> Result<IpWhitelistEntry, String> {
-    let conn = connect_db()?;
-
-    let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().timestamp();
-
-    conn.execute(
-        "INSERT INTO ip_whitelist (id, ip_pattern, description, created_at)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![id, ip_pattern, description, now],
-    )
-    .map_err(|e| e.to_string())?;
-
-    Ok(IpWhitelistEntry {
-        id,
-        ip_pattern: ip_pattern.to_string(),
-        description: description.map(|s| s.to_string()),
-        created_at: now,
-    })
-}
-
-/// 从白名单移除
-pub fn remove_from_whitelist(id: &str) -> Result<(), String> {
-    let conn = connect_db()?;
-
-    conn.execute("DELETE FROM ip_whitelist WHERE id = ?1", [id])
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-/// 获取白名单列表
-pub fn get_whitelist() -> Result<Vec<IpWhitelistEntry>, String> {
-    let conn = connect_db()?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, ip_pattern, description, created_at
-             FROM ip_whitelist
-             ORDER BY created_at DESC",
-        )
-        .map_err(|e| e.to_string())?;
-
-    let entries_iter = stmt
-        .query_map([], |row| {
-            Ok(IpWhitelistEntry {
-                id: row.get(0)?,
-                ip_pattern: row.get(1)?,
-                description: row.get(2)?,
-                created_at: row.get(3)?,
-            })
-        })
-        .map_err(|e| e.to_string())?;
-
-    let mut entries = Vec::new();
-    for e in entries_iter {
-        entries.push(e.map_err(|e| e.to_string())?);
-    }
-    Ok(entries)
-}
-
-/// 检查 IP 是否在白名单中
-pub fn is_ip_in_whitelist(ip: &str) -> Result<bool, String> {
-    let conn = connect_db()?;
-
-    // 精确匹配
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM ip_whitelist WHERE ip_pattern = ?1",
-            [ip],
-            |row| row.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-
-    if count > 0 {
-        return Ok(true);
+/// Parse IPv4 address string to octets
+fn parse_ipv4(ip: &str) -> Option<[u8; 4]> {
+    let parts: Vec<&str> = ip.split('.').collect();
+    if parts.len() != 4 {
+        return None;
     }
 
-    // CIDR 匹配
-    let entries = get_whitelist()?;
-    for entry in entries {
-        if entry.ip_pattern.contains('/') {
-            if cidr_match(ip, &entry.ip_pattern) {
-                return Ok(true);
-            }
+    let mut octets = [0u8; 4];
+    for (i, part) in parts.iter().enumerate() {
+        match part.parse::<u8>() {
+            Ok(n) => octets[i] = n,
+            Err(_) => return None,
         }
     }
 
-    Ok(false)
+    Some(octets)
 }
 
-/// 清空所有 IP 访问日志
-pub fn clear_ip_access_logs() -> Result<(), String> {
-    let conn = connect_db()?;
-    conn.execute("DELETE FROM ip_access_logs", [])
-        .map_err(|e| e.to_string())?;
-    Ok(())
+/// Convert octets to u32
+fn octets_to_u32(octets: &[u8; 4]) -> u32 {
+    ((octets[0] as u32) << 24)
+        | ((octets[1] as u32) << 16)
+        | ((octets[2] as u32) << 8)
+        | (octets[3] as u32)
 }
 
-/// 获取 IP 访问日志总数
-pub fn get_ip_access_logs_count(ip_filter: Option<&str>, blocked_only: bool) -> Result<u64, String> {
-    let conn = connect_db()?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let sql = if blocked_only {
-        if let Some(ip) = ip_filter {
-            format!(
-                "SELECT COUNT(*) FROM ip_access_logs WHERE blocked = 1 AND client_ip LIKE '%{}%'",
-                ip
-            )
-        } else {
-            "SELECT COUNT(*) FROM ip_access_logs WHERE blocked = 1".to_string()
-        }
-    } else if let Some(ip) = ip_filter {
-        format!(
-            "SELECT COUNT(*) FROM ip_access_logs WHERE client_ip LIKE '%{}%'",
-            ip
-        )
-    } else {
-        "SELECT COUNT(*) FROM ip_access_logs".to_string()
-    };
+    #[test]
+    fn test_cidr_matches() {
+        // /24 subnet
+        assert!(cidr_matches("192.168.1.0/24", "192.168.1.100"));
+        assert!(cidr_matches("192.168.1.0/24", "192.168.1.1"));
+        assert!(cidr_matches("192.168.1.0/24", "192.168.1.255"));
+        assert!(!cidr_matches("192.168.1.0/24", "192.168.2.1"));
 
-    let count: u64 = conn
-        .query_row(&sql, [], |row| row.get(0))
-        .map_err(|e| e.to_string())?;
+        // /16 subnet
+        assert!(cidr_matches("10.0.0.0/16", "10.0.1.1"));
+        assert!(cidr_matches("10.0.0.0/16", "10.0.255.255"));
+        assert!(!cidr_matches("10.0.0.0/16", "10.1.0.1"));
 
-    Ok(count)
+        // /8 subnet
+        assert!(cidr_matches("10.0.0.0/8", "10.255.255.255"));
+        assert!(!cidr_matches("10.0.0.0/8", "11.0.0.1"));
+
+        // /32 exact match
+        assert!(cidr_matches("192.168.1.1/32", "192.168.1.1"));
+        assert!(!cidr_matches("192.168.1.1/32", "192.168.1.2"));
+
+        // /0 matches all
+        assert!(cidr_matches("0.0.0.0/0", "1.2.3.4"));
+        assert!(cidr_matches("0.0.0.0/0", "255.255.255.255"));
+    }
+
+    #[test]
+    fn test_parse_ipv4() {
+        assert_eq!(parse_ipv4("192.168.1.1"), Some([192, 168, 1, 1]));
+        assert_eq!(parse_ipv4("0.0.0.0"), Some([0, 0, 0, 0]));
+        assert_eq!(parse_ipv4("255.255.255.255"), Some([255, 255, 255, 255]));
+        assert_eq!(parse_ipv4("invalid"), None);
+        assert_eq!(parse_ipv4("192.168.1"), None);
+        assert_eq!(parse_ipv4("192.168.1.256"), None);
+    }
 }

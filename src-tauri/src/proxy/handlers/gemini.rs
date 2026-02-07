@@ -6,12 +6,9 @@ use tracing::{debug, error, info};
 use crate::proxy::mappers::gemini::{wrap_request, unwrap_response};
 use crate::proxy::server::AppState;
 use crate::proxy::session_manager::SessionManager;
-use crate::proxy::handlers::common::{determine_retry_strategy, apply_retry_strategy, should_rotate_account, RetryStrategy};
+use crate::proxy::handlers::common::{determine_retry_strategy, apply_retry_strategy, should_rotate_account};
 use crate::proxy::debug_logger;
-use tokio::time::Duration;
-use axum::http::HeaderMap;
-use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; // [NEW] Adapter Registry
-
+ 
 const MAX_RETRY_ATTEMPTS: usize = 3;
  
 /// 处理 generateContent 和 streamGenerateContent
@@ -19,7 +16,6 @@ const MAX_RETRY_ATTEMPTS: usize = 3;
 pub async fn handle_generate(
     State(state): State<AppState>,
     Path(model_action): Path<String>,
-    headers: HeaderMap, // [NEW] Extract headers for adapter detection
     Json(mut body): Json<Value>  // 改为 mut 以支持修复提示词注入
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // 解析 model:method
@@ -32,12 +28,6 @@ pub async fn handle_generate(
     crate::modules::logger::log_info(&format!("Received Gemini request: {}/{}", model_name, method));
     let trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
     let debug_cfg = state.debug_logging.read().await.clone();
-
-    // [NEW] Detect Client Adapter
-    let client_adapter = CLIENT_ADAPTERS.iter().find(|a| a.matches(&headers)).cloned();
-    if client_adapter.is_some() {
-        debug!("[{}] Client Adapter detected", trace_id);
-    }
 
     // 1. 验证方法
     if method != "generateContent" && method != "streamGenerateContent" {
@@ -96,8 +86,7 @@ pub async fn handle_generate(
             &mapped_model,
             &tools_val,
             None,  // size (not applicable for Gemini native protocol)
-            None,  // quality
-            Some(&body),  // [NEW] Pass request body for imageConfig parsing
+            None   // quality
         );
 
         // 4. 获取 Token (使用准确的 request_type)
@@ -105,12 +94,17 @@ pub async fn handle_generate(
         let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
 
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager.get_token(&config.request_type, attempt > 0, Some(&session_id), &config.final_model).await {
+        let token_lease = match token_manager.get_token(&config.request_type, attempt > 0, Some(&session_id), &config.final_model).await {
             Ok(t) => t,
             Err(e) => {
                 return Err((StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)));
             }
         };
+
+        // Extract values using TokenLease
+        let access_token = token_lease.access_token.clone();
+        let project_id = token_lease.project_id.clone();
+        let email = token_lease.email.clone();
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
@@ -137,15 +131,8 @@ pub async fn handle_generate(
         let query_string = if is_stream { Some("alt=sse") } else { None };
         let upstream_method = if is_stream { "streamGenerateContent" } else { "generateContent" };
 
-        // [FIX #1522] Inject Anthropic Beta Headers for Claude models
-        let mut extra_headers = std::collections::HashMap::new();
-        if mapped_model.to_lowercase().contains("claude") {
-            extra_headers.insert("anthropic-beta".to_string(), "claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14".to_string());
-            tracing::debug!("[Gemini] Injected Anthropic beta headers for Claude model: {}", mapped_model);
-        }
-
         let response = match upstream
-            .call_v1_internal_with_headers(upstream_method, &access_token, wrapped_body, query_string, extra_headers.clone(), Some(account_id.as_str()))
+            .call_v1_internal(upstream_method, &access_token, wrapped_body, query_string)
             .await {
                 Ok(r) => r,
                 Err(e) => {
@@ -218,7 +205,6 @@ pub async fn handle_generate(
                 }
 
                 let s_id_for_stream = s_id.clone();
-                let model_name_for_stream = mapped_model.clone();
                 let stream = async_stream::stream! {
                     let mut first_data = first_chunk;
                     loop {
@@ -278,9 +264,6 @@ pub async fn handle_generate(
                                                 }
                                             }
 
-                                            // [FIX #1522] Inject Tool ID into Stream Response
-                                            crate::proxy::mappers::gemini::wrapper::inject_ids_to_response(&mut json, &model_name_for_stream);
-
                                             // Unwrap v1internal response wrapper
                                             if let Some(inner) = json.get_mut("response").map(|v| v.take()) {
                                                 let new_line = format!("data: {}\n\n", serde_json::to_string(&inner).unwrap_or_default());
@@ -336,13 +319,10 @@ pub async fn handle_generate(
                 }
             }
 
-            let mut gemini_resp: Value = response
+            let gemini_resp: Value = response
                 .json()
                 .await
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
-
-            // [FIX #1522] Inject Tool ID into Non-streaming Response
-            crate::proxy::mappers::gemini::wrapper::inject_ids_to_response(&mut gemini_resp, &mapped_model);
 
             // [FIX #765] Extract thoughtSignature from non-streaming response
             let inner_val = if gemini_resp.get("response").is_some() {
@@ -373,7 +353,7 @@ pub async fn handle_generate(
 
         // 处理错误并重试
         let status_code = status.as_u16();
-        let retry_after = response.headers().get("Retry-After").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
+        let _retry_after = response.headers().get("Retry-After").and_then(|h| h.to_str().ok()).map(|s| s.to_string());
         let error_text = response.text().await.unwrap_or_else(|_| format!("HTTP {}", status_code));
         last_error = format!("HTTP {}: {}", status_code, error_text);
         if debug_logger::is_enabled(&debug_cfg) {
@@ -397,11 +377,32 @@ pub async fn handle_generate(
 
         // 执行退避
         if apply_retry_strategy(strategy, attempt, max_attempts, status_code, &trace_id).await {
-            // [NEW] Apply Client Adapter "let_it_crash" strategy
-            if let Some(adapter) = &client_adapter {
-                if adapter.let_it_crash() && attempt > 0 {
-                    tracing::warn!("[Gemini] let_it_crash active: Aborting retries after attempt {}", attempt);
-                    break;
+            // [NEW] Circuit Breaker Reporting (402, 429, 401)
+            // Replaces old report_429_penalty logic
+            if status_code == 402 || status_code == 429 || status_code == 401 {
+                 token_manager.report_account_failure(&token_lease.account_id, status_code, &error_text);
+            }
+
+            // [NEW] Handle 403 VALIDATION_REQUIRED (Gemini Account Lock)
+            if status_code == 403 && error_text.contains("VALIDATION_REQUIRED") {
+                // Try extract URL
+                let validation_url = if let Ok(json) = serde_json::from_str::<Value>(&error_text) {
+                     json.get("error")
+                         .and_then(|e| e.get("details"))
+                         .and_then(|d| d.as_array())
+                         .and_then(|arr| arr.iter().find(|x| x.get("reason").and_then(|v| v.as_str()) == Some("VALIDATION_REQUIRED")))
+                         .and_then(|d| d.get("metadata"))
+                         .and_then(|m| m.get("validation_url"))
+                         .and_then(|v| v.as_str())
+                         .map(|s| s.to_string())
+                } else {
+                    None
+                };
+
+                if let Some(url) = validation_url {
+                    token_manager.report_account_validation_required(&token_lease.account_id, &url);
+                    // Mark as blocked immediately in local tracker to avoid using it
+                    token_manager.report_account_failure(&token_lease.account_id, 403, "VALIDATION_REQUIRED");
                 }
             }
 
@@ -441,21 +442,7 @@ pub async fn handle_generate(
  
         // 404 等由于模型配置或路径错误的 HTTP 异常，直接报错，不进行无效轮换
         error!("Gemini Upstream non-retryable error {}: {}", status_code, error_text);
-        return Ok((
-            status, 
-            [
-                ("X-Account-Email", email.as_str()),
-                ("X-Mapped-Model", mapped_model.as_str())
-            ], 
-            // [FIX] Return JSON error
-            Json(json!({
-                "error": {
-                    "code": status_code,
-                    "message": error_text,
-                    "status": "UPSTREAM_ERROR"
-                }
-            }))
-        ).into_response());
+        return Ok((status, [("X-Account-Email", email.as_str())], error_text).into_response());
     }
 
     if let Some(email) = last_email {
@@ -501,7 +488,7 @@ pub async fn handle_get_model(Path(model_name): Path<String>) -> impl IntoRespon
 
 pub async fn handle_count_tokens(State(state): State<AppState>, Path(_model_name): Path<String>, Json(_body): Json<Value>) -> Result<impl IntoResponse, (StatusCode, String)> {
     let model_group = "gemini";
-    let (_access_token, _project_id, _, _, _wait_ms) = state.token_manager.get_token(model_group, false, None, "gemini").await
+    let _token_lease = state.token_manager.get_token(model_group, false, None, "gemini").await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)))?;
     
     Ok(Json(json!({"totalTokens": 0})))

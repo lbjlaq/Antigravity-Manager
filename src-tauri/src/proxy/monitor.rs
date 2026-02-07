@@ -22,7 +22,6 @@ pub struct ProxyRequestLog {
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
     pub protocol: Option<String>,     // 协议类型: "openai", "anthropic", "gemini"
-    pub username: Option<String>,     // User token username
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -30,6 +29,7 @@ pub struct ProxyStats {
     pub total_requests: u64,
     pub success_count: u64,
     pub error_count: u64,
+    pub avg_latency: f64, // [NEW] Average latency in ms
 }
 
 pub struct ProxyMonitor {
@@ -79,19 +79,8 @@ impl ProxyMonitor {
     }
 
     pub async fn log_request(&self, log: ProxyRequestLog) {
-        if let (Some(account), Some(input), Some(output)) = (
-            &log.account_email,
-            log.input_tokens,
-            log.output_tokens,
-        ) {
-            let model = log.model.clone().unwrap_or_else(|| "unknown".to_string());
-            let account = account.clone();
-            tokio::spawn(async move {
-                if let Err(e) = crate::modules::token_stats::record_usage(&account, &model, input, output) {
-                    tracing::debug!("Failed to record token stats: {}", e);
-                }
-            });
-        }
+        // [OPTIMIZED] Removed redundant token stats recording here.
+        // It is handled asynchronously along with duplicate DB logging below to prevent double-counting.
 
         if !self.is_enabled() {
             return;
@@ -124,28 +113,21 @@ impl ProxyMonitor {
                 tracing::error!("Failed to save proxy log to DB: {}", e);
             }
 
-            // Sync to Security DB (IpAccessLogs) so it appears in Security Monitor
+            // [FIX] Sync to Security DB (access_log) so it appears in Security Monitor
             if let Some(ip) = &log_to_save.client_ip {
-                let security_log = crate::modules::security_db::IpAccessLog {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    client_ip: ip.clone(),
-                    timestamp: log_to_save.timestamp / 1000, // ms to s
-                    method: Some(log_to_save.method.clone()),
-                    path: Some(log_to_save.url.clone()),
-                    user_agent: None, // We don't have UA in ProxyRequestLog easily accessible here without plumbing
-                    status: Some(log_to_save.status as i32),
-                    duration: Some(log_to_save.duration as i64),
-                    api_key_hash: None,
-                    blocked: false, // This comes from monitor, so it wasn't blocked by IP filter
-                    block_reason: None,
-                    username: log_to_save.username.clone(),
-                };
-
-                if let Err(e) = crate::modules::security_db::save_ip_access_log(&security_log) {
-                     tracing::error!("Failed to save security log: {}", e);
+                if let Err(e) = crate::modules::security_db::log_access(
+                    ip,
+                    &log_to_save.url,
+                    &log_to_save.method,
+                    log_to_save.status as i32,
+                    false, // Not blocked (this comes from monitor, so it wasn't blocked by IP filter)
+                    None,  // No block reason
+                    None,  // We don't have UA easily accessible here
+                ) {
+                    tracing::error!("Failed to save security log: {}", e);
                 }
             }
-
+            
             // Record token stats if available
             if let (Some(account), Some(input), Some(output)) = (
                 &log_to_save.account_email,
@@ -178,7 +160,6 @@ impl ProxyMonitor {
                 input_tokens: log.input_tokens,
                 output_tokens: log.output_tokens,
                 protocol: log.protocol.clone(),
-                username: log.username.clone(),
             };
             let _ = app.emit("proxy://request", &log_summary);
         }

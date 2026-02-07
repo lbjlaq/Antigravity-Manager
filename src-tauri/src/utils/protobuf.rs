@@ -173,7 +173,6 @@ pub fn create_oauth_field(access_token: &str, refresh_token: &str, expiry: i64) 
     field6
 }
 
-
 /// Create Email (Field 2)
 pub fn create_email_field(email: &str) -> Vec<u8> {
     let tag = (2 << 3) | 2;
@@ -183,7 +182,7 @@ pub fn create_email_field(email: &str) -> Vec<u8> {
     f
 }
 
-/// 编码长度分隔字段 (wire_type = 2)
+/// Encode length-delimited field (wire_type = 2)
 pub fn encode_len_delim_field(field_num: u32, data: &[u8]) -> Vec<u8> {
     let tag = (field_num << 3) | 2;
     let mut f = encode_varint(tag as u64);
@@ -192,12 +191,12 @@ pub fn encode_len_delim_field(field_num: u32, data: &[u8]) -> Vec<u8> {
     f
 }
 
-/// 编码字符串字段 (wire_type = 2)
+/// Encode string field (wire_type = 2)
 pub fn encode_string_field(field_num: u32, value: &str) -> Vec<u8> {
     encode_len_delim_field(field_num, value.as_bytes())
 }
 
-/// 创建 OAuthTokenInfo 消息（不包含 Field 6 包装，用于新格式）
+/// Create OAuthTokenInfo message (without Field 6 wrapper, for new format)
 pub fn create_oauth_info(access_token: &str, refresh_token: &str, expiry: i64) -> Vec<u8> {
     // Field 1: access_token
     let field1 = encode_string_field(1, access_token);
@@ -208,13 +207,12 @@ pub fn create_oauth_info(access_token: &str, refresh_token: &str, expiry: i64) -
     // Field 3: refresh_token
     let field3 = encode_string_field(3, refresh_token);
     
-    // Field 4: expiry (嵌套的 Timestamp 消息)
+    // Field 4: expiry (nested Timestamp message)
     let timestamp_tag = (1 << 3) | 0;
     let mut timestamp_msg = encode_varint(timestamp_tag);
     timestamp_msg.extend(encode_varint(expiry as u64));
     let field4 = encode_len_delim_field(4, &timestamp_msg);
     
-    // 合并所有字段为 OAuthTokenInfo 消息
+    // Merge all fields into OAuthTokenInfo message
     [field1, field2, field3, field4].concat()
 }
-

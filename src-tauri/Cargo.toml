@@ -1,12 +1,16 @@
 [package]
 name = "antigravity_tools"
-version = "4.1.8"
+version = "5.0.9"
 description = "A Tauri App"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = ["single-instance"]
+single-instance = ["dep:tauri-plugin-single-instance"]
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
@@ -30,9 +34,12 @@ reqwest = { version = "0.12", features = ["json", "stream", "socks", "blocking"]
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
 base64 = "0.22"
 sysinfo = "0.31"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 url = "2.5.7"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-fs = "2.4.5"
@@ -49,6 +56,7 @@ tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 eventsource-stream = "0.2"
 dashmap = "6.1"
+parking_lot = "0.12"  # Fast synchronization primitives for log bridge
 anyhow = "1.0"
 futures = "0.3"
 rand = "0.8"                        # 生成 sessionId 和 mock project_id
@@ -57,7 +65,7 @@ regex = "1.12.2"                    # Duration 解析
 once_cell = "1.19"                  # 静态初始化 (模型映射表)
 pin-project = "1.1"                 # Pin 投影辅助
 bytes = "1.5"                       # SSE 字节操作
-tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
+tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"], optional = true }
 libc = "0.2"
 tracing-appender = "0.2.4"
 tracing-log = "0.2.0"
@@ -68,11 +76,9 @@ sha2 = "0.10"
 toml = "0.8"
 toml_edit = "0.22"
 tauri-plugin-window-state = "2"
-parking_lot = "0.12.5"
-tokio-util = "0.7.18"
-aes-gcm = "0.10.3"
-machine-uid = "0.5.4"
-plist = "1.7"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "1.7"

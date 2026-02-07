@@ -111,7 +111,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                 "switch_next" => {
                     tauri::async_runtime::spawn(async move {
                          // 1. Get all accounts
-                         if let Ok(accounts) = modules::list_accounts() {
+                         if let Ok(accounts) = modules::list_accounts().await {
                              if accounts.is_empty() { return; }
                              
                              let current_id = modules::get_current_account_id().unwrap_or(None);

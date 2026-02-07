@@ -4,9 +4,8 @@
 use super::models::*;
 use bytes::Bytes;
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::io;
 
 /// Collects an OpenAI SSE stream into a complete OpenAIResponse
 pub async fn collect_stream_to_json<S, E>(
@@ -135,7 +134,7 @@ where
         Some(reasoning_parts.join(""))
     };
 
-    // Build aggregated tool_calls
+    // Build final tool_calls from aggregated map
     let final_tool_calls: Option<Vec<ToolCall>> = if tool_calls_map.is_empty() {
         None
     } else {

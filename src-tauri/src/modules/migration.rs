@@ -142,19 +142,20 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                     
                     if let Some(refresh_token) = refresh_token_opt {
                          crate::modules::logger::log_info(&format!("Importing account: {}", email_placeholder));
-                                                  let (email, access_token, expires_in) = match oauth::refresh_access_token(&refresh_token, None).await {
-                             Ok(token_resp) => {
-                                 match oauth::get_user_info(&token_resp.access_token, None).await {
-                                     Ok(user_info) => (user_info.email, token_resp.access_token, token_resp.expires_in),
-                                     Err(_) => (email_placeholder.clone(), token_resp.access_token, token_resp.expires_in), 
-                                 }
-                             },
+                         
+                         let (email, access_token, expires_in) = match oauth::refresh_access_token(&refresh_token, None).await {
+                            Ok(token_resp) => {
+                                match oauth::get_user_info(&token_resp.access_token, None).await {
+                                    Ok(user_info) => (user_info.email, token_resp.access_token, token_resp.expires_in),
+                                    Err(_) => (email_placeholder.clone(), token_resp.access_token, token_resp.expires_in), 
+                                }
+                            },
                             Err(e) => {
                                 crate::modules::logger::log_warn(&format!("Token refresh failed (likely expired): {}", e));
                                 (email_placeholder.clone(), "imported_access_token".to_string(), 0)
                             }, 
                         };
-                        
+
                         let token_data = TokenData::new(
                             access_token, 
                             refresh_token,
@@ -201,6 +202,7 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
         
     // 3. Use Refresh Token to get latest Access Token and user info
     crate::modules::logger::log_info("Getting user info using Refresh Token...");
+    // [FIX #1583] Pass None for migration (no account_id yet)
     let token_resp = oauth::refresh_access_token(&refresh_token, None).await?;
     let user_info = oauth::get_user_info(&token_resp.access_token, None).await?;
     

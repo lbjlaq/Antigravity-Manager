@@ -228,7 +228,7 @@ async fn health() -> impl IntoResponse {
 
 /// GET /accounts - Get all accounts
 async fn list_accounts() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let accounts = account::list_accounts().map_err(|e| {
+    let accounts = account::list_accounts().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),

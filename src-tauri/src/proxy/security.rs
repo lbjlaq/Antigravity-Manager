@@ -48,7 +48,7 @@ mod tests {
             admin_password: None,
             allow_lan_access: false,
             port: 8080,
-            security_monitor: crate::proxy::config::SecurityMonitorConfig::default(),
+            security_monitor: SecurityMonitorConfig::default(),
         };
         assert!(matches!(s.effective_auth_mode(), ProxyAuthMode::Off));
     }
@@ -61,7 +61,7 @@ mod tests {
             admin_password: None,
             allow_lan_access: true,
             port: 8080,
-            security_monitor: crate::proxy::config::SecurityMonitorConfig::default(),
+            security_monitor: SecurityMonitorConfig::default(),
         };
         assert!(matches!(
             s.effective_auth_mode(),

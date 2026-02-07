@@ -1,11 +1,12 @@
-//! Log Module Bridge - Captures tracing logs and emits them to the frontend via Tauri Events.
+// File: src-tauri/src/modules/log_bridge.rs
+//! Log Bridge Module - Captures tracing logs and emits them to the frontend via Tauri Events.
 //! Uses a global ring buffer that can be attached to Tauri after app initialization.
 
-use parking_lot::RwLock;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
+use parking_lot::RwLock;
 use tauri::Emitter;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
@@ -52,7 +53,7 @@ pub fn init_log_bridge(app_handle: tauri::AppHandle) {
 /// Enable log bridging and emit buffered logs
 pub fn enable_log_bridge() {
     LOG_BRIDGE_ENABLED.store(true, Ordering::SeqCst);
-
+    
     // Emit all buffered logs to frontend
     if let Some(handle) = APP_HANDLE.get() {
         let buffer = get_log_buffer().read();
@@ -60,7 +61,7 @@ pub fn enable_log_bridge() {
             let _ = handle.emit("log-event", entry.clone());
         }
     }
-
+    
     tracing::info!("[LogBridge] Debug console enabled");
 }
 
@@ -114,24 +115,20 @@ impl Visit for FieldVisitor {
         if field.name() == "message" {
             self.message = Some(value.to_string());
         } else {
-            self.fields
-                .insert(field.name().to_string(), value.to_string());
+            self.fields.insert(field.name().to_string(), value.to_string());
         }
     }
 
     fn record_i64(&mut self, field: &Field, value: i64) {
-        self.fields
-            .insert(field.name().to_string(), value.to_string());
+        self.fields.insert(field.name().to_string(), value.to_string());
     }
 
     fn record_u64(&mut self, field: &Field, value: u64) {
-        self.fields
-            .insert(field.name().to_string(), value.to_string());
+        self.fields.insert(field.name().to_string(), value.to_string());
     }
 
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.fields
-            .insert(field.name().to_string(), value.to_string());
+        self.fields.insert(field.name().to_string(), value.to_string());
     }
 }
 
@@ -155,11 +152,6 @@ where
     S: Subscriber,
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        // [FIX] 如果调试控制台未启用，直接跳过所有处理，避免性能损耗
-        if !LOG_BRIDGE_ENABLED.load(Ordering::Relaxed) {
-            return;
-        }
-
         // Extract metadata
         let metadata = event.metadata();
         let level = match *metadata.level() {
@@ -192,7 +184,7 @@ where
             fields: visitor.fields,
         };
 
-        // Add to buffer
+        // Always add to buffer
         {
             let mut buffer = get_log_buffer().write();
             if buffer.len() >= MAX_BUFFER_SIZE {
@@ -201,9 +193,11 @@ where
             buffer.push_back(entry.clone());
         }
 
-        // Emit to frontend
-        if let Some(handle) = APP_HANDLE.get() {
-            let _ = handle.emit("log-event", entry);
+        // Emit to frontend if enabled and handle exists
+        if LOG_BRIDGE_ENABLED.load(Ordering::Relaxed) {
+            if let Some(handle) = APP_HANDLE.get() {
+                let _ = handle.emit("log-event", entry);
+            }
         }
     }
 }

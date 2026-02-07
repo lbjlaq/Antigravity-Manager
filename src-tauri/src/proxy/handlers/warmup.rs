@@ -15,7 +15,6 @@ use serde_json::{json, Value};
 use tracing::{info, warn};
 
 use crate::proxy::mappers::gemini::wrapper::wrap_request;
-use crate::proxy::monitor::ProxyRequestLog;
 use crate::proxy::server::AppState;
 
 /// 预热请求体
@@ -45,37 +44,17 @@ pub async fn handle_warmup(
     State(state): State<AppState>,
     Json(req): Json<WarmupRequest>,
 ) -> Response {
-    let start_time = std::time::Instant::now();
-
-    // ===== 前置检查：跳过 gemini-2.5-* 家族模型 =====
-    let model_lower = req.model.to_lowercase();
-    if model_lower.contains("2.5-") || model_lower.contains("2-5-") {
-        info!(
-            "[Warmup-API] SKIP: gemini-2.5-* model not supported for warmup: {} / {}",
-            req.email, req.model
-        );
-        return (
-            StatusCode::OK,
-            Json(WarmupResponse {
-                success: true,
-                message: format!("Skipped warmup for {} (2.5 models not supported)", req.model),
-                error: None,
-            }),
-        )
-            .into_response();
-    }
-
     info!(
         "[Warmup-API] ========== START: email={}, model={} ==========",
         req.email, req.model
     );
 
     // ===== 步骤 1: 获取 Token =====
-    let (access_token, project_id, account_id) = if let (Some(at), Some(pid)) = (&req.access_token, &req.project_id) {
-        (at.clone(), pid.clone(), String::new())
+    let (access_token, project_id) = if let (Some(at), Some(pid)) = (&req.access_token, &req.project_id) {
+        (at.clone(), pid.clone())
     } else {
         match state.token_manager.get_token_by_email(&req.email).await {
-            Ok((at, pid, _, acc_id, _wait_ms)) => (at, pid, acc_id),
+            Ok((at, pid, _, _wait_ms)) => (at, pid),
             Err(e) => {
                 warn!(
                     "[Warmup-API] Step 1 FAILED: Token error for {}: {}",
@@ -96,31 +75,30 @@ pub async fn handle_warmup(
 
     // ===== 步骤 2: 根据模型类型构建请求体 =====
     let is_claude = req.model.to_lowercase().contains("claude");
-    let is_image = req.model.to_lowercase().contains("image");
+    
+    // [FIX] Use a distinct session ID for warmup to avoid polluting real conversation matching
+    let session_id = format!("warmup_{}", uuid::Uuid::new_v4());
 
     let body: Value = if is_claude {
         // Claude 模型：使用 transform_claude_request_in 转换
-        let session_id = format!("warmup_{}_{}",
-            chrono::Utc::now().timestamp_millis(),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        );
         let claude_request = crate::proxy::mappers::claude::models::ClaudeRequest {
             model: req.model.clone(),
             messages: vec![crate::proxy::mappers::claude::models::Message {
                 role: "user".to_string(),
+                // [FIX] Use "Hello" instead of "ping" to pass strict model filters
                 content: crate::proxy::mappers::claude::models::MessageContent::String(
-                    "ping".to_string(),
+                    "Hello".to_string(),
                 ),
             }],
             max_tokens: Some(1),
             stream: false,
             system: None,
-            temperature: None,
+            temperature: Some(0.0), // Explicit 0.0 for stability
             top_p: None,
             top_k: None,
             tools: None,
             metadata: Some(crate::proxy::mappers::claude::models::Metadata {
-                user_id: Some(session_id),
+                user_id: Some(session_id.clone()),
             }),
             thinking: None,
             output_config: None,
@@ -148,35 +126,26 @@ pub async fn handle_warmup(
             }
         }
     } else {
-        // Gemini 模型：使用 wrap_request
-        let session_id = format!("warmup_{}_{}",
-            chrono::Utc::now().timestamp_millis(),
-            &uuid::Uuid::new_v4().to_string()[..8]
-        );
-
-        let base_request = if is_image {
-            json!({
-                "model": req.model,
-                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
-                "generationConfig": {
-                    "maxOutputTokens": 10,
-                    "temperature": 0,
-                    "responseModalities": ["TEXT"]
-                },
-                "session_id": session_id
-            })
-        } else {
-            json!({
-                "model": req.model,
-                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
-                "generationConfig": {
-                    "temperature": 0
-                },
-                "session_id": session_id
-            })
-        };
-
-        wrap_request(&base_request, &project_id, &req.model, Some(&session_id))
+        // Gemini 模型：使用 STANDARD payload format
+        // [FIX] Avoid wrap_request which might add incompatible fields for some models
+        // Use raw valid JSON for Gemini
+        
+        // Check if image model (needs different structure?) - No, text-only "Hello" is fine for most multimodal models
+        json!({
+            "model": req.model,
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": "Hello"}]
+            }],
+            "generationConfig": {
+                "maxOutputTokens": 1,
+                "temperature": 0.0
+            },
+            // Include session_id in a way that doesn't break schema (often ignored or passed in metadata)
+            // But for Gemini upstream, we often just need valid JSON.
+            // Some internal proxies expect `session_id` at top level.
+            "session_id": session_id
+        })
     };
 
     // ===== 步骤 3: 调用 UpstreamClient =====
@@ -191,51 +160,25 @@ pub async fn handle_warmup(
 
     let mut result = state
         .upstream
-        .call_v1_internal(method, &access_token, body.clone(), query, Some(account_id.as_str()))
+        .call_v1_internal(method, &access_token, body.clone(), query)
         .await;
 
     // 如果流式请求失败，尝试非流式请求
     if result.is_err() && !prefer_non_stream {
         result = state
             .upstream
-            .call_v1_internal("generateContent", &access_token, body, None, Some(account_id.as_str()))
+            .call_v1_internal("generateContent", &access_token, body, None)
             .await;
     }
 
-    let duration = start_time.elapsed().as_millis() as u64;
-
-    // ===== 步骤 4: 处理响应并记录流量日志 =====
+    // ===== 步骤 4: 处理响应 =====
     match result {
         Ok(response) => {
             let status = response.status();
-            let status_code = status.as_u16();
-
-            // 记录预热请求到流量日志
-            let log = ProxyRequestLog {
-                id: uuid::Uuid::new_v4().to_string(),
-                timestamp: chrono::Utc::now().timestamp_millis(),
-                method: "POST".to_string(),
-                url: format!("/internal/warmup -> {}", req.model),
-                status: status_code,
-                duration,
-                model: Some(req.model.clone()),
-                mapped_model: Some(req.model.clone()),
-                account_email: Some(req.email.clone()),
-                client_ip: Some("127.0.0.1".to_string()),
-                error: if status.is_success() { None } else { Some(format!("HTTP {}", status_code)) },
-                request_body: Some(format!("{{\"type\": \"warmup\", \"model\": \"{}\"}}", req.model)),
-                response_body: None,
-                input_tokens: Some(0),
-                output_tokens: Some(0),
-                protocol: Some("warmup".to_string()),
-                username: None,
-            };
-            state.monitor.log_request(log).await;
-
             let mut response = if status.is_success() {
                 info!(
-                    "[Warmup-API] ========== SUCCESS: {} / {} ({}ms) ==========",
-                    req.email, req.model, duration
+                    "[Warmup-API] ========== SUCCESS: {} / {} ==========",
+                    req.email, req.model
                 );
                 (
                     StatusCode::OK,
@@ -247,6 +190,7 @@ pub async fn handle_warmup(
                 )
                     .into_response()
             } else {
+                let status_code = status.as_u16();
                 let error_text = response.text().await.unwrap_or_default();
                 (
                     StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -266,37 +210,15 @@ pub async fn handle_warmup(
             if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {
                 response.headers_mut().insert("X-Mapped-Model", model_val);
             }
-
+            
             response
         }
         Err(e) => {
             warn!(
-                "[Warmup-API] ========== ERROR: {} / {} - {} ({}ms) ==========",
-                req.email, req.model, e, duration
+                "[Warmup-API] ========== ERROR: {} / {} - {} ==========",
+                req.email, req.model, e
             );
-
-            // 记录失败的预热请求到流量日志
-            let log = ProxyRequestLog {
-                id: uuid::Uuid::new_v4().to_string(),
-                timestamp: chrono::Utc::now().timestamp_millis(),
-                method: "POST".to_string(),
-                url: format!("/internal/warmup -> {}", req.model),
-                status: 500,
-                duration,
-                model: Some(req.model.clone()),
-                mapped_model: Some(req.model.clone()),
-                account_email: Some(req.email.clone()),
-                client_ip: Some("127.0.0.1".to_string()),
-                error: Some(e.clone()),
-                request_body: Some(format!("{{\"type\": \"warmup\", \"model\": \"{}\"}}", req.model)),
-                response_body: None,
-                input_tokens: None,
-                output_tokens: None,
-                protocol: Some("warmup".to_string()),
-                username: None,
-            };
-            state.monitor.log_request(log).await;
-
+            
             let mut response = (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(WarmupResponse {
@@ -313,7 +235,7 @@ pub async fn handle_warmup(
             if let Ok(model_val) = axum::http::HeaderValue::from_str(&req.model) {
                 response.headers_mut().insert("X-Mapped-Model", model_val);
             }
-
+            
             response
         }
     }

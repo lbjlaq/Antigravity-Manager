@@ -59,47 +59,15 @@ async fn auth_middleware_internal(
     // 权限检查逻辑
     if !force_strict {
         // AI 代理接口 (v1/chat/completions 等)
+        if is_internal_endpoint {
+            return Ok(next.run(request).await);
+        }
+
         if matches!(effective_mode, ProxyAuthMode::Off) {
-            // [FIX] 即使 auth_mode=Off，也需要尝试识别 User Token 以记录使用情况
-            // 先检查是否携带了 User Token
-            let api_key = request
-                .headers()
-                .get(header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|s| s.strip_prefix("Bearer ").or(Some(s)))
-                .or_else(|| {
-                    request
-                        .headers()
-                        .get("x-api-key")
-                        .and_then(|h| h.to_str().ok())
-                });
-            
-            if let Some(token) = api_key {
-                // 尝试验证是否为 User Token（不阻止请求，只记录）
-                if let Ok(Some(user_token)) = crate::modules::user_token_db::get_token_by_value(token) {
-                    let identity = UserTokenIdentity {
-                        token_id: user_token.id,
-                        token: user_token.token,
-                        username: user_token.username,
-                    };
-                    // 注入 identity 到请求
-                    let (mut parts, body) = request.into_parts();
-                    parts.extensions.insert(identity);
-                    let request = Request::from_parts(parts, body);
-                    return Ok(next.run(request).await);
-                }
-            }
-            
             return Ok(next.run(request).await);
         }
 
         if matches!(effective_mode, ProxyAuthMode::AllExceptHealth) && is_health_check {
-            return Ok(next.run(request).await);
-        }
-
-        // 内部端点 (/internal/*) 豁免鉴权 - 用于 warmup 等内部功能
-        if is_internal_endpoint {
-            tracing::debug!("Internal endpoint bypassed auth: {}", path);
             return Ok(next.run(request).await);
         }
     } else {
@@ -134,7 +102,9 @@ async fn auth_middleware_internal(
                 .and_then(|h| h.to_str().ok())
         });
 
-    if security.api_key.is_empty() && (security.admin_password.is_none() || security.admin_password.as_ref().unwrap().is_empty()) {
+    let admin_password_empty = security.admin_password.as_ref().map_or(true, |s| s.is_empty());
+
+    if security.api_key.is_empty() && admin_password_empty {
         if force_strict {
              tracing::error!("Admin auth is required but both api_key and admin_password are empty; denying request");
              return Err(StatusCode::UNAUTHORIZED);
@@ -162,78 +132,15 @@ async fn auth_middleware_internal(
 
     if authorized {
         Ok(next.run(request).await)
-    } else if !force_strict && api_key.is_some() {
-        // 尝试验证 UserToken
-        let token = api_key.unwrap();
-        
-        // 提取 IP (复用逻辑)
-        let client_ip = request
-            .headers()
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-            .or_else(|| {
-                request
-                    .headers()
-                    .get("x-real-ip")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| "127.0.0.1".to_string()); // Default fallback
-
-        // 验证 Token
-        match crate::modules::user_token_db::validate_token(token, &client_ip) {
-            Ok((true, _)) => {
-                // Token 有效，查询信息以便传递
-                if let Ok(Some(user_token)) = crate::modules::user_token_db::get_token_by_value(token) {
-                     let identity = UserTokenIdentity {
-                        token_id: user_token.id,
-                        token: user_token.token,
-                        username: user_token.username,
-                    };
-                    
-                    // [FIX] 将身份信息注入到请求 extensions 中，而不是响应
-                    // 这样 monitor_middleware 在处理请求时就能获取到 identity
-                    // 因为中间件执行顺序：auth (外层) -> monitor (内层) -> handler
-                    // 响应返回时：handler -> monitor -> auth
-                    // 如果注入到 response，monitor 执行时 identity 还不存在
-                    let (mut parts, body) = request.into_parts();
-                    parts.extensions.insert(identity);
-                    let request = Request::from_parts(parts, body);
-                    
-                    // 执行请求
-                    let response = next.run(request).await;
-                    
-                    Ok(response)
-                } else {
-                    Err(StatusCode::UNAUTHORIZED)
-                }
-            }
-            Ok((false, reason)) => {
-                tracing::warn!("UserToken rejected: {:?}", reason);
-                Err(StatusCode::UNAUTHORIZED)
-            }
-            Err(e) => {
-                tracing::error!("UserToken validation error: {}", e);
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-        }
     } else {
         Err(StatusCode::UNAUTHORIZED)
     }
 }
 
-/// 用户令牌身份信息 (传递给 Monitor 使用)
-#[derive(Clone, Debug)]
-pub struct UserTokenIdentity {
-    pub token_id: String,
-    pub token: String,
-    pub username: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::config::SecurityMonitorConfig;
     use crate::proxy::ProxyAuthMode;
 
     #[tokio::test]
@@ -244,7 +151,7 @@ mod tests {
             admin_password: Some("admin123".to_string()),
             allow_lan_access: true,
             port: 8045,
-            security_monitor: crate::proxy::config::SecurityMonitorConfig::default(),
+            security_monitor: SecurityMonitorConfig::default(),
         }));
 
         // 模拟请求 - 管理接口使用正确的管理密码

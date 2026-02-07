@@ -1,11 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use crate::modules::logger;
-use chrono::Utc;
 
-const GITHUB_API_URL: &str = "https://api.github.com/repos/lbjlaq/Antigravity-Manager/releases/latest";
-const GITHUB_RAW_URL: &str = "https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/package.json";
-const JSDELIVR_URL: &str = "https://cdn.jsdelivr.net/gh/lbjlaq/Antigravity-Manager@main/package.json";
+const GITHUB_API_URL: &str = "https://api.github.com/repos/GofMan5/Antigravity-Manager/releases/latest";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_CHECK_INTERVAL_HOURS: u64 = 24;
 
@@ -17,8 +14,6 @@ pub struct UpdateInfo {
     pub download_url: String, // previously release_url
     pub release_notes: String,
     pub published_at: String,
-    #[serde(default)]
-    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,67 +46,29 @@ struct GitHubRelease {
     published_at: String,
 }
 
-/// Check for updates with fallback strategy
+/// Check for updates from GitHub releases
 pub async fn check_for_updates() -> Result<UpdateInfo, String> {
-    // 1. Try GitHub API (Preferred: has release notes, specific version mapping)
-    match check_github_api().await {
-        Ok(info) => return Ok(info),
-        Err(e) => {
-            logger::log_warn(&format!("GitHub API check failed: {}. Trying fallbacks...", e));
-        }
-    }
+    let client = reqwest::Client::builder()
+        .user_agent(crate::constants::USER_AGENT.as_str())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| {
+            let err_msg = format!("Failed to create HTTP client: {}", e);
+            logger::log_error(&err_msg);
+            err_msg
+        })?;
 
-    // 2. Try GitHub Raw (Precision: avoids CDN caching issues)
-    match check_static_url(GITHUB_RAW_URL, "GitHub Raw").await {
-        Ok(info) => return Ok(info),
-        Err(e) => {
-            logger::log_warn(&format!("GitHub Raw check failed: {}. Trying next fallback...", e));
-        }
-    }
-
-    // 3. Try jsDelivr (High Availability: CDN)
-    match check_static_url(JSDELIVR_URL, "jsDelivr").await {
-        Ok(info) => return Ok(info),
-        Err(e) => {
-            logger::log_error(&format!("All update checks failed. Last error: {}", e));
-            return Err(e);
-        }
-    }
-}
-
-async fn create_client() -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .user_agent("Antigravity-Manager")
-        .timeout(std::time::Duration::from_secs(10));
-
-    // Load config to check for upstream proxy
-    if let Ok(config) = crate::modules::config::load_app_config() {
-        if config.proxy.upstream_proxy.enabled && !config.proxy.upstream_proxy.url.is_empty() {
-            logger::log_info(&format!("Update checker using upstream proxy: {}", config.proxy.upstream_proxy.url));
-            match reqwest::Proxy::all(&config.proxy.upstream_proxy.url) {
-                Ok(proxy) => {
-                    builder = builder.proxy(proxy);
-                },
-                Err(e) => {
-                    logger::log_warn(&format!("Failed to parse proxy URL '{}': {}", config.proxy.upstream_proxy.url, e));
-                }
-            }
-        }
-    }
-
-    builder.build().map_err(|e| format!("Failed to create HTTP client: {}", e))
-}
-
-async fn check_github_api() -> Result<UpdateInfo, String> {
-    let client = create_client().await?;
-
-    logger::log_info("Checking for updates via GitHub API...");
+    logger::log_info("Checking for new version from GitHub...");
 
     let response = client
         .get(GITHUB_API_URL)
         .send()
         .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+        .map_err(|e| {
+            let err_msg = format!("Failed to fetch release info: {}", e);
+            logger::log_error(&err_msg);
+            err_msg
+        })?;
 
     if !response.status().is_success() {
         return Err(format!("GitHub API returned status: {}", response.status()));
@@ -122,14 +79,16 @@ async fn check_github_api() -> Result<UpdateInfo, String> {
         .await
         .map_err(|e| format!("Failed to parse release info: {}", e))?;
 
+    // Remove 'v' prefix if present
     let latest_version = release.tag_name.trim_start_matches('v').to_string();
     let current_version = CURRENT_VERSION.to_string();
+
     let has_update = compare_versions(&latest_version, &current_version);
 
     if has_update {
-        logger::log_info(&format!("New version found (API): {} (Current: {})", latest_version, current_version));
+        logger::log_info(&format!("New version found: {} (Current version: {})", latest_version, current_version));
     } else {
-        logger::log_info(&format!("Up to date (API): {} (Matches {})", current_version, latest_version));
+        logger::log_info(&format!("Already up to date: {} (Matches remote version {})", current_version, latest_version));
     }
 
     Ok(UpdateInfo {
@@ -139,57 +98,6 @@ async fn check_github_api() -> Result<UpdateInfo, String> {
         download_url: release.html_url,
         release_notes: release.body,
         published_at: release.published_at,
-        source: Some("GitHub API".to_string()),
-    })
-}
-
-#[derive(Deserialize)]
-struct PackageJson {
-    version: String,
-}
-
-async fn check_static_url(url: &str, source_name: &str) -> Result<UpdateInfo, String> {
-    let client = create_client().await?;
-
-    logger::log_info(&format!("Checking for updates via {}...", source_name));
-
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!("{} returned status: {}", source_name, response.status()));
-    }
-
-    let package_json: PackageJson = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse package.json: {}", e))?;
-
-    let latest_version = package_json.version;
-    let current_version = CURRENT_VERSION.to_string();
-    let has_update = compare_versions(&latest_version, &current_version);
-
-    if has_update {
-        logger::log_info(&format!("New version found ({}): {} (Current: {})", source_name, latest_version, current_version));
-    } else {
-        logger::log_info(&format!("Up to date ({}): {} (Matches {})", source_name, current_version, latest_version));
-    }
-
-    // fallback sources generally don't provide release notes or download specific URL, construct generic
-    let download_url = "https://github.com/lbjlaq/Antigravity-Manager/releases/latest".to_string();
-    let release_notes = format!("New version detected via {}. Please check release page for details.", source_name);
-
-    Ok(UpdateInfo {
-        current_version,
-        latest_version,
-        has_update,
-        download_url,
-        release_notes,
-        published_at: Utc::now().to_rfc3339(), // Approximate time
-        source: Some(source_name.to_string()),
     })
 }
 

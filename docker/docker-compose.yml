@@ -2,9 +2,8 @@ services:
   antigravity-manager:
     image: lbjlaq/antigravity-manager:latest
     container_name: antigravity-manager
-    network_mode: host  # 使用宿主机网络，可直接访问 localhost:17771 等代理端口
-    # ports:  # host 模式不需要端口映射
-    #   - "8045:8045"
+    ports:
+      - "8045:8045"
     volumes:
       - ~/.antigravity_tools:/root/.antigravity_tools
     environment:

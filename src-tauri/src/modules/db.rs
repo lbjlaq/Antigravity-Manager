@@ -131,8 +131,6 @@ fn inject_new_format(
     refresh_token: &str,
     expiry: i64,
 ) -> Result<String, String> {
-    use base64::{engine::general_purpose, Engine as _};
-    
     let conn = Connection::open(db_path)
         .map_err(|e| format!("Failed to open database: {}", e))?;
     
@@ -175,7 +173,6 @@ fn inject_old_format(
     expiry: i64,
     email: &str,
 ) -> Result<String, String> {
-    use base64::{engine::general_purpose, Engine as _};
     use rusqlite::Error as SqliteError;
     
     let conn = Connection::open(db_path)

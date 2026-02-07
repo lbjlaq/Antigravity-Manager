@@ -5,10 +5,10 @@ WORKDIR /app
 
 # Use npm mirror if needed
 RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
-    echo "Using npm mirror..."; \
-    npm config set registry https://registry.npmmirror.com; \
+        echo "Using npm mirror..."; \
+        npm config set registry https://registry.npmmirror.com; \
     else \
-    echo "Using default npm registry..."; \
+        echo "Using default npm registry..."; \
     fi
 
 COPY package*.json ./
@@ -22,11 +22,11 @@ ARG USE_MIRROR=auto
 
 # Conditionally use Aliyun mirror for APT
 RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
-    echo "Using Aliyun mirror for APT..."; \
-    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
-    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
+        echo "Using Aliyun mirror for APT..."; \
+        sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
+        sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
     else \
-    echo "Using default APT sources..."; \
+        echo "Using default APT sources..."; \
     fi
 
 # Install build dependencies
@@ -43,24 +43,20 @@ RUN apt-get update && apt-get install -y \
 # Use Aliyun mirror for Cargo if needed (Sparse Index)
 ENV CARGO_HTTP_MULTIPLEXING=false
 RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
-    echo "Using Aliyun mirror for Cargo..."; \
-    mkdir -p /root/.cargo && \
-    echo "[source.crates-io]\nreplace-with = 'aliyun'\n\n[source.aliyun]\nregistry = \"sparse+https://mirrors.aliyun.com/crates.io-index/\"" > /root/.cargo/config.toml; \
+        echo "Using Aliyun mirror for Cargo..."; \
+        mkdir -p /root/.cargo && \
+        echo "[source.crates-io]\nreplace-with = 'aliyun'\n\n[source.aliyun]\nregistry = \"sparse+https://mirrors.aliyun.com/crates.io-index/\"" > /root/.cargo/config.toml; \
     else \
-    echo "Using default Cargo registry..."; \
+        echo "Using default Cargo registry..."; \
     fi
 
 WORKDIR /app
 # Copy the whole project to build the Rust workspace
 COPY . .
 
-# Build the Rust backend in release mode (with BuildKit cache)
+# Build the Rust backend in release mode
 WORKDIR /app/src-tauri
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/app/src-tauri/target \
-    cargo build --release --bin antigravity_tools && \
-    cp target/release/antigravity_tools /tmp/antigravity_tools
+RUN cargo build --release --bin antigravity_tools
 
 # --- Final Runtime Stage ---
 FROM debian:bookworm-slim
@@ -69,11 +65,11 @@ WORKDIR /app
 
 # Conditionally use Aliyun mirror for APT
 RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
-    echo "Using Aliyun mirror for APT..."; \
-    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
-    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
+        echo "Using Aliyun mirror for APT..."; \
+        sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
+        sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
     else \
-    echo "Using default APT sources..."; \
+        echo "Using default APT sources..."; \
     fi
 
 # Install runtime dependencies
@@ -88,7 +84,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder
-COPY --from=backend-builder /tmp/antigravity_tools /app/antigravity-tools
+COPY --from=backend-builder /app/src-tauri/target/release/antigravity_tools /app/antigravity-tools
 
 # Copy frontend dist from builder
 COPY --from=frontend-builder /app/dist /app/dist

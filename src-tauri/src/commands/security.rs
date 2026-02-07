@@ -1,329 +1,382 @@
-use tauri::State;
+// File: src-tauri/src/commands/security.rs
+//! Tauri commands for IP security management.
+
 use serde::{Deserialize, Serialize};
-use crate::modules::security_db;
+use tauri::State;
 
-// ==================== 请求/响应结构 ====================
+use crate::modules::security_db::{
+    self, AccessLogEntry, IpBlacklistEntry, IpWhitelistEntry, SecurityStats,
+};
+use crate::proxy::config::SecurityMonitorConfig;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct IpAccessLogQuery {
-    pub page: usize,
-    pub page_size: usize,
-    pub search: Option<String>,
+// ============================================================================
+// ERROR TYPE
+// ============================================================================
+
+#[derive(Debug, serde::Serialize)]
+pub struct SecurityError {
+    pub message: String,
+}
+
+impl From<String> for SecurityError {
+    fn from(s: String) -> Self {
+        Self { message: s }
+    }
+}
+
+// Note: Tauri v2 auto-implements From<T: Serialize> for InvokeError,
+// so we don't need an explicit impl here.
+
+// ============================================================================
+// REQUEST/RESPONSE TYPES
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddToBlacklistRequest {
+    pub ip_pattern: String,
+    pub reason: String,
+    #[serde(default)]
+    pub expires_in_seconds: Option<i64>,
+    #[serde(default = "default_created_by")]
+    pub created_by: String,
+}
+
+fn default_created_by() -> String {
+    "user".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddToWhitelistRequest {
+    pub ip_pattern: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_created_by")]
+    pub created_by: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetAccessLogsRequest {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+    #[serde(default)]
     pub blocked_only: bool,
+    #[serde(default)]
+    pub ip_filter: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct IpAccessLogResponse {
-    pub logs: Vec<security_db::IpAccessLog>,
-    pub total: usize,
+fn default_limit() -> i64 {
+    100
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AddBlacklistRequest {
-    pub ip_pattern: String,
-    pub reason: Option<String>,
-    pub expires_at: Option<i64>, // Unix timestamp
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationResult {
+    pub success: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<i64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AddWhitelistRequest {
-    pub ip_pattern: String,
-    pub description: Option<String>,
-}
+// ============================================================================
+// BLACKLIST COMMANDS
+// ============================================================================
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct IpStatsResponse {
-    pub total_requests: usize,
-    pub unique_ips: usize,
-    pub blocked_requests: usize,
-    pub top_ips: Vec<security_db::IpRanking>,
-}
-
-// ==================== IP 访问日志命令 ====================
-
-/// 获取 IP 访问日志列表
+/// Initialize security database
 #[tauri::command]
-pub async fn get_ip_access_logs(
-    query: IpAccessLogQuery,
-) -> Result<IpAccessLogResponse, String> {
-    let offset = (query.page.max(1) - 1) * query.page_size;
-    
-    let logs = security_db::get_ip_access_logs(
-        query.page_size,
-        offset,
-        query.search.as_deref(),
-        query.blocked_only,
-    )?;
-    
-    // 简单计算总数 (如果需要精确分页,可以添加 count 函数)
-    let total = logs.len();
-    
-    Ok(IpAccessLogResponse { logs, total })
+pub async fn security_init_db() -> Result<(), SecurityError> {
+    security_db::init_db().map_err(SecurityError::from)
 }
 
-/// 获取 IP 统计信息
+/// Get all blacklist entries
 #[tauri::command]
-pub async fn get_ip_stats() -> Result<IpStatsResponse, String> {
-    let stats = security_db::get_ip_stats()?;
-    let top_ips = security_db::get_top_ips(10, 24)?; // Top 10 IPs in last 24 hours
-    
-    Ok(IpStatsResponse {
-        total_requests: stats.total_requests as usize,
-        unique_ips: stats.unique_ips as usize,
-        blocked_requests: stats.blocked_count as usize,
-        top_ips,
+pub async fn security_get_blacklist() -> Result<Vec<IpBlacklistEntry>, SecurityError> {
+    security_db::get_blacklist().map_err(SecurityError::from)
+}
+
+/// Add IP to blacklist
+#[tauri::command]
+pub async fn security_add_to_blacklist(
+    request: AddToBlacklistRequest,
+) -> Result<OperationResult, SecurityError> {
+    let expires_at = request.expires_in_seconds.map(|seconds| {
+        chrono::Utc::now().timestamp() + seconds
+    });
+
+    let id = security_db::add_to_blacklist(
+        &request.ip_pattern,
+        &request.reason,
+        expires_at,
+        &request.created_by,
+    )
+    .map_err(SecurityError::from)?;
+
+    Ok(OperationResult {
+        success: true,
+        message: format!("Added {} to blacklist", request.ip_pattern),
+        id: Some(id),
     })
 }
 
-/// 清空 IP 访问日志
+/// Remove IP from blacklist by pattern
 #[tauri::command]
-pub async fn clear_ip_access_logs() -> Result<(), String> {
-    security_db::clear_ip_access_logs()
+pub async fn security_remove_from_blacklist(ip_pattern: String) -> Result<OperationResult, SecurityError> {
+    let removed = security_db::remove_from_blacklist(&ip_pattern).map_err(SecurityError::from)?;
+
+    Ok(OperationResult {
+        success: removed,
+        message: if removed {
+            format!("Removed {} from blacklist", ip_pattern)
+        } else {
+            format!("{} not found in blacklist", ip_pattern)
+        },
+        id: None,
+    })
 }
 
-// ==================== IP 黑名单命令 ====================
-
-/// 获取 IP 黑名单列表
+/// Remove IP from blacklist by ID
 #[tauri::command]
-pub async fn get_ip_blacklist() -> Result<Vec<security_db::IpBlacklistEntry>, String> {
-    security_db::get_blacklist()
+pub async fn security_remove_from_blacklist_by_id(id: i64) -> Result<OperationResult, SecurityError> {
+    let removed = security_db::remove_from_blacklist_by_id(id).map_err(SecurityError::from)?;
+
+    Ok(OperationResult {
+        success: removed,
+        message: if removed {
+            format!("Removed entry {} from blacklist", id)
+        } else {
+            format!("Entry {} not found in blacklist", id)
+        },
+        id: None,
+    })
 }
 
-/// 添加 IP 到黑名单
+/// Check if IP is blacklisted
 #[tauri::command]
-pub async fn add_ip_to_blacklist(
-    request: AddBlacklistRequest,
-) -> Result<(), String> {
-    // 验证 IP 格式
-    if !is_valid_ip_pattern(&request.ip_pattern) {
-        return Err("Invalid IP pattern. Use IP address or CIDR notation (e.g., 192.168.1.0/24)".to_string());
-    }
-    
-    security_db::add_to_blacklist(
+pub async fn security_is_ip_blacklisted(ip: String) -> Result<bool, SecurityError> {
+    security_db::is_ip_in_blacklist(&ip).map_err(SecurityError::from)
+}
+
+// ============================================================================
+// WHITELIST COMMANDS
+// ============================================================================
+
+/// Get all whitelist entries
+#[tauri::command]
+pub async fn security_get_whitelist() -> Result<Vec<IpWhitelistEntry>, SecurityError> {
+    security_db::get_whitelist().map_err(SecurityError::from)
+}
+
+/// Add IP to whitelist
+#[tauri::command]
+pub async fn security_add_to_whitelist(
+    request: AddToWhitelistRequest,
+) -> Result<OperationResult, SecurityError> {
+    let id = security_db::add_to_whitelist(
         &request.ip_pattern,
-        request.reason.as_deref(),
-        request.expires_at,
-        "manual",
-    )?;
-    Ok(())
+        &request.description,
+        &request.created_by,
+    )
+    .map_err(SecurityError::from)?;
+
+    Ok(OperationResult {
+        success: true,
+        message: format!("Added {} to whitelist", request.ip_pattern),
+        id: Some(id),
+    })
 }
 
-/// 从黑名单移除 IP
+/// Remove IP from whitelist by pattern
 #[tauri::command]
-pub async fn remove_ip_from_blacklist(ip_pattern: String) -> Result<(), String> {
-    // 先获取黑名单列表，找到对应的id
-    let entries = security_db::get_blacklist()?;
-    let entry = entries.iter().find(|e| e.ip_pattern == ip_pattern);
-    
-    if let Some(entry) = entry {
-        security_db::remove_from_blacklist(&entry.id)
-    } else {
-        Err(format!("IP pattern {} not found in blacklist", ip_pattern))
-    }
+pub async fn security_remove_from_whitelist(ip_pattern: String) -> Result<OperationResult, SecurityError> {
+    let removed = security_db::remove_from_whitelist(&ip_pattern).map_err(SecurityError::from)?;
+
+    Ok(OperationResult {
+        success: removed,
+        message: if removed {
+            format!("Removed {} from whitelist", ip_pattern)
+        } else {
+            format!("{} not found in whitelist", ip_pattern)
+        },
+        id: None,
+    })
 }
 
-/// 清空黑名单
+/// Remove IP from whitelist by ID
 #[tauri::command]
-pub async fn clear_ip_blacklist() -> Result<(), String> {
-    // 获取所有黑名单条目并逐个删除
-    let entries = security_db::get_blacklist()?;
+pub async fn security_remove_from_whitelist_by_id(id: i64) -> Result<OperationResult, SecurityError> {
+    let removed = security_db::remove_from_whitelist_by_id(id).map_err(SecurityError::from)?;
+
+    Ok(OperationResult {
+        success: removed,
+        message: if removed {
+            format!("Removed entry {} from whitelist", id)
+        } else {
+            format!("Entry {} not found in whitelist", id)
+        },
+        id: None,
+    })
+}
+
+/// Check if IP is whitelisted
+#[tauri::command]
+pub async fn security_is_ip_whitelisted(ip: String) -> Result<bool, SecurityError> {
+    security_db::is_ip_in_whitelist(&ip).map_err(SecurityError::from)
+}
+
+// ============================================================================
+// ACCESS LOG COMMANDS
+// ============================================================================
+
+/// Get access logs
+#[tauri::command]
+pub async fn security_get_access_logs(
+    request: GetAccessLogsRequest,
+) -> Result<Vec<AccessLogEntry>, SecurityError> {
+    security_db::get_access_logs(
+        request.limit,
+        request.offset,
+        request.blocked_only,
+        request.ip_filter.as_deref(),
+    )
+    .map_err(SecurityError::from)
+}
+
+/// Clear old access logs
+#[tauri::command]
+pub async fn security_cleanup_logs(days: i64) -> Result<OperationResult, SecurityError> {
+    let deleted = security_db::cleanup_old_logs(days).map_err(SecurityError::from)?;
+
+    Ok(OperationResult {
+        success: true,
+        message: format!("Deleted {} old log entries", deleted),
+        id: None,
+    })
+}
+
+/// Clear all access logs
+#[tauri::command]
+pub async fn security_clear_all_logs() -> Result<OperationResult, SecurityError> {
+    let deleted = security_db::clear_all_logs().map_err(SecurityError::from)?;
+
+    Ok(OperationResult {
+        success: true,
+        message: format!("Cleared {} log entries", deleted),
+        id: None,
+    })
+}
+
+// ============================================================================
+// STATISTICS COMMANDS
+// ============================================================================
+
+/// Get security statistics
+#[tauri::command]
+pub async fn security_get_stats() -> Result<SecurityStats, SecurityError> {
+    security_db::get_stats().map_err(SecurityError::from)
+}
+
+// ============================================================================
+// CLEAR COMMANDS (compatibility with Original API)
+// ============================================================================
+
+/// Clear all blacklist entries
+#[tauri::command]
+pub async fn security_clear_blacklist() -> Result<OperationResult, SecurityError> {
+    let entries = security_db::get_blacklist().map_err(SecurityError::from)?;
+    let mut removed_count = 0;
+
     for entry in entries {
-        security_db::remove_from_blacklist(&entry.ip_pattern)?;
+        if security_db::remove_from_blacklist(&entry.ip_pattern).map_err(SecurityError::from)? {
+            removed_count += 1;
+        }
     }
-    Ok(())
+
+    Ok(OperationResult {
+        success: true,
+        message: format!("Cleared {} blacklist entries", removed_count),
+        id: None,
+    })
 }
 
-/// 检查 IP 是否在黑名单中
+/// Clear all whitelist entries
 #[tauri::command]
-pub async fn check_ip_in_blacklist(ip: String) -> Result<bool, String> {
-    security_db::is_ip_in_blacklist(&ip)
-}
+pub async fn security_clear_whitelist() -> Result<OperationResult, SecurityError> {
+    let entries = security_db::get_whitelist().map_err(SecurityError::from)?;
+    let mut removed_count = 0;
 
-// ==================== IP 白名单命令 ====================
-
-/// 获取 IP 白名单列表
-#[tauri::command]
-pub async fn get_ip_whitelist() -> Result<Vec<security_db::IpWhitelistEntry>, String> {
-    security_db::get_whitelist()
-}
-
-/// 添加 IP 到白名单
-#[tauri::command]
-pub async fn add_ip_to_whitelist(
-    request: AddWhitelistRequest,
-) -> Result<(), String> {
-    // 验证 IP 格式
-    if !is_valid_ip_pattern(&request.ip_pattern) {
-        return Err("Invalid IP pattern. Use IP address or CIDR notation (e.g., 192.168.1.0/24)".to_string());
-    }
-    
-    security_db::add_to_whitelist(
-        &request.ip_pattern,
-        request.description.as_deref(),
-    )?;
-    Ok(())
-}
-
-/// 从白名单移除 IP
-#[tauri::command]
-pub async fn remove_ip_from_whitelist(ip_pattern: String) -> Result<(), String> {
-    // 先获取白名单列表，找到对应的id
-    let entries = security_db::get_whitelist()?;
-    let entry = entries.iter().find(|e| e.ip_pattern == ip_pattern);
-    
-    if let Some(entry) = entry {
-        security_db::remove_from_whitelist(&entry.id)
-    } else {
-        Err(format!("IP pattern {} not found in whitelist", ip_pattern))
-    }
-}
-
-/// 清空白名单
-#[tauri::command]
-pub async fn clear_ip_whitelist() -> Result<(), String> {
-    // 获取所有白名单条目并逐个删除
-    let entries = security_db::get_whitelist()?;
     for entry in entries {
-        security_db::remove_from_whitelist(&entry.ip_pattern)?;
+        if security_db::remove_from_whitelist(&entry.ip_pattern).map_err(SecurityError::from)? {
+            removed_count += 1;
+        }
     }
-    Ok(())
+
+    Ok(OperationResult {
+        success: true,
+        message: format!("Cleared {} whitelist entries", removed_count),
+        id: None,
+    })
 }
 
-/// 检查 IP 是否在白名单中
+/// Get IP token consumption statistics
 #[tauri::command]
-pub async fn check_ip_in_whitelist(ip: String) -> Result<bool, String> {
-    security_db::is_ip_in_whitelist(&ip)
+pub async fn security_get_ip_token_stats(
+    limit: Option<usize>,
+    hours: Option<i64>,
+) -> Result<Vec<crate::modules::proxy_db::IpTokenStats>, SecurityError> {
+    crate::modules::proxy_db::get_token_usage_by_ip(
+        limit.unwrap_or(100),
+        hours.unwrap_or(720),
+    )
+    .map_err(SecurityError::from)
 }
 
-// ==================== 安全配置命令 ====================
+// ============================================================================
+// CONFIG COMMANDS
+// ============================================================================
 
-/// 获取安全监控配置
+/// Get security monitor config
 #[tauri::command]
 pub async fn get_security_config(
     app_state: State<'_, crate::commands::proxy::ProxyServiceState>,
-) -> Result<crate::proxy::config::SecurityMonitorConfig, String> {
-    // 1. 尝试从运行中的实例获取 (内存中可能由最新的配置)
+) -> Result<SecurityMonitorConfig, SecurityError> {
     let instance_lock = app_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
-        return Ok(instance.config.security_monitor.clone());
+        Ok(instance.config.security_monitor.clone())
+    } else {
+        // Return from saved config
+        let app_config = crate::modules::config::load_app_config()
+            .map_err(|e| SecurityError::from(format!("Failed to load config: {}", e)))?;
+        Ok(app_config.proxy.security_monitor)
     }
-
-    // 2. 如果服务未运行，从磁盘加载
-    let app_config = crate::modules::config::load_app_config()
-        .map_err(|e| format!("Failed to load config: {}", e))?;
-    Ok(app_config.proxy.security_monitor)
 }
 
-/// 更新安全监控配置
+/// Update security monitor config
 #[tauri::command]
 pub async fn update_security_config(
-    config: crate::proxy::config::SecurityMonitorConfig,
+    config: SecurityMonitorConfig,
     app_state: State<'_, crate::commands::proxy::ProxyServiceState>,
-) -> Result<(), String> {
-    // 1. 同步保存到配置文件
+) -> Result<(), SecurityError> {
+    // 1. Save to config file
     let mut app_config = crate::modules::config::load_app_config()
-        .map_err(|e| format!("Failed to load config: {}", e))?;
+        .map_err(|e| SecurityError::from(format!("Failed to load config: {}", e)))?;
     app_config.proxy.security_monitor = config.clone();
     crate::modules::config::save_app_config(&app_config)
-        .map_err(|e| format!("Failed to save config: {}", e))?;
+        .map_err(|e| SecurityError::from(format!("Failed to save config: {}", e)))?;
 
-    // 2. 更新内存中的配置 (如果服务正在运行)
+    // 2. Hot-reload if proxy is running
     {
         let mut instance_lock = app_state.instance.write().await;
         if let Some(instance) = instance_lock.as_mut() {
             instance.config.security_monitor = config.clone();
-            // [FIX] 调用 update_security 热更新运行中的中间件配置
-            // 这是关键步骤！中间件读取的是 AppState.security (Arc<RwLock<ProxySecurityConfig>>)
-            // 必须调用 update_security() 才能使黑白名单配置实时生效
-            instance.axum_server.update_security(&instance.config).await;
-            tracing::info!("[Security] Runtime security config hot-reloaded");
+            // Update middleware state via AxumServer method
+            instance.axum_server.update_security_monitor(&instance.config).await;
+            tracing::info!("[Security] Configuration hot-reloaded");
         }
     }
 
-    tracing::info!("[Security] Security monitor config updated and saved");
     Ok(())
-}
-
-// ==================== 统计分析命令 ====================
-
-/// 获取 IP Token 消耗统计
-#[tauri::command]
-pub async fn get_ip_token_stats(
-    limit: Option<usize>,
-    hours: Option<i64>
-) -> Result<Vec<crate::modules::proxy_db::IpTokenStats>, String> {
-    crate::modules::proxy_db::get_token_usage_by_ip(
-        limit.unwrap_or(100),
-        hours.unwrap_or(720)
-    )
-}
-
-// ==================== 辅助函数 ====================
-
-/// 验证 IP 模式格式 (支持单个 IP 和 CIDR)
-fn is_valid_ip_pattern(pattern: &str) -> bool {
-    // 检查是否为 CIDR 格式
-    if pattern.contains('/') {
-        let parts: Vec<&str> = pattern.split('/').collect();
-        if parts.len() != 2 {
-            return false;
-        }
-        
-        // 验证 IP 部分
-        if !is_valid_ip(parts[0]) {
-            return false;
-        }
-        
-        // 验证掩码部分
-        if let Ok(mask) = parts[1].parse::<u8>() {
-            return mask <= 32;
-        }
-        return false;
-    }
-    
-    // 单个 IP 地址
-    is_valid_ip(pattern)
-}
-
-/// 验证 IP 地址格式
-fn is_valid_ip(ip: &str) -> bool {
-    let parts: Vec<&str> = ip.split('.').collect();
-    if parts.len() != 4 {
-        return false;
-    }
-    
-    for part in parts {
-        if let Ok(num) = part.parse::<u8>() {
-            if num > 255 {
-                return false;
-            }
-        } else {
-            return false;
-        }
-    }
-    
-    true
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_valid_ip_patterns() {
-        assert!(is_valid_ip_pattern("192.168.1.1"));
-        assert!(is_valid_ip_pattern("10.0.0.0/8"));
-        assert!(is_valid_ip_pattern("172.16.0.0/16"));
-        assert!(is_valid_ip_pattern("192.168.1.0/24"));
-        assert!(is_valid_ip_pattern("8.8.8.8/32"));
-    }
-
-    #[test]
-    fn test_invalid_ip_patterns() {
-        assert!(!is_valid_ip_pattern("256.1.1.1"));
-        assert!(!is_valid_ip_pattern("192.168.1"));
-        assert!(!is_valid_ip_pattern("192.168.1.1/33"));
-        assert!(!is_valid_ip_pattern("192.168.1.1/"));
-        assert!(!is_valid_ip_pattern("invalid"));
-    }
 }

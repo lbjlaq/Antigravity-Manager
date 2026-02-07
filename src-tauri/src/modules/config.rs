@@ -13,7 +13,6 @@ pub fn load_app_config() -> Result<AppConfig, String> {
     
     if !config_path.exists() {
         let config = AppConfig::new();
-        // [FIX #1460] Persist initial config to prevent new API Key on every refresh
         let _ = save_app_config(&config);
         return Ok(config);
     }

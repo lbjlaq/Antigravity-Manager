@@ -3,6 +3,7 @@ mod modules;
 mod commands;
 mod utils;
 mod proxy;  // Proxy service module
+pub mod shared;  // Shared infrastructure (db pool, etc.)
 pub mod error;
 pub mod constants;
 
@@ -19,10 +20,10 @@ fn increase_nofile_limit() {
             rlim_cur: 0,
             rlim_max: 0,
         };
-
+        
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
             info!("Current open file limit: soft={}, hard={}", rl.rlim_cur, rl.rlim_max);
-
+            
             // Attempt to increase to 4096 or maximum hard limit
             let target = 4096.min(rl.rlim_max);
             if rl.rlim_cur < target {
@@ -66,34 +67,12 @@ pub fn run() {
         error!("Failed to initialize security database: {}", e);
     }
     
-    // Initialize user token database
-    if let Err(e) = modules::user_token_db::init_db() {
-        error!("Failed to initialize user token database: {}", e);
-    }
-
     if is_headless {
         info!("Starting in HEADLESS mode...");
-
+        
         let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
         rt.block_on(async {
             // Initialize states manually
-            let proxy_state = commands::proxy::ProxyServiceState::new();
-            let cf_state = Arc::new(commands::cloudflared::CloudflaredState::new());
-
-            // [FIX] Initialize log bridge for headless mode
-            // Pass a dummy app handle or None since we don't have a Tauri app handle in headless mode
-            // Actually log_bridge relies on AppHandle to emit events.
-            // In headless mode, we don't emit events, but we still need the buffer.
-            // We need to modify log_bridge to handle missing AppHandle gracefully, which it already does (Option).
-            // But init_log_bridge requires AppHandle.
-            // We'll skip passing AppHandle for now and just leverage the global buffer capability.
-            // Since init_log_bridge takes AppHandle, we might need a separate init for headless or just not call init and rely on lazy init of buffer?
-            // Checking log_bridge code again...
-            // "static LOG_BUFFER: OnceLock<...> = OnceLock::new();" -> lazy init.
-            // So we just need to ensure the tracing layer is added.
-            // And `logger::init_logger()` adds the layer?
-            // Let's check `modules::logger`.
-
             let proxy_state = commands::proxy::ProxyServiceState::new();
             let cf_state = Arc::new(commands::cloudflared::CloudflaredState::new());
 
@@ -101,14 +80,10 @@ pub fn run() {
             match modules::config::load_app_config() {
                 Ok(mut config) => {
                     let mut modified = false;
-                    // Force LAN access in headless/docker mode so it binds to 0.0.0.0
-                    config.proxy.allow_lan_access = true;
 
-                    // [FIX] Force auth mode to AllExceptHealth in headless mode if it's Off or Auto
-                    // This ensures Web UI login validation works properly
-                    if matches!(config.proxy.auth_mode, crate::proxy::ProxyAuthMode::Off | crate::proxy::ProxyAuthMode::Auto) {
-                        info!("Headless mode: Forcing auth_mode to AllExceptHealth for Web UI security");
-                        config.proxy.auth_mode = crate::proxy::ProxyAuthMode::AllExceptHealth;
+                    // Force LAN access in headless/docker mode so it binds to 0.0.0.0
+                    if !config.proxy.allow_lan_access {
+                        config.proxy.allow_lan_access = true;
                         modified = true;
                     }
 
@@ -121,8 +96,10 @@ pub fn run() {
                     if let Some(key) = env_key {
                         if !key.trim().is_empty() {
                             info!("Using API Key from environment variable");
-                            config.proxy.api_key = key;
-                            modified = true;
+                            if config.proxy.api_key != key {
+                                config.proxy.api_key = key;
+                                modified = true;
+                            }
                         }
                     }
 
@@ -131,12 +108,14 @@ pub fn run() {
                     let env_web_password = std::env::var("ABV_WEB_PASSWORD")
                         .or_else(|_| std::env::var("WEB_PASSWORD"))
                         .ok();
-
+                    
                     if let Some(pwd) = env_web_password {
                         if !pwd.trim().is_empty() {
                             info!("Using Web UI Password from environment variable");
-                            config.proxy.admin_password = Some(pwd);
-                            modified = true;
+                            if config.proxy.admin_password.as_deref() != Some(pwd.as_str()) {
+                                config.proxy.admin_password = Some(pwd);
+                                modified = true;
+                            }
                         }
                     }
 
@@ -145,7 +124,7 @@ pub fn run() {
                     let env_auth_mode = std::env::var("ABV_AUTH_MODE")
                         .or_else(|_| std::env::var("AUTH_MODE"))
                         .ok();
-
+                    
                     if let Some(mode_str) = env_auth_mode {
                         let mode = match mode_str.to_lowercase().as_str() {
                             "off" => Some(crate::proxy::ProxyAuthMode::Off),
@@ -159,8 +138,34 @@ pub fn run() {
                         };
                         if let Some(m) = mode {
                             info!("Using Auth Mode from environment variable: {:?}", m);
-                            config.proxy.auth_mode = m;
-                            modified = true;
+                            let needs_update = !matches!(
+                                (&config.proxy.auth_mode, &m),
+                                (
+                                    crate::proxy::ProxyAuthMode::Off,
+                                    crate::proxy::ProxyAuthMode::Off
+                                ) | (
+                                    crate::proxy::ProxyAuthMode::Strict,
+                                    crate::proxy::ProxyAuthMode::Strict
+                                ) | (
+                                    crate::proxy::ProxyAuthMode::AllExceptHealth,
+                                    crate::proxy::ProxyAuthMode::AllExceptHealth
+                                ) | (
+                                    crate::proxy::ProxyAuthMode::Auto,
+                                    crate::proxy::ProxyAuthMode::Auto
+                                )
+                            );
+                            if needs_update {
+                                config.proxy.auth_mode = m;
+                                modified = true;
+                            }
+                        }
+                    }
+
+                    if modified {
+                        if let Err(e) = modules::config::save_app_config(&config) {
+                            error!("Failed to persist headless config overrides: {}", e);
+                        } else {
+                            info!("Persisted headless config overrides to gui_config.json");
                         }
                     }
 
@@ -176,16 +181,7 @@ pub fn run() {
                     info!("💡 Tips: You can use these keys to login to Web UI and access AI APIs.");
                     info!("💡 Search docker logs or grep gui_config.json to find them.");
                     info!("--------------------------------------------------");
-
-                    // [FIX #1460] Persist environment overrides to ensure they are visible in Web UI/load_config
-                    if modified {
-                        if let Err(e) = modules::config::save_app_config(&config) {
-                            error!("Failed to persist environment overrides: {}", e);
-                        } else {
-                            info!("Environment overrides persisted to gui_config.json");
-                        }
-                    }
-
+                    
                     // Start proxy service
                     if let Err(e) = commands::proxy::internal_start_proxy_service(
                         config.proxy,
@@ -196,9 +192,9 @@ pub fn run() {
                         error!("Failed to start proxy service in headless mode: {}", e);
                         std::process::exit(1);
                     }
-
+                    
                     info!("Headless proxy service is running.");
-
+                    
                     // Start smart scheduler
                     modules::scheduler::start_scheduler(None, proxy_state.clone());
                     info!("Smart scheduler started in headless mode.");
@@ -208,7 +204,7 @@ pub fn run() {
                     std::process::exit(1);
                 }
             }
-
+            
             // Wait for Ctrl-C
             tokio::signal::ctrl_c().await.ok();
             info!("Headless mode shutting down");
@@ -216,7 +212,7 @@ pub fn run() {
         return;
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
@@ -226,8 +222,11 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_window_state::Builder::default().build());
+
+        // Single instance plugin - only in release builds (controlled by feature flag)
+        #[cfg(feature = "single-instance")]
+        let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = app.get_webview_window("main")
                 .map(|window| {
                     let _ = window.show();
@@ -235,8 +234,9 @@ pub fn run() {
                     #[cfg(target_os = "macos")]
                     app.set_activation_policy(tauri::ActivationPolicy::Regular).unwrap_or(());
                 });
-        }))
-        .manage(commands::proxy::ProxyServiceState::new())
+        }));
+
+        builder.manage(commands::proxy::ProxyServiceState::new())
         .manage(commands::cloudflared::CloudflaredState::new())
         .setup(|app| {
             info!("Setup starting...");
@@ -268,7 +268,7 @@ pub fn run() {
 
             modules::tray::create_tray(app.handle())?;
             info!("Tray created");
-
+            
             // 立即启动管理服务器 (8045)，以便 Web 端能访问
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -277,7 +277,7 @@ pub fn run() {
                     let state = handle.state::<commands::proxy::ProxyServiceState>();
                     let cf_state = handle.state::<commands::cloudflared::CloudflaredState>();
                     let integration = crate::modules::integration::SystemManager::Desktop(handle.clone());
-
+                    
                     // 1. 确保管理后台开启
                     if let Err(e) = commands::proxy::ensure_admin_server(
                         config.proxy.clone(),
@@ -305,14 +305,14 @@ pub fn run() {
                     }
                 }
             });
-
+            
             // Start smart scheduler
             let scheduler_state = app.handle().state::<commands::proxy::ProxyServiceState>();
             modules::scheduler::start_scheduler(Some(app.handle().clone()), scheduler_state.inner().clone());
-
+            
             // [PHASE 1] 已整合至 Axum 端口 (8045)，不再单独启动 19527 端口
             info!("Management API integrated into main proxy server (port 8045)");
-
+            
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -329,138 +329,114 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             // Account management commands
-            commands::list_accounts,
-            commands::add_account,
-            commands::delete_account,
-            commands::delete_accounts,
-            commands::reorder_accounts,
-            commands::switch_account,
-            commands::export_accounts,
+            commands::account::list_accounts,
+            commands::account::add_account,
+            commands::account::delete_account,
+            commands::account::delete_accounts,
+            commands::account::reorder_accounts,
+            commands::account::switch_account,
+            commands::account::get_current_account,
+            commands::account::toggle_proxy_status,
+            commands::account::export_accounts,
             // Device fingerprint
-            commands::get_device_profiles,
-            commands::bind_device_profile,
-            commands::bind_device_profile_with_profile,
-            commands::preview_generate_profile,
-            commands::apply_device_profile,
-            commands::restore_original_device,
-            commands::list_device_versions,
-            commands::restore_device_version,
-            commands::delete_device_version,
-            commands::open_device_folder,
-            commands::get_current_account,
+            commands::device::get_device_profiles,
+            commands::device::bind_device_profile,
+            commands::device::bind_device_profile_with_profile,
+            commands::device::preview_generate_profile,
+            commands::device::apply_device_profile,
+            commands::device::restore_original_device,
+            commands::device::list_device_versions,
+            commands::device::restore_device_version,
+            commands::device::delete_device_version,
+            commands::device::open_device_folder,
             // Quota commands
-            commands::fetch_account_quota,
-            commands::refresh_all_quotas,
+            commands::quota::fetch_account_quota,
+            commands::quota::refresh_all_quotas,
+            commands::quota::warm_up_all_accounts,
+            commands::quota::warm_up_account,
             // Config commands
-            commands::load_config,
-            commands::save_config,
-            // Additional commands
-            commands::prepare_oauth_url,
-            commands::start_oauth_login,
-            commands::complete_oauth_login,
-            commands::cancel_oauth_login,
-            commands::submit_oauth_code,
-            commands::import_v1_accounts,
-            commands::import_from_db,
-            commands::import_custom_db,
-            commands::sync_account_from_db,
-            commands::save_text_file,
-            commands::read_text_file,
-            commands::clear_log_cache,
-            commands::clear_antigravity_cache,
-            commands::get_antigravity_cache_paths,
-            commands::open_data_folder,
-            commands::get_data_dir_path,
-            commands::show_main_window,
-            commands::set_window_theme,
-            commands::get_antigravity_path,
-            commands::get_antigravity_args,
-            commands::check_for_updates,
-            commands::get_update_settings,
-            commands::save_update_settings,
-            commands::should_check_updates,
-            commands::update_last_check_time,
-            commands::toggle_proxy_status,
+            commands::config::load_config,
+            commands::config::save_config,
+            commands::config::get_http_api_settings,
+            commands::config::save_http_api_settings,
+            // OAuth commands
+            commands::oauth::prepare_oauth_url,
+            commands::oauth::start_oauth_login,
+            commands::oauth::complete_oauth_login,
+            commands::oauth::cancel_oauth_login,
+            commands::oauth::submit_oauth_code,
+            // Import commands
+            commands::import::import_v1_accounts,
+            commands::import::import_from_db,
+            commands::import::import_custom_db,
+            commands::import::sync_account_from_db,
+            // System commands
+            commands::system::save_text_file,
+            commands::system::read_text_file,
+            commands::system::clear_log_cache,
+            commands::system::clear_antigravity_cache,
+            commands::system::get_antigravity_cache_paths,
+            commands::system::open_data_folder,
+            commands::system::get_data_dir_path,
+            commands::system::show_main_window,
+            commands::system::set_window_theme,
+            commands::system::get_antigravity_path,
+            commands::system::get_antigravity_args,
+            commands::system::check_for_updates,
+            commands::system::get_update_settings,
+            commands::system::save_update_settings,
+            commands::system::should_check_updates,
+            commands::system::update_last_check_time,
+            // Token stats commands
+            commands::stats::get_token_stats_hourly,
+            commands::stats::get_token_stats_daily,
+            commands::stats::get_token_stats_weekly,
+            commands::stats::get_token_stats_by_account,
+            commands::stats::get_token_stats_summary,
+            commands::stats::get_token_stats_by_model,
+            commands::stats::get_token_stats_model_trend_hourly,
+            commands::stats::get_token_stats_model_trend_daily,
+            commands::stats::get_token_stats_account_trend_hourly,
+            commands::stats::get_token_stats_account_trend_daily,
             // Proxy service commands
-            commands::proxy::start_proxy_service,
-            commands::proxy::stop_proxy_service,
-            commands::proxy::get_proxy_status,
-            commands::proxy::get_proxy_stats,
-            commands::proxy::get_proxy_logs,
-            commands::proxy::get_proxy_logs_paginated,
-            commands::proxy::get_proxy_log_detail,
-            commands::proxy::get_proxy_logs_count,
-            commands::proxy::export_proxy_logs,
-            commands::proxy::export_proxy_logs_json,
-            commands::proxy::get_proxy_logs_count_filtered,
-            commands::proxy::get_proxy_logs_filtered,
-            commands::proxy::set_proxy_monitor_enabled,
-            commands::proxy::clear_proxy_logs,
-            commands::proxy::generate_api_key,
-            commands::proxy::reload_proxy_accounts,
-            commands::proxy::update_model_mapping,
-            commands::proxy::check_proxy_health,
-            commands::proxy::get_proxy_pool_config,
-            commands::proxy::fetch_zai_models,
-            commands::proxy::get_proxy_scheduling_config,
-            commands::proxy::update_proxy_scheduling_config,
-            commands::proxy::clear_proxy_session_bindings,
-            commands::proxy::set_preferred_account,
-            commands::proxy::get_preferred_account,
-            commands::proxy::clear_proxy_rate_limit,
-            commands::proxy::clear_all_proxy_rate_limits,
-            commands::proxy::check_proxy_health,
-            // Proxy Pool Binding commands
-            commands::proxy_pool::bind_account_proxy,
-            commands::proxy_pool::unbind_account_proxy,
-            commands::proxy_pool::get_account_proxy_binding,
-            commands::proxy_pool::get_all_account_bindings,
+            commands::proxy::lifecycle::start_proxy_service,
+            commands::proxy::lifecycle::stop_proxy_service,
+            commands::proxy::status::get_proxy_status,
+            commands::proxy::status::get_proxy_stats,
+            commands::proxy::status::get_proxy_logs,
+            commands::proxy::logs::get_proxy_logs_paginated,
+            commands::proxy::logs::get_proxy_log_detail,
+            commands::proxy::logs::get_proxy_logs_count,
+            commands::proxy::logs::export_proxy_logs,
+            commands::proxy::logs::export_proxy_logs_json,
+            commands::proxy::logs::get_proxy_logs_count_filtered,
+            commands::proxy::logs::get_proxy_logs_filtered,
+            commands::proxy::status::set_proxy_monitor_enabled,
+            commands::proxy::status::clear_proxy_logs,
+            commands::proxy::config::generate_api_key,
+            commands::proxy::accounts::reload_proxy_accounts,
+            commands::proxy::config::update_model_mapping,
+            commands::proxy::external::fetch_zai_models,
+            commands::proxy::config::get_proxy_scheduling_config,
+            commands::proxy::config::update_proxy_scheduling_config,
+            commands::proxy::accounts::clear_proxy_session_bindings,
+            commands::proxy::accounts::set_preferred_account,
+            commands::proxy::accounts::get_preferred_account,
+            commands::proxy::accounts::clear_proxy_rate_limit,
+            commands::proxy::accounts::clear_all_proxy_rate_limits,
             // Autostart commands
             commands::autostart::toggle_auto_launch,
             commands::autostart::is_auto_launch_enabled,
-            // Warmup commands
-            commands::warm_up_all_accounts,
-            commands::warm_up_account,
-            commands::update_account_label,
-            // HTTP API settings commands
-            commands::get_http_api_settings,
-            commands::save_http_api_settings,
-            // Token 统计命令
-            commands::get_token_stats_hourly,
-            commands::get_token_stats_daily,
-            commands::get_token_stats_weekly,
-            commands::get_token_stats_by_account,
-            commands::get_token_stats_summary,
-            commands::get_token_stats_by_model,
-            commands::get_token_stats_model_trend_hourly,
-            commands::get_token_stats_model_trend_daily,
-            commands::get_token_stats_account_trend_hourly,
-            commands::get_token_stats_account_trend_daily,
+            // CLI sync commands
             proxy::cli_sync::get_cli_sync_status,
             proxy::cli_sync::execute_cli_sync,
             proxy::cli_sync::execute_cli_restore,
             proxy::cli_sync::get_cli_config_content,
+            // OpenCode sync commands
             proxy::opencode_sync::get_opencode_sync_status,
             proxy::opencode_sync::execute_opencode_sync,
             proxy::opencode_sync::execute_opencode_restore,
             proxy::opencode_sync::get_opencode_config_content,
-            // Security/IP monitoring commands
-            commands::security::get_ip_access_logs,
-            commands::security::get_ip_stats,
-            commands::security::get_ip_token_stats,
-            commands::security::clear_ip_access_logs,
-            commands::security::get_ip_blacklist,
-            commands::security::add_ip_to_blacklist,
-            commands::security::remove_ip_from_blacklist,
-            commands::security::clear_ip_blacklist,
-            commands::security::check_ip_in_blacklist,
-            commands::security::get_ip_whitelist,
-            commands::security::add_ip_to_whitelist,
-            commands::security::remove_ip_from_whitelist,
-            commands::security::clear_ip_whitelist,
-            commands::security::check_ip_in_whitelist,
-            commands::security::get_security_config,
-            commands::security::update_security_config,
             // Cloudflared commands
             commands::cloudflared::cloudflared_check,
             commands::cloudflared::cloudflared_install,
@@ -473,14 +449,27 @@ pub fn run() {
             modules::log_bridge::is_debug_console_enabled,
             modules::log_bridge::get_debug_console_logs,
             modules::log_bridge::clear_debug_console_logs,
-            // User Token commands
-            commands::user_token::list_user_tokens,
-            commands::user_token::create_user_token,
-            commands::user_token::update_user_token,
-            commands::user_token::delete_user_token,
-            commands::user_token::renew_user_token,
-            commands::user_token::get_token_ip_bindings,
-            commands::user_token::get_user_token_summary,
+            // Security commands (IP blacklist/whitelist)
+            commands::security::security_init_db,
+            commands::security::security_get_blacklist,
+            commands::security::security_add_to_blacklist,
+            commands::security::security_remove_from_blacklist,
+            commands::security::security_remove_from_blacklist_by_id,
+            commands::security::security_is_ip_blacklisted,
+            commands::security::security_get_whitelist,
+            commands::security::security_add_to_whitelist,
+            commands::security::security_remove_from_whitelist,
+            commands::security::security_remove_from_whitelist_by_id,
+            commands::security::security_is_ip_whitelisted,
+            commands::security::security_get_access_logs,
+            commands::security::security_cleanup_logs,
+            commands::security::security_clear_all_logs,
+            commands::security::security_get_stats,
+            commands::security::security_clear_blacklist,
+            commands::security::security_clear_whitelist,
+            commands::security::security_get_ip_token_stats,
+            commands::security::get_security_config,
+            commands::security::update_security_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

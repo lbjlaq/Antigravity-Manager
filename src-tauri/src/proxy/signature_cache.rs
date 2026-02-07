@@ -239,7 +239,6 @@ impl SignatureCache {
         None
     }
 
-    /// 删除指定会话的缓存签名
     pub fn delete_session_signature(&self, session_id: &str) {
         if let Ok(mut cache) = self.session_signatures.lock() {
             if cache.remove(session_id).is_some() {

@@ -69,13 +69,22 @@ mod tests {
 
     #[test]
     fn test_error_message_format() {
-        // 测试错误消息格式
-        let url = "http://invalid-domain-that-does-not-exist-12345.com";
+        // 测试错误消息格式（使用本地已关闭端口，避免外部 DNS/网络环境不确定性）
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let url = format!("http://{}", addr);
         let client = reqwest::Client::new();
         
         let rt = tokio::runtime::Runtime::new().unwrap();
         let error = rt.block_on(async {
-            client.get(url).send().await.unwrap_err()
+            client
+                .get(&url)
+                .send()
+                .await
+                .and_then(|resp| resp.error_for_status())
+                .unwrap_err()
         });
         
         let (error_type, message, i18n_key) = classify_stream_error(&error);

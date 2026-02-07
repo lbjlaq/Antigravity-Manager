@@ -129,4 +129,3 @@ mod tests {
         assert_eq!(parse_version(text), Some("1.15.8".to_string()));
     }
 }
-

@@ -217,9 +217,7 @@ where
 
             "error" => {
                 // 错误事件
-                let error_data = event.data.get("error").unwrap_or(&event.data);
-                let message = error_data.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown stream error");
-                return Err(message.to_string());
+                return Err(format!("Stream error: {:?}", event.data));
             }
 
             _ => {

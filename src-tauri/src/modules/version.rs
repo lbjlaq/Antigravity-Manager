@@ -2,20 +2,20 @@ use crate::modules::process;
 use std::fs;
 use std::path::PathBuf;
 
-/// Antigravity 版本信息
+/// Antigravity version information
 #[derive(Debug, Clone)]
 pub struct AntigravityVersion {
     pub short_version: String,
     pub bundle_version: String,
 }
 
-/// 检测 Antigravity 版本（跨平台）
+/// Detect Antigravity version (cross-platform)
 pub fn get_antigravity_version() -> Result<AntigravityVersion, String> {
-    // 1. 获取 Antigravity 可执行文件路径（复用现有功能）
+    // 1. Get Antigravity executable path (reuse existing functionality)
     let exe_path = process::get_antigravity_executable_path()
         .ok_or("Unable to locate Antigravity executable")?;
     
-    // 2. 根据平台读取版本信息
+    // 2. Read version info based on platform
     #[cfg(target_os = "macos")]
     {
         get_version_macos(&exe_path)
@@ -32,13 +32,13 @@ pub fn get_antigravity_version() -> Result<AntigravityVersion, String> {
     }
 }
 
-/// macOS: 从 Info.plist 读取版本
+/// macOS: Read version from Info.plist
 #[cfg(target_os = "macos")]
 fn get_version_macos(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     use plist::Value;
     
-    // exe_path 可能是 /Applications/Antigravity.app 或内部可执行文件
-    // 需要找到 .app 目录
+    // exe_path might be /Applications/Antigravity.app or internal executable
+    // Need to find the .app directory
     let path_str = exe_path.to_string_lossy();
     let app_path = if let Some(idx) = path_str.find(".app") {
         PathBuf::from(&path_str[..idx + 4])
@@ -74,12 +74,12 @@ fn get_version_macos(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     })
 }
 
-/// Windows: 从可执行文件元数据读取版本
+/// Windows: Read version from executable metadata
 #[cfg(target_os = "windows")]
 fn get_version_windows(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     use std::process::Command;
     
-    // Windows: 使用 PowerShell 读取文件版本信息
+    // Windows: Use PowerShell to read file version info
     let output = Command::new("powershell")
         .args([
             "-Command",
@@ -109,12 +109,12 @@ fn get_version_windows(exe_path: &PathBuf) -> Result<AntigravityVersion, String>
     })
 }
 
-/// Linux: 从 package.json 或 --version 参数读取
+/// Linux: Read from package.json or --version argument
 #[cfg(target_os = "linux")]
 fn get_version_linux(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     use std::process::Command;
     
-    // 方法1: 尝试执行 --version
+    // Method 1: Try executing --version
     let output = Command::new(exe_path)
         .arg("--version")
         .output();
@@ -133,7 +133,7 @@ fn get_version_linux(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
         }
     }
     
-    // 方法2: 尝试从安装目录的 package.json 读取
+    // Method 2: Try reading from installation directory's package.json
     if let Some(parent) = exe_path.parent() {
         let package_json = parent.join("resources/app/package.json");
         if package_json.exists() {
@@ -153,12 +153,12 @@ fn get_version_linux(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     Err("Unable to determine Antigravity version on Linux".to_string())
 }
 
-/// 判断是否为新版本 (>= 1.16.5)
+/// Check if version is new format (>= 1.16.5)
 pub fn is_new_version(version: &AntigravityVersion) -> bool {
     compare_version(&version.short_version, "1.16.5") >= std::cmp::Ordering::Equal
 }
 
-/// 比较版本号
+/// Compare version numbers
 fn compare_version(v1: &str, v2: &str) -> std::cmp::Ordering {
     let parts1: Vec<u32> = v1
         .split('.')
