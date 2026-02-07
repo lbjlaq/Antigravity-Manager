@@ -783,6 +783,36 @@
                 "sync_error": "Lỗi đồng bộ {{name}}: {{error}}"
             }
         },
+        "opencode_sync": {
+            "title": "Đồng bộ OpenCode",
+            "subtitle": "Đồng bộ cấu hình nhà cung cấp OpenCode và tùy chọn đồng bộ tệp tài khoản.",
+            "card_title": "Cấu hình {{name}}",
+            "status": {
+                "not_installed": "Chưa cài đặt",
+                "installed": "v{{version}}",
+                "synced": "Đã trỏ đến app này",
+                "not_synced": "Chưa đồng bộ",
+                "detecting": "Đang kiểm tra...",
+                "current_base_url": "Base URL hiện tại"
+            },
+            "btn_sync": "Đồng bộ ngay",
+            "btn_view": "Xem cấu hình",
+            "btn_restore": "Khôi phục",
+            "btn_restore_backup": "Khôi phục bản sao lưu",
+            "sync_accounts": "Đồng bộ tài khoản vào antigravity-accounts.json",
+            "restore_confirm": "Bạn có chắc muốn khôi phục cấu hình {{name}} từ tệp sao lưu/mặc định không?",
+            "restore_backup_confirm": "Tìm thấy cấu hình sao lưu. Bạn có chắc chắn muốn khôi phục không?",
+            "modal": {
+                "view_title": "Nội dung cấu hình {{name}}",
+                "copy_success": "Đã sao chép vào bộ nhớ tạm"
+            },
+            "toast": {
+                "sync_success": "Thành công! {{name}} đã sẵn sàng.",
+                "sync_error": "Lỗi đồng bộ: {{error}}"
+            },
+            "sync_confirm_title": "Xác nhận đồng bộ",
+            "sync_confirm_message": "Đã sẵn sàng đồng bộ cấu hình {{name}}. ⚠️ Cảnh báo: thao tác này sẽ ghi đè tệp cấu hình OpenCode cục bộ. Bạn có chắc muốn tiếp tục không?"
+        },
         "supported_models": {
             "title": "Model Hỗ trợ & Tích hợp",
             "model_name": "Tên Model",

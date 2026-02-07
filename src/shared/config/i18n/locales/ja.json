@@ -810,6 +810,36 @@
                 "sync_success": "同期に成功しました！{{name}} の準備が整いました。",
                 "sync_error": "同期に失敗しました：{{error}}"
             }
+        },
+        "opencode_sync": {
+            "title": "OpenCode 同期",
+            "subtitle": "OpenCode のプロバイダー設定と、必要に応じてアカウントファイルを同期します。",
+            "card_title": "{{name}} 設定",
+            "status": {
+                "not_installed": "未インストール",
+                "installed": "v{{version}}",
+                "synced": "このアプリに向いています",
+                "not_synced": "未同期",
+                "detecting": "検出中...",
+                "current_base_url": "現在のベースURL"
+            },
+            "btn_sync": "今すぐ同期",
+            "btn_view": "設定を表示",
+            "btn_restore": "デフォルトに戻す",
+            "btn_restore_backup": "バックアップを復元",
+            "sync_accounts": "antigravity-accounts.json にアカウントを同期",
+            "restore_confirm": "{{name}} 設定をバックアップ/デフォルトから復元してもよろしいですか？",
+            "restore_backup_confirm": "バックアップ設定が見つかりました。復元してもよろしいですか？",
+            "modal": {
+                "view_title": "{{name}} 設定ファイルの内容",
+                "copy_success": "設定内容をコピーしました"
+            },
+            "toast": {
+                "sync_success": "同期に成功しました！{{name}} の準備が整いました。",
+                "sync_error": "同期に失敗しました：{{error}}"
+            },
+            "sync_confirm_title": "同期の確認",
+            "sync_confirm_message": "{{name}} の設定を同期する準備ができました。⚠️ 注意：この操作はローカルの OpenCode 設定ファイルを上書きします。続行しますか？"
         }
     },
     "monitor": {

@@ -63,6 +63,12 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'execute_cli_restore': { url: '/api/proxy/cli/restore', method: 'POST' },
   'get_cli_config_content': { url: '/api/proxy/cli/config', method: 'POST' },
 
+  // OpenCode Sync
+  'get_opencode_sync_status': { url: '/api/proxy/opencode/status', method: 'POST' },
+  'execute_opencode_sync': { url: '/api/proxy/opencode/sync', method: 'POST' },
+  'execute_opencode_restore': { url: '/api/proxy/opencode/restore', method: 'POST' },
+  'get_opencode_config_content': { url: '/api/proxy/opencode/config', method: 'POST' },
+
   // Stats
   'get_token_stats_hourly': { url: '/api/stats/token/hourly', method: 'GET' },
   'get_token_stats_daily': { url: '/api/stats/token/daily', method: 'GET' },

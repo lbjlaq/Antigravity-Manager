@@ -795,6 +795,36 @@
             },
             "sync_confirm_title": "同步确认",
             "sync_confirm_message": "即将为您同步 {{name}} 的配置。⚠️ 注意：此操作将覆盖您本地已有的配置文件（如登录状态、API Key 等）。确定要继续吗？"
+        },
+        "opencode_sync": {
+            "title": "OpenCode 配置同步",
+            "subtitle": "同步 OpenCode Provider 配置，并可选同步账号池文件。",
+            "card_title": "{{name}} 配置",
+            "status": {
+                "not_installed": "未检测到安装",
+                "installed": "v{{version}}",
+                "synced": "已指向本项目",
+                "not_synced": "未同步",
+                "detecting": "检测中...",
+                "current_base_url": "当前接口地址 (Base URL)"
+            },
+            "btn_sync": "立即同步配置",
+            "btn_view": "查看当前配置",
+            "btn_restore": "恢复默认配置",
+            "btn_restore_backup": "恢复原有配置",
+            "sync_accounts": "同步账号到 antigravity-accounts.json",
+            "restore_confirm": "确定要将 {{name}} 配置从备份/默认文件中恢复吗？",
+            "restore_backup_confirm": "检测到备份配置文件，确定要恢复吗？",
+            "modal": {
+                "view_title": "{{name}} 配置文件内容",
+                "copy_success": "配置内容已复制"
+            },
+            "toast": {
+                "sync_success": "同步成功！{{name}} 已准备就绪。",
+                "sync_error": "同步失败：{{error}}"
+            },
+            "sync_confirm_title": "同步确认",
+            "sync_confirm_message": "即将为您同步 {{name}} 的配置。⚠️ 注意：此操作将覆盖本地 OpenCode 配置文件。确定要继续吗？"
         }
     },
     "monitor": {

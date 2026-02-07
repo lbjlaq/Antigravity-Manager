@@ -839,6 +839,36 @@
                 "sync_error": "Ошибка синхронизации {{name}}: {{error}}"
             }
         },
+        "opencode_sync": {
+            "title": "Синхронизация OpenCode",
+            "subtitle": "Синхронизируйте настройки провайдера OpenCode и при необходимости файл пула аккаунтов.",
+            "card_title": "Конфиг {{name}}",
+            "status": {
+                "not_installed": "Не установлено",
+                "installed": "v{{version}}",
+                "synced": "Указывает на это приложение",
+                "not_synced": "Не синхронизировано",
+                "detecting": "Определение...",
+                "current_base_url": "Текущий Base URL"
+            },
+            "btn_sync": "Синхронизировать",
+            "btn_view": "Просмотр конфига",
+            "btn_restore": "Восстановить",
+            "btn_restore_backup": "Восстановить резервную копию",
+            "sync_accounts": "Синхронизировать аккаунты в antigravity-accounts.json",
+            "restore_confirm": "Вы уверены, что хотите восстановить конфиг {{name}} из резервных/дефолтных файлов?",
+            "restore_backup_confirm": "Найдена резервная копия конфигурации. Восстановить ее?",
+            "modal": {
+                "view_title": "Содержимое конфига {{name}}",
+                "copy_success": "Скопировано в буфер обмена"
+            },
+            "toast": {
+                "sync_success": "Успешно! {{name}} готов к работе.",
+                "sync_error": "Ошибка синхронизации: {{error}}"
+            },
+            "sync_confirm_title": "Подтверждение синхронизации",
+            "sync_confirm_message": "Готово к синхронизации конфигурации {{name}}. ⚠️ Внимание: это перезапишет локальные файлы конфигурации OpenCode. Продолжить?"
+        },
         "supported_models": {
             "title": "Поддерживаемые модели и интеграция",
             "model_name": "Название модели",

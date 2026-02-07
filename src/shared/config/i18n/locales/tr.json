@@ -753,6 +753,36 @@
                 "sync_error": "{{name}} senkronizasyon hatası: {{error}}"
             }
         },
+        "opencode_sync": {
+            "title": "OpenCode Senkronizasyonu",
+            "subtitle": "OpenCode sağlayıcı yapılandırmasını ve isteğe bağlı hesap havuzu dosyalarını senkronize edin.",
+            "card_title": "{{name}} Yapılandırması",
+            "status": {
+                "not_installed": "Yüklü Değil",
+                "installed": "v{{version}}",
+                "synced": "Bu uygulamaya yönlendirilmiş",
+                "not_synced": "Senkronize Değil",
+                "detecting": "Algılanıyor...",
+                "current_base_url": "Mevcut Base URL"
+            },
+            "btn_sync": "Şimdi Senkronize Et",
+            "btn_view": "Yapılandırmayı Görüntüle",
+            "btn_restore": "Varsayılana Dön",
+            "btn_restore_backup": "Yedeği Geri Yükle",
+            "sync_accounts": "Hesapları antigravity-accounts.json dosyasına senkronize et",
+            "restore_confirm": "{{name}} yapılandırmasını yedek/varsayılan dosyalardan geri yüklemek istediğinizden emin misiniz?",
+            "restore_backup_confirm": "Yedek yapılandırma bulundu. Geri yüklemek istediğinizden emin misiniz?",
+            "modal": {
+                "view_title": "{{name}} Yapılandırma İçeriği",
+                "copy_success": "Panoya kopyalandı"
+            },
+            "toast": {
+                "sync_success": "Başarılı! {{name}} kullanıma hazır.",
+                "sync_error": "Senkronizasyon hatası: {{error}}"
+            },
+            "sync_confirm_title": "Senkronizasyon Onayı",
+            "sync_confirm_message": "{{name}} yapılandırmasını senkronize etmeye hazır. ⚠️ Uyarı: Bu işlem yerel OpenCode yapılandırma dosyalarının üzerine yazacaktır. Devam etmek istediğinizden emin misiniz?"
+        },
         "supported_models": {
             "title": "Desteklenen Modeller ve Entegrasyon",
             "model_name": "Model Adı",

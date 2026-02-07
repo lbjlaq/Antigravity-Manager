@@ -778,6 +778,36 @@
                 "sync_error": "Erro ao sincronizar {{name}}: {{error}}"
             }
         },
+        "opencode_sync": {
+            "title": "Sincronização OpenCode",
+            "subtitle": "Sincronize a configuração do provedor OpenCode e, opcionalmente, os arquivos de contas.",
+            "card_title": "Config {{name}}",
+            "status": {
+                "not_installed": "Não instalado",
+                "installed": "v{{version}}",
+                "synced": "Apontado para este app",
+                "not_synced": "Não sincronizado",
+                "detecting": "Detectando...",
+                "current_base_url": "URL Base Atual"
+            },
+            "btn_sync": "Sincronizar Agora",
+            "btn_view": "Ver Config",
+            "btn_restore": "Restaurar Padrão",
+            "btn_restore_backup": "Restaurar Backup",
+            "sync_accounts": "Sincronizar contas para antigravity-accounts.json",
+            "restore_confirm": "Tem certeza que deseja restaurar a config de {{name}} a partir dos arquivos de backup/padrão?",
+            "restore_backup_confirm": "Configuração de backup encontrada. Tem certeza de que deseja restaurá-la?",
+            "modal": {
+                "view_title": "Conteúdo do arquivo {{name}}",
+                "copy_success": "Copiado para a área de transferência"
+            },
+            "toast": {
+                "sync_success": "Sucesso! {{name}} está pronto.",
+                "sync_error": "Falha na sincronização: {{error}}"
+            },
+            "sync_confirm_title": "Confirmação de Sincronização",
+            "sync_confirm_message": "Pronto para sincronizar a configuração do {{name}}. ⚠️ Aviso: Isso substituirá arquivos locais de configuração do OpenCode. Tem certeza de que deseja continuar?"
+        },
         "supported_models": {
             "title": "Modelos Suportados e Integração",
             "model_name": "Nome do Modelo",

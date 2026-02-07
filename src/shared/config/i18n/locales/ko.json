@@ -794,6 +794,36 @@
             },
             "sync_confirm_title": "동기화 확인",
             "sync_confirm_message": "{{name}} 구성을 동기화할 준비가 되었습니다. ⚠️ 경고: 이 작업은 기존 로컬 구성 파일(예: 로그인 토큰, API 키)을 덮어씁니다. 계속하시겠습니까?"
+        },
+        "opencode_sync": {
+            "title": "OpenCode 동기화",
+            "subtitle": "OpenCode 공급자 설정과 필요 시 계정 풀 파일을 동기화합니다.",
+            "card_title": "{{name}} 구성",
+            "status": {
+                "not_installed": "감지되지 않음",
+                "installed": "v{{version}}",
+                "synced": "이 앱을 가리킴",
+                "not_synced": "동기화되지 않음",
+                "detecting": "감지 중...",
+                "current_base_url": "현재 기본 URL"
+            },
+            "btn_sync": "지금 설정 동기화",
+            "btn_view": "구성 보기",
+            "btn_restore": "기본값 복원",
+            "btn_restore_backup": "백업 복원",
+            "sync_accounts": "antigravity-accounts.json으로 계정 동기화",
+            "restore_confirm": "{{name}} 구성을 백업/기본 파일에서 복원하시겠습니까?",
+            "restore_backup_confirm": "백업 구성을 찾았습니다. 복원하시겠습니까?",
+            "modal": {
+                "view_title": "{{name}} 구성 내용",
+                "copy_success": "구성 내용 복사됨"
+            },
+            "toast": {
+                "sync_success": "동기화 성공! {{name}}이(가) 준비되었습니다.",
+                "sync_error": "동기화 실패: {{error}}"
+            },
+            "sync_confirm_title": "동기화 확인",
+            "sync_confirm_message": "{{name}} 구성을 동기화할 준비가 되었습니다. ⚠️ 경고: 이 작업은 로컬 OpenCode 구성 파일을 덮어씁니다. 계속하시겠습니까?"
         }
     },
     "monitor": {

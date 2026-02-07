@@ -784,6 +784,36 @@
                 "sync_error": "同步 {{name}} 失敗: {{error}}"
             }
         },
+        "opencode_sync": {
+            "title": "OpenCode 配置同步",
+            "subtitle": "同步 OpenCode Provider 配置，並可選同步帳號池檔案。",
+            "card_title": "{{name}} 配置",
+            "status": {
+                "not_installed": "未檢測到安裝",
+                "installed": "v{{version}}",
+                "synced": "已指向本專案",
+                "not_synced": "未同步",
+                "detecting": "檢測中...",
+                "current_base_url": "當前介面地址 (Base URL)"
+            },
+            "btn_sync": "立即同步配置",
+            "btn_view": "檢視當前配置",
+            "btn_restore": "恢復預設配置",
+            "btn_restore_backup": "還原原有配置",
+            "sync_accounts": "同步帳號到 antigravity-accounts.json",
+            "restore_confirm": "確定要將 {{name}} 配置從備份/預設檔案還原嗎？",
+            "restore_backup_confirm": "檢測到備份配置檔案，確定要還原嗎？",
+            "modal": {
+                "view_title": "{{name}} 配置文件內容",
+                "copy_success": "配置內容已複製到剪貼簿"
+            },
+            "toast": {
+                "sync_success": "同步成功！{{name}} 已準備就緒。",
+                "sync_error": "同步失敗：{{error}}"
+            },
+            "sync_confirm_title": "同步確認",
+            "sync_confirm_message": "即將為您同步 {{name}} 的配置。⚠️ 注意：此操作將覆蓋本地 OpenCode 配置檔案。確定要繼續嗎？"
+        },
         "supported_models": {
             "title": "支援模型與整合 (Supported Models & Integration)",
             "model_name": "模型名稱",

@@ -216,6 +216,27 @@ pub struct CliConfigContentRequest {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpencodeSyncStatusRequest {
+    pub proxy_url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpencodeSyncRequest {
+    pub proxy_url: String,
+    pub api_key: String,
+    #[serde(default)]
+    pub sync_accounts: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpencodeConfigContentRequest {
+    pub file_name: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct SubmitCodeRequest {
     pub code: String,
     pub state: Option<String>,

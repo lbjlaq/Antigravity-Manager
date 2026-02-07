@@ -856,6 +856,36 @@
             },
             "sync_confirm_title": "Sync Confirmation",
             "sync_confirm_message": "Ready to sync {{name}} configuration. ⚠️ Warning: This will overwrite your existing local configuration files (e.g. login tokens, API Keys). Are you sure you want to continue?"
+        },
+        "opencode_sync": {
+            "title": "OpenCode Sync",
+            "subtitle": "Sync OpenCode provider config and optional account pool files.",
+            "card_title": "{{name}} Config",
+            "status": {
+                "not_installed": "Not detected",
+                "installed": "v{{version}}",
+                "synced": "Pointed to this app",
+                "not_synced": "Not synced",
+                "detecting": "Detecting...",
+                "current_base_url": "Current Base URL"
+            },
+            "btn_sync": "Sync Config Now",
+            "btn_view": "View Config",
+            "btn_restore": "Restore Defaults",
+            "btn_restore_backup": "Restore Backup",
+            "sync_accounts": "Sync accounts to antigravity-accounts.json",
+            "restore_confirm": "Are you sure you want to restore {{name}} configuration from backup/default files?",
+            "restore_backup_confirm": "Backup configuration found. Are you sure you want to restore it?",
+            "modal": {
+                "view_title": "{{name}} Config Content",
+                "copy_success": "Config content copied"
+            },
+            "toast": {
+                "sync_success": "Sync successful! {{name}} is ready.",
+                "sync_error": "Sync failed: {{error}}"
+            },
+            "sync_confirm_title": "Sync Confirmation",
+            "sync_confirm_message": "Ready to sync {{name}} configuration. ⚠️ Warning: This will overwrite local OpenCode config files. Are you sure you want to continue?"
         }
     },
     "monitor": {

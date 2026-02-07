@@ -58,6 +58,17 @@ pub fn build_admin_routes() -> Router<AppState> {
         .route("/proxy/cli/sync", post(admin::execute_cli_sync))
         .route("/proxy/cli/restore", post(admin::execute_cli_restore))
         .route("/proxy/cli/config", post(admin::get_cli_config_content))
+        // OpenCode sync
+        .route("/proxy/opencode/status", post(admin::get_opencode_sync_status))
+        .route("/proxy/opencode/sync", post(admin::execute_opencode_sync))
+        .route(
+            "/proxy/opencode/restore",
+            post(admin::execute_opencode_restore),
+        )
+        .route(
+            "/proxy/opencode/config",
+            post(admin::get_opencode_config_content),
+        )
         // Proxy control
         .route("/proxy/status", get(admin::get_proxy_status))
         .route("/proxy/start", post(admin::start_proxy_service))

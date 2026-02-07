@@ -11,7 +11,8 @@ use axum::{
 
 use crate::modules::logger;
 use crate::proxy::server::types::{
-    AppState, ErrorResponse, LogsFilterQuery, UpdateMappingWrapper,
+    AppState, ErrorResponse, LogsFilterQuery, OpencodeConfigContentRequest, OpencodeSyncRequest,
+    OpencodeSyncStatusRequest, UpdateMappingWrapper,
 };
 
 // ============================================================================
@@ -504,6 +505,65 @@ pub async fn get_cli_config_content(
     Json(payload): Json<CliConfigContentRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     crate::proxy::cli_sync::get_cli_config_content(payload.app_type, payload.file_name)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+pub async fn get_opencode_sync_status(
+    Json(payload): Json<OpencodeSyncStatusRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::opencode_sync::get_opencode_sync_status(payload.proxy_url)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+pub async fn execute_opencode_sync(
+    Json(payload): Json<OpencodeSyncRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::opencode_sync::execute_opencode_sync(
+        payload.proxy_url,
+        payload.api_key,
+        Some(payload.sync_accounts),
+    )
+    .await
+    .map(|_| StatusCode::OK)
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })
+}
+
+pub async fn execute_opencode_restore(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::opencode_sync::execute_opencode_restore()
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+pub async fn get_opencode_config_content(
+    Json(payload): Json<OpencodeConfigContentRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::opencode_sync::get_opencode_config_content(payload.file_name)
         .await
         .map(Json)
         .map_err(|e| {

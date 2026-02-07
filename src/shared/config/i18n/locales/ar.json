@@ -790,6 +790,36 @@
             },
             "sync_confirm_title": "تأكيد المزامنة",
             "sync_confirm_message": "جاهز لمزامنة تكوين {{name}}. ⚠️ تحذير: سيؤدي هذا إلى الكتابة فوق ملفات التكوين المحلية الحالية (مثل توكنات تسجيل الدخول، مفاتيح API). هل أنت متأكد من رغبتك في الاستمرار؟"
+        },
+        "opencode_sync": {
+            "title": "مزامنة OpenCode",
+            "subtitle": "مزامنة إعدادات مزود OpenCode وملفات الحسابات اختياريا.",
+            "card_title": "تكوين {{name}}",
+            "status": {
+                "not_installed": "لم يتم اكتشافه",
+                "installed": "v{{version}}",
+                "synced": "موجه لهذا التطبيق",
+                "not_synced": "غير متزامن",
+                "detecting": "جاري الاكتشاف...",
+                "current_base_url": "URL الأساسي الحالي"
+            },
+            "btn_sync": "مزامنة التكوين الآن",
+            "btn_view": "عرض التكوين",
+            "btn_restore": "استعادة الافتراضيات",
+            "btn_restore_backup": "استعادة النسخة الاحتياطية",
+            "sync_accounts": "مزامنة الحسابات إلى antigravity-accounts.json",
+            "restore_confirm": "هل أنت متأكد من رغبتك في استعادة إعدادات {{name}} من ملفات النسخ الاحتياطية/الافتراضية؟",
+            "restore_backup_confirm": "تم العثور على تكوين احتياطي. هل أنت متأكد من رغبتك في استعادته؟",
+            "modal": {
+                "view_title": "محتوى تكوين {{name}}",
+                "copy_success": "تم نسخ محتوى التكوين"
+            },
+            "toast": {
+                "sync_success": "تمت المزامنة بنجاح! {{name}} جاهز.",
+                "sync_error": "فشلت المزامنة: {{error}}"
+            },
+            "sync_confirm_title": "تأكيد المزامنة",
+            "sync_confirm_message": "جاهز لمزامنة تكوين {{name}}. ⚠️ تحذير: سيؤدي هذا إلى الكتابة فوق ملفات تكوين OpenCode المحلية. هل أنت متأكد من رغبتك في الاستمرار؟"
         }
     },
     "monitor": {
