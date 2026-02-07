@@ -128,7 +128,8 @@ pub async fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenRespon
 }
 
 /// Refresh access_token using refresh_token
-pub async fn refresh_access_token(refresh_token: &str) -> Result<TokenResponse, String> {
+/// [FIX #1583] Added account_id parameter for future proxy selection context
+pub async fn refresh_access_token(refresh_token: &str, account_id: Option<&str>) -> Result<TokenResponse, String> {
     let client = crate::utils::http::get_long_client(); // [FIX #948/887] Extend timeout to 60s
     
     let params = [
@@ -138,7 +139,12 @@ pub async fn refresh_access_token(refresh_token: &str) -> Result<TokenResponse, 
         ("grant_type", "refresh_token"),
     ];
 
-    crate::modules::logger::log_info("Refreshing Token...");
+    // [FIX #1583] Enhanced logging for diagnostics
+    if let Some(id) = account_id {
+        crate::modules::logger::log_info(&format!("Refreshing Token for account: {}...", id));
+    } else {
+        crate::modules::logger::log_info("Refreshing Token for generic request (no account_id)...");
+    }
     
     let response = client
         .post(TOKEN_URL)
@@ -168,7 +174,8 @@ pub async fn refresh_access_token(refresh_token: &str) -> Result<TokenResponse, 
 }
 
 /// Get user info
-pub async fn get_user_info(access_token: &str) -> Result<UserInfo, String> {
+/// [FIX #1583] Added account_id parameter for future proxy selection context
+pub async fn get_user_info(access_token: &str, _account_id: Option<&str>) -> Result<UserInfo, String> {
     let client = crate::utils::http::get_client();
     
     let response = client
@@ -190,8 +197,10 @@ pub async fn get_user_info(access_token: &str) -> Result<UserInfo, String> {
 
 /// Check and refresh Token if needed
 /// Returns the latest access_token
+/// [FIX #1583] Added account_id parameter for proper proxy selection context
 pub async fn ensure_fresh_token(
     current_token: &crate::models::TokenData,
+    account_id: Option<&str>,
 ) -> Result<crate::models::TokenData, String> {
     let now = chrono::Local::now().timestamp();
     
@@ -201,8 +210,8 @@ pub async fn ensure_fresh_token(
     }
     
     // Need to refresh
-    crate::modules::logger::log_info("Token expiring soon, refreshing...");
-    let response = refresh_access_token(&current_token.refresh_token).await?;
+    crate::modules::logger::log_info(&format!("Token expiring soon for account {:?}, refreshing...", account_id));
+    let response = refresh_access_token(&current_token.refresh_token, account_id).await?;
     
     // Construct new TokenData
     Ok(crate::models::TokenData::new(

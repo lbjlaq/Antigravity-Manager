@@ -399,6 +399,63 @@ impl TokenManager {
     pub fn has_account(&self, account_id: &str) -> bool {
         self.tokens.contains_key(account_id)
     }
+
+    // =========================================================================
+    // [FIX #1585] Forbidden Account Management (403 handling)
+    // =========================================================================
+
+    /// Set is_forbidden status for an account (called when proxy encounters 403)
+    /// This marks the account as forbidden and clears any sticky session bindings
+    pub async fn set_forbidden(&self, account_id: &str, reason: &str) -> Result<(), String> {
+        // 1. Persist to disk - update quota.is_forbidden in account JSON
+        let path = self.data_dir.join("accounts").join(format!("{}.json", account_id));
+        if !path.exists() {
+            return Err(format!("Account file not found: {:?}", path));
+        }
+
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read account file: {}", e))?;
+
+        let mut account: serde_json::Value = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse account JSON: {}", e))?;
+
+        // Update quota.is_forbidden
+        if let Some(quota) = account.get_mut("quota") {
+            quota["is_forbidden"] = serde_json::Value::Bool(true);
+        } else {
+            // Create quota object if not exists
+            account["quota"] = serde_json::json!({
+                "models": [],
+                "last_updated": chrono::Utc::now().timestamp(),
+                "is_forbidden": true
+            });
+        }
+
+        // 2. Clear sticky session bindings for this account
+        self.session_accounts.retain(|_, (aid, _)| aid != account_id);
+
+        // 3. Remove from active token pool to prevent selection
+        if let Some(mut token) = self.tokens.get_mut(account_id) {
+            // Update in-memory state
+            if let Some(ref mut quota) = token.remaining_quota {
+                *quota = 0; // Set remaining quota to 0
+            }
+        }
+
+        let json_str = serde_json::to_string_pretty(&account)
+            .map_err(|e| format!("Failed to serialize account JSON: {}", e))?;
+
+        std::fs::write(&path, json_str)
+            .map_err(|e| format!("Failed to write account file: {}", e))?;
+
+        tracing::warn!(
+            "🚫 Account {} marked as forbidden (403): {}",
+            account_id,
+            truncate_reason(reason, 100)
+        );
+
+        Ok(())
+    }
 }
 
 /// Truncate long reason strings

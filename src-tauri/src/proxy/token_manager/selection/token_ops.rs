@@ -19,7 +19,7 @@ impl TokenManager {
         if now >= token.timestamp - 300 {
             tracing::debug!("账号 {} 的 token 即将过期，正在刷新...", token.email);
 
-            match crate::modules::oauth::refresh_access_token(&token.refresh_token).await {
+            match crate::modules::oauth::refresh_access_token(&token.refresh_token, Some(&token.account_id)).await {
                 Ok(token_response) => {
                     tracing::debug!("Token 刷新成功！");
                     token.access_token = token_response.access_token.clone();

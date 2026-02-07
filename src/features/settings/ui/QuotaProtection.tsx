@@ -47,6 +47,7 @@ const QuotaProtection = ({ config, onChange }: QuotaProtectionProps) => {
         { id: 'gemini-3-flash', label: 'Gemini 3 Flash' },
         { id: 'gemini-3-pro-high', label: 'Gemini 3 Pro High' },
         { id: 'claude-sonnet-4-5', label: 'Claude 4.5 Sonnet' },
+        { id: 'claude-opus-4-6-thinking', label: 'Claude 4.6 Opus' },
         { id: 'gemini-3-pro-image', label: 'Gemini 3 Pro Image' }
     ];
 

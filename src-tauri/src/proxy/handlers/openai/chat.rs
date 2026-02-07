@@ -493,21 +493,32 @@ pub async fn handle_chat_completions(
 
         // 403/401 trigger account rotation
         if status_code == 403 || status_code == 401 {
-            if status_code == 403 && (
-                error_text.contains("VALIDATION_REQUIRED") || 
-                error_text.contains("verify your account") ||
-                error_text.contains("validation_url")
-            ) {
-                tracing::warn!(
-                    "[OpenAI] VALIDATION_REQUIRED detected on account {}, temporarily blocking",
-                    email
-                );
-                let block_minutes = 10i64;
-                let block_until = chrono::Utc::now().timestamp() + (block_minutes * 60);
-                
+            if status_code == 403 {
+                // Mark account as forbidden for ANY 403 response
                 if let Some(acc_id) = token_manager.get_account_id_by_email(&email) {
-                    if let Err(e) = token_manager.set_validation_block_public(&acc_id, block_until, &error_text).await {
-                        tracing::error!("Failed to set validation block: {}", e);
+                    // Special handling for VALIDATION_REQUIRED
+                    if error_text.contains("VALIDATION_REQUIRED") || 
+                       error_text.contains("verify your account") ||
+                       error_text.contains("validation_url") {
+                        tracing::warn!(
+                            "[OpenAI] VALIDATION_REQUIRED detected on account {}, temporarily blocking",
+                            email
+                        );
+                        let block_minutes = 10i64;
+                        let block_until = chrono::Utc::now().timestamp() + (block_minutes * 60);
+                        
+                        if let Err(e) = token_manager.set_validation_block_public(&acc_id, block_until, &error_text).await {
+                            tracing::error!("Failed to set validation block: {}", e);
+                        }
+                    }
+                    
+                    // Mark as forbidden and remove from pool for ALL 403 responses
+                    tracing::warn!(
+                        "[OpenAI] 403 Forbidden on account {}, marking as forbidden and removing from pool",
+                        email
+                    );
+                    if let Err(e) = token_manager.set_forbidden(&acc_id, &error_text).await {
+                        tracing::error!("Failed to set forbidden status: {}", e);
                     }
                 }
             }

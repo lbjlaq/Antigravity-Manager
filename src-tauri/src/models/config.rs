@@ -57,6 +57,7 @@ fn default_warmup_models() -> Vec<String> {
         "gemini-2.5-flash".to_string(),
         "gemini-3-pro-low".to_string(),
         "claude-opus-4-5-thinking".to_string(),
+        "claude-opus-4-6-thinking".to_string(),
     ]
 }
 

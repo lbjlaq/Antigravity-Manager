@@ -4,6 +4,7 @@ pub mod config;
 pub mod logger;
 pub mod db;
 pub mod process;
+pub mod version;
 pub mod oauth;
 pub mod oauth_server;
 pub mod migration;

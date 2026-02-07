@@ -31,7 +31,9 @@ pub fn transform_openai_request(
         && mapped_model_lower.contains("-thinking") 
         && !mapped_model_lower.contains("claude");
     let is_claude_thinking = mapped_model_lower.ends_with("-thinking");
-    let is_thinking_model = is_gemini_3_thinking || is_claude_thinking;
+    // [NEW] PR #1641: Auto-enable thinking for Opus 4.6 models
+    let is_opus_46 = mapped_model_lower.contains("opus-4-6") || mapped_model_lower.contains("opus-4.6");
+    let is_thinking_model = is_gemini_3_thinking || is_claude_thinking || is_opus_46;
 
     // [NEW] 检查用户是否在请求中显式启用 thinking
     let user_enabled_thinking = request.thinking.as_ref()
@@ -393,8 +395,44 @@ pub fn transform_openai_request(
 
     // 为 thinking 模型注入 thinkingConfig (使用 thinkingBudget 而非 thinkingLevel)
     if actual_include_thinking {
-        // [NEW] 优先使用用户指定的 budget，否则使用默认值
-        let budget: i64 = user_thinking_budget.map(|b| b as i64).unwrap_or(32000);
+        // [FIX #1592/#1602] 使用配置系统处理 thinking_budget，强制 24576 上限
+        let tb_config = crate::proxy::config::get_thinking_budget_config();
+        let user_budget: i64 = user_thinking_budget.map(|b| b as i64).unwrap_or(24576);
+        
+        // 检查是否为 Gemini 受限模型 (需要 24576 上限)
+        let is_gemini_limited = mapped_model.contains("gemini") || mapped_model.contains("flash");
+        
+        let budget: i64 = match tb_config.mode {
+            crate::proxy::config::ThinkingBudgetMode::Custom => {
+                let mut custom_value = tb_config.custom_value as i64;
+                // [FIX #1602] 即使在自定义模式下，针对 Gemini 类模型也必须强制执行 24576 上限
+                if is_gemini_limited && custom_value > 24576 {
+                    tracing::warn!(
+                        "[OpenAI-Request] Custom mode: capping thinking_budget from {} to 24576 for Gemini model {}",
+                        custom_value, mapped_model
+                    );
+                    custom_value = 24576;
+                }
+                custom_value
+            }
+            crate::proxy::config::ThinkingBudgetMode::Passthrough => {
+                // 透传模式：直接使用用户值（风险自担）
+                user_budget
+            }
+            crate::proxy::config::ThinkingBudgetMode::Auto => {
+                // [FIX #1592] 自动模式：对 Gemini 类模型应用 24576 上限
+                if is_gemini_limited && user_budget > 24576 {
+                    tracing::info!(
+                        "[OpenAI-Request] Auto mode: capping thinking budget from {} to 24576 for model: {}", 
+                        user_budget, mapped_model
+                    );
+                    24576
+                } else {
+                    user_budget
+                }
+            }
+        };
+        
         gen_config["thinkingConfig"] = json!({
             "includeThoughts": true,
             "thinkingBudget": budget

@@ -17,21 +17,46 @@ pub fn build_generation_config(
             let mut thinking_config = json!({"includeThoughts": true});
 
             if let Some(budget_tokens) = thinking.budget_tokens {
-                let mut budget = budget_tokens;
                 let model_lower = claude_req.model.to_lowercase();
-                // [FIX] Cap budget for Flash models AND -thinking suffix models
-                let is_limited_model = has_web_search 
+                
+                // [FIX #1592/#1602] 使用配置系统处理 thinking_budget
+                let tb_config = crate::proxy::config::get_thinking_budget_config();
+                
+                // 检查是否为 Gemini 受限模型
+                let is_gemini_limited = model_lower.contains("gemini") 
                     || model_lower.contains("flash")
-                    || model_lower.ends_with("-thinking");
-                if is_limited_model {
-                    budget = budget.min(24576);
-                    if budget_tokens > 24576 {
-                        tracing::info!(
-                            "[Generation-Config] Capped thinking_budget from {} to 24576 for limited model",
-                            budget_tokens
-                        );
+                    || model_lower.ends_with("-thinking")
+                    || has_web_search;
+                
+                let budget = match tb_config.mode {
+                    crate::proxy::config::ThinkingBudgetMode::Custom => {
+                        let mut custom_value = tb_config.custom_value as i32;
+                        // [FIX #1602] 针对 Gemini 系列模型，在自定义模式下也强制执行 24576 上限
+                        if is_gemini_limited && custom_value > 24576 {
+                            tracing::warn!(
+                                "[Claude-Request] Custom mode: capping thinking_budget from {} to 24576 for Gemini model {}",
+                                custom_value, claude_req.model
+                            );
+                            custom_value = 24576;
+                        }
+                        custom_value
                     }
-                }
+                    crate::proxy::config::ThinkingBudgetMode::Passthrough => {
+                        budget_tokens as i32
+                    }
+                    crate::proxy::config::ThinkingBudgetMode::Auto => {
+                        if is_gemini_limited && budget_tokens > 24576 {
+                            tracing::info!(
+                                "[Claude-Request] Auto mode: capping thinking_budget from {} to 24576 for Gemini model {}", 
+                                budget_tokens, claude_req.model
+                            );
+                            24576
+                        } else {
+                            budget_tokens as i32
+                        }
+                    }
+                };
+                
                 thinking_config["thinkingBudget"] = json!(budget);
             }
 

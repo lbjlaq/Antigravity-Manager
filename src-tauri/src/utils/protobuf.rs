@@ -181,3 +181,38 @@ pub fn create_email_field(email: &str) -> Vec<u8> {
     f.extend(email.as_bytes());
     f
 }
+
+/// Encode length-delimited field (wire_type = 2)
+pub fn encode_len_delim_field(field_num: u32, data: &[u8]) -> Vec<u8> {
+    let tag = (field_num << 3) | 2;
+    let mut f = encode_varint(tag as u64);
+    f.extend(encode_varint(data.len() as u64));
+    f.extend_from_slice(data);
+    f
+}
+
+/// Encode string field (wire_type = 2)
+pub fn encode_string_field(field_num: u32, value: &str) -> Vec<u8> {
+    encode_len_delim_field(field_num, value.as_bytes())
+}
+
+/// Create OAuthTokenInfo message (without Field 6 wrapper, for new format)
+pub fn create_oauth_info(access_token: &str, refresh_token: &str, expiry: i64) -> Vec<u8> {
+    // Field 1: access_token
+    let field1 = encode_string_field(1, access_token);
+    
+    // Field 2: token_type = "Bearer"
+    let field2 = encode_string_field(2, "Bearer");
+    
+    // Field 3: refresh_token
+    let field3 = encode_string_field(3, refresh_token);
+    
+    // Field 4: expiry (nested Timestamp message)
+    let timestamp_tag = (1 << 3) | 0;
+    let mut timestamp_msg = encode_varint(timestamp_tag);
+    timestamp_msg.extend(encode_varint(expiry as u64));
+    let field4 = encode_len_delim_field(4, &timestamp_msg);
+    
+    // Merge all fields into OAuthTokenInfo message
+    [field1, field2, field3, field4].concat()
+}

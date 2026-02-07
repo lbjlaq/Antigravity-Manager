@@ -29,7 +29,8 @@ pub async fn switch_account(
     ));
 
     // 2. Ensure Token is valid (auto-refresh)
-    let fresh_token = oauth::ensure_fresh_token(&account.token)
+    // [FIX #1583] Pass account_id for proper context
+    let fresh_token = oauth::ensure_fresh_token(&account.token, Some(&account.id))
         .await
         .map_err(|e| format!("Token refresh failed: {}", e))?;
 

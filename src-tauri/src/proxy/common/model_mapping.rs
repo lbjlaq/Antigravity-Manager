@@ -10,6 +10,17 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-sonnet-4-5", "claude-sonnet-4-5");
     m.insert("claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking");
 
+    // [NEW] Claude Opus 4.6 Thinking Model (PR #1641)
+    m.insert("claude-opus-4-6-thinking", "claude-opus-4-6-thinking");
+    m.insert("claude-opus-4.6-thinking", "claude-opus-4-6-thinking");
+    m.insert("claude-4-6-thinking", "claude-opus-4-6-thinking");
+    m.insert("claude-4.6-thinking", "claude-opus-4-6-thinking");
+    m.insert("opus-4.6-thinking", "claude-opus-4-6-thinking");
+    m.insert("opus-4-6-thinking", "claude-opus-4-6-thinking");
+    m.insert("claude-opus-4-6-thinking-20260207", "claude-opus-4-6-thinking");
+    m.insert("claude-opus-4.6", "claude-opus-4-6-thinking");
+    m.insert("claude-4.6", "claude-opus-4-6-thinking");
+
     // 别名映射
     m.insert("claude-sonnet-4-5-20250929", "claude-sonnet-4-5-thinking");
     m.insert("claude-3-5-sonnet-20241022", "claude-sonnet-4-5");
@@ -72,6 +83,12 @@ pub fn map_claude_model_to_gemini(input: &str) -> String {
 
     // [NEW] Intelligent fallback based on model keywords
     let lower = input.to_lowercase();
+    
+    // [FIX #1641] Opus 4.6 fallback BEFORE generic opus check (order matters!)
+    if lower.contains("opus-4-6") || lower.contains("opus-4.6") {
+        return "claude-opus-4-6-thinking".to_string();
+    }
+    
     if lower.contains("opus") {
         return "gemini-3-pro-preview".to_string();
     }
@@ -238,6 +255,7 @@ pub fn resolve_model_route(
 /// - `gemini-3-flash`: All Flash variants (1.5-flash, 2.5-flash, 3-flash, etc.)
 /// - `gemini-3-pro-high`: All Pro variants (1.5-pro, 2.5-pro, etc.)
 /// - `claude-sonnet-4-5`: All Claude Sonnet variants (3-5-sonnet, sonnet-4-5, etc.)
+/// - `claude-opus-4-6-thinking`: Claude Opus 4.6 Thinking
 /// 
 /// Returns `None` if the model doesn't match any of the 3 protected categories.
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
@@ -252,6 +270,9 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
 
         // Claude 4.5 Sonnet Group
         "claude-sonnet-4-5" | "claude-sonnet-4-5-thinking" | "claude-opus-4-5-thinking" => Some("claude-sonnet-4-5".to_string()),
+
+        // [NEW] Claude 4.6 Opus Thinking Group (PR #1641)
+        "claude-opus-4-6-thinking" | "claude-opus-4.6-thinking" | "claude-4-6-thinking" | "claude-4.6-thinking" => Some("claude-opus-4-6-thinking".to_string()),
 
         _ => None
     }

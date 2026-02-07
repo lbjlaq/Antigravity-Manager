@@ -42,20 +42,54 @@ pub fn wrap_request(body: &Value, project_id: &str, mapped_model: &str, session_
         }
     }
 
-    // [FIX Issue #1355] Gemini Flash thinking budget capping
-    // Force cap thinking_budget to 24576 for Flash models to prevent 400 Bad Request
-    if final_model_name.to_lowercase().contains("flash") {
+    // [FIX #1592/#1602] Gemini thinking budget capping
+    // Force cap thinking_budget to 24576 for ALL Gemini models to prevent 400 Bad Request
+    // This applies to both Flash and Pro models
+    {
+        let tb_config = crate::proxy::config::get_thinking_budget_config();
         if let Some(gen_config) = inner_request.get_mut("generationConfig") {
             if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
                 if let Some(budget_val) = thinking_config.get("thinkingBudget") {
                     if let Some(budget) = budget_val.as_u64() {
-                        if budget > 24576 {
-                            thinking_config["thinkingBudget"] = json!(24576);
-                            tracing::info!(
-                                "[Gemini-Wrap] Capped thinking_budget from {} to 24576 for Flash model {}", 
-                                budget, final_model_name
-                            );
+                        let final_budget = match tb_config.mode {
+                            crate::proxy::config::ThinkingBudgetMode::Custom => {
+                                let custom = tb_config.custom_value as u64;
+                                if custom > 24576 {
+                                    tracing::warn!(
+                                        "[Gemini-Wrap] Custom mode: capping thinking_budget from {} to 24576 for model {}",
+                                        custom, final_model_name
+                                    );
+                                    24576
+                                } else {
+                                    custom
+                                }
+                            }
+                            crate::proxy::config::ThinkingBudgetMode::Passthrough => budget,
+                            crate::proxy::config::ThinkingBudgetMode::Auto => {
+                                if budget > 24576 {
+                                    tracing::info!(
+                                        "[Gemini-Wrap] Auto mode: capping thinking_budget from {} to 24576 for model {}", 
+                                        budget, final_model_name
+                                    );
+                                    24576
+                                } else {
+                                    budget
+                                }
+                            }
+                        };
+                        
+                        if final_budget != budget {
+                            thinking_config["thinkingBudget"] = json!(final_budget);
                         }
+                    }
+                } else {
+                    // [FIX] 如果没有 thinkingBudget 但有 thinkingConfig，注入默认值
+                    if thinking_config.get("includeThoughts").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        thinking_config["thinkingBudget"] = json!(24576);
+                        tracing::debug!(
+                            "[Gemini-Wrap] Injected default thinkingBudget=24576 for model {}",
+                            final_model_name
+                        );
                     }
                 }
             }

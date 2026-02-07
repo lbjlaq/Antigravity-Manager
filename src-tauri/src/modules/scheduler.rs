@@ -284,7 +284,7 @@ pub async fn trigger_warmup_for_account(account: &Account) {
         if model.percentage == 100 {
             // Check history to avoid repeated warmup (with cooldown)
             {
-                let mut history = WARMUP_HISTORY.lock().unwrap();
+                let history = WARMUP_HISTORY.lock().unwrap();
                 
                 // 4 hour cooldown (Pro account resets every 5h, 1h margin)
                 if let Some(&last_warmup_ts) = history.get(&history_key) {
@@ -294,9 +294,7 @@ pub async fn trigger_warmup_for_account(account: &Account) {
                         continue;
                     }
                 }
-                
-                history.insert(history_key, now_ts);
-                save_warmup_history(&history);
+                // [FIX] Don't write history here - only write after successful warmup
             }
 
             let model_to_ping = model.name.clone();
@@ -318,12 +316,19 @@ pub async fn trigger_warmup_for_account(account: &Account) {
 
     // Execute warmup
     if !tasks_to_run.is_empty() {
+        let now_ts = Utc::now().timestamp();
         for (model, pct) in tasks_to_run {
             logger::log_info(&format!(
                 "[Scheduler] 🔥 Triggering individual warmup: {} @ {} (Sync)",
                 model, account.email
             ));
-            quota::warmup_model_directly(&token, &model, &pid, &account.email, pct).await;
+            let success = quota::warmup_model_directly(&token, &model, &pid, &account.email, pct).await;
+            
+            // [FIX] Only record history AFTER successful warmup
+            if success {
+                let history_key = format!("{}:{}:100", account.email, model);
+                record_warmup_history(&history_key, now_ts);
+            }
         }
     }
 }

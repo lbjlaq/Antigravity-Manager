@@ -224,7 +224,7 @@ impl TokenManager {
 
         tracing::info!("[Warmup] Token for {} is expiring, refreshing...", email);
 
-        match crate::modules::oauth::refresh_access_token(&refresh_token).await {
+        match crate::modules::oauth::refresh_access_token(&refresh_token, Some(&account_id)).await {
             Ok(token_response) => {
                 tracing::info!("[Warmup] Token refresh successful for {}", email);
                 let new_now = chrono::Utc::now().timestamp();
@@ -276,7 +276,7 @@ impl TokenManager {
             }
         }
 
-        let token_info = crate::modules::oauth::refresh_access_token(refresh_token)
+        let token_info = crate::modules::oauth::refresh_access_token(refresh_token, None)
             .await
             .map_err(|e| format!("Invalid refresh token: {}", e))?;
 
@@ -327,10 +327,10 @@ impl TokenManager {
         &self,
         refresh_token: &str,
     ) -> Result<crate::modules::oauth::UserInfo, String> {
-        let token = crate::modules::oauth::refresh_access_token(refresh_token)
+        let token = crate::modules::oauth::refresh_access_token(refresh_token, None)
             .await
             .map_err(|e| format!("刷新 Access Token 失败: {}", e))?;
 
-        crate::modules::oauth::get_user_info(&token.access_token).await
+        crate::modules::oauth::get_user_info(&token.access_token, None).await
     }
 }

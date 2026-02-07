@@ -60,6 +60,7 @@ const COLUMN_WIDTHS = {
 function getModelLabel(id: string): string {
     const lower = id.toLowerCase();
     // Claude Opus
+    if (lower.includes('claude-opus-4-6') || lower.includes('claude-opus-4.6')) return 'Opus 4.6';
     if (lower.includes('claude-opus-4-5')) return 'Opus 4.5';
     if (lower.includes('claude-opus-4')) return 'Opus 4';
     if (lower.includes('claude-opus')) return 'Opus';

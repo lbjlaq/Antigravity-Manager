@@ -242,7 +242,10 @@ impl TokenManager {
         if let Some(models) = quota.get("models").and_then(|m| m.as_array()) {
             for model in models {
                 let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                if !config.monitored_models.iter().any(|m| m == name) {
+                // [FIX] Normalize model name before comparing with monitored_models
+                let standard_id = crate::proxy::common::model_mapping::normalize_to_standard_id(name)
+                    .unwrap_or_else(|| name.to_string());
+                if !config.monitored_models.iter().any(|m| m == &standard_id) {
                     continue;
                 }
 
@@ -251,7 +254,7 @@ impl TokenManager {
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i32;
                 if percentage <= threshold {
-                    protected_list.push(serde_json::Value::String(name.to_string()));
+                    protected_list.push(serde_json::Value::String(standard_id));
                 }
             }
         }

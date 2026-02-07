@@ -29,6 +29,7 @@ const SmartWarmup: React.FC<SmartWarmupProps> = ({ config, onChange }) => {
         { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
         { id: 'claude-sonnet-4-5-thinking', label: 'Claude Sonnet 4.5 Thinking' },
         { id: 'claude-opus-4-5-thinking', label: 'Claude Opus 4.5 Thinking' },
+        { id: 'claude-opus-4-6-thinking', label: 'Claude Opus 4.6 Thinking' },
     ];
 
     const handleEnabledChange = (enabled: boolean) => {

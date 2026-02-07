@@ -247,7 +247,8 @@ pub async fn get_valid_token_for_warmup(account: &crate::models::account::Accoun
     let mut account = account.clone();
     
     // Check and auto-refresh token
-    let new_token = crate::modules::oauth::ensure_fresh_token(&account.token).await?;
+    // [FIX #1583] Pass account_id for proper context
+    let new_token = crate::modules::oauth::ensure_fresh_token(&account.token, Some(&account.id)).await?;
     
     // If token changed (meant refreshed), save it
     if new_token.access_token != account.token.access_token {
@@ -319,7 +320,13 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
     let mut retry_count = 0;
     
     loop {
-        let target_accounts = crate::modules::account::list_accounts().await.unwrap_or_default();
+        let all_accounts = crate::modules::account::list_accounts().await.unwrap_or_default();
+        
+        // [FIX] Filter out disabled and proxy_disabled accounts
+        let target_accounts: Vec<_> = all_accounts
+            .into_iter()
+            .filter(|a| !a.disabled && !a.proxy_disabled)
+            .collect();
 
         if target_accounts.is_empty() {
             return Ok("No accounts available".to_string());
@@ -354,15 +361,21 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                         if m.percentage >= 100 {
                             let model_to_ping = m.name.clone();
                             
-                            // [FIX] Restore whitelist filter from Original - only warmup specific models
-                            match model_to_ping.as_str() {
-                                "gemini-3-flash" | "claude-sonnet-4-5" | "gemini-3-pro-high" | "gemini-3-pro-image" => {
-                                    if !account_warmed_series.contains(&model_to_ping) {
-                                        warmup_items.push((email.clone(), model_to_ping.clone(), token.clone(), pid.clone(), m.percentage));
-                                        account_warmed_series.insert(model_to_ping);
-                                    }
-                                }
-                                _ => continue,
+                            // [FIX] Removed hardcoded whitelist - use user config instead
+                            // Load user-configured monitored models
+                            let app_config = crate::modules::config::load_app_config().ok();
+                            let monitored_models = app_config
+                                .as_ref()
+                                .map(|c| &c.scheduled_warmup.monitored_models)
+                                .cloned()
+                                .unwrap_or_default();
+                            
+                            // Only warmup models in user's monitored list (or all if list is empty)
+                            let should_warmup = monitored_models.is_empty() || monitored_models.contains(&model_to_ping);
+                            
+                            if should_warmup && !account_warmed_series.contains(&model_to_ping) {
+                                warmup_items.push((email.clone(), model_to_ping.clone(), token.clone(), pid.clone(), m.percentage));
+                                account_warmed_series.insert(model_to_ping);
                             }
                         } else if m.percentage >= NEAR_READY_THRESHOLD {
                             has_near_ready_models = true;
@@ -475,15 +488,20 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
         if m.percentage >= 100 {
             let model_name = m.name.clone();
             
-            // [FIX] Restore whitelist filter from Original - only warmup specific models
-            match model_name.as_str() {
-                "gemini-3-flash" | "claude-sonnet-4-5" | "gemini-3-pro-high" | "gemini-3-pro-image" => {
-                    if !warmed_series.contains(&model_name) {
-                        models_to_warm.push((model_name.clone(), m.percentage));
-                        warmed_series.insert(model_name);
-                    }
-                }
-                _ => continue,
+            // [FIX] Removed hardcoded whitelist - use user config instead
+            let app_config = crate::modules::config::load_app_config().ok();
+            let monitored_models = app_config
+                .as_ref()
+                .map(|c| &c.scheduled_warmup.monitored_models)
+                .cloned()
+                .unwrap_or_default();
+            
+            // Only warmup models in user's monitored list (or all if list is empty)
+            let should_warmup = monitored_models.is_empty() || monitored_models.contains(&model_name);
+            
+            if should_warmup && !warmed_series.contains(&model_name) {
+                models_to_warm.push((model_name.clone(), m.percentage));
+                warmed_series.insert(model_name);
             }
         }
     }

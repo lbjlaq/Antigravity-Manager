@@ -122,7 +122,8 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> AppResult<QuotaDat
     use crate::modules::oauth;
 
     // 1. Ensure Token is valid
-    let token = match oauth::ensure_fresh_token(&account.token).await {
+    // [FIX #1583] Pass account_id for proper context
+    let token = match oauth::ensure_fresh_token(&account.token, Some(&account.id)).await {
         Ok(t) => t,
         Err(e) => {
             if e.contains("invalid_grant") {
@@ -202,7 +203,8 @@ async fn fetch_display_name_if_missing(account: &Account, access_token: &str) ->
             "Account {} missing display name, attempting to fetch...",
             account.email
         ));
-        match oauth::get_user_info(access_token).await {
+        // [FIX #1583] Pass account_id for proper context
+        match oauth::get_user_info(access_token, Some(&account.id)).await {
             Ok(user_info) => {
                 let display_name = user_info.get_display_name();
                 modules::logger::log_info(&format!(
@@ -229,7 +231,8 @@ async fn handle_401_retry(account: &mut Account) -> AppResult<QuotaData> {
         account.email
     ));
 
-    let token_res = match oauth::refresh_access_token(&account.token.refresh_token).await {
+    // [FIX #1583] Pass account_id for proper context
+    let token_res = match oauth::refresh_access_token(&account.token.refresh_token, Some(&account.id)).await {
         Ok(t) => t,
         Err(e) => {
             if e.contains("invalid_grant") {

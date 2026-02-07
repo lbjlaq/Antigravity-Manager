@@ -1,6 +1,67 @@
 use serde::{Deserialize, Serialize};
 // use std::path::PathBuf;
 use std::collections::HashMap;
+use std::sync::RwLock;
+use once_cell::sync::Lazy;
+
+// ============================================================================
+// [FIX #1592/#1602] THINKING BUDGET CONFIG
+// ============================================================================
+
+/// Global thinking budget config
+static THINKING_BUDGET_CONFIG: Lazy<RwLock<ThinkingBudgetConfig>> = 
+    Lazy::new(|| RwLock::new(ThinkingBudgetConfig::default()));
+
+/// Get current thinking budget configuration
+pub fn get_thinking_budget_config() -> ThinkingBudgetConfig {
+    THINKING_BUDGET_CONFIG.read().unwrap().clone()
+}
+
+/// Update thinking budget configuration
+pub fn update_thinking_budget_config(config: ThinkingBudgetConfig) {
+    let mut guard = THINKING_BUDGET_CONFIG.write().unwrap();
+    *guard = config;
+}
+
+/// Controls how to handle the thinking_budget parameter from the caller
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingBudgetMode {
+    /// Auto limit: apply 24576 cap for specific models (Flash/Thinking)
+    Auto,
+    /// Custom: use configured custom_value (still capped at 24576 for Gemini)
+    Custom,
+    /// Passthrough: forward caller's value directly (use with caution)
+    Passthrough,
+}
+
+impl Default for ThinkingBudgetMode {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+/// Thinking budget configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingBudgetConfig {
+    #[serde(default)]
+    pub mode: ThinkingBudgetMode,
+    #[serde(default = "default_thinking_budget_custom_value")]
+    pub custom_value: u32,
+}
+
+impl Default for ThinkingBudgetConfig {
+    fn default() -> Self {
+        Self {
+            mode: ThinkingBudgetMode::Auto,
+            custom_value: default_thinking_budget_custom_value(),
+        }
+    }
+}
+
+fn default_thinking_budget_custom_value() -> u32 {
+    24576 // [FIX #1592] Safe default for Gemini models
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
