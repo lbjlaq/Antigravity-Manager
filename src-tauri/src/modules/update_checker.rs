@@ -278,6 +278,82 @@ pub fn update_last_check_time() -> Result<(), String> {
     save_update_settings(&settings)
 }
 
+/// Detect if the app was installed via Homebrew Cask (macOS only)
+pub fn is_homebrew_installed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let caskroom_paths = [
+            "/opt/homebrew/Caskroom/antigravity-tools",
+            "/usr/local/Caskroom/antigravity-tools",
+        ];
+
+        for path in &caskroom_paths {
+            if std::path::Path::new(path).exists() {
+                logger::log_info(&format!("Detected Homebrew Cask installation at: {}", path));
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Execute `brew upgrade --cask antigravity-tools` with timeout (macOS only)
+#[cfg(not(target_os = "macos"))]
+pub async fn brew_upgrade_cask() -> Result<String, String> {
+    Err("brew_not_supported".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub async fn brew_upgrade_cask() -> Result<String, String> {
+    logger::log_info("Starting Homebrew Cask upgrade for antigravity-tools...");
+
+    // Find brew binary
+    let brew_path = if std::path::Path::new("/opt/homebrew/bin/brew").exists() {
+        "/opt/homebrew/bin/brew"
+    } else if std::path::Path::new("/usr/local/bin/brew").exists() {
+        "/usr/local/bin/brew"
+    } else {
+        return Err("brew_not_found".to_string());
+    };
+
+    // 3 min timeout to prevent hanging
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(180),
+        tokio::process::Command::new(brew_path)
+            .args(["upgrade", "--cask", "antigravity-tools"])
+            .output()
+    ).await;
+
+    let output = match result {
+        Ok(Ok(output)) => output,
+        Ok(Err(e)) => {
+            logger::log_error(&format!("Failed to execute brew upgrade: {}", e));
+            return Err("brew_exec_failed".to_string());
+        }
+        Err(_) => {
+            logger::log_error("Homebrew upgrade timed out after 3 minutes");
+            return Err("brew_timeout".to_string());
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if output.status.success() {
+        logger::log_info(&format!("Homebrew upgrade succeeded: {}", stdout));
+        Ok(stdout)
+    } else {
+        logger::log_error(&format!("brew upgrade failed - stdout: {} stderr: {}", stdout, stderr));
+        // Return structured error key for frontend i18n
+        if stderr.contains("already installed") || stdout.contains("already installed") {
+            Err("brew_already_latest".to_string())
+        } else {
+            Err("brew_upgrade_failed".to_string())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

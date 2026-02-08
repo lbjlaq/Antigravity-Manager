@@ -15,6 +15,8 @@ import { useDebugConsole } from '../stores/useDebugConsole';
 
 import { useTranslation } from 'react-i18next';
 import { isTauri } from '../utils/env';
+import { relaunch } from '@tauri-apps/plugin-process';
+
 import DebugConsole from '../components/debug/DebugConsole';
 import ProxyPoolSettings from '../components/settings/ProxyPoolSettings';
 
@@ -95,6 +97,12 @@ function Settings() {
         source?: string;
     } | null>(null);
 
+    // Homebrew Cask state
+    const [isBrewInstalled, setIsBrewInstalled] = useState(false);
+    const [isBrewUpgrading, setIsBrewUpgrading] = useState(false);
+    const [isBrewConfirmOpen, setIsBrewConfirmOpen] = useState(false);
+    const [isBrewSuccessOpen, setIsBrewSuccessOpen] = useState(false);
+
 
     useEffect(() => {
         loadConfig();
@@ -121,6 +129,13 @@ function Settings() {
                 setFormData(prev => ({ ...prev, auto_launch: enabled }));
             })
             .catch(err => console.error('Failed to get auto launch status:', err));
+
+        // 检测是否通过 Homebrew Cask 安装 (仅 Tauri 环境)
+        if (isTauri()) {
+            invoke<boolean>('check_homebrew_installation')
+                .then(installed => setIsBrewInstalled(installed))
+                .catch(err => console.error('Failed to check Homebrew installation:', err));
+        }
 
     }, [loadConfig]);
 
@@ -269,6 +284,22 @@ function Settings() {
             showToast(`${t('settings.about.update_check_failed')}: ${error}`, 'error');
         } finally {
             setIsCheckingUpdate(false);
+        }
+    };
+
+    const handleBrewUpgrade = async () => {
+        setIsBrewConfirmOpen(false);
+        setIsBrewUpgrading(true);
+        try {
+            await invoke<string>('brew_upgrade_cask');
+            setUpdateInfo(null);
+            setIsBrewSuccessOpen(true);
+        } catch (error) {
+            const errKey = String(error);
+            const errMsg = t(`settings.about.brew_error_${errKey}`, t('settings.about.brew_upgrade_failed'));
+            showToast(errMsg, 'error');
+        } finally {
+            setIsBrewUpgrading(false);
         }
     };
 
@@ -1226,15 +1257,33 @@ function Settings() {
                                                     <div className="text-sm text-orange-600 dark:text-orange-400 font-medium">
                                                         {t('settings.about.new_version_available', { version: updateInfo.latestVersion })}
                                                     </div>
-                                                    <a
-                                                        href={updateInfo.downloadUrl}
-                                                        target="_blank"
-                                                        rel="noreferrer"
-                                                        className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
-                                                    >
-                                                        {t('settings.about.download_update')}
-                                                        <ExternalLink className="w-3.5 h-3.5" />
-                                                    </a>
+                                                    <div className="flex items-center gap-2">
+                                                        {isBrewInstalled && (
+                                                            <button
+                                                                onClick={() => setIsBrewConfirmOpen(true)}
+                                                                disabled={isBrewUpgrading}
+                                                                className="px-4 py-1.5 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5 disabled:cursor-not-allowed"
+                                                            >
+                                                                {isBrewUpgrading ? (
+                                                                    <>
+                                                                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                                                        {t('settings.about.brew_upgrading')}
+                                                                    </>
+                                                                ) : (
+                                                                    t('settings.about.brew_upgrade')
+                                                                )}
+                                                            </button>
+                                                        )}
+                                                        <a
+                                                            href={updateInfo.downloadUrl}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
+                                                        >
+                                                            {t('settings.about.download_update')}
+                                                            <ExternalLink className="w-3.5 h-3.5" />
+                                                        </a>
+                                                    </div>
                                                 </div>
                                             ) : (
                                                 <div className="text-sm text-green-600 dark:text-green-400 font-medium">
@@ -1302,6 +1351,72 @@ function Settings() {
                             </p>
                         </div>
                     </div>
+                </ModalDialog>
+
+                {/* Homebrew Upgrade Confirm Modal */}
+                <ModalDialog
+                    isOpen={isBrewConfirmOpen}
+                    title={t('settings.about.brew_confirm_title')}
+                    type="confirm"
+                    confirmText={t('settings.about.brew_confirm_btn')}
+                    cancelText={t('common.cancel')}
+                    onConfirm={handleBrewUpgrade}
+                    onCancel={() => setIsBrewConfirmOpen(false)}
+                >
+                    <div className="space-y-3">
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                            {t('settings.about.brew_confirm_desc')}
+                        </p>
+                        <div className="bg-gray-50 dark:bg-base-200 rounded-lg p-3">
+                            <div className="flex items-center justify-between gap-2">
+                                <code className="text-xs text-gray-700 dark:text-gray-300 break-all">brew upgrade --cask antigravity-tools</code>
+                                <button
+                                    className="shrink-0 px-2 py-1 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 border border-gray-200 dark:border-base-300 rounded hover:bg-gray-100 dark:hover:bg-base-300 transition-colors"
+                                    onClick={() => {
+                                        navigator.clipboard.writeText('brew upgrade --cask antigravity-tools');
+                                        showToast(t('common.copied', 'Copied'), 'success');
+                                    }}
+                                >
+                                    {t('common.copy', 'Copy')}
+                                </button>
+                            </div>
+                        </div>
+                        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/30 rounded-lg p-3">
+                            <p className="text-xs text-amber-700 dark:text-amber-400 mb-2">{t('settings.about.brew_quarantine_hint')}</p>
+                            <div className="flex items-center justify-between gap-2">
+                                <code className="text-xs text-amber-800 dark:text-amber-300 break-all">sudo xattr -rd com.apple.quarantine "/Applications/Antigravity Tools.app"</code>
+                                <button
+                                    className="shrink-0 px-2 py-1 text-xs text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-200 border border-amber-200 dark:border-amber-700 rounded hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
+                                    onClick={() => {
+                                        navigator.clipboard.writeText('sudo xattr -rd com.apple.quarantine "/Applications/Antigravity Tools.app"');
+                                        showToast(t('common.copied', 'Copied'), 'success');
+                                    }}
+                                >
+                                    {t('common.copy', 'Copy')}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </ModalDialog>
+
+                {/* Homebrew Upgrade Success Modal */}
+                <ModalDialog
+                    isOpen={isBrewSuccessOpen}
+                    title={t('settings.about.brew_success_title')}
+                    type="success"
+                    confirmText={t('settings.about.brew_restart_btn')}
+                    onConfirm={async () => {
+                        try {
+                            await relaunch();
+                        } catch {
+                            setIsBrewSuccessOpen(false);
+                            showToast(t('settings.about.brew_restart_failed'), 'error');
+                        }
+                    }}
+                >
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                        {t('settings.about.brew_upgrade_success')}
+                    </p>
                 </ModalDialog>
 
                 {/* Support Modal */}

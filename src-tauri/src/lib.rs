@@ -376,6 +376,8 @@ pub fn run() {
             commands::get_antigravity_path,
             commands::get_antigravity_args,
             commands::check_for_updates,
+            commands::check_homebrew_installation,
+            commands::brew_upgrade_cask,
             commands::get_update_settings,
             commands::save_update_settings,
             commands::should_check_updates,
