@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { NavigationDropdown } from './NavDropdowns';
 import { isActive, getCurrentNavItem, type NavItem } from './constants';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -20,14 +21,17 @@ interface NavMenuProps {
 export function NavMenu({ navItems }: NavMenuProps) {
     const location = useLocation();
     const { isMenuItemHidden } = useConfigStore();
+    const { i18n } = useTranslation();
+
+    const isChinese = i18n.language.startsWith('zh');
 
     // 过滤隐藏的菜单项
     const visibleNavItems = navItems.filter(item => !isMenuItemHidden(item.path));
 
     return (
         <>
-            {/* 文字胶囊 (≥ 1024px) */}
-            <nav className="hidden lg:flex items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
+            {/* 文字胶囊 (中文: ≥1024px, 非中文: ≥1280px) */}
+            <nav className={`hidden ${isChinese ? 'lg:flex' : 'xl:flex'} items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1`}>
                 {visibleNavItems.map((item) => (
                     <Link
                         key={item.path}
@@ -52,8 +56,8 @@ export function NavMenu({ navItems }: NavMenuProps) {
                 ))}
             </nav>
 
-            {/* 图标胶囊 (820px - 1024px) - Logo 不显示文字 */}
-            <nav className="hidden min-[820px]:flex lg:hidden items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1">
+            {/* 图标胶囊 (中文: 820px-1024px, 非中文: 820px-1280px) - Logo 不显示文字 */}
+            <nav className={`hidden min-[820px]:flex ${isChinese ? 'lg:hidden' : 'xl:hidden'} items-center gap-1 bg-gray-100 dark:bg-base-200 rounded-full p-1`}>
                 {visibleNavItems.map((item) => (
                     <Link
                         key={item.path}
