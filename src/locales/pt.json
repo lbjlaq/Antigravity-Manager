@@ -73,7 +73,8 @@
         "switch_to_spanish": "Alternar para Espanhol",
         "switch_to_spanish_short": "ES",
         "switch_to_malay": "Alternar para Malaio",
-        "switch_to_malay_short": "MY"
+        "switch_to_malay_short": "MY",
+        "user_token": "Tokens de usuário"
     },
     "dashboard": {
         "hello": "Olá, Usuário 👋",
@@ -439,6 +440,12 @@
             "clear_cache_confirm_msg": "Os seguintes diretórios de cache serão limpos:",
             "cache_cleared_success": "Cache limpo com sucesso, {{size}} MB liberados",
             "cache_not_found": "Diretórios de cache do Antigravity não encontrados",
+            "debug_logs_title": "Log de depuração",
+            "debug_logs_enable_desc": "Quando ativado, registra a cadeia completa de requisição e resposta. Recomenda-se ativar apenas ao solucionar problemas.",
+            "debug_logs_desc": "Registra a cadeia completa: entrada original, requisição v1internal transformada e resposta upstream. Apenas para solução de problemas, pode conter dados sensíveis.",
+            "debug_log_dir": "Diretório de saída do log de depuração",
+            "debug_log_dir_hint": "Deixe vazio para usar o diretório padrão: {{path}}/debug_logs",
+            "debug_log_dir_select": "Selecionar diretório de saída do log de depuração",
             "http_api_title": "Serviço HTTP API",
             "http_api_desc": "Fornece interface HTTP local para programas externos (por exemplo, plugins do VS Code).",
             "http_api_enabled": "Habilitar HTTP API",
@@ -449,6 +456,12 @@
             "http_api_port_invalid": "Número de porta inválido (intervalo: 1024-65535)",
             "http_api_settings_saved": "Configurações HTTP API salvas, reinício necessário para aplicar",
             "http_api_restart_required": "⚠️ Reinício necessário para aplicar"
+        },
+        "menu": {
+            "title": "Configurações de exibição do menu",
+            "desc": "Selecione os itens de função a exibir na barra de menu. Ocultar menus pouco utilizados pode economizar espaço.",
+            "selected_items_note": "Os itens selecionados serão exibidos na barra de menu superior.",
+            "required": "Obrigatório"
         },
         "about": {
             "title": "Sobre",
@@ -846,6 +859,8 @@
             },
             "expert_title": "Roteamento Personalizado Especialista",
             "expert_subtitle": "Correspondência precisa para qualquer ID de modelo original.",
+            "custom_mapping_tip": "💡 Permite inserir manualmente qualquer ID de modelo para experimentar modelos não lançados (ex: claude-opus-4-6).",
+            "custom_mapping_warning": "Nota: Nem todas as contas suportam modelos não lançados.",
             "money_saving_tip": "💰 Dica de economia:",
             "haiku_optimization_tip": "Claude CLI usa {{model}} para tarefas em segundo plano por padrão. Mapeie para um modelo Flash mais barato para economizar ~95% dos custos",
             "haiku_optimization_btn": "Otimizar Rapidamente",

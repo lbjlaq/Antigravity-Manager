@@ -76,7 +76,8 @@
         "switch_to_spanish": "切換到西班牙語",
         "switch_to_spanish_short": "ES",
         "switch_to_malay": "切換到馬來語",
-        "switch_to_malay_short": "MY"
+        "switch_to_malay_short": "MY",
+        "user_token": "用戶 Token"
     },
     "dashboard": {
         "hello": "你好, 使用者 👋",
@@ -443,6 +444,12 @@
             "clear_cache_confirm_msg": "將清理以下快取目錄：",
             "cache_cleared_success": "快取清理完成，釋放 {{size}} MB 空間",
             "cache_not_found": "未找到 Antigravity 快取目錄",
+            "debug_logs_title": "除錯日誌",
+            "debug_logs_enable_desc": "啟用後會記錄完整請求與回應鏈路，建議僅在排查問題時開啟。",
+            "debug_logs_desc": "記錄完整鏈路：原始輸入、轉換後的 v1internal 請求、以及上游回應。僅用於問題排查，可能包含敏感資料。",
+            "debug_log_dir": "除錯日誌輸出目錄",
+            "debug_log_dir_hint": "不填寫則使用預設目錄：{{path}}/debug_logs",
+            "debug_log_dir_select": "選擇除錯日誌輸出目錄",
             "http_api_title": "HTTP API 服務",
             "http_api_desc": "為外部程式(如 VS Code 外掛)提供本地 HTTP 介面。",
             "http_api_enabled": "啟用 HTTP API",
@@ -475,6 +482,16 @@
             "support_alipay": "Alipay",
             "support_wechat": "Weixin Pay",
             "support_buymeacoffee": "Buy Me a Coffee"
+        },
+        "debug": {
+            "debug_logging": "除錯日誌",
+            "debug_logging_desc": "啟用後會記錄完整請求與回應鏈路，建議僅在排查問題時開啟。"
+        },
+        "menu": {
+            "title": "選單顯示設定",
+            "desc": "選擇要在選單列中顯示的功能項目。隱藏不常用的選單可以節省空間。",
+            "selected_items_note": "被選中的項目將顯示在頂部選單列中。",
+            "required": "必選"
         },
         "advanced_thinking": {
             "title": "高級思維与全局配置",
@@ -873,8 +890,10 @@
                     "desc": "GPT-5.1, GPT-5.2 xhigh"
                 }
             },
-            "expert_title": "專家精確對映 (Expert Custom Routing)",
+            "expert_title": "專家精確對映",
             "expert_subtitle": "精確比對支援從任何協定傳來的原始模型 ID。",
+            "custom_mapping_tip": "💡 支援手動輸入任意模型 ID，可體驗未發布模型（如 claude-opus-4-6）。",
+            "custom_mapping_warning": "注意：並非所有帳號都支援未發布模型。",
             "money_saving_tip": "💰 省錢提示:",
             "haiku_optimization_tip": "Claude CLI 預設使用 {{model}} 處理背景任務,建議對映到廉價 Flash 模型可節省約 95% 成本",
             "haiku_optimization_btn": "一鍵最佳化",

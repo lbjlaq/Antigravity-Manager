@@ -137,7 +137,7 @@ function Settings() {
             const proxyEnabled = formData.proxy?.upstream_proxy?.enabled;
             const proxyUrl = formData.proxy?.upstream_proxy?.url?.trim();
             if (proxyEnabled && !proxyUrl) {
-                showToast(t('proxy.config.upstream_proxy.validation_error', '启用上游代理时必须填写代理地址'), 'error');
+                showToast(t('proxy.config.upstream_proxy.validation_error'), 'error');
                 return;
             }
 
@@ -147,7 +147,7 @@ function Settings() {
 
             // 如果修改了代理配置，提示用户需要重启
             if (proxyEnabled && proxyUrl) {
-                showToast(t('proxy.config.upstream_proxy.restart_hint', '代理配置已保存，重启应用后生效'), 'info');
+                showToast(t('proxy.config.upstream_proxy.restart_hint'), 'info');
             }
         } catch (error) {
             showToast(`${t('common.error')}: ${error}`, 'error');
@@ -208,7 +208,7 @@ function Settings() {
             const selected = await open({
                 directory: true,
                 multiple: false,
-                title: t('settings.advanced.debug_log_dir_select', '选择调试日志输出目录'),
+                title: t('settings.advanced.debug_log_dir_select'),
             });
             if (selected && typeof selected === 'string') {
                 setFormData({
@@ -530,9 +530,9 @@ function Settings() {
 
                                 {/* 菜单显示设置 */}
                                 <div className="border-t border-gray-200 dark:border-base-200 pt-6 mt-6">
-                                    <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">菜单显示设置</h3>
+                                    <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.menu.title')}</h3>
                                     <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                                        选择要在菜单栏中显示的功能项。隐藏不常用的菜单可以节省空间。
+                                        {t('settings.menu.desc')}
                                     </p>
                                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                                         {[
@@ -540,7 +540,7 @@ function Settings() {
                                             { path: '/accounts', label: t('nav.accounts'), icon: Users },
                                             { path: '/api-proxy', label: t('nav.proxy'), icon: Network },
                                             { path: '/monitor', label: t('nav.call_records'), icon: Activity },
-                                            { path: '/token-stats', label: t('nav.token_stats', 'Token 统计'), icon: BarChart3 },
+                                            { path: '/token-stats', label: t('nav.token_stats'), icon: BarChart3 },
                                             { path: '/user-token', label: t('nav.user_token', 'User Tokens'), icon: Users },
                                             { path: '/security', label: t('nav.security'), icon: Lock },
                                             { path: '/settings', label: t('nav.settings'), icon: SettingsIcon },
@@ -596,7 +596,7 @@ function Settings() {
 
                                                     {isSettings && (
                                                         <div className="absolute top-2 right-2 text-xs font-bold text-gray-400 bg-gray-200 dark:bg-base-300 px-1.5 py-0.5 rounded">
-                                                            必选
+                                                            {t('settings.menu.required')}
                                                         </div>
                                                     )}
 
@@ -619,7 +619,7 @@ function Settings() {
                                     </div>
                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-4 flex items-center gap-1.5">
                                         <div className="w-1.5 h-1.5 rounded-full bg-gray-400"></div>
-                                        被选中的项目将显示在顶部菜单栏中
+                                        {t('settings.menu.selected_items_note')}
                                     </p>
                                 </div>
                             </>
@@ -898,19 +898,19 @@ function Settings() {
 
                                 {/* Antigravity 缓存清理 */}
                                 <div className="border-t border-gray-200 dark:border-base-200 pt-4">
-                                    <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.advanced.antigravity_cache_title', 'Antigravity 缓存清理')}</h3>
+                                    <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.advanced.antigravity_cache_title')}</h3>
                                     <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/30 rounded-lg p-3 mb-3">
-                                        <p className="text-sm text-amber-700 dark:text-amber-400">{t('settings.advanced.antigravity_cache_warning', '请确保 Antigravity 应用已完全退出后再执行清理操作。')}</p>
+                                        <p className="text-sm text-amber-700 dark:text-amber-400">{t('settings.advanced.antigravity_cache_warning')}</p>
                                     </div>
                                     <div className="bg-gray-50 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-lg p-3 mb-3">
-                                        <p className="text-sm text-gray-600 dark:text-gray-400">{t('settings.advanced.antigravity_cache_desc', '清理 Antigravity 应用的缓存可以解决登录失败、版本验证错误、OAuth 授权失败等问题。')}</p>
+                                        <p className="text-sm text-gray-600 dark:text-gray-400">{t('settings.advanced.antigravity_cache_desc')}</p>
                                     </div>
                                     <div className="flex items-center gap-4">
                                         <button
                                             className="px-4 py-2 border border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-400 rounded-lg hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors"
                                             onClick={handleOpenClearCacheDialog}
                                         >
-                                            {t('settings.advanced.clear_antigravity_cache', '清理 Antigravity 缓存')}
+                                            {t('settings.advanced.clear_antigravity_cache')}
                                         </button>
                                     </div>
                                 </div>
@@ -922,10 +922,10 @@ function Settings() {
                                         <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300">
                                             <div>
                                                 <div className="font-medium text-gray-900 dark:text-base-content">
-                                                    {t('settings.advanced.debug_logs_title', '调试日志')}
+                                                    {t('settings.advanced.debug_logs_title')}
                                                 </div>
                                                 <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                                                    {t('settings.advanced.debug_logs_enable_desc', '启用后会记录完整请求与响应链路，建议仅在排查问题时开启。')}
+                                                    {t('settings.advanced.debug_logs_enable_desc')}
                                                 </p>
                                             </div>
                                             <label className="relative inline-flex items-center cursor-pointer">
@@ -951,12 +951,12 @@ function Settings() {
                                             <>
                                                 <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/30 rounded-lg p-3">
                                                     <p className="text-sm text-amber-700 dark:text-amber-400">
-                                                        {t('settings.advanced.debug_logs_desc', '记录完整链路：原始输入、转换后的 v1internal 请求、以及上游响应。仅用于问题排查，可能包含敏感数据。')}
+                                                        {t('settings.advanced.debug_logs_desc')}
                                                     </p>
                                                 </div>
                                                 <div>
                                                     <label className="block text-sm font-medium text-gray-900 dark:text-base-content mb-1">
-                                                        {t('settings.advanced.debug_log_dir', '调试日志输出目录')}
+                                                        {t('settings.advanced.debug_log_dir')}
                                                     </label>
                                                     <div className="flex gap-2">
                                                         <input
@@ -985,7 +985,7 @@ function Settings() {
                                                         )}
                                                     </div>
                                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                                                        {t('settings.advanced.debug_log_dir_hint', `不填写则使用默认目录：${dataDirPath.replace(/\/$/, '')}/debug_logs`)}
+                                                        {t('settings.advanced.debug_log_dir_hint', { path: dataDirPath.replace(/\/$/, '') })}
                                                     </p>
                                                 </div>
                                             </>
@@ -1005,10 +1005,10 @@ function Settings() {
                             <div className="flex items-center justify-between">
                                 <div>
                                     <h2 className="text-lg font-semibold text-gray-900 dark:text-base-content">
-                                        {t('settings.debug.title', '调试控制台')}
+                                        {t('settings.debug.title')}
                                     </h2>
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                                        {t('settings.debug.desc', '实时查看应用日志，用于调试和问题排查')}
+                                        {t('settings.debug.desc')}
                                     </p>
                                 </div>
                                 <label className="relative inline-flex items-center cursor-pointer">
@@ -1020,7 +1020,7 @@ function Settings() {
                                     />
                                     <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
                                     <span className="ml-3 text-sm font-medium text-gray-700 dark:text-gray-300">
-                                        {isEnabled ? t('settings.debug.enabled', '已启用') : t('settings.debug.disabled', '已禁用')}
+                                        {isEnabled ? t('settings.debug.enabled') : t('settings.debug.disabled')}
                                     </span>
                                 </label>
                             </div>
@@ -1034,10 +1034,10 @@ function Settings() {
                                 <div className="h-[calc(100vh-320px)] min-h-[400px] flex items-center justify-center bg-gray-50 dark:bg-base-200 rounded-xl border border-gray-200 dark:border-base-300">
                                     <div className="text-center">
                                         <p className="text-gray-500 dark:text-gray-400 text-lg font-medium">
-                                            {t('settings.debug.disabled_hint', '调试控制台已关闭')}
+                                            {t('settings.debug.disabled_hint')}
                                         </p>
                                         <p className="text-gray-400 dark:text-gray-500 text-sm mt-2">
-                                            {t('settings.debug.disabled_desc', '开启后将实时记录应用日志')}
+                                            {t('settings.debug.disabled_desc')}
                                         </p>
                                     </div>
                                 </div>
@@ -1091,9 +1091,9 @@ function Settings() {
                                             <Globe size={18} />
                                         </div>
                                         <div>
-                                            <div className="font-bold text-gray-900 dark:text-gray-100 text-sm">{t('proxy.config.upstream_proxy.title', '全局上游代理 (Global Proxy)')}</div>
+                                            <div className="font-bold text-gray-900 dark:text-gray-100 text-sm">{t('proxy.config.upstream_proxy.title')}</div>
                                             <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-tight max-w-[280px]">
-                                                {t('proxy.config.upstream_proxy.desc_short', '用于无法匹配代理池账号时的通用出口或降级方案。')}
+                                                {t('proxy.config.upstream_proxy.desc_short')}
                                             </p>
                                         </div>
                                     </div>
@@ -1121,13 +1121,13 @@ function Settings() {
                                     <div className="space-y-4 animate-in slide-in-from-top-2 duration-300 relative z-10">
                                         <div className="pt-4 border-t border-gray-50 dark:border-base-300">
                                             <label className="block text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2.5">
-                                                {t('proxy.config.upstream_proxy.url', '代理地址')}
+                                                {t('proxy.config.upstream_proxy.url')}
                                             </label>
                                             <div className="relative group/input">
                                                 <input
                                                     type="text"
                                                     className="w-full px-4 py-2.5 bg-gray-50 dark:bg-base-200 border border-gray-100 dark:border-base-300 rounded-xl focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-sm font-medium transition-all shadow-inner"
-                                                    placeholder={t('proxy.config.upstream_proxy.url_placeholder', '例如: http://127.0.0.1:7890')}
+                                                    placeholder={t('proxy.config.upstream_proxy.url_placeholder')}
                                                     value={formData.proxy?.upstream_proxy?.url || ''}
                                                     onChange={(e) => setFormData({
                                                         ...formData,
@@ -1147,7 +1147,7 @@ function Settings() {
                                                 </div>
                                                 <div className="leading-relaxed">
                                                     <span className="font-bold mr-1.5 opacity-80 uppercase tracking-tighter">Tip:</span>
-                                                    {t('proxy.config.upstream_proxy.socks5h_hint', '若需避开上游风控并保留原始域名解析 (Remote DNS)，请手动将协议改为 socks5h://')}
+                                                    {t('proxy.config.upstream_proxy.socks5h_hint')}
                                                 </div>
                                             </div>
                                         </div>
@@ -1314,9 +1314,9 @@ function Settings() {
                 {/* Antigravity Cache Clear Modal */}
                 <ModalDialog
                     isOpen={isClearCacheOpen}
-                    title={t('settings.advanced.clear_cache_confirm_title', '确认清理 Antigravity 缓存')}
+                    title={t('settings.advanced.clear_cache_confirm_title')}
                     type="confirm"
-                    confirmText={isClearingCache ? t('common.clearing', '清理中...') : t('common.clear')}
+                    confirmText={isClearingCache ? t('common.clearing') : t('common.clear')}
                     cancelText={t('common.cancel')}
                     isDestructive={true}
                     onConfirm={confirmClearAntigravityCache}
@@ -1324,7 +1324,7 @@ function Settings() {
                 >
                     <div className="space-y-3">
                         <p className="text-sm text-gray-600 dark:text-gray-400">
-                            {t('settings.advanced.clear_cache_confirm_msg', '将清理以下缓存目录：')}
+                            {t('settings.advanced.clear_cache_confirm_msg')}
                         </p>
                         {cachePaths.length > 0 ? (
                             <div className="bg-gray-50 dark:bg-base-200 rounded-lg p-3 max-h-40 overflow-y-auto">
@@ -1337,13 +1337,13 @@ function Settings() {
                         ) : (
                             <div className="bg-gray-50 dark:bg-base-200 rounded-lg p-3">
                                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                                    {t('settings.advanced.cache_not_found', '未找到 Antigravity 缓存目录')}
+                                    {t('settings.advanced.cache_not_found')}
                                 </p>
                             </div>
                         )}
                         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/30 rounded-lg p-2">
                             <p className="text-xs text-amber-700 dark:text-amber-400">
-                                {t('settings.advanced.antigravity_cache_warning', '请确保 Antigravity 应用已完全退出后再执行清理操作。')}
+                                {t('settings.advanced.antigravity_cache_warning')}
                             </p>
                         </div>
                     </div>

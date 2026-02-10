@@ -72,7 +72,8 @@
         "switch_to_spanish": "Tukar ke Bahasa Sepanyol",
         "switch_to_spanish_short": "ES",
         "switch_to_malay": "Tukar ke Bahasa Melayu",
-        "switch_to_malay_short": "MY"
+        "switch_to_malay_short": "MY",
+        "user_token": "Token Pengguna"
     },
     "dashboard": {
         "hello": "Hai, Pengguna 👋",
@@ -443,6 +444,12 @@
             "clear_cache_confirm_msg": "Direktori cache berikut akan dikosongkan:",
             "cache_cleared_success": "Cache berjaya dikosongkan, membebaskan {{size}} MB",
             "cache_not_found": "Tiada direktori cache Antigravity ditemui",
+            "debug_logs_title": "Log Nyahpepijat",
+            "debug_logs_enable_desc": "Apabila diaktifkan, rantaian permintaan dan respons penuh akan direkodkan. Disyorkan untuk diaktifkan hanya semasa menyelesaikan masalah.",
+            "debug_logs_desc": "Merekod rantaian penuh: input asal, permintaan v1internal yang ditukar, dan respons huluan. Untuk penyelesaian masalah sahaja, mungkin mengandungi data sensitif.",
+            "debug_log_dir": "Direktori output log nyahpepijat",
+            "debug_log_dir_hint": "Biarkan kosong untuk menggunakan direktori lalai: {{path}}/debug_logs",
+            "debug_log_dir_select": "Pilih direktori output log nyahpepijat",
             "http_api_title": "Perkhidmatan API HTTP",
             "http_api_desc": "Menyediakan antara muka HTTP tempatan untuk program luaran (cth. plugin VS Code).",
             "http_api_enabled": "Aktifkan API HTTP",
@@ -453,6 +460,12 @@
             "http_api_port_invalid": "Nombor port tidak sah (julat: 1024-65535)",
             "http_api_settings_saved": "Tetapan API HTTP disimpan, mulakan semula diperlukan untuk digunakan",
             "http_api_restart_required": "⚠️ Mulakan semula diperlukan untuk digunakan"
+        },
+        "menu": {
+            "title": "Tetapan Paparan Menu",
+            "desc": "Pilih item fungsi untuk dipaparkan di bar menu. Menyembunyikan menu yang jarang digunakan dapat menjimatkan ruang.",
+            "selected_items_note": "Item yang dipilih akan dipaparkan di bar menu atas.",
+            "required": "Wajib"
         },
         "about": {
             "title": "Perihal",
@@ -864,7 +877,9 @@
             "original_id": "ID Asal",
             "route_to": "Halakan Ke",
             "select_target_model": "Pilih Model Sasaran",
-            "original_placeholder": "Asal (cth. gpt-4 atau gpt-4*)"
+            "original_placeholder": "Asal (cth. gpt-4 atau gpt-4*)",
+            "custom_mapping_tip": "💡 Sokong input manual sebarang ID model untuk mencuba model yang belum dikeluarkan (cth: claude-opus-4-6).",
+            "custom_mapping_warning": "Perhatian: Bukan semua akaun menyokong model yang belum dikeluarkan"
         },
         "multi_protocol": {
             "title": "Sokongan Pelbagai Protokol",

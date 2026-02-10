@@ -2292,8 +2292,8 @@ print(response.text)`;
                                                 <ArrowRight size={14} /> {t('proxy.router.custom_mappings')}
                                             </h3>
                                             <p className="text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed">
-                                                💡 支持手动输入任意模型 ID,可体验未发布模型(如 <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-blue-600 dark:text-blue-400">claude-opus-4-6</code>)。
-                                                <span className="text-amber-600 dark:text-amber-400">注意:并非所有账号都支持未发布模型</span>
+                                                {t('proxy.router.custom_mapping_tip')}
+                                                <span className="text-amber-600 dark:text-amber-400">{t('proxy.router.custom_mapping_warning')}</span>
                                             </p>
                                         </div>
                                     </div>

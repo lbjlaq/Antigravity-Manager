@@ -79,6 +79,7 @@
     "switch_to_spanish_short": "ES",
     "switch_to_malay": "マレー語に切り替え",
     "switch_to_malay_short": "MY",
+    "user_token": "ユーザートークン",
     "logout": "ログアウト"
   },
   "dashboard": {
@@ -440,6 +441,12 @@
       "clear_cache_confirm_msg": "以下のキャッシュディレクトリがクリアされます：",
       "cache_cleared_success": "キャッシュをクリアしました。{{size}} MB 解放されました",
       "cache_not_found": "Antigravityキャッシュディレクトリが見つかりません",
+      "debug_logs_title": "デバッグログ",
+      "debug_logs_enable_desc": "有効にすると、完全なリクエストとレスポンスチェーンが記録されます。問題のトラブルシューティング時のみ有効にすることをお勧めします。",
+      "debug_logs_desc": "完全なチェーンを記録：元の入力、変換後のv1internalリクエスト、およびアップストリームレスポンス。トラブルシューティング専用で、機密データが含まれる可能性があります。",
+      "debug_log_dir": "デバッグログ出力ディレクトリ",
+      "debug_log_dir_hint": "未入力の場合はデフォルトディレクトリを使用：{{path}}/debug_logs",
+      "debug_log_dir_select": "デバッグログ出力ディレクトリを選択",
       "http_api_desc": "外部プログラム（VS Codeプラグインなど）用のローカルHTTPインターフェースを提供します。",
       "http_api_enabled": "HTTP APIを有効にする",
       "http_api_enabled_desc": "有効にすると、外部プログラムがHTTPインターフェースを介してアカウントを管理できるようになります",
@@ -462,6 +469,12 @@
       "console_desc": "問題のトラブルシューティング用にリアルタイムアプリログを表示します。",
       "enable_desc": "有効にするとバックエンドログをキャプチャして表示します。",
       "open_btn": "コンソールを開く"
+    },
+    "menu": {
+      "title": "メニュー表示設定",
+      "desc": "メニューバーに表示する機能項目を選択します。使用頻度の低いメニューを非表示にしてスペースを節約できます。",
+      "selected_items_note": "選択された項目はトップメニューバーに表示されます。",
+      "required": "必須"
     },
     "about": {
       "title": "情報",
@@ -965,6 +978,8 @@
       },
       "expert_title": "エキスパートカスタムルーティング",
       "expert_subtitle": "任意のモデルIDに精密にマッチングさせます。",
+      "custom_mapping_tip": "💡 任意のモデルIDを手動入力して、リリース前のモデルを体験できます（例: claude-opus-4-6）。",
+      "custom_mapping_warning": "注意: すべてのアカウントがリリース前のモデルをサポートしているわけではありません。",
       "money_saving_tip": "💰 節約ヒント:",
       "haiku_optimization_tip": "Claude CLIはデフォルトで、バックグラウンドタスクに {{model}} を使用します。安価なFlashモデルにマップすることで、コストを約95%節約できます",
       "haiku_optimization_btn": "クイック最適化",

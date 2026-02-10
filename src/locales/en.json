@@ -79,6 +79,7 @@
         "switch_to_spanish_short": "ES",
         "switch_to_malay": "Switch to Malay",
         "switch_to_malay_short": "MY",
+        "user_token": "User Tokens",
         "logout": "Logout"
     },
     "dashboard": {
@@ -450,6 +451,12 @@
             "clear_cache_confirm_msg": "The following cache directories will be cleared:",
             "cache_cleared_success": "Cache cleared successfully, freed {{size}} MB",
             "cache_not_found": "No Antigravity cache directories found",
+            "debug_logs_title": "Debug Logging",
+            "debug_logs_enable_desc": "When enabled, records the complete request and response chain. Recommended to enable only when troubleshooting issues.",
+            "debug_logs_desc": "Records the full chain: original input, transformed v1internal request, and upstream response. For troubleshooting only, may contain sensitive data.",
+            "debug_log_dir": "Debug Log Output Directory",
+            "debug_log_dir_hint": "Leave empty to use the default directory: {{path}}/debug_logs",
+            "debug_log_dir_select": "Select Debug Log Output Directory",
             "http_api_title": "HTTP API Service",
             "http_api_desc": "Provides local HTTP interface for external programs (e.g. VS Code plugins).",
             "http_api_enabled": "Enable HTTP API",
@@ -471,7 +478,15 @@
             "console_title": "Debug Console",
             "console_desc": "View real-time application logs to troubleshoot issues.",
             "enable_desc": "Enable to capture and display backend logs.",
-            "open_btn": "Open Console"
+            "open_btn": "Open Console",
+            "debug_logging": "Debug Logging",
+            "debug_logging_desc": "When enabled, records the complete request and response chain. Recommended to enable only when troubleshooting issues."
+        },
+        "menu": {
+            "title": "Menu Display Settings",
+            "desc": "Select the function items to display in the menu bar. Hiding infrequently used menus can save space.",
+            "selected_items_note": "Selected items will be displayed in the top menu bar.",
+            "required": "Required"
         },
         "about": {
             "title": "About",
@@ -947,6 +962,8 @@
             },
             "expert_title": "Expert Custom Routing",
             "expert_subtitle": "Precise matching for any original model ID.",
+            "custom_mapping_tip": "💡 Supports manual input of any model ID to experience unreleased models (e.g. claude-opus-4-6).",
+            "custom_mapping_warning": "Note: Not all accounts support unreleased models.",
             "money_saving_tip": "💰 Cost-saving tip:",
             "haiku_optimization_tip": "Claude CLI uses {{model}} for background tasks by default. Map it to a cheaper Flash model to save ~95% costs",
             "haiku_optimization_btn": "Quick Optimize",
