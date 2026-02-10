@@ -17,10 +17,15 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-opus-4", "claude-opus-4-5-thinking");
     m.insert("claude-opus-4-5-20251101", "claude-opus-4-5-thinking");
 
-    // Claude Opus 4.6 (nuevo modelo thinking)
-    m.insert("claude-opus-4-6-thinking", "claude-opus-4-6-thinking");
-    m.insert("claude-opus-4-6", "claude-opus-4-6-thinking");
-    m.insert("claude-opus-4-6-20260201", "claude-opus-4-6-thinking");
+    // Claude Opus 4.6
+    //
+    // NOTE:
+    // - `*-thinking` is treated as a logical alias in Antigravity to indicate "thinking on by default".
+    // - Upstream model ids may not include `-thinking` (Claude Code / Anthropic-style naming), so we map
+    //   Opus 4.6 thinking aliases back to the physical `claude-opus-4-6` id for compatibility.
+    m.insert("claude-opus-4-6-thinking", "claude-opus-4-6");
+    m.insert("claude-opus-4-6", "claude-opus-4-6");
+    m.insert("claude-opus-4-6-20260201", "claude-opus-4-6");
 
     m.insert("claude-haiku-4", "claude-sonnet-4-5");
     m.insert("claude-3-haiku-20240307", "claude-sonnet-4-5");
@@ -260,15 +265,16 @@ pub fn resolve_model_route(
     result
 }
 
-/// Normalize any physical model name to one of the 3 standard protection IDs.
+/// Normalize any physical model name to a standard protection ID.
 /// This ensures quota protection works consistently regardless of API versioning or request variations.
 /// 
 /// Standard IDs:
 /// - `gemini-3-flash`: All Flash variants (1.5-flash, 2.5-flash, 3-flash, etc.)
 /// - `gemini-3-pro-high`: All Pro variants (1.5-pro, 2.5-pro, etc.)
 /// - `claude-sonnet-4-5`: All Claude Sonnet variants (3-5-sonnet, sonnet-4-5, etc.)
+/// - `claude-opus-4-6`: All Claude Opus 4.6 variants (including versioned / logical aliases)
 /// 
-/// Returns `None` if the model doesn't match any of the 3 protected categories.
+/// Returns `None` if the model doesn't match any protected category.
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
     // [FIX] Strict matching based on user-defined groups (Case Insensitive)
     let lower = model_name.to_lowercase();
@@ -283,10 +289,15 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
         return Some("gemini-3-pro-high".to_string());
     }
 
-    // [High-End Isolation] Opus 4.6 should NOT be normalized to Sonnet 4.5
-    // This allows specific capability check for "claude-opus-4-6-thinking"
+    // [High-End Isolation] Opus 4.6 should have its own standard id.
+    //
+    // Why:
+    // - We must NOT normalize Opus 4.6 into the generic Claude bucket (`claude-sonnet-4-5`),
+    //   otherwise Pro/Free accounts could be incorrectly selected and then rejected upstream.
+    // - At the same time, we want all Opus 4.6 variants to match consistently:
+    //   `claude-opus-4-6`, `claude-opus-4-6-thinking`, `claude-opus-4-6-20260201`, etc.
     if lower.contains("claude-opus-4-6") {
-        return None;
+        return Some("claude-opus-4-6".to_string());
     }
 
     // Group 3: Claude 4.5 Sonnet (includes Opus etc. assigned to this bucket)
@@ -328,7 +339,10 @@ mod tests {
         );
         
         // Test Normalization Exception
-        assert_eq!(normalize_to_standard_id("claude-opus-4-6-thinking"), None);
+        assert_eq!(
+            normalize_to_standard_id("claude-opus-4-6-thinking"),
+            Some("claude-opus-4-6".to_string())
+        );
         assert_eq!(
             normalize_to_standard_id("claude-sonnet-4-5"), 
             Some("claude-sonnet-4-5".to_string())
