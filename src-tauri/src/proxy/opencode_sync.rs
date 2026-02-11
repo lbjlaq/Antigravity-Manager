@@ -72,8 +72,8 @@ fn build_model_catalog() -> Vec<ModelDef> {
             variant_type: Some(VariantType::ClaudeThinking),
         },
         ModelDef {
-            id: "claude-opus-4-5-thinking",
-            name: "Claude Opus 4.5 Thinking",
+            id: "claude-opus-4-6-thinking",
+            name: "Claude Opus 4.6 Thinking",
             context_limit: 200_000,
             output_limit: 64_000,
             input_modalities: &["text", "image", "pdf"],
@@ -1345,6 +1345,7 @@ mod tests {
 
         // Should have all catalog models
         assert!(models.contains_key("claude-sonnet-4-5"), "should have claude-sonnet-4-5");
+        assert!(models.contains_key("claude-opus-4-6-thinking"), "should have claude-opus-4-6-thinking");
         assert!(models.contains_key("gemini-3-pro-high"), "should have gemini-3-pro-high");
         assert!(models.contains_key("gemini-2.5-pro"), "should have gemini-2.5-pro");
 
@@ -1369,6 +1370,28 @@ mod tests {
         assert!(models.contains_key("claude-sonnet-4-5"));
         assert!(models.contains_key("gemini-3-pro-high"));
         assert!(!models.contains_key("gemini-2.5-pro"), "should not have unselected models");
+    }
+
+    #[test]
+    fn test_sync_includes_opus_4_6_with_variants() {
+        let config = serde_json::json!({});
+        let models_to_sync = &["claude-opus-4-6-thinking"];
+
+        let result = apply_sync_to_config(config, "http://localhost:3000", "test-api-key", Some(models_to_sync));
+
+        let provider = result.get("provider").unwrap();
+        let ag = provider.get(ANTIGRAVITY_PROVIDER_ID).unwrap();
+        let models = ag.get("models").unwrap().as_object().unwrap();
+
+        let opus = models.get("claude-opus-4-6-thinking").unwrap();
+        assert_eq!(opus.get("name").unwrap(), "Claude Opus 4.6 Thinking");
+        assert_eq!(opus.get("reasoning").unwrap(), true);
+
+        let variants = opus.get("variants").unwrap().as_object().unwrap();
+        assert!(variants.contains_key("low"));
+        assert!(variants.contains_key("medium"));
+        assert!(variants.contains_key("high"));
+        assert!(variants.contains_key("max"));
     }
 
     // Tests for apply_clear_to_config
@@ -1605,6 +1628,7 @@ const ANTIGRAVITY_MODEL_IDS: &[&str] = &[
     "claude-sonnet-4-5",
     "claude-sonnet-4-5-thinking",
     "claude-opus-4-5-thinking",
+    "claude-opus-4-6-thinking",
     "gemini-3-pro-high",
     "gemini-3-pro-low",
     "gemini-3-flash",
