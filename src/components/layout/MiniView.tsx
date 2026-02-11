@@ -286,8 +286,9 @@ export default function MiniView() {
                             animate={{ opacity: 1, y: 0 }}
                             className="flex items-center w-full gap-2"
                         >
+                            <span className={`badge badge-sm text-white border-none ${latestLog.status >= 200 && latestLog.status < 400 ? 'badge-success' : 'badge-error'}`}>{latestLog.status}</span>
                             <span className="font-bold truncate max-w-[100px]" title={latestLog.model}>
-                                {latestLog.mapped_model || 'Unknown'}
+                                {latestLog.mapped_model || latestLog.model}
                             </span>
 
                             <div className="flex-1 flex items-center justify-end gap-2">
