@@ -959,21 +959,21 @@ export default function ApiProxy() {
         // 1. Anthropic Protocol
         if (selectedProtocol === 'anthropic') {
             return `from anthropic import Anthropic
- 
- client = Anthropic(
-     # 推荐使用 127.0.0.1
-     base_url="${`http://127.0.0.1:${port}`}",
-     api_key="${apiKey}"
- )
- 
- # 注意: Antigravity 支持使用 Anthropic SDK 调用任意模型
- response = client.messages.create(
-     model="${modelId}",
-     max_tokens=1024,
-     messages=[{"role": "user", "content": "Hello"}]
- )
- 
- print(response.content[0].text)`;
+
+client = Anthropic(
+    # 推荐使用 127.0.0.1
+    base_url="${`http://127.0.0.1:${port}`}",
+    api_key="${apiKey}"
+)
+
+# 注意: Antigravity 支持使用 Anthropic SDK 调用任意模型
+response = client.messages.create(
+    model="${modelId}",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+print(response.content[0].text)`;
         }
 
         // 2. Gemini Protocol (Native)
@@ -997,43 +997,43 @@ print(response.text)`;
         // 3. OpenAI Protocol
         if (modelId.startsWith('gemini-3-pro-image')) {
             return `from openai import OpenAI
- 
- client = OpenAI(
-     base_url="${baseUrl}",
-     api_key="${apiKey}"
- )
- 
- response = client.chat.completions.create(
-     model="${modelId}",
-     # 方式 1: 使用 size 参数 (推荐)
-     # 支持: "1024x1024" (1:1), "1280x720" (16:9), "720x1280" (9:16), "1216x896" (4:3)
-     extra_body={ "size": "1024x1024" },
-     
-     # 方式 2: 使用模型后缀
-     # 例如: gemini-3-pro-image-16-9, gemini-3-pro-image-4-3
-     # model="gemini-3-pro-image-16-9",
-     messages=[{
-         "role": "user",
-         "content": "Draw a futuristic city"
-     }]
- )
- 
- print(response.choices[0].message.content)`;
+
+client = OpenAI(
+    base_url="${baseUrl}",
+    api_key="${apiKey}"
+)
+
+response = client.chat.completions.create(
+    model="${modelId}",
+    # 方式 1: 使用 size 参数 (推荐)
+    # 支持: "1024x1024" (1:1), "1280x720" (16:9), "720x1280" (9:16), "1216x896" (4:3)
+    extra_body={ "size": "1024x1024" },
+    
+    # 方式 2: 使用模型后缀
+    # 例如: gemini-3-pro-image-16-9, gemini-3-pro-image-4-3
+    # model="gemini-3-pro-image-16-9",
+    messages=[{
+        "role": "user",
+        "content": "Draw a futuristic city"
+    }]
+)
+
+print(response.choices[0].message.content)`;
         }
 
         return `from openai import OpenAI
- 
- client = OpenAI(
-     base_url="${baseUrl}",
-     api_key="${apiKey}"
- )
- 
- response = client.chat.completions.create(
-     model="${modelId}",
-     messages=[{"role": "user", "content": "Hello"}]
- )
- 
- print(response.choices[0].message.content)`;
+
+client = OpenAI(
+    base_url="${baseUrl}",
+    api_key="${apiKey}"
+)
+
+response = client.chat.completions.create(
+    model="${modelId}",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+
+print(response.choices[0].message.content)`;
     };
 
     // 在 filter 逻辑中，当选择 openai 协议时，允许显示所有模型
