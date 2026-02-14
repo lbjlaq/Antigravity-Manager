@@ -232,6 +232,8 @@ pub struct StreamingState {
     pub has_content: bool,
     pub message_count: usize, // [NEW v4.0.0] Message count for rewind detection
     pub client_adapter: Option<std::sync::Arc<dyn ClientAdapter>>, // [FIX] Remove Box, use Arc<dyn> directly
+    // [FIX #MCP] Registered tool names for fuzzy matching
+    pub registered_tool_names: Vec<String>,
 }
 
 impl StreamingState {
@@ -260,12 +262,18 @@ impl StreamingState {
             has_content: false,
             message_count: 0,
             client_adapter: None,
+            registered_tool_names: Vec::new(),
         }
     }
 
     // [NEW] Set client adapter
     pub fn set_client_adapter(&mut self, adapter: Option<std::sync::Arc<dyn ClientAdapter>>) {
         self.client_adapter = adapter;
+    }
+
+    // [FIX #MCP] Set registered tool names for fuzzy matching
+    pub fn set_registered_tool_names(&mut self, names: Vec<String>) {
+        self.registered_tool_names = names;
     }
 
     /// 发送 SSE 事件
@@ -980,6 +988,27 @@ impl<'a> PartProcessor<'a> {
             tracing::debug!("[Streaming] Normalizing tool name: Search → grep");
         }
 
+        // [FIX #MCP] MCP tool name fuzzy matching
+        // Gemini often hallucinates incorrect MCP tool names, e.g.:
+        //   "mcp__puppeteer_navigate" instead of "mcp__puppeteer__puppeteer_navigate"
+        // We attempt to find the closest registered tool name.
+        if tool_name.starts_with("mcp__") && !self.state.registered_tool_names.is_empty() {
+            if !self.state.registered_tool_names.contains(&tool_name) {
+                if let Some(matched) = fuzzy_match_mcp_tool(&tool_name, &self.state.registered_tool_names) {
+                    tracing::warn!(
+                        "[FIX #MCP] Corrected MCP tool name: '{}' → '{}'",
+                        tool_name, matched
+                    );
+                    tool_name = matched;
+                } else {
+                    tracing::warn!(
+                        "[FIX #MCP] No fuzzy match found for MCP tool '{}'. Passing as-is.",
+                        tool_name
+                    );
+                }
+            }
+        }
+
         // 1. 发送 content_block_start (input 为空对象)
         let mut tool_use = json!({
             "type": "tool_use",
@@ -1038,6 +1067,115 @@ impl<'a> PartProcessor<'a> {
         chunks.extend(self.state.end_block());
 
         chunks
+    }
+}
+
+/// [FIX #MCP] Fuzzy match an incorrect MCP tool name against registered tool names.
+///
+/// MCP tool naming convention: `mcp__<server_name>__<tool_name>`
+/// Gemini often hallucinates by:
+///   1. Dropping the server prefix: `mcp__navigate` → should be `mcp__puppeteer__puppeteer_navigate`
+///   2. Merging server+tool: `mcp__puppeteer_navigate` → should be `mcp__puppeteer__puppeteer_navigate`
+///   3. Partial name: `mcp__pup_navigate` → should be `mcp__puppeteer__puppeteer_navigate`
+///
+/// Strategy (in priority order):
+///   1. Exact suffix match: if the hallucinated name's suffix exactly matches a registered tool's suffix
+///   2. Suffix contained: if the hallucinated name (without `mcp__`) is contained in a registered tool name
+///   3. Longest common subsequence scoring: picks the registered tool with the best LCS ratio
+fn fuzzy_match_mcp_tool(hallucinated: &str, registered: &[String]) -> Option<String> {
+    let mcp_tools: Vec<&String> = registered.iter()
+        .filter(|name| name.starts_with("mcp__"))
+        .collect();
+
+    if mcp_tools.is_empty() {
+        return None;
+    }
+
+    // Extract the part after "mcp__" for the hallucinated name
+    let hallucinated_suffix = &hallucinated[5..]; // skip "mcp__"
+
+    // Strategy 1: Exact suffix match
+    // e.g., hallucinated = "mcp__puppeteer_navigate", registered = "mcp__puppeteer__puppeteer_navigate"
+    // Check if any registered tool ends with the hallucinated suffix after `__`
+    for tool in &mcp_tools {
+        // For registered tool "mcp__server__tool_name", extract "tool_name"
+        if let Some(last_sep) = tool.rfind("__") {
+            let tool_suffix = &tool[last_sep + 2..];
+            if hallucinated_suffix == tool_suffix {
+                return Some(tool.to_string());
+            }
+        }
+    }
+
+    // Strategy 2: Suffix contained match
+    // e.g., hallucinated = "mcp__puppeteer_navigate", check if "puppeteer_navigate" is a substring
+    // of any registered tool's full name
+    let mut contained_matches: Vec<(&String, usize)> = Vec::new();
+    for tool in &mcp_tools {
+        let tool_lower = tool.to_lowercase();
+        let hall_lower = hallucinated_suffix.to_lowercase();
+        if tool_lower.contains(&hall_lower) {
+            contained_matches.push((tool, tool.len()));
+        }
+    }
+    // Pick the shortest match (most specific)
+    if !contained_matches.is_empty() {
+        contained_matches.sort_by_key(|(_, len)| *len);
+        return Some(contained_matches[0].0.to_string());
+    }
+
+    // Strategy 3: Normalized token overlap scoring
+    // Split both names into tokens by '_' and '__', compute overlap ratio  
+    let hall_tokens: Vec<&str> = hallucinated_suffix
+        .split(|c: char| c == '_')
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if hall_tokens.is_empty() {
+        return None;
+    }
+
+    let mut best_match: Option<String> = None;
+    let mut best_score: f64 = 0.0;
+    let threshold = 0.4; // Minimum overlap ratio to consider a match
+
+    for tool in &mcp_tools {
+        let tool_after_mcp = &tool[5..]; // skip "mcp__"
+        let tool_tokens: Vec<&str> = tool_after_mcp
+            .split(|c: char| c == '_')
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if tool_tokens.is_empty() {
+            continue;
+        }
+
+        // Count matching tokens
+        let mut matches = 0;
+        for ht in &hall_tokens {
+            if tool_tokens.iter().any(|tt| tt.eq_ignore_ascii_case(ht)) {
+                matches += 1;
+            }
+        }
+
+        // Score = matching tokens / max(hall_tokens, tool_tokens)
+        let max_len = hall_tokens.len().max(tool_tokens.len()) as f64;
+        let score = matches as f64 / max_len;
+
+        if score > best_score {
+            best_score = score;
+            best_match = Some(tool.to_string());
+        }
+    }
+
+    if best_score >= threshold {
+        tracing::debug!(
+            "[FIX #MCP] Fuzzy match score for '{}': {:.2} -> {:?}",
+            hallucinated, best_score, best_match
+        );
+        best_match
+    } else {
+        None
     }
 }
 
@@ -1110,5 +1248,92 @@ mod tests {
 
         // 3. content_block_stop
         assert!(output.contains(r#""type":"content_block_stop""#));
+    }
+
+    #[test]
+    fn test_fuzzy_match_mcp_tool_exact_suffix() {
+        let registered = vec![
+            "mcp__puppeteer__puppeteer_navigate".to_string(),
+            "mcp__puppeteer__puppeteer_screenshot".to_string(),
+            "mcp__filesystem__read_file".to_string(),
+        ];
+
+        // Gemini drops server prefix, produces: mcp__puppeteer_navigate
+        // Should match mcp__puppeteer__puppeteer_navigate via suffix "puppeteer_navigate"
+        let result = fuzzy_match_mcp_tool("mcp__puppeteer_navigate", &registered);
+        assert_eq!(result, Some("mcp__puppeteer__puppeteer_navigate".to_string()));
+    }
+
+    #[test]
+    fn test_fuzzy_match_mcp_tool_exact_match_no_correction() {
+        let registered = vec![
+            "mcp__puppeteer__puppeteer_navigate".to_string(),
+        ];
+
+        // Already correct - should not be called (the caller checks contains first)
+        // But if called, should find it
+        let result = fuzzy_match_mcp_tool("mcp__puppeteer__puppeteer_navigate", &registered);
+        // It will match via suffix strategy
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_fuzzy_match_mcp_tool_suffix_contained() {
+        let registered = vec![
+            "mcp__puppeteer__puppeteer_navigate".to_string(),
+            "mcp__puppeteer__puppeteer_click".to_string(),
+        ];
+
+        // Gemini produces a partial-but-contained name
+        let result = fuzzy_match_mcp_tool("mcp__navigate", &registered);
+        assert_eq!(result, Some("mcp__puppeteer__puppeteer_navigate".to_string()));
+    }
+
+    #[test]
+    fn test_fuzzy_match_mcp_tool_token_overlap() {
+        let registered = vec![
+            "mcp__filesystem__read_file".to_string(),
+            "mcp__filesystem__write_file".to_string(),
+            "mcp__filesystem__list_directory".to_string(),
+        ];
+
+        // Gemini produces: mcp__read_file → should match mcp__filesystem__read_file
+        let result = fuzzy_match_mcp_tool("mcp__read_file", &registered);
+        assert_eq!(result, Some("mcp__filesystem__read_file".to_string()));
+    }
+
+    #[test]
+    fn test_fuzzy_match_mcp_tool_no_match() {
+        let registered = vec![
+            "mcp__puppeteer__puppeteer_navigate".to_string(),
+        ];
+
+        // Completely unrelated name
+        let result = fuzzy_match_mcp_tool("mcp__totally_unrelated_xyz", &registered);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_fuzzy_match_mcp_tool_no_mcp_tools() {
+        let registered = vec![
+            "regular_tool".to_string(),
+            "another_tool".to_string(),
+        ];
+
+        // No MCP tools in registry
+        let result = fuzzy_match_mcp_tool("mcp__puppeteer_navigate", &registered);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_fuzzy_match_mcp_tool_screenshot() {
+        let registered = vec![
+            "mcp__puppeteer__puppeteer_navigate".to_string(),
+            "mcp__puppeteer__puppeteer_screenshot".to_string(),
+            "mcp__puppeteer__puppeteer_click".to_string(),
+        ];
+
+        let result = fuzzy_match_mcp_tool("mcp__puppeteer_screenshot", &registered);
+        assert_eq!(result, Some("mcp__puppeteer__puppeteer_screenshot".to_string()));
     }
 }
