@@ -300,16 +300,39 @@
             "auto_launch": "Başlangıçta Çalıştır",
             "auto_launch_enabled": "Etkin",
             "auto_launch_disabled": "Devre Dışı",
-            "auto_launch_desc": "Sistem başladığında Antigravity Tools'u otomatik olarak başlat"
+            "auto_launch_desc": "Sistem başladığında Antigravity Tools'u otomatik olarak başlat",
+            "auto_check_update": "Otomatik Güncelleme Kontrolü",
+            "auto_check_update_desc": "Başlangıçta otomatik olarak yeni sürümleri kontrol et",
+            "auto_check_update_enabled": "Otomatik kontrol etkin",
+            "auto_check_update_disabled": "Otomatik kontrol devre dışı",
+            "update_check_interval": "Kontrol Aralığı (saat)",
+            "update_check_interval_desc": "Otomatik kontrol aralığını ayarla (1-168 saat)",
+            "update_check_interval_saved": "Kontrol aralığı ayarları kaydedildi"
         },
         "account": {
             "title": "Hesap Ayarları",
             "auto_refresh": "Otomatik Kota Yenileme",
             "auto_refresh_desc": "Tüm hesaplar için kota bilgilerini periyodik olarak otomatik yenile",
+            "always_on": "Sürekli Çalışır",
             "refresh_interval": "Yenileme Aralığı (dakika)",
             "auto_sync": "Mevcut Hesabı Otomatik Senkronize Et",
             "auto_sync_desc": "Mevcut aktif hesap bilgilerini periyodik olarak otomatik senkronize et",
             "sync_interval": "Senkronizasyon Aralığı (saniye)"
+        },
+        "warmup": {
+            "title": "Akıllı Isınma",
+            "desc": "Tüm modelleri otomatik olarak izler ve kota %100'e ulaştığında ısınmayı hemen tetikleyerek modelleri sıcak tutar"
+        },
+        "quota_protection": {
+            "title": "Kota Koruması",
+            "enable": "Kota Korumasını Etkinleştir",
+            "enable_desc": "Hesap kotası eşiğin altına düştüğünde proxy'yi otomatik olarak devre dışı bırakır ve kota sıfırlandığında otomatik olarak geri yükler",
+            "threshold_label": "Ayrılmış Kota Yüzdesi",
+            "monitored_models_label": "İzlenen Modeller (Tetikleme Koşulları)",
+            "monitored_models_desc": "En az bir tane seçin. Korumayı tetiklemek için seçilen herhangi bir model eşiğin altına düşerse devreye girer",
+            "range": "Aralık",
+            "example": "Örnek: %{{percentage}} seviyesinde, {{total}} kotaya sahip bir hesap, kalan ≤ {{threshold}} olduğunda devre dışı bırakılacaktır",
+            "auto_restore_info": "Kota sıfırlandığında hesap otomatik olarak yeniden etkinleştirilecektir"
         },
         "pinned_quota_models": {
             "title": "Sabitlenmiş Kota Modelleri",
@@ -426,6 +449,20 @@
             "http_api_settings_saved": "HTTP API ayarları kaydedildi, uygulamak için yeniden başlatma gerekli",
             "http_api_restart_required": "⚠️ Uygulamak için yeniden başlatma gerekli"
         },
+        "debug": {
+            "title": "Hata Ayıklama Konsolu",
+            "desc": "Hata ayıklama için gerçek zamanlı uygulama günlüklerini görüntüleyin",
+            "enabled": "Etkin",
+            "disabled": "Devre Dışı",
+            "disabled_hint": "Hata Ayıklama Konsolu Kapalı",
+            "disabled_desc": "Uygulama günlüklerini kaydetmeye başlamak için etkinleştirin",
+            "console_title": "Hata Ayıklama Konsolu",
+            "console_desc": "Sorunları gidermek için gerçek zamanlı uygulama günlüklerini görüntüleyin.",
+            "enable_desc": "Arka uç günlüklerini yakalamak ve görüntülemek için etkinleştirin.",
+            "open_btn": "Konsolu Aç",
+            "debug_logging": "Hata Ayıklama Günlüğü",
+            "debug_logging_desc": "Etkinleştirildiğinde, tam istek ve yanıt zinciri kaydedilir. Yalnızca sorun giderme sırasında etkinleştirmeniz önerilir."
+        },
         "menu": {
             "title": "Menü Görünüm Ayarları",
             "desc": "Menü çubuğunda gösterilecek işlev öğelerini seçin. Sık kullanılmayan menüleri gizleyerek alan tasarrufu yapabilirsiniz.",
@@ -488,6 +525,10 @@
             "placeholder": "Küresel sistem talimatlarını buraya girin...\nÖrn: Sen React ve Rust konusunda uzman, deneyimli bir full-stack geliştiricisin. Türkçe cevap ver.",
             "char_count": "{{count}} karakter",
             "long_prompt_warning": "Talimatlar çok uzun (2000 karakterden fazla) ve çok fazla bağlam alanı tüketebilir."
+        },
+        "branding": {
+            "title": "Antigravity Tools",
+            "subtitle": "Profesyonel Hesap Yönetimi"
         }
     },
     "tray": {
@@ -687,6 +728,58 @@
                 "context_compression_threshold_l2_tooltip": "İmzaları korurken erken düşünce bloklarını sıkıştırır. Önerilen: 0.55 (55%)",
                 "context_compression_threshold_l3": "L3 Sıkıştırma Eşiği (Özet Pivotu)",
                 "context_compression_threshold_l3_tooltip": "XML durum özeti oluşturur ve taze bir oturuma geçer. Önerilen: 0.7 (70%)"
+            },
+            "opencode_sync": {
+                "card_title": "OpenCode",
+                "status": {
+                    "detecting": "Algılanıyor...",
+                    "installed": "Yüklü ({{version}})",
+                    "not_installed": "Yüklü Değil",
+                    "synced": "Senkronize",
+                    "not_synced": "Senkronize Değil",
+                    "current_base_url": "Mevcut Temel URL"
+                },
+                "sync_accounts": "Hesapları antigravity-accounts.json ile senkronize et",
+                "btn_sync": "Yapılandırmayı Senkronize Et",
+                "btn_view": "Yapılandırmayı Görüntüle",
+                "btn_restore": "Geri Yükle",
+                "btn_restore_backup": "Yedeği Geri Yükle",
+                "btn_clear": "Yapılandırmayı Temizle",
+                "clear_confirm_title": "Yapılandırma Temizliğini Onayla",
+                "clear_confirm_message": "OpenCode yapılandırmasını temizlemek istediğinizden emin misiniz? Bu işlem yapılandırma dosyasını silecektir.",
+                "toast": {
+                    "config_missing": "Lütfen önce API Anahtarı oluşturun ve hizmeti başlatın",
+                    "sync_success": "OpenCode yapılandırması başarıyla senkronize edildi",
+                    "sync_error": "OpenCode senkronizasyonu başarısız: {{error}}",
+                    "clear_success": "OpenCode yapılandırması başarıyla temizlendi",
+                    "clear_error": "OpenCode yapılandırması temizlenemedi: {{error}}"
+                },
+                "modal": {
+                    "view_title": "OpenCode Yapılandırma Görüntüleyici",
+                    "copy_success": "Yapılandırma kopyalandı"
+                },
+                "sync_confirm_title": "Senkronizasyonu Onayla",
+                "sync_confirm_message": "OpenCode yapılandırması mevcut proxy ayarlarına göre üzerine yazılacak. Devam edilsin mi?",
+                "restore_confirm": "OpenCode'u varsayılan ayarlara geri yüklemek istediğinizden emin misiniz?",
+                "restore_backup_confirm": "OpenCode yapılandırmasını yedekten geri yüklemek istediğinizden emin misiniz?",
+                "modal_title": "OpenCode Modellerini Seç",
+                "select_models": "Senkronize edilecek modelleri seçin",
+                "auth_plugin_warning": "opencode-antigravity-auth eklentisi algılandı. Senkronizasyon yalnızca antigravity-manager sağlayıcısını oluşturur ve google sağlayıcısını/eklentisini üzerine yazmaz.",
+                "btn_confirm_sync": "Senkronizasyonu Onayla",
+                "custom_base_url_label": "Özel Yönetici Temel URL'si",
+                "custom_base_url_desc": "Docker Compose ağ iletişimi için",
+                "custom_base_url_reset": "Sıfırla"
+            },
+            "droid_sync": {
+                "modal_title": "Droid'e model ekle",
+                "modal_desc": "Seçilen modeller settings.json dosyasına customModels olarak eklenecek",
+                "selected": "seçili",
+                "btn_confirm_sync": "Seçili modelleri ekle",
+                "toast": {
+                    "no_models_selected": "Lütfen en az bir model seçin",
+                    "sync_success_count": "{{count}} model Droid'e eklendi",
+                    "sync_error": "Senkronizasyon başarısız: {{error}}"
+                }
             },
             "cloudflared": {
                 "title": "Genel Erişim (Cloudflared)",
@@ -965,6 +1058,34 @@
         "dialog": {
             "clear_title": "Proxy Loglarını Temizle",
             "clear_msg": "Tüm proxy loglarını temizlemek istediğinizden emin misiniz? Bu işlem geri alınamaz."
+        },
+        "network": {
+            "title": "Ağ İzleyicisi",
+            "open": "Ağ İzleyicisini Aç",
+            "requests_count": "{{count}} istek",
+            "start_recording": "Kaydı Başlat",
+            "stop_recording": "Kaydı Durdur",
+            "clear_requests": "İstekleri Temizle",
+            "empty": "Kayıtlı istek yok",
+            "waiting": "Yanıt bekleniyor...",
+            "badge_error": "Hata",
+            "table": {
+                "status": "Durum",
+                "command": "Komut",
+                "time": "Zaman",
+                "duration": "Süre"
+            },
+            "sections": {
+                "general": "Genel",
+                "request_args": "İstek Argümanları",
+                "error_details": "Hata Detayları",
+                "response": "Yanıt"
+            },
+            "fields": {
+                "status": "Durum",
+                "start_time": "Başlangıç Zamanı",
+                "duration": "Süre"
+            }
         }
     },
     "update_notification": {
@@ -974,6 +1095,9 @@
         "downloading": "Güncelleme indiriliyor...",
         "restarting": "Uygulama yeniden başlatılıyor...",
         "auto_update": "Otomatik güncelleme",
+        "restart_prompt": "Güncelleme indirildi ve kuruluma hazır. Şimdi yeniden başlatılsın mı?",
+        "btn_restart": "Yeniden Başlat",
+        "btn_later": "Daha Sonra",
         "toast": {
             "not_ready": "Otomatik güncelleme paketi hazır değil, indirme sayfasına yönlendiriliyorsunuz...",
             "failed": "Otomatik güncelleme başarısız oldu, indirme sayfasına yönlendiriliyorsunuz..."
@@ -1046,6 +1170,7 @@
         },
         "logs": {
             "search_placeholder": "IP, Yol, Kullanıcı Aracısı Ara...",
+            "username": "Kullanıcı",
             "show_blocked_only": "Sadece Engellenenler",
             "status": "Durum",
             "ip_address": "IP Adresi",
@@ -1077,7 +1202,10 @@
             "expires_placeholder": "Kalıcı olması için boş bırakın",
             "cancel": "İptal",
             "confirm": "Ekle",
-            "add_btn": "Ekle"
+            "add_btn": "Ekle",
+            "error_duplicate": "Bu IP zaten kara listede mevcut",
+            "error_invalid_ip": "Geçersiz IP formatı. Lütfen IP adresi veya CIDR gösterimi kullanın (örn. 192.168.1.0/24)",
+            "error_add_failed": "Ekleme başarısız"
         },
         "whitelist": {
             "add_ip": "Güvenilir IP Ekle",
