@@ -64,6 +64,9 @@ RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3
     echo "Using default Cargo registry..."; \
     fi
 
+# Verify Go installation for BoringSSL build
+RUN which go && go version || (echo "ERROR: Go compiler not found" && exit 1)
+
 WORKDIR /app
 # Copy only backend sources to keep frontend cache intact on backend-only changes
 COPY src-tauri ./src-tauri
