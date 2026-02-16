@@ -585,9 +585,15 @@ pub fn transform_claude_request_in(
         inner_request["generationConfig"] = generation_config;
     }
 
-
-    // [FIX] 确认不需要在根级别注入 thinking，由 generationConfig.thinkingConfig 统一处理
-    // root-level thinking injection removed
+    if let Some(tools_val) = tools {
+        inner_request["tools"] = tools_val;
+        // 显式设置工具配置模式为 VALIDATED
+        inner_request["toolConfig"] = json!({
+            "functionCallingConfig": {
+                "mode": "VALIDATED"
+            }
+        });
+    }
 
 
     // 深度清理 [undefined] 字符串 (Cherry Studio 等客户端常见注入)
@@ -1791,16 +1797,9 @@ fn build_generation_config(
         let effort = claude_req.output_config.as_ref().and_then(|c| c.effort.as_ref())
             .or_else(|| claude_req.thinking.as_ref().and_then(|t| t.effort.as_ref()));
 
-    // Thinking 配置
-    // Thinking 配置
-    // [FIX] 合并后的逻辑，移除重复的 if is_thinking_enabled
-    let mut thinking_config = json!({"includeThoughts": true});
-    let lower_mapped = mapped_model.to_lowercase();
-
-        // [FIX] 针对 Gemini 2.x 设置 thinkingBudget, 对于 3.x 设置 thinkingLevel
-        // 注意：目前 v1internal 接口对 3.x 预览版可能也需要特定的映射
         if should_use_adaptive {
             // [FIX #1825] Claude 4.6+ adaptive 模式下映射为动态预算或分级思维
+            let lower_mapped = mapped_model.to_lowercase();
             if lower_mapped.contains("gemini-3") {
                 // Gemini 3.x 支持分级指标格式，联动用户选择的强度
                 let mapped_level = match effort.map(|e| e.to_lowercase()).as_deref() {
@@ -1811,10 +1810,6 @@ fn build_generation_config(
                 };
                 tracing::debug!("[Claude-Request] Mapping adaptive mode to thinkingLevel: {} for Gemini 3 model", mapped_level);
                 thinking_config["thinkingLevel"] = json!(mapped_level);
-            } else if lower_mapped.contains("claude") {
-                // [FIX] Claude 模型不支持 -1，强制使用 16000
-                tracing::debug!("[Claude-Request] Mapping adaptive mode to fixed budget (16000) for Claude model");
-                thinking_config["thinkingBudget"] = json!(16000);
             } else {
                 // Gemini 2.x 支持通过 -1 开启原生全量动态预算
                 tracing::debug!("[Claude-Request] Mapping adaptive mode to dynamic budget (-1) for Gemini model");
@@ -1826,20 +1821,10 @@ fn build_generation_config(
                 config["maxOutputTokens"] = json!(131072);
             }
         } else {
-            // 固定预算模式
-            let mut budget = claude_req.thinking.as_ref().and_then(|t| t.budget_tokens).unwrap_or(16000);
-            
-            // [FIX] 如果 Claude 模型传入了 <= 0 的预算（可能是某些客户端的默认行为），修正为 16000
-            if lower_mapped.contains("claude") && budget <= 0 {
-                budget = 16000;
-            }
-            
             thinking_config["thinkingBudget"] = json!(budget);
         }
         
-        // [FIX] 统一注入到 generationConfig.thinkingConfig
         config["thinkingConfig"] = thinking_config;
-
     }
 
     // 其他参数
@@ -1876,10 +1861,7 @@ fn build_generation_config(
     let final_overhead = if is_adaptive_effective { 131072 } else { 32768 };
 
     if let Some(thinking_config) = config.get("thinkingConfig") {
-        if is_adaptive_effective {
-             // [FIX] Adaptive mode: enforce large context window (128k) regardless of the shim budget
-             final_max_tokens = Some(final_overhead as i64);
-        } else if let Some(budget) = thinking_config
+        if let Some(budget) = thinking_config
             .get("thinkingBudget")
             .and_then(|t| t.as_u64())
         {
@@ -2876,7 +2858,7 @@ mod tests {
 
         // Check injection
         assert_eq!(thinking_config["includeThoughts"], true);
-        assert_eq!(thinking_config["thinkingBudget"], 16000);
+        assert_eq!(thinking_config["thinkingBudget"], -1);
         assert!(thinking_config.get("thinkingType").is_none());
         assert!(thinking_config.get("effort").is_none());
 

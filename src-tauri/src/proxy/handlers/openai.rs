@@ -23,6 +23,7 @@ use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; // [NEW] Adapter Regi
 use crate::proxy::session_manager::SessionManager;
 use axum::http::HeaderMap;
 use tokio::time::Duration;
+use crate::modules::account;
 
 pub async fn handle_chat_completions(
     State(state): State<AppState>,
@@ -1876,6 +1877,11 @@ pub async fn handle_images_generations(
     let openai_response = json!({
         "created": chrono::Utc::now().timestamp(),
         "data": images
+    });
+
+    // [FIX] 图像生成成功后触发配额刷新 (Issue #1995)
+    tokio::spawn(async move {
+        let _ = account::refresh_all_quotas_logic().await;
     });
 
     let email_header = used_email.unwrap_or_default();

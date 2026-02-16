@@ -81,6 +81,7 @@ where
         let mut emitted_tool_calls = std::collections::HashSet::new();
         let mut final_usage: Option<super::models::OpenAIUsage> = None;
         let mut error_occurred = false;
+        let mut tool_call_index = 0;
 
         let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(15));
         heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -112,7 +113,6 @@ where
                                                     let mut thought_out = String::new();
 
                                                     if let Some(parts_list) = parts {
-                                                        let mut tool_call_index = 0;
                                                         for part in parts_list {
                                                             let is_thought_part = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false);
                                                             if let Some(text) = part.get("text").and_then(|t| t.as_str()) {

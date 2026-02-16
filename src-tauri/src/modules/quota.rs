@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::models::QuotaData;
 use crate::modules::config;
 
-const QUOTA_API_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels";
+const QUOTA_API_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
 /// Critical retry threshold: considered near recovery when quota reaches 95%
 const NEAR_READY_THRESHOLD: i32 = 95;
@@ -208,7 +208,7 @@ pub async fn fetch_quota_with_cache(
                         let reset_time = quota_info.reset_time.clone().unwrap_or_default();
                         
                         // Only keep models we care about
-                        if name.contains("gemini") || name.contains("claude") {
+                        if name.contains("gemini") || name.contains("claude") || name.contains("image") || name.contains("imagen") {
                             quota_data.add_model(name, percentage, reset_time);
                         }
                     }

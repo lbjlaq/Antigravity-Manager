@@ -3,7 +3,7 @@
 # Usage: curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.sh | bash
 #
 # Environment variables:
-#   VERSION     - Install specific version (e.g., "4.1.15"), default: latest
+#   VERSION     - Install specific version (e.g., "4.1.20"), default: latest
 #   DRY_RUN     - Set to "1" to print commands without executing
 
 set -euo pipefail
@@ -43,7 +43,7 @@ Usage:
     curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash
 
     # Install specific version
-    curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | VERSION=4.1.15 bash
+    curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | VERSION=4.1.20 bash
 
 Options:
     --help      Show this help message
@@ -151,17 +151,17 @@ build_download_url() {
         linux)
             case "$PKG_EXT" in
                 deb)
-                    # Antigravity.Tools_4.1.15_amd64.deb or _arm64.deb
+                    # Antigravity.Tools_4.1.20_amd64.deb or _arm64.deb
                     DOWNLOAD_URL="${base_url}/Antigravity.Tools_${RELEASE_VERSION}_${DEB_ARCH}.deb"
                     FILENAME="Antigravity.Tools_${RELEASE_VERSION}_${DEB_ARCH}.deb"
                     ;;
                 rpm)
-                    # Antigravity.Tools-4.1.15-1.x86_64.rpm or -1.aarch64.rpm
+                    # Antigravity.Tools-4.1.20-1.x86_64.rpm or -1.aarch64.rpm
                     DOWNLOAD_URL="${base_url}/Antigravity.Tools-${RELEASE_VERSION}-1.${RPM_ARCH}.rpm"
                     FILENAME="Antigravity.Tools-${RELEASE_VERSION}-1.${RPM_ARCH}.rpm"
                     ;;
                 AppImage)
-                    # Antigravity.Tools_4.1.15_amd64.AppImage or _aarch64.AppImage
+                    # Antigravity.Tools_4.1.20_amd64.AppImage or _aarch64.AppImage
                     local appimage_arch
                     if [[ "$ARCH_LABEL" == "x86_64" ]]; then
                         appimage_arch="amd64"

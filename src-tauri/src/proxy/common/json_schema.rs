@@ -284,21 +284,18 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                 }
             }
 
-            // 2. [FIX #815] 处理 anyOf/oneOf 联合类型: 合并属性而非直接删除
+            // 2. [FIX #815] 处理 anyOf/oneOf 联合类型: 合并属性或择优选择分支
             let mut union_to_merge = None;
-            if map.get("type").is_none()
-                || map.get("type").and_then(|t| t.as_str()) == Some("object")
-            {
-                if let Some(Value::Array(any_of)) = map.get("anyOf") {
-                    union_to_merge = Some(any_of.clone());
-                } else if let Some(Value::Array(one_of)) = map.get("oneOf") {
-                    union_to_merge = Some(one_of.clone());
-                }
+            if let Some(Value::Array(any_of)) = map.get("anyOf") {
+                union_to_merge = Some(any_of.clone());
+            } else if let Some(Value::Array(one_of)) = map.get("oneOf") {
+                union_to_merge = Some(one_of.clone());
             }
 
             if let Some(union_array) = union_to_merge {
                 if let Some((best_branch, all_types)) = extract_best_schema_from_union(&union_array) {
                     if let Value::Object(branch_obj) = best_branch {
+                        // 合并分支属性到当前 map
                         for (k, v) in branch_obj {
                             if k == "properties" {
                                 if let Some(target_props) = map
@@ -1552,5 +1549,26 @@ mod tests {
         // 验证基本结构保留，没有崩溃
         assert_eq!(schema["properties"]["start"]["type"], "object");
         assert!(schema["properties"]["start"]["properties"].get("toB").is_some());
+    }
+
+    #[test]
+    fn test_any_of_best_branch_selection() {
+        let mut schema = json!({
+            "anyOf": [
+                { "type": "string" },
+                { "type": "object", "properties": { "foo": { "type": "string" } } },
+                { "type": "null" }
+            ]
+        });
+
+        clean_json_schema(&mut schema);
+
+        // 验证选择了分数最高的 Object 分支
+        assert_eq!(schema["type"], "object");
+        assert!(schema.get("properties").is_some());
+        assert_eq!(schema["properties"]["foo"]["type"], "string");
+        
+        // 验证描述中增加了类型提示 (注意: null 分支在清洗后变为了带 (nullable) 标记的 string，因此去重后为 string | object)
+        assert!(schema["description"].as_str().unwrap().contains("Accepts: string | object"));
     }
 }

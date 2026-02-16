@@ -66,7 +66,7 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                 continue;
             };
 
-            if !app_config.scheduled_warmup.enabled {
+            if !app_config.auto_refresh {
                 continue;
             }
             

@@ -251,13 +251,41 @@ impl UpstreamClient {
                 .map_err(|e| e.to_string())?,
         );
 
-        // [NEW] 支持自定义 User-Agent 覆盖
         headers.insert(
             header::USER_AGENT,
             header::HeaderValue::from_str(&self.get_user_agent().await).unwrap_or_else(|e| {
                 tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
                 header::HeaderValue::from_static("antigravity")
             }),
+        );
+
+        // [ENHANCED] 注入 Antigravity 官方客户端关键特征 Headers
+        // 1. Client Identity
+        headers.insert(
+            "x-client-name",
+            header::HeaderValue::from_static("antigravity"),
+        );
+        if let Ok(ver) = header::HeaderValue::from_str(&crate::constants::CURRENT_VERSION) {
+            headers.insert("x-client-version", ver);
+        }
+
+        // 2. Device & Session Identity
+        // Machine ID (Persistent)
+        if let Ok(mid) = machine_uid::get() {
+             if let Ok(mid_val) = header::HeaderValue::from_str(&mid) {
+                 headers.insert("x-machine-id", mid_val);
+             }
+        }
+        // Session ID (Per App Launch)
+        if let Ok(sess_val) = header::HeaderValue::from_str(&crate::constants::SESSION_ID) {
+            headers.insert("x-vscode-sessionid", sess_val);
+        }
+
+        // 3. Google API Client (Node.js/Electron Environment Simulation)
+        // 模拟 gl-node, fire, grpc 版本特征
+        headers.insert(
+            "x-goog-api-client", 
+            header::HeaderValue::from_static("gl-node/18.18.2 fire/0.8.6 grpc/1.10.x")
         );
 
         // 注入额外的 Headers (如 anthropic-beta)
@@ -268,6 +296,9 @@ impl UpstreamClient {
                 }
             }
         }
+
+        // [DEBUG] Log headers for verification
+        tracing::debug!(?headers, "Final Upstream Request Headers");
 
         let mut last_err: Option<String> = None;
         // [NEW] 收集降级尝试记录

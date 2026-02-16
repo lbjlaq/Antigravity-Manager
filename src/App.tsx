@@ -107,6 +107,15 @@ function App() {
       })
     );
 
+    // 监听后端全量刷新事件 (Command / Scheduler)
+    unlistenPromises.push(
+      listen('accounts://refreshed', () => {
+        console.log('[App] Backend triggered quota refresh, syncing UI...');
+        fetchCurrentAccount();
+        fetchAccounts();
+      })
+    );
+
     // Cleanup
     return () => {
       Promise.all(unlistenPromises).then(unlisteners => {

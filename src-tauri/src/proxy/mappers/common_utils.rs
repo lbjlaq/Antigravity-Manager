@@ -114,16 +114,14 @@ pub fn resolve_request_config(
         _ => final_model,
     };
 
-    if enable_networking {
-        // [FIX] Only gemini-2.5-flash supports googleSearch tool
-        // All other models (including Gemini 3 Pro, thinking models, Claude aliases) must downgrade
-        if final_model != "gemini-2.5-flash" {
-            tracing::info!(
-                "[Common-Utils] Downgrading {} to gemini-2.5-flash for web search (only gemini-2.5-flash supports googleSearch)",
-                final_model
-            );
-            final_model = "gemini-2.5-flash".to_string();
-        }
+    // [FIX] Check allowlist before forcing downgrade
+    // If networking is enabled but the model doesn't support search, fall back to Flash
+    if enable_networking && !_is_high_quality_model {
+        tracing::info!(
+            "[Common-Utils] Downgrading {} to gemini-2.5-flash for web search (model not in search allowlist)",
+            final_model
+        );
+        final_model = "gemini-2.5-flash".to_string();
     }
 
     RequestConfig {

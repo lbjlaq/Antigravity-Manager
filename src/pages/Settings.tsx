@@ -678,10 +678,26 @@ function Settings() {
                                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t('settings.account.auto_refresh_desc')}</p>
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg border border-blue-100 dark:border-blue-800/30">
-                                        <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></div>
-                                        <span className="text-[10px] font-bold uppercase tracking-wider leading-none">{t('settings.account.always_on')}</span>
-                                    </div>
+                                    <label className={`relative inline-flex items-center ${formData.quota_protection.enabled ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'}`}>
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={formData.auto_refresh}
+                                            disabled={formData.quota_protection.enabled}
+                                            onChange={async (e) => {
+                                                const enabled = e.target.checked;
+                                                const newConfig = { ...formData, auto_refresh: enabled };
+                                                setFormData(newConfig);
+                                                // Hot Save
+                                                try {
+                                                    await saveConfig(newConfig);
+                                                } catch (error) {
+                                                    showToast(`${t('common.error')}: ${error}`, 'error');
+                                                }
+                                            }}
+                                        />
+                                        <div className={`w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500 shadow-inner ${formData.quota_protection.enabled ? 'peer-checked:bg-blue-500' : ''}`}></div>
+                                    </label>
                                 </div>
 
                                 <div className="mt-5 pt-5 border-t border-gray-50 dark:border-base-300 flex items-center gap-4 animate-in slide-in-from-top-1 duration-200">
@@ -741,10 +757,19 @@ function Settings() {
                             <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-orange-200 transition-all duration-300 shadow-sm">
                                 <SmartWarmup
                                     config={formData.scheduled_warmup}
-                                    onChange={(newConfig) => setFormData({
-                                        ...formData,
-                                        scheduled_warmup: newConfig
-                                    })}
+                                    onChange={async (newConfig) => {
+                                        const newFormData = {
+                                            ...formData,
+                                            scheduled_warmup: newConfig
+                                        };
+                                        setFormData(newFormData);
+                                        // Hot Save
+                                        try {
+                                            await saveConfig(newFormData);
+                                        } catch (error) {
+                                            showToast(`${t('common.error')}: ${error}`, 'error');
+                                        }
+                                    }}
                                 />
                             </div>
 
@@ -752,10 +777,28 @@ function Settings() {
                             <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-rose-200 transition-all duration-300 shadow-sm">
                                 <QuotaProtection
                                     config={formData.quota_protection}
-                                    onChange={(newConfig) => setFormData({
-                                        ...formData,
-                                        quota_protection: newConfig
-                                    })}
+                                    onChange={async (newConfig) => {
+                                        const updates: any = {
+                                            quota_protection: newConfig
+                                        };
+                                        // 联动逻辑：开启配额保护时，强制开启后台自动刷新 (不仅仅是预热)
+                                        if (newConfig.enabled) {
+                                            updates.auto_refresh = true;
+                                        }
+
+                                        const newFormData = {
+                                            ...formData,
+                                            ...updates
+                                        };
+                                        setFormData(newFormData);
+
+                                        // Hot Save
+                                        try {
+                                            await saveConfig(newFormData);
+                                        } catch (error) {
+                                            showToast(`${t('common.error')}: ${error}`, 'error');
+                                        }
+                                    }}
                                 />
                             </div>
 
@@ -1211,7 +1254,7 @@ function Settings() {
                                     <div>
                                         <h3 className="text-3xl font-black text-gray-900 dark:text-base-content tracking-tight mb-2">{t('common.app_name', 'Antigravity Tools')}</h3>
                                         <div className="flex items-center justify-center gap-2 text-sm">
-                                            v4.1.19
+                                            v4.1.20
                                             <span className="text-gray-400 dark:text-gray-600">•</span>
                                             <span className="text-gray-500 dark:text-gray-400">{t('settings.branding.subtitle')}</span>
                                         </div>
