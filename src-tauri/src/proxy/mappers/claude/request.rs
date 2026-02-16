@@ -419,18 +419,13 @@ pub fn transform_claude_request_in(
         build_system_instruction(&claude_req.system, &claude_req.model, has_mcp_tools);
 
     //  Map model name (Use standard mapping)
-    // [IMPROVED] 提取 web search 模型为常量，便于维护
-    const WEB_SEARCH_FALLBACK_MODEL: &str = "gemini-2.5-flash";
-
-    let mapped_model = if has_web_search_tool {
-        tracing::debug!(
-            "[Claude-Request] Web search tool detected, using fallback model: {}",
-            WEB_SEARCH_FALLBACK_MODEL
-        );
-        WEB_SEARCH_FALLBACK_MODEL.to_string()
-    } else {
-        crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model)
-    };
+    // [FIX] Removed duplicate WEB_SEARCH_FALLBACK_MODEL downgrade.
+    // The fallback logic already exists in common_utils::resolve_request_config(),
+    // which correctly checks the model allowlist before downgrading.
+    // The previous unconditional downgrade here was overriding high-quality models
+    // (e.g. gemini-3-pro) that natively support web search.
+    let mapped_model =
+        crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model);
 
     // 将 Claude 工具转为 Value 数组以便探测联网
     let tools_val: Option<Vec<Value>> = claude_req.tools.as_ref().map(|list| {
