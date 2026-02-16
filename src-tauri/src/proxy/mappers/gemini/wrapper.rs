@@ -224,9 +224,9 @@ pub fn wrap_request(
                 .and_then(|v| v.as_u64())
                 .or(req_max_tokens);
 
-            if is_adaptive {
+            if is_adaptive && is_claude {
                 if current_max.map_or(true, |m| m < 131072) {
-                     gen_config.insert("maxOutputTokens".to_string(), json!(131072));
+                    gen_config.insert("maxOutputTokens".to_string(), json!(131072));
                 }
             } else if let Some(budget_i64) = budget_opt {
                 if budget_i64 > 0 {
@@ -905,3 +905,96 @@ mod tests {
         assert_eq!(image_config_2["imageSize"], "1K");
     }
 
+    #[test]
+    fn test_gemini_thinking_level_keeps_user_max_output_tokens() {
+        let body = json!({
+            "model": "gemini-3-flash",
+            "generationConfig": {
+                "maxOutputTokens": 32000,
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingLevel": "high"
+                }
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": "hi"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let result = wrap_request(&body, "test-proj", "gemini-3-flash", None);
+        let req = result.get("request").unwrap();
+        let gen_config = req.get("generationConfig").unwrap();
+        let max_tokens = gen_config["maxOutputTokens"].as_u64().unwrap();
+
+        assert_eq!(max_tokens, 32000);
+    }
+
+    #[test]
+    fn test_gemini_thinking_level_still_enforces_budget_floor_when_present() {
+        let body = json!({
+            "model": "gemini-3-flash",
+            "generationConfig": {
+                "maxOutputTokens": 10000,
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingLevel": "high",
+                    "thinkingBudget": 24000
+                }
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": "hi"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let result = wrap_request(&body, "test-proj", "gemini-3-flash", None);
+        let req = result.get("request").unwrap();
+        let gen_config = req.get("generationConfig").unwrap();
+        let max_tokens = gen_config["maxOutputTokens"].as_u64().unwrap();
+
+        assert_eq!(max_tokens, 24000 + 8192);
+    }
+
+    #[test]
+    fn test_claude_adaptive_keeps_131072_bump() {
+        let body = json!({
+            "model": "claude-3-7-sonnet-thinking",
+            "generationConfig": {
+                "maxOutputTokens": 32000,
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingLevel": "high"
+                }
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": "hi"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let result = wrap_request(&body, "test-proj", "claude-3-7-sonnet-thinking", None);
+        let req = result.get("request").unwrap();
+        let gen_config = req.get("generationConfig").unwrap();
+        let max_tokens = gen_config["maxOutputTokens"].as_u64().unwrap();
+
+        assert_eq!(max_tokens, 131072);
+    }
