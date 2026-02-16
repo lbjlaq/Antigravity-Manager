@@ -48,6 +48,18 @@ struct VersionConfig {
 fn resolve_version_config() -> (VersionConfig, VersionSource) {
     // 1. Try Local Installation (Preferred)
     if let Ok(local_ver) = crate::modules::version::get_antigravity_version() {
+        let resolved_version = parse_version(&local_ver.short_version)
+            .or_else(|| parse_version(&local_ver.bundle_version))
+            .unwrap_or_else(|| {
+                tracing::warn!(
+                    raw_short = %local_ver.short_version,
+                    raw_bundle = %local_ver.bundle_version,
+                    fallback = KNOWN_STABLE_VERSION,
+                    "Unable to parse semver from local installation version output; using known stable fallback"
+                );
+                KNOWN_STABLE_VERSION.to_string()
+            });
+
         // Map local version to Electron/Chrome if possible
         // For now, if local version is >= 1.16.5, we assume it's using the new Electron 39 stack
         // Ideally we would maintain a map, but for now we default to the KNOWN_STABLE stack
@@ -55,7 +67,7 @@ fn resolve_version_config() -> (VersionConfig, VersionSource) {
         // If older, we might want to fallback to older values, but using new values is generally safer for "updates".
         return (
             VersionConfig {
-                version: local_ver.short_version,
+                version: resolved_version,
                 electron: KNOWN_STABLE_ELECTRON.to_string(),
                 chrome: KNOWN_STABLE_CHROME.to_string(),
             },
@@ -146,4 +158,3 @@ mod tests {
         assert_eq!(parse_version(text), Some("1.15.8".to_string()));
     }
 }
-

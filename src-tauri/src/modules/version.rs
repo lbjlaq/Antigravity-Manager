@@ -10,6 +10,30 @@ pub struct AntigravityVersion {
     pub bundle_version: String,
 }
 
+/// 从任意字符串中提取第一个语义化版本号 (X.Y.Z)
+fn extract_semver(raw: &str) -> Option<String> {
+    for token in raw.split(|c: char| c.is_whitespace() || c == ',' || c == ';') {
+        let t = token.trim_matches(|c: char| c == '"' || c == '\'' || c == '(' || c == ')');
+        if t.is_empty() {
+            continue;
+        }
+        let mut parts = t.split('.');
+        let p1 = parts.next();
+        let p2 = parts.next();
+        let p3 = parts.next();
+        if p1.is_some()
+            && p2.is_some()
+            && p3.is_some()
+            && [p1.unwrap(), p2.unwrap(), p3.unwrap()]
+                .iter()
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+        {
+            return Some(t.to_string());
+        }
+    }
+    None
+}
+
 /// 检测 Antigravity 版本（跨平台）
 pub fn get_antigravity_version() -> Result<AntigravityVersion, String> {
     // 1. 获取 Antigravity 可执行文件路径（复用现有功能）
@@ -122,13 +146,21 @@ fn get_version_linux(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     
     if let Ok(result) = output {
         if result.status.success() {
-            let version = String::from_utf8_lossy(&result.stdout)
+            let raw_version = String::from_utf8_lossy(&result.stdout)
                 .trim()
                 .to_string();
-            if !version.is_empty() {
+            if !raw_version.is_empty() {
+                let version = extract_semver(&raw_version).unwrap_or_else(|| {
+                    raw_version
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string()
+                });
                 return Ok(AntigravityVersion {
                     short_version: version.clone(),
-                    bundle_version: version,
+                    bundle_version: raw_version,
                 });
             }
         }
@@ -213,5 +245,11 @@ mod tests {
             bundle_version: "1.17.0".to_string(),
         };
         assert!(is_new_version(&newer));
+    }
+
+    #[test]
+    fn test_extract_semver_from_messy_output() {
+        let raw = "1.107.0\n1504c8cc4b34dbfbb4a97ebe954b3da2b5634516\nx64";
+        assert_eq!(extract_semver(raw), Some("1.107.0".to_string()));
     }
 }
