@@ -82,10 +82,35 @@ where
                                 }
 
                                 // Tool Calls aggregation by index
+                                // [FIX] When multiple tool calls arrive with the same index but
+                                // different IDs, treat them as SEPARATE tool calls instead of
+                                // merging into one (which would concatenate their arguments).
                                 if let Some(tcs) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                                     for tc in tcs {
-                                        let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                                        
+                                        let raw_index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                                        let new_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+
+                                        // If this index already has a DIFFERENT id, it's a new tool call
+                                        // Assign it a unique index to avoid merging
+                                        let index = if !new_id.is_empty() {
+                                            if let Some(existing) = tool_calls_map.get(&raw_index) {
+                                                if !existing.0.is_empty() && existing.0 != new_id {
+                                                    // Find next available index
+                                                    let mut next_idx = raw_index + 1;
+                                                    while tool_calls_map.contains_key(&next_idx) {
+                                                        next_idx += 1;
+                                                    }
+                                                    next_idx
+                                                } else {
+                                                    raw_index
+                                                }
+                                            } else {
+                                                raw_index
+                                            }
+                                        } else {
+                                            raw_index
+                                        };
+
                                         let entry = tool_calls_map.entry(index).or_insert_with(|| {
                                             (String::new(), String::from("function"), String::new(), Vec::new())
                                         });
