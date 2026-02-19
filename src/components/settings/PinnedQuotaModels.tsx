@@ -1,6 +1,7 @@
 import { Pin, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PinnedQuotaModelsConfig } from '../../types/config';
+import { MODEL_CONFIG } from '../../config/modelConfig';
 
 interface PinnedQuotaModelsProps {
     config: PinnedQuotaModelsConfig;
@@ -25,12 +26,11 @@ const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
         onChange({ ...config, models: newModels });
     };
 
-    const modelOptions = [
-        { id: 'gemini-3-pro-high', label: 'G3 Pro', desc: 'Gemini 3 Pro High' },
-        { id: 'gemini-3-flash', label: 'G3 Flash', desc: 'Gemini 3 Flash' },
-        { id: 'gemini-3-pro-image', label: 'G3 Image', desc: 'Gemini 3 Pro Image' },
-        { id: 'claude-opus-4-6-thinking', label: 'Claude 4.6 TK', desc: 'Claude 4.6 Opus Thinking' }
-    ];
+    const modelOptions = Object.entries(MODEL_CONFIG).map(([id, config]) => ({
+        id,
+        label: config.shortLabel,
+        desc: t(config.i18nKey, config.label)
+    }));
 
     return (
         <div className="animate-in fade-in duration-500">

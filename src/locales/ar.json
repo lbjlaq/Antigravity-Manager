@@ -826,15 +826,6 @@
             "restore_defaults": "استعادة التكوين الافتراضي",
             "reset_all": "إعادة تعيين الكل"
         },
-        "models": {
-            "flash": "فائق السرعة",
-            "flash_thinking": "قدرة التفكير",
-            "pro_high": "أفضل منطق",
-            "pro_low": "حصة منخفضة",
-            "sonnet": "تفكير برمجي",
-            "sonnet_thinking": "سلسلة أفكار",
-            "opus_thinking": "أقوى تفكير"
-        },
         "router": {
             "title": "موجه النماذج",
             "subtitle": "توجيه النماذج حسب السلسلة أو إضافة تعيينات دقيقة مخصصة.\nملاحظة: نماذج Claude الأصلية الممرة (مثل claude-opus-4-6-thinking) تتخطى مجموعات السلسلة افتراضيًا. استخدم \"توجيه مخصص خبير\" للتجاوز.",
@@ -847,10 +838,6 @@
             "presets_applied": "تم تطبيق الإعدادات المسبقة بنجاح",
             "custom_mappings": "تعيينات مخصصة",
             "group_title": "مجموعات السلاسل",
-            "gemini3_group_label": "Gemini 3 (موصى به)",
-            "gemini3_option_high": "gemini-3-pro-high (جودة عالية)",
-            "gemini3_option_low": "gemini-3-pro-low (متوازن)",
-            "gemini3_option_flash": "gemini-3-flash (سريع)",
             "groups": {
                 "claude_45": {
                     "name": "سلسلة Claude 4.6 TK",

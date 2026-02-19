@@ -893,24 +893,24 @@
         },
         "model": {
             "flash": "极速响应",
-            "flash_preview": "极速预览",
-            "flash_lite": "轻量极速",
-            "flash_thinking": "思考能力",
-            "pro_legacy": "经典版",
-            "pro_low": "标准性能",
-            "pro_high": "最强推理",
+            "flash_preview": "极速预览 (Flash 3)",
+            "flash_lite": "轻量极速 (Lite)",
+            "flash_thinking": "思考能力 (Thinking)",
+            "pro_legacy": "经典版 Pro",
+            "pro_low": "标准性能 (Pro)",
+            "pro_high": "最强推理 (High)",
             "pro_image": "图片生成 (1:1)",
             "pro_image_16_9": "图片生成 (16:9)",
             "pro_image_9_16": "图片生成 (9:16)",
             "pro_image_4_3": "图片生成 (4:3)",
             "pro_image_3_4": "图片生成 (3:4)",
             "pro_image_1_1": "图片生成 (1:1)",
-            "claude_sonnet": "代码推理",
-            "claude_sonnet_thinking": "思维链",
-            "claude_opus_thinking": "最强思维",
-            "gemini_2_5_flash": "极速模型 (2.5)",
-            "gemini_2_5_pro": "高性能推理 (2.5)",
-            "claude_4_5": "最新版推理"
+            "claude_sonnet": "代码推理 (Sonnet)",
+            "claude_sonnet_thinking": "思维链 (Sonnet Think)",
+            "claude_opus_thinking": "最强思维 (Opus Think)",
+            "gemini_2_5_flash": "极速模型 (2.5 Flash)",
+            "gemini_2_5_pro": "高性能推理 (2.5 Pro)",
+            "claude_4_5": "最新推理 (Claude 4.5)"
         },
         "mapping": {
             "title": "Claude Code 模型映射",
@@ -923,15 +923,6 @@
             "apply_recommended": "应用推荐配置",
             "restore_defaults": "恢复默认配置",
             "reset_all": "重置全部"
-        },
-        "models": {
-            "flash": "极速响应",
-            "flash_thinking": "思考能力",
-            "pro_high": "最强推理",
-            "pro_low": "低配额",
-            "sonnet": "代码推理",
-            "sonnet_thinking": "思维链",
-            "opus_thinking": "最强思维"
         },
         "router": {
             "title": "模型路由中心 (Model Router)",
@@ -972,10 +963,6 @@
             "original_id": "原始模型 ID",
             "route_to": "路由目标",
             "group_title": "模型家族分组 (Series Groups)",
-            "gemini3_group_label": "Gemini 3 (推荐)",
-            "gemini3_option_high": "gemini-3-pro-high (高质量)",
-            "gemini3_option_low": "gemini-3-pro-low (均衡)",
-            "gemini3_option_flash": "gemini-3-flash (快速)",
             "groups": {
                 "claude_45": {
                     "name": "Claude 4.6 TK 系列",

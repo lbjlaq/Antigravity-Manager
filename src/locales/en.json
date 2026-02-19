@@ -905,24 +905,24 @@
         },
         "model": {
             "flash": "Fast Response",
-            "flash_preview": "Flash Preview",
-            "flash_lite": "Lite & Fast",
-            "flash_thinking": "Thinking Capability",
+            "flash_preview": "Flash Preview (Flash 3)",
+            "flash_lite": "Lite & Fast (Lite)",
+            "flash_thinking": "Thinking Capability (Thinking)",
             "pro_legacy": "Legacy Pro",
-            "pro_low": "High Performance",
-            "pro_high": "Best Reasoning",
+            "pro_low": "High Performance (Pro)",
+            "pro_high": "Best Reasoning (High)",
             "pro_image": "Image Generation (1:1)",
             "pro_image_16_9": "Image Generation (16:9)",
             "pro_image_9_16": "Image Generation (9:16)",
             "pro_image_4_3": "Image Generation (4:3)",
             "pro_image_3_4": "Image Generation (3:4)",
             "pro_image_1_1": "Image Generation (1:1)",
-            "claude_sonnet": "Code Reasoning",
-            "claude_sonnet_thinking": "Chain of Thought",
-            "claude_opus_thinking": "Strongest Thinking",
-            "gemini_2_5_flash": "Flash Model (2.5)",
-            "gemini_2_5_pro": "High Performance (2.5)",
-            "claude_4_5": "Latest Reasoning"
+            "claude_sonnet": "Code Reasoning (Sonnet)",
+            "claude_sonnet_thinking": "Chain of Thought (Sonnet Think)",
+            "claude_opus_thinking": "Strongest Thinking (Opus Think)",
+            "gemini_2_5_flash": "Flash Model (2.5 Flash)",
+            "gemini_2_5_pro": "High Performance (2.5 Pro)",
+            "claude_4_5": "Latest Reasoning (Claude 4.5)"
         },
         "mapping": {
             "title": "Claude Code Model Mapping",
@@ -935,15 +935,6 @@
             "apply_recommended": "Apply Recommended",
             "restore_defaults": "Restore Default Configuration",
             "reset_all": "Reset All"
-        },
-        "models": {
-            "flash": "Ultra-fast",
-            "flash_thinking": "Thinking Capability",
-            "pro_high": "Best Reasoning",
-            "pro_low": "Low Quota",
-            "sonnet": "Code Reasoning",
-            "sonnet_thinking": "Chain of Thought",
-            "opus_thinking": "Strongest Thinking"
         },
         "router": {
             "title": "Model Router",
@@ -982,10 +973,6 @@
             "custom_preset_desc": "User defined preset",
             "custom_mappings": "Custom Mappings",
             "group_title": "Series Groups",
-            "gemini3_group_label": "Gemini 3 (Recommended)",
-            "gemini3_option_high": "gemini-3-pro-high (High Quality)",
-            "gemini3_option_low": "gemini-3-pro-low (Balanced)",
-            "gemini3_option_flash": "gemini-3-flash (Fast)",
             "groups": {
                 "claude_45": {
                     "name": "Claude 4.6 TK Series",

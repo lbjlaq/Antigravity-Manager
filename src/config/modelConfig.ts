@@ -4,7 +4,7 @@ import { Gemini, Claude } from '@lobehub/icons';
  * 模型配置接口
  */
 export interface ModelConfig {
-    /** 模型完整显示名称 (用于详情) */
+    /** 模型完整显示名称 (作为回退或默认展示) */
     label: string;
     /** 模型简短标签 (用于列表/卡片) */
     shortLabel: string;
@@ -12,6 +12,14 @@ export interface ModelConfig {
     protectedKey: string;
     /** 模型图标组件 */
     Icon: React.ComponentType<{ size?: number; className?: string }>;
+    /** 国际化键名 (用于动态名称) */
+    i18nKey: string;
+    /** 描述信息键名 (用于详细说明) */
+    i18nDescKey: string;
+    /** 所属系列/分组 */
+    group: string;
+    /** 选填标签 (用于筛选) */
+    tags?: string[];
 }
 
 /**
@@ -25,24 +33,40 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         shortLabel: 'G3 Pro',
         protectedKey: 'gemini-pro',
         Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro_high',
+        i18nDescKey: 'proxy.model.pro_high',
+        group: 'Gemini 3',
+        tags: ['pro', 'high'],
     },
     'gemini-3-flash': {
         label: 'Gemini 3 Flash',
         shortLabel: 'G3 Flash',
         protectedKey: 'gemini-flash',
         Icon: Gemini.Color,
+        i18nKey: 'proxy.model.flash_preview',
+        i18nDescKey: 'proxy.model.flash_preview',
+        group: 'Gemini 3',
+        tags: ['flash'],
     },
     'gemini-3-pro-image': {
         label: 'Gemini 3 Image',
         shortLabel: 'G3 Image',
         protectedKey: 'gemini-3-pro-image',
         Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro_image',
+        i18nDescKey: 'proxy.model.pro_image_1_1',
+        group: 'Gemini 3',
+        tags: ['image'],
     },
     'gemini-3-pro-low': {
         label: 'Gemini 3 Pro Low',
         shortLabel: 'G3 Low',
         protectedKey: 'gemini-pro',
         Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro_low',
+        i18nDescKey: 'proxy.model.pro_low',
+        group: 'Gemini 3',
+        tags: ['pro', 'low'],
     },
 
     // Gemini 2.5 系列
@@ -51,18 +75,40 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         shortLabel: 'G2.5 Flash',
         protectedKey: 'gemini-flash',
         Icon: Gemini.Color,
+        i18nKey: 'proxy.model.gemini_2_5_flash',
+        i18nDescKey: 'proxy.model.gemini_2_5_flash',
+        group: 'Gemini 2.5',
+        tags: ['flash'],
     },
     'gemini-2.5-flash-lite': {
         label: 'Gemini 2.5 Flash Lite',
         shortLabel: 'G2.5 Lite',
         protectedKey: 'gemini-flash',
         Icon: Gemini.Color,
+        i18nKey: 'proxy.model.flash_lite',
+        i18nDescKey: 'proxy.model.flash_lite',
+        group: 'Gemini 2.5',
+        tags: ['flash', 'lite'],
     },
     'gemini-2.5-flash-thinking': {
         label: 'Gemini 2.5 Flash Think',
         shortLabel: 'G2.5 Think',
         protectedKey: 'gemini-flash',
         Icon: Gemini.Color,
+        i18nKey: 'proxy.model.flash_thinking',
+        i18nDescKey: 'proxy.model.flash_thinking',
+        group: 'Gemini 2.5',
+        tags: ['flash', 'thinking'],
+    },
+    'gemini-2.5-pro': {
+        label: 'Gemini 2.5 Pro',
+        shortLabel: 'G2.5 Pro',
+        protectedKey: 'gemini-pro',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.gemini_2_5_pro',
+        i18nDescKey: 'proxy.model.gemini_2_5_pro',
+        group: 'Gemini 2.5',
+        tags: ['pro'],
     },
 
     // Claude 系列
@@ -71,18 +117,50 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         shortLabel: 'Claude 4.5',
         protectedKey: 'claude',
         Icon: Claude.Color,
+        i18nKey: 'proxy.model.claude_4_5',
+        i18nDescKey: 'proxy.model.claude_4_5',
+        group: 'Claude',
+        tags: ['sonnet'],
     },
     'claude-sonnet-4-5-thinking': {
         label: 'Claude 4.5 TK',
         shortLabel: 'Claude 4.5 TK',
         protectedKey: 'claude',
         Icon: Claude.Color,
+        i18nKey: 'proxy.model.claude_sonnet_thinking',
+        i18nDescKey: 'proxy.model.claude_sonnet_thinking',
+        group: 'Claude',
+        tags: ['sonnet', 'thinking'],
     },
     'claude-opus-4-6-thinking': {
         label: 'Claude 4.6 TK',
         shortLabel: 'Claude 4.6 TK',
         protectedKey: 'claude',
         Icon: Claude.Color,
+        i18nKey: 'proxy.model.claude_opus_thinking',
+        i18nDescKey: 'proxy.model.claude_opus_thinking',
+        group: 'Claude',
+        tags: ['opus', 'thinking'],
+    },
+    'claude-sonnet-4-6': {
+        label: 'Claude 4.6',
+        shortLabel: 'Claude 4.6',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+        i18nKey: 'proxy.model.claude_sonnet', // 这里可能需要增加 4.6 专用的 key，目前暂时复用
+        i18nDescKey: 'proxy.model.claude_sonnet',
+        group: 'Claude',
+        tags: ['sonnet'],
+    },
+    'claude-sonnet-4-6-thinking': {
+        label: 'Claude 4.6 TK',
+        shortLabel: 'Claude 4.6 TK',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+        i18nKey: 'proxy.model.claude_sonnet_thinking',
+        i18nDescKey: 'proxy.model.claude_sonnet_thinking',
+        group: 'Claude',
+        tags: ['sonnet', 'thinking'],
     },
 };
 

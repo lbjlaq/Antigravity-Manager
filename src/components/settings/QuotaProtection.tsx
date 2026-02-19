@@ -1,6 +1,7 @@
 import { Shield, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { QuotaProtectionConfig } from '../../types/config';
+import { MODEL_CONFIG } from '../../config/modelConfig';
 
 interface QuotaProtectionProps {
     config: QuotaProtectionConfig;
@@ -40,12 +41,10 @@ const QuotaProtection = ({ config, onChange }: QuotaProtectionProps) => {
         onChange({ ...config, monitored_models: newModels });
     };
 
-    const monitoredModelsOptions = [
-        { id: 'gemini-3-flash', label: 'Gemini 3 Flash' },
-        { id: 'gemini-3-pro-high', label: 'Gemini 3 Pro High' },
-        { id: 'claude-opus-4-6-thinking', label: 'Claude 4.6 TK' },
-        { id: 'gemini-3-pro-image', label: 'Gemini 3 Pro Image' }
-    ];
+    const monitoredModelsOptions = Object.entries(MODEL_CONFIG).map(([id, config]) => ({
+        id,
+        label: config.shortLabel
+    }));
 
     // 计算示例值
     const exampleTotal = 150;

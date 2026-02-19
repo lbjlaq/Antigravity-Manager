@@ -797,15 +797,6 @@
             "restore_defaults": "Varsayılan Yapılandırmayı Geri Yükle",
             "reset_all": "Tümünü Sıfırla"
         },
-        "models": {
-            "flash": "Ultra-hızlı",
-            "flash_thinking": "Düşünme Yeteneği",
-            "pro_high": "En İyi Akıl Yürütme",
-            "pro_low": "Düşük Kota",
-            "sonnet": "Kod Akıl Yürütme",
-            "sonnet_thinking": "Düşünce Zinciri",
-            "opus_thinking": "En Güçlü Düşünme"
-        },
         "router": {
             "title": "Model Yönlendirici",
             "subtitle": "Modelleri serilere göre yönlendirin veya özel tam eşlemeler ekleyin.\nNot: Yerel Claude geçiş modelleri (örn. claude-opus-4-6-thinking) varsayılan olarak seri gruplarını atlar. Geçersiz kılmak için \"Uzman Özel Yönlendirme\" kullanın.",
@@ -818,10 +809,6 @@
             "presets_applied": "Ön ayarlar başarıyla uygulandı",
             "custom_mappings": "Özel Eşlemeler",
             "group_title": "Seri Grupları",
-            "gemini3_group_label": "Gemini 3 (Önerilen)",
-            "gemini3_option_high": "gemini-3-pro-high (Yüksek Kalite)",
-            "gemini3_option_low": "gemini-3-pro-low (Dengeli)",
-            "gemini3_option_flash": "gemini-3-flash (Hızlı)",
             "groups": {
                 "claude_45": {
                     "name": "Claude 4.6 TK Serisi",

@@ -831,15 +831,6 @@
             "restore_defaults": "기본 구성 복원",
             "reset_all": "모두 초기화"
         },
-        "models": {
-            "flash": "초고속",
-            "flash_thinking": "생각 능력",
-            "pro_high": "최고의 추론",
-            "pro_low": "낮은 할당량",
-            "sonnet": "코드 추론",
-            "sonnet_thinking": "생각의 사슬",
-            "opus_thinking": "가장 강력한 생각"
-        },
         "router": {
             "title": "모델 라우터",
             "subtitle": "시리즈별로 모델을 라우팅하거나 사용자 지정 정확한 매핑을 추가합니다.\n참고: 네이티브 Claude 패스스루 모델(예: claude-opus-4-6-thinking)은 기본적으로 시리즈 그룹을 우회합니다. 재정의하려면 \"전문가 사용자 지정 라우팅\"을 사용하세요.",
@@ -877,10 +868,6 @@
             "custom_preset_desc": "사용자 정의 프리셋",
             "custom_mappings": "사용자 지정 매핑",
             "group_title": "시리즈 그룹",
-            "gemini3_group_label": "Gemini 3 (권장)",
-            "gemini3_option_high": "gemini-3-pro-high (고품질)",
-            "gemini3_option_low": "gemini-3-pro-low (균형)",
-            "gemini3_option_flash": "gemini-3-flash (빠름)",
             "groups": {
                 "claude_45": {
                     "name": "Claude 4.6 TK 시리즈",

@@ -822,15 +822,6 @@
             "restore_defaults": "Restaurar Configuración Predeterminada",
             "reset_all": "Restablecer Todo"
         },
-        "models": {
-            "flash": "Ultra-rápido",
-            "flash_thinking": "Capacidad de Pensamiento",
-            "pro_high": "Mejor Razonamiento",
-            "pro_low": "Cuota Baja",
-            "sonnet": "Razonamiento de Código",
-            "sonnet_thinking": "Cadena de Pensamiento",
-            "opus_thinking": "Pensamiento Más Fuerte"
-        },
         "router": {
             "title": "Enrutador de Modelos",
             "subtitle": "Enrute modelos por serie o agregue mapeos exactos personalizados.\nNota: Los modelos nativos de paso Claude (ej. claude-opus-4-6-thinking) omiten los grupos de series por defecto. Use \"Enrutamiento Personalizado Experto\" para sobreescribir.",
@@ -843,10 +834,6 @@
             "presets_applied": "Preajustes aplicados exitosamente",
             "custom_mappings": "Mapeos Personalizados",
             "group_title": "Grupos de Series",
-            "gemini3_group_label": "Gemini 3 (Recomendado)",
-            "gemini3_option_high": "gemini-3-pro-high (Alta Calidad)",
-            "gemini3_option_low": "gemini-3-pro-low (Balanceado)",
-            "gemini3_option_flash": "gemini-3-flash (Rápido)",
             "groups": {
                 "claude_45": {
                     "name": "Serie Claude 4.6 TK",

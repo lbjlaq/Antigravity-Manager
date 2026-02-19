@@ -827,15 +827,6 @@
             "restore_defaults": "恢復預設配置",
             "reset_all": "重置全部"
         },
-        "models": {
-            "flash": "極速回應",
-            "flash_thinking": "思考能力",
-            "pro_high": "最強推理",
-            "pro_low": "低配額",
-            "sonnet": "程式碼推理",
-            "sonnet_thinking": "思維鏈",
-            "opus_thinking": "最強思維"
-        },
         "router": {
             "title": "模型路由中心 (Model Router)",
             "subtitle": "按“規格家族”統一路由 OpenAI/Claude 模型，或新增最高優先順序的“精確對映”。\n注意：Claude 原生直通模型（claude-opus-4-6-thinking 等 3 個）預設直通，需在“專家精確對映”中新增規則才能修改。",
@@ -875,10 +866,6 @@
             "original_id": "原始模型 ID",
             "route_to": "路由目標",
             "group_title": "模型家族分組 (Series Groups)",
-            "gemini3_group_label": "Gemini 3 (推薦)",
-            "gemini3_option_high": "gemini-3-pro-high (高品質)",
-            "gemini3_option_low": "gemini-3-pro-low (均衡)",
-            "gemini3_option_flash": "gemini-3-flash (快速)",
             "groups": {
                 "claude_45": {
                     "name": "Claude 4.6 TK 系列",

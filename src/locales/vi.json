@@ -828,15 +828,6 @@
             "restore_defaults": "Khôi phục Mặc định",
             "reset_all": "Đặt lại Tất cả"
         },
-        "models": {
-            "flash": "Siêu nhanh",
-            "flash_thinking": "Khả năng Tư duy",
-            "pro_high": "Tư duy Tốt nhất",
-            "pro_low": "Hạn mức Thấp",
-            "sonnet": "Tư duy Code",
-            "sonnet_thinking": "Chuỗi Tư duy",
-            "opus_thinking": "Tư duy Mạnh nhất"
-        },
         "router": {
             "title": "Bộ Định tuyến Model (Router)",
             "subtitle": "Định tuyến model theo nhóm (Series) hoặc thêm ánh xạ chính xác.\nLưu ý: Các native model Claude (ví dụ: claude-opus-4-6-thinking) mặc định sẽ bỏ qua nhóm series và đi thẳng. Dùng \"Định tuyến Tùy chỉnh Cao cấp\" để ghi đè.",
@@ -849,10 +840,6 @@
             "presets_applied": "Đã áp dụng cài đặt sẵn thành công",
             "custom_mappings": "Ánh xạ Tùy chỉnh",
             "group_title": "Nhóm Series (Đích đến)",
-            "gemini3_group_label": "Gemini 3 (Khuyên dùng)",
-            "gemini3_option_high": "gemini-3-pro-high (Chất lượng Cao)",
-            "gemini3_option_low": "gemini-3-pro-low (Cân bằng)",
-            "gemini3_option_flash": "gemini-3-flash (Nhanh)",
             "groups": {
                 "claude_45": {
                     "name": "Dòng Claude 4.6 TK",
