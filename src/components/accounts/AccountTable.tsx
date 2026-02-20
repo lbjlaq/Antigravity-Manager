@@ -130,6 +130,9 @@ const MODEL_GROUPS = {
         'claude'
     ],
     GEMINI_PRO: [
+        'gemini-3.1-pro-high',
+        'gemini-3.1-pro-low',
+        'gemini-3.1-pro-preview',
         'gemini-3-pro-high',
         'gemini-3-pro-low',
         'gemini-3-pro-preview'
@@ -138,6 +141,19 @@ const MODEL_GROUPS = {
         'gemini-3-flash'
     ]
 };
+
+const MODEL_ID_ALIASES: Record<string, string[]> = {
+    'gemini-3-pro-high': ['gemini-3-pro-high', 'gemini-3.1-pro-high'],
+    'gemini-3-pro-low': ['gemini-3-pro-low', 'gemini-3.1-pro-low'],
+    'gemini-3-pro-preview': ['gemini-3-pro-preview', 'gemini-3.1-pro-preview'],
+    'gemini-3.1-pro-high': ['gemini-3.1-pro-high', 'gemini-3-pro-high'],
+    'gemini-3.1-pro-low': ['gemini-3.1-pro-low', 'gemini-3-pro-low'],
+    'gemini-3.1-pro-preview': ['gemini-3.1-pro-preview', 'gemini-3-pro-preview'],
+};
+
+function getModelAliases(modelId: string): string[] {
+    return MODEL_ID_ALIASES[modelId] || [modelId];
+}
 
 function isModelProtected(protectedModels: string[] | undefined, modelName: string): boolean {
     if (!protectedModels || protectedModels.length === 0) return false;
@@ -336,11 +352,12 @@ function AccountRowContent({
             })
             : pinnedModels.filter(modelId => MODEL_CONFIG[modelId]).map(modelId => {
                 const config = MODEL_CONFIG[modelId];
+                const aliases = getModelAliases(modelId);
                 return {
                     id: modelId,
                     label: config.shortLabel || config.label,
                     protectedKey: config.protectedKey,
-                    data: account.quota?.models.find(m => m.name.toLowerCase() === modelId)
+                    data: account.quota?.models.find(m => aliases.includes(m.name.toLowerCase()))
                 };
             })
         ).filter(m => m.id !== 'claude-sonnet-4-5-thinking' && m.id !== 'claude-opus-4-5-thinking')

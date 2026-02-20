@@ -26,7 +26,12 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
     const { t } = useTranslation();
     // [重构] 按组聚合查找逻辑，优先显示组内配额最低的型号以与锁定状态（🔒）对齐
     const geminiProModel = account.quota?.models
-        .filter(m => m.name.toLowerCase() === 'gemini-3-pro-high' || m.name.toLowerCase() === 'gemini-3-pro-low')
+        .filter(m =>
+            m.name.toLowerCase() === 'gemini-3-pro-high'
+            || m.name.toLowerCase() === 'gemini-3-pro-low'
+            || m.name.toLowerCase() === 'gemini-3.1-pro-high'
+            || m.name.toLowerCase() === 'gemini-3.1-pro-low'
+        )
         .sort((a, b) => (a.percentage || 0) - (b.percentage || 0))[0];
 
     const geminiFlashModel = account.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-flash');
@@ -171,9 +176,9 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                 />
                             )}
                             <div className="relative z-10 w-full flex items-center text-[10px] font-mono leading-none">
-                                <span className="w-[64px] text-gray-500 dark:text-gray-400 font-bold pr-1 flex items-center gap-1" title="Gemini 3 Pro">
-                                    {account.protected_models?.includes('gemini-3-pro-high') && <Lock className="w-2.5 h-2.5 text-rose-500 shrink-0 z-10" />}
-                                    <span className="truncate">G3 Pro</span>
+                                <span className="w-[64px] text-gray-500 dark:text-gray-400 font-bold pr-1 flex items-center gap-1" title="Gemini 3.1 Pro">
+                                    {(account.protected_models?.includes('gemini-3-pro-high') || account.protected_models?.includes('gemini-3.1-pro-high')) && <Lock className="w-2.5 h-2.5 text-rose-500 shrink-0 z-10" />}
+                                    <span className="truncate">G3.1 Pro</span>
                                 </span>
                                 <div className="flex-1 flex justify-center">
                                     {geminiProModel?.reset_time ? (

@@ -878,8 +878,8 @@
             "custom_mappings": "사용자 지정 매핑",
             "group_title": "시리즈 그룹",
             "gemini3_group_label": "Gemini 3 (권장)",
-            "gemini3_option_high": "gemini-3-pro-high (고품질)",
-            "gemini3_option_low": "gemini-3-pro-low (균형)",
+            "gemini3_option_high": "gemini-3.1-pro-high (고품질)",
+            "gemini3_option_low": "gemini-3.1-pro-low (균형)",
             "gemini3_option_flash": "gemini-3-flash (빠름)",
             "groups": {
                 "claude_45": {

@@ -844,8 +844,8 @@
             "custom_mappings": "Pemetaan Tersuai",
             "group_title": "Kumpulan Siri",
             "gemini3_group_label": "Gemini 3 (Disyorkan)",
-            "gemini3_option_high": "gemini-3-pro-high (Kualiti Tinggi)",
-            "gemini3_option_low": "gemini-3-pro-low (Seimbang)",
+            "gemini3_option_high": "gemini-3.1-pro-high (Kualiti Tinggi)",
+            "gemini3_option_low": "gemini-3.1-pro-low (Seimbang)",
             "gemini3_option_flash": "gemini-3-flash (Pantas)",
             "groups": {
                 "claude_45": {

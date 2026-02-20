@@ -462,7 +462,8 @@ pub fn transform_claude_request_in(
     let target_model_supports_thinking = mapped_model.contains("-thinking")
         || mapped_model.starts_with("claude-")
         || mapped_model.contains("gemini-2.0-pro")
-        || mapped_model.contains("gemini-3-pro");
+        || mapped_model.contains("gemini-3-pro")
+        || mapped_model.contains("gemini-3.1-pro");
 
     if is_thinking_enabled && !target_model_supports_thinking {
         tracing::warn!(
@@ -687,7 +688,10 @@ fn should_enable_thinking_by_default(model: &str) -> bool {
     // [FIX #1557] Enable thinking by default for Gemini Pro models (gemini-3-pro, gemini-2.0-pro)
     // These models prioritize reasoning but clients might not send thinking config for them
     // unless they have "-thinking" suffix (which they don't in Antigravity mapping)
-    if model_lower.contains("gemini-2.0-pro") || model_lower.contains("gemini-3-pro") {
+    if model_lower.contains("gemini-2.0-pro")
+        || model_lower.contains("gemini-3-pro")
+        || model_lower.contains("gemini-3.1-pro")
+    {
         tracing::debug!(
             "[Thinking-Mode] Auto-enabling thinking for Gemini Pro model: {}",
             model

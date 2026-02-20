@@ -50,10 +50,16 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     // Gemini 协议映射表
     m.insert("gemini-2.5-flash-lite", "gemini-2.5-flash");
     m.insert("gemini-2.5-flash-thinking", "gemini-2.5-flash-thinking");
-    m.insert("gemini-3-pro-low", "gemini-3-pro-preview");
-    m.insert("gemini-3-pro-high", "gemini-3-pro-preview");
-    m.insert("gemini-3-pro-preview", "gemini-3-pro-preview");
-    m.insert("gemini-3-pro", "gemini-3-pro-preview");  // 统一映射到 preview
+    // [Migrate] Gemini 3 Pro High/Low -> Gemini 3.1 Pro High/Low
+    // Keep 3.0 aliases for backward compatibility.
+    m.insert("gemini-3.1-pro-low", "gemini-3.1-pro-preview");
+    m.insert("gemini-3.1-pro-high", "gemini-3.1-pro-preview");
+    m.insert("gemini-3.1-pro-preview", "gemini-3.1-pro-preview");
+    m.insert("gemini-3.1-pro", "gemini-3.1-pro-preview");
+    m.insert("gemini-3-pro-low", "gemini-3.1-pro-preview");
+    m.insert("gemini-3-pro-high", "gemini-3.1-pro-preview");
+    m.insert("gemini-3-pro-preview", "gemini-3.1-pro-preview");
+    m.insert("gemini-3-pro", "gemini-3.1-pro-preview");
     m.insert("gemini-2.5-flash", "gemini-2.5-flash");
     m.insert("gemini-3-flash", "gemini-3-flash");
     m.insert("gemini-3-pro-image", "gemini-3-pro-image");
@@ -136,7 +142,7 @@ pub async fn get_all_dynamic_models(
     }
 
     // 5. 确保包含常用的 Gemini/画画模型 ID
-    model_ids.insert("gemini-3-pro-low".to_string());
+    model_ids.insert("gemini-3.1-pro-low".to_string());
     
     // [NEW] Issue #247: Dynamically generate all Image Gen Combinations
     let base = "gemini-3-pro-image";
@@ -156,8 +162,8 @@ pub async fn get_all_dynamic_models(
     model_ids.insert("gemini-2.5-flash".to_string());
     // gemini-2.5-pro removed 
     model_ids.insert("gemini-3-flash".to_string());
-    model_ids.insert("gemini-3-pro-high".to_string());
-    model_ids.insert("gemini-3-pro-low".to_string());
+    model_ids.insert("gemini-3.1-pro-high".to_string());
+    model_ids.insert("gemini-3.1-pro-low".to_string());
 
 
     let mut sorted_ids: Vec<_> = model_ids.into_iter().collect();
@@ -318,6 +324,23 @@ mod tests {
         assert_eq!(
             map_claude_model_to_gemini("unknown-model"),
             "unknown-model"
+        );
+        // [Migrate] Gemini 3 Pro High/Low should route to Gemini 3.1 Pro
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-3-pro-high"),
+            "gemini-3.1-pro-preview"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-3-pro-low"),
+            "gemini-3.1-pro-preview"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-3.1-pro-high"),
+            "gemini-3.1-pro-preview"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-3.1-pro-low"),
+            "gemini-3.1-pro-preview"
         );
 
         // Test Normalization (Opus 4.6 now merged into "claude" group)
