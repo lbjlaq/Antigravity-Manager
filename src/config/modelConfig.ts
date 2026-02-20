@@ -78,6 +78,18 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         protectedKey: 'claude',
         Icon: Claude.Color,
     },
+    'claude-sonnet-4-6': {
+        label: 'Claude 4.6',
+        shortLabel: 'Claude 4.6',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+    },
+    'claude-sonnet-4-6-thinking': {
+        label: 'Claude 4.6 TK',
+        shortLabel: 'Claude 4.6 TK',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+    },
     'claude-opus-4-6-thinking': {
         label: 'Claude 4.6 TK',
         shortLabel: 'Claude 4.6 TK',

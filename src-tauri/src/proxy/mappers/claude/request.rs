@@ -671,6 +671,8 @@ fn should_enable_thinking_by_default(model: &str) -> bool {
         || model_lower.contains("opus-4.5")
         || model_lower.contains("opus-4-6")
         || model_lower.contains("opus-4.6")
+        || model_lower.contains("sonnet-4-6")
+        || model_lower.contains("sonnet-4.6")
     {
         tracing::debug!(
             "[Thinking-Mode] Auto-enabling thinking for Opus model: {}",

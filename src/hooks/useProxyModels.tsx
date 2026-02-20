@@ -78,6 +78,20 @@ export const useProxyModels = () => {
             icon: <Cpu size={16} />
         },
         {
+            id: 'claude-sonnet-4-6',
+            name: 'Claude 4.6',
+            desc: t('proxy.model.claude_4_5'), // Use 4.5 translation as fallback or update locale
+            group: 'Claude 4.6',
+            icon: <Cpu size={16} />
+        },
+        {
+            id: 'claude-sonnet-4-6-thinking',
+            name: 'Claude 4.6 TK',
+            desc: t('proxy.model.claude_sonnet_thinking'),
+            group: 'Claude 4.6',
+            icon: <Cpu size={16} />
+        },
+        {
             id: 'claude-opus-4-6-thinking',
             name: 'Claude 4.6 TK',
             desc: t('proxy.model.claude_opus_thinking'),

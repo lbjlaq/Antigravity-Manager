@@ -12,7 +12,7 @@ const FALLBACK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Known stable configuration (for Docker/Headless fallback)
 /// Antigravity 1.16.5 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "1.16.5";
+const KNOWN_STABLE_VERSION: &str = "3.1.0";
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
 const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
