@@ -487,7 +487,7 @@ function AccountRowContent({
                                 <QuotaItem
                                     key={model.id}
                                     label={model.label}
-                                    percentage={modelData?.percentage || 0}
+                                    percentage={modelData?.percentage ?? 100}
                                     resetTime={modelData?.reset_time}
                                     isProtected={isModelProtected(account.protected_models, model.protectedKey)}
                                     Icon={MODEL_CONFIG[model.id]?.Icon}

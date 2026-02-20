@@ -229,7 +229,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                             <QuotaItem
                                 key={model.id}
                                 label={model.label}
-                                percentage={model.data?.percentage || 0}
+                                percentage={model.data?.percentage ?? 100}
                                 resetTime={model.data?.reset_time}
                                 isProtected={isModelProtected(model.protectedKey)}
                                 Icon={model.Icon}

@@ -94,7 +94,7 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
                                 const modelData = account.quota?.models.find((m: any) => m.name.toLowerCase() === id);
                                 return {
                                     id,
-                                    model: modelData || { name: id, percentage: 0, total: 0, used: 0, reset_time: 0 }
+                                    model: modelData || { name: id, percentage: 100, total: 0, used: 0, reset_time: 0 }
                                 };
                             });
 
@@ -112,7 +112,7 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
                             return sortedModels.map(({ id, model }) => {
                                 const config = MODEL_CONFIG[id];
                                 const label = config?.label || model.name;
-                                const percentage = model.percentage || 0;
+                                const percentage = model.percentage ?? 100;
 
                                 return (
                                     <div key={id} className="p-4 rounded-xl border border-gray-100 dark:border-base-200 bg-white dark:bg-base-100 hover:border-blue-100 dark:hover:border-blue-900 hover:shadow-sm transition-all group">
