@@ -9,19 +9,19 @@ export const useProxyModels = () => {
     const { t } = useTranslation();
 
     const models = [
-        // Gemini 3 Series
+        // Gemini 3.1 Series
         {
-            id: 'gemini-3-pro-high',
-            name: 'Gemini 3 Pro High',
+            id: 'gemini-3.1-pro-high',
+            name: 'Gemini 3.1 Pro High',
             desc: t('proxy.model.pro_high'),
-            group: 'Gemini 3',
+            group: 'Gemini 3.1',
             icon: <Cpu size={16} />
         },
         {
-            id: 'gemini-3-flash',
-            name: 'Gemini 3 Flash',
+            id: 'gemini-3.1-flash',
+            name: 'Gemini 3.1 Flash',
             desc: t('proxy.model.flash_preview'),
-            group: 'Gemini 3',
+            group: 'Gemini 3.1',
             icon: <Zap size={16} />
         },
         {
@@ -32,28 +32,14 @@ export const useProxyModels = () => {
             icon: <ImageIcon size={16} />
         },
         {
-            id: 'gemini-3-pro-low',
-            name: 'Gemini 3 Pro Low',
+            id: 'gemini-3.1-pro-low',
+            name: 'Gemini 3.1 Pro Low',
             desc: t('proxy.model.pro_low'),
-            group: 'Gemini 3',
+            group: 'Gemini 3.1',
             icon: <Cpu size={16} />
         },
 
         // Gemini 2.5 Series
-        {
-            id: 'gemini-2.5-flash',
-            name: 'Gemini 2.5 Flash',
-            desc: t('proxy.model.gemini_2_5_flash'),
-            group: 'Gemini 2.5',
-            icon: <Zap size={16} />
-        },
-        {
-            id: 'gemini-2.5-flash-lite',
-            name: 'Gemini 2.5 Flash Lite',
-            desc: t('proxy.model.flash_lite'),
-            group: 'Gemini 2.5',
-            icon: <Zap size={16} />
-        },
         {
             id: 'gemini-2.5-flash-thinking',
             name: 'Gemini 2.5 Flash Think',
@@ -63,27 +49,6 @@ export const useProxyModels = () => {
         },
 
         // Claude Series
-        {
-            id: 'claude-sonnet-4-5',
-            name: 'Claude 4.5',
-            desc: t('proxy.model.claude_4_5'),
-            group: 'Claude 4.5',
-            icon: <Cpu size={16} />
-        },
-        {
-            id: 'claude-sonnet-4-5-thinking',
-            name: 'Claude 4.5 TK',
-            desc: t('proxy.model.claude_sonnet_thinking'),
-            group: 'Claude 4.5',
-            icon: <Cpu size={16} />
-        },
-        {
-            id: 'claude-sonnet-4-6',
-            name: 'Claude 4.6',
-            desc: t('proxy.model.claude_4_5'), // Use 4.5 translation as fallback or update locale
-            group: 'Claude 4.6',
-            icon: <Cpu size={16} />
-        },
         {
             id: 'claude-sonnet-4-6-thinking',
             name: 'Claude 4.6 TK',
