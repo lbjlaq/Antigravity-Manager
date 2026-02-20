@@ -33,12 +33,20 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         shortLabel: 'G3.1 Pro',
         protectedKey: 'gemini-pro',
         Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro_high',
+        i18nDescKey: 'proxy.model.pro_high',
+        group: 'Gemini 3',
+        tags: ['pro', 'high'],
     },
     'gemini-3.1-pro-low': {
         label: 'Gemini 3.1 Pro Low',
         shortLabel: 'G3.1 Low',
         protectedKey: 'gemini-pro',
         Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro_low',
+        i18nDescKey: 'proxy.model.pro_low',
+        group: 'Gemini 3',
+        tags: ['pro', 'low'],
     },
     'gemini-3-pro-high': {
         label: 'Gemini 3 Pro High',
@@ -124,12 +132,6 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
     },
 
     // Claude 系列
-    'claude-sonnet-4-6-thinking': {
-        label: 'Claude 4.6 TK',
-        shortLabel: 'Claude 4.6 TK',
-        protectedKey: 'claude',
-        Icon: Claude.Color,
-    },
     'claude-sonnet-4-5': {
         label: 'Claude 4.5',
         shortLabel: 'Claude 4.5',
