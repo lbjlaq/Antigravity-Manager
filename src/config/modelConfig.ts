@@ -19,16 +19,28 @@ export interface ModelConfig {
  * 键为模型 ID，值为模型配置
  */
 export const MODEL_CONFIG: Record<string, ModelConfig> = {
-    // Gemini 3.1 系列
+    // Gemini 3.x 系列
     'gemini-3.1-pro-high': {
         label: 'Gemini 3.1 Pro High',
         shortLabel: 'G3.1 Pro',
         protectedKey: 'gemini-pro',
         Icon: Gemini.Color,
     },
-    'gemini-3.1-flash': {
-        label: 'Gemini 3.1 Flash',
-        shortLabel: 'G3.1 Flash',
+    'gemini-3.1-pro-low': {
+        label: 'Gemini 3.1 Pro Low',
+        shortLabel: 'G3.1 Low',
+        protectedKey: 'gemini-pro',
+        Icon: Gemini.Color,
+    },
+    'gemini-3-pro-high': {
+        label: 'Gemini 3 Pro High',
+        shortLabel: 'G3 Pro',
+        protectedKey: 'gemini-pro',
+        Icon: Gemini.Color,
+    },
+    'gemini-3-flash': {
+        label: 'Gemini 3 Flash',
+        shortLabel: 'G3 Flash',
         protectedKey: 'gemini-flash',
         Icon: Gemini.Color,
     },
@@ -38,14 +50,26 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         protectedKey: 'gemini-3-pro-image',
         Icon: Gemini.Color,
     },
-    'gemini-3.1-pro-low': {
-        label: 'Gemini 3.1 Pro Low',
-        shortLabel: 'G3.1 Low',
+    'gemini-3-pro-low': {
+        label: 'Gemini 3 Pro Low',
+        shortLabel: 'G3 Low',
         protectedKey: 'gemini-pro',
         Icon: Gemini.Color,
     },
 
     // Gemini 2.5 系列
+    'gemini-2.5-flash': {
+        label: 'Gemini 2.5 Flash',
+        shortLabel: 'G2.5 Flash',
+        protectedKey: 'gemini-flash',
+        Icon: Gemini.Color,
+    },
+    'gemini-2.5-flash-lite': {
+        label: 'Gemini 2.5 Flash Lite',
+        shortLabel: 'G2.5 Lite',
+        protectedKey: 'gemini-flash',
+        Icon: Gemini.Color,
+    },
     'gemini-2.5-flash-thinking': {
         label: 'Gemini 2.5 Flash Think',
         shortLabel: 'G2.5 Think',
@@ -57,6 +81,18 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
     'claude-sonnet-4-6-thinking': {
         label: 'Claude 4.6 TK',
         shortLabel: 'Claude 4.6 TK',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+    },
+    'claude-sonnet-4-5': {
+        label: 'Claude 4.5',
+        shortLabel: 'Claude 4.5',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+    },
+    'claude-sonnet-4-5-thinking': {
+        label: 'Claude 4.5 TK',
+        shortLabel: 'Claude 4.5 TK',
         protectedKey: 'claude',
         Icon: Claude.Color,
     },
@@ -87,8 +123,7 @@ export const getModelConfig = (modelId: string): ModelConfig | undefined => {
 const MODEL_SORT_WEIGHTS = {
     // 系列权重 (第一优先级)
     series: {
-        'gemini-3.1': 100,
-        'gemini-3': 110,
+        'gemini-3': 100,
         'gemini-2.5': 200,
         'gemini-2': 300,
         'claude': 400,
@@ -118,9 +153,7 @@ function getModelSortWeight(modelId: string): number {
     let weight = 0;
 
     // 1. 系列权重 (x1000)
-    if (id.startsWith('gemini-3.1')) {
-        weight += MODEL_SORT_WEIGHTS.series['gemini-3.1'] * 1000;
-    } else if (id.startsWith('gemini-3')) {
+    if (id.startsWith('gemini-3')) {
         weight += MODEL_SORT_WEIGHTS.series['gemini-3'] * 1000;
     } else if (id.startsWith('gemini-2.5')) {
         weight += MODEL_SORT_WEIGHTS.series['gemini-2.5'] * 1000;
@@ -176,3 +209,4 @@ export function sortModels<T extends { id: string }>(models: T[]): T[] {
         return a.id.localeCompare(b.id);
     });
 }
+
