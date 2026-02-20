@@ -287,9 +287,6 @@ print(response.choices[0].message.content)
         -   **[Core Refactor] Unify model configuration and remove hardcoded options (PR #2040)**:
             -   **Unified Config**: Redesigned model configuration logic for unified backend model definition management.
             -   **Redundancy Cleanup**: Removed multiple hardcoded model options, significantly improving codebase maintainability and extensibility.
-        -   **[Core Optimization] Refine model configuration and proxy handling (PR #2044)**:
-            -   **Logic Alignment**: Further optimized the unified model config logic, ensuring more precise model mapping across different protocols.
-            -   **Robustness Boost**: Fixed edge cases discovered during integration, enhancing the overall stability of the proxy service.
     *   **v4.1.21 (2026-02-17)**:
         -   **[Core Fix] Cherry Studio / Claude Protocol Compatibility (Fix Issue #2007)**:
             -   **maxOutputTokens Capping**: Fixed `400 INVALID_ARGUMENT` errors caused by Cherry Studio sending excessive `maxOutputTokens` (128k). The system now automatically caps Claude protocol output to **65536**, ensuring requests remain within Gemini's limits.
