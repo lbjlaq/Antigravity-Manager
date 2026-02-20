@@ -76,6 +76,8 @@
         "switch_to_spanish_short": "ES",
         "switch_to_malay": "Chuyển sang Tiếng Mã Lai",
         "switch_to_malay_short": "MY",
+        "switch_to_indonesian": "Chuyển sang Tiếng Indonesia",
+        "switch_to_indonesian_short": "ID",
         "user_token": "Token người dùng"
     },
     "dashboard": {

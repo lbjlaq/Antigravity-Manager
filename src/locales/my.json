@@ -73,6 +73,8 @@
         "switch_to_spanish_short": "ES",
         "switch_to_malay": "Tukar ke Bahasa Melayu",
         "switch_to_malay_short": "MY",
+        "switch_to_indonesian": "Tukar ke Bahasa Indonesia",
+        "switch_to_indonesian_short": "ID",
         "user_token": "Token Pengguna"
     },
     "dashboard": {

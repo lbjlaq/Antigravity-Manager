@@ -14,6 +14,7 @@ import ko from "./locales/ko.json";
 import ar from "./locales/ar.json";
 import es from "./locales/es.json";
 import my from "./locales/my.json";
+import id from "./locales/id.json";
 
 i18n
     // detect user language
@@ -82,6 +83,9 @@ i18n
             },
             "ms-MY": {
                 translation: my,
+            },
+            id: {
+                translation: id,
             },
         },
         fallbackLng: "en",

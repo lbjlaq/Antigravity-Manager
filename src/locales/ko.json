@@ -76,6 +76,8 @@
         "switch_to_spanish_short": "ES",
         "switch_to_malay": "말레이어로 전환",
         "switch_to_malay_short": "MY",
+        "switch_to_indonesian": "인도네시아어로 전환",
+        "switch_to_indonesian_short": "ID",
         "user_token": "사용자 토큰"
     },
     "dashboard": {
