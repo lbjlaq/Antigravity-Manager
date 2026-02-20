@@ -28,6 +28,18 @@ export interface ModelConfig {
  */
 export const MODEL_CONFIG: Record<string, ModelConfig> = {
     // Gemini 3.x 系列
+    'gemini-3.1-pro-high': {
+        label: 'Gemini 3.1 Pro High',
+        shortLabel: 'G3.1 Pro',
+        protectedKey: 'gemini-pro',
+        Icon: Gemini.Color,
+    },
+    'gemini-3.1-pro-low': {
+        label: 'Gemini 3.1 Pro Low',
+        shortLabel: 'G3.1 Low',
+        protectedKey: 'gemini-pro',
+        Icon: Gemini.Color,
+    },
     'gemini-3-pro-high': {
         label: 'Gemini 3 Pro High',
         shortLabel: 'G3 Pro',
@@ -112,6 +124,12 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
     },
 
     // Claude 系列
+    'claude-sonnet-4-6-thinking': {
+        label: 'Claude 4.6 TK',
+        shortLabel: 'Claude 4.6 TK',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+    },
     'claude-sonnet-4-5': {
         label: 'Claude 4.5',
         shortLabel: 'Claude 4.5',

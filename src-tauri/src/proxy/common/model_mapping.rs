@@ -6,6 +6,7 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     let mut m = HashMap::new();
 
     // 直接支持的模型
+    m.insert("claude-sonnet-4-6-thinking", "claude-sonnet-4-6-thinking");
     m.insert("claude-sonnet-4-5", "claude-sonnet-4-5");
     m.insert("claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking");
 
@@ -56,6 +57,8 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gemini-3-pro", "gemini-3-pro-preview");  // 统一映射到 preview
     m.insert("gemini-2.5-flash", "gemini-2.5-flash");
     m.insert("gemini-3-flash", "gemini-3-flash");
+    m.insert("gemini-3.1-pro-high", "gemini-3.1-pro-preview");
+    m.insert("gemini-3.1-pro-low", "gemini-3.1-pro-preview");
     m.insert("gemini-3-pro-image", "gemini-3-pro-image");
 
     // [New] Unified Virtual ID for Background Tasks (Title, Summary, etc.)
@@ -156,6 +159,8 @@ pub async fn get_all_dynamic_models(
     model_ids.insert("gemini-2.5-flash".to_string());
     // gemini-2.5-pro removed 
     model_ids.insert("gemini-3-flash".to_string());
+    model_ids.insert("gemini-3.1-pro-high".to_string());
+    model_ids.insert("gemini-3.1-pro-low".to_string());
     model_ids.insert("gemini-3-pro-high".to_string());
     model_ids.insert("gemini-3-pro-low".to_string());
 
