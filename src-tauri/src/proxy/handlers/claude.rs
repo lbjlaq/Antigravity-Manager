@@ -35,6 +35,93 @@ struct ThinkingHint {
     level: Option<String>,
 }
 
+fn extract_budget_from_value(value: &Value) -> Option<u32> {
+    let budget = value
+        .get("thinking")
+        .and_then(|t| t.get("budget_tokens"))
+        .and_then(|b| b.as_u64())
+        .or_else(|| {
+            value
+                .get("thinking")
+                .and_then(|t| t.get("budgetTokens"))
+                .and_then(|b| b.as_u64())
+        })
+        .or_else(|| {
+            value
+                .get("thinking")
+                .and_then(|t| t.get("budget"))
+                .and_then(|b| b.as_u64())
+        })
+        .or_else(|| {
+            value
+                .get("thinkingConfig")
+                .and_then(|t| t.get("thinkingBudget"))
+                .and_then(|b| b.as_u64())
+        })
+        .or_else(|| value.get("thinkingBudget").and_then(|b| b.as_u64()));
+
+    budget.and_then(|b| u32::try_from(b).ok())
+}
+
+fn extract_level_from_value(value: &Value) -> Option<String> {
+    value
+        .get("thinkingLevel")
+        .and_then(|l| l.as_str())
+        .or_else(|| {
+            value
+                .get("thinking")
+                .and_then(|t| t.get("level"))
+                .and_then(|l| l.as_str())
+        })
+        .or_else(|| value.get("level").and_then(|l| l.as_str()))
+        .map(|level| level.to_lowercase())
+}
+
+fn extract_hint_from_provider_options(body: &Value) -> ThinkingHint {
+    let mut hint = ThinkingHint {
+        budget_tokens: None,
+        level: None,
+    };
+
+    let Some(provider_options) = body.get("providerOptions").and_then(|v| v.as_object()) else {
+        return hint;
+    };
+
+    // Prefer known keys first, then scan all remaining provider options.
+    let preferred_keys = ["anthropic", "antigravity-manager", "google"];
+
+    for key in preferred_keys {
+        if let Some(value) = provider_options.get(key) {
+            if hint.budget_tokens.is_none() {
+                hint.budget_tokens = extract_budget_from_value(value);
+            }
+            if hint.level.is_none() {
+                hint.level = extract_level_from_value(value);
+            }
+            if hint.budget_tokens.is_some() && hint.level.is_some() {
+                return hint;
+            }
+        }
+    }
+
+    for (key, value) in provider_options {
+        if preferred_keys.contains(&key.as_str()) {
+            continue;
+        }
+        if hint.budget_tokens.is_none() {
+            hint.budget_tokens = extract_budget_from_value(value);
+        }
+        if hint.level.is_none() {
+            hint.level = extract_level_from_value(value);
+        }
+        if hint.budget_tokens.is_some() && hint.level.is_some() {
+            break;
+        }
+    }
+
+    hint
+}
+
 /// Extract thinking hints from raw request JSON (OpenCode variants compatibility)
 /// Checks multiple possible paths for budget and level configuration
 fn extract_thinking_hint(body: &Value) -> ThinkingHint {
@@ -43,40 +130,107 @@ fn extract_thinking_hint(body: &Value) -> ThinkingHint {
         level: None,
     };
 
-    // Try to extract budget_tokens from various paths
-    // Priority: thinking.budget_tokens > thinking.budgetTokens > thinking.budget > thinkingConfig.thinkingBudget
-    if let Some(budget) = body
-        .get("thinking")
-        .and_then(|t| t.get("budget_tokens"))
-        .and_then(|b| b.as_u64())
-    {
-        hint.budget_tokens = Some(budget as u32);
-    } else if let Some(budget) = body
-        .get("thinking")
-        .and_then(|t| t.get("budgetTokens"))
-        .and_then(|b| b.as_u64())
-    {
-        hint.budget_tokens = Some(budget as u32);
-    } else if let Some(budget) = body
-        .get("thinking")
-        .and_then(|t| t.get("budget"))
-        .and_then(|b| b.as_u64())
-    {
-        hint.budget_tokens = Some(budget as u32);
-    } else if let Some(budget) = body
-        .get("thinkingConfig")
-        .and_then(|t| t.get("thinkingBudget"))
-        .and_then(|b| b.as_u64())
-    {
-        hint.budget_tokens = Some(budget as u32);
-    }
+    // Root-level values have highest priority.
+    hint.budget_tokens = extract_budget_from_value(body);
+    hint.level = extract_level_from_value(body);
 
-    // Try to extract level from thinkingLevel
-    if let Some(level) = body.get("thinkingLevel").and_then(|l| l.as_str()) {
-        hint.level = Some(level.to_lowercase());
+    // OpenCode often sends variant config under providerOptions.<sdk-key>.
+    if hint.budget_tokens.is_none() || hint.level.is_none() {
+        let provider_hint = extract_hint_from_provider_options(body);
+        if hint.budget_tokens.is_none() {
+            hint.budget_tokens = provider_hint.budget_tokens;
+        }
+        if hint.level.is_none() {
+            hint.level = provider_hint.level;
+        }
     }
 
     hint
+}
+
+#[cfg(test)]
+mod thinking_hint_tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_thinking_hint_from_root_thinking_budget() {
+        let body = serde_json::json!({
+            "thinking": {
+                "budget_tokens": 24576
+            }
+        });
+
+        let hint = extract_thinking_hint(&body);
+        assert_eq!(hint.budget_tokens, Some(24576));
+    }
+
+    #[test]
+    fn test_extract_thinking_hint_from_provider_options_anthropic() {
+        let body = serde_json::json!({
+            "providerOptions": {
+                "anthropic": {
+                    "thinking": {
+                        "budgetTokens": 16384
+                    }
+                }
+            }
+        });
+
+        let hint = extract_thinking_hint(&body);
+        assert_eq!(hint.budget_tokens, Some(16384));
+    }
+
+    #[test]
+    fn test_extract_thinking_hint_from_provider_options_antigravity_manager() {
+        let body = serde_json::json!({
+            "providerOptions": {
+                "antigravity-manager": {
+                    "thinkingConfig": {
+                        "thinkingBudget": 12288
+                    }
+                }
+            }
+        });
+
+        let hint = extract_thinking_hint(&body);
+        assert_eq!(hint.budget_tokens, Some(12288));
+    }
+
+    #[test]
+    fn test_extract_thinking_hint_level_from_provider_options() {
+        let body = serde_json::json!({
+            "providerOptions": {
+                "anthropic": {
+                    "thinkingLevel": "High"
+                }
+            }
+        });
+
+        let hint = extract_thinking_hint(&body);
+        assert_eq!(hint.level, Some("high".to_string()));
+    }
+
+    #[test]
+    fn test_extract_thinking_hint_prefers_root_over_provider_options() {
+        let body = serde_json::json!({
+            "thinking": {
+                "budget_tokens": 8192
+            },
+            "providerOptions": {
+                "anthropic": {
+                    "thinking": {
+                        "budgetTokens": 32768
+                    },
+                    "thinkingLevel": "high"
+                }
+            },
+            "thinkingLevel": "low"
+        });
+
+        let hint = extract_thinking_hint(&body);
+        assert_eq!(hint.budget_tokens, Some(8192));
+        assert_eq!(hint.level, Some("low".to_string()));
+    }
 }
 
 /// Map thinking level to suggested budget tokens
