@@ -110,7 +110,7 @@ where
                                         } else {
                                             raw_index
                                         };
-                                        
+
                                         let entry = tool_calls_map.entry(index).or_insert_with(|| {
                                             (String::new(), String::from("function"), String::new(), Vec::new())
                                         });
