@@ -876,8 +876,8 @@
             "route_to": "路由目標",
             "group_title": "模型家族分組 (Series Groups)",
             "gemini3_group_label": "Gemini 3 (推薦)",
-            "gemini3_option_high": "gemini-3-pro-high (高品質)",
-            "gemini3_option_low": "gemini-3-pro-low (均衡)",
+            "gemini3_option_high": "gemini-3.1-pro-high (高品質)",
+            "gemini3_option_low": "gemini-3.1-pro-low (均衡)",
             "gemini3_option_flash": "gemini-3-flash (快速)",
             "groups": {
                 "claude_45": {

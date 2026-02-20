@@ -90,6 +90,7 @@ pub fn resolve_request_config(
         || mapped_model.starts_with("gemini-2.5-flash-")
         || mapped_model.starts_with("gemini-2.0-flash")
         || mapped_model.starts_with("gemini-3-")
+        || mapped_model.starts_with("gemini-3.")
         || mapped_model.contains("claude-3-5-sonnet")
         || mapped_model.contains("claude-3-opus")
         || mapped_model.contains("claude-sonnet")
@@ -108,7 +109,8 @@ pub fn resolve_request_config(
 
     // [FIX] Map logic aliases back to physical model names for upstream compatibility
     final_model = match final_model.as_str() {
-        "gemini-3-pro-preview" => "gemini-3-pro-high".to_string(), // Preview maps back to High
+        "gemini-3-pro-preview" => "gemini-3.1-pro-high".to_string(), // 3.0 preview redirects to 3.1 High
+        "gemini-3.1-pro-preview" => "gemini-3.1-pro-high".to_string(),
         "gemini-3-pro-image-preview" => "gemini-3-pro-image".to_string(),
         "gemini-3-flash-preview" => "gemini-3-flash".to_string(),
         _ => final_model,

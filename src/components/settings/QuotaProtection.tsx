@@ -42,7 +42,7 @@ const QuotaProtection = ({ config, onChange }: QuotaProtectionProps) => {
 
     const monitoredModelsOptions = [
         { id: 'gemini-3-flash', label: 'Gemini 3 Flash' },
-        { id: 'gemini-3-pro-high', label: 'Gemini 3 Pro High' },
+        { id: 'gemini-3-pro-high', label: 'Gemini 3.1 Pro High' },
         { id: 'claude-opus-4-6-thinking', label: 'Claude 4.6 TK' },
         { id: 'gemini-3-pro-image', label: 'Gemini 3 Pro Image' }
     ];

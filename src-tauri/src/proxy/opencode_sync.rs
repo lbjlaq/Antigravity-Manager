@@ -91,10 +91,10 @@ fn build_model_catalog() -> Vec<ModelDef> {
             reasoning: true,
             variant_type: Some(VariantType::ClaudeThinking),
         },
-        // Gemini 3 Pro models
+        // Gemini 3.1 Pro models
         ModelDef {
-            id: "gemini-3-pro-high",
-            name: "Gemini 3 Pro High",
+            id: "gemini-3.1-pro-high",
+            name: "Gemini 3.1 Pro High",
             context_limit: 1_048_576,
             output_limit: 65_535,
             input_modalities: &["text", "image", "pdf"],
@@ -103,8 +103,8 @@ fn build_model_catalog() -> Vec<ModelDef> {
             variant_type: Some(VariantType::Gemini3Pro),
         },
         ModelDef {
-            id: "gemini-3-pro-low",
-            name: "Gemini 3 Pro Low",
+            id: "gemini-3.1-pro-low",
+            name: "Gemini 3.1 Pro Low",
             context_limit: 1_048_576,
             output_limit: 65_535,
             input_modalities: &["text", "image", "pdf"],
@@ -1355,7 +1355,7 @@ mod tests {
 
         // Should have all catalog models
         assert!(models.contains_key("claude-sonnet-4-5"), "should have claude-sonnet-4-5");
-        assert!(models.contains_key("gemini-3-pro-high"), "should have gemini-3-pro-high");
+        assert!(models.contains_key("gemini-3.1-pro-high"), "should have gemini-3.1-pro-high");
         assert!(models.contains_key("gemini-2.5-pro"), "should have gemini-2.5-pro");
 
         // Check model structure
@@ -1368,7 +1368,7 @@ mod tests {
     #[test]
     fn test_sync_with_filtered_models() {
         let config = serde_json::json!({});
-        let models_to_sync = &["claude-sonnet-4-5", "gemini-3-pro-high"];
+        let models_to_sync = &["claude-sonnet-4-5", "gemini-3.1-pro-high"];
 
         let result = apply_sync_to_config(config, "http://localhost:3000", "test-api-key", Some(models_to_sync));
 
@@ -1377,7 +1377,7 @@ mod tests {
         let models = ag.get("models").unwrap().as_object().unwrap();
 
         assert!(models.contains_key("claude-sonnet-4-5"));
-        assert!(models.contains_key("gemini-3-pro-high"));
+        assert!(models.contains_key("gemini-3.1-pro-high"));
         assert!(!models.contains_key("gemini-2.5-pro"), "should not have unselected models");
     }
 
@@ -1611,6 +1611,8 @@ const ANTIGRAVITY_MODEL_IDS: &[&str] = &[
     "claude-sonnet-4-5",
     "claude-sonnet-4-5-thinking",
     "claude-opus-4-5-thinking",
+    "gemini-3.1-pro-high",
+    "gemini-3.1-pro-low",
     "gemini-3-pro-high",
     "gemini-3-pro-low",
     "gemini-3-flash",

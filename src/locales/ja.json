@@ -968,8 +968,8 @@
       "custom_mappings": "カスタムマッピング",
       "group_title": "シリーズグループ",
       "gemini3_group_label": "Gemini 3 (推奨)",
-      "gemini3_option_high": "gemini-3-pro-high (高品質)",
-      "gemini3_option_low": "gemini-3-pro-low (バランス)",
+      "gemini3_option_high": "gemini-3.1-pro-high (高品質)",
+      "gemini3_option_low": "gemini-3.1-pro-low (バランス)",
       "gemini3_option_flash": "gemini-3-flash (高速)",
       "groups": {
         "claude_45": {

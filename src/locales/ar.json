@@ -848,8 +848,8 @@
             "custom_mappings": "تعيينات مخصصة",
             "group_title": "مجموعات السلاسل",
             "gemini3_group_label": "Gemini 3 (موصى به)",
-            "gemini3_option_high": "gemini-3-pro-high (جودة عالية)",
-            "gemini3_option_low": "gemini-3-pro-low (متوازن)",
+            "gemini3_option_high": "gemini-3.1-pro-high (جودة عالية)",
+            "gemini3_option_low": "gemini-3.1-pro-low (متوازن)",
             "gemini3_option_flash": "gemini-3-flash (سريع)",
             "groups": {
                 "claude_45": {

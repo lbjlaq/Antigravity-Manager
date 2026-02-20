@@ -819,8 +819,8 @@
             "custom_mappings": "Özel Eşlemeler",
             "group_title": "Seri Grupları",
             "gemini3_group_label": "Gemini 3 (Önerilen)",
-            "gemini3_option_high": "gemini-3-pro-high (Yüksek Kalite)",
-            "gemini3_option_low": "gemini-3-pro-low (Dengeli)",
+            "gemini3_option_high": "gemini-3.1-pro-high (Yüksek Kalite)",
+            "gemini3_option_low": "gemini-3.1-pro-low (Dengeli)",
             "gemini3_option_flash": "gemini-3-flash (Hızlı)",
             "groups": {
                 "claude_45": {

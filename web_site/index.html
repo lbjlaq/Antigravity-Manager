@@ -316,7 +316,7 @@ client = openai.OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gemini-3-pro-high",
+    model="gemini-3.1-pro-high",
     messages=[{"role": "user", "content": "Hello, Antigravity!"}]
 )
 print(response.choices[0].message.content)</code></pre>
@@ -338,7 +338,7 @@ print(response.choices[0].message.content)</code></pre>
       "base_url": "http://127.0.0.1:8045/v1",
       "models": [
         "claude-sonnet-4-5-thinking",
-        "gemini-3-pro-high"
+        "gemini-3.1-pro-high"
       ]
     }
   }

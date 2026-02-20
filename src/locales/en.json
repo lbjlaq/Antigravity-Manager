@@ -983,8 +983,8 @@
             "custom_mappings": "Custom Mappings",
             "group_title": "Series Groups",
             "gemini3_group_label": "Gemini 3 (Recommended)",
-            "gemini3_option_high": "gemini-3-pro-high (High Quality)",
-            "gemini3_option_low": "gemini-3-pro-low (Balanced)",
+            "gemini3_option_high": "gemini-3.1-pro-high (High Quality)",
+            "gemini3_option_low": "gemini-3.1-pro-low (Balanced)",
             "gemini3_option_flash": "gemini-3-flash (Fast)",
             "groups": {
                 "claude_45": {

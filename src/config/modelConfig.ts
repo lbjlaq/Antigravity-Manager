@@ -20,9 +20,17 @@ export interface ModelConfig {
  */
 export const MODEL_CONFIG: Record<string, ModelConfig> = {
     // Gemini 3.x 系列
+    // [Migrate] Gemini 3 Pro High/Low -> Gemini 3.1 Pro High/Low
+    'gemini-3.1-pro-high': {
+        label: 'Gemini 3.1 Pro High',
+        shortLabel: 'G3.1 Pro',
+        protectedKey: 'gemini-pro',
+        Icon: Gemini.Color,
+    },
+    // Backward-compatible alias
     'gemini-3-pro-high': {
-        label: 'Gemini 3 Pro High',
-        shortLabel: 'G3 Pro',
+        label: 'Gemini 3.1 Pro High',
+        shortLabel: 'G3.1 Pro',
         protectedKey: 'gemini-pro',
         Icon: Gemini.Color,
     },
@@ -38,9 +46,16 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         protectedKey: 'gemini-3-pro-image',
         Icon: Gemini.Color,
     },
+    'gemini-3.1-pro-low': {
+        label: 'Gemini 3.1 Pro Low',
+        shortLabel: 'G3.1 Low',
+        protectedKey: 'gemini-pro',
+        Icon: Gemini.Color,
+    },
+    // Backward-compatible alias
     'gemini-3-pro-low': {
-        label: 'Gemini 3 Pro Low',
-        shortLabel: 'G3 Low',
+        label: 'Gemini 3.1 Pro Low',
+        shortLabel: 'G3.1 Low',
         protectedKey: 'gemini-pro',
         Icon: Gemini.Color,
     },
@@ -191,4 +206,3 @@ export function sortModels<T extends { id: string }>(models: T[]): T[] {
         return a.id.localeCompare(b.id);
     });
 }
-

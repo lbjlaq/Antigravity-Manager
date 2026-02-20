@@ -113,7 +113,8 @@ pub fn wrap_request(
         let is_preview = lower_model.contains("preview");
         let should_inject = lower_model.contains("thinking")
             || (lower_model.contains("gemini-2.0-pro") && !is_preview)
-            || (lower_model.contains("gemini-3-pro") && !is_preview);
+            || (lower_model.contains("gemini-3-pro") && !is_preview)
+            || (lower_model.contains("gemini-3.1-pro") && !is_preview);
 
         if should_inject {
             // Scope for borrowing inner_request/gen_config
@@ -904,4 +905,3 @@ mod tests {
         assert_eq!(image_config_2["aspectRatio"], "1:1");
         assert_eq!(image_config_2["imageSize"], "1K");
     }
-
