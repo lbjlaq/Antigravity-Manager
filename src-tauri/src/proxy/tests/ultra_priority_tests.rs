@@ -82,7 +82,7 @@ fn test_is_ultra_required_model() {
     assert!(is_ultra_required_model("models/claude-opus-4-6"));
 
     // 应该识别为普通模型
-    assert!(!is_ultra_required_model("claude-sonnet-4-5"));
+    assert!(!is_ultra_required_model("claude-sonnet-4-6"));
     assert!(!is_ultra_required_model("claude-sonnet"));
     assert!(!is_ultra_required_model("gemini-1.5-flash"));
     assert!(!is_ultra_required_model("gemini-2.0-pro"));
@@ -137,9 +137,9 @@ fn filter_tokens_by_capability(tokens: Vec<ProxyToken>, target_model: &str) -> V
 fn test_ultra_priority_for_high_end_models() {
     // 创建测试账号：Ultra 低配额 vs Pro 高配额
     // Ultra 账号支持 Opus 4.6
-    let ultra_low_quota = create_test_token("ultra@test.com", Some("ULTRA"), 1.0, None, Some(20), vec!["claude-opus-4-6", "claude-sonnet-4-5"]);
+    let ultra_low_quota = create_test_token("ultra@test.com", Some("ULTRA"), 1.0, None, Some(20), vec!["claude-opus-4-6", "claude-sonnet-4-6"]);
     // Pro 账号不支持 Opus 4.6 (假设)
-    let pro_high_quota = create_test_token("pro@test.com", Some("PRO"), 1.0, None, Some(80), vec!["claude-sonnet-4-5"]);
+    let pro_high_quota = create_test_token("pro@test.com", Some("PRO"), 1.0, None, Some(80), vec!["claude-sonnet-4-6"]);
 
     // 1. 验证过滤逻辑
     let tokens = vec![ultra_low_quota.clone(), pro_high_quota.clone()];
@@ -150,7 +150,7 @@ fn test_ultra_priority_for_high_end_models() {
     // 2. 验证排序逻辑 (针对 Sonnet，两者都支持)
     // 即使 Pro 配额更高，由于新策略是 "Ultra First"，Ultra 仍然排在前面
     assert_eq!(
-        compare_tokens_for_model(&ultra_low_quota, &pro_high_quota, "claude-sonnet-4-5"),
+        compare_tokens_for_model(&ultra_low_quota, &pro_high_quota, "claude-sonnet-4-6"),
         Ordering::Less, // Ultra 排在前面
         "Sonnet should now prefer Ultra account over Pro (Strict Tier Policy)"
     );
@@ -203,7 +203,7 @@ fn test_full_sorting_mixed_accounts() {
     }
 
     // 创建混合账号池 (全部支持所有模型，简化测试)
-    let supported = vec!["claude-opus-4-6", "claude-sonnet-4-5"];
+    let supported = vec!["claude-opus-4-6", "claude-sonnet-4-6"];
     let ultra_high = create_test_token("ultra_high@test.com", Some("ULTRA"), 1.0, None, Some(80), supported.clone());
     let ultra_low = create_test_token("ultra_low@test.com", Some("ULTRA"), 1.0, None, Some(20), supported.clone());
     let pro_high = create_test_token("pro_high@test.com", Some("PRO"), 1.0, None, Some(90), supported.clone());
@@ -224,7 +224,7 @@ fn test_full_sorting_mixed_accounts() {
 
     // 普通模型 (Sonnet) 排序
     let mut tokens_sonnet = vec![pro_high.clone(), free.clone(), ultra_low.clone(), pro_low.clone(), ultra_high.clone()];
-    sort_tokens_for_model(&mut tokens_sonnet, "claude-sonnet-4-5");
+    sort_tokens_for_model(&mut tokens_sonnet, "claude-sonnet-4-6");
 
     let emails_sonnet: Vec<&str> = tokens_sonnet.iter().map(|t| t.email.as_str()).collect();
     // 期望顺序: Ultra > Pro > Free (严格层级)

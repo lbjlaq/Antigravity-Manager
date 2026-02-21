@@ -56,7 +56,7 @@
 
 ### 3.1 Claude Thinking Models
 ```bash
-opencode run "test" --model antigravity-manager/claude-sonnet-4-5-thinking --variant high
+opencode run "test" --model antigravity-manager/claude-sonnet-4-6-thinking --variant high
 ```
 - [ ] `--variant low` → `thinkingBudget: 8192`
 - [ ] `--variant medium` → `thinkingBudget: 16384`
@@ -89,7 +89,7 @@ opencode run "test" --model antigravity-manager/gemini-3-pro-high --variant low
 ### 4.1 Plugin Model Unaffected
 ```bash
 # If opencode-antigravity-auth plugin installed
-opencode run "test" --model google/antigravity-claude-sonnet-4-5-thinking --variant max
+opencode run "test" --model google/antigravity-claude-sonnet-4-6-thinking --variant max
 ```
 - [ ] Plugin provider works independently
 - [ ] Manager sync does not interfere with plugin accounts

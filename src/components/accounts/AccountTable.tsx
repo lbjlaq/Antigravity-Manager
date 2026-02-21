@@ -41,6 +41,7 @@ import {
     Tag,
     X,
     Check,
+    Clock,
 } from 'lucide-react';
 import { Account } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -130,6 +131,9 @@ const MODEL_GROUPS = {
         'claude'
     ],
     GEMINI_PRO: [
+        'gemini-3.1-pro-high',
+        'gemini-3.1-pro-low',
+        'gemini-3.1-pro-preview',
         'gemini-3-pro-high',
         'gemini-3-pro-low',
         'gemini-3-pro-preview'
@@ -138,6 +142,19 @@ const MODEL_GROUPS = {
         'gemini-3-flash'
     ]
 };
+
+const MODEL_ID_ALIASES: Record<string, string[]> = {
+    'gemini-3-pro-high': ['gemini-3-pro-high', 'gemini-3.1-pro-high'],
+    'gemini-3-pro-low': ['gemini-3-pro-low', 'gemini-3.1-pro-low'],
+    'gemini-3-pro-preview': ['gemini-3-pro-preview', 'gemini-3.1-pro-preview'],
+    'gemini-3.1-pro-high': ['gemini-3.1-pro-high', 'gemini-3-pro-high'],
+    'gemini-3.1-pro-low': ['gemini-3.1-pro-low', 'gemini-3-pro-low'],
+    'gemini-3.1-pro-preview': ['gemini-3.1-pro-preview', 'gemini-3-pro-preview'],
+};
+
+function getModelAliases(modelId: string): string[] {
+    return MODEL_ID_ALIASES[modelId] || [modelId];
+}
 
 function isModelProtected(protectedModels: string[] | undefined, modelName: string): boolean {
     if (!protectedModels || protectedModels.length === 0) return false;
@@ -323,28 +340,53 @@ function AccountRowContent({
     const pinnedModels = config?.pinned_quota_models?.models || Object.keys(MODEL_CONFIG);
 
     // 根据 show_all 状态决定显示哪些模型
+    const uniqueLabels = new Set<string>();
     const displayModels = sortModels(
         (showAllQuotas
             ? (account.quota?.models || []).map(m => {
                 const config = MODEL_CONFIG[m.name.toLowerCase()];
+                const label = config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || m.name);
                 return {
                     id: m.name.toLowerCase(),
-                    label: config?.shortLabel || config?.label || m.name,
+                    label: label,
                     protectedKey: config?.protectedKey || m.name.toLowerCase(),
                     data: m
                 };
             })
             : pinnedModels.filter(modelId => MODEL_CONFIG[modelId]).map(modelId => {
                 const config = MODEL_CONFIG[modelId];
+                const aliases = getModelAliases(modelId);
+                const label = config.i18nKey ? t(config.i18nKey) : (config.shortLabel || config.label);
                 return {
                     id: modelId,
-                    label: config.shortLabel || config.label,
+                    label: label,
                     protectedKey: config.protectedKey,
-                    data: account.quota?.models.find(m => m.name.toLowerCase() === modelId)
+                    data: account.quota?.models.find(m => aliases.includes(m.name.toLowerCase()))
                 };
             })
-        ).filter(m => m.id !== 'claude-sonnet-4-5-thinking' && m.id !== 'claude-opus-4-5-thinking')
-    );
+        ).filter(m => {
+            // 过滤特定的 Claude/Gemini 思考变体 (在列表页隐藏)
+            const isHiddenThinking = m.id.includes('thinking');
+
+            if (isHiddenThinking) return false;
+
+            // 基于标签去重 (例如 G3.1 Pro 只显示一次)
+            // 优先显示有配额数据的 ID
+            const labelKey = `${m.label}-${m.protectedKey}`;
+            if (uniqueLabels.has(labelKey)) {
+                return false;
+            }
+            if (m.data) {
+                uniqueLabels.add(labelKey);
+                return true;
+            }
+            return true;
+        })
+    ).filter((m, index, self) => {
+        // 第二次过滤：确保即使没有数据的重复 Label 也只保留一个
+        const labelKey = `${m.label}-${m.protectedKey}`;
+        return self.findIndex(t => `${t.label}-${t.protectedKey}` === labelKey) === index;
+    });
 
 
     return (
@@ -387,6 +429,12 @@ function AccountRowContent({
                             <span className="px-2 py-0.5 rounded-md bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-red-200/50">
                                 <Lock className="w-2.5 h-2.5" />
                                 <span>{t('accounts.forbidden')}</span>
+                            </span>
+                        )}
+                        {account.validation_blocked && (
+                            <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-400 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-amber-200/50">
+                                <Clock className="w-2.5 h-2.5" />
+                                <span>{t('accounts.status.validation_required')}</span>
                             </span>
                         )}
 
@@ -459,15 +507,27 @@ function AccountRowContent({
 
             {/* 模型配额列 */}
             <td className="px-2 py-1 align-middle">
-                {isDisabled || account.quota?.is_forbidden ? (
-                    <div className="flex items-center justify-center gap-3 bg-red-50/50 dark:bg-red-900/10 py-1.5 px-4 rounded-xl border border-red-100/50 dark:border-red-900/20 group/error">
-                        <div className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                            {account.quota?.is_forbidden ? <Lock className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
-                            <span className="text-[11px] font-bold text-red-700/80 dark:text-red-400">
-                                {isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg')}
+                {isDisabled || account.quota?.is_forbidden || account.validation_blocked ? (
+                    <div className={cn(
+                        "flex items-center justify-center gap-3 py-1.5 px-4 rounded-xl border group/error",
+                        account.validation_blocked ? "bg-amber-50/50 dark:bg-amber-900/10 border-amber-100/50 dark:border-amber-900/20" : "bg-red-50/50 dark:bg-red-900/10 border-red-100/50 dark:border-red-900/20"
+                    )}>
+                        <div className={cn(
+                            "flex items-center gap-1.5",
+                            account.validation_blocked ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
+                        )}>
+                            {account.validation_blocked ? <Clock className="w-3.5 h-3.5" /> : (account.quota?.is_forbidden ? <Lock className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />)}
+                            <span className={cn(
+                                "text-[11px] font-bold",
+                                account.validation_blocked ? "text-amber-700/80 dark:text-amber-400" : "text-red-700/80 dark:text-red-400"
+                            )}>
+                                {account.validation_blocked ? t('accounts.status.validation_required') : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg'))}
                             </span>
                         </div>
-                        <div className="w-px h-3 bg-red-200 dark:bg-red-800/50" />
+                        <div className={cn(
+                            "w-px h-3",
+                            account.validation_blocked ? "bg-amber-200 dark:bg-amber-800/50" : "bg-red-200 dark:bg-red-800/50"
+                        )} />
                         <button
                             onClick={(e) => { e.stopPropagation(); onViewError(); }}
                             className="text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5"

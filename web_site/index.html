@@ -139,7 +139,7 @@
         <div class="max-w-5xl text-center z-10 fade-in-up">
             <div
                 class="inline-block px-4 py-1.5 mb-6 rounded-full glass border border-emerald-500/30 text-emerald-400 text-xs font-bold uppercase tracking-widest">
-                v4.1.21 Available Now
+                v4.1.22 Available Now
             </div>
             <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 uppercase tracking-tighter leading-none"
                 data-i18n="heroSlogan">
@@ -316,7 +316,7 @@ client = openai.OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gemini-3-pro-high",
+    model="gemini-3.1-pro-high",
     messages=[{"role": "user", "content": "Hello, Antigravity!"}]
 )
 print(response.choices[0].message.content)</code></pre>
@@ -337,8 +337,8 @@ print(response.choices[0].message.content)</code></pre>
       "api_key": "sk-antigravity",
       "base_url": "http://127.0.0.1:8045/v1",
       "models": [
-        "claude-sonnet-4-5-thinking",
-        "gemini-3-pro-high"
+        "claude-sonnet-4-6-thinking",
+        "gemini-3.1-pro-high"
       ]
     }
   }
@@ -358,7 +358,7 @@ print(response.choices[0].message.content)</code></pre>
             <a href="https://github.com/lbjlaq/Antigravity-Manager"
                 class="hover:text-emerald-500 transition-colors">GitHub</a>
             <a href="qa.html" class="hover:text-emerald-500 transition-colors" data-i18n="navFaq">常见问题</a>
-            <a href="#" class="hover:text-emerald-500 transition-colors">v4.1.21</a>
+            <a href="#" class="hover:text-emerald-500 transition-colors">v4.1.22</a>
         </div>
     </footer>
 

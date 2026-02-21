@@ -1238,8 +1238,10 @@ pub async fn handle_messages(
             if request_for_body.model.contains("claude-") {
                 let mut m = request_for_body.model.clone();
                 m = m.replace("-thinking", "");
-                if m.contains("claude-sonnet-4-5-") {
-                    m = "claude-sonnet-4-5".to_string();
+                if m.contains("claude-sonnet-4-6-") {
+                    m = "claude-sonnet-4-6".to_string();
+                } else if m.contains("claude-sonnet-4-5-") {
+                    m = "claude-sonnet-4-6".to_string();
                 } else if m.contains("claude-opus-4-6-") {
                     m = "claude-opus-4-6".to_string();
                 } else if m.contains("claude-opus-4-5-") || m.contains("claude-opus-4-") {

@@ -1,6 +1,7 @@
 import { Pin, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PinnedQuotaModelsConfig } from '../../types/config';
+import { MODEL_CONFIG } from '../../config/modelConfig';
 
 interface PinnedQuotaModelsProps {
     config: PinnedQuotaModelsConfig;
@@ -25,12 +26,22 @@ const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
         onChange({ ...config, models: newModels });
     };
 
-    const modelOptions = [
-        { id: 'gemini-3-pro-high', label: 'G3 Pro', desc: 'Gemini 3 Pro High' },
-        { id: 'gemini-3-flash', label: 'G3 Flash', desc: 'Gemini 3 Flash' },
-        { id: 'gemini-3-pro-image', label: 'G3 Image', desc: 'Gemini 3 Pro Image' },
-        { id: 'claude-opus-4-6-thinking', label: 'Claude 4.6 TK', desc: 'Claude 4.6 Opus Thinking' }
-    ];
+    const uniqueLabels = new Set<string>();
+    const modelOptions = Object.entries(MODEL_CONFIG)
+        .filter(([id, cfg]) => {
+            // 隐藏思考变体
+            if (id.includes('thinking')) return false;
+
+            const label = cfg.shortLabel || cfg.label;
+            if (uniqueLabels.has(label)) return false;
+            uniqueLabels.add(label);
+            return true;
+        })
+        .map(([id, cfg]) => ({
+            id,
+            label: cfg.shortLabel || cfg.label,
+            desc: t(cfg.i18nDescKey || cfg.i18nKey, cfg.label)
+        }));
 
     return (
         <div className="animate-in fade-in duration-500">

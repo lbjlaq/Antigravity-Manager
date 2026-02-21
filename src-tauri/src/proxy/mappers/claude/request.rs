@@ -462,7 +462,8 @@ pub fn transform_claude_request_in(
     let target_model_supports_thinking = mapped_model.contains("-thinking")
         || mapped_model.starts_with("claude-")
         || mapped_model.contains("gemini-2.0-pro")
-        || mapped_model.contains("gemini-3-pro");
+        || mapped_model.contains("gemini-3-pro")
+        || mapped_model.contains("gemini-3.1-pro");
 
     if is_thinking_enabled && !target_model_supports_thinking {
         tracing::warn!(
@@ -687,7 +688,10 @@ fn should_enable_thinking_by_default(model: &str) -> bool {
     // [FIX #1557] Enable thinking by default for Gemini Pro models (gemini-3-pro, gemini-2.0-pro)
     // These models prioritize reasoning but clients might not send thinking config for them
     // unless they have "-thinking" suffix (which they don't in Antigravity mapping)
-    if model_lower.contains("gemini-2.0-pro") || model_lower.contains("gemini-3-pro") {
+    if model_lower.contains("gemini-2.0-pro")
+        || model_lower.contains("gemini-3-pro")
+        || model_lower.contains("gemini-3.1-pro")
+    {
         tracing::debug!(
             "[Thinking-Mode] Auto-enabling thinking for Gemini Pro model: {}",
             model
@@ -1787,7 +1791,14 @@ fn build_generation_config(
                 config["maxOutputTokens"] = json!(64000);
             }
         } else {
-            thinking_config["thinkingBudget"] = json!(budget);
+            // [FIX #2007] Opus 4.6 Thinking Alignment (OpenAI Protocol Recipe)
+            // Explicitly set fixed budget for Opus 4.6 to match successful OpenAI pattern
+            if mapped_model.to_lowercase().contains("claude-opus-4-6-thinking") {
+                tracing::debug!("[Opus-Alignment] Enforcing fixed thinkingBudget 24576 for Opus 4.6");
+                thinking_config["thinkingBudget"] = json!(24576);
+            } else {
+                thinking_config["thinkingBudget"] = json!(budget);
+            }
         }
         
         config["thinkingConfig"] = thinking_config;
@@ -1811,7 +1822,7 @@ fn build_generation_config(
     }*/
 
     // max_tokens 映射为 maxOutputTokens
-    // [FIX] 不再默认设置 81920，防止非思维模型 (如 claude-sonnet-4-5) 报 400 Invalid Argument
+    // [FIX] 不再默认设置 81920，防止非思维模型 (如 claude-sonnet-4-6) 报 400 Invalid Argument
     let mut final_max_tokens: Option<i64> = claude_req.max_tokens.map(|t| t as i64);
 
     // [NEW] 确保 maxOutputTokens 大于 thinkingBudget (API 强约束)
@@ -1826,6 +1837,13 @@ fn build_generation_config(
     let is_adaptive_effective = (req_adaptive || global_adaptive) && model_lower.contains("claude");
     // [FIX] Lower default overhead to keep total under 65536
     let final_overhead = if is_adaptive_effective { 64000 } else { 32768 };
+
+    // [FIX #2007] Opus 4.6 Thinking Alignment
+    // OpenAI logs show maxOutputTokens = 57344 (24576 + 32768)
+    if model_lower.contains("claude-opus-4-6-thinking") && is_thinking_enabled {
+        final_max_tokens = Some(57344);
+        tracing::debug!("[Opus-Alignment] Enforcing maxOutputTokens 57344 for Opus 4.6");
+    }
 
     if let Some(thinking_config) = config.get("thinkingConfig") {
         if let Some(budget) = thinking_config
@@ -1845,7 +1863,7 @@ fn build_generation_config(
         } else if is_adaptive_effective {
              // [FIX] Adaptive mode (no budget set in thinkingConfig), apply default maxOutputTokens
              if final_max_tokens.is_none() {
-                 final_max_tokens = Some(final_overhead as i64);
+                  final_max_tokens = Some(final_overhead as i64);
              }
         }
     } else {
@@ -1872,14 +1890,13 @@ fn build_generation_config(
     }
 
     // [优化] 设置全局停止序列,防止模型幻觉出对话标记
-    // 注意: 不包含 "[DONE]" 是因为:
-    //   1. "[DONE]" 是 SSE 协议的标准结束标记,在代码/文档中经常出现
-    //   2. 将其作为 stopSequence 会导致模型输出被意外截断 (如解释 SSE 协议时)
-    //   3. Gemini 流的真正结束由 finishReason 字段控制,无需依赖 stopSequence
-    //   4. SSE 层面的 "data: [DONE]" 已在 mod.rs 中单独处理
-    // [优化] 设置全局停止序列,防止模型幻觉出对话标记
-    // ...
-    config["stopSequences"] = json!(["<|user|>", "<|end_of_turn|>", "\n\nHuman:"]);
+    // [FIX #2007] Opus 4.6 Thinking Alignment
+    // Successful OpenAI logs show NO stop sequences were sent for Opus 4.6 Thinking.
+    if !(model_lower.contains("claude-opus-4-6-thinking") && is_thinking_enabled) {
+        config["stopSequences"] = json!(["<|user|>", "<|end_of_turn|>", "\n\nHuman:"]);
+    } else {
+        tracing::debug!("[Opus-Alignment] Skipping stopSequences for Opus 4.6 to match OpenAI protocol");
+    }
 
     config
 }
@@ -1997,7 +2014,7 @@ mod tests {
     #[test]
     fn test_simple_request() {
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: MessageContent::String("Hello".to_string()),
@@ -2138,7 +2155,7 @@ mod tests {
     fn test_cache_control_cleanup() {
         // 模拟 VS Code 插件发送的包含 cache_control 的历史消息
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             messages: vec![
                 Message {
                     role: "user".to_string(),
@@ -2200,7 +2217,7 @@ mod tests {
         // [场景] 历史消息中有一个工具调用链，且 Assistant 消息没有 Thinking 块
         // 期望: 系统自动降级，禁用 Thinking 模式，以避免 400 错误
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             messages: vec![
                 Message {
                     role: "user".to_string(),
@@ -2280,7 +2297,7 @@ mod tests {
     fn test_thinking_block_not_prepend_when_disabled() {
         // 验证当 thinking 未启用时,不会补全 thinking 块
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             messages: vec![
                 Message {
                     role: "user".to_string(),
@@ -2331,7 +2348,7 @@ mod tests {
         // [场景] 客户端发送了一个内容为空的 thinking 块
         // 期望: 自动填充 "..."
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             messages: vec![Message {
                 role: "assistant".to_string(),
                 content: MessageContent::Array(vec![
@@ -2385,7 +2402,7 @@ mod tests {
         // [场景] 客户端包含 RedactedThinking
         // 期望: 降级为普通文本，不带 thought: true
         let req = ClaudeRequest {
-            model: "claude-sonnet-4-5".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
             messages: vec![Message {
                 role: "assistant".to_string(),
                 content: MessageContent::Array(vec![

@@ -26,7 +26,12 @@ function CurrentAccount({ account, onSwitch }: CurrentAccountProps) {
     }
 
     const geminiProModel = account.quota?.models
-        .filter(m => m.name.toLowerCase() === 'gemini-3-pro-high' || m.name.toLowerCase() === 'gemini-3-pro-low')
+        .filter(m =>
+            m.name.toLowerCase() === 'gemini-3-pro-high'
+            || m.name.toLowerCase() === 'gemini-3-pro-low'
+            || m.name.toLowerCase() === 'gemini-3.1-pro-high'
+            || m.name.toLowerCase() === 'gemini-3.1-pro-low'
+        )
         .sort((a, b) => (a.percentage || 0) - (b.percentage || 0))[0];
 
     const geminiFlashModel = account.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-flash');
@@ -94,8 +99,8 @@ function CurrentAccount({ account, onSwitch }: CurrentAccountProps) {
                     <div className="space-y-1.5">
                         <div className="flex justify-between items-baseline">
                             <span className="text-xs font-medium text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                                {account.protected_models?.includes('gemini-3-pro-high') && <Lock className="w-2.5 h-2.5 text-rose-500" />}
-                                Gemini 3 Pro
+                                {(account.protected_models?.includes('gemini-3-pro-high') || account.protected_models?.includes('gemini-3.1-pro-high')) && <Lock className="w-2.5 h-2.5 text-rose-500" />}
+                                Gemini 3.1 Pro
                             </span>
                             <div className="flex items-center gap-2">
                                 <span className="text-[10px] text-gray-400 dark:text-gray-500" title={`${t('accounts.reset_time')}: ${new Date(geminiProModel.reset_time).toLocaleString()}`}>

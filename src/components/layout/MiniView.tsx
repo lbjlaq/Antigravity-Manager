@@ -70,7 +70,7 @@ export default function MiniView() {
                 }
             } else {
                 // Fallback for web mode if needed, or import from package.json
-                setAppVersion('4.1.21');
+                setAppVersion('4.1.22');
             }
         };
         fetchVersion();
@@ -136,7 +136,12 @@ export default function MiniView() {
 
     // Extract specific models to match AccountRow.tsx
     const geminiProModel = currentAccount?.quota?.models
-        .filter(m => m.name.toLowerCase() === 'gemini-3-pro-high' || m.name.toLowerCase() === 'gemini-3-pro-low')
+        .filter(m =>
+            m.name.toLowerCase() === 'gemini-3-pro-high'
+            || m.name.toLowerCase() === 'gemini-3-pro-low'
+            || m.name.toLowerCase() === 'gemini-3.1-pro-high'
+            || m.name.toLowerCase() === 'gemini-3.1-pro-low'
+        )
         .sort((a, b) => (a.percentage || 0) - (b.percentage || 0))[0];
 
     const geminiFlashModel = currentAccount?.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-flash');
@@ -271,7 +276,7 @@ export default function MiniView() {
                             {/* Models List */}
                             <AnimatePresence mode='popLayout'>
                                 <div className="space-y-4 !mt-0">
-                                    {renderModelRow(geminiProModel, 'Gemini 3 Pro', 'emerald')}
+                                    {renderModelRow(geminiProModel, 'Gemini 3.1 Pro', 'emerald')}
                                     {renderModelRow(geminiFlashModel, 'Gemini 3 Flash', 'emerald')}
                                     {renderModelRow(claudeModel, t('common.claude_series', 'Claude 系列'), 'cyan')}
 

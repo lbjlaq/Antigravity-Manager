@@ -2,7 +2,7 @@
 # Usage: irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps1 | iex
 #
 # Parameters (set before running):
-#   $Version = "4.1.21"  # Install specific version
+#   $Version = "4.1.22"  # Install specific version
 #   $DryRun = $true      # Preview commands without executing
 
 if (-not $Version) { $Version = "" }
@@ -85,12 +85,12 @@ function Get-ReleaseVersion {
     }
 
     Script-Error "Failed to determine latest version. Try specifying version manually:"
-    Write-Host '  $Version = "4.1.21"; irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps1 | iex' -ForegroundColor Yellow
+    Write-Host '  $Version = "4.1.22"; irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps1 | iex' -ForegroundColor Yellow
     return $false
 }
 
 function Get-DownloadUrl {
-    # NSIS installer: Antigravity.Tools_4.1.21_x64-setup.exe
+    # NSIS installer: Antigravity.Tools_4.1.22_x64-setup.exe
     $script:DownloadUrl = "https://github.com/$Repo/releases/download/v$($script:ReleaseVersion)/Antigravity.Tools_$($script:ReleaseVersion)_x64-setup.exe"
     $script:Filename = "Antigravity.Tools_$($script:ReleaseVersion)_x64-setup.exe"
 

@@ -41,7 +41,10 @@
         "create_success": "创建成功",
         "update_success": "更新成功",
         "delete_success": "删除成功",
-        "copied": "已复制到剪贴板"
+        "copied": "已复制到剪贴板",
+        "reason": "原因",
+        "show_raw": "显示原始报文",
+        "show_parsed": "显示解析后"
     },
     "nav": {
         "dashboard": "仪表盘",
@@ -155,13 +158,33 @@
         "status": {
             "forbidden": "403 Forbidden",
             "disabled": "账号已禁用",
-            "proxy_disabled": "反代已禁用"
+            "proxy_disabled": "反代已禁用",
+            "validation_required": "账号需验证",
+            "violation_blocked": "由于违规被禁用"
         },
         "error_details": "错误详情",
         "error_status": "错误状态",
         "error_time": "检测时间",
         "view_error": "查看原因",
         "click_to_verify": "点击去验证",
+        "copy_validation_url": "复制验证链接",
+        "validation_url_copied": "验证链接已复制到剪贴板",
+        "fix_guide": {
+            "title": "终端一键自救指南 (解决部分 403 拦截)",
+            "step1_title": "🚀 终极杀招（最快方案）",
+            "step1_desc": "打开终端（Terminal），执行以下命令告诉 Google \"是我本人\"，可解决部分 403 拦截：",
+            "step1_li1": "按回车执行，提示继续时输入 <1>Y</1>。",
+            "step1_li2": "浏览器自动打开，选择账号并“允许”。",
+            "step1_li3": "看到 <1>You are now authenticated</1> 即大功告成！",
+            "step2_title": "🧹 如果无效（清除缓存重来）",
+            "step2_li1_prefix": "先执行清除命令退出旧认证：",
+            "step2_li2_prefix": "再执行登录：",
+            "tips_title": "💡 常见建议",
+            "tip1": "若仍 403，尝试先在终端执行 <1>unset GOOGLE_APPLICATION_CREDENTIALS</1> 重置环境变量。",
+            "tip2": "生产环境强烈建议改用 <1>服务账户 (Service Account)</1> 的 JSON 密钥，更稳定且免交互。",
+            "tip3": "若操作失败，请前往 <1>Google Cloud Console</1> 中的 Generative Language API 查看是否被冻结权限。若是，说明账号触发了风控，建议让账号冷却 72 小时后再次尝试。",
+            "tip4": "你也可以尝试执行 <1>npm install -g @google/gemini-cli</1>，只要不弹出错误，大概率在软件内删除账号重新授权即可。"
+        },
         "no_data": "无数据",
         "last_used": "最后使用",
         "reset_time": "重置时间",
@@ -895,24 +918,24 @@
         },
         "model": {
             "flash": "极速响应",
-            "flash_preview": "极速预览",
-            "flash_lite": "轻量极速",
-            "flash_thinking": "思考能力",
-            "pro_legacy": "经典版",
-            "pro_low": "标准性能",
-            "pro_high": "最强推理",
+            "flash_preview": "极速预览 (Flash 3.1)",
+            "flash_lite": "轻量极速 (Lite)",
+            "flash_thinking": "思考能力 (Thinking)",
+            "pro_legacy": "经典版 Pro",
+            "pro_low": "3.1 Pro Low",
+            "pro_high": "3.1 Pro High",
             "pro_image": "图片生成 (1:1)",
             "pro_image_16_9": "图片生成 (16:9)",
             "pro_image_9_16": "图片生成 (9:16)",
             "pro_image_4_3": "图片生成 (4:3)",
             "pro_image_3_4": "图片生成 (3:4)",
             "pro_image_1_1": "图片生成 (1:1)",
-            "claude_sonnet": "代码推理",
-            "claude_sonnet_thinking": "思维链",
-            "claude_opus_thinking": "最强思维",
-            "gemini_2_5_flash": "极速模型 (2.5)",
-            "gemini_2_5_pro": "高性能推理 (2.5)",
-            "claude_4_5": "最新版推理"
+            "claude_sonnet": "代码推理 (Claude 4.6)",
+            "claude_sonnet_thinking": "思维链 (4.6 Think)",
+            "claude_opus_thinking": "最强思维 (Opus Think)",
+            "gemini_2_5_flash": "极速模型 (2.5 Flash)",
+            "gemini_2_5_pro": "高性能推理 (2.5 Pro)",
+            "claude_4_6": "最新代理版 (4.6)"
         },
         "mapping": {
             "title": "Claude Code 模型映射",
@@ -937,7 +960,7 @@
         },
         "router": {
             "title": "模型路由中心 (Model Router)",
-            "subtitle": "按“规格家族”统一路由 OpenAI/Claude 模型，或添加最高优先级的“精确映射”。\n注意：Claude 原生直通模型（claude-opus-4-6-thinking 等 3 个）默认透传，需在“专家精确映射”中添加规则才能修改。",
+            "subtitle": "按“规格家族”统一路由 OpenAI/Claude 模型，或添加最高优先级的“精确映射”。\n注意：Claude 原生直通模型（claude-sonnet-4-6-thinking, claude-opus-4-6-thinking 等）默认透传，需在“专家精确映射”中添加规则才能修改。",
             "subtitle_simple": "通过通配符或精确映射自定义模型路由规则",
             "background_task_title": "后台任务模型",
             "background_task_desc": "用于 Claude CLI 的标题生成、摘要提取等后台自动化任务 (默认: gemini-2.5-flash)",
@@ -975,12 +998,12 @@
             "route_to": "路由目标",
             "group_title": "模型家族分组 (Series Groups)",
             "gemini3_group_label": "Gemini 3 (推荐)",
-            "gemini3_option_high": "gemini-3-pro-high (高质量)",
-            "gemini3_option_low": "gemini-3-pro-low (均衡)",
+            "gemini3_option_high": "gemini-3.1-pro-high (高质量)",
+            "gemini3_option_low": "gemini-3.1-pro-low (均衡)",
             "gemini3_option_flash": "gemini-3-flash (快速)",
             "groups": {
                 "claude_45": {
-                    "name": "Claude 4.6 TK 系列",
+                    "name": "Opus 4.6 TK 系列",
                     "desc": "Opus 4.5 TK (推理)"
                 },
                 "claude_35": {

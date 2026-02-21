@@ -38,6 +38,7 @@ pub fn transform_openai_request(
             mapped_model_lower.contains("-thinking")
                 || mapped_model_lower.contains("gemini-2.0-pro")
                 || mapped_model_lower.contains("gemini-3-pro")
+                || mapped_model_lower.contains("gemini-3.1-pro")
         )
         && !mapped_model_lower.contains("claude");
     let is_claude_thinking = mapped_model_lower.ends_with("-thinking");
@@ -403,7 +404,7 @@ pub fn transform_openai_request(
         "topP": request.top_p.unwrap_or(0.95), // Gemini default is usually 0.95
     });
 
-    // [FIX] 移除默认的 81920 maxOutputTokens，防止非思维模型 (如 claude-sonnet-4-5) 报 400 Invalid Argument
+    // [FIX] 移除默认的 81920 maxOutputTokens，防止非思维模型 (如 claude-sonnet-4-6) 报 400 Invalid Argument
     // 仅在用户显式提供时设置
     if let Some(max_tokens) = request.max_tokens {
          gen_config["maxOutputTokens"] = json!(max_tokens);
@@ -1081,4 +1082,3 @@ mod tests {
         crate::proxy::config::update_image_thinking_mode(Some("enabled".to_string()));
     }
 }
-

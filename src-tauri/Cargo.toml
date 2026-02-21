@@ -1,6 +1,6 @@
 [package]
 name = "antigravity_tools"
-version = "4.1.21"
+version = "4.1.22"
 description = "A Tauri App"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"
