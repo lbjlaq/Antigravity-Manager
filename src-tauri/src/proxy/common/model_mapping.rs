@@ -22,6 +22,8 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gemini-3-pro-low", "gemini-3.1-pro-low");
     m.insert("gemini-3-pro-preview", "gemini-3.1-pro-high");
     m.insert("gemini-3-pro", "gemini-3.1-pro-high");
+    // Gemini 3.1 Flash (不存在的模型名, 客户端可能误发) -> gemini-3-flash
+    m.insert("gemini-3.1-flash", "gemini-3-flash");
     // Gemini 2.5 系列 -> gemini-3-flash
     m.insert("gemini-2.5-flash", "gemini-3-flash");
     m.insert("gemini-2.5-flash-lite", "gemini-3-flash");
@@ -36,6 +38,8 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-sonnet-4-5-thinking", "claude-sonnet-4-6");
     m.insert("claude-sonnet-4-5-20250929", "claude-sonnet-4-6");
     m.insert("claude-sonnet-4-6", "claude-sonnet-4-6");
+    // [NEW] 修复: claude-sonnet-4-6-thinking 是废弃名称, 映射到正确的 claude-sonnet-4-6
+    m.insert("claude-sonnet-4-6-thinking", "claude-sonnet-4-6");
     // Claude 3.5 Sonnet -> Sonnet 4.6
     m.insert("claude-3-5-sonnet-20241022", "claude-sonnet-4-6");
     m.insert("claude-3-5-sonnet-20240620", "claude-sonnet-4-6");
