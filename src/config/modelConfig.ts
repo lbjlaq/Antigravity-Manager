@@ -99,16 +99,16 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         tags: ['flash'],
     },
 
-    // Claude 4.6 系列
-    'claude-sonnet-4-6-thinking': {
-        label: 'Claude Sonnet 4.6 TK',
-        shortLabel: 'Sonnet 4.6 TK',
+    // Claude 4.6 系列 (注意: Sonnet 用 claude-sonnet-4-6, Opus 用 claude-opus-4-6-thinking)
+    'claude-sonnet-4-6': {
+        label: 'Claude Sonnet 4.6',
+        shortLabel: 'Sonnet 4.6',
         protectedKey: 'claude',
         Icon: Claude.Color,
-        i18nKey: 'proxy.model.claude_sonnet_thinking',
-        i18nDescKey: 'proxy.model.claude_sonnet_thinking',
+        i18nKey: 'proxy.model.claude_sonnet',
+        i18nDescKey: 'proxy.model.claude_sonnet',
         group: 'Claude',
-        tags: ['sonnet', 'thinking'],
+        tags: ['sonnet'],
     },
     'claude-opus-4-6-thinking': {
         label: 'Claude Opus 4.6 TK',

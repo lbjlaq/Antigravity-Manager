@@ -9,7 +9,7 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gemini-3.1-pro-high", "gemini-3.1-pro-high");
     m.insert("gemini-3.1-pro-low", "gemini-3.1-pro-low");
     m.insert("gemini-3-flash", "gemini-3-flash");
-    m.insert("claude-sonnet-4-6-thinking", "claude-sonnet-4-6-thinking");
+    m.insert("claude-sonnet-4-6", "claude-sonnet-4-6");
     m.insert("claude-opus-4-6-thinking", "claude-opus-4-6-thinking");
     m.insert("gpt-oss-120b", "gpt-oss-120b");
 
@@ -32,13 +32,13 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
 
     // ===== Claude 同系列别名映射 =====
     // Claude Sonnet 4.5 -> Sonnet 4.6
-    m.insert("claude-sonnet-4-5", "claude-sonnet-4-6-thinking");
-    m.insert("claude-sonnet-4-5-thinking", "claude-sonnet-4-6-thinking");
-    m.insert("claude-sonnet-4-5-20250929", "claude-sonnet-4-6-thinking");
-    m.insert("claude-sonnet-4-6", "claude-sonnet-4-6-thinking");
+    m.insert("claude-sonnet-4-5", "claude-sonnet-4-6");
+    m.insert("claude-sonnet-4-5-thinking", "claude-sonnet-4-6");
+    m.insert("claude-sonnet-4-5-20250929", "claude-sonnet-4-6");
+    m.insert("claude-sonnet-4-6", "claude-sonnet-4-6");
     // Claude 3.5 Sonnet -> Sonnet 4.6
-    m.insert("claude-3-5-sonnet-20241022", "claude-sonnet-4-6-thinking");
-    m.insert("claude-3-5-sonnet-20240620", "claude-sonnet-4-6-thinking");
+    m.insert("claude-3-5-sonnet-20241022", "claude-sonnet-4-6");
+    m.insert("claude-3-5-sonnet-20240620", "claude-sonnet-4-6");
     // Claude Opus 系列 -> Opus 4.6
     m.insert("claude-opus-4", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4-5-thinking", "claude-opus-4-6-thinking");
@@ -46,9 +46,9 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-opus-4-6", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4-6-20260201", "claude-opus-4-6-thinking");
     // Claude Haiku -> Sonnet 4.6
-    m.insert("claude-haiku-4", "claude-sonnet-4-6-thinking");
-    m.insert("claude-3-haiku-20240307", "claude-sonnet-4-6-thinking");
-    m.insert("claude-haiku-4-5-20251001", "claude-sonnet-4-6-thinking");
+    m.insert("claude-haiku-4", "claude-sonnet-4-6");
+    m.insert("claude-3-haiku-20240307", "claude-sonnet-4-6");
+    m.insert("claude-haiku-4-5-20251001", "claude-sonnet-4-6");
 
     // ===== OpenAI 协议映射 (仅保留常用, 映射到 gpt-oss-120b) =====
     m.insert("gpt-4o", "gpt-oss-120b");
@@ -136,7 +136,7 @@ pub async fn get_all_dynamic_models(
     model_ids.insert("gemini-3.1-pro-high".to_string());
     model_ids.insert("gemini-3.1-pro-low".to_string());
     model_ids.insert("gemini-3-flash".to_string());
-    model_ids.insert("claude-sonnet-4-6-thinking".to_string());
+    model_ids.insert("claude-sonnet-4-6".to_string());
     model_ids.insert("claude-opus-4-6-thinking".to_string());
     model_ids.insert("gpt-oss-120b".to_string());
 
@@ -300,7 +300,7 @@ mod tests {
         // Claude 旧版映射到 Sonnet 4.6
         assert_eq!(
             map_claude_model_to_gemini("claude-3-5-sonnet-20241022"),
-            "claude-sonnet-4-6-thinking"
+            "claude-sonnet-4-6"
         );
         // Opus 4 -> Opus 4.6
         assert_eq!(
@@ -331,7 +331,7 @@ mod tests {
         // Test Normalization
         assert_eq!(normalize_to_standard_id("claude-opus-4-6-thinking"), Some("claude".to_string()));
         assert_eq!(
-            normalize_to_standard_id("claude-sonnet-4-6-thinking"),
+            normalize_to_standard_id("claude-sonnet-4-6"),
             Some("claude".to_string())
         );
         assert_eq!(
