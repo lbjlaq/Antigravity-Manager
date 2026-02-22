@@ -667,14 +667,18 @@ pub fn transform_claude_request_in(
 fn should_enable_thinking_by_default(model: &str) -> bool {
     let model_lower = model.to_lowercase();
 
-    // Enable thinking by default for Opus 4.5 and 4.6 variants
+    // Enable thinking by default for Opus 4.5/4.6 and Sonnet 4.6 variants
+    // Sonnet 4.6 uses model id `claude-sonnet-4-6` (no -thinking suffix) but
+    // the Google v1internal API still requires ThinkingConfig for it.
     if model_lower.contains("opus-4-5")
         || model_lower.contains("opus-4.5")
         || model_lower.contains("opus-4-6")
         || model_lower.contains("opus-4.6")
+        || model_lower.contains("sonnet-4-6")
+        || model_lower.contains("sonnet-4.6")
     {
         tracing::debug!(
-            "[Thinking-Mode] Auto-enabling thinking for Opus model: {}",
+            "[Thinking-Mode] Auto-enabling thinking for Claude model: {}",
             model
         );
         return true;
