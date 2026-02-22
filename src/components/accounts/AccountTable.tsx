@@ -27,7 +27,7 @@ import {
     ArrowRightLeft,
     RefreshCw,
     Trash2,
-    Download,
+    Copy,
     Fingerprint,
     Info,
     Lock,
@@ -67,7 +67,7 @@ interface AccountTableProps {
     onRefresh: (accountId: string) => void;
     onViewDevice: (accountId: string) => void;
     onViewDetails: (accountId: string) => void;
-    onExport: (accountId: string) => void;
+    onCopy: (accountId: string) => void;
     onDelete: (accountId: string) => void;
     onToggleProxy: (accountId: string) => void;
     onWarmup?: (accountId: string) => void;
@@ -89,7 +89,7 @@ interface SortableRowProps {
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
-    onExport: () => void;
+    onCopy: () => void;
     onDelete: () => void;
     onToggleProxy: () => void;
     onWarmup?: () => void;
@@ -107,7 +107,7 @@ interface AccountRowContentProps {
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
-    onExport: () => void;
+    onCopy: () => void;
     onDelete: () => void;
     onToggleProxy: () => void;
     onWarmup?: () => void;
@@ -209,7 +209,7 @@ function SortableAccountRow({
     onRefresh,
     onViewDevice,
     onViewDetails,
-    onExport,
+    onCopy,
     onDelete,
     onToggleProxy,
     onWarmup,
@@ -275,7 +275,7 @@ function SortableAccountRow({
                 onRefresh={onRefresh}
                 onViewDevice={onViewDevice}
                 onViewDetails={onViewDetails}
-                onExport={onExport}
+                onCopy={onCopy}
                 onDelete={onDelete}
                 onToggleProxy={onToggleProxy}
                 onWarmup={onWarmup}
@@ -300,7 +300,7 @@ function AccountRowContent({
     onRefresh,
     onViewDevice,
     onViewDetails,
-    onExport,
+    onCopy,
     onDelete,
     onToggleProxy,
     onWarmup,
@@ -637,10 +637,10 @@ function AccountRowContent({
                     </button>
                     <button
                         className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-all"
-                        onClick={(e) => { e.stopPropagation(); onExport(); }}
-                        title={t('common.export')}
+                        onClick={(e) => { e.stopPropagation(); onCopy(); }}
+                        title={t('common.copy')}
                     >
-                        <Download className="w-3.5 h-3.5" />
+                        <Copy className="w-3.5 h-3.5" />
                     </button>
                     <button
                         className={cn(
@@ -691,7 +691,7 @@ function AccountTable({
     onRefresh,
     onViewDevice,
     onViewDetails,
-    onExport,
+    onCopy,
     onDelete,
     onToggleProxy,
     onReorder,
@@ -790,7 +790,7 @@ function AccountTable({
                                     onRefresh={() => onRefresh(account.id)}
                                     onViewDevice={() => onViewDevice(account.id)}
                                     onViewDetails={() => onViewDetails(account.id)}
-                                    onExport={() => onExport(account.id)}
+                                    onCopy={() => onCopy(account.id)}
                                     onDelete={() => onDelete(account.id)}
                                     onToggleProxy={() => onToggleProxy(account.id)}
                                     onWarmup={onWarmup ? () => onWarmup(account.id) : undefined}
@@ -832,7 +832,7 @@ function AccountTable({
                                         onRefresh={() => { }}
                                         onViewDevice={() => { }}
                                         onViewDetails={() => { }}
-                                        onExport={() => { }}
+                                        onCopy={() => { }}
                                         onDelete={() => { }}
                                         onToggleProxy={() => { }}
                                         isDisabled={Boolean(activeAccount.disabled)}

@@ -1,4 +1,4 @@
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Fingerprint } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Copy, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Fingerprint } from 'lucide-react';
 import { Account } from '../../types/account';
 import { getQuotaColor, formatTimeRemaining, getTimeRemainingColor } from '../../utils/format';
 import { cn } from '../../utils/cn';
@@ -15,14 +15,14 @@ interface AccountRowProps {
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
-    onExport: () => void;
+    onCopy: () => void;
     onDelete: () => void;
     onToggleProxy: () => void;
 }
 
 
 
-function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice }: AccountRowProps) {
+function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onCopy, onDelete, onToggleProxy, onViewDevice }: AccountRowProps) {
     const { t } = useTranslation();
     // [重构] 按组聚合查找逻辑，优先显示组内配额最低的型号以与锁定状态（🔒）对齐
     const geminiProModel = account.quota?.models
@@ -345,10 +345,10 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                     </button>
                     <button
                         className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-all"
-                        onClick={(e) => { e.stopPropagation(); onExport(); }}
-                        title={t('common.export')}
+                        onClick={(e) => { e.stopPropagation(); onCopy(); }}
+                        title={t('common.copy')}
                     >
-                        <Download className="w-3.5 h-3.5" />
+                        <Copy className="w-3.5 h-3.5" />
                     </button>
                     <button
                         className={cn(
