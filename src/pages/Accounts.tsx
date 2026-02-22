@@ -31,7 +31,7 @@ import { isTauri } from "../utils/env";
 import { request as invoke } from "../utils/request";
 import { useTranslation } from "react-i18next";
 
-type FilterType = "all" | "pro" | "ultra" | "free";
+type FilterType = "all" | "pro" | "ultra" | "free" | string;
 type ViewMode = "list" | "grid";
 
 
@@ -257,6 +257,26 @@ function Accounts() {
     };
   }, [searchedAccounts]);
 
+  // 收集所有唯一的自定义标签
+  const uniqueLabels = useMemo(() => {
+    const labels = new Set<string>();
+    searchedAccounts.forEach((a) => {
+      if (a.custom_label?.trim()) labels.add(a.custom_label.trim());
+    });
+    return Array.from(labels).sort();
+  }, [searchedAccounts]);
+
+  // 计算各标签的数量
+  const labelCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    uniqueLabels.forEach((label) => {
+      counts[label] = searchedAccounts.filter(
+        (a) => a.custom_label?.trim() === label
+      ).length;
+    });
+    return counts;
+  }, [searchedAccounts, uniqueLabels]);
+
   // 过滤和搜索最终结果
   const filteredAccounts = useMemo(() => {
     let result = searchedAccounts;
@@ -274,6 +294,9 @@ function Accounts() {
         const tier = a.quota?.subscription_tier?.toLowerCase();
         return tier && !tier.includes("pro") && !tier.includes("ultra");
       });
+    } else if (filter !== "all") {
+      // 自定义标签筛选
+      result = result.filter((a) => a.custom_label?.trim() === filter);
     }
 
     return result;
@@ -607,10 +630,19 @@ function Accounts() {
     exportAccountsToJson(accountsToExport);
   };
 
-  const handleExportOne = (accountId: string) => {
-    const account = accounts.find((a) => a.id === accountId);
-    if (account) {
-      exportAccountsToJson([account]);
+  const handleCopyOne = async (accountId: string) => {
+    try {
+      const response = await exportAccounts([accountId]);
+      if (!response.accounts || response.accounts.length === 0) {
+        showToast(t("dashboard.toast.export_no_accounts"), "warning");
+        return;
+      }
+      const content = JSON.stringify(response.accounts[0]);
+      await navigator.clipboard.writeText(content);
+      showToast(t("common.copy") + " " + t("common.success"), "success");
+    } catch (error: any) {
+      console.error("Copy failed:", error);
+      showToast(`${t("common.error")}: ${error}`, "error");
     }
   };
 
@@ -908,6 +940,34 @@ function Accounts() {
               {filterCounts.free}
             </span>
           </button>
+
+          {/* 动态标签筛选 */}
+          {uniqueLabels.length > 0 && (
+            <div className="w-px h-4 bg-gray-300 dark:bg-gray-600 mx-0.5 self-center" />
+          )}
+          {uniqueLabels.map((label) => (
+            <button
+              key={`label-${label}`}
+              className={cn(
+                "flex px-2 lg:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all items-center gap-1 lg:gap-1.5 whitespace-nowrap shrink-0",
+                filter === label
+                  ? "bg-white dark:bg-base-100 text-purple-600 dark:text-purple-400 shadow-sm ring-1 ring-black/5"
+                  : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content hover:bg-white/40"
+              )}
+              onClick={() => setFilter(label)}
+              title={`${label} (${labelCounts[label] || 0})`}
+            >
+              <span className="hidden md:inline">{label}</span>
+              <span className={cn(
+                "px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors",
+                filter === label
+                  ? "bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-400"
+                  : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+              )}>
+                {labelCounts[label] || 0}
+              </span>
+            </button>
+          ))}
         </div>
 
         <div className="flex-1 min-w-[8px]"></div>
@@ -1065,7 +1125,7 @@ function Accounts() {
                 onRefresh={handleRefresh}
                 onViewDevice={handleViewDevice}
                 onViewDetails={handleViewDetails}
-                onExport={handleExportOne}
+                onCopy={handleCopyOne}
                 onDelete={handleDelete}
                 onToggleProxy={(id) =>
                   handleToggleProxy(
@@ -1093,7 +1153,7 @@ function Accounts() {
               onRefresh={handleRefresh}
               onViewDevice={handleViewDevice}
               onViewDetails={handleViewDetails}
-              onExport={handleExportOne}
+              onCopy={handleCopyOne}
               onDelete={handleDelete}
               onToggleProxy={(id) =>
                 handleToggleProxy(

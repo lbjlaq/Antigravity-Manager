@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:debug": "RUST_LOG=debug npm run tauri dev"
+    "tauri:debug": "RUST_LOG=debug npm run tauri dev",
+    "release": "powershell -ExecutionPolicy Bypass -File release.ps1"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
@@ -21,13 +22,13 @@
     "@lobehub/icons": "^4.2.0",
     "@lobehub/ui": "^4.33.4",
     "@tanstack/react-virtual": "^3.13.18",
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-autostart": "^2.5.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.9.0",
+    "@tauri-apps/plugin-updater": "^2.10.0",
     "antd": "^5.24.6",
     "antd-style": "^3.7.1",
     "clsx": "^2.1.1",

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Copy, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock } from 'lucide-react';
 import { Account } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -18,7 +18,7 @@ interface AccountCardProps {
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
-    onExport: () => void;
+    onCopy: () => void;
     onDelete: () => void;
     onToggleProxy: () => void;
     onWarmup?: () => void;
@@ -34,7 +34,7 @@ const DEFAULT_MODELS = Object.entries(MODEL_CONFIG).map(([id, config]) => ({
     Icon: config.Icon
 }));
 
-function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice, onWarmup, onUpdateLabel, onViewError }: AccountCardProps) {
+function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onCopy, onDelete, onToggleProxy, onViewDevice, onWarmup, onUpdateLabel, onViewError }: AccountCardProps) {
     const { t } = useTranslation();
     const { config, showAllQuotas } = useConfigStore();
     const isDisabled = Boolean(account.disabled);
@@ -344,10 +344,10 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                     </button>
                     <button
                         className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                        onClick={(e) => { e.stopPropagation(); onExport(); }}
-                        title={t('common.export')}
+                        onClick={(e) => { e.stopPropagation(); onCopy(); }}
+                        title={t('common.copy')}
                     >
-                        <Download className="w-3.5 h-3.5" />
+                        <Copy className="w-3.5 h-3.5" />
                     </button>
                     <button
                         className={cn(
