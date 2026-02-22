@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use tracing::{info, warn};
 
+use crate::proxy::common::model_mapping::map_claude_model_to_gemini;
 use crate::proxy::mappers::gemini::wrapper::wrap_request;
 use crate::proxy::monitor::ProxyRequestLog;
 use crate::proxy::server::AppState;
@@ -109,6 +110,8 @@ pub async fn handle_warmup(
             chrono::Utc::now().timestamp_millis(),
             &uuid::Uuid::new_v4().to_string()[..8]
         );
+        // [FIX] 显式禁用 thinking，防止 transform_claude_request_in 自动注入
+        // ThinkingConfig(budget=10000)，导致 max_tokens=1 < budget 而返回 400
         let claude_request = crate::proxy::mappers::claude::models::ClaudeRequest {
             model: req.model.clone(),
             messages: vec![crate::proxy::mappers::claude::models::Message {
@@ -127,7 +130,11 @@ pub async fn handle_warmup(
             metadata: Some(crate::proxy::mappers::claude::models::Metadata {
                 user_id: Some(session_id),
             }),
-            thinking: None,
+            thinking: Some(crate::proxy::mappers::claude::models::ThinkingConfig {
+                type_: "disabled".to_string(),
+                budget_tokens: None,
+                effort: None,
+            }),
             output_config: None,
             size: None,
             quality: None,
@@ -138,7 +145,16 @@ pub async fn handle_warmup(
             &project_id,
             false,
         ) {
-            Ok(transformed) => transformed,
+            Ok(mut transformed) => {
+                // [FIX] 双重保险：即使 transform 仍注入了 thinkingConfig，也强制移除
+                if let Some(inner_req) = transformed.get_mut("request") {
+                    if let Some(gen_config) = inner_req.get_mut("generationConfig") {
+                        gen_config["maxOutputTokens"] = json!(1);
+                        gen_config.as_object_mut().map(|m| m.remove("thinkingConfig"));
+                    }
+                }
+                transformed
+            },
             Err(e) => {
                 warn!("[Warmup-API] Step 2 FAILED: Claude transform error: {}", e);
                 return (
