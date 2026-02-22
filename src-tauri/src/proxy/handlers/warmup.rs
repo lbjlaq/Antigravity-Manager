@@ -14,6 +14,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use tracing::{info, warn};
 
 use crate::proxy::mappers::gemini::wrapper::wrap_request;
@@ -48,11 +49,29 @@ pub async fn handle_warmup(
     Json(req): Json<WarmupRequest>,
 ) -> Response {
     let start_time = std::time::Instant::now();
+    let model_lower = req.model.to_lowercase();
 
     info!(
         "[Warmup-API] ========== START: email={}, model={} ==========",
         req.email, req.model
     );
+
+    // ===== 跳过非 Google API 模型 =====
+    if model_lower.contains("gpt-oss") || model_lower.contains("gpt-4") || model_lower.contains("gpt-3") {
+        info!(
+            "[Warmup-API] SKIP: {} is not a Google v1internal model, skipping warmup",
+            req.model
+        );
+        return (
+            StatusCode::OK,
+            Json(WarmupResponse {
+                success: true,
+                message: format!("Skipped warmup for non-Google model: {}", req.model),
+                error: None,
+            }),
+        )
+            .into_response();
+    }
 
     // ===== 步骤 1: 获取 Token =====
     let (access_token, project_id, account_id) =
@@ -80,8 +99,8 @@ pub async fn handle_warmup(
         };
 
     // ===== 步骤 2: 根据模型类型构建极短 token 的有效请求体 =====
-    let is_claude = req.model.to_lowercase().contains("claude");
-    let is_image = req.model.to_lowercase().contains("image");
+    let is_claude = model_lower.contains("claude");
+    let is_image = model_lower.contains("image");
 
     let body: Value = if is_claude {
         // Claude 模型：使用 transform_claude_request_in 转换，max_tokens=1
@@ -164,7 +183,19 @@ pub async fn handle_warmup(
             })
         };
 
-        wrap_request(&base_request, &project_id, &req.model, Some(&session_id))
+        let mut wrapped = wrap_request(&base_request, &project_id, &req.model, Some(&session_id));
+
+        // [FIX] wrap_request 会自动注入 thinkingConfig 并将 maxOutputTokens 覆盖为 32768+
+        // 预热请求必须强制覆盖回极短 token，避免浪费配额
+        if let Some(inner_req) = wrapped.get_mut("request") {
+            if let Some(gen_config) = inner_req.get_mut("generationConfig") {
+                gen_config["maxOutputTokens"] = json!(1);
+                // 移除 thinking 配置，warmup 不需要思考
+                gen_config.as_object_mut().map(|m| m.remove("thinkingConfig"));
+            }
+        }
+
+        wrapped
     };
 
     // ===== 日志：记录完整的发送请求体 =====
@@ -174,14 +205,24 @@ pub async fn handle_warmup(
         req.email, req.model, request_body_str
     );
 
-    // ===== 步骤 3: 调用 UpstreamClient (统一使用非流式以获取完整响应体) =====
+    // ===== 步骤 3: 调用 UpstreamClient =====
+    // Claude 模型需要 anthropic-beta 头，否则 v1internal 会返回 400/404
+    let mut extra_headers = HashMap::new();
+    if is_claude {
+        extra_headers.insert(
+            "anthropic-beta".to_string(),
+            "claude-code-20250219".to_string(),
+        );
+    }
+
     let result = state
         .upstream
-        .call_v1_internal(
+        .call_v1_internal_with_headers(
             "generateContent",
             &access_token,
             body,
             None,
+            extra_headers,
             Some(account_id.as_str()),
         )
         .await;
