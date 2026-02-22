@@ -945,7 +945,8 @@
             "claude_opus_thinking": "Strongest Thinking (Opus Think)",
             "gemini_2_5_flash": "Flash Model (2.5 Flash)",
             "gemini_2_5_pro": "High Performance (2.5 Pro)",
-            "claude_4_6": "Latest Reasoning (4.6)"
+            "claude_4_6": "Latest Reasoning (4.6)",
+            "gpt_oss": "Open Source Model (OSS 120B)"
         },
         "mapping": {
             "title": "Claude Code Model Mapping",

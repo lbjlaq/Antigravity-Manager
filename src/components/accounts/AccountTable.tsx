@@ -365,11 +365,6 @@ function AccountRowContent({
                 };
             })
         ).filter(m => {
-            // 过滤特定的 Claude/Gemini 思考变体 (在列表页隐藏)
-            const isHiddenThinking = m.id.includes('thinking');
-
-            if (isHiddenThinking) return false;
-
             // 基于标签去重 (例如 G3.1 Pro 只显示一次)
             // 优先显示有配额数据的 ID
             const labelKey = `${m.label}-${m.protectedKey}`;

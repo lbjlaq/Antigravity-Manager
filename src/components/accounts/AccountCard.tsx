@@ -100,8 +100,15 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
             }
         }
 
-        // 应用排序并过滤过期模型
-        return sortModels(models).filter(m => m.id !== 'claude-sonnet-4-6-thinking' && m.id !== 'claude-sonnet-4-5-thinking' && m.id !== 'claude-opus-4-5-thinking');
+        // 应用排序并按 shortLabel 去重
+        const seen = new Set<string>();
+        return sortModels(models).filter(m => {
+            const cfg = MODEL_CONFIG[m.id.toLowerCase()];
+            const key = cfg ? `${cfg.shortLabel}-${cfg.protectedKey}` : m.id;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
     }, [config, account, showAllQuotas]);
 
     const isModelProtected = (key?: string) => {
