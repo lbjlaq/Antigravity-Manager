@@ -11,10 +11,10 @@ const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 const FALLBACK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Known stable configuration (for Docker/Headless fallback)
-/// Antigravity 1.16.5 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "1.16.5";
+/// Antigravity 1.18.4 uses Electron 39.2.3 which corresponds to Chrome 142.0.7444.175
+const KNOWN_STABLE_VERSION: &str = "1.18.4";
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
-const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
+const KNOWN_STABLE_CHROME: &str = "142.0.7444.175";
 
 /// Pre-compiled regex for version parsing (X.Y.Z pattern)
 static VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
