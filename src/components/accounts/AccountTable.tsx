@@ -345,10 +345,9 @@ function AccountRowContent({
         (showAllQuotas
             ? (account.quota?.models || []).map(m => {
                 const config = MODEL_CONFIG[m.name.toLowerCase()];
-                const label = config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || m.name);
                 return {
                     id: m.name.toLowerCase(),
-                    label: label,
+                    label: config?.shortLabel || config?.label || m.name,
                     protectedKey: config?.protectedKey || m.name.toLowerCase(),
                     data: m
                 };
@@ -356,10 +355,9 @@ function AccountRowContent({
             : pinnedModels.filter(modelId => MODEL_CONFIG[modelId]).map(modelId => {
                 const config = MODEL_CONFIG[modelId];
                 const aliases = getModelAliases(modelId);
-                const label = config.i18nKey ? t(config.i18nKey) : (config.shortLabel || config.label);
                 return {
                     id: modelId,
-                    label: label,
+                    label: config.shortLabel || config.label,
                     protectedKey: config.protectedKey,
                     data: account.quota?.models.find(m => aliases.includes(m.name.toLowerCase()))
                 };
