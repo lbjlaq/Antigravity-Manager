@@ -7,7 +7,7 @@ export const useProxyModels = () => {
     const models = Object.entries(MODEL_CONFIG).map(([id, config]) => ({
         id,
         name: config.i18nKey ? t(config.i18nKey) : config.label,
-        desc: t(config.i18nDescKey || config.i18nKey, config.label),
+        desc: config.i18nDescKey ? t(config.i18nDescKey) : config.label,
         group: config.group,
         icon: <config.Icon size={16} />
     }));

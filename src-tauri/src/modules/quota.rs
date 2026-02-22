@@ -295,6 +295,13 @@ pub async fn warmup_model_directly(
         "project_id": project_id
     });
 
+    // Log the complete warmup request details
+    let body_str = serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body));
+    crate::modules::logger::log_info(&format!(
+        "[Warmup] >>> Sending to {} - Model: {} (quota was {}%)\nRequest URL: {}\nRequest body:\n{}",
+        email, model_name, percentage, warmup_url, body_str
+    ));
+
     // Use a no-proxy client for local loopback requests
     // This prevents Docker environments from routing localhost through external proxies
     let client = rquest::Client::builder()
@@ -312,17 +319,27 @@ pub async fn warmup_model_directly(
     match resp {
         Ok(response) => {
             let status = response.status();
+            let status_code = status.as_u16();
+
+            // Read response body for logging
+            let response_body = response.text().await.unwrap_or_default();
+
+            // Log the complete warmup response details
+            crate::modules::logger::log_info(&format!(
+                "[Warmup] <<< Response from {} - Model: {} [HTTP {}]\nResponse body:\n{}",
+                email, model_name, status_code, response_body
+            ));
+
             if status.is_success() {
-                crate::modules::logger::log_info(&format!("[Warmup] ✓ Triggered {} for {} (was {}%)", model_name, email, percentage));
+                crate::modules::logger::log_info(&format!("[Warmup] ✓ SUCCESS: {} for {} (was {}%)", model_name, email, percentage));
                 true
             } else {
-                let text = response.text().await.unwrap_or_default();
-                crate::modules::logger::log_warn(&format!("[Warmup] ✗ {} for {} (was {}%): HTTP {} - {}", model_name, email, percentage, status, text));
+                crate::modules::logger::log_warn(&format!("[Warmup] ✗ FAILED: {} for {} (was {}%): HTTP {} - {}", model_name, email, percentage, status_code, response_body));
                 false
             }
         }
         Err(e) => {
-            crate::modules::logger::log_warn(&format!("[Warmup] ✗ {} for {} (was {}%): {}", model_name, email, percentage, e));
+            crate::modules::logger::log_warn(&format!("[Warmup] ✗ ERROR: {} for {} (was {}%): {}", model_name, email, percentage, e));
             false
         }
     }

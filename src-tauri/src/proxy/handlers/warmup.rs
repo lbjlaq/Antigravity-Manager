@@ -4,6 +4,8 @@
 // - 指定账号（通过 email）
 // - 指定模型（不做映射，直接使用原始模型名称）
 // - 复用代理的所有基础设施（UpstreamClient、TokenManager）
+// - 发送极短 token 的有效请求进行预热
+// - 完整记录发送和返回信息
 
 use axum::{
     extract::State,
@@ -47,27 +49,6 @@ pub async fn handle_warmup(
 ) -> Response {
     let start_time = std::time::Instant::now();
 
-    // ===== 前置检查：跳过 gemini-2.5-* 家族模型 =====
-    let model_lower = req.model.to_lowercase();
-    if model_lower.contains("2.5-") || model_lower.contains("2-5-") {
-        info!(
-            "[Warmup-API] SKIP: gemini-2.5-* model not supported for warmup: {} / {}",
-            req.email, req.model
-        );
-        return (
-            StatusCode::OK,
-            Json(WarmupResponse {
-                success: true,
-                message: format!(
-                    "Skipped warmup for {} (2.5 models not supported)",
-                    req.model
-                ),
-                error: None,
-            }),
-        )
-            .into_response();
-    }
-
     info!(
         "[Warmup-API] ========== START: email={}, model={} ==========",
         req.email, req.model
@@ -98,12 +79,12 @@ pub async fn handle_warmup(
             }
         };
 
-    // ===== 步骤 2: 根据模型类型构建请求体 =====
+    // ===== 步骤 2: 根据模型类型构建极短 token 的有效请求体 =====
     let is_claude = req.model.to_lowercase().contains("claude");
     let is_image = req.model.to_lowercase().contains("image");
 
     let body: Value = if is_claude {
-        // Claude 模型：使用 transform_claude_request_in 转换
+        // Claude 模型：使用 transform_claude_request_in 转换，max_tokens=1
         let session_id = format!(
             "warmup_{}_{}",
             chrono::Utc::now().timestamp_millis(),
@@ -114,7 +95,7 @@ pub async fn handle_warmup(
             messages: vec![crate::proxy::mappers::claude::models::Message {
                 role: "user".to_string(),
                 content: crate::proxy::mappers::claude::models::MessageContent::String(
-                    "ping".to_string(),
+                    "hi".to_string(),
                 ),
             }],
             max_tokens: Some(1),
@@ -153,7 +134,7 @@ pub async fn handle_warmup(
             }
         }
     } else {
-        // Gemini 模型：使用 wrap_request
+        // Gemini 模型：使用 wrap_request，maxOutputTokens=1 确保极短响应
         let session_id = format!(
             "warmup_{}_{}",
             chrono::Utc::now().timestamp_millis(),
@@ -163,9 +144,9 @@ pub async fn handle_warmup(
         let base_request = if is_image {
             json!({
                 "model": req.model,
-                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
+                "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
                 "generationConfig": {
-                    "maxOutputTokens": 10,
+                    "maxOutputTokens": 1,
                     "temperature": 0,
                     "responseModalities": ["TEXT"]
                 },
@@ -174,8 +155,9 @@ pub async fn handle_warmup(
         } else {
             json!({
                 "model": req.model,
-                "contents": [{"role": "user", "parts": [{"text": "Say hi"}]}],
+                "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
                 "generationConfig": {
+                    "maxOutputTokens": 1,
                     "temperature": 0
                 },
                 "session_id": session_id
@@ -185,51 +167,44 @@ pub async fn handle_warmup(
         wrap_request(&base_request, &project_id, &req.model, Some(&session_id))
     };
 
-    // ===== 步骤 3: 调用 UpstreamClient =====
-    let model_lower = req.model.to_lowercase();
-    let prefer_non_stream = model_lower.contains("flash-lite") || model_lower.contains("2.5-pro");
+    // ===== 日志：记录完整的发送请求体 =====
+    let request_body_str = serde_json::to_string_pretty(&body).unwrap_or_else(|_| format!("{:?}", body));
+    info!(
+        "[Warmup-API] >>> REQUEST body for {} / {}:\n{}",
+        req.email, req.model, request_body_str
+    );
 
-    let (method, query) = if prefer_non_stream {
-        ("generateContent", None)
-    } else {
-        ("streamGenerateContent", Some("alt=sse"))
-    };
-
-    let mut result = state
+    // ===== 步骤 3: 调用 UpstreamClient (统一使用非流式以获取完整响应体) =====
+    let result = state
         .upstream
         .call_v1_internal(
-            method,
+            "generateContent",
             &access_token,
-            body.clone(),
-            query,
+            body,
+            None,
             Some(account_id.as_str()),
         )
         .await;
 
-    // 如果流式请求失败，尝试非流式请求
-    if result.is_err() && !prefer_non_stream {
-        result = state
-            .upstream
-            .call_v1_internal(
-                "generateContent",
-                &access_token,
-                body,
-                None,
-                Some(account_id.as_str()),
-            )
-            .await;
-    }
-
     let duration = start_time.elapsed().as_millis() as u64;
 
-    // ===== 步骤 4: 处理响应并记录流量日志 =====
+    // ===== 步骤 4: 处理响应并记录完整的返回信息 =====
     match result {
         Ok(call_result) => {
             let response = call_result.response;
             let status = response.status();
             let status_code = status.as_u16();
 
-            // 记录预热请求到流量日志
+            // 读取完整的响应体
+            let response_body_text = response.text().await.unwrap_or_default();
+
+            // 日志：记录完整的返回信息
+            info!(
+                "[Warmup-API] <<< RESPONSE for {} / {} [HTTP {}] ({}ms):\n{}",
+                req.email, req.model, status_code, duration, response_body_text
+            );
+
+            // 记录预热请求到流量日志（包含完整的请求和响应体）
             let log = ProxyRequestLog {
                 id: uuid::Uuid::new_v4().to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -241,16 +216,13 @@ pub async fn handle_warmup(
                 mapped_model: Some(req.model.clone()),
                 account_email: Some(req.email.clone()),
                 client_ip: Some("127.0.0.1".to_string()),
-                error: if status.is_success() {
+                error: if status_code < 400 {
                     None
                 } else {
                     Some(format!("HTTP {}", status_code))
                 },
-                request_body: Some(format!(
-                    "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
-                    req.model
-                )),
-                response_body: None,
+                request_body: Some(request_body_str.clone()),
+                response_body: Some(response_body_text.clone()),
                 input_tokens: Some(0),
                 output_tokens: Some(0),
                 protocol: Some("warmup".to_string()),
@@ -258,7 +230,9 @@ pub async fn handle_warmup(
             };
             state.monitor.log_request(log).await;
 
-            let mut response = if status.is_success() {
+            let is_success = status_code < 400;
+
+            let mut response = if is_success {
                 info!(
                     "[Warmup-API] ========== SUCCESS: {} / {} ({}ms) ==========",
                     req.email, req.model, duration
@@ -273,7 +247,10 @@ pub async fn handle_warmup(
                 )
                     .into_response()
             } else {
-                let error_text = response.text().await.unwrap_or_default();
+                warn!(
+                    "[Warmup-API] ========== FAILED: {} / {} HTTP {} ({}ms) ==========",
+                    req.email, req.model, status_code, duration
+                );
 
                 // [FIX] 预热阶段检测到 403 时，标记账号为 forbidden，避免无效账号继续参与轮询
                 if status_code == 403 && !account_id.is_empty() {
@@ -281,7 +258,7 @@ pub async fn handle_warmup(
                         "[Warmup-API] 403 Forbidden detected for {}, marking account as forbidden",
                         req.email
                     );
-                    if let Err(e) = state.token_manager.set_forbidden(&account_id, &error_text).await {
+                    if let Err(e) = state.token_manager.set_forbidden(&account_id, &response_body_text).await {
                         warn!("[Warmup-API] Failed to set forbidden status: {}", e);
                     }
                 }
@@ -291,7 +268,7 @@ pub async fn handle_warmup(
                     Json(WarmupResponse {
                         success: false,
                         message: format!("Warmup failed: HTTP {}", status_code),
-                        error: Some(error_text),
+                        error: Some(response_body_text),
                     }),
                 )
                     .into_response()
@@ -326,11 +303,8 @@ pub async fn handle_warmup(
                 account_email: Some(req.email.clone()),
                 client_ip: Some("127.0.0.1".to_string()),
                 error: Some(e.clone()),
-                request_body: Some(format!(
-                    "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
-                    req.model
-                )),
-                response_body: None,
+                request_body: Some(request_body_str),
+                response_body: Some(e.clone()),
                 input_tokens: None,
                 output_tokens: None,
                 protocol: Some("warmup".to_string()),

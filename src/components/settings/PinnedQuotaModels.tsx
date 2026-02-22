@@ -28,10 +28,8 @@ const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
 
     const uniqueLabels = new Set<string>();
     const modelOptions = Object.entries(MODEL_CONFIG)
-        .filter(([id, cfg]) => {
-            // 隐藏思考变体
-            if (id.includes('thinking')) return false;
-
+        .filter(([, cfg]) => {
+            // 按 shortLabel 去重（隐藏同名的向后兼容别名）
             const label = cfg.shortLabel || cfg.label;
             if (uniqueLabels.has(label)) return false;
             uniqueLabels.add(label);
@@ -40,7 +38,7 @@ const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
         .map(([id, cfg]) => ({
             id,
             label: cfg.shortLabel || cfg.label,
-            desc: t(cfg.i18nDescKey || cfg.i18nKey, cfg.label)
+            desc: t(cfg.i18nDescKey || cfg.i18nKey || cfg.label)
         }));
 
     return (

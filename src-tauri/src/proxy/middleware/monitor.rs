@@ -43,7 +43,10 @@ pub async fn monitor_middleware(
     let method = request.method().to_string();
     let uri = request.uri().to_string();
     
-    if uri.contains("event_logging") || uri.contains("/api/") || uri.starts_with("/internal/") {
+    // 跳过不需要记录的路径：遥测、管理API、内部端点、健康检查
+    if uri.contains("event_logging") || uri.contains("/api/") || uri.starts_with("/internal/")
+        || ((uri == "/" || uri == "/health" || uri == "/healthz") && method == "GET")
+    {
         return next.run(request).await;
     }
     

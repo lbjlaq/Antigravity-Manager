@@ -370,6 +370,7 @@ impl AxumServer {
 
         // 1. 构建主 AI 代理路由 (遵循 auth_mode 配置)
         let proxy_routes = Router::new()
+            .route("/", get(health_check_handler))
             .route("/health", get(health_check_handler))
             .route("/healthz", get(health_check_handler))
             // OpenAI Protocol

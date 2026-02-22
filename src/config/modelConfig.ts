@@ -1,24 +1,28 @@
-import { Gemini, Claude } from '@lobehub/icons';
+import { Gemini, Claude, OpenAI } from '@lobehub/icons';
+import type { FC } from 'react';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type IconComponent = FC<any>;
 
 /**
  * 模型配置接口
  */
 export interface ModelConfig {
-    /** 模型完整显示名称 (作为回退或默认展示) */
+    /** 显示标签 */
     label: string;
-    /** 模型简短标签 (用于列表/卡片) */
+    /** 短标签 */
     shortLabel: string;
-    /** 保护模型的键名 */
+    /** 配额保护键 */
     protectedKey: string;
-    /** 模型图标组件 */
-    Icon: React.ComponentType<{ size?: number; className?: string }>;
-    /** 国际化键名 (用于动态名称) */
-    i18nKey: string;
-    /** 描述信息键名 (用于详细说明) */
-    i18nDescKey: string;
-    /** 所属系列/分组 */
-    group: string;
-    /** 选填标签 (用于筛选) */
+    /** 图标组件 */
+    Icon: IconComponent;
+    /** i18n 键 */
+    i18nKey?: string;
+    /** i18n 描述键 */
+    i18nDescKey?: string;
+    /** 分组 */
+    group?: string;
+    /** 标签列表 */
     tags?: string[];
 }
 
@@ -27,8 +31,7 @@ export interface ModelConfig {
  * 键为模型 ID，值为模型配置
  */
 export const MODEL_CONFIG: Record<string, ModelConfig> = {
-    // Gemini 3.x 系列
-    // [Migrate] Gemini 3 Pro High/Low -> Gemini 3.1 Pro High/Low
+    // Gemini 3.1 系列
     'gemini-3.1-pro-high': {
         label: 'Gemini 3.1 Pro High',
         shortLabel: 'G3.1 Pro',
@@ -49,26 +52,6 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         i18nDescKey: 'proxy.model.pro_high',
         group: 'Gemini 3',
         tags: ['pro', 'high'],
-    },
-    'gemini-3-flash': {
-        label: 'Gemini 3 Flash',
-        shortLabel: 'G3 Flash',
-        protectedKey: 'gemini-flash',
-        Icon: Gemini.Color,
-        i18nKey: 'proxy.model.flash_preview',
-        i18nDescKey: 'proxy.model.flash_preview',
-        group: 'Gemini 3',
-        tags: ['flash'],
-    },
-    'gemini-3-pro-image': {
-        label: 'Gemini 3 Image',
-        shortLabel: 'G3 Image',
-        protectedKey: 'gemini-3-pro-image',
-        Icon: Gemini.Color,
-        i18nKey: 'proxy.model.pro_image',
-        i18nDescKey: 'proxy.model.pro_image_1_1',
-        group: 'Gemini 3',
-        tags: ['image'],
     },
     'gemini-3.1-pro-low': {
         label: 'Gemini 3.1 Pro Low',
@@ -92,7 +75,19 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         tags: ['pro', 'low'],
     },
 
-    // Gemini 2.5 系列
+    // Gemini 3 系列
+    'gemini-3-flash': {
+        label: 'Gemini 3 Flash',
+        shortLabel: 'G3 Flash',
+        protectedKey: 'gemini-flash',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.flash_preview',
+        i18nDescKey: 'proxy.model.flash_preview',
+        group: 'Gemini 3',
+        tags: ['flash'],
+    },
+
+    // Gemini 2.5 系列 (backward compatible)
     'gemini-2.5-flash': {
         label: 'Gemini 2.5 Flash',
         shortLabel: 'G2.5 Flash',
@@ -103,51 +98,11 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         group: 'Gemini 2.5',
         tags: ['flash'],
     },
-    'gemini-2.5-flash-lite': {
-        label: 'Gemini 2.5 Flash Lite',
-        shortLabel: 'G2.5 Lite',
-        protectedKey: 'gemini-flash',
-        Icon: Gemini.Color,
-        i18nKey: 'proxy.model.flash_lite',
-        i18nDescKey: 'proxy.model.flash_lite',
-        group: 'Gemini 2.5',
-        tags: ['flash', 'lite'],
-    },
-    'gemini-2.5-flash-thinking': {
-        label: 'Gemini 2.5 Flash Think',
-        shortLabel: 'G2.5 Think',
-        protectedKey: 'gemini-flash',
-        Icon: Gemini.Color,
-        i18nKey: 'proxy.model.flash_thinking',
-        i18nDescKey: 'proxy.model.flash_thinking',
-        group: 'Gemini 2.5',
-        tags: ['flash', 'thinking'],
-    },
-    'gemini-2.5-pro': {
-        label: 'Gemini 2.5 Pro',
-        shortLabel: 'G2.5 Pro',
-        protectedKey: 'gemini-pro',
-        Icon: Gemini.Color,
-        i18nKey: 'proxy.model.gemini_2_5_pro',
-        i18nDescKey: 'proxy.model.gemini_2_5_pro',
-        group: 'Gemini 2.5',
-        tags: ['pro'],
-    },
 
-    // Claude 系列
-    'claude-sonnet-4-6': {
-        label: 'Claude 4.6',
-        shortLabel: 'Claude 4.6',
-        protectedKey: 'claude',
-        Icon: Claude.Color,
-        i18nKey: 'proxy.model.claude_sonnet',
-        i18nDescKey: 'proxy.model.claude_sonnet',
-        group: 'Claude',
-        tags: ['sonnet'],
-    },
+    // Claude 4.6 系列
     'claude-sonnet-4-6-thinking': {
-        label: 'Claude 4.6 TK',
-        shortLabel: 'Claude 4.6 TK',
+        label: 'Claude Sonnet 4.6 TK',
+        shortLabel: 'Sonnet 4.6 TK',
         protectedKey: 'claude',
         Icon: Claude.Color,
         i18nKey: 'proxy.model.claude_sonnet_thinking',
@@ -157,13 +112,25 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
     },
     'claude-opus-4-6-thinking': {
         label: 'Claude Opus 4.6 TK',
-        shortLabel: 'Claude Opus 4.6 TK',
+        shortLabel: 'Opus 4.6 TK',
         protectedKey: 'claude',
         Icon: Claude.Color,
         i18nKey: 'proxy.model.claude_opus_thinking',
         i18nDescKey: 'proxy.model.claude_opus_thinking',
         group: 'Claude',
         tags: ['opus', 'thinking'],
+    },
+
+    // GPT-OSS 系列
+    'gpt-oss-120b': {
+        label: 'GPT-OSS 120B',
+        shortLabel: 'OSS 120B',
+        protectedKey: 'gpt-oss',
+        Icon: OpenAI as unknown as IconComponent,
+        i18nKey: 'proxy.model.gpt_oss',
+        i18nDescKey: 'proxy.model.gpt_oss',
+        group: 'GPT-OSS',
+        tags: ['oss'],
     },
 };
 
@@ -186,10 +153,12 @@ export const getModelConfig = (modelId: string): ModelConfig | undefined => {
 const MODEL_SORT_WEIGHTS = {
     // 系列权重 (第一优先级)
     series: {
+        'gemini-3.1': 50,
         'gemini-3': 100,
         'gemini-2.5': 200,
         'gemini-2': 300,
         'claude': 400,
+        'gpt-oss': 500,
     },
     // 性能级别权重 (第二优先级)
     tier: {
@@ -198,6 +167,7 @@ const MODEL_SORT_WEIGHTS = {
         'lite': 30,
         'opus': 5,
         'sonnet': 10,
+        'oss': 15,
     },
     // 特殊后缀权重 (第三优先级)
     suffix: {
@@ -216,7 +186,9 @@ function getModelSortWeight(modelId: string): number {
     let weight = 0;
 
     // 1. 系列权重 (x1000)
-    if (id.startsWith('gemini-3')) {
+    if (id.startsWith('gemini-3.1')) {
+        weight += MODEL_SORT_WEIGHTS.series['gemini-3.1'] * 1000;
+    } else if (id.startsWith('gemini-3')) {
         weight += MODEL_SORT_WEIGHTS.series['gemini-3'] * 1000;
     } else if (id.startsWith('gemini-2.5')) {
         weight += MODEL_SORT_WEIGHTS.series['gemini-2.5'] * 1000;
@@ -224,6 +196,8 @@ function getModelSortWeight(modelId: string): number {
         weight += MODEL_SORT_WEIGHTS.series['gemini-2'] * 1000;
     } else if (id.startsWith('claude')) {
         weight += MODEL_SORT_WEIGHTS.series['claude'] * 1000;
+    } else if (id.startsWith('gpt-oss')) {
+        weight += MODEL_SORT_WEIGHTS.series['gpt-oss'] * 1000;
     }
 
     // 2. 性能级别权重 (x100)
@@ -237,38 +211,38 @@ function getModelSortWeight(modelId: string): number {
         weight += MODEL_SORT_WEIGHTS.tier['opus'] * 100;
     } else if (id.includes('sonnet')) {
         weight += MODEL_SORT_WEIGHTS.tier['sonnet'] * 100;
+    } else if (id.includes('oss')) {
+        weight += MODEL_SORT_WEIGHTS.tier['oss'] * 100;
     }
 
-    // 3. 特殊后缀权重 (x10)
+    // 3. 特殊后缀权重
     if (id.includes('thinking')) {
-        weight += MODEL_SORT_WEIGHTS.suffix['thinking'] * 10;
+        weight += MODEL_SORT_WEIGHTS.suffix['thinking'];
     } else if (id.includes('image')) {
-        weight += MODEL_SORT_WEIGHTS.suffix['image'] * 10;
-    } else if (id.includes('high')) {
-        weight += MODEL_SORT_WEIGHTS.suffix['high'] * 10;
-    } else if (id.includes('low')) {
-        weight += MODEL_SORT_WEIGHTS.suffix['low'] * 10;
+        weight += MODEL_SORT_WEIGHTS.suffix['image'];
+    }
+
+    if (id.endsWith('high')) {
+        weight += MODEL_SORT_WEIGHTS.suffix['high'];
+    } else if (id.endsWith('low')) {
+        weight += MODEL_SORT_WEIGHTS.suffix['low'];
     }
 
     return weight;
 }
 
 /**
- * 对模型列表进行排序
- * @param models 模型列表
- * @returns 排序后的模型列表
+ * 获取排序后的模型列表
  */
-export function sortModels<T extends { id: string }>(models: T[]): T[] {
-    return [...models].sort((a, b) => {
-        const weightA = getModelSortWeight(a.id);
-        const weightB = getModelSortWeight(b.id);
+export const getSortedModelIds = (): string[] => {
+    const modelIds = getAllModelIds();
+    return modelIds.sort((a, b) => getModelSortWeight(a) - getModelSortWeight(b));
+};
 
-        // 按权重升序排序
-        if (weightA !== weightB) {
-            return weightA - weightB;
-        }
-
-        // 权重相同时，按字母顺序排序
-        return a.id.localeCompare(b.id);
-    });
-}
+/**
+ * 对模型数组按权重排序
+ * @param models 包含 id 字段的模型数组
+ */
+export const sortModels = <T extends { id: string }>(models: T[]): T[] => {
+    return [...models].sort((a, b) => getModelSortWeight(a.id) - getModelSortWeight(b.id));
+};
