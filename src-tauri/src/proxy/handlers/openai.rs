@@ -1570,12 +1570,39 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
     let data: Vec<_> = model_ids
         .into_iter()
         .map(|id| {
-            json!({
+            let id_lower = id.to_lowercase();
+
+            // [FIX] 判断模型是否支持视觉/图片输入
+            // 大部分现代模型都支持多模态，仅排除纯文本和纯图像生成模型
+            let supports_vision = !id_lower.contains("-image")       // 图像生成模型不接受图片输入
+                && !id_lower.contains("imagen")
+                && !id_lower.contains("embedding")
+                && !id_lower.contains("tts")
+                && !id_lower.contains("whisper")
+                && !id_lower.contains("text-only");
+
+            // 判断是否支持函数调用
+            let supports_function_call = !id_lower.contains("-image")
+                && !id_lower.contains("imagen")
+                && !id_lower.contains("embedding");
+
+            let mut model_obj = json!({
                 "id": id,
                 "object": "model",
                 "created": 1706745600,
-                "owned_by": "antigravity"
-            })
+                "owned_by": "antigravity",
+                "capabilities": {
+                    "vision": supports_vision,
+                    "function_calling": supports_function_call
+                }
+            });
+
+            // Cherry Studio 兼容: 部分客户端通过 top-level 字段检测能力
+            if supports_vision {
+                model_obj["vision"] = json!(true);
+            }
+
+            model_obj
         })
         .collect();
 

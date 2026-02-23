@@ -119,7 +119,7 @@ fn default_pinned_models() -> Vec<String> {
         "gemini-3-pro-high".to_string(),
         "gemini-3-flash".to_string(),
         "gemini-3-pro-image".to_string(),
-        "claude-sonnet-4-6-thinking".to_string(),
+        "claude-sonnet-4-6".to_string(),
     ]
 }
 

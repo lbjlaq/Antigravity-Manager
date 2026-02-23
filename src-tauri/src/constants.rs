@@ -11,10 +11,10 @@ const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 const FALLBACK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Known stable configuration (for Docker/Headless fallback)
-/// Antigravity 1.16.5 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "1.16.5";
+/// Antigravity 1.107.0 uses Electron 39.2.3 which corresponds to Chrome 142.0.7444.175
+const KNOWN_STABLE_VERSION: &str = "1.107.0";
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
-const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
+const KNOWN_STABLE_CHROME: &str = "142.0.7444.175";
 
 /// Pre-compiled regex for version parsing (X.Y.Z pattern)
 static VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -44,6 +44,17 @@ struct VersionConfig {
     chrome: String,
 }
 
+/// Check if a version string looks like a valid Antigravity version (major >= 1)
+/// This filters out false positives from other processes (e.g. esbuild 0.27.3)
+fn is_valid_antigravity_version(version: &str) -> bool {
+    if let Some(major_str) = version.split('.').next() {
+        if let Ok(major) = major_str.parse::<u32>() {
+            return major >= 1;
+        }
+    }
+    false
+}
+
 /// Fetch version strategy: Local > Known Stable (Docker) > Remote
 fn resolve_version_config() -> (VersionConfig, VersionSource) {
     // 1. Try Local Installation (Preferred)
@@ -60,19 +71,24 @@ fn resolve_version_config() -> (VersionConfig, VersionSource) {
                 KNOWN_STABLE_VERSION.to_string()
             });
 
-        // Map local version to Electron/Chrome if possible
-        // For now, if local version is >= 1.16.5, we assume it's using the new Electron 39 stack
-        // Ideally we would maintain a map, but for now we default to the KNOWN_STABLE stack
-        // if the version matches or is newer.
-        // If older, we might want to fallback to older values, but using new values is generally safer for "updates".
-        return (
-            VersionConfig {
-                version: resolved_version,
-                electron: KNOWN_STABLE_ELECTRON.to_string(),
-                chrome: KNOWN_STABLE_CHROME.to_string(),
-            },
-            VersionSource::LocalInstallation,
-        );
+        // Sanity check: Antigravity versions are >= 1.0.0
+        // Filter out false positives from other processes (e.g. esbuild 0.27.3)
+        if !is_valid_antigravity_version(&resolved_version) {
+            tracing::warn!(
+                detected_version = %resolved_version,
+                fallback = KNOWN_STABLE_VERSION,
+                "Detected local version looks invalid (major < 1), using known stable fallback"
+            );
+        } else {
+            return (
+                VersionConfig {
+                    version: resolved_version,
+                    electron: KNOWN_STABLE_ELECTRON.to_string(),
+                    chrome: KNOWN_STABLE_CHROME.to_string(),
+                },
+                VersionSource::LocalInstallation,
+            );
+        }
     }
 
     // 2. Fallback to Known Stable (Docker / Headless)

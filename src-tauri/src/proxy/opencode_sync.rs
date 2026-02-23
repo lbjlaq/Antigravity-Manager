@@ -62,8 +62,8 @@ fn build_model_catalog() -> Vec<ModelDef> {
             variant_type: None,
         },
         ModelDef {
-            id: "claude-sonnet-4-6-thinking",
-            name: "Claude Sonnet 4.6 Thinking",
+            id: "claude-sonnet-4-6",
+            name: "Claude Sonnet 4.6",
             context_limit: 200_000,
             output_limit: 64_000,
             input_modalities: &["text", "image", "pdf"],
@@ -1609,7 +1609,7 @@ pub async fn get_opencode_config_content(request: GetOpencodeConfigRequest) -> R
 /// List of Antigravity model IDs that may have been added to legacy providers
 const ANTIGRAVITY_MODEL_IDS: &[&str] = &[
     "claude-sonnet-4-6",
-    "claude-sonnet-4-6-thinking",
+    "claude-sonnet-4-6",
     "claude-sonnet-4-5",
     "claude-sonnet-4-5-thinking",
     "claude-opus-4-5-thinking",
