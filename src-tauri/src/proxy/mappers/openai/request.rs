@@ -261,14 +261,14 @@ pub fn transform_openai_request(
                                         } else {
                                             image_url.url.clone()
                                         };
-                                        
+
                                         tracing::debug!("[OpenAI-Request] Reading local image: {}", file_path);
-                                        
+
                                         // 读取文件并转换为 base64
                                         if let Ok(file_bytes) = std::fs::read(&file_path) {
                                             use base64::Engine as _;
                                             let b64 = base64::engine::general_purpose::STANDARD.encode(&file_bytes);
-                                            
+
                                             // 根据文件扩展名推断 MIME 类型
                                             let mime_type = if file_path.to_lowercase().ends_with(".png") {
                                                 "image/png"
@@ -279,13 +279,18 @@ pub fn transform_openai_request(
                                             } else {
                                                 "image/jpeg"
                                             };
-                                            
+
                                             parts.push(json!({
                                                 "inlineData": { "mimeType": mime_type, "data": b64 }
                                             }));
                                             tracing::debug!("[OpenAI-Request] Successfully loaded image: {} ({} bytes)", file_path, file_bytes.len());
                                         } else {
-                                            tracing::debug!("[OpenAI-Request] Failed to read local image: {}", file_path);
+                                            // [FIX] 文件不存在或无法读取时，注入警告文本而不是静默丢弃
+                                            // 这样模型会明确知道图片加载失败的原因
+                                            tracing::warn!("[OpenAI-Request] Failed to read local image: {} (client file path not accessible on server)", file_path);
+                                            parts.push(json!({
+                                                "text": format!("[Image file not found on server: {}]", file_path)
+                                            }));
                                         }
                                     }
                                 }

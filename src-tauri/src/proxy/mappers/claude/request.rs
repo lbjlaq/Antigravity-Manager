@@ -874,6 +874,7 @@ fn build_contents(
     last_user_task_text_normalized: &mut Option<String>,
     previous_was_tool_result: &mut bool,
     _existing_tool_result_ids: &std::collections::HashSet<String>,
+    is_last_message: bool,
 ) -> Result<Vec<Value>, String> {
     let mut parts = Vec::new();
     // Track tool results in the current turn to identify missing ones
@@ -1250,9 +1251,11 @@ fn build_contents(
                             tool_result_compressor::sanitize_tool_result_blocks(blocks);
                         }
 
-                        // Smart Truncation: strict image removal
-                        // Remove all Base64 images from historical tool results to save context.
-                        // Only allow text.
+                        // Smart Truncation: image handling
+                        // For historical tool results: strip Base64 images to save context.
+                        // For the LAST message (current turn): preserve images as Gemini inlineData
+                        // so the model can actually see them. (Fix: Gemini 3.1 Pro image support)
+                        let mut inline_image_parts: Vec<Value> = Vec::new();
                         let mut merged_content = match &compacted_content {
                             serde_json::Value::String(s) => s.clone(),
                             serde_json::Value::Array(arr) => arr
@@ -1261,11 +1264,30 @@ fn build_contents(
                                     if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
                                         Some(text.to_string())
                                     } else if block.get("source").is_some() {
-                                        // If it's an image/document, replace with placeholder
-                                        if block.get("type").and_then(|v| v.as_str())
-                                            == Some("image")
-                                        {
-                                            Some("[image omitted to save context]".to_string())
+                                        let block_type = block.get("type").and_then(|v| v.as_str());
+                                        if block_type == Some("image") {
+                                            if is_last_message {
+                                                // [FIX] Preserve image in current turn: convert to Gemini inlineData
+                                                if let Some(source) = block.get("source") {
+                                                    let source_type = source.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                                                    if source_type == "base64" {
+                                                        let media_type = source.get("media_type").and_then(|v| v.as_str()).unwrap_or("image/jpeg");
+                                                        let data = source.get("data").and_then(|v| v.as_str()).unwrap_or("");
+                                                        if !data.is_empty() {
+                                                            inline_image_parts.push(json!({
+                                                                "inlineData": {
+                                                                    "mimeType": media_type,
+                                                                    "data": data
+                                                                }
+                                                            }));
+                                                            tracing::debug!("[Claude-Request] Preserved image in tool_result for current turn (mime: {})", media_type);
+                                                        }
+                                                    }
+                                                }
+                                                None // Text part handled separately; image goes as inlineData
+                                            } else {
+                                                Some("[image omitted to save context]".to_string())
+                                            }
                                         } else {
                                             None
                                         }
@@ -1295,7 +1317,7 @@ fn build_contents(
                         }
 
                         // [优化] 如果结果为空，注入显式确认信号，防止模型幻觉
-                        if merged_content.trim().is_empty() {
+                        if merged_content.trim().is_empty() && inline_image_parts.is_empty() {
                             if is_error.unwrap_or(false) {
                                 merged_content =
                                     "Tool execution failed with no output.".to_string();
@@ -1311,6 +1333,16 @@ fn build_contents(
                                 "id": tool_use_id
                             }
                         }));
+
+                        // [FIX] Append preserved images as separate inlineData parts
+                        // Gemini expects images as top-level parts alongside functionResponse
+                        if !inline_image_parts.is_empty() {
+                            tracing::info!(
+                                "[Claude-Request] Attaching {} image(s) from tool_result to Gemini request",
+                                inline_image_parts.len()
+                            );
+                            parts.extend(inline_image_parts);
+                        }
 
                         // [FIX] Tool Result 也需要回填签名（如果上下文中有）
                         if let Some(sig) = last_thought_signature.as_ref() {
@@ -1435,6 +1467,7 @@ fn build_google_content(
     last_user_task_text_normalized: &mut Option<String>,
     previous_was_tool_result: &mut bool,
     existing_tool_result_ids: &std::collections::HashSet<String>,
+    is_last_message: bool,
 ) -> Result<Value, String> {
     let role = if msg.role == "assistant" {
         "model"
@@ -1492,6 +1525,7 @@ fn build_google_content(
         last_user_task_text_normalized,
         previous_was_tool_result,
         existing_tool_result_ids,
+        is_last_message,
     )?;
 
     if parts.is_empty() {
@@ -1526,7 +1560,7 @@ fn build_google_contents(
     let mut last_user_task_text_normalized: Option<String> = None;
     let mut previous_was_tool_result = false;
 
-    let _msg_count = messages.len();
+    let msg_count = messages.len();
 
     // [FIX #632] Pre-scan all messages to identify all tool_result IDs that ALREADY exist in the conversation.
     // This prevents Elastic-Recovery from injecting duplicate results if they are present later in the chain.
@@ -1541,7 +1575,8 @@ fn build_google_contents(
         }
     }
 
-    for (_i, msg) in messages.iter().enumerate() {
+    for (i, msg) in messages.iter().enumerate() {
+        let is_last_message = i == msg_count - 1;
         let google_content = build_google_content(
             msg,
             claude_req,
@@ -1557,6 +1592,7 @@ fn build_google_contents(
             &mut last_user_task_text_normalized,
             &mut previous_was_tool_result,
             &existing_tool_result_ids,
+            is_last_message,
         )?;
 
         if !google_content.is_null() {
