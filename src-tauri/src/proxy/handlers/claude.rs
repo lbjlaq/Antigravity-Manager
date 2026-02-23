@@ -236,20 +236,125 @@ use super::common::{determine_retry_strategy, apply_retry_strategy, should_rotat
 
 // ===== 退避策略模块结束 =====
 
+/// [ROBUSTNESS] Sanitize raw request body before deserialization
+/// Adds default values for missing required fields to prevent:
+/// 1. Deserialization failures (serde errors on missing fields)
+/// 2. Upstream API rejections ("thinking.signature: Field required", "thinking.thinking: Field required")
+fn sanitize_raw_request_body(body: &mut Value) {
+    let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+        return;
+    };
+
+    let mut fixes_applied = 0u32;
+
+    for msg in messages.iter_mut() {
+        let Some(content) = msg.get_mut("content").and_then(|c| c.as_array_mut()) else {
+            continue;
+        };
+
+        for block in content.iter_mut() {
+            let Some(obj) = block.as_object_mut() else {
+                continue;
+            };
+            let block_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or("").to_string();
+
+            match block_type.as_str() {
+                "thinking" => {
+                    // Ensure 'thinking' text field exists and is a string
+                    match obj.get("thinking") {
+                        None | Some(Value::Null) => {
+                            obj.insert("thinking".to_string(), Value::String(String::new()));
+                            fixes_applied += 1;
+                        }
+                        _ => {}
+                    }
+                    // Ensure 'signature' field exists and is a string
+                    // Missing signature causes "thinking.signature: Field required" from upstream
+                    match obj.get("signature") {
+                        None | Some(Value::Null) => {
+                            obj.insert("signature".to_string(), Value::String(String::new()));
+                            fixes_applied += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                "redacted_thinking" => {
+                    match obj.get("data") {
+                        None | Some(Value::Null) => {
+                            obj.insert("data".to_string(), Value::String(String::new()));
+                            fixes_applied += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                "text" => {
+                    match obj.get("text") {
+                        None | Some(Value::Null) => {
+                            obj.insert("text".to_string(), Value::String(String::new()));
+                            fixes_applied += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                "tool_use" => {
+                    if matches!(obj.get("id"), None | Some(Value::Null)) {
+                        obj.insert("id".to_string(), Value::String(
+                            format!("toolu_sanitized_{}", chrono::Utc::now().timestamp_millis())
+                        ));
+                        fixes_applied += 1;
+                    }
+                    if matches!(obj.get("name"), None | Some(Value::Null)) {
+                        obj.insert("name".to_string(), Value::String("unknown".to_string()));
+                        fixes_applied += 1;
+                    }
+                    if matches!(obj.get("input"), None | Some(Value::Null)) {
+                        obj.insert("input".to_string(), json!({}));
+                        fixes_applied += 1;
+                    }
+                }
+                "tool_result" => {
+                    if matches!(obj.get("tool_use_id"), None | Some(Value::Null)) {
+                        obj.insert("tool_use_id".to_string(), Value::String(
+                            format!("toolu_sanitized_{}", chrono::Utc::now().timestamp_millis())
+                        ));
+                        fixes_applied += 1;
+                    }
+                    if matches!(obj.get("content"), None | Some(Value::Null)) {
+                        obj.insert("content".to_string(), Value::String(String::new()));
+                        fixes_applied += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if fixes_applied > 0 {
+        tracing::info!(
+            "[Request-Sanitizer] Applied {} field fixes to malformed request body",
+            fixes_applied
+        );
+    }
+}
+
 /// 处理 Claude messages 请求
-/// 
+///
 /// 处理 Chat 消息请求流程
 pub async fn handle_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    Json(mut body): Json<Value>,
 ) -> Response {
     // [FIX] 保存原始请求体的完整副本，用于日志记录
     // 这确保了即使结构体定义遗漏字段，日志也能完整记录所有参数
     let original_body = body.clone();
-    
+
     tracing::debug!("handle_messages called. Body JSON len: {}", body.to_string().len());
-    
+
+    // [ROBUSTNESS] Sanitize request body before deserialization
+    // Fixes malformed requests that would cause deserialization or upstream API errors
+    sanitize_raw_request_body(&mut body);
+
     // 生成随机 Trace ID 用户追踪
     let trace_id: String = rand::Rng::sample_iter(rand::thread_rng(), &rand::distributions::Alphanumeric)
         .take(6)

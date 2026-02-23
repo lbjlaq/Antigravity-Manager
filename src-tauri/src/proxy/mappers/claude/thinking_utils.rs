@@ -191,7 +191,14 @@ pub fn filter_invalid_thinking_blocks_with_family(
                     // 1. Basic length check - allow empty signatures to pass through for compatibility
                     let sig = match signature {
                         Some(s) if s.len() >= MIN_SIGNATURE_LENGTH || s.is_empty() => s,
-                        None => return true, // Allow None signatures to pass through
+                        None => {
+                            // [FIX] Strip thinking blocks with missing signature
+                            // None signature causes upstream "thinking.signature: Field required" error
+                            // because skip_serializing_if omits the field entirely during re-serialization
+                            info!("[Thinking-Sanitizer] Stripping thinking block with missing signature (was None)");
+                            stripped_count += 1;
+                            return false;
+                        }
                         _ => {
                             stripped_count += 1;
                             return false;
