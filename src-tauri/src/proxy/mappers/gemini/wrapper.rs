@@ -164,6 +164,29 @@ pub fn wrap_request(
             .as_object_mut()
             .unwrap();
 
+        // [FIX] Convert v1beta thinkingLevel (string) to v1internal thinkingBudget (number).
+        // Clients (e.g. OpenClaw, Cline) may send thinkingLevel which v1internal does not accept,
+        // causing 400 INVALID_ARGUMENT. Convert before any budget processing below.
+        if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
+            if let Some(level) = thinking_config.get("thinkingLevel").and_then(|v| v.as_str()).map(|s| s.to_uppercase()) {
+                let budget: i64 = match level.as_str() {
+                    "NONE" => 0,
+                    "LOW" => 4096,
+                    "MEDIUM" => 8192,
+                    "HIGH" => 24576,
+                    _ => 8192, // safe default
+                };
+                tracing::info!(
+                    "[Gemini-Wrap] Converting thinkingLevel '{}' to thinkingBudget {}",
+                    level, budget
+                );
+                if let Some(tc) = thinking_config.as_object_mut() {
+                    tc.remove("thinkingLevel");
+                    tc.insert("thinkingBudget".to_string(), json!(budget));
+                }
+            }
+        }
+
         if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
             if let Some(budget_val) = thinking_config.get("thinkingBudget") {
                 if let Some(budget_i64) = budget_val.as_i64() {
