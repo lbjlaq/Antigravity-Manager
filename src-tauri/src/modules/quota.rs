@@ -254,8 +254,8 @@ pub async fn fetch_quota_with_cache(
                         
                         let reset_time = quota_info.reset_time.clone().unwrap_or_default();
                         
-                        // Only keep models we care about
-                        if name.contains("gemini") || name.contains("claude") || name.contains("image") || name.contains("imagen") || name.contains("chat") || name.contains("gpt") {
+                        // Only keep models we care about (exclude internal chat models)
+                        if name.starts_with("gemini") || name.starts_with("claude") || name.starts_with("gpt") || name.starts_with("image") || name.starts_with("imagen") {
                             let model_quota = crate::models::quota::ModelQuota {
                                 name,
                                 percentage,
