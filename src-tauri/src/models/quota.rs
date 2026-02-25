@@ -6,6 +6,13 @@ pub struct ModelQuota {
     pub name: String,
     pub percentage: i32,  // 剩余百分比 0-100
     pub reset_time: String,
+    // 动态高级属性
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
+    #[serde(default)]
+    pub thinking_budget: Option<u32>,
+    #[serde(default)]
+    pub supports_thinking: Option<bool>,
 }
 
 /// 配额数据结构
@@ -21,6 +28,9 @@ pub struct QuotaData {
     /// 订阅等级 (FREE/PRO/ULTRA)
     #[serde(default)]
     pub subscription_tier: Option<String>,
+    /// 模型重定向路由表 (deprecatedModelIds 映射)
+    #[serde(default)]
+    pub model_aliases: std::collections::HashMap<String, String>,
 }
 
 impl QuotaData {
@@ -31,14 +41,26 @@ impl QuotaData {
             is_forbidden: false,
             forbidden_reason: None,
             subscription_tier: None,
+            model_aliases: std::collections::HashMap::new(),
         }
     }
 
-    pub fn add_model(&mut self, name: String, percentage: i32, reset_time: String) {
+    pub fn add_model(
+        &mut self, 
+        name: String, 
+        percentage: i32, 
+        reset_time: String,
+        max_output_tokens: Option<u32>,
+        thinking_budget: Option<u32>,
+        supports_thinking: Option<bool>,
+    ) {
         self.models.push(ModelQuota {
             name,
             percentage,
             reset_time,
+            max_output_tokens,
+            thinking_budget,
+            supports_thinking,
         });
     }
 }

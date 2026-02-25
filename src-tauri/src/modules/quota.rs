@@ -14,12 +14,29 @@ const RETRY_DELAY_SECS: u64 = 30;
 #[derive(Debug, Serialize, Deserialize)]
 struct QuotaResponse {
     models: std::collections::HashMap<String, ModelInfo>,
+    #[serde(default)]
+    #[serde(rename = "deprecatedModelIds")]
+    deprecated_model_ids: std::collections::HashMap<String, DeprecatedModelInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DeprecatedModelInfo {
+    #[serde(rename = "newModelId")]
+    new_model_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ModelInfo {
     #[serde(rename = "quotaInfo")]
     quota_info: Option<QuotaInfo>,
+    
+    // Extracted dynamic capabilities from fetchAvailableModels
+    #[serde(rename = "maxOutputTokens")]
+    max_output_tokens: Option<u32>,
+    #[serde(rename = "thinkingBudget")]
+    thinking_budget: Option<u32>,
+    #[serde(rename = "supportsThinking")]
+    supports_thinking: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -240,10 +257,23 @@ pub async fn fetch_quota_with_cache(
                         let reset_time = quota_info.reset_time.clone().unwrap_or_default();
                         
                         // Only keep models we care about
-                        if name.contains("gemini") || name.contains("claude") || name.contains("image") || name.contains("imagen") {
-                            quota_data.add_model(name, percentage, reset_time);
+                        if name.contains("gemini") || name.contains("claude") || name.contains("image") || name.contains("imagen") || name.contains("gpt") || name.contains("chat") {
+                            quota_data.add_model(
+                                name, 
+                                percentage, 
+                                reset_time,
+                                info.max_output_tokens,
+                                info.thinking_budget,
+                                info.supports_thinking
+                            );
                         }
                     }
+                }
+                
+                // Process deprecated models to build routing table
+                for (old_name, info) in quota_response.deprecated_model_ids {
+                    quota_data.model_aliases.insert(old_name.clone(), info.new_model_id.clone());
+                    tracing::debug!("Found official deprecation redirect: {} -> {}", old_name, info.new_model_id);
                 }
                 
                 // Set subscription tier
