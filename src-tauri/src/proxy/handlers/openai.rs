@@ -203,7 +203,7 @@ pub async fn handle_chat_completions(
 
         // 4. 转换请求 (返回内容包含 session_id 和 message_count)
         let (gemini_body, session_id, message_count) =
-            transform_openai_request(&openai_req, &project_id, &mapped_model);
+            transform_openai_request(&openai_req, &project_id, &mapped_model, Some(account_id.as_str()));
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -1183,7 +1183,7 @@ pub async fn handle_completions(
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
         let (gemini_body, session_id, message_count) =
-            transform_openai_request(&openai_req, &project_id, &mapped_model);
+            transform_openai_request(&openai_req, &project_id, &mapped_model, Some(account_id.as_str()));
 
         // [New] 打印转换后的报文 (Gemini Body) 供调试 (Codex 路径) ———— 缩减为 simple debug
         debug!(
@@ -1565,7 +1565,7 @@ pub async fn handle_completions(
 pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoResponse {
     use crate::proxy::common::model_mapping::get_all_dynamic_models;
 
-    let model_ids = get_all_dynamic_models(&state.custom_mapping).await;
+    let model_ids = get_all_dynamic_models(&state.custom_mapping, Some(&state.token_manager)).await;
 
     let data: Vec<_> = model_ids
         .into_iter()

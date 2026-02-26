@@ -11,8 +11,8 @@ const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 const FALLBACK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Known stable configuration (for Docker/Headless fallback)
-/// Antigravity 1.16.5 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "1.16.5";
+/// Antigravity 4.1.22 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
+const KNOWN_STABLE_VERSION: &str = "4.1.22";
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
 const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
@@ -93,14 +93,22 @@ pub static CURRENT_VERSION: LazyLock<String> = LazyLock::new(|| {
     config.version
 });
 
+/// Native OAuth Authorization User-Agent
+/// Formatted exactly as: {nameLong}// User-Agent string for native OAuth requests
+pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
+    format!("vscode/1.X.X (Antigravity/{})", CURRENT_VERSION.as_str())
+});
+
 /// Global Session ID (generated once per app launch)
 pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| {
     uuid::Uuid::new_v4().to_string()
 });
 
 /// Shared User-Agent string for all upstream API requests.
-/// Format matches official Electron client:
-/// "Antigravity/1.16.5 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/1.16.5 Chrome/132.0.6834.160 Electron/39.2.3 Safari/537.36"
+/// Format matches the official Antigravity Electron desktop client (non-browser style):
+/// "Antigravity/4.1.23 (Macintosh; Intel Mac OS X 10_15_7) Chrome/132.0.6834.160 Electron/39.2.3"
+/// [CHANGED v4.1.24] Removed Mozilla/5.0 AppleWebKit/Safari browser wrapper to align with
+/// native desktop client fingerprint (closer to the actual official client behavior).
 pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     let (config, source) = resolve_version_config();
 
@@ -115,13 +123,13 @@ pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
         "macos" => "Macintosh; Intel Mac OS X 10_15_7",
         "windows" => "Windows NT 10.0; Win64; x64",
         "linux" => "X11; Linux x86_64",
-        _ => "X11; Linux x86_64", // Default to Linux-like
+        _ => "X11; Linux x86_64",
     };
 
     format!(
-        "Mozilla/5.0 ({}) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/{} Chrome/{} Electron/{} Safari/537.36",
-        platform_info,
+        "Antigravity/{} ({}) Chrome/{} Electron/{}",
         config.version,
+        platform_info,
         config.chrome,
         config.electron
     )

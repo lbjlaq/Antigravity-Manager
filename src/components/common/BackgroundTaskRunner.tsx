@@ -29,7 +29,7 @@ function BackgroundTaskRunner() {
             intervalId = setInterval(() => {
                 console.log('[BackgroundTask] Auto-refreshing all quotas...');
                 refreshAllQuotas();
-            }, refresh_interval * 60 * 1000);
+            }, Math.min(refresh_interval * 60 * 1000, 2147483647));
         }
 
         return () => {
@@ -60,7 +60,7 @@ function BackgroundTaskRunner() {
             intervalId = setInterval(() => {
                 console.log('[BackgroundTask] Auto-syncing current account from DB...');
                 syncAccountFromDb();
-            }, sync_interval * 60 * 1000);
+            }, Math.min(sync_interval * 60 * 1000, 2147483647));
         }
 
         return () => {

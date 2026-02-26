@@ -654,10 +654,23 @@ pub fn save_account(account: &Account) -> Result<(), String> {
     let accounts_dir = get_accounts_dir()?;
     let account_path = accounts_dir.join(format!("{}.json", account.id));
 
+    let temp_filename = format!("{}.tmp.{}", account.id, Uuid::new_v4());
+    let temp_path = accounts_dir.join(&temp_filename);
+
     let content = serde_json::to_string_pretty(account)
         .map_err(|e| format!("failed_to_serialize_account_data: {}", e))?;
 
-    fs::write(&account_path, content).map_err(|e| format!("failed_to_save_account_data: {}", e))
+    if let Err(e) = std::fs::write(&temp_path, content) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("failed_to_write_temp_account_file: {}", e));
+    }
+
+    if let Err(e) = atomic_replace_file(&temp_path, &account_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(format!("failed_to_replace_account_file: {}", e));
+    }
+
+    Ok(())
 }
 
 /// List all accounts

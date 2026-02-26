@@ -500,6 +500,18 @@ impl TokenManager {
             }
         }
 
+        // [NEW] 启动时自动同步持久化的淘汰模型路由表，注入热更新拦截器
+        if let Some(rules) = account.get("quota").and_then(|q| q.get("model_forwarding_rules")).and_then(|r| r.as_object()) {
+            for (k, v) in rules {
+                if let Some(new_model) = v.as_str() {
+                    crate::proxy::common::model_mapping::update_dynamic_forwarding_rules(
+                        k.to_string(),
+                        new_model.to_string()
+                    );
+                }
+            }
+        }
+
         Ok(Some(ProxyToken {
             account_id,
             access_token,
@@ -2356,6 +2368,18 @@ impl TokenManager {
         }
 
         earliest_ts
+    }
+
+    /// 获取当前所有可用账号中收集到的官方下发的所有动态模型集合
+    pub fn get_all_collected_models(&self) -> std::collections::HashSet<String> {
+        let mut all_models = std::collections::HashSet::new();
+        for entry in self.tokens.iter() {
+            let token = entry.value();
+            for model_id in token.model_quotas.keys() {
+                all_models.insert(model_id.clone());
+            }
+        }
+        all_models
     }
 
     /// Helper to find account ID by email

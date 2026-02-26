@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Protocol Proxy System (v4.1.22)
+> Professional AI Account Management & Protocol Proxy System (v4.1.23)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.1.22-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.1.23-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -122,7 +122,7 @@ Automatically detects your OS, architecture, and package manager — one command
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.22/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.23/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -132,7 +132,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.1.22`, dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.1.23`, dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
@@ -283,6 +283,27 @@ print(response.choices[0].message.content)
 ## 📝 Developer & Community
 
 *   **Changelog**:
+    *   **v4.1.23 (2026-02-25)**:
+        -   **[Security Enhancement] Aligned application-layer and low-level protocol fingerprints with native clients to improve request stability and anti-interception capabilities.**
+        -   **[Core Fix] Convert v1beta thinkingLevel to v1internal thinkingBudget (PR #2095)**:
+            -   **Root Cause**: Clients like OpenClaw and Cline send v1beta-style `thinkingLevel` strings (`"NONE"` / `"LOW"` / `"MEDIUM"` / `"HIGH"`) in `generationConfig.thinkingConfig`. When AGM proxies through Google's v1internal API, Google rejects `thinkingLevel` with `400 INVALID_ARGUMENT` because v1internal only accepts the numeric `thinkingBudget`.
+            -   **Fix**: Inserted an early conversion step inside `wrap_request()` before any existing budget processing logic: detect the `thinkingLevel` string, map it to a numeric `thinkingBudget` (`NONE`→0, `LOW`→4096, `MEDIUM`→8192, `HIGH`→24576), remove `thinkingLevel`, and write `thinkingBudget`. This ensures all downstream logic (budget capping, `maxOutputTokens` adjustment, adaptive detection) sees the correct numeric budget.
+            -   **Testing**: Verified with OpenClaw sending `thinkingLevel: "LOW"` to `gemini-3.1-pro-high` via Gemini native protocol — requests now return `200 OK` instead of the previous `400` error.
+        -   **[Core Fix] Resolve Account Data Corruption and Background Task Infinite Loops (PR #2094)**:
+            -   **Root Cause**: When a user enters an excessively large interval value (e.g., 999999999), `interval * 60 * 1000` exceeds the JS engine's signed 32-bit integer limit (`2,147,483,647ms`). The browser silently clamps the `setInterval` delay to 1ms, causing the frontend to fire `refreshAllQuotas`/`syncAccountFromDb` thousands of times per second, flooding the backend with concurrent writes to the same `[uuid].json` file, interleaving byte streams, and permanently corrupting account data.
+            -   **Atomic File Writes (`account.rs`)**: `save_account` now writes to a UUID-suffixed temp file first, then atomically replaces the target via `fs::rename` (POSIX) / `MoveFileExW` (Windows), consistent with the existing `save_account_index` implementation, eliminating race-condition corruption at the source.
+            -   **setInterval Overflow Guard (`BackgroundTaskRunner.tsx`)**: Applied `Math.min(..., 2147483647)` to the computed delay for both the refresh and sync timers, preventing INT32_MAX overflow from silently clamping intervals to 1ms.
+            -   **Input Validation (`Settings.tsx`)**: Updated the `max` attribute for `refresh_interval` and `sync_interval` inputs from `60` to `35791` (35791 min × 60000 < INT32_MAX), and added `NaN` fallback (defaults to 1) with range clamping `[1, 35791]` in `onChange` to block invalid values at the source.
+        -   **[Core Optimization] OAuth Token Exchange Only: Remove JA3 Fingerprinting and Dynamic User-Agent Masking**:
+            -   **Pure Requests**: Specifically for `exchange_code` (initial authorization) and `refresh_access_token` (silent renewal) requests, the Chrome JA3 fingerprint emulation has been removed to revert to standard pure TLS characteristics.
+            -   **Dynamic UA**: During token exchange, the system automatically extracts the compiled version (`CURRENT_VERSION`) to construct a dedicated `User-Agent` (e.g., `vscode/1.X.X (Antigravity/4.1.23)`), matching the pure TLS connection.
+        -   **[Feature Enhancement] API Proxy Page and Settings Model Lists Now Fully Dynamic**:
+            -   **Root Cause**: The "API Proxy → Supported Models & Integration" list, the target model dropdown in "Model Router", and the "Settings → Pinned Quota Models" list all previously read only from the static `MODEL_CONFIG`, causing dynamically issued models (e.g., `GPT-OSS 120B`, `Gemini 3.1 Pro (High)`) to never appear in these lists.
+            -   **Fix**:
+                -   Refactored the `useProxyModels` Hook: account `quota.models` dynamic data is now the primary data source, aggregating `display_name` (as the primary label) and `name` (as the model ID) across all accounts; `MODEL_CONFIG` is used only for icon/group styling and as a static fallback when no account data is available.
+                -   Added automatic lazy-loading: since `ApiProxy` itself does not call `fetchAccounts`, the Hook now auto-triggers a fetch when the store is empty, ensuring dynamic models appear regardless of the navigation path.
+                -   Refactored `PinnedQuotaModels` component: applies the same strategy and fixes the issue where previously-pinned "thinking" models displayed as "Unknown", now correctly resolving their real `display_name`.
+            -   **Deduplication**: All lists deduplicate by original `name` (lowercase) and additionally filter out `-thinking` suffix entries from `MODEL_CONFIG` (these variants are already covered by the `supports_thinking` flag in account data).
     *   **v4.1.22 (2026-02-21)**:
         -   **[Important Warning] 2api Risk Control Alert**:
             -   Due to recent Google risk control measures, utilizing 2api features significantly increases the probability of your account being flagged.

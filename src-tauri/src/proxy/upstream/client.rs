@@ -312,12 +312,9 @@ impl UpstreamClient {
             headers.insert("x-vscode-sessionid", sess_val);
         }
 
-        // 3. Google API Client (Node.js/Electron Environment Simulation)
-        // 模拟 gl-node, fire, grpc 版本特征
-        headers.insert(
-            "x-goog-api-client", 
-            header::HeaderValue::from_static("gl-node/18.18.2 fire/0.8.6 grpc/1.10.x")
-        );
+        // [REMOVED v4.1.24] x-goog-api-client (gl-node/fire/grpc) header has been removed.
+        // This header belongs to the IDE's JS layer, not the official client's egress.
+        // Sending it creates a contradictory "Electron + Node.js" fingerprint.
 
         // 注入额外的 Headers (如 anthropic-beta)
         for (k, v) in extra_headers {

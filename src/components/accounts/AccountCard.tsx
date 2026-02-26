@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot } from 'lucide-react';
 import { Account } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -78,9 +78,9 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
             const fullConfig = MODEL_CONFIG[m.name.toLowerCase()];
             return {
                 id: m.name,
-                label: fullConfig?.shortLabel || fullConfig?.label || m.name,
-                protectedKey: fullConfig?.protectedKey,
-                Icon: iconMap.get(m.name),
+                label: m.display_name || fullConfig?.shortLabel || fullConfig?.label || m.name,
+                protectedKey: fullConfig?.protectedKey || m.name,
+                Icon: iconMap.get(m.name) || Bot,
                 data: m
             };
         }) || [];
@@ -95,8 +95,9 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
             if (pinned && pinned.length > 0) {
                 models = accountModels.filter(m => pinned.includes(m.id));
             } else {
-                // Default fallback: show known default models
-                models = accountModels.filter(m => DEFAULT_MODELS.some(d => d.id === m.id));
+                // Default fallback: show known default models, plus we show all dynamic pinned models
+                // 暂时退化：如果没有 config 就不阻拦了？不，没有 pinned 就显示内置+有 display_name 的。
+                models = accountModels.filter(m => DEFAULT_MODELS.some(d => d.id === m.id) || m.data.display_name);
             }
         }
 

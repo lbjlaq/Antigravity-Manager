@@ -137,6 +137,8 @@ pub async fn handle_warmup(
             &claude_request,
             &project_id,
             false,
+            None,
+            "warmup",
         ) {
             Ok(transformed) => transformed,
             Err(e) => {
@@ -182,7 +184,7 @@ pub async fn handle_warmup(
             })
         };
 
-        wrap_request(&base_request, &project_id, &req.model, Some(&session_id))
+        wrap_request(&base_request, &project_id, &req.model, None, Some(&session_id))
     };
 
     // ===== 步骤 3: 调用 UpstreamClient =====

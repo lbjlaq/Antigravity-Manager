@@ -42,6 +42,7 @@ import {
     X,
     Check,
     Clock,
+    Bot,
 } from 'lucide-react';
 import { Account } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -345,7 +346,7 @@ function AccountRowContent({
         (showAllQuotas
             ? (account.quota?.models || []).map(m => {
                 const config = MODEL_CONFIG[m.name.toLowerCase()];
-                const label = config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || m.name);
+                const label = m.display_name || (config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || m.name));
                 return {
                     id: m.name.toLowerCase(),
                     label: label,
@@ -353,17 +354,18 @@ function AccountRowContent({
                     data: m
                 };
             })
-            : pinnedModels.filter(modelId => MODEL_CONFIG[modelId]).map(modelId => {
+            : pinnedModels.map(modelId => {
+                const m = account.quota?.models.find(m => m.name === modelId || getModelAliases(modelId).includes(m.name.toLowerCase()));
                 const config = MODEL_CONFIG[modelId];
-                const aliases = getModelAliases(modelId);
-                const label = config.i18nKey ? t(config.i18nKey) : (config.shortLabel || config.label);
+                if (!config && !m) return null; // Safe guard for unknown models that aren't fetched
+                const label = m?.display_name || (config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || modelId));
                 return {
                     id: modelId,
                     label: label,
-                    protectedKey: config.protectedKey,
-                    data: account.quota?.models.find(m => aliases.includes(m.name.toLowerCase()))
+                    protectedKey: config?.protectedKey || modelId,
+                    data: m
                 };
-            })
+            }).filter(Boolean) as any[]
         ).filter(m => {
             // 过滤特定的 Claude/Gemini 思考变体 (在列表页隐藏)
             const isHiddenThinking = m.id.includes('thinking');
@@ -550,7 +552,7 @@ function AccountRowContent({
                                     percentage={modelData?.percentage || 0}
                                     resetTime={modelData?.reset_time}
                                     isProtected={isModelProtected(account.protected_models, model.protectedKey)}
-                                    Icon={MODEL_CONFIG[model.id]?.Icon}
+                                    Icon={MODEL_CONFIG[model.id]?.Icon || Bot}
                                 />
                             );
                         })}

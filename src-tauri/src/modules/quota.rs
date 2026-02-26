@@ -14,12 +14,35 @@ const RETRY_DELAY_SECS: u64 = 30;
 #[derive(Debug, Serialize, Deserialize)]
 struct QuotaResponse {
     models: std::collections::HashMap<String, ModelInfo>,
+    #[serde(rename = "deprecatedModelIds")]
+    deprecated_model_ids: Option<std::collections::HashMap<String, DeprecatedModelInfo>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DeprecatedModelInfo {
+    #[serde(rename = "newModelId")]
+    new_model_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ModelInfo {
     #[serde(rename = "quotaInfo")]
     quota_info: Option<QuotaInfo>,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+    #[serde(rename = "supportsImages")]
+    supports_images: Option<bool>,
+    #[serde(rename = "supportsThinking")]
+    supports_thinking: Option<bool>,
+    #[serde(rename = "thinkingBudget")]
+    thinking_budget: Option<i32>,
+    recommended: Option<bool>,
+    #[serde(rename = "maxTokens")]
+    max_tokens: Option<i32>,
+    #[serde(rename = "maxOutputTokens")]
+    max_output_tokens: Option<i32>,
+    #[serde(rename = "supportedMimeTypes")]
+    supported_mime_types: Option<std::collections::HashMap<String, bool>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -38,36 +61,48 @@ struct LoadProjectResponse {
     current_tier: Option<Tier>,
     #[serde(rename = "paidTier")]
     paid_tier: Option<Tier>,
+    #[serde(rename = "allowedTiers")]
+    allowed_tiers: Option<Vec<Tier>>,
+    #[serde(rename = "ineligibleTiers")]
+    ineligible_tiers: Option<Vec<IneligibleTier>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IneligibleTier {
+    #[allow(dead_code)]
+    #[serde(rename = "reasonCode")]
+    reason_code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Tier {
+    #[allow(dead_code)]
+    is_default: Option<bool>,
     id: Option<String>,
     #[allow(dead_code)]
     #[serde(rename = "quotaTier")]
     quota_tier: Option<String>,
-    #[allow(dead_code)]
     name: Option<String>,
     #[allow(dead_code)]
     slug: Option<String>,
 }
 
-/// Get shared HTTP Client (15s timeout)
-async fn create_client(account_id: Option<&str>) -> rquest::Client {
+/// Get shared HTTP Client (15s timeout) for pure info fetching (No JA3)
+async fn create_standard_client(account_id: Option<&str>) -> rquest::Client {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 15).await
+        pool.get_effective_standard_client(account_id, 15).await
     } else {
-        crate::utils::http::get_client()
+        crate::utils::http::get_standard_client()
     }
 }
 
-/// Get shared HTTP Client (60s timeout)
+/// Get shared HTTP Client (60s timeout) for pure info fetching (No JA3)
 #[allow(dead_code)] // 预留给预热/后台任务调用
-async fn create_warmup_client(account_id: Option<&str>) -> rquest::Client {
+async fn create_long_standard_client(account_id: Option<&str>) -> rquest::Client {
     if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
-        pool.get_effective_client(account_id, 60).await
+        pool.get_effective_standard_client(account_id, 60).await
     } else {
-        crate::utils::http::get_long_client()
+        crate::utils::http::get_long_standard_client()
     }
 }
 
@@ -75,14 +110,14 @@ const CLOUD_CODE_BASE_URL: &str = "https://daily-cloudcode-pa.sandbox.googleapis
 
 /// Fetch project ID and subscription tier
 async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&str>) -> (Option<String>, Option<String>) {
-    let client = create_client(account_id).await;
+    let client = create_standard_client(account_id).await;
     let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}});
 
     let res = client
         .post(format!("{}/v1internal:loadCodeAssist", CLOUD_CODE_BASE_URL))
         .header(rquest::header::AUTHORIZATION, format!("Bearer {}", access_token))
         .header(rquest::header::CONTENT_TYPE, "application/json")
-        .header(rquest::header::USER_AGENT, crate::constants::USER_AGENT.as_str())
+        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
         .json(&meta)
         .send()
         .await;
@@ -93,10 +128,32 @@ async fn fetch_project_id(access_token: &str, email: &str, account_id: Option<&s
                 if let Ok(data) = res.json::<LoadProjectResponse>().await {
                     let project_id = data.project_id.clone();
                     
-                    // Core logic: Priority to subscription ID from paid_tier, which better reflects actual account benefits than current_tier
-                    let subscription_tier = data.paid_tier
-                        .and_then(|t| t.id)
-                        .or_else(|| data.current_tier.and_then(|t| t.id));
+                    // Core logic: Multi-level fallback for tier extraction
+                    // 1. Paid Tier (Google One AI Premium etc.)
+                    // 2. Current Tier (If not ineligible)
+                    // 3. Allowed Tiers (Restricted/Default proxy access)
+                    let mut subscription_tier = data.paid_tier.as_ref().and_then(|t| t.name.clone())
+                        .or_else(|| data.paid_tier.as_ref().and_then(|t| t.id.clone()));
+                        
+                    let is_ineligible = data.ineligible_tiers.is_some() && !data.ineligible_tiers.as_ref().unwrap().is_empty();
+                    
+                    if subscription_tier.is_none() {
+                        if !is_ineligible {
+                            subscription_tier = data.current_tier.as_ref().and_then(|t| t.name.clone())
+                                .or_else(|| data.current_tier.as_ref().and_then(|t| t.id.clone()));
+                        } else {
+                            // If account is marked as INELIGIBLE, drop to allowedTiers and extract default
+                            if let Some(mut allowed) = data.allowed_tiers {
+                                if let Some(default_tier) = allowed.iter_mut().find(|t| t.is_default == Some(true)) {
+                                    if let Some(name) = &default_tier.name {
+                                        subscription_tier = Some(format!("{} (Restricted)", name));
+                                    } else if let Some(id) = &default_tier.id {
+                                        subscription_tier = Some(format!("{} (Restricted)", id));
+                                    }
+                                }
+                            }
+                        }
+                    }
                     
                     if let Some(ref tier) = subscription_tier {
                         crate::modules::logger::log_info(&format!(
@@ -141,12 +198,10 @@ pub async fn fetch_quota_with_cache(
         fetch_project_id(access_token, email, account_id).await
     };
     
-    let final_project_id = project_id.as_deref().unwrap_or("bamboo-precept-lgxtn");
+    // We keep project_id to store in the DB, but we NO LONGER force inject it into payload if it's absent
     
-    let client = create_client(account_id).await;
-    let payload = json!({
-        "project": final_project_id
-    });
+    let client = create_standard_client(account_id).await;
+    let payload = json!({}); // Empty payload: Bypass project validation to get full model list
     
     let url = QUOTA_API_URL;
     let mut last_error: Option<AppError> = None;
@@ -155,7 +210,7 @@ pub async fn fetch_quota_with_cache(
         match client
             .post(url)
             .bearer_auth(access_token)
-            .header(rquest::header::USER_AGENT, crate::constants::USER_AGENT.as_str())
+            .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
             .json(&json!(payload))
             .send()
             .await
@@ -207,10 +262,30 @@ pub async fn fetch_quota_with_cache(
                         
                         let reset_time = quota_info.reset_time.clone().unwrap_or_default();
                         
-                        // Only keep models we care about
-                        if name.contains("gemini") || name.contains("claude") || name.contains("image") || name.contains("imagen") {
-                            quota_data.add_model(name, percentage, reset_time);
+                        // Only keep models we care about (exclude internal chat models)
+                        if name.starts_with("gemini") || name.starts_with("claude") || name.starts_with("gpt") || name.starts_with("image") || name.starts_with("imagen") {
+                            let model_quota = crate::models::quota::ModelQuota {
+                                name,
+                                percentage,
+                                reset_time,
+                                display_name: info.display_name,
+                                supports_images: info.supports_images,
+                                supports_thinking: info.supports_thinking,
+                                thinking_budget: info.thinking_budget,
+                                recommended: info.recommended,
+                                max_tokens: info.max_tokens,
+                                max_output_tokens: info.max_output_tokens,
+                                supported_mime_types: info.supported_mime_types,
+                            };
+                            quota_data.add_model(model_quota);
                         }
+                    }
+                }
+                
+                // Parse deprecated model routing rules
+                if let Some(deprecated) = quota_response.deprecated_model_ids {
+                    for (old_id, info) in deprecated {
+                        quota_data.model_forwarding_rules.insert(old_id, info.new_model_id);
                     }
                 }
                 

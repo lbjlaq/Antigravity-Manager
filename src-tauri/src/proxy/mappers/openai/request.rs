@@ -7,6 +7,7 @@ pub fn transform_openai_request(
     request: &OpenAIRequest,
     project_id: &str,
     mapped_model: &str,
+    account_id: Option<&str>,
 ) -> (Value, String, usize) {
     let session_id = crate::proxy::session_manager::SessionManager::extract_openai_session_id(request);
     let message_count = request.messages.len();
@@ -401,7 +402,10 @@ pub fn transform_openai_request(
 
     let mut gen_config = json!({
         "temperature": request.temperature.unwrap_or(1.0),
-        "topP": request.top_p.unwrap_or(0.95), // Gemini default is usually 0.95
+        // [CHANGED v4.1.24] Default topP from 0.95 → 1.0 to match native behavior
+        "topP": request.top_p.unwrap_or(1.0),
+        // [ADDED v4.1.24] topK=40 aligns with official client generationConfig
+        "topK": 40,
     });
 
     // [FIX] 移除默认的 81920 maxOutputTokens，防止非思维模型 (如 claude-sonnet-4-6) 报 400 Invalid Argument
@@ -642,6 +646,10 @@ pub fn transform_openai_request(
 
         if !function_declarations.is_empty() {
             inner_request["tools"] = json!([{ "functionDeclarations": function_declarations }]);
+            // [ADDED v4.1.24] toolConfig VALIDATED - aligns with native behavior
+            inner_request["toolConfig"] = json!({
+                "functionCallingConfig": { "mode": "VALIDATED" }
+            });
         }
     }
 
@@ -698,13 +706,20 @@ pub fn transform_openai_request(
         }
     }
 
+    // [ADDED v4.1.24] 注入稳定 sessionId 对齐官方规范
+    if let Some(account_id) = account_id {
+        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id));
+    }
+
     let final_body = json!({
         "project": project_id,
-        "requestId": format!("openai-{}", uuid::Uuid::new_v4()),
+        // [CHANGED v4.1.24] Structured requestId: agent/<session>/<turn> to match official format
+        "requestId": format!("agent/antigravity/{}/{}", &session_id[..session_id.len().min(8)], message_count),
         "request": inner_request,
         "model": config.final_model,
         "userAgent": "antigravity",
-        "requestType": config.request_type
+        // [CHANGED v4.1.24] Use "agent" for all non-image requests (matches official client)
+        "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" }
     });
 
     (final_body, session_id, message_count)

@@ -162,8 +162,7 @@ function Settings() {
                 return;
             }
 
-            // 强制开启后台自动刷新，确保联动逻辑生效
-            await saveConfig({ ...formData, auto_refresh: true });
+            await saveConfig(formData);
             showToast(t('common.saved'), 'success');
 
             // 如果修改了代理配置，提示用户需要重启
@@ -707,9 +706,9 @@ function Settings() {
                                             type="number"
                                             className="w-24 px-3 py-2 bg-gray-50 dark:bg-base-200 border border-gray-100 dark:border-base-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-blue-600 dark:text-blue-400"
                                             min="1"
-                                            max="60"
+                                            max="35791"
                                             value={formData.refresh_interval}
-                                            onChange={(e) => setFormData({ ...formData, refresh_interval: parseInt(e.target.value) })}
+                                            onChange={(e) => setFormData({ ...formData, refresh_interval: isNaN(parseInt(e.target.value)) ? 1 : Math.min(Math.max(parseInt(e.target.value), 1), 35791) })}
                                         />
                                     </div>
                                 </div>
@@ -745,9 +744,9 @@ function Settings() {
                                             type="number"
                                             className="w-24 px-3 py-2 bg-gray-50 dark:bg-base-200 border border-gray-100 dark:border-base-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-bold text-emerald-600 dark:text-emerald-400"
                                             min="1"
-                                            max="60"
+                                            max="35791"
                                             value={formData.sync_interval}
-                                            onChange={(e) => setFormData({ ...formData, sync_interval: parseInt(e.target.value) })}
+                                            onChange={(e) => setFormData({ ...formData, sync_interval: isNaN(parseInt(e.target.value)) ? 1 : Math.min(Math.max(parseInt(e.target.value), 1), 35791) })}
                                         />
                                     </div>
                                 )}
@@ -1254,7 +1253,7 @@ function Settings() {
                                     <div>
                                         <h3 className="text-3xl font-black text-gray-900 dark:text-base-content tracking-tight mb-2">{t('common.app_name', 'Antigravity Tools')}</h3>
                                         <div className="flex items-center justify-center gap-2 text-sm">
-                                            v4.1.22
+                                            v4.1.23
                                             <span className="text-gray-400 dark:text-gray-600">•</span>
                                             <span className="text-gray-500 dark:text-gray-400">{t('settings.branding.subtitle')}</span>
                                         </div>

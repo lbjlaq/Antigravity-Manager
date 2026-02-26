@@ -790,7 +790,7 @@ pub async fn handle_messages(
         // 生成 Trace ID (简单用时间戳后缀)
         // let _trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
 
-        let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id, retried_without_thinking) {
+        let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id, retried_without_thinking, Some(account_id.as_str()), &session_id_str) {
             Ok(b) => {
                 debug!("[{}] Transformed Gemini Body: {}", trace_id, serde_json::to_string_pretty(&b).unwrap_or_default());
                 b
@@ -1407,6 +1407,7 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
 
     let model_ids = get_all_dynamic_models(
         &state.custom_mapping,
+        Some(&state.token_manager)
     ).await;
 
     let data: Vec<_> = model_ids.into_iter().map(|id| {
@@ -1751,12 +1752,12 @@ async fn call_gemini_sync(
     trace_id: &str,
 ) -> Result<String, String> {
     // Get token and transform request
-    let (access_token, project_id, _, _, _wait_ms) = token_manager
+    let (access_token, project_id, _, account_id, _wait_ms) = token_manager
         .get_token("gemini", false, None, model)
         .await
         .map_err(|e| format!("Failed to get account: {}", e))?;
     
-    let gemini_body = crate::proxy::mappers::claude::transform_claude_request_in(request, &project_id, false)
+    let gemini_body = crate::proxy::mappers::claude::transform_claude_request_in(request, &project_id, false, Some(account_id.as_str()), trace_id)
         .map_err(|e| format!("Failed to transform request: {}", e))?;
     
     // Call Gemini API

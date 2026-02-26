@@ -2,6 +2,7 @@ import { Pin, Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PinnedQuotaModelsConfig } from '../../types/config';
 import { MODEL_CONFIG } from '../../config/modelConfig';
+import { useAccountStore } from '../../stores/useAccountStore';
 
 interface PinnedQuotaModelsProps {
     config: PinnedQuotaModelsConfig;
@@ -26,22 +27,70 @@ const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
         onChange({ ...config, models: newModels });
     };
 
-    const uniqueLabels = new Set<string>();
-    const modelOptions = Object.entries(MODEL_CONFIG)
+    const { accounts } = useAccountStore();
+    const uniqueIds = new Set<string>();
+
+    // 先收集所有已知模型的 id 和 protectedKey，防止他们作为未知的 "动态抽出模型" 出现
+    Object.entries(MODEL_CONFIG).forEach(([id, cfg]) => {
+        uniqueIds.add(id.toLowerCase());
+        if (cfg.protectedKey) {
+            uniqueIds.add(cfg.protectedKey.toLowerCase());
+        }
+    });
+
+    const addedDisplayLabels = new Set<string>();
+
+    // 基础内置配置模型
+    const baseModels = Object.entries(MODEL_CONFIG)
         .filter(([id, cfg]) => {
             // 隐藏思考变体
             if (id.includes('thinking')) return false;
 
-            const label = cfg.shortLabel || cfg.label;
-            if (uniqueLabels.has(label)) return false;
-            uniqueLabels.add(label);
+            const labelKey = (cfg.shortLabel || cfg.label).toLowerCase();
+            // 在这一层，如果展示用的 labelKey 已经被加过了，就不要重复加到外派的选项里了
+            if (addedDisplayLabels.has(labelKey)) return false;
+            addedDisplayLabels.add(labelKey);
             return true;
         })
         .map(([id, cfg]) => ({
             id,
-            label: cfg.shortLabel || cfg.label,
-            desc: t(cfg.i18nDescKey || cfg.i18nKey, cfg.label)
+            label: id,
+            desc: cfg.shortLabel || cfg.label || t(cfg.i18nDescKey || cfg.i18nKey, cfg.label)
         }));
+
+    // 提取所有账号的历史动态模型
+    const dynamicModels = accounts.flatMap(a => a.quota?.models || [])
+        .filter(m => {
+            const id = m.name.toLowerCase();
+            if (id.includes('thinking')) return false;
+            // 查重：避免内置里已经包含的模型或同名 id 重复
+            if (uniqueIds.has(id)) return false;
+            uniqueIds.add(id);
+            return true;
+        })
+        .map(m => ({
+            id: m.name.toLowerCase(),
+            label: m.name.toLowerCase(),
+            desc: m.display_name || t('settings.pinned_quota_models.dynamic', 'Dynamic Extracted Model')
+        }));
+
+    const modelOptions = [...baseModels, ...dynamicModels];
+
+    // [FIX] Ensure previously pinned but unknown/hidden models are still rendered so users can un-pin them
+    const currentChecked = config.models || [];
+    currentChecked.forEach(modelId => {
+        if (!modelOptions.some(m => m.id === modelId)) {
+            // 尝试在历史配额中找到它的真实名字 (为了应对如 thinking 模型被隐藏但在关注列表里等情况)
+            const quotaModel = accounts.flatMap(a => a.quota?.models || []).find(m => m.name.toLowerCase() === modelId.toLowerCase());
+            const cfg = MODEL_CONFIG[modelId.toLowerCase()];
+
+            modelOptions.push({
+                id: modelId,
+                label: modelId,
+                desc: quotaModel?.display_name || cfg?.shortLabel || cfg?.label || t('common.unknown', '未知')
+            });
+        }
+    });
 
     return (
         <div className="animate-in fade-in duration-500">

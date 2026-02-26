@@ -37,12 +37,21 @@ export interface QuotaData {
     is_forbidden?: boolean;
     forbidden_reason?: string;
     subscription_tier?: string;  // 订阅类型: FREE/PRO/ULTRA
+    model_forwarding_rules?: Record<string, string>; // 废弃模型转发表
 }
 
 export interface ModelQuota {
     name: string;
     percentage: number;
     reset_time: string;
+    display_name?: string;
+    supports_images?: boolean;
+    supports_thinking?: boolean;
+    thinking_budget?: number;
+    recommended?: boolean;
+    max_tokens?: number;
+    max_output_tokens?: number;
+    supported_mime_types?: Record<string, boolean>;
 }
 
 export interface DeviceProfile {

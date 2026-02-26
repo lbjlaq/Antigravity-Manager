@@ -1,6 +1,17 @@
 // 模型名称映射
 use std::collections::HashMap;
 use once_cell::sync::Lazy;
+use dashmap::DashMap;
+
+// 动态官方废弃模型转发表 (old_model_id -> new_model_id)
+pub static DYNAMIC_MODEL_FORWARDING_RULES: Lazy<DashMap<String, String>> = Lazy::new(|| DashMap::new());
+
+pub fn update_dynamic_forwarding_rules(old_model: String, new_model: String) {
+    if !DYNAMIC_MODEL_FORWARDING_RULES.contains_key(&old_model) {
+        crate::modules::logger::log_info(&format!("[Mapping] Registered automatic forwarding rule: {} -> {}", old_model, new_model));
+    }
+    DYNAMIC_MODEL_FORWARDING_RULES.insert(old_model, new_model);
+}
 
 static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
     let mut m = HashMap::new();
@@ -125,9 +136,10 @@ pub fn get_supported_models() -> Vec<String> {
     CLAUDE_TO_GEMINI.keys().map(|s| s.to_string()).collect()
 }
 
-/// 动态获取所有可用模型列表 (包含内置与用户自定义)
+/// 动态获取所有可用模型列表 (包含内置与用户自定义与官方端点动态下发)
 pub async fn get_all_dynamic_models(
     custom_mapping: &tokio::sync::RwLock<std::collections::HashMap<String, String>>,
+    token_manager: Option<&crate::proxy::token_manager::TokenManager>,
 ) -> Vec<String> {
     use std::collections::HashSet;
     let mut model_ids = HashSet::new();
@@ -142,6 +154,13 @@ pub async fn get_all_dynamic_models(
         let mapping = custom_mapping.read().await;
         for key in mapping.keys() {
             model_ids.insert(key.clone());
+        }
+    }
+
+    // 3. [NEW] 获取所有账号从官方接口汇聚而来的动态模型
+    if let Some(tm) = token_manager {
+        for dynamic_model in tm.get_all_collected_models() {
+            model_ids.insert(dynamic_model);
         }
     }
 
@@ -234,7 +253,14 @@ pub fn resolve_model_route(
     original_model: &str,
     custom_mapping: &std::collections::HashMap<String, String>,
 ) -> String {
-    // 1. 精确匹配 (最高优先级)
+    // 0. API 热更新废弃模型转发 (最高物理优先级，强制纠正)
+    // 如果用户非要用已经被移除的模型，并且官方下发了 fallback path，我们在此拦截并纠正
+    if let Some(forwarded) = DYNAMIC_MODEL_FORWARDING_RULES.get(original_model) {
+        crate::modules::logger::log_info(&format!("[Router] 官方淘汰重定向: {} -> {}", original_model, forwarded.value()));
+        return forwarded.value().clone();
+    }
+
+    // 1. 精确匹配 (次高优先级)
     if let Some(target) = custom_mapping.get(original_model) {
         crate::modules::logger::log_info(&format!("[Router] 精确映射: {} -> {}", original_model, target));
         return target.clone();

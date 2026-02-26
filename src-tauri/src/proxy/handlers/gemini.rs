@@ -155,7 +155,7 @@ pub async fn handle_generate(
 
         // 5. 包装请求 (project injection)
         // [FIX #765] Pass session_id to wrap_request for signature injection
-        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(&session_id));
+        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(account_id.as_str()), Some(&session_id));
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -642,7 +642,7 @@ pub async fn handle_list_models(
     use crate::proxy::common::model_mapping::get_all_dynamic_models;
 
     // 获取所有动态模型列表（与 /v1/models 一致）
-    let model_ids = get_all_dynamic_models(&state.custom_mapping).await;
+    let model_ids = get_all_dynamic_models(&state.custom_mapping, Some(&state.token_manager)).await;
 
     // 转换为 Gemini API 格式
     let models: Vec<_> = model_ids

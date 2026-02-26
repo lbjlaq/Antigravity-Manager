@@ -6,6 +6,7 @@ pub fn wrap_request(
     body: &Value,
     project_id: &str,
     mapped_model: &str,
+    account_id: Option<&str>,
     session_id: Option<&str>,
 ) -> Value {
     // 优先使用传入的 mapped_model，其次尝试从 body 获取
@@ -20,6 +21,12 @@ pub fn wrap_request(
     } else {
         original_model
     };
+
+    // [ADDED v4.1.24] 计算 message_count 供 requestId 使用
+    let message_count = body.get("contents")
+        .and_then(|c| c.as_array())
+        .map(|a| a.len())
+        .unwrap_or(1);
 
     // 复制 body 以便修改
     let mut inner_request = body.clone();
@@ -163,6 +170,37 @@ pub fn wrap_request(
             .or_insert(json!({}))
             .as_object_mut()
             .unwrap();
+
+        // [ADDED v4.1.24] Inject topK=40 and topP=1.0 if not present to match official client
+        if !gen_config.contains_key("topK") {
+            gen_config.insert("topK".to_string(), json!(40));
+        }
+        if !gen_config.contains_key("topP") {
+            gen_config.insert("topP".to_string(), json!(1.0));
+        }
+
+        // [FIX] Convert v1beta thinkingLevel (string) to v1internal thinkingBudget (number).
+        // Clients (e.g. OpenClaw, Cline) may send thinkingLevel which v1internal does not accept,
+        // causing 400 INVALID_ARGUMENT. Convert before any budget processing below.
+        if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
+            if let Some(level) = thinking_config.get("thinkingLevel").and_then(|v| v.as_str()).map(|s| s.to_uppercase()) {
+                let budget: i64 = match level.as_str() {
+                    "NONE" => 0,
+                    "LOW" => 4096,
+                    "MEDIUM" => 8192,
+                    "HIGH" => 24576,
+                    _ => 8192, // safe default
+                };
+                tracing::info!(
+                    "[Gemini-Wrap] Converting thinkingLevel '{}' to thinkingBudget {}",
+                    level, budget
+                );
+                if let Some(tc) = thinking_config.as_object_mut() {
+                    tc.remove("thinkingLevel");
+                    tc.insert("thinkingBudget".to_string(), json!(budget));
+                }
+            }
+        }
 
         if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
             if let Some(budget_val) = thinking_config.get("thinkingBudget") {
@@ -424,13 +462,28 @@ pub fn wrap_request(
         }
     }
 
+    // [ADDED v4.1.24] 扩展 toolConfig 到 VALIDATED 模式
+    if inner_request.get("tools").is_some() && !inner_request.get("toolConfig").is_some() {
+        inner_request["toolConfig"] = json!({
+            "functionCallingConfig": { "mode": "VALIDATED" }
+        });
+    }
+
+    // [ADDED v4.1.24] 注入基于账号的稳定 sessionId
+    if let Some(account_id_str) = account_id {
+        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id_str));
+    }
+
+    let sid = session_id.unwrap_or("default");
     let final_request = json!({
         "project": project_id,
-        "requestId": format!("agent-{}", uuid::Uuid::new_v4()), // 修正为 agent- 前缀
+        // [CHANGED v4.1.24] Structured requestId to match official format
+        "requestId": format!("agent/antigravity/{}/{}", &sid[..sid.len().min(8)], message_count),
         "request": inner_request,
         "model": config.final_model,
         "userAgent": "antigravity",
-        "requestType": config.request_type
+        // [CHANGED v4.1.24] Use "agent" for all non-image requests
+        "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" }
     });
 
     final_request

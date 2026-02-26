@@ -1,4 +1,4 @@
-import { X, Clock, AlertCircle } from 'lucide-react';
+import { X, Clock, AlertCircle, Bot } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Account } from '../../types/account';
 import { formatDate } from '../../utils/format';
@@ -89,7 +89,7 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
                             return sortModels(
                                 (account.quota?.models || []).map(model => {
                                     const config = MODEL_CONFIG[model.name.toLowerCase()];
-                                    const label = config?.i18nKey ? t(config.i18nKey) : (config?.label || model.name);
+                                    const label = model.display_name || (config?.i18nKey ? t(config.i18nKey) : (config?.label || model.name));
                                     return {
                                         id: model.name.toLowerCase(),
                                         label: label,
@@ -103,14 +103,21 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
                             }).map(({ model, label }) => (
                                 <div key={model.name} className="p-4 rounded-xl border border-gray-100 dark:border-base-200 bg-white dark:bg-base-100 hover:border-blue-100 dark:hover:border-blue-900 hover:shadow-sm transition-all group">
                                     <div className="flex justify-between items-start mb-3">
-                                        <div className="flex items-center gap-2">
-                                            {(() => {
-                                                const Icon = MODEL_CONFIG[model.name.toLowerCase()]?.Icon;
-                                                return Icon ? <Icon size={16} className="shrink-0" /> : null;
-                                            })()}
-                                            <span className="text-sm font-medium font-mono text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">
-                                                {label}
-                                            </span>
+                                        <div className="flex flex-col gap-1">
+                                            <div className="flex items-center gap-2">
+                                                {(() => {
+                                                    const Icon = MODEL_CONFIG[model.name.toLowerCase()]?.Icon || Bot;
+                                                    return <Icon size={16} className="shrink-0" />;
+                                                })()}
+                                                <span className="text-sm font-medium font-mono text-gray-700 dark:text-gray-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">
+                                                    {label}
+                                                </span>
+                                            </div>
+                                            {model.thinking_budget !== undefined && (
+                                                <span className="text-[10px] text-gray-500 font-mono bg-gray-100 dark:bg-base-200 px-1 rounded inline-block w-max mt-0.5">
+                                                    {t('proxy.config.thinking_budget', 'Thinking Budget')}: {model.thinking_budget}
+                                                </span>
+                                            )}
                                         </div>
                                         <span
                                             className={`text-xs font-bold px-2 py-0.5 rounded-md ${model.percentage >= 50 ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400' :

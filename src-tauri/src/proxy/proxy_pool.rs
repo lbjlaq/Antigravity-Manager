@@ -123,6 +123,52 @@ impl ProxyPoolManager {
         builder.build().unwrap_or_else(|_| Client::new())
     }
 
+    /// [NEW] 为指定账号获取“最终生效”的无特征 Standard HttpClient (专门用于纯净场景，如 OAuth 退还)
+    pub async fn get_effective_standard_client(&self, account_id: Option<&str>, timeout_secs: u64) -> Client {
+        let mut builder = Client::builder()
+            // 无 Emulation 设置，走纯正的基础 TLS 指纹
+            .timeout(Duration::from_secs(timeout_secs));
+        
+        // 尝试获取代理配置
+        let proxy_opt = if let Some(acc_id) = account_id {
+            self.get_proxy_for_account(acc_id).await.ok().flatten()
+        } else {
+            // 没有 account_id 的通用请求，如果代理池启用，则默认从中选择节点作为出口
+            let config = self.config.read().await;
+            if config.enabled {
+                let res = self.select_proxy_from_pool(&config).await.ok().flatten();
+                if let Some(ref p) = res {
+                    tracing::info!("[Proxy] Route: Generic Request (Standard Client) -> Proxy {} (Pool)", p.entry_id);
+                } else {
+                    tracing::warn!("[Proxy] Route: Generic Request (Standard Client) -> No available proxy in pool, falling back to upstream or direct");
+                }
+                res
+            } else {
+                tracing::debug!("[Proxy] Route: Generic Request (Standard Client) -> Proxy pool disabled");
+                None
+            }
+        };
+
+        if let Some(proxy_cfg) = proxy_opt {
+            builder = builder.proxy(proxy_cfg.proxy);
+        } else {
+            // Fallback 到应用配置的单上游代理
+            if let Ok(app_cfg) = crate::modules::config::load_app_config() {
+                let up = app_cfg.proxy.upstream_proxy;
+                if up.enabled && !up.url.is_empty() {
+                    if let Ok(p) = rquest::Proxy::all(&up.url) {
+                        tracing::info!("[Proxy] Route: {:?} (Standard Client) -> Upstream: {} (AppConfig)", account_id.unwrap_or("Generic"), up.url);
+                        builder = builder.proxy(p);
+                    }
+                } else {
+                    tracing::info!("[Proxy] Route: {:?} (Standard Client) -> Direct", account_id.unwrap_or("Generic"));
+                }
+            }
+        }
+
+        builder.build().unwrap_or_else(|_| Client::new())
+    }
+
     /// 为账号获取代理
     pub async fn get_proxy_for_account(
         &self,
