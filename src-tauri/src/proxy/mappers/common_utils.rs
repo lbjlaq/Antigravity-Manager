@@ -80,26 +80,10 @@ pub fn resolve_request_config(
     // 检测是否包含非联网工具 (如 MCP 本地工具)
     let _has_non_networking = contains_non_networking_tool(tools);
 
-    // Strip -online suffix from original model if present (to detect networking intent)
-    let is_online_suffix = original_model.ends_with("-online");
-
-    // High-quality grounding allowlist (Only for models known to support search and be relatively 'safe')
-    let _is_high_quality_model = mapped_model == "gemini-2.5-flash"
-        || mapped_model == "gemini-1.5-pro"
-        || mapped_model.starts_with("gemini-1.5-pro-")
-        || mapped_model.starts_with("gemini-2.5-flash-")
-        || mapped_model.starts_with("gemini-2.0-flash")
-        || mapped_model.starts_with("gemini-3-")
-        || mapped_model.starts_with("gemini-3.")
-        || mapped_model.contains("claude-3-5-sonnet")
-        || mapped_model.contains("claude-3-opus")
-        || mapped_model.contains("claude-sonnet")
-        || mapped_model.contains("claude-opus")
-        || mapped_model.contains("claude-4");
-
     // Determine if we should enable networking
     // [FIX] 禁用基于模型的自动联网逻辑，防止图像请求被联网搜索结果覆盖。
     // 仅在用户显式请求联网时启用：1) -online 后缀 2) 携带联网工具定义
+    let is_online_suffix = original_model.to_lowercase().ends_with("-online");
     let enable_networking = is_online_suffix || has_networking_tool;
 
     // The final model to send upstream should be the MAPPED model,
@@ -107,18 +91,21 @@ pub fn resolve_request_config(
     // Force a stable search model for search requests.
     let mut final_model = mapped_model.trim_end_matches("-online").to_string();
 
-    // [REFACTORED] Use model_specs for alias resolution (configured in model_specs.json)
-    final_model = crate::proxy::model_specs::resolve_alias(&final_model);
+    // [REFACTORED] Use model_specs for lookup and search support check
+    let model_supports_search = crate::proxy::model_specs::supports_search(&final_model);
 
-    // [FIX] Check allowlist before forcing downgrade
+    // [FIX] Check config before forcing downgrade
     // If networking is enabled but the model doesn't support search, fall back to Flash
-    if enable_networking && !_is_high_quality_model {
+    if enable_networking && !model_supports_search {
         tracing::info!(
             "[Common-Utils] Downgrading {} to gemini-2.5-flash for web search (model not in search allowlist)",
             final_model
         );
         final_model = "gemini-2.5-flash".to_string();
     }
+
+    // [REFACTORED] Final alias resolution (configured in model_specs.json)
+    final_model = crate::proxy::model_specs::resolve_alias(&final_model);
 
     RequestConfig {
         request_type: if enable_networking {

@@ -107,21 +107,16 @@ pub fn wrap_request(
     // [CONFIGURABLE] 现在改为遵循全局 Thinking Budget 配置
     // [FIX #1557] Also apply to Pro/Thinking models to ensure budget processing
     // [FIX #1557] Auto-inject thinkingConfig if missing for these models
-    let lower_model = final_model_name.to_lowercase();
-    if lower_model.contains("flash")
-        || lower_model.contains("pro")
-        || lower_model.contains("thinking")
-    {
+    if crate::proxy::model_specs::supports_thinking(final_model_name) {
         // [NEW] Extract OpenAI-style max_tokens before mutably borrowing gen_config
         let req_max_tokens = inner_request.get("max_tokens").and_then(|v| v.as_u64());
 
-        // Determine model family and capability beforehand to avoid borrow checker conflicts
-        let is_claude = lower_model.contains("claude");
-        let is_preview = lower_model.contains("preview");
-        let should_inject = lower_model.contains("thinking")
-            || (lower_model.contains("gemini-2.0-pro") && !is_preview)
-            || (lower_model.contains("gemini-3-pro") && !is_preview)
-            || (lower_model.contains("gemini-3.1-pro") && !is_preview);
+        // Determine model family beforehand to avoid borrow checker conflicts
+        let is_claude = final_model_name.to_lowercase().contains("claude");
+        
+        // Use lookup to decide if we should auto-inject thinkingConfig
+        // We inject it for models that definitely support it but might have it missing from the request
+        let should_inject = crate::proxy::model_specs::supports_thinking(final_model_name);
 
         if should_inject {
             // Scope for borrowing inner_request/gen_config
@@ -517,7 +512,7 @@ mod test_fixes {
             }]
         });
 
-        let result = wrap_request(&body, "proj", "gemini-pro", Some(session_id));
+        let result = wrap_request(&body, "proj", "gemini-pro", None, Some(session_id));
         let injected_sig = result["request"]["contents"][0]["parts"][0]["thoughtSignature"]
             .as_str()
             .unwrap();
@@ -581,7 +576,7 @@ mod tests {
             "contents": [{"role": "user", "parts": [{"text": "Hi"}]}]
         });
 
-        let result = wrap_request(&body, "test-project", "gemini-2.5-flash", None);
+        let result = wrap_request(&body, "test-project", "gemini-2.5-flash", None, None);
         assert_eq!(result["project"], "test-project");
         assert_eq!(result["model"], "gemini-2.5-flash");
         assert!(result["requestId"].as_str().unwrap().starts_with("agent-"));
@@ -607,7 +602,7 @@ mod tests {
             "messages": []
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-pro", None);
+        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None);
 
         // 验证 systemInstruction
         let sys = result
@@ -633,7 +628,7 @@ mod tests {
         });
 
         // Test with Flash model
-        let result = wrap_request(&body, "test-proj", "gemini-2.0-flash-thinking-exp", None);
+        let result = wrap_request(&body, "test-proj", "gemini-2.0-flash-thinking-exp", None, None);
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
         let budget = gen_config["thinkingConfig"]["thinkingBudget"]
@@ -653,7 +648,7 @@ mod tests {
                 }
             }
         });
-        let result_pro = wrap_request(&body_pro, "test-proj", "gemini-2.0-pro-exp", None);
+        let result_pro = wrap_request(&body_pro, "test-proj", "gemini-2.0-pro-exp", None, None);
         let budget_pro = result_pro["request"]["generationConfig"]["thinkingConfig"]
             ["thinkingBudget"]
             .as_u64()
@@ -677,7 +672,7 @@ mod tests {
             "contents": [{"role": "user", "parts": [{"text": "Draw a cat"}]}]
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-image-2k", None);
+        let result = wrap_request(&body, "test-proj", "gemini-3-pro-image-2k", None, None);
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
         
@@ -699,7 +694,7 @@ mod tests {
             }
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-pro", None);
+        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None);
         let sys = result
             .get("request")
             .unwrap()
@@ -730,7 +725,7 @@ mod tests {
             }
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-pro", None);
+        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None);
         let sys = result
             .get("request")
             .unwrap()
@@ -762,7 +757,7 @@ mod tests {
             "contents": [{"parts": parts}]
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-image", None);
+        let result = wrap_request(&body, "test-proj", "gemini-3-pro-image", None, None);
 
         let request = result.get("request").unwrap();
         let contents = request.get("contents").unwrap().as_array().unwrap();
@@ -797,7 +792,7 @@ mod tests {
         });
 
         // Test with Pro model
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None);
+        let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None, None);
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
 
@@ -840,7 +835,7 @@ mod tests {
                 "messages": [{"role": "user", "content": "hi"}]
             });
 
-            let result = wrap_request(&body, "proj", "claude-3-7-sonnet-thinking", None);
+            let result = wrap_request(&body, "proj", "claude-3-7-sonnet-thinking", None, None);
             let req = result.get("request").unwrap();
 
             // 1. 确保根目录没有 thinking
@@ -863,7 +858,7 @@ mod tests {
                 "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
             });
 
-            let result = wrap_request(&body, "proj", "gemini-2.0-flash-thinking-exp", None);
+            let result = wrap_request(&body, "proj", "gemini-2.0-flash-thinking-exp", None, None);
             let req = result.get("request").unwrap();
             let gen_config = req.get("generationConfig").unwrap();
             let thinking_config = gen_config.get("thinkingConfig").unwrap();
@@ -893,7 +888,7 @@ mod tests {
         });
 
         // Test with Pro-preview model (should NOT auto-inject to avoid 400)
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None);
+        let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None, None);
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
 
@@ -908,7 +903,7 @@ mod tests {
             "model": "gemini-3-pro",
             "generationConfig": {}
         });
-        let result_std = wrap_request(&body_std, "test-proj", "gemini-3-pro", None);
+        let result_std = wrap_request(&body_std, "test-proj", "gemini-3-pro", None, None);
         let gen_config_std = result_std.get("request").unwrap().get("generationConfig").unwrap();
         
         assert!(
@@ -927,7 +922,7 @@ mod tests {
             "prompt": "Test"
         });
 
-        let result_1 = wrap_request(&body_1, "test-proj", "gemini-3-pro-image", None);
+        let result_1 = wrap_request(&body_1, "test-proj", "gemini-3-pro-image", None, None);
         let req_1 = result_1.get("request").unwrap();
         let gen_config_1 = req_1.get("generationConfig").unwrap();
         let image_config_1 = gen_config_1.get("imageConfig").unwrap();
@@ -943,7 +938,7 @@ mod tests {
              "prompt": "Test"
         });
 
-        let result_2 = wrap_request(&body_2, "test-proj", "gemini-3-pro-image", None);
+        let result_2 = wrap_request(&body_2, "test-proj", "gemini-3-pro-image", None, None);
         let req_2 = result_2.get("request").unwrap();
         let image_config_2 = req_2["generationConfig"]["imageConfig"]
             .as_object()

@@ -21,6 +21,7 @@ pub struct ModelDefaults {
     pub adaptive_default_max_output: u64,
     pub opus_fixed_budget: u64,
     pub opus_max_output_tokens: u64,
+    #[allow(dead_code)]
     pub safe_max_output_cap: u64,
 }
 
@@ -50,10 +51,6 @@ static MODEL_SPECS: Lazy<ModelSpecsConfig> = Lazy::new(|| {
     serde_json::from_str(json_str).expect("Failed to parse embedded model_specs.json")
 });
 
-/// Get a reference to the global model specs config
-pub fn get_config() -> &'static ModelSpecsConfig {
-    &MODEL_SPECS
-}
 
 /// Get the defaults
 pub fn defaults() -> &'static ModelDefaults {
@@ -70,20 +67,23 @@ pub fn resolve_alias(model: &str) -> String {
         .unwrap_or_else(|| model.to_string())
 }
 
-/// Look up a model spec by name (with prefix matching).
-/// First tries exact match, then tries prefix matching (longest prefix wins).
+/// Look up a model spec by name (automatically resolves aliases).
+/// First resolves any alias, then tries exact match, then tries prefix matching (longest prefix wins).
 pub fn lookup(model_name: &str) -> Option<&'static ModelSpec> {
-    let lower = model_name.to_lowercase();
+    // 1. Resolve alias first
+    let resolved_name = resolve_alias(model_name);
+    let lower = resolved_name.to_lowercase();
 
-    // 1. Exact match
+    // 2. Exact match on resolved name
     if let Some(spec) = MODEL_SPECS.models.get(&lower) {
         return Some(spec);
     }
 
-    // 2. Prefix match (longest wins)
+    // 3. Prefix match (longest wins)
+    // Use starts_with for more accurate family matching than general contains
     let mut best_match: Option<(&str, &ModelSpec)> = None;
     for (key, spec) in &MODEL_SPECS.models {
-        if lower.contains(key.as_str()) {
+        if lower.starts_with(key.as_str()) {
             if best_match.map_or(true, |(k, _)| key.len() > k.len()) {
                 best_match = Some((key, spec));
             }
@@ -91,6 +91,24 @@ pub fn lookup(model_name: &str) -> Option<&'static ModelSpec> {
     }
 
     best_match.map(|(_, spec)| spec)
+}
+
+/// Check if a model supports thinking (reasoning)
+pub fn supports_thinking(model_name: &str) -> bool {
+    lookup(model_name)
+        .map(|s| s.supports_thinking)
+        .unwrap_or_else(|| {
+            // Heuristic fallback for unknown models
+            let lower = model_name.to_lowercase();
+            lower.contains("-thinking") || lower.contains("thinking-exp")
+        })
+}
+
+/// Check if a model supports web search / grounding
+pub fn supports_search(model_name: &str) -> bool {
+    lookup(model_name)
+        .and_then(|s| s.supports_search)
+        .unwrap_or(false)
 }
 
 /// Get max_output_tokens for a model (with fallback to default)
@@ -112,7 +130,8 @@ pub fn is_thinking_budget_limited(model_name: &str) -> bool {
     lookup(model_name)
         .map(|s| s.thinking_budget_limited)
         .unwrap_or_else(|| {
-            // Fallback heuristic for unknown models
+            // Fallback heuristic for unknown models:
+            // Most Gemini models (except image gen) and thinking-specific models are limited
             let lower = model_name.to_lowercase();
             (lower.contains("gemini") && !lower.contains("-image"))
                 || lower.contains("flash")

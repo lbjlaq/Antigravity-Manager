@@ -52,6 +52,7 @@ fn create_test_token(
         reset_time,
         validation_blocked: false,
         validation_blocked_until: 0,
+        validation_url: None,
         model_quotas,
     }
 }

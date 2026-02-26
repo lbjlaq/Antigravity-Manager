@@ -2761,6 +2761,7 @@ mod tests {
             reset_time,
             validation_blocked: false,
             validation_blocked_until: 0,
+            validation_url: None,
             model_quotas: HashMap::new(),
         }
     }
@@ -3017,6 +3018,7 @@ mod tests {
             reset_time: None,
             validation_blocked: false,
             validation_blocked_until: 0,
+            validation_url: None,
             model_quotas: HashMap::new(),
         }
     }

@@ -30,20 +30,10 @@ pub fn transform_openai_request(
         None,  // body
     );
 
-    // [FIX] 仅当模型名称显式包含 "-thinking" 时才视为 Gemini 思维模型
-    // 避免对 gemini-3-pro (preview) 等其实不支持 thinkingConfig 的模型注入参数导致 400
-    // [FIX #1557] Allow "pro" models (e.g. gemini-3-pro, gemini-2.0-pro) to bypass thinking check
-    // These models support thinking but do not have "-thinking" suffix
-    let is_gemini_3_thinking = mapped_model_lower.contains("gemini")
-        && (
-            mapped_model_lower.contains("-thinking")
-                || mapped_model_lower.contains("gemini-2.0-pro")
-                || mapped_model_lower.contains("gemini-3-pro")
-                || mapped_model_lower.contains("gemini-3.1-pro")
-        )
-        && !mapped_model_lower.contains("claude");
-    let is_claude_thinking = mapped_model_lower.ends_with("-thinking");
-    let is_thinking_model = is_gemini_3_thinking || is_claude_thinking;
+    // [FIX] Use centralized specs to determine if a model supports thinking
+    let is_thinking_model = crate::proxy::model_specs::supports_thinking(&mapped_model_lower);
+    let is_gemini_3_thinking = mapped_model_lower.contains("gemini") && is_thinking_model;
+    let is_claude_thinking = mapped_model_lower.contains("claude") && is_thinking_model;
 
     // [NEW] 检查用户是否在请求中显式启用 thinking
     let user_enabled_thinking = request.thinking.as_ref()
@@ -752,9 +742,7 @@ fn enforce_uppercase_types(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::mappers::openai::models::*;
-
-    #[test]
+    
     #[test]
     fn test_issue_1592_gemini_3_pro_budget_capping() {
         // [FIX #1592] Regression test for gemini-3-pro thinking budget capping
@@ -772,7 +760,7 @@ mod tests {
         };
 
         // Auto mode (default) should cap gemini-3-pro thinking budget to 24576
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", "gemini-3-pro");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", "gemini-3-pro", None);
         let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_i64()
             .unwrap();
@@ -815,7 +803,7 @@ mod tests {
         };
 
         // 验证针对 Gemini 模型即使是 Custom 模式也会被修正为 24576
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", "gemini-2.0-flash-thinking");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", "gemini-2.0-flash-thinking", None);
         let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_i64()
             .unwrap();
@@ -823,7 +811,7 @@ mod tests {
 
         // 验证非 Gemini 模型（如 Claude 原生路径，假设映射后名不含 gemini）则不应截断
         // 注意：这里的 transform_openai_request 第三个参数是 mapped_model
-        let (result_claude, _, _) = transform_openai_request(&req, "test-v", "claude-3-7-sonnet");
+        let (result_claude, _, _) = transform_openai_request(&req, "test-v", "claude-3-7-sonnet", None);
         let budget_claude = result_claude["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_i64();
         // 如果不是 gemini 模型且协议中没带 thinking 配置，可能会是 None 或 32000
@@ -865,7 +853,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", "gemini-1.5-flash");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", "gemini-1.5-flash", None);
         let parts = &result["request"]["contents"][0]["parts"];
         assert_eq!(parts.as_array().unwrap().len(), 2);
         assert_eq!(parts[0]["text"].as_str().unwrap(), "What is in this image?");
@@ -907,7 +895,7 @@ mod tests {
         };
 
         // Pass explicit gemini-3-pro-preview which doesn't have "-thinking" suffix
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-3-pro-preview");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-3-pro-preview", None);
         let gen_config = &result["request"]["generationConfig"];
         
         // Assert thinkingConfig is present (fix verification)
@@ -933,7 +921,7 @@ mod tests {
         };
 
         // Pass gemini-3-pro-image which matches "gemini-3-pro" substring
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-3-pro-image");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-3-pro-image", None);
         let gen_config = &result["request"]["generationConfig"];
         
         // Assert thinkingConfig IS present (based on latest user feedback)
@@ -969,7 +957,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-3-pro-high-thinking");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-3-pro-high-thinking", None);
         let gen_config = &result["request"]["generationConfig"];
         let max_output_tokens = gen_config["maxOutputTokens"].as_i64().unwrap();
         // budget(24576) + overhead(32768) = 57344
@@ -1013,7 +1001,7 @@ mod tests {
         };
 
         // Test with Flash model
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-2.0-flash-thinking-exp");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-p", "gemini-2.0-flash-thinking-exp", None);
         let gen_config = &result["request"]["generationConfig"];
         
         // Should be capped at 24576
@@ -1052,7 +1040,7 @@ mod tests {
         // Simulate Vertex AI path
         let mapped_model = "projects/my-project/locations/us-central1/publishers/google/models/gemini-2.0-flash-thinking-exp";
         
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", mapped_model);
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-v", mapped_model, None);
         
         // Extract the tool call part from contents
         let contents = result["contents"].as_array().unwrap();
@@ -1087,7 +1075,7 @@ mod tests {
         };
 
         // 2. Transform request
-        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-proj", "gemini-3-pro-image");
+        let (result, _sid, _msg_count) = transform_openai_request(&req, "test-proj", "gemini-3-pro-image", None);
 
         // 3. Verify thinkingConfig has includeThoughts: false
         let gen_config = result["request"]["generationConfig"].as_object().expect("Should have generationConfig in request payload");

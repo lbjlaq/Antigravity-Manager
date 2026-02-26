@@ -37,6 +37,7 @@ mod tests {
             reset_time: None,
             validation_blocked: false,
             validation_blocked_until: 0,
+            validation_url: None,
             model_quotas: std::collections::HashMap::new(),
         }
     }
@@ -1140,6 +1141,7 @@ mod tests {
             reset_time: None,
             validation_blocked: false,
             validation_blocked_until: 0,
+            validation_url: None,
             model_quotas: std::collections::HashMap::new(),
         }
     }
