@@ -1715,7 +1715,7 @@ fn build_generation_config(
             .thinking
             .as_ref()
             .and_then(|t| t.budget_tokens)
-            .unwrap_or(16000);
+            .unwrap_or(crate::proxy::model_specs::default_thinking_budget(mapped_model) as u32);
 
         let tb_config = crate::proxy::config::get_thinking_budget_config();
         let budget = match tb_config.mode {
@@ -1728,12 +1728,12 @@ fn build_generation_config(
                     || model_lower.contains("flash")
                     || model_lower.ends_with("-thinking");
 
-                if is_gemini_limited && custom_value > 24576 {
+                if is_gemini_limited && custom_value > crate::proxy::model_specs::thinking_budget_cap(mapped_model) as u32 {
                     tracing::warn!(
-                        "[Claude-Request] Custom mode: capping thinking_budget from {} to 24576 for Gemini model {}",
-                        custom_value, mapped_model
+                        "[Claude-Request] Custom mode: capping thinking_budget from {} to {} for Gemini model {}",
+                        custom_value, crate::proxy::model_specs::thinking_budget_cap(mapped_model), mapped_model
                     );
-                    custom_value = 24576;
+                    custom_value = crate::proxy::model_specs::thinking_budget_cap(mapped_model) as u32;
                 }
                 custom_value
             }
@@ -1743,12 +1743,12 @@ fn build_generation_config(
                 let is_gemini_limited = (model_lower.contains("gemini") && !model_lower.contains("-image"))
                     || model_lower.contains("flash")
                     || model_lower.ends_with("-thinking");
-                if is_gemini_limited && budget_tokens > 24576 {
+                if is_gemini_limited && budget_tokens > crate::proxy::model_specs::thinking_budget_cap(mapped_model) as u32 {
                     tracing::info!(
-                        "[Claude-Request] Auto mode: capping thinking_budget from {} to 24576 for Gemini model {}", 
-                        budget_tokens, mapped_model
+                        "[Claude-Request] Auto mode: capping thinking_budget from {} to {} for Gemini model {}", 
+                        budget_tokens, crate::proxy::model_specs::thinking_budget_cap(mapped_model), mapped_model
                     );
-                    24576
+                    crate::proxy::model_specs::thinking_budget_cap(mapped_model) as u32
                 } else {
                     budget_tokens
                 }
@@ -1781,21 +1781,23 @@ fn build_generation_config(
                 // Gemini 1.5/2.0 models via Vertex AI often reject thinkingBudget: -1 (Adaptive) with 400 Invalid Argument
                 // especially when maxOutputTokens is high.
                 // We align with OpenAI mapper behavior: use 24576 as safe adaptive budget.
-                tracing::debug!("[Claude-Request] Mapping adaptive mode to safe budget (24576) for Gemini model");
-                thinking_config["thinkingBudget"] = json!(24576);
+                tracing::debug!("[Claude-Request] Mapping adaptive mode to safe budget ({}) for Gemini model", crate::proxy::model_specs::defaults().adaptive_safe_budget);
+                thinking_config["thinkingBudget"] = json!(crate::proxy::model_specs::defaults().adaptive_safe_budget);
             }
             
             // 针对自适应模式，如果没有显式设置，确保 maxOutputTokens 给足空间
             // OpenAI mapper uses 57344 (24576 + 32768), we normally use 64k limit.
             if config.get("maxOutputTokens").is_none() {
-                config["maxOutputTokens"] = json!(64000);
+                config["maxOutputTokens"] = json!(crate::proxy::model_specs::defaults().adaptive_default_max_output);
             }
         } else {
             // [FIX #2007] Opus 4.6 Thinking Alignment (OpenAI Protocol Recipe)
             // Explicitly set fixed budget for Opus 4.6 to match successful OpenAI pattern
             if mapped_model.to_lowercase().contains("claude-opus-4-6-thinking") {
-                tracing::debug!("[Opus-Alignment] Enforcing fixed thinkingBudget 24576 for Opus 4.6");
-                thinking_config["thinkingBudget"] = json!(24576);
+                let opus_spec = crate::proxy::model_specs::lookup("claude-opus-4-6-thinking");
+                let opus_budget = opus_spec.and_then(|s| s.fixed_thinking_budget).unwrap_or(crate::proxy::model_specs::defaults().opus_fixed_budget);
+                tracing::debug!("[Opus-Alignment] Enforcing fixed thinkingBudget {} for Opus 4.6", opus_budget);
+                thinking_config["thinkingBudget"] = json!(opus_budget);
             } else {
                 thinking_config["thinkingBudget"] = json!(budget);
             }
@@ -1841,8 +1843,10 @@ fn build_generation_config(
     // [FIX #2007] Opus 4.6 Thinking Alignment
     // OpenAI logs show maxOutputTokens = 57344 (24576 + 32768)
     if model_lower.contains("claude-opus-4-6-thinking") && is_thinking_enabled {
-        final_max_tokens = Some(57344);
-        tracing::debug!("[Opus-Alignment] Enforcing maxOutputTokens 57344 for Opus 4.6");
+        let opus_spec = crate::proxy::model_specs::lookup("claude-opus-4-6-thinking");
+        let opus_max = opus_spec.and_then(|s| s.fixed_max_output_tokens).unwrap_or(crate::proxy::model_specs::defaults().opus_max_output_tokens);
+        final_max_tokens = Some(opus_max as i64);
+        tracing::debug!("[Opus-Alignment] Enforcing maxOutputTokens {} for Opus 4.6", opus_max);
     }
 
     if let Some(thinking_config) = config.get("thinkingConfig") {
@@ -1853,7 +1857,7 @@ fn build_generation_config(
             let current = final_max_tokens.unwrap_or(0);
             if current <= budget as i64 {
                 // [FIX #1675] 针对图像模型使用更小的增量 (2048)
-                let overhead = if mapped_model.contains("-image") { 2048 } else { 8192 };
+                let overhead = if mapped_model.contains("-image") { crate::proxy::model_specs::thinking_min_overhead(true) } else { crate::proxy::model_specs::thinking_min_overhead(false) };
                 final_max_tokens = Some((budget + overhead) as i64);
                 tracing::info!(
                     "[Generation-Config] Bumping maxOutputTokens to {} due to thinking budget of {}", 
@@ -1875,9 +1879,8 @@ fn build_generation_config(
 
 
     if let Some(val) = final_max_tokens {
-        // [FIX] Cap maxOutputTokens to 65536 to avoid INVALID_ARGUMENT (Cherry Studio sends 128000)
-        // Gemini models typically support max 8192 or 65536 output tokens. 128k is usually invalid.
-        let safe_limit = 65536;
+        // [FIX] Cap maxOutputTokens using model_specs to avoid INVALID_ARGUMENT
+        let safe_limit = crate::proxy::model_specs::max_output_tokens(mapped_model) as i64;
         if val > safe_limit {
             tracing::warn!(
                 "[Generation-Config] Capping maxOutputTokens from {} to {} to prevent 400 Invalid Argument",

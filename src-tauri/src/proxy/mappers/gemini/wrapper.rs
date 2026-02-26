@@ -134,8 +134,8 @@ pub fn wrap_request(
                 );
 
                 // [FIX] 统一注入到 generationConfig.thinkingConfig
-                // Claude 模型使用 16000 预算，Gemini 使用 24576
-                let default_budget = if is_claude { 16000 } else { 24576 };
+                // 从 model_specs 读取默认 thinking budget
+                let default_budget = crate::proxy::model_specs::default_thinking_budget(final_model_name);
                 
                 let gen_config = inner_request
                     .as_object_mut()
@@ -175,26 +175,10 @@ pub fn wrap_request(
                             crate::proxy::config::ThinkingBudgetMode::Passthrough => budget,
                             crate::proxy::config::ThinkingBudgetMode::Custom => {
                                 let val = tb_config.custom_value as u64;
-                                let is_limited = (final_model_name.contains("gemini")
-                                    || final_model_name.contains("thinking"))
-                                    && !final_model_name.contains("-image");
-
-                                if is_limited && val > 24576 {
-                                    24576
-                                } else {
-                                    val
-                                }
+                                crate::proxy::model_specs::cap_thinking_budget(final_model_name, val)
                             }
                             crate::proxy::config::ThinkingBudgetMode::Auto => {
-                                let is_limited = (final_model_name.contains("gemini")
-                                    || final_model_name.contains("thinking"))
-                                    && !final_model_name.contains("-image");
-
-                                if is_limited && budget > 24576 {
-                                    24576
-                                } else {
-                                    budget
-                                }
+                                crate::proxy::model_specs::cap_thinking_budget(final_model_name, budget)
                             }
                             crate::proxy::config::ThinkingBudgetMode::Adaptive => budget,
                         };
@@ -226,13 +210,14 @@ pub fn wrap_request(
                 .or(req_max_tokens);
 
             if is_adaptive {
-                if current_max.map_or(true, |m| m < 131072) {
-                     gen_config.insert("maxOutputTokens".to_string(), json!(131072));
+                let adaptive_max = crate::proxy::model_specs::defaults().adaptive_max_output_tokens;
+                if current_max.map_or(true, |m| m < adaptive_max) {
+                     gen_config.insert("maxOutputTokens".to_string(), json!(adaptive_max));
                 }
             } else if let Some(budget_i64) = budget_opt {
                 if budget_i64 > 0 {
                     let budget = budget_i64 as u64;
-                    let min_required_max = budget + 8192;
+                    let min_required_max = budget + crate::proxy::model_specs::defaults().thinking_min_overhead;
                     if current_max.map_or(true, |m| m <= budget) {
                         tracing::info!(
                             "[Gemini-Wrap] Bumping maxOutputTokens from {:?} to {} to satisfy thinkingBudget ({})",
@@ -241,6 +226,15 @@ pub fn wrap_request(
                         gen_config.insert("maxOutputTokens".to_string(), json!(min_required_max));
                     }
                 }
+            }
+        }
+
+        // [FIX] Cap maxOutputTokens to model-specific limits (loaded from model_specs.json).
+        // e.g. gemini-3-flash only supports 65536; gemini-cli sends 131072 which causes 400 INVALID_ARGUMENT.
+        if let Some(max_tokens) = gen_config.get("maxOutputTokens").and_then(|v| v.as_u64()) {
+            let capped = crate::proxy::model_specs::cap_max_output_tokens(final_model_name, max_tokens);
+            if capped != max_tokens {
+                gen_config.insert("maxOutputTokens".to_string(), json!(capped));
             }
         }
     }

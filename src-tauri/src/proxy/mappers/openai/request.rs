@@ -430,8 +430,10 @@ pub fn transform_openai_request(
         } else {
             // [CONFIGURABLE] 根据用户配置决定 thinking_budget 处理方式
             let tb_config = crate::proxy::config::get_thinking_budget_config();
-            // [FIX #1592] 下调默认 budget 到 24576，以更好地兼容不支持 32k 的 Gemini 原生模型 (如 gemini-3-pro)
-            let user_budget: i64 = user_thinking_budget.map(|b| b as i64).unwrap_or(24576);
+            // [REFACTORED] Use model_specs for default budget
+            let user_budget: i64 = user_thinking_budget.map(|b| b as i64).unwrap_or(
+                crate::proxy::model_specs::default_thinking_budget(mapped_model) as i64
+            );
             
             let budget = match tb_config.mode {
                 crate::proxy::config::ThinkingBudgetMode::Passthrough => {
@@ -450,12 +452,12 @@ pub fn transform_openai_request(
                     let is_gemini_limited = (mapped_model_lower.contains("gemini") && !mapped_model_lower.contains("-image"))
                         || is_claude_thinking; 
 
-                    if is_gemini_limited && custom_value > 24576 {
+                    if is_gemini_limited && custom_value > crate::proxy::model_specs::thinking_budget_cap(mapped_model) as i64 {
                         tracing::warn!(
-                            "[OpenAI-Request] Custom mode: capping thinking_budget from {} to 24576 for Gemini model {}",
-                            custom_value, mapped_model
+                            "[OpenAI-Request] Custom mode: capping thinking_budget from {} to {} for Gemini model {}",
+                            custom_value, crate::proxy::model_specs::thinking_budget_cap(mapped_model), mapped_model
                         );
-                        custom_value = 24576;
+                        custom_value = crate::proxy::model_specs::thinking_budget_cap(mapped_model) as i64;
                     }
 
                     tracing::debug!(
@@ -470,12 +472,12 @@ pub fn transform_openai_request(
                     let is_gemini_limited = (mapped_model_lower.contains("gemini") && !mapped_model_lower.contains("-image"))
                         || is_claude_thinking;  
                     
-                    if is_gemini_limited && user_budget > 24576 {
+                    if is_gemini_limited && user_budget > crate::proxy::model_specs::thinking_budget_cap(mapped_model) as i64 {
                         tracing::info!(
-                            "[OpenAI-Request] Auto mode: capping thinking budget from {} to 24576 for model: {}", 
-                            user_budget, mapped_model
+                            "[OpenAI-Request] Auto mode: capping thinking budget from {} to {} for model: {}", 
+                            user_budget, crate::proxy::model_specs::thinking_budget_cap(mapped_model), mapped_model
                         );
-                        24576
+                        crate::proxy::model_specs::thinking_budget_cap(mapped_model) as i64
                     } else {
                         user_budget
                     }
@@ -493,8 +495,8 @@ pub fn transform_openai_request(
 
             // [CRITICAL] 思维模型的 maxOutputTokens 必须大于 thinkingBudget
             // [FIX #1675] 针对图像模型使用更保守的 max_tokens 增量，避免触发 128k 限制
-            let overhead = if config.request_type == "image_gen" { 2048 } else { 32768 };
-            let min_overhead = if config.request_type == "image_gen" { 1024 } else { 8192 };
+            let overhead = if config.request_type == "image_gen" { crate::proxy::model_specs::thinking_overhead(true) as i64 } else { crate::proxy::model_specs::thinking_overhead(false) as i64 };
+            let min_overhead = if config.request_type == "image_gen" { crate::proxy::model_specs::thinking_min_overhead(true) as i64 } else { crate::proxy::model_specs::thinking_min_overhead(false) as i64 };
 
             if let Some(max_tokens) = request.max_tokens {
                  if (max_tokens as i64) <= budget {

@@ -107,14 +107,8 @@ pub fn resolve_request_config(
     // Force a stable search model for search requests.
     let mut final_model = mapped_model.trim_end_matches("-online").to_string();
 
-    // [FIX] Map logic aliases back to physical model names for upstream compatibility
-    final_model = match final_model.as_str() {
-        "gemini-3-pro-preview" => "gemini-3.1-pro-high".to_string(), // 3.0 preview redirects to 3.1 High
-        "gemini-3.1-pro-preview" => "gemini-3.1-pro-high".to_string(),
-        "gemini-3-pro-image-preview" => "gemini-3-pro-image".to_string(),
-        "gemini-3-flash-preview" => "gemini-3-flash".to_string(),
-        _ => final_model,
-    };
+    // [REFACTORED] Use model_specs for alias resolution (configured in model_specs.json)
+    final_model = crate::proxy::model_specs::resolve_alias(&final_model);
 
     // [FIX] Check allowlist before forcing downgrade
     // If networking is enabled but the model doesn't support search, fall back to Flash

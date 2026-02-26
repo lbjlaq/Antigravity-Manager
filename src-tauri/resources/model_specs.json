@@ -1,0 +1,113 @@
+{
+  "_comment": "Model specifications for Antigravity proxy. All token limits and parameters are centralized here to avoid hardcoding across the codebase.",
+  "defaults": {
+    "max_output_tokens": 131072,
+    "thinking_budget_cap": 24576,
+    "default_thinking_budget_gemini": 24576,
+    "default_thinking_budget_claude": 16000,
+    "thinking_overhead": 32768,
+    "thinking_min_overhead": 8192,
+    "image_thinking_overhead": 2048,
+    "image_thinking_min_overhead": 1024,
+    "adaptive_max_output_tokens": 131072,
+    "adaptive_safe_budget": 24576,
+    "adaptive_default_max_output": 64000,
+    "opus_fixed_budget": 24576,
+    "opus_max_output_tokens": 57344,
+    "safe_max_output_cap": 65536
+  },
+  "model_aliases": {
+    "gemini-3-pro-preview": "gemini-3.1-pro-high",
+    "gemini-3.1-pro-preview": "gemini-3.1-pro-high",
+    "gemini-3-pro-image-preview": "gemini-3-pro-image",
+    "gemini-3-flash-preview": "gemini-3-flash"
+  },
+  "models": {
+    "gemini-3-flash": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": true,
+      "supports_search": false
+    },
+    "gemini-2.5-flash": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": true,
+      "supports_search": true
+    },
+    "gemini-2.5-pro": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": true,
+      "supports_search": true
+    },
+    "gemini-2.5-flash-lite": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": true,
+      "supports_search": false
+    },
+    "gemini-2.5-flash-thinking": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": true,
+      "supports_search": false
+    },
+    "gemini-3-pro-high": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": true,
+      "supports_search": true
+    },
+    "gemini-3.1-pro-high": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": true,
+      "supports_search": true
+    },
+    "gemini-3.1-pro-low": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": true,
+      "supports_search": false
+    },
+    "gemini-3-pro-low": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": true,
+      "supports_search": false
+    },
+    "gemini-3-pro-image": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": null,
+      "supports_thinking": true,
+      "thinking_budget_limited": false,
+      "supports_search": false
+    },
+    "claude-sonnet-4-6": {
+      "max_output_tokens": 65536,
+      "thinking_budget_cap": null,
+      "supports_thinking": false,
+      "thinking_budget_limited": false,
+      "supports_search": false
+    },
+    "claude-opus-4-6-thinking": {
+      "max_output_tokens": 57344,
+      "thinking_budget_cap": 24576,
+      "supports_thinking": true,
+      "thinking_budget_limited": false,
+      "supports_search": false,
+      "fixed_thinking_budget": 24576,
+      "fixed_max_output_tokens": 57344
+    }
+  }
+}

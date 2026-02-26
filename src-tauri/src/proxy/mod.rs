@@ -15,6 +15,7 @@ pub mod common; // 公共工具
 pub mod debug_logger;
 pub mod handlers; // API 端点处理器
 pub mod mappers; // 协议转换器
+pub mod model_specs; // 模型规格注册表 (JSON 配置驱动)
 pub mod middleware; // Axum 中间件
 pub mod monitor; // 监控
 pub mod opencode_sync; // OpenCode 配置同步
