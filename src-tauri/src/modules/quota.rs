@@ -443,13 +443,13 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 
             for handle in handles {
                 if let Ok(Some((id, email, token, pid, Some((fresh_quota, _))))) = handle.await {
-                    // [FIX] 预热阶段检测到 403 时，持久化 is_forbidden 标记，避免无效账号继续参与轮询
+                    // [FIX] 预热阶段检测到 403 时，使用统一禁用逻辑，确保账号文件和索引同时更新
                     if fresh_quota.is_forbidden {
                         crate::modules::logger::log_warn(&format!(
-                            "[Warmup] Account {} returned 403 Forbidden during quota fetch, persisting forbidden status",
+                            "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
                             email
                         ));
-                        let _ = crate::modules::account::update_account_quota(&id, fresh_quota);
+                        let _ = crate::modules::account::mark_account_forbidden(&id, "Warmup: 403 Forbidden - quota fetch denied");
                         continue;
                     }
                     let mut account_warmed_series = std::collections::HashSet::new();
@@ -571,13 +571,15 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
     let (token, pid) = get_valid_token_for_warmup(&account_owned).await?;
     let (fresh_quota, _) = fetch_quota_with_cache(&token, &email, Some(&pid), Some(&account_owned.id)).await.map_err(|e| format!("Failed to fetch quota: {}", e))?;
     
-    // [FIX] 预热阶段检测到 403 时，持久化 is_forbidden 标记，避免无效账号继续参与轮询
+    // [FIX] 预热阶段检测到 403 时，使用统一的 mark_account_forbidden 逻辑，
+    // 确保账号文件和索引文件同时更新，且前端刷新后能感知到禁用状态
     if fresh_quota.is_forbidden {
         crate::modules::logger::log_warn(&format!(
-            "[Warmup] Account {} returned 403 Forbidden during quota fetch, persisting forbidden status",
+            "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
             email
         ));
-        let _ = crate::modules::account::update_account_quota(account_id, fresh_quota);
+        let reason = "Warmup: 403 Forbidden - quota fetch denied";
+        let _ = crate::modules::account::mark_account_forbidden(account_id, reason);
         return Err("Account is forbidden (403)".to_string());
     }
 

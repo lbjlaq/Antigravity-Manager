@@ -1322,6 +1322,55 @@ pub fn toggle_proxy_status(
     Ok(())
 }
 
+/// Find account ID by email (from index)
+pub fn find_account_id_by_email(email: &str) -> Option<String> {
+    load_account_index().ok()?.accounts.into_iter()
+        .find(|a| a.email == email)
+        .map(|a| a.id)
+}
+
+pub fn mark_account_forbidden(account_id: &str, reason: &str) -> Result<(), String> {
+    let _lock = ACCOUNT_INDEX_LOCK
+        .lock()
+        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+
+    let mut account = load_account(account_id)?;
+
+    // 1. Update quota status
+    if let Some(ref mut q) = account.quota {
+        q.is_forbidden = true;
+        q.forbidden_reason = Some(reason.to_string());
+    } else {
+        account.quota = Some(crate::models::QuotaData {
+            models: Vec::new(),
+            last_updated: chrono::Utc::now().timestamp(),
+            subscription_tier: None,
+            is_forbidden: true,
+            forbidden_reason: Some(reason.to_string()),
+            model_forwarding_rules: std::collections::HashMap::new(),
+        });
+    }
+
+    // 2. Disable proxy for this account
+    account.proxy_disabled = true;
+    account.proxy_disabled_reason = Some(format!("Forbidden (403): {}", reason));
+    account.proxy_disabled_at = Some(chrono::Utc::now().timestamp());
+
+    save_account(&account)?;
+
+    // 3. Update index summary
+    let mut index = load_account_index()?;
+    if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
+        summary.proxy_disabled = true;
+        save_account_index(&index)?;
+    }
+
+    // 4. Notify frontend to refresh account list
+    crate::modules::log_bridge::emit_accounts_refreshed();
+
+    Ok(())
+}
+
 /// Export accounts by IDs (for backup/migration)
 pub fn export_accounts_by_ids(account_ids: &[String]) -> Result<crate::models::AccountExportResponse, String> {
     use crate::models::{AccountExportItem, AccountExportResponse};

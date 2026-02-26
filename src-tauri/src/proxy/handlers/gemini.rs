@@ -155,7 +155,9 @@ pub async fn handle_generate(
 
         // 5. 包装请求 (project injection)
         // [FIX #765] Pass session_id to wrap_request for signature injection
-        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(account_id.as_str()), Some(&session_id));
+        // [NEW] 查询动态限额 (dynamic > static default > 131072)
+        let dynamic_cap = token_manager.get_model_output_limit_for_account(&account_id, &mapped_model);
+        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(account_id.as_str()), Some(&session_id), dynamic_cap);
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({

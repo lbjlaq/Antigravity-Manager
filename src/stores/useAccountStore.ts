@@ -274,12 +274,13 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         set({ loading: true, error: null });
         try {
             const result = await accountService.warmUpAllAccounts();
-            await get().fetchAccounts();
             set({ loading: false });
             return result;
         } catch (error) {
             set({ error: String(error), loading: false });
             throw error;
+        } finally {
+            await get().fetchAccounts();
         }
     },
 
@@ -287,12 +288,13 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         set({ loading: true, error: null });
         try {
             const result = await accountService.warmUpAccount(accountId);
-            await get().fetchAccounts();
             set({ loading: false });
             return result;
         } catch (error) {
             set({ error: String(error), loading: false });
             throw error;
+        } finally {
+            await get().fetchAccounts();
         }
     },
 

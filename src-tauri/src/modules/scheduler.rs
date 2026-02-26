@@ -104,13 +104,13 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                     continue;
                 };
 
-                // [FIX] 预热阶段检测到 403 时，持久化 is_forbidden 标记，避免无效账号继续参与轮询
+                // [FIX] 预热阶段检测到 403 时，使用统一禁用逻辑，确保账号文件和索引同时更新
                 if fresh_quota.is_forbidden {
                     logger::log_warn(&format!(
-                        "[Scheduler] Account {} returned 403 Forbidden during quota fetch, persisting forbidden status",
+                        "[Scheduler] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
                         account.email
                     ));
-                    let _ = account::update_account_quota(&account.id, fresh_quota);
+                    let _ = account::mark_account_forbidden(&account.id, "Scheduler: 403 Forbidden - quota fetch denied");
                     continue;
                 }
 
@@ -290,13 +290,13 @@ pub async fn trigger_warmup_for_account(account: &Account) {
         return;
     };
 
-    // [FIX] 预热阶段检测到 403 时，持久化 is_forbidden 标记，避免无效账号继续参与轮询
+    // [FIX] 预热阶段检测到 403 时，使用统一禁用逻辑，确保账号文件和索引同时更新
     if fresh_quota.is_forbidden {
         logger::log_warn(&format!(
-            "[Scheduler] Account {} returned 403 Forbidden during quota fetch, persisting forbidden status",
+            "[Scheduler] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
             account.email
         ));
-        let _ = account::update_account_quota(&account.id, fresh_quota);
+        let _ = account::mark_account_forbidden(&account.id, "Scheduler: 403 Forbidden - quota fetch denied");
         return;
     }
 

@@ -35,6 +35,7 @@ pub struct ProxyToken {
     pub validation_blocked_until: i64,     // [NEW] Timestamp until which the account is blocked
     pub validation_url: Option<String>,    // [NEW] Validation URL (#1522)
     pub model_quotas: HashMap<String, i32>, // [OPTIMIZATION] In-memory cache for model-specific quotas
+    pub model_limits: HashMap<String, u64>, // [NEW] max_output_tokens per model from quota data
 }
 
 pub struct TokenManager {
@@ -489,6 +490,8 @@ impl TokenManager {
 
         // [OPTIMIZATION] 构建模型配额内存缓存，避免排序时读取磁盘
         let mut model_quotas = HashMap::new();
+        // [NEW] 构建模型输出限额内存缓存 (max_output_tokens)
+        let mut model_limits: HashMap<String, u64> = HashMap::new();
         if let Some(models) = account.get("quota").and_then(|q| q.get("models")).and_then(|m| m.as_array()) {
             for model in models {
                 if let (Some(name), Some(pct)) = (model.get("name").and_then(|v| v.as_str()), model.get("percentage").and_then(|v| v.as_i64())) {
@@ -496,6 +499,13 @@ impl TokenManager {
                     let standard_id = crate::proxy::common::model_mapping::normalize_to_standard_id(name)
                         .unwrap_or_else(|| name.to_string());
                     model_quotas.insert(standard_id, pct as i32);
+                }
+                // [NEW] 解析并缓存 max_output_tokens (按原始 model name，不归一化)
+                if let (Some(name), Some(limit)) = (
+                    model.get("name").and_then(|v| v.as_str()),
+                    model.get("max_output_tokens").and_then(|v| v.as_u64()),
+                ) {
+                    model_limits.insert(name.to_string(), limit);
                 }
             }
         }
@@ -530,6 +540,7 @@ impl TokenManager {
             validation_blocked_until: account.get("validation_blocked_until").and_then(|v| v.as_i64()).unwrap_or(0),
             validation_url: account.get("validation_url").and_then(|v| v.as_str()).map(|s| s.to_string()),
             model_quotas,
+            model_limits,
         }))
     }
 
@@ -2382,6 +2393,17 @@ impl TokenManager {
         all_models
     }
 
+    /// [NEW] 从指定账号的动态额度数据中获取特定模型的 max_output_tokens
+    ///
+    /// # 返回
+    /// - `Some(u64)`: 找到了动态限额数据
+    /// - `None`: 账号不存在或该模型无数据（调用方应继续查静态默认表）
+    pub fn get_model_output_limit_for_account(&self, account_id: &str, model_name: &str) -> Option<u64> {
+        self.tokens
+            .get(account_id)
+            .and_then(|token| token.model_limits.get(model_name).copied())
+    }
+
     /// Helper to find account ID by email
     pub fn get_account_id_by_email(&self, email: &str) -> Option<String> {
         for entry in self.tokens.iter() {
@@ -2475,40 +2497,11 @@ impl TokenManager {
 
     /// Set is_forbidden status for an account (called when proxy encounters 403)
     pub async fn set_forbidden(&self, account_id: &str, reason: &str) -> Result<(), String> {
-        // 1. Persist to disk - update quota.is_forbidden in account JSON
-        let path = self.data_dir.join("accounts").join(format!("{}.json", account_id));
-        if !path.exists() {
-            return Err(format!("Account file not found: {:?}", path));
-        }
-
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read account file: {}", e))?;
-
-        let mut account: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse account JSON: {}", e))?;
-
-        // Update quota.is_forbidden
-        if let Some(quota) = account.get_mut("quota") {
-            quota["is_forbidden"] = serde_json::Value::Bool(true);
-            quota["forbidden_reason"] = serde_json::Value::String(reason.to_string());
-        } else {
-            // Create quota object if not exists
-            account["quota"] = serde_json::json!({
-                "models": [],
-                "last_updated": chrono::Utc::now().timestamp(),
-                "is_forbidden": true,
-                "forbidden_reason": reason
-            });
-        }
+        // [FIX] 调用封装好的模块函数，确保线程安全地更新账号文件和索引
+        crate::modules::account::mark_account_forbidden(account_id, reason)?;
 
         // Clear sticky session if forbidden
         self.session_accounts.retain(|_, v| *v != account_id);
-
-        let json_str = serde_json::to_string_pretty(&account)
-            .map_err(|e| format!("Failed to serialize account JSON: {}", e))?;
-
-        std::fs::write(&path, json_str)
-            .map_err(|e| format!("Failed to write account file: {}", e))?;
 
         // [FIX] 从内存池中移除账号，避免重试时再次选中
         self.remove_account(account_id);
@@ -2516,7 +2509,7 @@ impl TokenManager {
         tracing::warn!(
             "🚫 Account {} marked as forbidden (403): {}",
             account_id,
-            truncate_reason(reason, 1000) // [FIX] 放宽日志显示限制到 1000
+            truncate_reason(reason, 1000)
         );
 
         Ok(())

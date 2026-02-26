@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Protocol Proxy System (v4.1.23)
+> Professional AI Account Management & Protocol Proxy System (v4.1.24)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.1.23-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.1.24-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -122,7 +122,7 @@ Automatically detects your OS, architecture, and package manager — one command
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.23/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.24/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -132,7 +132,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.1.23`, dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.1.24`, dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
@@ -283,12 +283,24 @@ print(response.choices[0].message.content)
 ## 📝 Developer & Community
 
 *   **Changelog**:
+    *   **v4.1.24 (2026-02-26)**:
+        -   **[Feature Adjustment] Disabled Automatic Warmup Scheduler, Retained Manual Warmup**:
+            -   **Change Summary**: To reduce unnecessary background resource usage, the background scheduler for Automatic Warmup (Smart Warmup) has been commented out in this version.
+            -   **UI Hidden**: The "Smart Warmup" configuration section in the Settings page has been hidden.
+            -   **Manual Retained**: Manual warmup functionality in the Account Management page remains fully functional.
+            -   **Restoration Guide**: Users who require automatic warmup can clone the repository and uncomment the `start_scheduler` calls in `src-tauri/src/lib.rs` and the related UI in `Settings.tsx` before rebuilding.
+        -   **[Core Fix] Smart Version Fingerprint Selection & Startup Panic Fix (Issue #2123)**:
+            -   **Root Cause**: 1) `KNOWN_STABLE_VERSION` in `constants.rs` was hardcoded to an outdated version. When local detection failed, this old version was used as `x-client-version`, causing Google to reject Gemini 3.1 Pro requests. 2) The new remote version fetching logic was executed within its `LazyLock` initializer on the main thread (Tokio async context), triggering a `Cannot block the current thread` panic.
+            -   **Fix**: 1) Implemented a "Smart Max Version" strategy: `max(local_version, remote_version, 4.1.24)`. 2) Refactored the network probe to run in a dedicated OS thread over `mpsc` channels, safely bypassing async runtime restrictions. This ensures that the client fingerprint always meets upstream requirements and the application starts reliably.
+        -   **[Core Fix] Dynamic Model maxOutputTokens Limit System (Replaces hardcoded approach in PR #2119)**:
+            -   **Root Cause**: Some clients send `maxOutputTokens` exceeding the physical limits of models (e.g., Flash capped at 64k), causing `400 INVALID_ARGUMENT` from the upstream API.
+            -   **Three-Tier Limit Architecture**:
+                -   **Tier 1 (Dynamic Priority)**: Reads real-time quota data from accounts.
+                -   **Tier 2 (Static Default Table)**: `model_limits.rs` with known defaults (e.g., Flash: 65536).
+                -   **Tier 3 (Global Fallback)**: Default 131072.
+            -   **Implementation Details**: Injected clamping logic in `wrap_request()` to ensure parameter compliance.
     *   **v4.1.23 (2026-02-25)**:
         -   **[Security Enhancement] Aligned application-layer and low-level protocol fingerprints with native clients to improve request stability and anti-interception capabilities.**
-        -   **[Core Fix] Convert v1beta thinkingLevel to v1internal thinkingBudget (PR #2095)**:
-            -   **Root Cause**: Clients like OpenClaw and Cline send v1beta-style `thinkingLevel` strings (`"NONE"` / `"LOW"` / `"MEDIUM"` / `"HIGH"`) in `generationConfig.thinkingConfig`. When AGM proxies through Google's v1internal API, Google rejects `thinkingLevel` with `400 INVALID_ARGUMENT` because v1internal only accepts the numeric `thinkingBudget`.
-            -   **Fix**: Inserted an early conversion step inside `wrap_request()` before any existing budget processing logic: detect the `thinkingLevel` string, map it to a numeric `thinkingBudget` (`NONE`→0, `LOW`→4096, `MEDIUM`→8192, `HIGH`→24576), remove `thinkingLevel`, and write `thinkingBudget`. This ensures all downstream logic (budget capping, `maxOutputTokens` adjustment, adaptive detection) sees the correct numeric budget.
-            -   **Testing**: Verified with OpenClaw sending `thinkingLevel: "LOW"` to `gemini-3.1-pro-high` via Gemini native protocol — requests now return `200 OK` instead of the previous `400` error.
         -   **[Core Fix] Resolve Account Data Corruption and Background Task Infinite Loops (PR #2094)**:
             -   **Root Cause**: When a user enters an excessively large interval value (e.g., 999999999), `interval * 60 * 1000` exceeds the JS engine's signed 32-bit integer limit (`2,147,483,647ms`). The browser silently clamps the `setInterval` delay to 1ms, causing the frontend to fire `refreshAllQuotas`/`syncAccountFromDb` thousands of times per second, flooding the backend with concurrent writes to the same `[uuid].json` file, interleaving byte streams, and permanently corrupting account data.
             -   **Atomic File Writes (`account.rs`)**: `save_account` now writes to a UUID-suffixed temp file first, then atomically replaces the target via `fs::rename` (POSIX) / `MoveFileExW` (Windows), consistent with the existing `save_account_index` implementation, eliminating race-condition corruption at the source.
@@ -296,7 +308,7 @@ print(response.choices[0].message.content)
             -   **Input Validation (`Settings.tsx`)**: Updated the `max` attribute for `refresh_interval` and `sync_interval` inputs from `60` to `35791` (35791 min × 60000 < INT32_MAX), and added `NaN` fallback (defaults to 1) with range clamping `[1, 35791]` in `onChange` to block invalid values at the source.
         -   **[Core Optimization] OAuth Token Exchange Only: Remove JA3 Fingerprinting and Dynamic User-Agent Masking**:
             -   **Pure Requests**: Specifically for `exchange_code` (initial authorization) and `refresh_access_token` (silent renewal) requests, the Chrome JA3 fingerprint emulation has been removed to revert to standard pure TLS characteristics.
-            -   **Dynamic UA**: During token exchange, the system automatically extracts the compiled version (`CURRENT_VERSION`) to construct a dedicated `User-Agent` (e.g., `vscode/1.X.X (Antigravity/4.1.23)`), matching the pure TLS connection.
+            -   **Dynamic UA**: During token exchange, the system automatically extracts the compiled version (`CURRENT_VERSION`) to construct a dedicated `User-Agent` (e.g., `vscode/1.X.X (Antigravity/4.1.24)`), matching the pure TLS connection.
         -   **[Feature Enhancement] API Proxy Page and Settings Model Lists Now Fully Dynamic**:
             -   **Root Cause**: The "API Proxy → Supported Models & Integration" list, the target model dropdown in "Model Router", and the "Settings → Pinned Quota Models" list all previously read only from the static `MODEL_CONFIG`, causing dynamically issued models (e.g., `GPT-OSS 120B`, `Gemini 3.1 Pro (High)`) to never appear in these lists.
             -   **Fix**:
