@@ -2578,6 +2578,16 @@ print(response.choices[0].message.content)`;
                                                     {copied === 'openai-resp' ? <CheckCircle size={10} className="text-green-500" /> : <Copy size={10} />}
                                                 </button>
                                             </div>
+                                            <div className="flex items-center justify-between hover:bg-black/5 dark:hover:bg-white/5 rounded p-0.5 group">
+                                                <code className="text-[10px] opacity-70 font-bold text-sky-500">/cursor/chat/completions (Cursor)</code>
+                                                <button onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const baseUrl = status.running ? status.base_url : `http://127.0.0.1:${appConfig.proxy.port || 8045}`;
+                                                    copyToClipboardHandler(`${baseUrl}/cursor/chat/completions`, 'openai-cursor');
+                                                }} className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    {copied === 'openai-cursor' ? <CheckCircle size={10} className="text-green-500" /> : <Copy size={10} />}
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
 

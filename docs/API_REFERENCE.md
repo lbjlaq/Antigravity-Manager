@@ -84,6 +84,7 @@ Antigravity Gateway 是一个双重角色的服务器：
 ### OpenAI Compatible
 *   **对话生成 (Chat Completions)**
     *   **POST** `/v1/chat/completions`
+    *   **POST** `/cursor/chat/completions` (Cursor 专用兼容入口：支持 OpenAI Chat / Responses-like / Anthropic-like 输入，统一输出 OpenAI Chat 格式；默认使用 `X-Cursor-Reasoning-Mode: think_tags` 将思考包装为 `<think>...</think>` 以便 Cursor 折叠展示；也支持 `hide` / `raw` / `inline`)
     *   **支持模型**: 任何映射后的模型 ID (如 `gpt-4o`, `gemini-1.5-pro`)
     *   **兼容性**: 完全兼容 OpenAI 官方 Response 格式 (包括流式 SSE)。
 
@@ -95,7 +96,7 @@ Antigravity Gateway 是一个双重角色的服务器：
 ### Anthropic Compatible
 *   **Claude Messages**
     *   **POST** `/v1/messages`
-    *   **用途**: 支持 Claude CLI (`claude`), Cursor, Cherry Studio 等客户端。
+    *   **用途**: 支持 Claude CLI (`claude`), Cherry Studio 等客户端。
     *   **特性**: 完整支持 Tool Use (工具调用) 和 Thinking (思维链) 模式。
 
 ### Gemini Native
