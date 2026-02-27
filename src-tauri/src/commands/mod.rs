@@ -376,6 +376,8 @@ pub async fn save_config(
         crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
         // [NEW] 更新全局图像思维模式配置
         crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
+        // [NEW] 更新 Cursor 思考展示模式配置
+        crate::proxy::update_cursor_reasoning_mode(config.proxy.cursor_reasoning_mode.clone());
         // 更新代理池配置
         instance
             .axum_server

@@ -28,17 +28,6 @@ enum CursorReasoningMode {
     Inline,
 }
 
-impl CursorReasoningMode {
-    fn as_str(self) -> &'static str {
-        match self {
-            CursorReasoningMode::Hide => "hide",
-            CursorReasoningMode::Raw => "raw",
-            CursorReasoningMode::ThinkTags => "think_tags",
-            CursorReasoningMode::Inline => "inline",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorPayloadKind {
     OpenAiChat,
@@ -57,16 +46,15 @@ fn parse_cursor_reasoning_mode(value: &str) -> Option<CursorReasoningMode> {
     }
 }
 
-fn resolve_cursor_reasoning_mode(headers: &HeaderMap) -> CursorReasoningMode {
+fn resolve_cursor_reasoning_mode() -> CursorReasoningMode {
     // Cursor endpoint defaults to think_tags mode:
     // convert reasoning_content into <think>...</think> blocks that Cursor can fold.
-    if let Some(v) = headers
-        .get("X-Cursor-Reasoning-Mode")
-        .or_else(|| headers.get("x-cursor-reasoning-mode"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(parse_cursor_reasoning_mode)
+    // 优先级: 页面配置(持久化) > 环境变量 > 默认值
+
+    if let Some(mode) =
+        parse_cursor_reasoning_mode(&crate::proxy::get_cursor_reasoning_mode())
     {
-        return v;
+        return mode;
     }
 
     if let Ok(env_mode) = std::env::var("ANTI_CURSOR_REASONING_MODE") {
@@ -872,7 +860,7 @@ pub async fn handle_cursor_chat_completions(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    let reasoning_mode = resolve_cursor_reasoning_mode(&headers);
+    let reasoning_mode = resolve_cursor_reasoning_mode();
     let (normalized_body, payload_kind) = match normalize_cursor_payload_to_openai(body, &headers) {
         Ok(v) => v,
         Err((status, msg)) => return (status, msg).into_response(),
@@ -892,11 +880,6 @@ pub async fn handle_cursor_chat_completions(
     let mut sanitized = sanitize_cursor_openai_output(raw_response, reasoning_mode).await;
     if let Ok(v) = HeaderValue::from_str(payload_kind.as_str()) {
         sanitized.headers_mut().insert("X-Cursor-Payload-Kind", v);
-    }
-    if let Ok(v) = HeaderValue::from_str(reasoning_mode.as_str()) {
-        sanitized
-            .headers_mut()
-            .insert("X-Cursor-Reasoning-Mode", v);
     }
     sanitized
 }

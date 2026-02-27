@@ -122,6 +122,47 @@ pub fn update_image_thinking_mode(mode: Option<String>) {
     }
 }
 
+// ============================================================================
+// Cursor 思考展示模式配置存储
+// ============================================================================
+static GLOBAL_CURSOR_REASONING_MODE: OnceLock<RwLock<String>> = OnceLock::new();
+
+fn normalize_cursor_reasoning_mode(mode: Option<String>) -> String {
+    let normalized = mode
+        .unwrap_or_else(|| "think_tags".to_string())
+        .trim()
+        .to_ascii_lowercase();
+
+    match normalized.as_str() {
+        "hide" | "raw" | "think_tags" | "inline" => normalized,
+        _ => "think_tags".to_string(),
+    }
+}
+
+pub fn get_cursor_reasoning_mode() -> String {
+    GLOBAL_CURSOR_REASONING_MODE
+        .get()
+        .and_then(|lock| lock.read().ok())
+        .map(|s| s.clone())
+        .unwrap_or_else(|| "think_tags".to_string())
+}
+
+pub fn update_cursor_reasoning_mode(mode: Option<String>) {
+    let val = normalize_cursor_reasoning_mode(mode);
+
+    if let Some(lock) = GLOBAL_CURSOR_REASONING_MODE.get() {
+        if let Ok(mut cfg) = lock.write() {
+            if *cfg != val {
+                *cfg = val.clone();
+                tracing::info!("[Cursor-Reasoning] Global config updated: {}", val);
+            }
+        }
+    } else {
+        let _ = GLOBAL_CURSOR_REASONING_MODE.set(RwLock::new(val.clone()));
+        tracing::info!("[Cursor-Reasoning] Global config initialized: {}", val);
+    }
+}
+
 /// 全局系统提示词配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalSystemPromptConfig {
@@ -553,6 +594,14 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub image_thinking_mode: Option<String>,
 
+    /// Cursor 思考展示模式
+    /// - hide: 移除思考内容
+    /// - raw: 原样透传
+    /// - think_tags: 包装为 <think>...</think>（便于 Cursor 折叠）
+    /// - inline: 内联拼接到正文
+    #[serde(default)]
+    pub cursor_reasoning_mode: Option<String>,
+
     /// 代理池配置
     #[serde(default)]
     pub proxy_pool: ProxyPoolConfig,
@@ -593,6 +642,7 @@ impl Default for ProxyConfig {
             global_system_prompt: GlobalSystemPromptConfig::default(),
             proxy_pool: ProxyPoolConfig::default(),
             image_thinking_mode: None,
+            cursor_reasoning_mode: None,
         }
     }
 }

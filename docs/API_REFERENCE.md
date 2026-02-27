@@ -84,9 +84,25 @@ Antigravity Gateway 是一个双重角色的服务器：
 ### OpenAI Compatible
 *   **对话生成 (Chat Completions)**
     *   **POST** `/v1/chat/completions`
-    *   **POST** `/cursor/chat/completions` (Cursor 专用兼容入口：支持 OpenAI Chat / Responses-like / Anthropic-like 输入，统一输出 OpenAI Chat 格式；默认使用 `X-Cursor-Reasoning-Mode: think_tags` 将思考包装为 `<think>...</think>` 以便 Cursor 折叠展示；也支持 `hide` / `raw` / `inline`)
+    *   **POST** `/cursor/chat/completions` (Cursor 专用兼容入口：支持 OpenAI Chat / Responses-like / Anthropic-like 输入，统一输出 OpenAI Chat 格式；思考展示模式可在页面设置，也可通过环境变量 `ANTI_CURSOR_REASONING_MODE` 指定默认值)
     *   **支持模型**: 任何映射后的模型 ID (如 `gpt-4o`, `gemini-1.5-pro`)
     *   **兼容性**: 完全兼容 OpenAI 官方 Response 格式 (包括流式 SSE)。
+
+#### Cursor 客户端配置（推荐）
+
+1. 进入 Cursor `Settings -> Models`，在 OpenAI 模型区域添加并启用你的目标模型（例如 `claude-opus-4-6`）。
+2. 在 `Settings -> API Keys` 中启用 OpenAI API Key，并填入 Antigravity 服务的 API Key。
+3. 打开 `Override OpenAI Base URL`，填写你的网关地址：
+   `http://127.0.0.1:8045/cursor`
+4. **不要**在 Base URL 中手动追加 `/chat/completions`，Cursor 会自动拼接该路径。
+5. 完成后，Cursor 实际请求路径应为：
+   `/cursor/chat/completions`
+6. 请确保该 Base URL 对 Cursor 运行环境可访问；如果你的服务是本地地址（如 `127.0.0.1`）且需要跨设备/外网访问，建议先做内网穿透并使用可访问的公网地址。
+
+> 思考展示模式可在页面 `API 反代服务 -> 多协议支持 -> Cursor 思考展示模式` 直接设置。
+> 优先级：页面配置 > `ANTI_CURSOR_REASONING_MODE` 环境变量 > 默认 `think_tags`。
+
+![Cursor 配置示意图](./images/cursor-settings-openai-override.png)
 
 *   **图片生成 (Image Generation)**
     *   **POST** `/v1/images/generations`

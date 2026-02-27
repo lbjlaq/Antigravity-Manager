@@ -632,7 +632,16 @@
                 "user_agent": "User-Agent 覆盖",
                 "user_agent_tooltip": "自定义发送给上游 API 的 User-Agent 请求头。留空则使用默认值。",
                 "user_agent_hint": "当前默认值: antigravity/<version> <os>/<arch>",
-                "user_agent_placeholder": "输入自定义 User-Agent 字符串..."
+                "user_agent_placeholder": "输入自定义 User-Agent 字符串...",
+                "cursor_reasoning_mode": "Cursor 思考展示模式",
+                "cursor_reasoning_mode_tooltip": "控制 /cursor/chat/completions 的思考内容展示方式。",
+                "cursor_reasoning_mode_hint": "优先级：页面配置 > 环境变量 ANTI_CURSOR_REASONING_MODE。",
+                "cursor_reasoning_mode_options": {
+                    "hide": "不展示思考",
+                    "raw": "原样透传（调试）",
+                    "think_tags": "折叠显示（推荐）",
+                    "inline": "展示思考到正文"
+                }
             },
             "port": "监听端口",
             "port_tooltip": "本地 API 代理监听的端口。需要先停止服务再修改，修改后需重启生效。",
