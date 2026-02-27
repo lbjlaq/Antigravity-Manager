@@ -18,8 +18,10 @@ use crate::proxy::mappers::openai::models::{
 };
 use crate::proxy::server::AppState;
 
-const MAX_CURSOR_BODY_SIZE: usize = 100 * 1024 * 1024;
+const MAX_CURSOR_BODY_SIZE: usize = 16 * 1024 * 1024;
+const REASONING_CONTENT_KEY: &[u8] = br#""reasoning_content""#;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CursorReasoningMode {
     Hide,
@@ -35,35 +37,9 @@ pub enum CursorPayloadKind {
     AnthropicLike,
 }
 
-fn parse_cursor_reasoning_mode(value: &str) -> Option<CursorReasoningMode> {
-    let normalized = value.trim().to_ascii_lowercase();
-    match normalized.as_str() {
-        "hide" | "off" | "disabled" => Some(CursorReasoningMode::Hide),
-        "raw" | "passthrough" | "native" => Some(CursorReasoningMode::Raw),
-        "think_tags" | "think-tags" | "fold" | "cursor" => Some(CursorReasoningMode::ThinkTags),
-        "inline" | "on" | "enabled" => Some(CursorReasoningMode::Inline),
-        _ => None,
-    }
-}
-
 fn resolve_cursor_reasoning_mode() -> CursorReasoningMode {
-    // Cursor endpoint defaults to think_tags mode:
-    // convert reasoning_content into <think>...</think> blocks that Cursor can fold.
-    // 优先级: 页面配置(持久化) > 环境变量 > 默认值
-
-    if let Some(mode) =
-        parse_cursor_reasoning_mode(&crate::proxy::get_cursor_reasoning_mode())
-    {
-        return mode;
-    }
-
-    if let Ok(env_mode) = std::env::var("ANTI_CURSOR_REASONING_MODE") {
-        if let Some(mode) = parse_cursor_reasoning_mode(&env_mode) {
-            return mode;
-        }
-    }
-
-    CursorReasoningMode::ThinkTags
+    // 固定策略：返回给 Cursor 时始终移除 reasoning_content。
+    CursorReasoningMode::Hide
 }
 
 impl CursorPayloadKind {
@@ -567,6 +543,13 @@ fn strip_reasoning_fields_in_value(value: &mut Value) {
     }
 }
 
+fn payload_might_contain_reasoning(bytes: &Bytes) -> bool {
+    bytes
+        .as_ref()
+        .windows(REASONING_CONTENT_KEY.len())
+        .any(|w| w == REASONING_CONTENT_KEY)
+}
+
 fn merge_reasoning_content_into_content(
     obj: &mut serde_json::Map<String, Value>,
     separator: &str,
@@ -838,17 +821,28 @@ async fn sanitize_cursor_openai_output(
         Err(_) => return Response::from_parts(parts, Body::empty()),
     };
 
-    let body_out = match serde_json::from_slice::<Value>(&bytes) {
-        Ok(mut json_val) => {
-            match reasoning_mode {
-                CursorReasoningMode::Hide => strip_reasoning_fields_in_value(&mut json_val),
-                CursorReasoningMode::Inline => inline_reasoning_for_non_stream_payload(&mut json_val),
-                CursorReasoningMode::ThinkTags => think_tags_for_non_stream_payload(&mut json_val),
-                CursorReasoningMode::Raw => {}
+    let should_parse = match reasoning_mode {
+        CursorReasoningMode::Raw => false,
+        CursorReasoningMode::Hide
+        | CursorReasoningMode::Inline
+        | CursorReasoningMode::ThinkTags => payload_might_contain_reasoning(&bytes),
+    };
+
+    let body_out = if should_parse {
+        match serde_json::from_slice::<Value>(&bytes) {
+            Ok(mut json_val) => {
+                match reasoning_mode {
+                    CursorReasoningMode::Hide => strip_reasoning_fields_in_value(&mut json_val),
+                    CursorReasoningMode::Inline => inline_reasoning_for_non_stream_payload(&mut json_val),
+                    CursorReasoningMode::ThinkTags => think_tags_for_non_stream_payload(&mut json_val),
+                    CursorReasoningMode::Raw => {}
+                }
+                Bytes::from(serde_json::to_vec(&json_val).unwrap_or_else(|_| bytes.to_vec()))
             }
-            Bytes::from(serde_json::to_vec(&json_val).unwrap_or_else(|_| bytes.to_vec()))
+            Err(_) => bytes,
         }
-        Err(_) => bytes,
+    } else {
+        bytes
     };
 
     parts.headers.remove(header::CONTENT_LENGTH);

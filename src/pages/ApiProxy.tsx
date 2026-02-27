@@ -2530,34 +2530,6 @@ print(response.choices[0].message.content)`;
                                     {t('proxy.multi_protocol.description')}
                                 </p>
 
-                                <div className="mb-4 p-3 rounded-xl border border-gray-200 dark:border-gray-700/70 bg-white/80 dark:bg-gray-900/40 backdrop-blur-sm">
-                                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                                        <label className="text-xs font-medium text-gray-700 dark:text-gray-100 inline-flex items-center gap-1">
-                                            {t('proxy.config.request.cursor_reasoning_mode', { defaultValue: 'Cursor 思考展示模式' })}
-                                            <HelpTooltip text={t('proxy.config.request.cursor_reasoning_mode_tooltip', { defaultValue: '控制 /cursor/chat/completions 的思考内容展示方式。' })} />
-                                        </label>
-                                        <select
-                                            value={appConfig.proxy.cursor_reasoning_mode === 'hide' ? 'hide' : 'inline'}
-                                            onChange={(e) =>
-                                                updateProxyConfig({
-                                                    cursor_reasoning_mode: e.target.value as 'hide' | 'inline'
-                                                })
-                                            }
-                                            className="w-full sm:w-64 px-2.5 py-1.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-xs text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                        >
-                                            <option value="inline">
-                                                {t('proxy.config.request.cursor_reasoning_mode_options.inline', { defaultValue: '展示思考到正文' })}
-                                            </option>
-                                            <option value="hide">
-                                                {t('proxy.config.request.cursor_reasoning_mode_options.hide', { defaultValue: '不展示思考' })}
-                                            </option>
-                                        </select>
-                                    </div>
-                                    <p className="text-[10px] text-gray-500 dark:text-gray-300/90 mt-2">
-                                        {t('proxy.config.request.cursor_reasoning_mode_hint', { defaultValue: '优先级：页面配置 > 环境变量 ANTI_CURSOR_REASONING_MODE。' })}
-                                    </p>
-                                </div>
-
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                     {/* OpenAI Card */}
                                     <div

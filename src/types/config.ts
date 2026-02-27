@@ -24,7 +24,6 @@ export interface ProxyConfig {
     thinking_budget?: ThinkingBudgetConfig;
     global_system_prompt?: GlobalSystemPromptConfig;
     image_thinking_mode?: 'enabled' | 'disabled'; // [NEW] 图像思维模式开关
-    cursor_reasoning_mode?: 'hide' | 'raw' | 'think_tags' | 'inline';
     proxy_pool?: ProxyPoolConfig;
 }
 

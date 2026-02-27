@@ -641,16 +641,7 @@
                 "user_agent": "User-Agent Override",
                 "user_agent_tooltip": "Override the User-Agent header sent to upstream APIs. Leave empty to use default.",
                 "user_agent_hint": "Current Default: antigravity/<version> <os>/<arch>",
-                "user_agent_placeholder": "Enter custom User-Agent string...",
-                "cursor_reasoning_mode": "Cursor Reasoning Display Mode",
-                "cursor_reasoning_mode_tooltip": "Controls how reasoning is exposed for /cursor/chat/completions.",
-                "cursor_reasoning_mode_hint": "Priority: page setting > environment variable ANTI_CURSOR_REASONING_MODE.",
-                "cursor_reasoning_mode_options": {
-                    "hide": "Hide reasoning",
-                    "raw": "Raw passthrough (debug)",
-                    "think_tags": "Folded display (recommended)",
-                    "inline": "Show reasoning in body"
-                }
+                "user_agent_placeholder": "Enter custom User-Agent string..."
             },
             "port": "Listen Port",
             "port_tooltip": "TCP port the local API Proxy listens on. Stop the service to change it, then restart to apply.",
