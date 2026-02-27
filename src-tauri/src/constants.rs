@@ -10,8 +10,8 @@ const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 
 
 /// Known stable configuration (for Docker/Headless fallback)
-/// Antigravity 4.1.24 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "4.1.24";
+/// Antigravity 4.1.25 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
+const KNOWN_STABLE_VERSION: &str = "4.1.25";
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
 const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
@@ -174,7 +174,7 @@ fn resolve_version_config() -> (VersionConfig, VersionSource) {
     )
 }
 
-/// Current resolved Antigravity version (e.g., "4.1.24")
+/// Current resolved Antigravity version (e.g., "4.1.25")
 /// Always >= KNOWN_STABLE_VERSION, and >= remote latest when reachable.
 pub static CURRENT_VERSION: LazyLock<String> = LazyLock::new(|| {
     let (config, _) = resolve_version_config();
@@ -193,9 +193,9 @@ pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| {
 
 /// Shared User-Agent string for all upstream API requests.
 /// Format matches the official Antigravity Electron desktop client:
-/// "Antigravity/4.1.24 (Macintosh; Intel Mac OS X 10_15_7) Chrome/132.0.6834.160 Electron/39.2.3"
+/// "Antigravity/4.1.25 (Macintosh; Intel Mac OS X 10_15_7) Chrome/132.0.6834.160 Electron/39.2.3"
 ///
-/// Version selection: max(local installation, remote latest, known stable 4.1.24)
+/// Version selection: max(local installation, remote latest, known stable 4.1.25)
 /// This prevents model rejection due to outdated client version headers.
 pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     let (config, source) = resolve_version_config();
@@ -255,9 +255,9 @@ mod tests {
 
     #[test]
     fn test_compare_semver() {
-        assert_eq!(compare_semver("4.1.24", "4.1.22"), std::cmp::Ordering::Greater);
-        assert_eq!(compare_semver("4.1.22", "4.1.24"), std::cmp::Ordering::Less);
-        assert_eq!(compare_semver("4.1.24", "4.1.24"), std::cmp::Ordering::Equal);
+        assert_eq!(compare_semver("4.1.25", "4.1.22"), std::cmp::Ordering::Greater);
+        assert_eq!(compare_semver("4.1.22", "4.1.25"), std::cmp::Ordering::Less);
+        assert_eq!(compare_semver("4.1.25", "4.1.25"), std::cmp::Ordering::Equal);
         assert_eq!(compare_semver("5.0.0", "4.9.9"), std::cmp::Ordering::Greater);
         assert_eq!(compare_semver("1.16.5", "1.16.4"), std::cmp::Ordering::Greater);
     }
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_old_local_version_uses_floor() {
-        // Simulate: local = 4.1.20 (old), floor = 4.1.24
+        // Simulate: local = 4.1.20 (old), floor = 4.1.25
         // Expected: use floor
         let local = "4.1.20";
         let floor = KNOWN_STABLE_VERSION;
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_newer_local_version_takes_priority() {
-        // Simulate: local = 4.1.25 (newer than floor), floor = 4.1.24
+        // Simulate: local = 4.1.25 (newer than floor), floor = 4.1.25
         // Expected: use local
         let local = "4.1.25";
         let floor = KNOWN_STABLE_VERSION;

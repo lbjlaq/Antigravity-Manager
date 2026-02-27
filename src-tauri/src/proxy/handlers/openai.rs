@@ -30,6 +30,13 @@ pub async fn handle_chat_completions(
     headers: HeaderMap, // [CHANGED] Extract headers
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // [NEW] Check for Image Model Redirection
+    let model_name = body.get("model").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+    if model_name.contains("image") || model_name.contains("dall-e") || model_name.contains("midjourney") {
+        tracing::info!("[ChatRedirection] Redirecting model {} to image generations", model_name);
+        return intercept_chat_to_image(state, body, &model_name).await;
+    }
+
     // [FIX] 保存原始请求体的完整副本，用于日志记录
     // 这确保了即使结构体定义遗漏字段，日志也能完整记录所有参数
     let original_body = body.clone();
@@ -1587,10 +1594,161 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
 
 /// OpenAI Images API: POST /v1/images/generations
 /// 处理图像生成请求，转换为 Gemini API 格式
+pub async fn handle_chat_redirection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    handle_chat_completions(State(state), headers, Json(body)).await
+}
+
+async fn intercept_chat_to_image(
+    state: AppState,
+    body: Value,
+    model_name: &str,
+) -> Result<Response, (StatusCode, String)> {
+    // 1. Extract prompt from messages
+    let mut prompt = String::new();
+    if let Some(messages) = body.get("messages").and_then(|v| v.as_array()) {
+        for msg in messages {
+            if msg.get("role").and_then(|v| v.as_str()) == Some("user") {
+                if let Some(content) = msg.get("content") {
+                    if let Some(s) = content.as_str() {
+                        prompt = s.to_string();
+                    } else if let Some(arr) = content.as_array() {
+                        for part in arr {
+                            if part.get("type").and_then(|v| v.as_str()) == Some("text") {
+                                prompt.push_str(part.get("text").and_then(|v| v.as_str()).unwrap_or(""));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if prompt.is_empty() {
+        prompt = "A beautiful painting".to_string(); // fallback
+    }
+
+    let is_stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    // 2. Call internal image generator
+    let img_req = json!({
+        "prompt": prompt,
+        "model": model_name,
+        "n": 1,
+        "response_format": "url"
+    });
+
+    match handle_images_generations_internal(state, img_req).await {
+        Ok((email, img_res)) => {
+            // Extract URL
+            let mut img_markdown = String::new();
+            if let Some(data) = img_res.get("data").and_then(|v| v.as_array()) {
+                for item in data {
+                    if let Some(url) = item.get("url").and_then(|v| v.as_str()) {
+                        img_markdown.push_str(&format!("![Generated Image]({})\n\n", url));
+                    }
+                }
+            }
+
+            if img_markdown.is_empty() {
+                img_markdown = "Failed to extract image URL from generation result.".to_string();
+            }
+
+            // 3. Construct Chat Completion Response
+            if is_stream {
+                use axum::body::Body;
+                
+                let chunk = json!({
+                    "id": format!("chatcmpl-img-{}", uuid::Uuid::new_v4()),
+                    "object": "chat.completion.chunk",
+                    "created": chrono::Utc::now().timestamp(),
+                    "model": model_name,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {
+                            "role": "assistant",
+                            "content": img_markdown
+                        },
+                        "finish_reason": null
+                    }]
+                });
+                
+                let done_chunk = json!({
+                    "id": format!("chatcmpl-img-{}", uuid::Uuid::new_v4()),
+                    "object": "chat.completion.chunk",
+                    "created": chrono::Utc::now().timestamp(),
+                    "model": model_name,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }]
+                });
+
+                let sse_data = format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n", chunk.to_string(), done_chunk.to_string());
+                
+                let body = Body::from(sse_data);
+                Ok(Response::builder()
+                    .header("Content-Type", "text/event-stream")
+                    .header("Cache-Control", "no-cache")
+                    .header("X-Account-Email", email)
+                    .body(body)
+                    .unwrap())
+            } else {
+                let resp = json!({
+                    "id": format!("chatcmpl-img-{}", uuid::Uuid::new_v4()),
+                    "object": "chat.completion",
+                    "created": chrono::Utc::now().timestamp(),
+                    "model": model_name,
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": img_markdown
+                        },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
+                });
+
+                Ok((
+                    StatusCode::OK,
+                    [
+                        ("X-Account-Email", email.as_str()),
+                    ],
+                    Json(resp)
+                ).into_response())
+            }
+        },
+        Err(e) => Err(e.into()) // using Err directly is fine since return type handles it
+    }
+}
+
 pub async fn handle_images_generations(
     State(state): State<AppState>,
     Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    match handle_images_generations_internal(state, body).await {
+        Ok((email_header, openai_response)) => Ok((
+            StatusCode::OK,
+            [
+                ("X-Mapped-Model", "dall-e-3"),
+                ("X-Account-Email", email_header.as_str()),
+            ],
+            Json(openai_response),
+        )
+            .into_response()),
+        Err(e) => Err(e),
+    }
+}
+
+pub async fn handle_images_generations_internal(
+    state: AppState,
+    body: Value,
+) -> Result<(String, Value), (StatusCode, String)> {
     // 1. 解析请求参数
     let prompt = body.get("prompt").and_then(|v| v.as_str()).ok_or((
         StatusCode::BAD_REQUEST,
@@ -1606,8 +1764,7 @@ pub async fn handle_images_generations(
 
     let size = body
         .get("size")
-        .and_then(|v| v.as_str())
-        .unwrap_or("1024x1024");
+        .and_then(|v| v.as_str());
 
     let response_format = body
         .get("response_format")
@@ -1616,8 +1773,7 @@ pub async fn handle_images_generations(
 
     let quality = body
         .get("quality")
-        .and_then(|v| v.as_str())
-        .unwrap_or("standard");
+        .and_then(|v| v.as_str());
 
     let image_size = body
         .get("image_size")
@@ -1634,22 +1790,22 @@ pub async fn handle_images_generations(
         model,
         prompt,
         n,
-        size,
-        quality,
+        size.unwrap_or("auto"),
+        quality.unwrap_or("auto"),
         style
     );
 
     // 2. 使用 common_utils 解析图片配置（统一逻辑，支持动态计算宽高比和 quality 映射）
-    let (image_config, _) = crate::proxy::mappers::common_utils::parse_image_config_with_params(
+    let (image_config, clean_model_name) = crate::proxy::mappers::common_utils::parse_image_config_with_params(
         model,
-        Some(size),
-        Some(quality),
+        size,
+        quality,
         image_size,
     );
 
     // 3. Prompt Enhancement（保留原有逻辑）
     let mut final_prompt = prompt.to_string();
-    if quality == "hd" {
+    if quality == Some("hd") {
         final_prompt.push_str(", (high quality, highly detailed, 4k resolution, hdr)");
     }
     match style {
@@ -1676,7 +1832,7 @@ pub async fn handle_images_generations(
         let image_config = image_config.clone(); // 使用解析后的完整配置
         let _response_format = response_format.to_string();
 
-        let model_to_use = "gemini-3-pro-image".to_string();
+        let model_to_use = clean_model_name.clone();
 
         tasks.push(tokio::spawn(async move {
             let mut last_error = String::new();
@@ -1684,7 +1840,7 @@ pub async fn handle_images_generations(
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
                 let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-                    .get_token("image_gen", attempt > 0, None, "gemini-3-pro-image")
+                    .get_token("image_gen", attempt > 0, None, &model_to_use)
                     .await
                 {
                     Ok(t) => t,
@@ -1885,15 +2041,7 @@ pub async fn handle_images_generations(
     });
 
     let email_header = used_email.unwrap_or_default();
-    Ok((
-        StatusCode::OK,
-        [
-            ("X-Mapped-Model", "dall-e-3"),
-            ("X-Account-Email", email_header.as_str()),
-        ],
-        Json(openai_response),
-    )
-        .into_response())
+    Ok((email_header, openai_response))
 }
 
 pub async fn handle_images_edits(

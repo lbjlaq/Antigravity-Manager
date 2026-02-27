@@ -309,8 +309,8 @@ pub fn resolve_model_route(
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
     let lower = model_name.to_lowercase();
     
-    // 1. gemini-3-pro-image (优先匹配，使用前缀匹配以支持分辨率/比例后缀)
-    if lower.starts_with("gemini-3-pro-image") {
+    // 1. image 资源 (优先匹配，使用 contains 匹配以支持任何变体，如 gemini-3.1-flash-image)
+    if lower.contains("image") {
         return Some("gemini-3-pro-image".to_string());
     }
 
@@ -410,6 +410,14 @@ mod tests {
         );
         assert_eq!(
             normalize_to_standard_id("gemini-3-pro-image-4k-16x9"),
+            Some("gemini-3-pro-image".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.1-flash-image"),
+            Some("gemini-3-pro-image".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-3.1-flash-image-4k"),
             Some("gemini-3-pro-image".to_string())
         );
     }
