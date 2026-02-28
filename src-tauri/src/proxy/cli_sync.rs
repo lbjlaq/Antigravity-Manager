@@ -643,8 +643,17 @@ pub fn get_export_status(app: &CliApp) -> Result<ExportStatus, String> {
 
     let files = app.config_files();
     let mut exported_files = Vec::new();
+    let mut expected_count = 0;
 
     for file in &files {
+        // Mirror the skip logic from export_config: Gemini skips config.json when settings.json exists
+        if app == &CliApp::Gemini && file.name == "config.json" {
+            let settings_export = app_dir.join("settings.json");
+            if settings_export.exists() {
+                continue;
+            }
+        }
+        expected_count += 1;
         let export_path = app_dir.join(&file.name);
         if export_path.exists() {
             exported_files.push(ExportedFile {
@@ -655,7 +664,7 @@ pub fn get_export_status(app: &CliApp) -> Result<ExportStatus, String> {
         }
     }
 
-    let fully_exported = !exported_files.is_empty() && exported_files.len() == files.len();
+    let fully_exported = !exported_files.is_empty() && exported_files.len() == expected_count;
 
     Ok(ExportStatus {
         exported: fully_exported,
