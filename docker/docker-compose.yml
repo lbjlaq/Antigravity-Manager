@@ -11,7 +11,7 @@ services:
     volumes:
       - ~/.antigravity_tools:/root/.antigravity_tools
     environment:
-      - LOG_LEVEL=info
-      - API_KEY=test  # [重要] 請設置您的安全密鑰，若不設置則在日誌中查看隨機密鑰
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - API_KEY=${API_KEY:-test}  # [重要] 請設置您的安全密鑰，若不設置則在日誌中查看隨機密鑰
       - ABV_BIND_LOCAL_ONLY=${ABV_BIND_LOCAL_ONLY:-true}  # 僅綁定 127.0.0.1
     restart: unless-stopped
