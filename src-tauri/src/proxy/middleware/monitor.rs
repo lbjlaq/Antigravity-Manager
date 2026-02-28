@@ -138,8 +138,16 @@ pub async fn monitor_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    let cursor_payload_kind = response
+        .headers()
+        .get("X-Cursor-Payload-Kind")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     // Determine protocol from URL path
-    let protocol = if uri.contains("/v1/messages") {
+    let protocol = if uri.contains("/cursor/chat/completions") {
+        Some("openai".to_string())
+    } else if uri.contains("/v1/messages") {
         Some("anthropic".to_string())
     } else if uri.contains("/v1beta/models") {
         Some("gemini".to_string())
@@ -173,6 +181,7 @@ pub async fn monitor_middleware(
         output_tokens: None,
         protocol,
         username,
+        cursor_payload_kind,
     };
 
 

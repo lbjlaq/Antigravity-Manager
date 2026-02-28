@@ -397,6 +397,11 @@ impl AxumServer {
             ) // 音频转录 API
             // Claude Protocol
             .route("/v1/messages", post(handlers::claude::handle_messages))
+            // Cursor-compatible OpenAI chat endpoint
+            .route(
+                "/cursor/chat/completions",
+                post(handlers::cursor::handle_cursor_chat_completions),
+            )
             .route(
                 "/v1/messages/count_tokens",
                 post(handlers::claude::handle_count_tokens),
