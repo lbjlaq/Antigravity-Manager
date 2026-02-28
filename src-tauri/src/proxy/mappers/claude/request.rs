@@ -1072,7 +1072,48 @@ fn build_contents(
                                 }
                             }));
                             saw_non_thinking = true;
+                        } else if source.source_type == "url" {
+                            // [FIX] Handle URL-type images: use fileData for Gemini
+                            if let Some(ref url) = source.url {
+                                if url.starts_with("http://") || url.starts_with("https://") {
+                                    // Use Gemini's fileData format for HTTP URLs
+                                    parts.push(json!({
+                                        "fileData": {
+                                            "fileUri": url,
+                                            "mimeType": source.media_type
+                                        }
+                                    }));
+                                    tracing::debug!("[Claude-Request] Converted URL image to Gemini fileData: {}", url);
+                                } else if url.starts_with("file://") {
+                                    // Handle local file URLs - read file and convert to base64
+                                    let file_path = url.trim_start_matches("file://");
+                                    if let Ok(file_bytes) = std::fs::read(file_path) {
+                                        use base64::Engine as _;
+                                        let b64 = base64::engine::general_purpose::STANDARD.encode(&file_bytes);
+                                        let mime_type = if file_path.to_lowercase().ends_with(".png") {
+                                            "image/png"
+                                        } else if file_path.to_lowercase().ends_with(".gif") {
+                                            "image/gif"
+                                        } else if file_path.to_lowercase().ends_with(".webp") {
+                                            "image/webp"
+                                        } else {
+                                            "image/jpeg"
+                                        };
+                                        parts.push(json!({
+                                            "inlineData": {
+                                                "mimeType": mime_type,
+                                                "data": b64
+                                            }
+                                        }));
+                                        tracing::debug!("[Claude-Request] Loaded local image: {} ({} bytes)", file_path, file_bytes.len());
+                                    } else {
+                                        tracing::warn!("[Claude-Request] Failed to read local image: {}", file_path);
+                                    }
+                                }
+                                saw_non_thinking = true;
+                            }
                         }
+                        // Note: Other source types are silently dropped (same as before for unknown types)
                     }
                     ContentBlock::Document { source, .. } => {
                         if source.source_type == "base64" {
@@ -1083,6 +1124,20 @@ fn build_contents(
                                 }
                             }));
                             saw_non_thinking = true;
+                        } else if source.source_type == "url" {
+                            // [FIX] Handle URL-type documents
+                            if let Some(ref url) = source.url {
+                                if url.starts_with("http://") || url.starts_with("https://") {
+                                    parts.push(json!({
+                                        "fileData": {
+                                            "fileUri": url,
+                                            "mimeType": source.media_type
+                                        }
+                                    }));
+                                    tracing::debug!("[Claude-Request] Converted URL document to Gemini fileData: {}", url);
+                                }
+                                saw_non_thinking = true;
+                            }
                         }
                     }
                     ContentBlock::ToolUse {
@@ -1280,7 +1335,21 @@ fn build_contents(
                                                                     "data": data
                                                                 }
                                                             }));
-                                                            tracing::debug!("[Claude-Request] Preserved image in tool_result for current turn (mime: {})", media_type);
+                                                            tracing::debug!("[Claude-Request] Preserved base64 image in tool_result (mime: {})", media_type);
+                                                        }
+                                                    } else if source_type == "url" {
+                                                        // [NEW] Handle URL-type images in tool_result
+                                                        if let Some(url) = source.get("url").and_then(|v| v.as_str()) {
+                                                            if url.starts_with("http://") || url.starts_with("https://") {
+                                                                let media_type = source.get("media_type").and_then(|v| v.as_str()).unwrap_or("image/jpeg");
+                                                                inline_image_parts.push(json!({
+                                                                    "fileData": {
+                                                                        "fileUri": url,
+                                                                        "mimeType": media_type
+                                                                    }
+                                                                }));
+                                                                tracing::debug!("[Claude-Request] Preserved URL image in tool_result: {}", url);
+                                                            }
                                                         }
                                                     }
                                                 }

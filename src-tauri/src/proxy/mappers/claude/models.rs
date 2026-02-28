@@ -148,16 +148,30 @@ pub enum ContentBlock {
 pub struct ImageSource {
     #[serde(rename = "type")]
     pub source_type: String,
+    /// Present for source_type == "base64"
+    #[serde(default)]
     pub media_type: String,
+    /// Present for source_type == "base64"
+    #[serde(default)]
     pub data: String,
+    /// Present for source_type == "url"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentSource {
     #[serde(rename = "type")]
-    pub source_type: String, // "base64"
+    pub source_type: String, // "base64" or "url"
+    /// Present for source_type == "base64"
+    #[serde(default)]
     pub media_type: String, // e.g. "application/pdf"
+    /// Present for source_type == "base64"
+    #[serde(default)]
     pub data: String,       // base64 data
+    /// Present for source_type == "url"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 /// Tool - supports both client tools (with input_schema) and server tools (like web_search)
