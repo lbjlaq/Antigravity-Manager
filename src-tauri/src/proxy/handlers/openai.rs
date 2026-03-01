@@ -205,12 +205,15 @@ pub async fn handle_chat_completions(
             }
         };
 
+        // [NEW v4.1.28] 获取完整 Token 对象用于动态规格查询
+        let proxy_token = token_manager.get_token_by_id(&account_id);
+
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
         // 4. 转换请求 (返回内容包含 session_id 和 message_count)
         let (gemini_body, session_id, message_count) =
-            transform_openai_request(&openai_req, &project_id, &mapped_model, Some(account_id.as_str()));
+            transform_openai_request(&openai_req, &project_id, &mapped_model, proxy_token.as_ref());
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -1189,8 +1192,9 @@ pub async fn handle_completions(
 
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
+        let proxy_token = token_manager.get_token_by_id(&account_id);
         let (gemini_body, session_id, message_count) =
-            transform_openai_request(&openai_req, &project_id, &mapped_model, Some(account_id.as_str()));
+            transform_openai_request(&openai_req, &project_id, &mapped_model, proxy_token.as_ref());
 
         // [New] 打印转换后的报文 (Gemini Body) 供调试 (Codex 路径) ———— 缩减为 simple debug
         debug!(

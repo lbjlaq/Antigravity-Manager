@@ -26,6 +26,7 @@ use crate::proxy::upstream::client::mask_email;
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; // [NEW] Import Adapter Registry
 use axum::http::HeaderMap;
 use std::sync::{atomic::Ordering, Arc};
+use crate::proxy::model_specs; // [NEW]
 
 // ===== Task #6: OpenCode variants thinking config mapping =====
 // Helper structs for parsing thinking hints from raw JSON
@@ -80,14 +81,15 @@ fn extract_thinking_hint(body: &Value) -> ThinkingHint {
 }
 
 /// Map thinking level to suggested budget tokens
-fn level_to_budget(level: &str) -> u32 {
-    match level {
+fn level_to_budget(level: &str, cap: u64) -> u32 {
+    let base = match level {
         "minimal" => 1024,
         "low" => 8192,
         "medium" => 16384,
         "high" => 24576,
         _ => 8192, // default to low
-    }
+    };
+    base.min(cap as u32)
 }
 
 /// Map thinking level to effort level for output_config
@@ -105,6 +107,7 @@ fn apply_thinking_hints(
     request: &mut crate::proxy::mappers::claude::models::ClaudeRequest,
     hint: &ThinkingHint,
     trace_id: &str,
+    budget_cap: u64, // [NEW]
 ) {
     let mut applied = false;
 
@@ -135,7 +138,7 @@ fn apply_thinking_hints(
 
         // If no budget provided but level is, map level to budget
         if hint.budget_tokens.is_none() {
-            let budget = level_to_budget(level);
+            let budget = level_to_budget(level, budget_cap);
             request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
                 type_: "enabled".to_string(),
                 budget_tokens: Some(budget),
@@ -287,8 +290,10 @@ pub async fn handle_messages(
     };
 
     // [Task #6] Apply OpenCode variants thinking hints from raw JSON
+    // 由于此时还没拿到账号，先用模型默认限额兜底
+    let temp_cap = model_specs::get_thinking_budget(&request.model, None);
     let thinking_hint = extract_thinking_hint(&original_body);
-    apply_thinking_hints(&mut request, &thinking_hint, &trace_id);
+    apply_thinking_hints(&mut request, &thinking_hint, &trace_id, temp_cap);
 
     if debug_logger::is_enabled(&debug_cfg) {
         // [FIX] 使用原始 body 副本记录日志，确保不丢失任何字段
@@ -790,7 +795,8 @@ pub async fn handle_messages(
         // 生成 Trace ID (简单用时间戳后缀)
         // let _trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
 
-        let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id, retried_without_thinking, Some(account_id.as_str()), &session_id_str) {
+        let token_obj = token_manager.get_token_by_id(&account_id);
+        let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id, retried_without_thinking, Some(account_id.as_str()), &session_id_str, token_obj.as_ref()) {
             Ok(b) => {
                 debug!("[{}] Transformed Gemini Body: {}", trace_id, serde_json::to_string_pretty(&b).unwrap_or_default());
                 b
@@ -1757,7 +1763,8 @@ async fn call_gemini_sync(
         .await
         .map_err(|e| format!("Failed to get account: {}", e))?;
     
-    let gemini_body = crate::proxy::mappers::claude::transform_claude_request_in(request, &project_id, false, Some(account_id.as_str()), trace_id)
+    let token_obj = token_manager.get_token_by_id(&account_id);
+    let gemini_body = crate::proxy::mappers::claude::transform_claude_request_in(request, &project_id, false, Some(account_id.as_str()), trace_id, token_obj.as_ref())
         .map_err(|e| format!("Failed to transform request: {}", e))?;
     
     // Call Gemini API

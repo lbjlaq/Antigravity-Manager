@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.1.26)
+> 专业级 AI 账号管理与协议代理系统 (v4.1.27)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.1.26-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.1.27-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -121,7 +121,7 @@ graph TD
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.26/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.27/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -131,7 +131,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **支持的格式**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.1.26`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
+> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.1.27`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 如果您已安装 [Homebrew](https://brew.sh/)，也可以通过以下命令安装：
@@ -431,6 +431,33 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.1.27 (2026-03-01)**:
+        -   **[核心优化] 代理配置初始化与工具图片保留修复 (Issue #2156)**:
+            -   **补全默认配置**: 修复了 `ProxyConfig` 默认初始化时缺失 `global_system_prompt`、`proxy_pool` 和 `image_thinking_mode` 字段导致的编译失败问题。
+            -   **模式匹配完善**: 补充了 `OpenAIContentBlock` 枚举匹配中的未知类型兜底分支 (`_ => {}`)，消除非穷尽匹配的编译警告/错误。
+            -   **图片无条件保留**: 移除冗余的 `preserve_tool_result_images` 开关，现已强制保留 `tool_result` 中的图片数据结构，转为大模型支持的 `inlineData` 结构，大幅简化逻辑。
+        -   **[功能增强] 修改 docker-compose.yml 的配置 (PR #2185)**:
+            -   **命名空间更新**: 将构建的默认镜像名称从 `antigravity-manager` 更新为 `lbjlaq/antigravity-manager`。
+            -   **环境变量占位符**: 为环境变量添加了带默认值的占位符语法，允许用户通过宿主机的环境变量或 `.env` 文件来灵活覆盖默认配置。
+        -   **[核心修复] OpenCode thinking budget 参数全面兼容 (Issue #2186)**:
+            -   **架构支持**：解决了 Vercel AI SDK (`@ai-sdk/anthropic`) 配合 OpenCode 使用时，因原生蛇形命名 `budget_tokens` 导致系统无法启动并抛出 `AI_UnsupportedFunctionalityError: 'thinking requires a budget'` 的问题。
+            -   **双字段输出**：在向 OpenCode / Claude CLI 等外部客户端同步模型配置时，自动同时输出标准的 `budget_tokens` 与小驼峰的 `budgetTokens` 字段。
+            -   **服务端适配**：后端配置解析器现已原生支持这两种命名变体。
+        -   **[核心修复] 解决免费账号配额耗尽后的无限重试与路由死锁问题 (Issue #2184)**：
+            -   **问题根源**：修补了 Google API `fetchAvailableModels` 接口在特定负载下无法正确返回 `remainingFraction` 的缺陷。由于缺失 `project` 标识，导致接口错误地为已耗尽配额（HTTP 429）的账号返回 `1.0`（100%），进而导致智能路由算法将请求持续分配给不可用账号，引发长时间重试及配额显示错误。
+            -   **负载修复**：修改配额刷新请求，在负载中精准注入正确的 `{"project": project_id}` 结构。恢复了配额信息的准确感知，并在未破坏原生字段（如 `supportsThinking`）的前提下实现了接口完全兼容。
+            -   **自愈恢复**：通过读取真实配额，系统现已能够实时识别免费账号的耗尽状态并将其可用度置为 0%，无缝触发多账号自愈轮询（Smart Status Self-healing），解决请求受阻与长等待问题。
+        -   **[核心修复] 解决首页 Gemini 绘图平均配额显示为 0 的问题 (Issue #2160)**：
+            -   **匹配更新**：将 Dashboard 中的绘图模型匹配逻辑从硬编码的 `gemini-3-pro-image` 更新为包含最新的 `gemini-3.1-flash-image`。
+            -   **配置同步**：在 `modelConfig.ts` 中补全了新版绘图模型的 UI 定义，确保图标和标签正常渲染。
+        -   **[核心功能] 全协议动态模型规格 (Model Specs) 集成 (Issue #2176)**：
+            -   **动态引擎**：实现了“动态优先、静态兜底”的规格引擎，优先识别 API 返回的 `max_output_tokens` 等硬限额数据。
+            -   **静态资源**：引入 `model_specs.json` 集中管理 30+ 种模型的默认参数，彻底告别映射器中的硬编码逻辑。
+            -   **协议注入**：统一了 OpenAI、Claude 和 Gemini 协议处理器对 Token 限额的注入方式，增强了跨版本兼容性。
+        -   **[核心修复] 深度解决 Claude -> Gemini 3 路径下的 400 INVALID_ARGUMENT 异常**：
+            -   **自适应识别**：修正了自适应模式逻辑，确保映射后的 Gemini 3 模型能正确使用 `thinkingLevel` 支持，而非失效的 budget 逻辑。
+            -   **冲突规避**：实现了参数排他性检查，在开启分级思维时自动剥离不兼容的 `thinkingBudget`。
+            -   **Token 溢出保护**：为 `maxOutputTokens` 自动提升补齐逻辑增加了 `65536` 的模型硬上限保护，根除参数越界导致的请求失败。
     *   **v4.1.26 (2026-02-27)**:
         -   **[功能增强] 优化配额刷新逻辑，支持同步禁用账号**:
             -   **逻辑放宽**: “刷新所有”和“批量刷新”现在不再跳过标记为 `disabled` 或 `proxy_disabled` 的账号。
@@ -455,7 +482,7 @@ response = client.chat.completions.create(
             -   **恢复指引**: 如果您需要自动预热功能，可以自行拉取本项目源代码，在 `src-tauri/src/lib.rs` 中取消 `start_scheduler` 的注释并解除 `Settings.tsx` 中相关 UI 的注释后重新编译使用。
         -   **[核心修复] 智能版本指纹选择与启动 Panic 修复 (Issue #2123)**:
             -   **问题根源**: 1) `constants.rs` 中的 `KNOWN_STABLE_VERSION` 硬编码了低版本号，当本地 IDE 检测失败时回退该版本作为请求头，导致 Google 拒绝 Gemini 3.1 Pro 模型。2) 新增的远端版本网络调用直接在 `LazyLock` 初始化（Tokio 异步上下文）中执行，导致 `Cannot block the current thread` 严重崩溃。
-            -   **修复方案**: 1) 引入"智能最大版本"策略 `max(本地版本, 远端版本, 4.1.26)`，始终取最高值。2) 将网络探测逻辑移至独立 OS 线程并配合 `mpsc` 通道，安全避开异步运行时限制。保证无论本地版本新旧，指纹均不低于上游要求，且应用能稳定启动。
+            -   **修复方案**: 1) 引入"智能最大版本"策略 `max(本地版本, 远端版本, 4.1.27)`，始终取最高值。2) 将网络探测逻辑移至独立 OS 线程并配合 `mpsc` 通道，安全避开异步运行时限制。保证无论本地版本新旧，指纹均不低于上游要求，且应用能稳定启动。
         -   **[核心修复] 动态模型 maxOutputTokens 限额系统 (替代 PR #2119 硬编码方案)**:
             -   **问题根源**: 部分客户端发送的 `maxOutputTokens` 超过模型物理上限（如 Flash 限制 64k），导致上游返回 400 错误。
             -   **三层限额架构**:
@@ -476,7 +503,7 @@ response = client.chat.completions.create(
             -   **输入验证 (`Settings.tsx`)**: 将 `refresh_interval` 和 `sync_interval` 输入框的 `max` 属性从 `60` 更新为 `35791`（35791 min × 60000 < INT32_MAX），并在 `onChange` 中添加 `NaN` fallback（默认为 1）及范围夹紧 `[1, 35791]`，从源头阻断非法值输入。
         -   **[核心优化] OAuth 换票专属：剔除 JA3 指纹与动态 User-Agent 伪装**:
             -   **纯净请求**: 仅针对 `exchange_code`（首次授权）和 `refresh_access_token`（静默续期）的换票请求，移除了底层网络库的 Chrome JA3 指纹伪装，恢复标准纯净的 TLS特征。
-            -   **动态 UA**: 换票时自动提取编译时版本号 (`CURRENT_VERSION`) 构建专属的 `User-Agent`（如 `vscode/1.X.X (Antigravity/4.1.26)`），以匹配纯净 TLS 链路。
+            -   **动态 UA**: 换票时自动提取编译时版本号 (`CURRENT_VERSION`) 构建专属的 `User-Agent`（如 `vscode/1.X.X (Antigravity/4.1.27)`），以匹配纯净 TLS 链路。
         -   **[功能增强] API 反代页面与设置页模型列表全面接入动态模型数据**:
             -   **问题根源**: "API 反代 → 支持模型与集成"列表与"模型路由中心"的目标模型选择下拉框，以及"设置 → 固定配额模型"列表，此前均仅从静态 `MODEL_CONFIG` 读取硬编码模型信息，导致账号实际下发的动态新模型（如 `GPT-OSS 120B`、`Gemini 3.1 Pro (High)` 等）无法出现在这些列表中。
             -   **修复方案**:

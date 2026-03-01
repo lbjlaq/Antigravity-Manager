@@ -1,5 +1,7 @@
 // OpenAI → Gemini 请求转换
 use super::models::*;
+use crate::proxy::model_specs;
+use crate::proxy::token_manager::ProxyToken;
 
 use serde_json::{json, Value};
 
@@ -7,7 +9,7 @@ pub fn transform_openai_request(
     request: &OpenAIRequest,
     project_id: &str,
     mapped_model: &str,
-    account_id: Option<&str>,
+    token: Option<&ProxyToken>,
 ) -> (Value, String, usize) {
     let session_id = crate::proxy::session_manager::SessionManager::extract_openai_session_id(request);
     let message_count = request.messages.len();
@@ -352,9 +354,35 @@ pub fn transform_openai_request(
                                 else if let Some(id) = &msg.tool_call_id { tool_id_to_name.get(id).map(|s| s.as_str()).unwrap_or(name) }
                                 else { name };
 
+                let mut extra_parts = Vec::new();
+
                 let content_val = match &msg.content {
                     Some(OpenAIContent::String(s)) => s.clone(),
-                    Some(OpenAIContent::Array(blocks)) => blocks.iter().filter_map(|b| if let OpenAIContentBlock::Text { text } = b { Some(text.clone()) } else { None }).collect::<Vec<_>>().join("\n"),
+                    Some(OpenAIContent::Array(blocks)) => {
+                        let mut texts = Vec::new();
+                        for block in blocks {
+                            match block {
+                                OpenAIContentBlock::Text { text } => texts.push(text.clone()),
+                                OpenAIContentBlock::ImageUrl { image_url } => {
+                                    if image_url.url.starts_with("data:") {
+                                        if let Some(pos) = image_url.url.find(',') {
+                                            let mime_part = &image_url.url[5..pos];
+                                            let mime_type = mime_part.split(';').next().unwrap_or("image/jpeg");
+                                            let data = &image_url.url[pos + 1..];
+                                            
+                                            extra_parts.push(json!({
+                                                "inlineData": { "mimeType": mime_type, "data": data }
+                                            }));
+                                        }
+                                    } else {
+                                        texts.push("[image link]".to_string());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        texts.join("\n")
+                    },
                     None => "".to_string()
                 };
 
@@ -365,6 +393,10 @@ pub fn transform_openai_request(
                        "id": msg.tool_call_id.clone().unwrap_or_default()
                     }
                 }));
+
+                for extra in extra_parts {
+                    parts.push(extra);
+                }
             }
 
             json!({ "role": role, "parts": parts })
@@ -408,10 +440,13 @@ pub fn transform_openai_request(
         "topK": 40,
     });
 
-    // [FIX] 移除默认的 81920 maxOutputTokens，防止非思维模型 (如 claude-sonnet-4-6) 报 400 Invalid Argument
-    // 仅在用户显式提供时设置
+    // [FIX] 移除旧的硬编码限额，改为动态查询 (v4.1.28)
     if let Some(max_tokens) = request.max_tokens {
          gen_config["maxOutputTokens"] = json!(max_tokens);
+    } else {
+         // 使用动态优先的规格限额
+         let limit = model_specs::get_max_output_tokens(mapped_model, token);
+         gen_config["maxOutputTokens"] = json!(limit);
     }
 
     // [NEW] 支持多候选结果数量 (n -> candidateCount)
@@ -432,60 +467,37 @@ pub fn transform_openai_request(
                 "includeThoughts": false
             });
         } else {
-            // [CONFIGURABLE] 根据用户配置决定 thinking_budget 处理方式
+            // [CONFIGURABLE] 根据配置和模型规格决定 thinking_budget (v4.1.28)
             let tb_config = crate::proxy::config::get_thinking_budget_config();
-            // [FIX #1592] 下调默认 budget 到 24576，以更好地兼容不支持 32k 的 Gemini 原生模型 (如 gemini-3-pro)
-            let user_budget: i64 = user_thinking_budget.map(|b| b as i64).unwrap_or(24576);
+            // 优先使用用户在请求中传入的 budget，否则从规格表中获取默认值
+            let default_budget = model_specs::get_thinking_budget(mapped_model, token);
+            let user_budget: i64 = user_thinking_budget.map(|b| b as i64).unwrap_or(default_budget as i64);
             
             let budget = match tb_config.mode {
                 crate::proxy::config::ThinkingBudgetMode::Passthrough => {
-                    // 透传模式：使用用户传入的值，不做任何限制
-                    tracing::debug!(
-                        "[OpenAI-Request] Passthrough mode: using caller's budget {}",
-                        user_budget
-                    );
                     user_budget
                 }
                 crate::proxy::config::ThinkingBudgetMode::Custom => {
-                    // 自定义模式：使用全局配置的固定值
                     let mut custom_value = tb_config.custom_value as i64;
-                    
-                    // [FIX #1592/1602] 针对 Gemini 类模型强制执行 24576 上限 (除画图模型外，见用户反馈)
-                    let is_gemini_limited = (mapped_model_lower.contains("gemini") && !mapped_model_lower.contains("-image"))
-                        || is_claude_thinking; 
-
-                    if is_gemini_limited && custom_value > 24576 {
+                    // 如果自定义值超过了模型规格上限，则进行裁剪
+                    if custom_value > default_budget as i64 {
                         tracing::warn!(
-                            "[OpenAI-Request] Custom mode: capping thinking_budget from {} to 24576 for Gemini model {}",
-                            custom_value, mapped_model
+                            "[OpenAI-Request] Custom budget {} exceeds model spec limit {}, capping.",
+                            custom_value, default_budget
                         );
-                        custom_value = 24576;
+                        custom_value = default_budget as i64;
                     }
-
-                    tracing::debug!(
-                        "[OpenAI-Request] Custom mode: overriding {} with fixed value {}",
-                        user_budget,
-                        custom_value
-                    );
                     custom_value
                 }
                 crate::proxy::config::ThinkingBudgetMode::Auto => {
-                    // [FIX #1592] 拓宽判定逻辑，确保所有 Gemini 思考模型都应用 24k 上限 (除画画模型外)
-                    let is_gemini_limited = (mapped_model_lower.contains("gemini") && !mapped_model_lower.contains("-image"))
-                        || is_claude_thinking;  
-                    
-                    if is_gemini_limited && user_budget > 24576 {
-                        tracing::info!(
-                            "[OpenAI-Request] Auto mode: capping thinking budget from {} to 24576 for model: {}", 
-                            user_budget, mapped_model
-                        );
-                        24576
+                    // Auto 模式下，直接应用规格建议的预算
+                    if user_budget > default_budget as i64 {
+                        default_budget as i64
                     } else {
                         user_budget
                     }
                 }
                 crate::proxy::config::ThinkingBudgetMode::Adaptive => {
-                    // Adaptive 模式暂时使用默认值,实际的 adaptive 逻辑在后续处理
                     user_budget
                 }
             };
@@ -705,8 +717,8 @@ pub fn transform_openai_request(
     }
 
     // [ADDED v4.1.24] 注入稳定 sessionId 对齐官方规范
-    if let Some(account_id) = account_id {
-        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id));
+    if let Some(t) = token {
+        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(&t.account_id));
     }
 
     let final_body = json!({

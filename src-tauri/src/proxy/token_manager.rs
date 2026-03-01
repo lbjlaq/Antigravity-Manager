@@ -198,27 +198,24 @@ impl TokenManager {
 
     /// 从内存中彻底移除指定账号及其关联数据 (Issue #1477)
     pub fn remove_account(&self, account_id: &str) {
-        // 1. 从 DashMap 中移除令牌
+        // ... (省略原有逻辑)
         if self.tokens.remove(account_id).is_some() {
             tracing::info!("[Proxy] Removed account {} from memory cache", account_id);
         }
-
-        // 2. 清理相关的健康分数
         self.health_scores.remove(account_id);
-
-        // 3. 清理该账号的所有限流记录
         self.clear_rate_limit(account_id);
-
-        // 4. 清理涉及该账号的所有会话绑定
         self.session_accounts.retain(|_, v| v != account_id);
-
-        // 5. 如果是当前优先账号，也需要清理
         if let Ok(mut preferred) = self.preferred_account_id.try_write() {
             if preferred.as_deref() == Some(account_id) {
                 *preferred = None;
                 tracing::info!("[Proxy] Cleared preferred account status for {}", account_id);
             }
         }
+    }
+
+    /// 根据账号 ID 获取完整的 ProxyToken 对象 (v4.1.28)
+    pub fn get_token_by_id(&self, account_id: &str) -> Option<ProxyToken> {
+        self.tokens.get(account_id).map(|t| t.clone())
     }
 
     /// Check if an account has been disabled on disk.

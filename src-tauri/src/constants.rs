@@ -10,8 +10,8 @@ const CHANGELOG_URL: &str = "https://antigravity.google/changelog";
 
 
 /// Known stable configuration (for Docker/Headless fallback)
-/// Antigravity 4.1.26 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
-const KNOWN_STABLE_VERSION: &str = "4.1.26";
+/// Antigravity 4.1.27 uses Electron 39.2.3 which corresponds to Chrome 132.0.6834.160
+const KNOWN_STABLE_VERSION: &str = "4.1.27";
 const KNOWN_STABLE_ELECTRON: &str = "39.2.3";
 const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 
@@ -174,7 +174,7 @@ fn resolve_version_config() -> (VersionConfig, VersionSource) {
     )
 }
 
-/// Current resolved Antigravity version (e.g., "4.1.26")
+/// Current resolved Antigravity version (e.g., "4.1.27")
 /// Always >= KNOWN_STABLE_VERSION, and >= remote latest when reachable.
 pub static CURRENT_VERSION: LazyLock<String> = LazyLock::new(|| {
     let (config, _) = resolve_version_config();
@@ -186,13 +186,13 @@ pub static NATIVE_OAUTH_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     format!("vscode/1.X.X (Antigravity/{})", CURRENT_VERSION.as_str())
 });
 
-/// Current resolved Antigravity version (e.g., "4.1.26")
+/// Current resolved Antigravity version (e.g., "4.1.27")
 pub fn get_current_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
 /// Returns a full User-Agent string for the current version
-/// "Antigravity/4.1.26 (Macintosh; Intel Mac OS X 10_15_7) Chrome/132.0.6834.160 Electron/39.2.3"
+/// "Antigravity/4.1.27 (Macintosh; Intel Mac OS X 10_15_7) Chrome/132.0.6834.160 Electron/39.2.3"
 pub fn get_default_user_agent() -> String {
     format!("Antigravity/{} (Macintosh; Intel Mac OS X 10_15_7) Chrome/132.0.6834.160 Electron/39.2.3", env!("CARGO_PKG_VERSION"))
 }
@@ -203,7 +203,7 @@ pub static SESSION_ID: LazyLock<String> = LazyLock::new(|| {
 });
 
 /// Returns the best version choice between local and remote
-/// Version selection: max(local installation, remote latest, known stable 4.1.26)
+/// Version selection: max(local installation, remote latest, known stable 4.1.27)
 /// This prevents model rejection due to outdated client version headers.
 pub static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     let (config, source) = resolve_version_config();
@@ -263,9 +263,9 @@ mod tests {
 
     #[test]
     fn test_compare_semver() {
-        assert_eq!(compare_semver("4.1.26", "4.1.22"), std::cmp::Ordering::Greater);
-        assert_eq!(compare_semver("4.1.22", "4.1.26"), std::cmp::Ordering::Less);
-        assert_eq!(compare_semver("4.1.26", "4.1.26"), std::cmp::Ordering::Equal);
+        assert_eq!(compare_semver("4.1.27", "4.1.22"), std::cmp::Ordering::Greater);
+        assert_eq!(compare_semver("4.1.22", "4.1.27"), std::cmp::Ordering::Less);
+        assert_eq!(compare_semver("4.1.27", "4.1.27"), std::cmp::Ordering::Equal);
         assert_eq!(compare_semver("5.0.0", "4.9.9"), std::cmp::Ordering::Greater);
         assert_eq!(compare_semver("1.16.5", "1.16.4"), std::cmp::Ordering::Greater);
     }
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_old_local_version_uses_floor() {
-        // Simulate: local = 4.1.20 (old), floor = 4.1.26
+        // Simulate: local = 4.1.20 (old), floor = 4.1.27
         // Expected: use floor
         let local = "4.1.20";
         let floor = KNOWN_STABLE_VERSION;
@@ -297,15 +297,15 @@ mod tests {
 
     #[test]
     fn test_newer_local_version_takes_priority() {
-        // Simulate: local = 4.1.26 (newer than floor), floor = 4.1.26
+        // Simulate: local = 4.1.27 (newer than floor), floor = 4.1.27
         // Expected: use local
-        let local = "4.1.26";
+        let local = "4.1.27";
         let floor = KNOWN_STABLE_VERSION;
         let best = if compare_semver(local, floor) >= std::cmp::Ordering::Equal {
             local
         } else {
             floor
         };
-        assert_eq!(best, "4.1.26");
+        assert_eq!(best, "4.1.27");
     }
 }

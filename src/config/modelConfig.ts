@@ -60,6 +60,16 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         group: 'Gemini 3',
         tags: ['flash'],
     },
+    'gemini-3.1-flash-image': {
+        label: 'Gemini 3.1 Flash Image',
+        shortLabel: 'G3.1 Image',
+        protectedKey: 'gemini-3-pro-image',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro_image',
+        i18nDescKey: 'proxy.model.pro_image_1_1',
+        group: 'Gemini 3',
+        tags: ['image', 'flash'],
+    },
     'gemini-3-pro-image': {
         label: 'Gemini 3 Image',
         shortLabel: 'G3 Image',

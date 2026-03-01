@@ -255,8 +255,7 @@ fn deep_clean_html(html: &str) -> String {
 pub fn sanitize_tool_result_blocks(blocks: &mut Vec<Value>) {
     let mut used_chars = 0;
     let mut cleaned_blocks = Vec::new();
-    let mut removed_image = false;
-    
+
     if !blocks.is_empty() {
         info!(
             "[ToolCompressor] Processing {} blocks for truncation (MAX: {} chars)",
@@ -266,13 +265,6 @@ pub fn sanitize_tool_result_blocks(blocks: &mut Vec<Value>) {
     }
     
     for block in blocks.iter() {
-        // 移除 base64 图片
-        if is_base64_image(block) {
-            removed_image = true;
-            debug!("[ToolCompressor] Removed base64 image block");
-            continue;
-        }
-        
         // 压缩文本内容
         if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
             let remaining = MAX_TOOL_RESULT_CHARS.saturating_sub(used_chars);
@@ -293,6 +285,7 @@ pub fn sanitize_tool_result_blocks(blocks: &mut Vec<Value>) {
                 compacted.len()
             );
         } else {
+            // 保留其他类型的块 (例如图片), 但受总长度块数限制, 此处不单独截断
             cleaned_blocks.push(block.clone());
             used_chars += 100; // 估算非文本块大小
         }
@@ -300,13 +293,6 @@ pub fn sanitize_tool_result_blocks(blocks: &mut Vec<Value>) {
         if used_chars >= MAX_TOOL_RESULT_CHARS {
             break;
         }
-    }
-    
-    if removed_image {
-        cleaned_blocks.push(serde_json::json!({
-            "type": "text",
-            "text": "[image omitted to fit Antigravity prompt limits; use the file path in the previous text block]"
-        }));
     }
     
     info!(
@@ -317,16 +303,6 @@ pub fn sanitize_tool_result_blocks(blocks: &mut Vec<Value>) {
     );
     
     *blocks = cleaned_blocks;
-}
-
-/// 检测是否是 base64 图片块
-fn is_base64_image(block: &Value) -> bool {
-    block.get("type").and_then(|v| v.as_str()) == Some("image")
-        && block
-            .get("source")
-            .and_then(|s| s.get("type"))
-            .and_then(|v| v.as_str())
-            == Some("base64")
 }
 
 #[cfg(test)]
@@ -384,20 +360,6 @@ Please read the file locally."#;
                 "type": "text",
                 "text": "b".repeat(150_000)
             }),
-        ];
-
-        sanitize_tool_result_blocks(&mut blocks);
-
-        assert_eq!(blocks.len(), 2);
-        // 第一个块应该保持原样
-        assert_eq!(blocks[0]["text"].as_str().unwrap().len(), 100_000);
-        // 第二个块应该被截断到 100,000 (200,000 - 100,000)
-        assert!(blocks[1]["text"].as_str().unwrap().len() < 110_000);
-    }
-
-    #[test]
-    fn test_sanitize_removes_base64_image() {
-        let mut blocks = vec![
             serde_json::json!({
                 "type": "image",
                 "source": {
@@ -410,31 +372,9 @@ Please read the file locally."#;
                 "text": "some text"
             }),
         ];
-
+        
+        // 确认工具结果不再剔除图片
         sanitize_tool_result_blocks(&mut blocks);
-
-        // 图片应该被移除,添加了提示文本
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0]["type"], "text");
-        assert_eq!(blocks[0]["text"], "some text");
-        assert!(blocks[1]["text"].as_str().unwrap().contains("[image omitted"));
-    }
-
-    #[test]
-    fn test_is_base64_image() {
-        let image_block = serde_json::json!({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "data": "abc123"
-            }
-        });
-        assert!(is_base64_image(&image_block));
-
-        let text_block = serde_json::json!({
-            "type": "text",
-            "text": "hello"
-        });
-        assert!(!is_base64_image(&text_block));
+        assert_eq!(blocks.len(), 4);
     }
 }

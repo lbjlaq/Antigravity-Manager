@@ -8,7 +8,7 @@ pub fn wrap_request(
     mapped_model: &str,
     account_id: Option<&str>,
     session_id: Option<&str>,
-    max_output_tokens_cap: Option<u64>, // [NEW] 动态或静态默认限额，优先级：动态账号数据 > 静态默认表 > 131072
+    token: Option<&crate::proxy::token_manager::ProxyToken>, // [NEW] 动态规格注入
 ) -> Value {
     // 优先使用传入的 mapped_model，其次尝试从 body 获取
     let original_model = body
@@ -142,8 +142,8 @@ pub fn wrap_request(
                 );
 
                 // [FIX] 统一注入到 generationConfig.thinkingConfig
-                // Claude 模型使用 16000 预算，Gemini 使用 24576
-                let default_budget = if is_claude { 16000 } else { 24576 };
+                // 使用动态规格提供的默认预算
+                let default_budget = crate::proxy::model_specs::get_thinking_budget(final_model_name, token);
                 
                 let gen_config = inner_request
                     .as_object_mut()
@@ -185,12 +185,13 @@ pub fn wrap_request(
         // causing 400 INVALID_ARGUMENT. Convert before any budget processing below.
         if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
             if let Some(level) = thinking_config.get("thinkingLevel").and_then(|v| v.as_str()).map(|s| s.to_uppercase()) {
+                let thinking_budget_cap = crate::proxy::model_specs::get_thinking_budget(final_model_name, token);
                 let budget: i64 = match level.as_str() {
                     "NONE" => 0,
-                    "LOW" => 4096,
-                    "MEDIUM" => 8192,
-                    "HIGH" => 24576,
-                    _ => 8192, // safe default
+                    "LOW" => (thinking_budget_cap / 4).max(4096) as i64,
+                    "MEDIUM" => (thinking_budget_cap / 2).max(8192) as i64,
+                    "HIGH" => thinking_budget_cap as i64,
+                    _ => (thinking_budget_cap / 2).max(8192) as i64, // safe default
                 };
                 tracing::info!(
                     "[Gemini-Wrap] Converting thinkingLevel '{}' to thinkingBudget {}",
@@ -209,6 +210,7 @@ pub fn wrap_request(
                     // [NEW] -1 indicates native dynamic mode, skip capping
                     if budget_i64 != -1 {
                         let budget = budget_i64 as u64;
+                        let thinking_budget_cap = crate::proxy::model_specs::get_thinking_budget(final_model_name, token);
                         let tb_config = crate::proxy::config::get_thinking_budget_config();
                         let final_budget = match tb_config.mode {
                             crate::proxy::config::ThinkingBudgetMode::Passthrough => budget,
@@ -218,8 +220,8 @@ pub fn wrap_request(
                                     || final_model_name.contains("thinking"))
                                     && !final_model_name.contains("-image");
 
-                                if is_limited && val > 24576 {
-                                    24576
+                                if is_limited && val > thinking_budget_cap {
+                                    thinking_budget_cap
                                 } else {
                                     val
                                 }
@@ -229,8 +231,8 @@ pub fn wrap_request(
                                     || final_model_name.contains("thinking"))
                                     && !final_model_name.contains("-image");
 
-                                if is_limited && budget > 24576 {
-                                    24576
+                                if is_limited && budget > thinking_budget_cap {
+                                    thinking_budget_cap
                                 } else {
                                     budget
                                 }
@@ -284,13 +286,10 @@ pub fn wrap_request(
         }
     }
 
-    // [NEW] 按模型对 maxOutputTokens 进行三层限额 (Dynamic > Static Default > 131072)
+    // [NEW] 按模型对 maxOutputTokens 进行三层限额 (Dynamic > Static Default > 65535)
     // 修复: gemini-cli 等客户端发送的 131072 超过部分模型支持的上限，导致 v1internal 返回 400 INVALID_ARGUMENT
     {
-        let final_cap = crate::proxy::mappers::model_limits::get_model_output_limit(
-            final_model_name,
-            max_output_tokens_cap,
-        );
+        let final_cap = crate::proxy::model_specs::get_max_output_tokens(final_model_name, token);
         let gen_config = inner_request
             .as_object_mut()
             .unwrap()
@@ -301,8 +300,8 @@ pub fn wrap_request(
         if let Some(current) = gen_config.get("maxOutputTokens").and_then(|v| v.as_u64()) {
             if current > final_cap {
                 tracing::debug!(
-                    "[Gemini-Wrap] Capped maxOutputTokens from {} to {} for model {} (dynamic={:?})",
-                    current, final_cap, final_model_name, max_output_tokens_cap
+                    "[Gemini-Wrap] Capped maxOutputTokens from {} to {} for model {}",
+                    current, final_cap, final_model_name
                 );
                 gen_config.insert("maxOutputTokens".to_string(), serde_json::json!(final_cap));
             }

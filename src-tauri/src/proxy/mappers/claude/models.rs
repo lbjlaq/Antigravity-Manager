@@ -41,6 +41,7 @@ pub struct ClaudeRequest {
 pub struct ThinkingConfig {
     #[serde(rename = "type")]
     pub type_: String, // "enabled" or "adaptive"
+    #[serde(alias = "budgetTokens")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]

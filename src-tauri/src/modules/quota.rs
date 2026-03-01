@@ -201,7 +201,11 @@ pub async fn fetch_quota_with_cache(
     // We keep project_id to store in the DB, but we NO LONGER force inject it into payload if it's absent
     
     let client = create_standard_client(account_id).await;
-    let payload = json!({}); // Empty payload: Bypass project validation to get full model list
+    let payload = if let Some(ref pid) = project_id {
+        json!({ "project": pid })
+    } else {
+        json!({}) // Empty payload fallback
+    };
     
     let url = QUOTA_API_URL;
     let mut last_error: Option<AppError> = None;

@@ -49,7 +49,10 @@ function Dashboard() {
             .filter(q => q > 0);
 
         const geminiImageQuotas = accounts
-            .map(a => a.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-pro-image')?.percentage || 0)
+            .map(a => a.quota?.models.find(m =>
+                m.name.toLowerCase() === 'gemini-3.1-flash-image' ||
+                m.name.toLowerCase() === 'gemini-3-pro-image'
+            )?.percentage || 0)
             .filter(q => q > 0);
 
         const claudeQuotas = accounts
