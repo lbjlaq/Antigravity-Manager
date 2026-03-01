@@ -284,6 +284,25 @@ pub fn wrap_request(
                 }
             }
         }
+
+        // [FIX] Cap maxOutputTokens to model-specific limits.
+        // gemini-3-flash supports max 65536; gemini-cli sends 131072 which causes 400 INVALID_ARGUMENT.
+        if let Some(max_tokens) = gen_config.get("maxOutputTokens").and_then(|v| v.as_u64()) {
+            let model_max = if final_model_name.contains("gemini-3-flash") {
+                65536u64
+            } else if final_model_name.contains("gemini-2.5-flash") {
+                65536u64
+            } else {
+                131072u64 // default reasonable cap
+            };
+            if max_tokens > model_max {
+                tracing::debug!(
+                    "[Gemini-Wrap] Capped maxOutputTokens from {} to {} for model {}",
+                    max_tokens, model_max, final_model_name
+                );
+                gen_config.insert("maxOutputTokens".to_string(), json!(model_max));
+            }
+        }
     }
 
     // [NEW] 按模型对 maxOutputTokens 进行三层限额 (Dynamic > Static Default > 65535)
