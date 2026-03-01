@@ -1806,7 +1806,7 @@ pub async fn handle_images_generations_internal(
 
     // 2. 使用 common_utils 解析图片配置（统一逻辑，支持动态计算宽高比和 quality 映射）
     let (image_config, clean_model_name) = crate::proxy::mappers::common_utils::parse_image_config_with_params(
-        model,
+        &model,
         size,
         quality,
         image_size,
