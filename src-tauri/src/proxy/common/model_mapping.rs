@@ -158,26 +158,39 @@ pub async fn get_all_dynamic_models(
     }
 
     // 3. [NEW] 获取所有账号从官方接口汇聚而来的动态模型
-    if let Some(tm) = token_manager {
-        for dynamic_model in tm.get_all_collected_models() {
-            model_ids.insert(dynamic_model);
+    let collected_models = if let Some(tm) = token_manager {
+        let models = tm.get_all_collected_models();
+        for dynamic_model in &models {
+            model_ids.insert(dynamic_model.clone());
         }
-    }
+        models
+    } else {
+        std::collections::HashSet::new()
+    };
 
     // 5. 确保包含常用的 Gemini/画画模型 ID
     model_ids.insert("gemini-3.1-pro-low".to_string());
-    
+
     // [NEW] Issue #247: Dynamically generate all Image Gen Combinations
-    let base = "gemini-3-pro-image";
-    let resolutions = vec!["", "-2k", "-4k"];
-    let ratios = vec!["", "-1x1", "-4x3", "-3x4", "-16x9", "-9x16", "-21x9"];
-    
-    for res in resolutions {
-        for ratio in ratios.iter() {
-            let mut id = base.to_string();
-            id.push_str(res);
-            id.push_str(ratio);
-            model_ids.insert(id);
+    // 从上游收集的模型中找出所有 gemini image 系列（包含 "gemini" 且包含 "image"），
+    // 为每个 base 生成分辨率/比例变体组合。上游无数据时列表为空。
+    let image_bases: Vec<String> = collected_models
+        .iter()
+        .filter(|m| m.contains("gemini") && m.contains("image"))
+        .cloned()
+        .collect();
+
+    let resolutions = ["", "-2k", "-4k"];
+    let ratios = ["", "-1x1", "-4x3", "-3x4", "-16x9", "-9x16", "-21x9"];
+
+    for base in &image_bases {
+        for res in resolutions {
+            for ratio in ratios {
+                let mut id = base.clone();
+                id.push_str(res);
+                id.push_str(ratio);
+                model_ids.insert(id);
+            }
         }
     }
 

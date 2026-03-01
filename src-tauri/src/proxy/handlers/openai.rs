@@ -1759,10 +1759,15 @@ pub async fn handle_images_generations_internal(
         "Missing 'prompt' field".to_string(),
     ))?;
 
-    let model = body
-        .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("gemini-3-pro-image");
+    let model = if let Some(m) = body.get("model").and_then(|v| v.as_str()) {
+        m.to_string()
+    } else {
+        // 未指定 model，从上游收集的模型中取第一个 gemini image 模型
+        state.token_manager.get_all_collected_models()
+            .into_iter()
+            .find(|m| m.contains("gemini") && m.contains("image"))
+            .ok_or((StatusCode::BAD_REQUEST, "No image model available, please login first".to_string()))?
+    };
 
     let n = body.get("n").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
 
@@ -2061,7 +2066,7 @@ pub async fn handle_images_edits(
     let mut n = 1;
     let mut size = "1024x1024".to_string();
     let mut response_format = "b64_json".to_string();
-    let mut model = "gemini-3-pro-image".to_string();
+    let mut model = String::new();
     let mut aspect_ratio: Option<String> = None;
     let mut image_size_param: Option<String> = None;
     let mut style: Option<String> = None;
@@ -2130,6 +2135,14 @@ pub async fn handle_images_edits(
                 }
             }
         }
+    }
+
+    // 未指定 model，从上游收集的模型中取第一个 gemini image 模型
+    if model.is_empty() {
+        model = state.token_manager.get_all_collected_models()
+            .into_iter()
+            .find(|m| m.contains("gemini") && m.contains("image"))
+            .ok_or((StatusCode::BAD_REQUEST, "No image model available, please login first".to_string()))?;
     }
 
     // Validation: Require either 'image' (standard edit) OR 'prompt' (generation)
@@ -2239,7 +2252,7 @@ pub async fn handle_images_edits(
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
                 let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-                    .get_token("image_gen", attempt > 0, None, "gemini-3-pro-image")
+                    .get_token("image_gen", attempt > 0, None, &model)
                     .await
                 {
                     Ok(t) => t,
