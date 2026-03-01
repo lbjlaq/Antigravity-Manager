@@ -36,6 +36,7 @@ pub struct ProxyToken {
     pub validation_url: Option<String>,    // [NEW] Validation URL (#1522)
     pub model_quotas: HashMap<String, i32>, // [OPTIMIZATION] In-memory cache for model-specific quotas
     pub model_limits: HashMap<String, u64>, // [NEW] max_output_tokens per model from quota data
+    pub raw_model_names: HashSet<String>,   // [NEW] 上游下发的原始模型名（未归一化）
 }
 
 pub struct TokenManager {
@@ -489,9 +490,12 @@ impl TokenManager {
         let mut model_quotas = HashMap::new();
         // [NEW] 构建模型输出限额内存缓存 (max_output_tokens)
         let mut model_limits: HashMap<String, u64> = HashMap::new();
+        // [NEW] 保留上游下发的原始模型名（用于 models 列表动态检测）
+        let mut raw_model_names: HashSet<String> = HashSet::new();
         if let Some(models) = account.get("quota").and_then(|q| q.get("models")).and_then(|m| m.as_array()) {
             for model in models {
                 if let (Some(name), Some(pct)) = (model.get("name").and_then(|v| v.as_str()), model.get("percentage").and_then(|v| v.as_i64())) {
+                    raw_model_names.insert(name.to_string());
                     // Normalize name to standard ID
                     let standard_id = crate::proxy::common::model_mapping::normalize_to_standard_id(name)
                         .unwrap_or_else(|| name.to_string());
@@ -538,6 +542,7 @@ impl TokenManager {
             validation_url: account.get("validation_url").and_then(|v| v.as_str()).map(|s| s.to_string()),
             model_quotas,
             model_limits,
+            raw_model_names,
         }))
     }
 
@@ -2379,11 +2384,16 @@ impl TokenManager {
     }
 
     /// 获取当前所有可用账号中收集到的官方下发的所有动态模型集合
+    /// 同时包含归一化后的 model_quotas key 和上游原始模型名，
+    /// 以便 models 列表能展示上游实际下发的原始模型名（如 gemini-3.1-flash-image）。
     pub fn get_all_collected_models(&self) -> std::collections::HashSet<String> {
         let mut all_models = std::collections::HashSet::new();
         for entry in self.tokens.iter() {
             let token = entry.value();
             for model_id in token.model_quotas.keys() {
+                all_models.insert(model_id.clone());
+            }
+            for model_id in &token.raw_model_names {
                 all_models.insert(model_id.clone());
             }
         }
