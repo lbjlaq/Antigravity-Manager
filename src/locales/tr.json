@@ -311,16 +311,39 @@
             "auto_launch": "Başlangıçta Çalıştır",
             "auto_launch_enabled": "Etkin",
             "auto_launch_disabled": "Devre Dışı",
-            "auto_launch_desc": "Sistem başladığında Antigravity Tools'u otomatik olarak başlat"
+            "auto_launch_desc": "Sistem başladığında Antigravity Tools'u otomatik olarak başlat",
+            "auto_check_update": "Otomatik Güncelleme Kontrolü",
+            "auto_check_update_desc": "Başlangıçta otomatik olarak yeni sürümleri kontrol et",
+            "auto_check_update_enabled": "Otomatik kontrol etkin",
+            "auto_check_update_disabled": "Otomatik kontrol devre dışı",
+            "update_check_interval": "Kontrol Aralığı (saat)",
+            "update_check_interval_desc": "Otomatik kontrol aralığını ayarla (1-168 saat)",
+            "update_check_interval_saved": "Kontrol aralığı ayarları kaydedildi"
         },
         "account": {
             "title": "Hesap Ayarları",
             "auto_refresh": "Otomatik Kota Yenileme",
             "auto_refresh_desc": "Tüm hesaplar için kota bilgilerini periyodik olarak otomatik yenile",
+            "always_on": "Sürekli Çalışır",
             "refresh_interval": "Yenileme Aralığı (dakika)",
             "auto_sync": "Mevcut Hesabı Otomatik Senkronize Et",
             "auto_sync_desc": "Mevcut aktif hesap bilgilerini periyodik olarak otomatik senkronize et",
             "sync_interval": "Senkronizasyon Aralığı (saniye)"
+        },
+        "warmup": {
+            "title": "Akıllı Isınma",
+            "desc": "Tüm modelleri otomatik olarak izler ve kota %100'e ulaştığında ısınmayı hemen tetikleyerek modelleri sıcak tutar"
+        },
+        "quota_protection": {
+            "title": "Kota Koruması",
+            "enable": "Kota Korumasını Etkinleştir",
+            "enable_desc": "Hesap kotası eşiğin altına düştüğünde proxy'yi otomatik olarak devre dışı bırakır ve kota sıfırlandığında otomatik olarak geri yükler",
+            "threshold_label": "Ayrılmış Kota Yüzdesi",
+            "monitored_models_label": "İzlenen Modeller (Tetikleme Koşulları)",
+            "monitored_models_desc": "En az bir tane seçin. Korumayı tetiklemek için seçilen herhangi bir model eşiğin altına düşerse devreye girer",
+            "range": "Aralık",
+            "example": "Örnek: %{{percentage}} seviyesinde, {{total}} kotaya sahip bir hesap, kalan ≤ {{threshold}} olduğunda devre dışı bırakılacaktır",
+            "auto_restore_info": "Kota sıfırlandığında hesap otomatik olarak yeniden etkinleştirilecektir"
         },
         "pinned_quota_models": {
             "title": "Sabitlenmiş Kota Modelleri",
@@ -330,56 +353,56 @@
             "title": "Proxy Ayarları"
         },
         "proxy_pool": {
-            "title": "Proxy Pool",
-            "strategy_priority": "Priority",
-            "strategy_round_robin": "Round Robin",
-            "strategy_random": "Random",
-            "strategy_least_connections": "Least Connections",
-            "test_all": "Test All",
-            "batch_import": "Import",
-            "binding_manager": "Bindings",
-            "add_proxy": "Add Proxy",
-            "edit_proxy": "Edit Proxy",
-            "name": "Name",
+            "title": "Proxy Havuzu",
+            "strategy_priority": "Öncelik",
+            "strategy_round_robin": "Sıralı Döngü (Round Robin)",
+            "strategy_random": "Rastgele",
+            "strategy_least_connections": "En Az Bağlantı",
+            "test_all": "Tümünü Test Et",
+            "batch_import": "İçe Aktar",
+            "binding_manager": "Bağlantılar",
+            "add_proxy": "Proxy Ekle",
+            "edit_proxy": "Proxy Düzenle",
+            "name": "İsim",
             "url": "Proxy URL",
-            "username": "Username",
-            "password": "Password",
-            "max_accounts": "Max Accounts",
-            "max_accounts_hint": "0 = Unlimited",
-            "priority": "Priority",
-            "priority_hint": "Lower is better",
-            "health_check_url": "Health Check URL",
-            "tags": "Tags",
-            "add_tag_placeholder": "Add tag...",
-            "seconds": "Sec",
-            "test_completed": "Health check completed",
-            "test_failed": "Health check failed",
-            "confirm_delete": "Are you sure you want to delete this proxy?",
-            "empty": "No proxies available",
-            "column_priority": "Priority",
-            "column_status": "Status",
-            "column_details": "Proxy Details",
-            "column_bindings": "Bindings",
-            "import_title": "Batch Import Proxies",
-            "import_label": "Paste Proxy List (One per line)",
-            "import_hint": "Supported formats: protocol://user:pass@host:port, host:port:user:pass",
-            "import_preview": "Preview",
-            "import_confirm": "Import {{count}} Proxies",
-            "no_valid_proxies": "No valid proxies found",
+            "username": "Kullanıcı Adı",
+            "password": "Şifre",
+            "max_accounts": "Maksimum Hesap",
+            "max_accounts_hint": "0 = Sınırsız",
+            "priority": "Öncelik",
+            "priority_hint": "Düşük değer daha önceliklidir",
+            "health_check_url": "Sağlık Kontrolü URL",
+            "tags": "Etiketler",
+            "add_tag_placeholder": "Etiket ekle...",
+            "seconds": "Sn",
+            "test_completed": "Sağlık kontrolü tamamlandı",
+            "test_failed": "Sağlık kontrolü başarısız",
+            "confirm_delete": "Bu proxy'yi silmek istediğinizden emin misiniz?",
+            "empty": "Kullanılabilir proxy yok",
+            "column_priority": "Öncelik",
+            "column_status": "Durum",
+            "column_details": "Proxy Detayları",
+            "column_bindings": "Bağlantılar",
+            "import_title": "Toplu Proxy İçe Aktarma",
+            "import_label": "Proxy Listesini Yapıştır (Her satıra bir tane)",
+            "import_hint": "Desteklenen formatlar: protocol://user:pass@host:port, host:port:user:pass",
+            "import_preview": "Önizleme",
+            "import_confirm": "{{count}} Proxy'yi İçe Aktar",
+            "no_valid_proxies": "Geçerli proxy bulunamadı",
             "binding": {
-                "title": "Account Proxy Bindings",
-                "load_failed": "Failed to load bindings",
-                "unbind_success": "Unbound successfully",
-                "bind_success": "Bound successfully",
-                "update_failed": "Failed to update binding",
-                "assigned_proxy": "Assigned Proxy",
-                "default_strategy": "Default (Follow Strategy)"
+                "title": "Hesap Proxy Bağlantıları",
+                "load_failed": "Bağlantılar yüklenemedi",
+                "unbind_success": "Bağlantı başarıyla kaldırıldı",
+                "bind_success": "Başarıyla bağlandı",
+                "update_failed": "Bağlantı güncellenemedi",
+                "assigned_proxy": "Atanan Proxy",
+                "default_strategy": "Varsayılan (Stratejiyi İzle)"
             },
             "status": {
-                "inactive": "Inactive",
-                "checking": "Checking",
-                "healthy": "Healthy",
-                "timeout": "Timeout"
+                "inactive": "Pasif",
+                "checking": "Kontrol Ediliyor",
+                "healthy": "Sağlıklı",
+                "timeout": "Zaman Aşımı"
             }
         },
         "advanced": {
@@ -436,6 +459,20 @@
             "http_api_port_invalid": "Geçersiz port numarası (aralık: 1024-65535)",
             "http_api_settings_saved": "HTTP API ayarları kaydedildi, uygulamak için yeniden başlatma gerekli",
             "http_api_restart_required": "⚠️ Uygulamak için yeniden başlatma gerekli"
+        },
+        "debug": {
+            "title": "Hata Ayıklama Konsolu",
+            "desc": "Hata ayıklama için gerçek zamanlı uygulama günlüklerini görüntüleyin",
+            "enabled": "Etkin",
+            "disabled": "Devre Dışı",
+            "disabled_hint": "Hata Ayıklama Konsolu Kapalı",
+            "disabled_desc": "Uygulama günlüklerini kaydetmeye başlamak için etkinleştirin",
+            "console_title": "Hata Ayıklama Konsolu",
+            "console_desc": "Sorunları gidermek için gerçek zamanlı uygulama günlüklerini görüntüleyin.",
+            "enable_desc": "Arka uç günlüklerini yakalamak ve görüntülemek için etkinleştirin.",
+            "open_btn": "Konsolu Aç",
+            "debug_logging": "Hata Ayıklama Günlüğü",
+            "debug_logging_desc": "Etkinleştirildiğinde, tam istek ve yanıt zinciri kaydedilir. Yalnızca sorun giderme sırasında etkinleştirmeniz önerilir."
         },
         "menu": {
             "title": "Menü Görünüm Ayarları",
@@ -499,6 +536,10 @@
             "placeholder": "Küresel sistem talimatlarını buraya girin...\nÖrn: Sen React ve Rust konusunda uzman, deneyimli bir full-stack geliştiricisin. Türkçe cevap ver.",
             "char_count": "{{count}} karakter",
             "long_prompt_warning": "Talimatlar çok uzun (2000 karakterden fazla) ve çok fazla bağlam alanı tüketebilir."
+        },
+        "branding": {
+            "title": "Antigravity Tools",
+            "subtitle": "Profesyonel Hesap Yönetimi"
         }
     },
     "tray": {
@@ -527,10 +568,10 @@
         "config": {
             "title": "Hizmet Yapılandırması",
             "request": {
-                "user_agent": "User-Agent Override",
-                "user_agent_tooltip": "Override the User-Agent header sent to upstream APIs. Leave empty to use default.",
-                "user_agent_hint": "Current Default: antigravity/<version> <os>/<arch>",
-                "user_agent_placeholder": "Enter custom User-Agent string..."
+                "user_agent": "User-Agent Geçersiz Kılma",
+                "user_agent_tooltip": "Yukarı akış API'lerine gönderilen User-Agent başlığını geçersiz kılın. Varsayılanı kullanmak için boş bırakın.",
+                "user_agent_hint": "Mevcut Varsayılan: antigravity/<version> <os>/<arch>",
+                "user_agent_placeholder": "Özel User-Agent dizisi girin..."
             },
             "port": "Dinleme Portu",
             "port_tooltip": "Yerel API Proxy'nin dinlediği TCP portu. Değiştirmek için hizmeti durdurun, ardından uygulamak için yeniden başlatın.",
@@ -698,6 +739,58 @@
                 "context_compression_threshold_l2_tooltip": "İmzaları korurken erken düşünce bloklarını sıkıştırır. Önerilen: 0.55 (55%)",
                 "context_compression_threshold_l3": "L3 Sıkıştırma Eşiği (Özet Pivotu)",
                 "context_compression_threshold_l3_tooltip": "XML durum özeti oluşturur ve taze bir oturuma geçer. Önerilen: 0.7 (70%)"
+            },
+            "opencode_sync": {
+                "card_title": "OpenCode",
+                "status": {
+                    "detecting": "Algılanıyor...",
+                    "installed": "Yüklü ({{version}})",
+                    "not_installed": "Yüklü Değil",
+                    "synced": "Senkronize",
+                    "not_synced": "Senkronize Değil",
+                    "current_base_url": "Mevcut Temel URL"
+                },
+                "sync_accounts": "Hesapları antigravity-accounts.json ile senkronize et",
+                "btn_sync": "Yapılandırmayı Senkronize Et",
+                "btn_view": "Yapılandırmayı Görüntüle",
+                "btn_restore": "Geri Yükle",
+                "btn_restore_backup": "Yedeği Geri Yükle",
+                "btn_clear": "Yapılandırmayı Temizle",
+                "clear_confirm_title": "Yapılandırma Temizliğini Onayla",
+                "clear_confirm_message": "OpenCode yapılandırmasını temizlemek istediğinizden emin misiniz? Bu işlem yapılandırma dosyasını silecektir.",
+                "toast": {
+                    "config_missing": "Lütfen önce API Anahtarı oluşturun ve hizmeti başlatın",
+                    "sync_success": "OpenCode yapılandırması başarıyla senkronize edildi",
+                    "sync_error": "OpenCode senkronizasyonu başarısız: {{error}}",
+                    "clear_success": "OpenCode yapılandırması başarıyla temizlendi",
+                    "clear_error": "OpenCode yapılandırması temizlenemedi: {{error}}"
+                },
+                "modal": {
+                    "view_title": "OpenCode Yapılandırma Görüntüleyici",
+                    "copy_success": "Yapılandırma kopyalandı"
+                },
+                "sync_confirm_title": "Senkronizasyonu Onayla",
+                "sync_confirm_message": "OpenCode yapılandırması mevcut proxy ayarlarına göre üzerine yazılacak. Devam edilsin mi?",
+                "restore_confirm": "OpenCode'u varsayılan ayarlara geri yüklemek istediğinizden emin misiniz?",
+                "restore_backup_confirm": "OpenCode yapılandırmasını yedekten geri yüklemek istediğinizden emin misiniz?",
+                "modal_title": "OpenCode Modellerini Seç",
+                "select_models": "Senkronize edilecek modelleri seçin",
+                "auth_plugin_warning": "opencode-antigravity-auth eklentisi algılandı. Senkronizasyon yalnızca antigravity-manager sağlayıcısını oluşturur ve google sağlayıcısını/eklentisini üzerine yazmaz.",
+                "btn_confirm_sync": "Senkronizasyonu Onayla",
+                "custom_base_url_label": "Özel Yönetici Temel URL'si",
+                "custom_base_url_desc": "Docker Compose ağ iletişimi için",
+                "custom_base_url_reset": "Sıfırla"
+            },
+            "droid_sync": {
+                "modal_title": "Droid'e model ekle",
+                "modal_desc": "Seçilen modeller settings.json dosyasına customModels olarak eklenecek",
+                "selected": "seçili",
+                "btn_confirm_sync": "Seçili modelleri ekle",
+                "toast": {
+                    "no_models_selected": "Lütfen en az bir model seçin",
+                    "sync_success_count": "{{count}} model Droid'e eklendi",
+                    "sync_error": "Senkronizasyon başarısız: {{error}}"
+                }
             },
             "cloudflared": {
                 "title": "Genel Erişim (Cloudflared)",
@@ -963,6 +1056,34 @@
         "dialog": {
             "clear_title": "Proxy Loglarını Temizle",
             "clear_msg": "Tüm proxy loglarını temizlemek istediğinizden emin misiniz? Bu işlem geri alınamaz."
+        },
+        "network": {
+            "title": "Ağ İzleyicisi",
+            "open": "Ağ İzleyicisini Aç",
+            "requests_count": "{{count}} istek",
+            "start_recording": "Kaydı Başlat",
+            "stop_recording": "Kaydı Durdur",
+            "clear_requests": "İstekleri Temizle",
+            "empty": "Kayıtlı istek yok",
+            "waiting": "Yanıt bekleniyor...",
+            "badge_error": "Hata",
+            "table": {
+                "status": "Durum",
+                "command": "Komut",
+                "time": "Zaman",
+                "duration": "Süre"
+            },
+            "sections": {
+                "general": "Genel",
+                "request_args": "İstek Argümanları",
+                "error_details": "Hata Detayları",
+                "response": "Yanıt"
+            },
+            "fields": {
+                "status": "Durum",
+                "start_time": "Başlangıç Zamanı",
+                "duration": "Süre"
+            }
         }
     },
     "update_notification": {
@@ -972,6 +1093,9 @@
         "downloading": "Güncelleme indiriliyor...",
         "restarting": "Uygulama yeniden başlatılıyor...",
         "auto_update": "Otomatik güncelleme",
+        "restart_prompt": "Güncelleme indirildi ve kuruluma hazır. Şimdi yeniden başlatılsın mı?",
+        "btn_restart": "Yeniden Başlat",
+        "btn_later": "Daha Sonra",
         "toast": {
             "not_ready": "Otomatik güncelleme paketi hazır değil, indirme sayfasına yönlendiriliyorsunuz...",
             "failed": "Otomatik güncelleme başarısız oldu, indirme sayfasına yönlendiriliyorsunuz..."
@@ -1044,6 +1168,7 @@
         },
         "logs": {
             "search_placeholder": "IP, Yol, Kullanıcı Aracısı Ara...",
+            "username": "Kullanıcı",
             "show_blocked_only": "Sadece Engellenenler",
             "status": "Durum",
             "ip_address": "IP Adresi",
@@ -1075,7 +1200,10 @@
             "expires_placeholder": "Kalıcı olması için boş bırakın",
             "cancel": "İptal",
             "confirm": "Ekle",
-            "add_btn": "Ekle"
+            "add_btn": "Ekle",
+            "error_duplicate": "Bu IP zaten kara listede mevcut",
+            "error_invalid_ip": "Geçersiz IP formatı. Lütfen IP adresi veya CIDR gösterimi kullanın (örn. 192.168.1.0/24)",
+            "error_add_failed": "Ekleme başarısız"
         },
         "whitelist": {
             "add_ip": "Güvenilir IP Ekle",
