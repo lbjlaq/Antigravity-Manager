@@ -16,28 +16,28 @@ static DEFAULT_MODEL_OUTPUT_LIMITS: Lazy<HashMap<&'static str, u64>> = Lazy::new
     let mut m = HashMap::new();
 
     // --- Gemini 3 系列 ---
-    m.insert("gemini-3-flash",            65536);
-    m.insert("gemini-3-pro-image",        65535);
-    m.insert("gemini-3-pro-high",         65535);
-    m.insert("gemini-3-pro-low",          65535);
+    m.insert("gemini-3-flash", 65536);
+    m.insert("gemini-3-pro-image", 65535);
+    m.insert("gemini-3-pro-high", 65535);
+    m.insert("gemini-3-pro-low", 65535);
 
     // --- Gemini 3.1 Pro 系列 ---
-    m.insert("gemini-3.1-pro-preview",    65535);
-    m.insert("gemini-3.1-pro-high",       65535);
-    m.insert("gemini-3.1-pro-low",        65535);
+    m.insert("gemini-3.1-pro-preview", 65535);
+    m.insert("gemini-3.1-pro-high", 65535);
+    m.insert("gemini-3.1-pro-low", 65535);
 
     // --- Gemini 2.5 系列 ---
-    m.insert("gemini-2.5-flash",          65535);
+    m.insert("gemini-2.5-flash", 65535);
     m.insert("gemini-2.5-flash-thinking", 65535);
-    m.insert("gemini-2.5-flash-lite",     65535);
-    m.insert("gemini-2.5-pro",            65535);
+    m.insert("gemini-2.5-flash-lite", 65535);
+    m.insert("gemini-2.5-pro", 65535);
 
     // --- Claude 系列 ---
-    m.insert("claude-sonnet-4-6",         64000);
-    m.insert("claude-opus-4-6-thinking",  64000);
+    m.insert("claude-sonnet-4-6", 64000);
+    m.insert("claude-opus-4-6-thinking", 64000);
 
     // --- GPT-OSS 系列 ---
-    m.insert("gpt-oss-120b-medium",       32768);
+    m.insert("gpt-oss-120b-medium", 32768);
 
     m
 });
@@ -100,6 +100,9 @@ mod tests {
     #[test]
     fn test_dynamic_overrides_static() {
         // 账号动态数据与静态表不同时，动态数据优先
-        assert_eq!(get_model_output_limit("claude-opus-4-6-thinking", Some(80000)), 80000);
+        assert_eq!(
+            get_model_output_limit("claude-opus-4-6-thinking", Some(80000)),
+            80000
+        );
     }
 }

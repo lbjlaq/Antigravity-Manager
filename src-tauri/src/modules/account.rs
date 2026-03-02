@@ -1,10 +1,10 @@
 use serde::Serialize;
 use serde_json;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
-use std::collections::HashSet;
 
 use crate::models::{
     Account, AccountIndex, AccountSummary, DeviceProfile, DeviceProfileVersion, QuotaData,
@@ -37,10 +37,8 @@ mod tests {
                     .as_millis()
             ));
             fs::create_dir_all(&temp_path).expect("Failed to create temp dir");
-            
-            Self {
-                path: temp_path,
-            }
+
+            Self { path: temp_path }
         }
 
         fn path(&self) -> &PathBuf {
@@ -64,7 +62,7 @@ mod tests {
     fn create_account_file(path: &PathBuf, account_id: &str, email: &str) {
         let accounts_dir = path.join("accounts");
         fs::create_dir_all(&accounts_dir).expect("Failed to create accounts dir");
-        
+
         let account = Account::new(
             account_id.to_string(),
             email.to_string(),
@@ -76,8 +74,9 @@ mod tests {
                 None,
                 None,
             ),
+            crate::models::AccountType::Antigravity,
         );
-        
+
         let content = serde_json::to_string_pretty(&account).expect("Failed to serialize account");
         let account_path = accounts_dir.join(format!("{}.json", account_id));
         fs::write(&account_path, content).expect("Failed to write account file");
@@ -94,13 +93,17 @@ mod tests {
         let mut content = Vec::new();
         content.extend_from_slice(&bom);
         content.extend_from_slice(json.as_bytes());
-        
+
         write_corrupted_index(dir.path(), &content);
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // New behavior: BOM is stripped and JSON parses successfully
-        assert!(result.is_ok(), "BOM should be stripped and JSON should parse: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "BOM should be stripped and JSON should parse: {:?}",
+            result
+        );
         let index = result.unwrap();
         assert!(index.accounts.is_empty());
         println!("BOM case: successfully loaded index after sanitization");
@@ -117,13 +120,17 @@ mod tests {
         let mut content = Vec::new();
         content.extend_from_slice(&nul);
         content.extend_from_slice(json.as_bytes());
-        
+
         write_corrupted_index(dir.path(), &content);
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // New behavior: NUL bytes are stripped and JSON parses successfully
-        assert!(result.is_ok(), "NUL prefix should be stripped and JSON should parse: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "NUL prefix should be stripped and JSON should parse: {:?}",
+            result
+        );
         let index = result.unwrap();
         assert!(index.accounts.is_empty());
         println!("NUL prefix case: successfully loaded index after sanitization");
@@ -138,11 +145,18 @@ mod tests {
         write_corrupted_index(dir.path(), b"\0\0not json");
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // New behavior: garbage content triggers recovery, returns empty index
-        assert!(result.is_ok(), "Garbage content should trigger recovery and return Ok: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Garbage content should trigger recovery and return Ok: {:?}",
+            result
+        );
         let index = result.unwrap();
-        assert!(index.accounts.is_empty(), "Recovered index should be empty when no account files exist");
+        assert!(
+            index.accounts.is_empty(),
+            "Recovered index should be empty when no account files exist"
+        );
         println!("Garbage content case: successfully recovered to empty index");
     }
 
@@ -155,7 +169,7 @@ mod tests {
         write_corrupted_index(dir.path(), b"");
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // Current behavior: empty file returns new empty index
         assert!(result.is_ok());
         let index = result.unwrap();
@@ -171,7 +185,7 @@ mod tests {
         write_corrupted_index(dir.path(), b"   \n\t  ");
 
         let result = load_account_index_in_dir(dir.path());
-        
+
         // Current behavior: whitespace-only file returns new empty index
         assert!(result.is_ok());
         let index = result.unwrap();
@@ -195,8 +209,12 @@ mod tests {
         let result = load_account_index_in_dir(dir.path());
         assert!(result.is_ok(), "Should recover from accounts directory");
         let index = result.unwrap();
-        assert_eq!(index.accounts.len(), 2, "Index should have 2 accounts recovered from accounts directory");
-        
+        assert_eq!(
+            index.accounts.len(),
+            2,
+            "Index should have 2 accounts recovered from accounts directory"
+        );
+
         // Verify recovered accounts have correct data
         let emails: Vec<_> = index.accounts.iter().map(|s| s.email.clone()).collect();
         assert!(emails.contains(&"user1@example.com".to_string()));
@@ -209,9 +227,16 @@ mod tests {
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
             .collect();
-        assert_eq!(account_files.len(), 2, "Account files should still exist on disk");
-        
-        println!("Missing index with existing accounts: successfully recovered {} accounts", index.accounts.len());
+        assert_eq!(
+            account_files.len(),
+            2,
+            "Account files should still exist on disk"
+        );
+
+        println!(
+            "Missing index with existing accounts: successfully recovered {} accounts",
+            index.accounts.len()
+        );
     }
 
     #[test]
@@ -256,23 +281,38 @@ mod tests {
 
         // Assert it matches
         assert_eq!(loaded.accounts.len(), 2, "Should have 2 accounts");
-        assert_eq!(loaded.current_account_id, Some("acc-1".to_string()), "current_account_id should match");
-        
+        assert_eq!(
+            loaded.current_account_id,
+            Some("acc-1".to_string()),
+            "current_account_id should match"
+        );
+
         // Check first account
-        let acc1 = loaded.accounts.iter().find(|a| a.id == "acc-1").expect("acc-1 should exist");
+        let acc1 = loaded
+            .accounts
+            .iter()
+            .find(|a| a.id == "acc-1")
+            .expect("acc-1 should exist");
         assert_eq!(acc1.email, "user1@example.com");
         assert_eq!(acc1.name, Some("User One".to_string()));
         assert!(!acc1.disabled);
         assert!(!acc1.proxy_disabled);
-        
+
         // Check second account
-        let acc2 = loaded.accounts.iter().find(|a| a.id == "acc-2").expect("acc-2 should exist");
+        let acc2 = loaded
+            .accounts
+            .iter()
+            .find(|a| a.id == "acc-2")
+            .expect("acc-2 should exist");
         assert_eq!(acc2.email, "user2@example.com");
         assert_eq!(acc2.name, None);
         assert!(acc2.disabled);
         assert!(acc2.proxy_disabled);
 
-        println!("save_account_index roundtrip: successfully saved and loaded index with {} accounts", loaded.accounts.len());
+        println!(
+            "save_account_index roundtrip: successfully saved and loaded index with {} accounts",
+            loaded.accounts.len()
+        );
     }
 
     #[test]
@@ -292,10 +332,14 @@ mod tests {
         assert!(index_path.exists(), "accounts.json should exist");
 
         // Call load_account_index to trigger recovery and backup creation
-        let recovered = load_account_index_in_dir(dir.path()).expect("Should recover from accounts");
+        let recovered =
+            load_account_index_in_dir(dir.path()).expect("Should recover from accounts");
         assert_eq!(recovered.accounts.len(), 1, "Should recover 1 account");
         assert_eq!(recovered.accounts[0].email, "recovered@example.com");
-        assert_eq!(recovered.current_account_id, Some("recovered-acc".to_string()));
+        assert_eq!(
+            recovered.current_account_id,
+            Some("recovered-acc".to_string())
+        );
 
         // Assert a backup file exists with prefix "accounts.json.corrupt-"
         let data_dir = dir.path();
@@ -308,12 +352,16 @@ mod tests {
                     .map_or(false, |name| name.starts_with("accounts.json.corrupt-"))
             })
             .collect();
-        
+
         assert_eq!(backup_files.len(), 1, "Should have exactly one backup file");
-        
+
         // Verify backup contains the original garbage content
-        let backup_content = fs::read(&backup_files[0].path()).expect("Should be able to read backup file");
-        assert_eq!(backup_content, garbage_content, "Backup should contain original corrupt content");
+        let backup_content =
+            fs::read(&backup_files[0].path()).expect("Should be able to read backup file");
+        assert_eq!(
+            backup_content, garbage_content,
+            "Backup should contain original corrupt content"
+        );
 
         println!("Backup creation on parse failure: successfully created backup");
     }
@@ -334,7 +382,8 @@ pub fn get_data_dir() -> Result<PathBuf, String> {
         if !env_path.trim().is_empty() {
             let data_dir = PathBuf::from(env_path);
             if !data_dir.exists() {
-                fs::create_dir_all(&data_dir).map_err(|e| format!("failed_to_create_custom_data_dir: {}", e))?;
+                fs::create_dir_all(&data_dir)
+                    .map_err(|e| format!("failed_to_create_custom_data_dir: {}", e))?;
             }
             return Ok(data_dir);
         }
@@ -377,8 +426,8 @@ fn load_account_index_in_dir(data_dir: &PathBuf) -> Result<AccountIndex, String>
         return Ok(recovered);
     }
 
-    let raw_content = fs::read(&index_path)
-        .map_err(|e| format!("failed_to_read_account_index: {}", e))?;
+    let raw_content =
+        fs::read(&index_path).map_err(|e| format!("failed_to_read_account_index: {}", e))?;
 
     // If file is empty, attempt recovery
     if raw_content.is_empty() {
@@ -464,16 +513,17 @@ fn rebuild_index_from_accounts_in_dir(data_dir: &PathBuf) -> Result<AccountIndex
                     if let Some(account_id) = path.file_stem().and_then(|s| s.to_str()) {
                         match load_account_at_path(&path) {
                             Ok(account) => {
-                                    summaries.push(AccountSummary {
-                                        id: account.id,
-                                        email: account.email,
-                                        name: account.name,
-                                        disabled: account.disabled,
-                                        proxy_disabled: account.proxy_disabled,
-                                        protected_models: account.protected_models,
-                                        created_at: account.created_at,
-                                        last_used: account.last_used,
-                                    });
+                                summaries.push(AccountSummary {
+                                    id: account.id,
+                                    email: account.email,
+                                    name: account.name,
+                                    account_type: account.account_type,
+                                    disabled: account.disabled,
+                                    proxy_disabled: account.proxy_disabled,
+                                    protected_models: account.protected_models,
+                                    created_at: account.created_at,
+                                    last_used: account.last_used,
+                                });
                             }
                             Err(e) => {
                                 crate::modules::logger::log_warn(&format!(
@@ -581,7 +631,7 @@ fn try_save_recovered_index(
         }
         Err(_) => {
             crate::modules::logger::log_warn(
-                "Could not acquire lock to save recovered index. Will retry on next load."
+                "Could not acquire lock to save recovered index. Will retry on next load.",
             );
         }
     }
@@ -605,7 +655,11 @@ fn atomic_replace_file(src: &PathBuf, dst: &PathBuf) -> Result<(), String> {
 
     #[link(name = "Kernel32")]
     extern "system" {
-        fn MoveFileExW(lp_existing_file_name: *const u16, lp_new_file_name: *const u16, dw_flags: Dword) -> Bool;
+        fn MoveFileExW(
+            lp_existing_file_name: *const u16,
+            lp_new_file_name: *const u16,
+            dw_flags: Dword,
+        ) -> Bool;
     }
 
     let src_wide: Vec<u16> = src
@@ -702,20 +756,28 @@ pub fn add_account(
     email: String,
     name: Option<String>,
     token: TokenData,
+    account_type: crate::models::AccountType,
 ) -> Result<Account, String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
 
-    // Check if account already exists
-    if index.accounts.iter().any(|s| s.email == email) {
-        return Err(format!("Account already exists: {}", email));
+    // Check if account already exists (same email AND same account_type)
+    if index
+        .accounts
+        .iter()
+        .any(|s| s.email == email && s.account_type == account_type)
+    {
+        return Err(format!(
+            "Account already exists: {} ({})",
+            email, account_type
+        ));
     }
 
     // Create new account
     let account_id = Uuid::new_v4().to_string();
-    let mut account = Account::new(account_id.clone(), email.clone(), token);
+    let mut account = Account::new(account_id.clone(), email.clone(), token, account_type);
     account.name = name.clone();
 
     // Save account data
@@ -731,6 +793,7 @@ pub fn add_account(
         protected_models: account.protected_models.clone(),
         created_at: account.created_at,
         last_used: account.last_used,
+        account_type: account.account_type,
     });
 
     // If first account, set as current
@@ -748,17 +811,18 @@ pub fn upsert_account(
     email: String,
     name: Option<String>,
     token: TokenData,
+    account_type: crate::models::AccountType,
 ) -> Result<Account, String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
 
-    // Find account ID if exists
+    // Find account ID if exists (match both email AND account_type)
     let existing_account_id = index
         .accounts
         .iter()
-        .find(|s| s.email == email)
+        .find(|s| s.email == email && s.account_type == account_type)
         .map(|s| s.id.clone());
 
     if let Some(account_id) = existing_account_id {
@@ -796,7 +860,8 @@ pub fn upsert_account(
                     account_id, e
                 ));
                 // Index exists but file is missing, recreating
-                let mut account = Account::new(account_id.clone(), email.clone(), token);
+                let mut account =
+                    Account::new(account_id.clone(), email.clone(), token, account_type);
                 account.name = name.clone();
                 save_account(&account)?;
 
@@ -817,7 +882,7 @@ pub fn upsert_account(
 
     // Release lock, let add_account handle it
     drop(_lock);
-    add_account(email, name, token)
+    add_account(email, name, token, account_type)
 }
 
 /// Delete account
@@ -959,9 +1024,10 @@ pub async fn switch_account(
     ));
 
     // 2. Ensure Token is valid (auto-refresh)
-    let fresh_token = oauth::ensure_fresh_token(&account.token, Some(&account.id))
-        .await
-        .map_err(|e| format!("Token refresh failed: {}", e))?;
+    let fresh_token =
+        oauth::ensure_fresh_token(&account.token, Some(&account.id), account.account_type)
+            .await
+            .map_err(|e| format!("Token refresh failed: {}", e))?;
 
     // If Token updated, save back to account file
     if fresh_token.access_token != account.token.access_token {
@@ -1043,8 +1109,7 @@ pub fn bind_device_profile(account_id: &str, mode: &str) -> Result<DeviceProfile
 
     let mut account = load_account(account_id)?;
     let _ = device::save_global_original(&profile);
-    apply_profile_to_account(
-        &mut account, profile.clone(), Some(mode.to_string()), true)?;
+    apply_profile_to_account(&mut account, profile.clone(), Some(mode.to_string()), true)?;
 
     Ok(profile)
 }
@@ -1202,6 +1267,26 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
     let mut account = load_account(account_id)?;
     account.update_quota(quota);
 
+    // [RECOVERY] If quota refresh is successful (not forbidden),
+    // automatically clear legacy 403-forbidden disable state.
+    if let Some(ref q) = account.quota {
+        if !q.is_forbidden
+            && account.proxy_disabled
+            && account
+                .proxy_disabled_reason
+                .as_ref()
+                .map_or(false, |r| r.starts_with("Forbidden (403):"))
+        {
+            crate::modules::logger::log_info(&format!(
+                "[Quota] Auto-clearing legacy forbidden disable state for {}",
+                account.email
+            ));
+            account.proxy_disabled = false;
+            account.proxy_disabled_reason = None;
+            account.proxy_disabled_at = None;
+        }
+    }
+
     // --- Quota protection logic start ---
     if let Ok(config) = crate::modules::config::load_app_config() {
         if config.quota_protection.enabled {
@@ -1324,7 +1409,10 @@ pub fn toggle_proxy_status(
 
 /// Find account ID by email (from index)
 pub fn find_account_id_by_email(email: &str) -> Option<String> {
-    load_account_index().ok()?.accounts.into_iter()
+    load_account_index()
+        .ok()?
+        .accounts
+        .into_iter()
         .find(|a| a.email == email)
         .map(|a| a.id)
 }
@@ -1371,12 +1459,175 @@ pub fn mark_account_forbidden(account_id: &str, reason: &str) -> Result<(), Stri
     Ok(())
 }
 
+/// Verify account: re-fetch project_id and clear forbidden status
+/// Reference: gcli2api/src/panel/creds.py:513-589
+pub async fn verify_account(account_id: &str) -> Result<String, String> {
+    // 1. Load account
+    let mut account = load_account(account_id)?;
+
+    // 2. Refresh token
+    let token =
+        modules::oauth::ensure_fresh_token(&account.token, Some(&account.id), account.account_type)
+            .await
+            .map_err(|e| format!("Token refresh failed: {}", e))?;
+    account.token = token;
+
+    // 3. Fetch new project_id using account_type-aware resolver
+    let new_project_id = crate::proxy::project_resolver::fetch_project_id(
+        &account.token.access_token,
+        account.account_type,
+    )
+    .await
+    .map_err(|e| format!("Failed to fetch project_id: {}", e))?;
+
+    // 4. Update project_id
+    account.token.project_id = Some(new_project_id.clone());
+
+    // 5. Clear forbidden / proxy_disabled status
+    if let Some(ref mut q) = account.quota {
+        q.is_forbidden = false;
+        q.forbidden_reason = None;
+    }
+    account.proxy_disabled = false;
+    account.proxy_disabled_reason = None;
+    account.proxy_disabled_at = None;
+
+    // 6. Save account + update index
+    {
+        let _lock = ACCOUNT_INDEX_LOCK
+            .lock()
+            .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+
+        save_account(&account)?;
+
+        let mut index = load_account_index()?;
+        if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
+            summary.proxy_disabled = false;
+            save_account_index(&index)?;
+        }
+    }
+
+    // 7. Notify proxy to reload this account
+    crate::proxy::server::trigger_account_reload(account_id);
+
+    modules::logger::log_info(&format!(
+        "[Verify] Account {} verified successfully, new project_id: {}",
+        account.email, new_project_id
+    ));
+
+    Ok(new_project_id)
+}
+
+/// Configure preview for GeminiCLI account (set experimental release channel)
+/// Reference: gcli2api/src/panel/creds.py:1126-1303
+pub async fn configure_preview(account_id: &str) -> Result<(), String> {
+    // 1. Load account, verify it's GeminiCLI
+    let mut account = load_account(account_id)?;
+    if account.account_type != crate::models::AccountType::GeminiCli {
+        return Err("configure_preview is only available for GeminiCLI accounts".to_string());
+    }
+
+    // 2. Ensure project_id exists
+    let project_id = account
+        .token
+        .project_id
+        .clone()
+        .ok_or("Account has no project_id. Please verify the account first.".to_string())?;
+
+    // 3. Refresh token
+    let token =
+        modules::oauth::ensure_fresh_token(&account.token, Some(&account.id), account.account_type)
+            .await
+            .map_err(|e| format!("Token refresh failed: {}", e))?;
+    account.token = token;
+
+    let client = crate::utils::http::get_client();
+    let base_url = format!(
+        "https://cloudaicompanion.googleapis.com/v1/projects/{}/locations/global/releaseChannelSettings",
+        project_id
+    );
+
+    // Step 1: Create release channel setting
+    let setting_id = format!("preview-setting-{}", uuid::Uuid::new_v4());
+    let step1_url = format!("{}?release_channel_setting_id={}", base_url, setting_id);
+    let step1_body = serde_json::json!({
+        "release_channel": "EXPERIMENTAL"
+    });
+
+    let step1_resp = client
+        .post(&step1_url)
+        .bearer_auth(&account.token.access_token)
+        .header("Content-Type", "application/json")
+        .json(&step1_body)
+        .send()
+        .await
+        .map_err(|e| format!("Release channel setting request failed: {}", e))?;
+
+    let step1_status = step1_resp.status();
+    if !step1_status.is_success() && step1_status.as_u16() != 409 {
+        let body = step1_resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "Release channel setting failed {}: {}",
+            step1_status, body
+        ));
+    }
+
+    modules::logger::log_info(&format!(
+        "[Preview] Step 1 completed for {}: status {}",
+        account.email, step1_status
+    ));
+
+    // Step 2: Create setting binding
+    let binding_id = format!("preview-binding-{}", uuid::Uuid::new_v4());
+    let step2_url = format!(
+        "{}/{}/settingBindings?setting_binding_id={}",
+        base_url, setting_id, binding_id
+    );
+    let step2_body = serde_json::json!({
+        "target": format!("projects/{}", project_id),
+        "product": "GEMINI_CODE_ASSIST"
+    });
+
+    let step2_resp = client
+        .post(&step2_url)
+        .bearer_auth(&account.token.access_token)
+        .header("Content-Type", "application/json")
+        .json(&step2_body)
+        .send()
+        .await
+        .map_err(|e| format!("Setting binding request failed: {}", e))?;
+
+    let step2_status = step2_resp.status();
+    if !step2_status.is_success() && step2_status.as_u16() != 409 {
+        let body = step2_resp.text().await.unwrap_or_default();
+        return Err(format!("Setting binding failed {}: {}", step2_status, body));
+    }
+
+    modules::logger::log_info(&format!(
+        "[Preview] Step 2 completed for {}: status {}",
+        account.email, step2_status
+    ));
+
+    // 6. Save preview = true
+    account.preview = true;
+    save_account(&account)?;
+
+    modules::logger::log_info(&format!(
+        "[Preview] Account {} preview configured successfully",
+        account.email
+    ));
+
+    Ok(())
+}
+
 /// Export accounts by IDs (for backup/migration)
-pub fn export_accounts_by_ids(account_ids: &[String]) -> Result<crate::models::AccountExportResponse, String> {
+pub fn export_accounts_by_ids(
+    account_ids: &[String],
+) -> Result<crate::models::AccountExportResponse, String> {
     use crate::models::{AccountExportItem, AccountExportResponse};
-    
+
     let accounts = list_accounts()?;
-    
+
     let export_items: Vec<AccountExportItem> = accounts
         .into_iter()
         .filter(|acc| account_ids.contains(&acc.id))
@@ -1411,23 +1662,26 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     use reqwest::StatusCode;
 
     // 1. Time-based check - ensure Token is valid first
-    let token = match oauth::ensure_fresh_token(&account.token, Some(&account.id)).await {
-        Ok(t) => t,
-        Err(e) => {
-            if e.contains("invalid_grant") {
-                modules::logger::log_error(&format!(
+    let token =
+        match oauth::ensure_fresh_token(&account.token, Some(&account.id), account.account_type)
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                if e.contains("invalid_grant") {
+                    modules::logger::log_error(&format!(
                     "Disabling account {} due to invalid_grant during token refresh (quota check)",
                     account.email
                 ));
-                account.disabled = true;
-                account.disabled_at = Some(chrono::Utc::now().timestamp());
-                account.disabled_reason = Some(format!("invalid_grant: {}", e));
-                let _ = save_account(account);
-                crate::proxy::server::trigger_account_reload(&account.id);
+                    account.disabled = true;
+                    account.disabled_at = Some(chrono::Utc::now().timestamp());
+                    account.disabled_reason = Some(format!("invalid_grant: {}", e));
+                    let _ = save_account(account);
+                    crate::proxy::server::trigger_account_reload(&account.id);
+                }
+                return Err(AppError::OAuth(e));
             }
-            return Err(AppError::OAuth(e));
-        }
-    };
+        };
 
     if token.access_token != account.token.access_token {
         modules::logger::log_info(&format!("Time-based Token refresh: {}", account.email));
@@ -1446,7 +1700,13 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         };
 
         account.name = name.clone();
-        upsert_account(account.email.clone(), name, token.clone()).map_err(AppError::Account)?;
+        upsert_account(
+            account.email.clone(),
+            name,
+            token.clone(),
+            account.account_type,
+        )
+        .map_err(AppError::Account)?;
     }
 
     // 0. Supplement display name (if missing or upper step failed)
@@ -1465,9 +1725,12 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 ));
                 account.name = display_name.clone();
                 // Save immediately
-                if let Err(e) =
-                    upsert_account(account.email.clone(), display_name, account.token.clone())
-                {
+                if let Err(e) = upsert_account(
+                    account.email.clone(),
+                    display_name,
+                    account.token.clone(),
+                    account.account_type,
+                ) {
                     modules::logger::log_warn(&format!("Failed to save display name: {}", e));
                 }
             }
@@ -1478,8 +1741,13 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
     }
 
     // 2. Attempt query
-    let result: crate::error::AppResult<(QuotaData, Option<String>)> =
-        modules::fetch_quota(&account.token.access_token, &account.email, Some(&account.id)).await;
+    let result: crate::error::AppResult<(QuotaData, Option<String>)> = modules::fetch_quota(
+        &account.token.access_token,
+        &account.email,
+        Some(&account.id),
+        account.account_type,
+    )
+    .await;
 
     // Capture potentially updated project_id and save
     if let Ok((ref _q, ref project_id)) = result {
@@ -1493,6 +1761,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 account.email.clone(),
                 account.name.clone(),
                 account.token.clone(),
+                account.account_type,
             ) {
                 modules::logger::log_warn(&format!("Failed to sync project_id: {}", e));
             }
@@ -1509,8 +1778,12 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 ));
 
                 // Force refresh
-                let token_res = match oauth::refresh_access_token(&account.token.refresh_token, Some(&account.id))
-                    .await
+                let token_res = match oauth::refresh_access_token(
+                    &account.token.refresh_token,
+                    Some(&account.id),
+                    account.account_type,
+                )
+                .await
                 {
                     Ok(t) => t,
                     Err(e) => {
@@ -1552,12 +1825,23 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
 
                 account.token = new_token.clone();
                 account.name = name.clone();
-                upsert_account(account.email.clone(), name, new_token.clone())
-                    .map_err(AppError::Account)?;
+                upsert_account(
+                    account.email.clone(),
+                    name,
+                    new_token.clone(),
+                    account.account_type,
+                )
+                .map_err(AppError::Account)?;
 
                 // Retry query
                 let retry_result: crate::error::AppResult<(QuotaData, Option<String>)> =
-                    modules::fetch_quota(&new_token.access_token, &account.email, Some(&account.id)).await;
+                    modules::fetch_quota(
+                        &new_token.access_token,
+                        &account.email,
+                        Some(&account.id),
+                        account.account_type,
+                    )
+                    .await;
 
                 // Also handle project_id saving during retry
                 if let Ok((ref _q, ref project_id)) = retry_result {
@@ -1571,6 +1855,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                             account.email.clone(),
                             account.name.clone(),
                             account.token.clone(),
+                            account.account_type,
                         );
                     }
                 }
@@ -1622,11 +1907,18 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
         .into_iter()
         .filter(|account| {
             // [MOD] Now we allow refreshing disabled and proxy_disabled accounts
-            // to support forced re-sync from UI. 
-            // Only strictly skip forbidden accounts if necessary, but even those 
+            // to support forced re-sync from UI.
+            // Only strictly skip forbidden accounts if necessary, but even those
             // might want a retry to see if they are unbanned.
             if let Some(ref q) = account.quota {
                 if q.is_forbidden {
+                    if account.account_type == crate::models::AccountType::GeminiCli {
+                        crate::modules::logger::log_info(&format!(
+                            "  - GeminiCLI forbidden account {} will still be retried (recovery mode)",
+                            account.email
+                        ));
+                        return true;
+                    }
                     crate::modules::logger::log_info(&format!(
                         "  - Skipping {} (Forbidden)",
                         account.email

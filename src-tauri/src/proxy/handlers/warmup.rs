@@ -74,12 +74,17 @@ pub async fn handle_warmup(
     );
 
     // ===== 步骤 1: 获取 Token =====
-    let (access_token, project_id, account_id) =
+    let (access_token, project_id, account_id, account_type) =
         if let (Some(at), Some(pid)) = (&req.access_token, &req.project_id) {
-            (at.clone(), pid.clone(), String::new())
+            (
+                at.clone(),
+                pid.clone(),
+                String::new(),
+                crate::models::AccountType::Antigravity,
+            )
         } else {
             match state.token_manager.get_token_by_email(&req.email).await {
-                Ok((at, pid, _, acc_id, _wait_ms)) => (at, pid, acc_id),
+                Ok((at, pid, _, acc_id, _wait_ms, acc_type)) => (at, pid, acc_id, acc_type),
                 Err(e) => {
                     warn!(
                         "[Warmup-API] Step 1 FAILED: Token error for {}: {}",
@@ -184,7 +189,15 @@ pub async fn handle_warmup(
             })
         };
 
-        wrap_request(&base_request, &project_id, &req.model, None, Some(&session_id), None)
+        wrap_request(
+            &base_request,
+            &project_id,
+            &req.model,
+            None,
+            Some(&session_id),
+            None,
+            account_type,
+        )
     };
 
     // ===== 步骤 3: 调用 UpstreamClient =====
@@ -205,6 +218,7 @@ pub async fn handle_warmup(
             body.clone(),
             query,
             Some(account_id.as_str()),
+            &account_type,
         )
         .await;
 
@@ -218,6 +232,7 @@ pub async fn handle_warmup(
                 body,
                 None,
                 Some(account_id.as_str()),
+                &account_type,
             )
             .await;
     }
@@ -293,7 +308,10 @@ pub async fn handle_warmup(
                             "[Warmup-API] 403 Forbidden detected for {}, marking account as forbidden",
                             req.email
                         );
-                        let _ = crate::modules::account::mark_account_forbidden(&resolved_account_id, &error_text);
+                        let _ = crate::modules::account::mark_account_forbidden(
+                            &resolved_account_id,
+                            &error_text,
+                        );
                     } else {
                         warn!(
                             "[Warmup-API] 403 Forbidden detected for {} but could not resolve account_id, skipping mark",

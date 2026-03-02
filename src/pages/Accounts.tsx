@@ -31,7 +31,7 @@ import { isTauri } from "../utils/env";
 import { request as invoke } from "../utils/request";
 import { useTranslation } from "react-i18next";
 
-type FilterType = "all" | "pro" | "ultra" | "free";
+type FilterType = "all" | "pro" | "ultra" | "free" | "antigravity" | "gcli";
 type ViewMode = "list" | "grid";
 
 
@@ -52,6 +52,8 @@ function Accounts() {
     warmUpAccounts,
     warmUpAccount,
     updateAccountLabel,
+    verifyAccount,
+    configurePreview,
   } = useAccountStore();
   const { config, showAllQuotas, toggleShowAllQuotas } = useConfigStore();
 
@@ -108,6 +110,46 @@ function Accounts() {
       showToast(t('accounts.label_updated', 'Label updated'), 'success');
     } catch (error) {
       showToast(`${t('common.error')}: ${error}`, 'error');
+    }
+  };
+
+  const handleVerify = async (accountId: string) => {
+    setRefreshingIds((prev) => {
+      const next = new Set(prev);
+      next.add(accountId);
+      return next;
+    });
+    try {
+      const projectId = await verifyAccount(accountId);
+      showToast(t('accounts.verify_success', 'Account verified, project_id: {{projectId}}').replace('{{projectId}}', projectId), 'success');
+    } catch (error) {
+      showToast(`${t('common.error')}: ${error}`, 'error');
+    } finally {
+      setRefreshingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(accountId);
+        return next;
+      });
+    }
+  };
+
+  const handleConfigurePreview = async (accountId: string) => {
+    setRefreshingIds((prev) => {
+      const next = new Set(prev);
+      next.add(accountId);
+      return next;
+    });
+    try {
+      await configurePreview(accountId);
+      showToast(t('accounts.preview_success', 'Preview configured successfully'), 'success');
+    } catch (error) {
+      showToast(`${t('common.error')}: ${error}`, 'error');
+    } finally {
+      setRefreshingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(accountId);
+        return next;
+      });
     }
   };
 
@@ -254,6 +296,12 @@ function Accounts() {
         const tier = a.quota?.subscription_tier?.toLowerCase();
         return tier && !tier.includes("pro") && !tier.includes("ultra");
       }).length,
+      antigravity: searchedAccounts.filter((a) =>
+        !a.account_type || a.account_type === 'antigravity',
+      ).length,
+      gcli: searchedAccounts.filter((a) =>
+        a.account_type === 'gemini_cli',
+      ).length,
     };
   }, [searchedAccounts]);
 
@@ -274,6 +322,10 @@ function Accounts() {
         const tier = a.quota?.subscription_tier?.toLowerCase();
         return tier && !tier.includes("pro") && !tier.includes("ultra");
       });
+    } else if (filter === "antigravity") {
+      result = result.filter((a) => !a.account_type || a.account_type === 'antigravity');
+    } else if (filter === "gcli") {
+      result = result.filter((a) => a.account_type === 'gemini_cli');
     }
 
     return result;
@@ -319,8 +371,8 @@ function Accounts() {
     setSelectedIds(newSet);
   };
 
-  const handleAddAccount = async (email: string, refreshToken: string) => {
-    await addAccount(email, refreshToken);
+  const handleAddAccount = async (email: string, refreshToken: string, accountType?: import('../types/account').AccountType) => {
+    await addAccount(email, refreshToken, accountType);
   };
 
   const [switchingAccountId, setSwitchingAccountId] = useState<string | null>(
@@ -908,6 +960,50 @@ function Accounts() {
               {filterCounts.free}
             </span>
           </button>
+
+          {/* Antigravity */}
+          <button
+            className={cn(
+              "flex px-2 lg:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all items-center gap-1 lg:gap-1.5 whitespace-nowrap shrink-0",
+              filter === 'antigravity'
+                ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-black/5"
+                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content hover:bg-white/40"
+            )}
+            onClick={() => setFilter('antigravity')}
+            title={`Antigravity (${filterCounts.antigravity})`}
+          >
+            <span className="hidden md:inline">AG</span>
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors",
+              filter === 'antigravity'
+                ? "bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400"
+                : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+            )}>
+              {filterCounts.antigravity}
+            </span>
+          </button>
+
+          {/* GCLI */}
+          <button
+            className={cn(
+              "flex px-2 lg:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all items-center gap-1 lg:gap-1.5 whitespace-nowrap shrink-0",
+              filter === 'gcli'
+                ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-black/5"
+                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content hover:bg-white/40"
+            )}
+            onClick={() => setFilter('gcli')}
+            title={`GCLI (${filterCounts.gcli})`}
+          >
+            <span className="hidden md:inline">GCLI</span>
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors",
+              filter === 'gcli'
+                ? "bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400"
+                : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+            )}>
+              {filterCounts.gcli}
+            </span>
+          </button>
         </div>
 
         <div className="flex-1 min-w-[8px]"></div>
@@ -1077,6 +1173,8 @@ function Accounts() {
                 onWarmup={handleWarmup}
                 onUpdateLabel={handleUpdateLabel}
                 onViewError={(id: string) => setErrorAccountId(id)}
+                onVerify={handleVerify}
+                onConfigurePreview={handleConfigurePreview}
               />
             </div>
           </div>
@@ -1104,6 +1202,8 @@ function Accounts() {
               onWarmup={handleWarmup}
               onUpdateLabel={handleUpdateLabel}
               onViewError={(id: string) => setErrorAccountId(id)}
+              onVerify={handleVerify}
+              onConfigurePreview={handleConfigurePreview}
             />
           </div>
         )}

@@ -20,6 +20,8 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'warm_up_account': { url: '/api/accounts/:accountId/warmup', method: 'POST' },
   'update_account_label': { url: '/api/accounts/:accountId/label', method: 'POST' },
   'export_accounts': { url: '/api/accounts/export', method: 'POST' },
+  'verify_account': { url: '/api/accounts/:accountId/verify', method: 'POST' },
+  'configure_preview': { url: '/api/accounts/:accountId/configure-preview', method: 'POST' },
   'bind_device_profile': { url: '/api/accounts/:accountId/bind-device', method: 'POST' },
   'get_device_profiles': { url: '/api/accounts/:accountId/device-profiles', method: 'GET' },
   'list_device_versions': { url: '/api/accounts/:accountId/device-versions', method: 'GET' },

@@ -1,6 +1,6 @@
 //! IP Security Module Tests
 //! IP 安全监控功能的综合测试套件
-//! 
+//!
 //! 测试目标:
 //! 1. 验证 IP 黑/白名单功能的正确性
 //! 2. 验证 CIDR 匹配逻辑
@@ -11,12 +11,10 @@
 #[cfg(test)]
 mod security_db_tests {
     use crate::modules::security_db::{
-        self, IpAccessLog, IpBlacklistEntry, IpWhitelistEntry,
-        init_db, add_to_blacklist, remove_from_blacklist, get_blacklist,
-        is_ip_in_blacklist, get_blacklist_entry_for_ip,
-        add_to_whitelist, remove_from_whitelist, get_whitelist,
-        is_ip_in_whitelist, save_ip_access_log, get_ip_access_logs,
-        get_ip_stats, cleanup_old_ip_logs, clear_ip_access_logs,
+        self, add_to_blacklist, add_to_whitelist, cleanup_old_ip_logs, clear_ip_access_logs,
+        get_blacklist, get_blacklist_entry_for_ip, get_ip_access_logs, get_ip_stats, get_whitelist,
+        init_db, is_ip_in_blacklist, is_ip_in_whitelist, remove_from_blacklist,
+        remove_from_whitelist, save_ip_access_log, IpAccessLog, IpBlacklistEntry, IpWhitelistEntry,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -49,12 +47,16 @@ mod security_db_tests {
     // ============================================================================
     // 测试类别 1: 数据库初始化
     // ============================================================================
-    
+
     #[test]
     fn test_db_initialization() {
         // 验证数据库初始化不会 panic
         let result = init_db();
-        assert!(result.is_ok(), "Database initialization should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Database initialization should succeed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -62,7 +64,10 @@ mod security_db_tests {
         // 验证多次初始化不会出错 (幂等性)
         for _ in 0..3 {
             let result = init_db();
-            assert!(result.is_ok(), "Multiple DB initializations should be idempotent");
+            assert!(
+                result.is_ok(),
+                "Multiple DB initializations should be idempotent"
+            );
         }
     }
 
@@ -77,7 +82,11 @@ mod security_db_tests {
 
         // 添加 IP 到黑名单
         let result = add_to_blacklist("192.168.1.100", Some("Test block"), None, "test");
-        assert!(result.is_ok(), "Should add IP to blacklist: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Should add IP to blacklist: {:?}",
+            result.err()
+        );
 
         // 验证 IP 在黑名单中
         let is_blocked = is_ip_in_blacklist("192.168.1.100");
@@ -87,7 +96,10 @@ mod security_db_tests {
         // 验证其他 IP 不在黑名单中
         let is_other_blocked = is_ip_in_blacklist("192.168.1.101");
         assert!(is_other_blocked.is_ok());
-        assert!(!is_other_blocked.unwrap(), "Other IP should not be in blacklist");
+        assert!(
+            !is_other_blocked.unwrap(),
+            "Other IP should not be in blacklist"
+        );
 
         cleanup_test_data();
     }
@@ -99,7 +111,7 @@ mod security_db_tests {
 
         // 添加 IP
         let entry = add_to_blacklist("10.0.0.5", Some("Temp block"), None, "test").unwrap();
-        
+
         // 验证存在
         assert!(is_ip_in_blacklist("10.0.0.5").unwrap());
 
@@ -129,10 +141,10 @@ mod security_db_tests {
         // 获取条目详情
         let entry_result = get_blacklist_entry_for_ip("172.16.0.50");
         assert!(entry_result.is_ok());
-        
+
         let entry = entry_result.unwrap();
         assert!(entry.is_some());
-        
+
         let entry = entry.unwrap();
         assert_eq!(entry.ip_pattern, "172.16.0.50");
         assert_eq!(entry.reason.as_deref(), Some("Abuse detected"));
@@ -155,13 +167,28 @@ mod security_db_tests {
         let _ = add_to_blacklist("192.168.1.0/24", Some("Block subnet"), None, "test");
 
         // 验证该子网内的 IP 都被阻止
-        assert!(is_ip_in_blacklist("192.168.1.1").unwrap(), "192.168.1.1 should match /24");
-        assert!(is_ip_in_blacklist("192.168.1.100").unwrap(), "192.168.1.100 should match /24");
-        assert!(is_ip_in_blacklist("192.168.1.254").unwrap(), "192.168.1.254 should match /24");
+        assert!(
+            is_ip_in_blacklist("192.168.1.1").unwrap(),
+            "192.168.1.1 should match /24"
+        );
+        assert!(
+            is_ip_in_blacklist("192.168.1.100").unwrap(),
+            "192.168.1.100 should match /24"
+        );
+        assert!(
+            is_ip_in_blacklist("192.168.1.254").unwrap(),
+            "192.168.1.254 should match /24"
+        );
 
         // 验证子网外的 IP 不被阻止
-        assert!(!is_ip_in_blacklist("192.168.2.1").unwrap(), "192.168.2.1 should not match");
-        assert!(!is_ip_in_blacklist("10.0.0.1").unwrap(), "10.0.0.1 should not match");
+        assert!(
+            !is_ip_in_blacklist("192.168.2.1").unwrap(),
+            "192.168.2.1 should not match"
+        );
+        assert!(
+            !is_ip_in_blacklist("10.0.0.1").unwrap(),
+            "10.0.0.1 should not match"
+        );
 
         cleanup_test_data();
     }
@@ -173,18 +200,27 @@ mod security_db_tests {
 
         // 测试 /16 掩码
         let _ = add_to_blacklist("10.10.0.0/16", Some("Block /16"), None, "test");
-        
+
         assert!(is_ip_in_blacklist("10.10.0.1").unwrap(), "Should match /16");
-        assert!(is_ip_in_blacklist("10.10.255.255").unwrap(), "Should match /16");
-        assert!(!is_ip_in_blacklist("10.11.0.1").unwrap(), "Should not match /16");
+        assert!(
+            is_ip_in_blacklist("10.10.255.255").unwrap(),
+            "Should match /16"
+        );
+        assert!(
+            !is_ip_in_blacklist("10.11.0.1").unwrap(),
+            "Should not match /16"
+        );
 
         cleanup_test_data();
 
         // 测试 /32 掩码 (单个 IP)
         let _ = add_to_blacklist("8.8.8.8/32", Some("Block single"), None, "test");
-        
+
         assert!(is_ip_in_blacklist("8.8.8.8").unwrap(), "Should match /32");
-        assert!(!is_ip_in_blacklist("8.8.8.9").unwrap(), "Should not match /32");
+        assert!(
+            !is_ip_in_blacklist("8.8.8.9").unwrap(),
+            "Should not match /32"
+        );
 
         cleanup_test_data();
     }
@@ -196,17 +232,29 @@ mod security_db_tests {
 
         // 测试 /0 (所有 IP) - 边界情况
         let _ = add_to_blacklist("0.0.0.0/0", Some("Block all"), None, "test");
-        
-        assert!(is_ip_in_blacklist("1.2.3.4").unwrap(), "Everything should match /0");
-        assert!(is_ip_in_blacklist("255.255.255.255").unwrap(), "Everything should match /0");
+
+        assert!(
+            is_ip_in_blacklist("1.2.3.4").unwrap(),
+            "Everything should match /0"
+        );
+        assert!(
+            is_ip_in_blacklist("255.255.255.255").unwrap(),
+            "Everything should match /0"
+        );
 
         cleanup_test_data();
 
         // 测试 /8 掩码
         let _ = add_to_blacklist("10.0.0.0/8", Some("Block /8"), None, "test");
-        
-        assert!(is_ip_in_blacklist("10.255.255.255").unwrap(), "Should match /8");
-        assert!(!is_ip_in_blacklist("11.0.0.0").unwrap(), "Should not match /8");
+
+        assert!(
+            is_ip_in_blacklist("10.255.255.255").unwrap(),
+            "Should match /8"
+        );
+        assert!(
+            !is_ip_in_blacklist("11.0.0.0").unwrap(),
+            "Should not match /8"
+        );
 
         cleanup_test_data();
     }
@@ -339,12 +387,16 @@ mod security_db_tests {
         };
 
         let save_result = save_ip_access_log(&log);
-        assert!(save_result.is_ok(), "Should save access log: {:?}", save_result.err());
+        assert!(
+            save_result.is_ok(),
+            "Should save access log: {:?}",
+            save_result.err()
+        );
 
         // 检索日志
         let logs = get_ip_access_logs(10, 0, Some("test.log.ip"), false);
         assert!(logs.is_ok());
-        
+
         let logs = logs.unwrap();
         assert!(!logs.is_empty(), "Should retrieve saved log");
         assert_eq!(logs[0].client_ip, "test.log.ip");
@@ -422,7 +474,11 @@ mod security_db_tests {
                 duration: Some(100),
                 api_key_hash: None,
                 blocked: i == 4, // 最后一个被阻止
-                block_reason: if i == 4 { Some("Test".to_string()) } else { None },
+                block_reason: if i == 4 {
+                    Some("Test".to_string())
+                } else {
+                    None
+                },
                 username: None,
             };
             let _ = save_ip_access_log(&log);
@@ -436,11 +492,14 @@ mod security_db_tests {
         // 获取统计
         let stats = get_ip_stats();
         assert!(stats.is_ok());
-        
+
         let stats = stats.unwrap();
         assert!(stats.total_requests >= 5, "Should have at least 5 requests");
         assert!(stats.unique_ips >= 3, "Should have at least 3 unique IPs");
-        assert!(stats.blocked_count >= 1, "Should have at least 1 blocked request");
+        assert!(
+            stats.blocked_count >= 1,
+            "Should have at least 1 blocked request"
+        );
         assert_eq!(stats.blacklist_count, 2);
         assert_eq!(stats.whitelist_count, 1);
 
@@ -513,7 +572,7 @@ mod security_db_tests {
     #[test]
     fn test_concurrent_access() {
         use std::thread;
-        
+
         let _ = init_db();
         cleanup_test_data();
 
@@ -523,7 +582,7 @@ mod security_db_tests {
                     // 每个线程添加不同的 IP
                     let ip = format!("concurrent.test.{}", i);
                     let _ = add_to_blacklist(&ip, Some("Concurrent test"), None, "test");
-                    
+
                     // 验证自己添加的 IP
                     is_ip_in_blacklist(&ip).unwrap_or(false)
                 })
@@ -531,9 +590,12 @@ mod security_db_tests {
             .collect();
 
         let results: Vec<bool> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-        
+
         // 所有线程都应该成功
-        assert!(results.iter().all(|&r| r), "All concurrent adds should succeed");
+        assert!(
+            results.iter().all(|&r| r),
+            "All concurrent adds should succeed"
+        );
 
         cleanup_test_data();
     }
@@ -582,7 +644,9 @@ mod security_db_tests {
         let result = add_to_blacklist("special.char.test", Some(reason), None, "test");
         assert!(result.is_ok());
 
-        let entry = get_blacklist_entry_for_ip("special.char.test").unwrap().unwrap();
+        let entry = get_blacklist_entry_for_ip("special.char.test")
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.reason.as_deref(), Some(reason));
 
         cleanup_test_data();
@@ -605,7 +669,10 @@ mod security_db_tests {
         let blacklist = get_blacklist().unwrap();
         let entry = blacklist.iter().find(|e| e.ip_pattern == "hit.count.test");
         assert!(entry.is_some());
-        assert!(entry.unwrap().hit_count >= 5, "Hit count should be at least 5");
+        assert!(
+            entry.unwrap().hit_count >= 5,
+            "Hit count should be at least 5"
+        );
 
         cleanup_test_data();
     }
@@ -626,7 +693,7 @@ mod ip_filter_middleware_tests {
         // X-Forwarded-For 应该优先于 X-Real-IP
         // X-Real-IP 应该优先于 ConnectInfo
         // 这里只验证逻辑概念，实际测试需要构造 HTTP 请求
-        
+
         // 场景 1: X-Forwarded-For 有多个 IP，取第一个
         let xff_header = "203.0.113.1, 198.51.100.2, 192.0.2.3";
         let first_ip = xff_header.split(',').next().unwrap().trim();
@@ -647,8 +714,7 @@ mod ip_filter_middleware_tests {
 mod performance_benchmarks {
     use super::security_db_tests::*;
     use crate::modules::security_db::{
-        init_db, add_to_blacklist, is_ip_in_blacklist, get_blacklist,
-        clear_ip_access_logs,
+        add_to_blacklist, clear_ip_access_logs, get_blacklist, init_db, is_ip_in_blacklist,
     };
     use std::time::Instant;
 
@@ -656,7 +722,7 @@ mod performance_benchmarks {
     #[test]
     fn benchmark_blacklist_lookup() {
         let _ = init_db();
-        
+
         // 清理并添加 100 个黑名单条目
         if let Ok(entries) = get_blacklist() {
             for entry in entries {
@@ -665,12 +731,7 @@ mod performance_benchmarks {
         }
 
         for i in 0..100 {
-            let _ = add_to_blacklist(
-                &format!("bench.ip.{}", i),
-                Some("Benchmark"),
-                None,
-                "test",
-            );
+            let _ = add_to_blacklist(&format!("bench.ip.{}", i), Some("Benchmark"), None, "test");
         }
 
         // 执行 1000 次查找

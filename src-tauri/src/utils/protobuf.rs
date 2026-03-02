@@ -96,7 +96,9 @@ pub fn find_field(data: &[u8], target_field: u32) -> Result<Option<Vec<u8>>, Str
 
         if field_num == target_field && wire_type == 2 {
             let (length, content_offset) = read_varint(data, new_offset)?;
-            return Ok(Some(data[content_offset..content_offset + length as usize].to_vec()));
+            return Ok(Some(
+                data[content_offset..content_offset + length as usize].to_vec(),
+            ));
         }
 
         // Skip field
@@ -107,7 +109,7 @@ pub fn find_field(data: &[u8], target_field: u32) -> Result<Option<Vec<u8>>, Str
 }
 
 /// Create OAuthTokenInfo (Field 6)
-/// 
+///
 /// Structure:
 /// message OAuthTokenInfo {
 ///     optional string access_token = 1;
@@ -146,14 +148,14 @@ pub fn create_oauth_field(access_token: &str, refresh_token: &str, expiry: i64) 
 
     // Field 4: expiry (Nested Timestamp message, wire_type = 2)
     // Timestamp message contains: Field 1: seconds (int64, wire_type = 0)
-    let timestamp_tag = (1 << 3) | 0;  // Field 1, varint
+    let timestamp_tag = (1 << 3) | 0; // Field 1, varint
     let timestamp_msg = {
         let mut m = encode_varint(timestamp_tag);
         m.extend(encode_varint(expiry as u64));
         m
     };
-    
-    let tag4 = (4 << 3) | 2;  // Field 4, length-delimited
+
+    let tag4 = (4 << 3) | 2; // Field 4, length-delimited
     let field4 = {
         let mut f = encode_varint(tag4);
         f.extend(encode_varint(timestamp_msg.len() as u64));
@@ -172,7 +174,6 @@ pub fn create_oauth_field(access_token: &str, refresh_token: &str, expiry: i64) 
 
     field6
 }
-
 
 /// Create Email (Field 2)
 pub fn create_email_field(email: &str) -> Vec<u8> {
@@ -201,20 +202,19 @@ pub fn encode_string_field(field_num: u32, value: &str) -> Vec<u8> {
 pub fn create_oauth_info(access_token: &str, refresh_token: &str, expiry: i64) -> Vec<u8> {
     // Field 1: access_token
     let field1 = encode_string_field(1, access_token);
-    
+
     // Field 2: token_type = "Bearer"
     let field2 = encode_string_field(2, "Bearer");
-    
+
     // Field 3: refresh_token
     let field3 = encode_string_field(3, refresh_token);
-    
+
     // Field 4: expiry (嵌套的 Timestamp 消息)
     let timestamp_tag = (1 << 3) | 0;
     let mut timestamp_msg = encode_varint(timestamp_tag);
     timestamp_msg.extend(encode_varint(expiry as u64));
     let field4 = encode_len_delim_field(4, &timestamp_msg);
-    
+
     // 合并所有字段为 OAuthTokenInfo 消息
     [field1, field2, field3, field4].concat()
 }
-

@@ -1,16 +1,18 @@
+use crate::models::AccountType;
+use crate::modules::oauth;
+use std::sync::{Mutex, OnceLock};
+use tauri::Url;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
-use std::sync::{Mutex, OnceLock};
-use tauri::Url;
-use crate::modules::oauth;
 
 struct OAuthFlowState {
     auth_url: String,
     #[allow(dead_code)]
     redirect_uri: String,
     state: String,
+    account_type: AccountType,
     cancel_tx: watch::Sender<bool>,
     code_tx: mpsc::Sender<Result<String, String>>,
     code_rx: Option<mpsc::Receiver<Result<String, String>>>,
@@ -43,8 +45,10 @@ fn oauth_fail_html() -> &'static str {
     </html>"
 }
 
-async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Result<String, String> {
-
+async fn ensure_oauth_flow_prepared(
+    app_handle: Option<tauri::AppHandle>,
+    account_type: AccountType,
+) -> Result<String, String> {
     // Return URL if flow already exists and is still "fresh" (receiver hasn't been taken)
     if let Ok(mut state) = get_oauth_flow_state().lock() {
         if let Some(s) = state.as_mut() {
@@ -121,7 +125,7 @@ async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Res
     };
 
     let state_str = uuid::Uuid::new_v4().to_string();
-    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str);
+    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str, account_type);
 
     // Cancellation signal (supports multiple consumers)
     let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -146,14 +150,18 @@ async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Res
                 let mut buffer = [0u8; 4096];
                 let bytes_read = stream.read(&mut buffer).await.unwrap_or(0);
                 let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-                
+
                 // [FIX #931/850/778] More robust parsing and detailed logging
                 let query_params = request
                     .lines()
                     .next()
                     .and_then(|line| {
                         let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 { Some(parts[1]) } else { None }
+                        if parts.len() >= 2 {
+                            Some(parts[1])
+                        } else {
+                            None
+                        }
                     })
                     .and_then(|path| {
                         // Use a dummy base for parsing; redirect_uri is already set to localhost
@@ -163,8 +171,11 @@ async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Res
                         let mut code = None;
                         let mut state = None;
                         for (k, v) in url.query_pairs() {
-                            if k == "code" { code = Some(v.to_string()); }
-                            else if k == "state" { state = Some(v.to_string()); }
+                            if k == "code" {
+                                code = Some(v.to_string());
+                            } else if k == "state" {
+                                state = Some(v.to_string());
+                            }
                         }
                         (code, state)
                     });
@@ -196,16 +207,23 @@ async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Res
 
                 let (result, response_html) = match (code, state_valid) {
                     (Some(code), true) => {
-                        crate::modules::logger::log_info("Successfully captured OAuth code from IPv4 listener");
+                        crate::modules::logger::log_info(
+                            "Successfully captured OAuth code from IPv4 listener",
+                        );
                         (Ok(code), oauth_success_html())
-                    },
+                    }
                     (Some(_), false) => {
-                        crate::modules::logger::log_error("OAuth callback state mismatch (CSRF protection)");
+                        crate::modules::logger::log_error(
+                            "OAuth callback state mismatch (CSRF protection)",
+                        );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
-                    },
-                    (None, _) => (Err("Failed to get Authorization Code in callback".to_string()), oauth_fail_html()),
+                    }
+                    (None, _) => (
+                        Err("Failed to get Authorization Code in callback".to_string()),
+                        oauth_fail_html(),
+                    ),
                 };
-                
+
                 let _ = stream.write_all(response_html.as_bytes()).await;
                 let _ = stream.flush().await;
 
@@ -230,23 +248,28 @@ async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Res
                 let mut buffer = [0u8; 4096];
                 let bytes_read = stream.read(&mut buffer).await.unwrap_or(0);
                 let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-                
+
                 let query_params = request
                     .lines()
                     .next()
                     .and_then(|line| {
                         let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 { Some(parts[1]) } else { None }
+                        if parts.len() >= 2 {
+                            Some(parts[1])
+                        } else {
+                            None
+                        }
                     })
-                    .and_then(|path| {
-                        Url::parse(&format!("http://localhost{}", path)).ok()
-                    })
+                    .and_then(|path| Url::parse(&format!("http://localhost{}", path)).ok())
                     .map(|url| {
                         let mut code = None;
                         let mut state = None;
                         for (k, v) in url.query_pairs() {
-                            if k == "code" { code = Some(v.to_string()); }
-                            else if k == "state" { state = Some(v.to_string()); }
+                            if k == "code" {
+                                code = Some(v.to_string());
+                            } else if k == "state" {
+                                state = Some(v.to_string());
+                            }
                         }
                         (code, state)
                     });
@@ -278,16 +301,23 @@ async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Res
 
                 let (result, response_html) = match (code, state_valid) {
                     (Some(code), true) => {
-                        crate::modules::logger::log_info("Successfully captured OAuth code from IPv6 listener");
+                        crate::modules::logger::log_info(
+                            "Successfully captured OAuth code from IPv6 listener",
+                        );
                         (Ok(code), oauth_success_html())
-                    },
+                    }
                     (Some(_), false) => {
-                        crate::modules::logger::log_error("OAuth callback state mismatch (IPv6 CSRF protection)");
+                        crate::modules::logger::log_error(
+                            "OAuth callback state mismatch (IPv6 CSRF protection)",
+                        );
                         (Err("OAuth state mismatch".to_string()), oauth_fail_html())
-                    },
-                    (None, _) => (Err("Failed to get Authorization Code in callback".to_string()), oauth_fail_html()),
+                    }
+                    (None, _) => (
+                        Err("Failed to get Authorization Code in callback".to_string()),
+                        oauth_fail_html(),
+                    ),
                 };
-                
+
                 let _ = stream.write_all(response_html.as_bytes()).await;
                 let _ = stream.flush().await;
 
@@ -306,6 +336,7 @@ async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Res
             auth_url: auth_url.clone(),
             redirect_uri,
             state: state_str,
+            account_type,
             cancel_tx,
             code_tx,
             code_rx: Some(code_rx),
@@ -322,8 +353,21 @@ async fn ensure_oauth_flow_prepared(app_handle: Option<tauri::AppHandle>) -> Res
 }
 
 /// Pre-generate OAuth URL (does not open browser, does not block waiting for callback)
-pub async fn prepare_oauth_url(app_handle: Option<tauri::AppHandle>) -> Result<String, String> {
-    ensure_oauth_flow_prepared(app_handle).await
+pub async fn prepare_oauth_url(
+    app_handle: Option<tauri::AppHandle>,
+    account_type: AccountType,
+) -> Result<String, String> {
+    ensure_oauth_flow_prepared(app_handle, account_type).await
+}
+
+/// Get the account_type of the current OAuth flow (if any)
+pub fn get_current_flow_account_type() -> AccountType {
+    if let Ok(lock) = get_oauth_flow_state().lock() {
+        if let Some(s) = lock.as_ref() {
+            return s.account_type;
+        }
+    }
+    AccountType::Antigravity
 }
 
 /// Cancel current OAuth flow
@@ -337,9 +381,12 @@ pub fn cancel_oauth_flow() {
 }
 
 /// Start OAuth flow and wait for callback, then exchange token
-pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>) -> Result<oauth::TokenResponse, String> {
+pub async fn start_oauth_flow(
+    app_handle: Option<tauri::AppHandle>,
+    account_type: AccountType,
+) -> Result<oauth::TokenResponse, String> {
     // Ensure URL + listener are ready (this way if the user authorizes first, it won't get stuck)
-    let auth_url = ensure_oauth_flow_prepared(app_handle.clone()).await?;
+    let auth_url = ensure_oauth_flow_prepared(app_handle.clone(), account_type).await?;
 
     if let Some(h) = app_handle {
         // Open default browser
@@ -350,7 +397,7 @@ pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>) -> Result<oa
     }
 
     // Take code_rx to wait for it
-    let (mut code_rx, redirect_uri) = {
+    let (mut code_rx, redirect_uri, flow_account_type) = {
         let mut lock = get_oauth_flow_state()
             .lock()
             .map_err(|_| "OAuth state lock corrupted".to_string())?;
@@ -361,7 +408,7 @@ pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>) -> Result<oa
             .code_rx
             .take()
             .ok_or_else(|| "OAuth authorization already in progress".to_string())?;
-        (rx, state.redirect_uri.clone())
+        (rx, state.redirect_uri.clone(), state.account_type)
     };
 
     // Wait for code (if user has already authorized, this returns immediately)
@@ -377,18 +424,21 @@ pub async fn start_oauth_flow(app_handle: Option<tauri::AppHandle>) -> Result<oa
         *lock = None;
     }
 
-    oauth::exchange_code(&code, &redirect_uri).await
+    oauth::exchange_code(&code, &redirect_uri, flow_account_type).await
 }
 
 /// Завершить OAuth flow без открытия браузера.
 /// Предполагается, что пользователь открыл ссылку вручную (или ранее была открыта),
 /// а мы только ждём callback и обмениваем code на token.
-pub async fn complete_oauth_flow(app_handle: Option<tauri::AppHandle>) -> Result<oauth::TokenResponse, String> {
+pub async fn complete_oauth_flow(
+    app_handle: Option<tauri::AppHandle>,
+    account_type: AccountType,
+) -> Result<oauth::TokenResponse, String> {
     // Ensure URL + listeners exist
-    let _ = ensure_oauth_flow_prepared(app_handle).await?;
+    let _ = ensure_oauth_flow_prepared(app_handle, account_type).await?;
 
     // Take receiver to wait for code
-    let (mut code_rx, redirect_uri) = {
+    let (mut code_rx, redirect_uri, flow_account_type) = {
         let mut lock = get_oauth_flow_state()
             .lock()
             .map_err(|_| "OAuth state lock corrupted".to_string())?;
@@ -399,7 +449,7 @@ pub async fn complete_oauth_flow(app_handle: Option<tauri::AppHandle>) -> Result
             .code_rx
             .take()
             .ok_or_else(|| "OAuth authorization already in progress".to_string())?;
-        (rx, state.redirect_uri.clone())
+        (rx, state.redirect_uri.clone(), state.account_type)
     };
 
     let code = match code_rx.recv().await {
@@ -412,13 +462,16 @@ pub async fn complete_oauth_flow(app_handle: Option<tauri::AppHandle>) -> Result
         *lock = None;
     }
 
-    oauth::exchange_code(&code, &redirect_uri).await
+    oauth::exchange_code(&code, &redirect_uri, flow_account_type).await
 }
 
 /// Manually submit an OAuth code to complete the flow.
 /// This is used when the user manually copies the code/URL from the browser
 /// because the localhost callback couldn't be reached (e.g. in Docker/remote).
-pub async fn submit_oauth_code(code_input: String, state_input: Option<String>) -> Result<(), String> {
+pub async fn submit_oauth_code(
+    code_input: String,
+    state_input: Option<String>,
+) -> Result<(), String> {
     let tx = {
         let lock = get_oauth_flow_state().lock().map_err(|e| e.to_string())?;
         if let Some(state) = lock.as_ref() {
@@ -449,25 +502,31 @@ pub async fn submit_oauth_code(code_input: String, state_input: Option<String>) 
     };
 
     crate::modules::logger::log_info("Received manual OAuth code submission");
-    
+
     // Send to the channel
-    tx.send(Ok(code)).await.map_err(|_| "Failed to send code to OAuth flow (receiver dropped)".to_string())?;
-    
+    tx.send(Ok(code))
+        .await
+        .map_err(|_| "Failed to send code to OAuth flow (receiver dropped)".to_string())?;
+
     Ok(())
 }
 /// Manually prepare an OAuth flow without starting listeners.
 /// Useful for Web/Docker environments where we only need manual code submission.
-pub fn prepare_oauth_flow_manually(redirect_uri: String, state_str: String) -> Result<(String, mpsc::Receiver<Result<String, String>>), String> {
-    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str);
-    
+pub fn prepare_oauth_flow_manually(
+    redirect_uri: String,
+    state_str: String,
+    account_type: AccountType,
+) -> Result<(String, mpsc::Receiver<Result<String, String>>), String> {
+    let auth_url = oauth::get_auth_url(&redirect_uri, &state_str, account_type);
+
     // Check if we can reuse existing state
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
         if let Some(s) = lock.as_mut() {
-             // If we already have a code_rx, we can't easily "steal" it again because it's already returned.
-             // But if this is a NEW request (different state), we should overwrite.
-             // For now, let's just clear and restart to be safe.
-             let _ = s.cancel_tx.send(true);
-             *lock = None;
+            // If we already have a code_rx, we can't easily "steal" it again because it's already returned.
+            // But if this is a NEW request (different state), we should overwrite.
+            // For now, let's just clear and restart to be safe.
+            let _ = s.cancel_tx.send(true);
+            *lock = None;
         }
     }
 
@@ -479,6 +538,7 @@ pub fn prepare_oauth_flow_manually(redirect_uri: String, state_str: String) -> R
             auth_url: auth_url.clone(),
             redirect_uri: redirect_uri.clone(),
             state: state_str,
+            account_type,
             cancel_tx,
             code_tx,
             code_rx: None, // We return it directly

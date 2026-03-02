@@ -1,8 +1,10 @@
 //! 测试 determine_retry_strategy 和 should_rotate_account 的所有分支，
 //! 重点覆盖 404 重试与账号轮换逻辑。
 
+use crate::proxy::handlers::common::{
+    determine_retry_strategy, should_rotate_account, RetryStrategy,
+};
 use std::time::Duration;
-use crate::proxy::handlers::common::{determine_retry_strategy, should_rotate_account, RetryStrategy};
 
 // ===== determine_retry_strategy =====
 
@@ -29,7 +31,13 @@ fn test_retry_strategy_429_no_delay() {
 fn test_retry_strategy_503() {
     let strategy = determine_retry_strategy(503, "", false);
     assert!(
-        matches!(strategy, RetryStrategy::ExponentialBackoff { base_ms: 10000, max_ms: 60000 }),
+        matches!(
+            strategy,
+            RetryStrategy::ExponentialBackoff {
+                base_ms: 10000,
+                max_ms: 60000
+            }
+        ),
         "Expected ExponentialBackoff {{ base_ms: 10000, max_ms: 60000 }}, got {:?}",
         strategy
     );
@@ -39,7 +47,13 @@ fn test_retry_strategy_503() {
 fn test_retry_strategy_529() {
     let strategy = determine_retry_strategy(529, "", false);
     assert!(
-        matches!(strategy, RetryStrategy::ExponentialBackoff { base_ms: 10000, max_ms: 60000 }),
+        matches!(
+            strategy,
+            RetryStrategy::ExponentialBackoff {
+                base_ms: 10000,
+                max_ms: 60000
+            }
+        ),
         "Expected ExponentialBackoff {{ base_ms: 10000, max_ms: 60000 }}, got {:?}",
         strategy
     );

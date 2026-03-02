@@ -69,7 +69,7 @@ impl ContextManager {
         if total_msgs == 0 {
             return false;
         }
-        
+
         let start_protection_idx = total_msgs.saturating_sub(protected_last_n);
         let mut modified = false;
 
@@ -84,7 +84,7 @@ impl ContextManager {
                     let original_len = blocks.len();
                     // Retain only non-Thinking blocks
                     blocks.retain(|b| !matches!(b, ContentBlock::Thinking { .. }));
-                    
+
                     if blocks.len() != original_len {
                         modified = true;
                         debug!(

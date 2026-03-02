@@ -97,7 +97,7 @@ pub async fn handle_audio_transcription(
 
     // 6. 获取 Token 和上游客户端
     let token_manager = state.token_manager;
-    let (access_token, project_id, email, account_id, _wait_ms) = token_manager
+    let (access_token, project_id, email, account_id, _wait_ms, account_type) = token_manager
         .get_token("text", false, None, &model)
         .await
         .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, e))?;
@@ -123,6 +123,7 @@ pub async fn handle_audio_transcription(
             wrapped_body,
             None,
             Some(account_id.as_str()),
+            &account_type,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("上游请求失败: {}", e)))?

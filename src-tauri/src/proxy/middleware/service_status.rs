@@ -1,10 +1,10 @@
+use crate::proxy::server::AppState;
 use axum::{
     extract::{Request, State},
+    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
-    http::StatusCode,
 };
-use crate::proxy::server::AppState;
 
 pub async fn service_status_middleware(
     State(state): State<AppState>,
@@ -12,7 +12,7 @@ pub async fn service_status_middleware(
     next: Next,
 ) -> Response {
     let path = request.uri().path();
-    
+
     // Always allow Admin API and Auth callback
     if path.starts_with("/api/") || path == "/auth/callback" || path == "/health" {
         return next.run(request).await;

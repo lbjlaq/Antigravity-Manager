@@ -1,11 +1,11 @@
+use crate::modules::security_db;
+use crate::proxy::server::AppState;
 use axum::{
     extract::{Request, State},
+    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
-    http::StatusCode,
 };
-use crate::proxy::server::AppState;
-use crate::modules::security_db;
 
 /// IP 黑白名单过滤中间件
 pub async fn ip_filter_middleware(
@@ -15,11 +15,11 @@ pub async fn ip_filter_middleware(
 ) -> Response {
     // 提取客户端 IP
     let client_ip = extract_client_ip(&request);
-    
+
     if let Some(ip) = &client_ip {
         // 读取安全配置
         let security_config = state.security.read().await;
-        
+
         // 1. 检查白名单 (如果启用白名单模式,只允许白名单 IP)
         if security_config.security_monitor.whitelist.enabled {
             match security_db::is_ip_in_whitelist(ip) {
@@ -42,7 +42,11 @@ pub async fn ip_filter_middleware(
             }
         } else {
             // 白名单优先模式: 如果在白名单中,跳过黑名单检查
-            if security_config.security_monitor.whitelist.whitelist_priority {
+            if security_config
+                .security_monitor
+                .whitelist
+                .whitelist_priority
+            {
                 match security_db::is_ip_in_whitelist(ip) {
                     Ok(true) => {
                         tracing::debug!("[IP Filter] IP {} is in whitelist (priority mode), skipping blacklist check", ip);
@@ -63,24 +67,30 @@ pub async fn ip_filter_middleware(
             match security_db::get_blacklist_entry_for_ip(ip) {
                 Ok(Some(entry)) => {
                     tracing::warn!("[IP Filter] IP {} is in blacklist, blocking", ip);
-                    
+
                     // 构建详细的封禁消息
-                    let reason = entry.reason.as_deref().unwrap_or("Malicious activity detected");
+                    let reason = entry
+                        .reason
+                        .as_deref()
+                        .unwrap_or("Malicious activity detected");
                     let ban_type = if let Some(expires_at) = entry.expires_at {
                         let now = chrono::Utc::now().timestamp();
                         let remaining_seconds = expires_at - now;
-                        
+
                         if remaining_seconds > 0 {
                             let hours = remaining_seconds / 3600;
                             let minutes = (remaining_seconds % 3600) / 60;
-                            
+
                             if hours > 24 {
                                 let days = hours / 24;
                                 format!("Temporary ban. Please try again after {} day(s).", days)
                             } else if hours > 0 {
                                 format!("Temporary ban. Please try again after {} hour(s) and {} minute(s).", hours, minutes)
                             } else {
-                                format!("Temporary ban. Please try again after {} minute(s).", minutes)
+                                format!(
+                                    "Temporary ban. Please try again after {} minute(s).",
+                                    minutes
+                                )
                             }
                         } else {
                             "Temporary ban (expired, will be removed soon).".to_string()
@@ -88,13 +98,10 @@ pub async fn ip_filter_middleware(
                     } else {
                         "Permanent ban.".to_string()
                     };
-                    
-                    let detailed_message = format!(
-                        "Access denied. Reason: {}. {}",
-                        reason,
-                        ban_type
-                    );
-                    
+
+                    let detailed_message =
+                        format!("Access denied. Reason: {}. {}", reason, ban_type);
+
                     // 记录被封禁的访问日志
                     let log = security_db::IpAccessLog {
                         id: uuid::Uuid::new_v4().to_string(),
@@ -114,17 +121,14 @@ pub async fn ip_filter_middleware(
                         block_reason: Some(format!("IP in blacklist: {}", reason)),
                         username: None,
                     };
-                    
+
                     tokio::spawn(async move {
                         if let Err(e) = security_db::save_ip_access_log(&log) {
                             tracing::error!("[IP Filter] Failed to save blocked access log: {}", e);
                         }
                     });
-                    
-                    return create_blocked_response(
-                        ip,
-                        &detailed_message,
-                    );
+
+                    return create_blocked_response(ip, &detailed_message);
                 }
                 Ok(None) => {
                     // 不在黑名单中,放行
@@ -179,7 +183,7 @@ fn create_blocked_response(ip: &str, message: &str) -> Response {
             "ip": ip,
         }
     });
-    
+
     (
         StatusCode::FORBIDDEN,
         [(axum::http::header::CONTENT_TYPE, "application/json")],

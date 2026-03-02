@@ -9,6 +9,7 @@ pub fn wrap_request(
     account_id: Option<&str>,
     session_id: Option<&str>,
     max_output_tokens_cap: Option<u64>, // [NEW] 动态或静态默认限额，优先级：动态账号数据 > 静态默认表 > 131072
+    account_type: crate::models::AccountType, // [NEW] 区分 GeminiCLI 与 Antigravity 的请求体格式
 ) -> Value {
     // 优先使用传入的 mapped_model，其次尝试从 body 获取
     let original_model = body
@@ -24,7 +25,8 @@ pub fn wrap_request(
     };
 
     // [ADDED v4.1.24] 计算 message_count 供 requestId 使用
-    let message_count = body.get("contents")
+    let message_count = body
+        .get("contents")
         .and_then(|c| c.as_array())
         .map(|a| a.len())
         .unwrap_or(1);
@@ -130,7 +132,10 @@ pub fn wrap_request(
             if is_claude {
                 has_thinking = inner_request.get("thinking").is_some();
             } else {
-                if let Some(gc) = inner_request.get("generationConfig").and_then(|v| v.as_object()) {
+                if let Some(gc) = inner_request
+                    .get("generationConfig")
+                    .and_then(|v| v.as_object())
+                {
                     has_thinking = gc.get("thinkingConfig").is_some();
                 }
             }
@@ -144,7 +149,7 @@ pub fn wrap_request(
                 // [FIX] 统一注入到 generationConfig.thinkingConfig
                 // Claude 模型使用 16000 预算，Gemini 使用 24576
                 let default_budget = if is_claude { 16000 } else { 24576 };
-                
+
                 let gen_config = inner_request
                     .as_object_mut()
                     .unwrap()
@@ -152,7 +157,7 @@ pub fn wrap_request(
                     .or_insert(json!({}))
                     .as_object_mut()
                     .unwrap();
-                
+
                 gen_config.insert(
                     "thinkingConfig".to_string(),
                     json!({
@@ -184,7 +189,11 @@ pub fn wrap_request(
         // Clients (e.g. OpenClaw, Cline) may send thinkingLevel which v1internal does not accept,
         // causing 400 INVALID_ARGUMENT. Convert before any budget processing below.
         if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
-            if let Some(level) = thinking_config.get("thinkingLevel").and_then(|v| v.as_str()).map(|s| s.to_uppercase()) {
+            if let Some(level) = thinking_config
+                .get("thinkingLevel")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_uppercase())
+            {
                 let budget: i64 = match level.as_str() {
                     "NONE" => 0,
                     "LOW" => 4096,
@@ -194,7 +203,8 @@ pub fn wrap_request(
                 };
                 tracing::info!(
                     "[Gemini-Wrap] Converting thinkingLevel '{}' to thinkingBudget {}",
-                    level, budget
+                    level,
+                    budget
                 );
                 if let Some(tc) = thinking_config.as_object_mut() {
                     tc.remove("thinkingLevel");
@@ -251,12 +261,18 @@ pub fn wrap_request(
         // [FIX #1825] Handle adaptive fallback (incl. -1 and thinkingLevel)
         let thinking_config_opt = gen_config.get("thinkingConfig");
         let is_adaptive = thinking_config_opt.map_or(false, |t| {
-            t.get("thinkingLevel").is_some() || t.get("thinkingBudget").and_then(|v| v.as_i64()) == Some(-1)
-        }) || (thinking_config_opt.and_then(|t| t.get("thinkingBudget").and_then(|v| v.as_u64())) == Some(32768) && is_claude);
+            t.get("thinkingLevel").is_some()
+                || t.get("thinkingBudget").and_then(|v| v.as_i64()) == Some(-1)
+        }) || (thinking_config_opt
+            .and_then(|t| t.get("thinkingBudget").and_then(|v| v.as_u64()))
+            == Some(32768)
+            && is_claude);
 
         if let Some(thinking_config) = gen_config.get("thinkingConfig") {
-            let budget_opt = thinking_config.get("thinkingBudget").and_then(|v| v.as_i64());
-            
+            let budget_opt = thinking_config
+                .get("thinkingBudget")
+                .and_then(|v| v.as_i64());
+
             // For adaptive or dynamic mode, we only need to ensure max tokens is large.
             // For fixed budget, we must satisfy maxOutputTokens > thinkingBudget.
             let current_max = gen_config
@@ -266,7 +282,7 @@ pub fn wrap_request(
 
             if is_adaptive {
                 if current_max.map_or(true, |m| m < 131072) {
-                     gen_config.insert("maxOutputTokens".to_string(), json!(131072));
+                    gen_config.insert("maxOutputTokens".to_string(), json!(131072));
                 }
             } else if let Some(budget_i64) = budget_opt {
                 if budget_i64 > 0 {
@@ -416,23 +432,54 @@ pub fn wrap_request(
                 // [NEW] 根据全局配置决定是否保留 thinkingConfig
                 let image_thinking_mode = crate::proxy::config::get_image_thinking_mode();
                 tracing::debug!("[Gemini-Wrap] Image thinking mode: {}", image_thinking_mode);
-                
+
                 if image_thinking_mode == "disabled" {
                     // [FIX] Explicitly disable thinking instead of just removing the config
                     // Removing it might cause the model to fallback to default (which might be ON)
-                    gen_obj.insert("thinkingConfig".to_string(), json!({
-                        "includeThoughts": false
-                    }));
-                    tracing::debug!("[Gemini-Wrap] Image thinking mode disabled: set includeThoughts=false");
+                    gen_obj.insert(
+                        "thinkingConfig".to_string(),
+                        json!({
+                            "includeThoughts": false
+                        }),
+                    );
+                    tracing::debug!(
+                        "[Gemini-Wrap] Image thinking mode disabled: set includeThoughts=false"
+                    );
                 }
-                
+
                 gen_obj.remove("responseMimeType");
                 gen_obj.remove("responseModalities"); // Cherry Studio sends this, might conflict
                 gen_obj.insert("imageConfig".to_string(), image_config);
             }
         }
+    } else if account_type == crate::models::AccountType::GeminiCli {
+        // [GeminiCLI] 不注入 Antigravity 身份，保持客户端原始 systemInstruction
+        // 仅补全 role 字段（v1internal 要求）
+        if let Some(system_instruction) = inner_request.get_mut("systemInstruction") {
+            if let Some(obj) = system_instruction.as_object_mut() {
+                if !obj.contains_key("role") {
+                    obj.insert("role".to_string(), json!("user"));
+                }
+            }
+        }
+        // [GeminiCLI] 仅注入全局系统提示词（如果用户配置了的话）
+        let global_prompt_config = crate::proxy::config::get_global_system_prompt();
+        if global_prompt_config.enabled && !global_prompt_config.content.trim().is_empty() {
+            if let Some(system_instruction) = inner_request.get_mut("systemInstruction") {
+                if let Some(parts) = system_instruction.get_mut("parts") {
+                    if let Some(parts_array) = parts.as_array_mut() {
+                        parts_array.push(json!({"text": global_prompt_config.content}));
+                    }
+                }
+            } else {
+                inner_request["systemInstruction"] = json!({
+                    "role": "user",
+                    "parts": [{"text": global_prompt_config.content}]
+                });
+            }
+        }
     } else {
-        // [NEW] 只在非图像生成模式下注入 Antigravity 身份 (原始简化版)
+        // [Antigravity] 注入 Antigravity 身份 (原始简化版)
         let antigravity_identity = "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\n\
         You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\n\
         **Absolute paths only**\n\
@@ -502,20 +549,33 @@ pub fn wrap_request(
 
     // [ADDED v4.1.24] 注入基于账号的稳定 sessionId
     if let Some(account_id_str) = account_id {
-        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(account_id_str));
+        inner_request["sessionId"] = json!(crate::proxy::common::session::derive_session_id(
+            account_id_str
+        ));
     }
 
-    let sid = session_id.unwrap_or("default");
-    let final_request = json!({
-        "project": project_id,
-        // [CHANGED v4.1.24] Structured requestId to match official format
-        "requestId": format!("agent/antigravity/{}/{}", &sid[..sid.len().min(8)], message_count),
-        "request": inner_request,
-        "model": config.final_model,
-        "userAgent": "antigravity",
-        // [CHANGED v4.1.24] Use "agent" for all non-image requests
-        "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" }
-    });
+    let final_request = if account_type == crate::models::AccountType::GeminiCli {
+        // [GeminiCLI] 最小化 payload，与 gcli2api 保持一致
+        // gcli2api 只发送 { model, project, request }
+        json!({
+            "model": config.final_model,
+            "project": project_id,
+            "request": inner_request
+        })
+    } else {
+        // [Antigravity] 完整 payload
+        let sid = session_id.unwrap_or("default");
+        json!({
+            "project": project_id,
+            // [CHANGED v4.1.24] Structured requestId to match official format
+            "requestId": format!("agent/antigravity/{}/{}", &sid[..sid.len().min(8)], message_count),
+            "request": inner_request,
+            "model": config.final_model,
+            "userAgent": "antigravity",
+            // [CHANGED v4.1.24] Use "agent" for all non-image requests
+            "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" }
+        })
+    };
 
     final_request
 }
@@ -548,7 +608,7 @@ mod test_fixes {
             }]
         });
 
-        let result = wrap_request(&body, "proj", "gemini-pro", Some(session_id), None);
+        let result = wrap_request(&body, "proj", "gemini-pro", Some(session_id), None, crate::models::AccountType::Antigravity);
         let injected_sig = result["request"]["contents"][0]["parts"][0]["thoughtSignature"]
             .as_str()
             .unwrap();
@@ -612,7 +672,7 @@ mod tests {
             "contents": [{"role": "user", "parts": [{"text": "Hi"}]}]
         });
 
-        let result = wrap_request(&body, "test-project", "gemini-2.5-flash", None, None);
+        let result = wrap_request(&body, "test-project", "gemini-2.5-flash", None, None, crate::models::AccountType::Antigravity);
         assert_eq!(result["project"], "test-project");
         assert_eq!(result["model"], "gemini-2.5-flash");
         assert!(result["requestId"].as_str().unwrap().starts_with("agent-"));
@@ -638,7 +698,7 @@ mod tests {
             "messages": []
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None);
+        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None, crate::models::AccountType::Antigravity);
 
         // 验证 systemInstruction
         let sys = result
@@ -651,7 +711,9 @@ mod tests {
     #[test]
     fn test_gemini_flash_thinking_budget_capping() {
         // Ensure default config (Auto mode)
-        crate::proxy::config::update_thinking_budget_config(crate::proxy::config::ThinkingBudgetConfig::default());
+        crate::proxy::config::update_thinking_budget_config(
+            crate::proxy::config::ThinkingBudgetConfig::default(),
+        );
 
         let body = json!({
             "model": "gemini-2.0-flash-thinking-exp",
@@ -664,7 +726,14 @@ mod tests {
         });
 
         // Test with Flash model
-        let result = wrap_request(&body, "test-proj", "gemini-2.0-flash-thinking-exp", None, None);
+        let result = wrap_request(
+            &body,
+            "test-proj",
+            "gemini-2.0-flash-thinking-exp",
+            None,
+            None,
+            crate::models::AccountType::Antigravity,
+        );
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
         let budget = gen_config["thinkingConfig"]["thinkingBudget"]
@@ -684,7 +753,7 @@ mod tests {
                 }
             }
         });
-        let result_pro = wrap_request(&body_pro, "test-proj", "gemini-2.0-pro-exp", None, None);
+        let result_pro = wrap_request(&body_pro, "test-proj", "gemini-2.0-pro-exp", None, None, crate::models::AccountType::Antigravity);
         let budget_pro = result_pro["request"]["generationConfig"]["thinkingConfig"]
             ["thinkingBudget"]
             .as_u64()
@@ -692,8 +761,6 @@ mod tests {
         // [FIX #1592] Pro models now also capped to 24576 in wrap_request logic
         assert_eq!(budget_pro, 24576);
     }
-
-
 
     #[test]
     fn test_image_thinking_mode_disabled() {
@@ -708,10 +775,10 @@ mod tests {
             "contents": [{"role": "user", "parts": [{"text": "Draw a cat"}]}]
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-image-2k", None, None);
+        let result = wrap_request(&body, "test-proj", "gemini-3-pro-image-2k", None, None, crate::models::AccountType::Antigravity);
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
-        
+
         // 3. Verify thinkingConfig has includeThoughts: false
         let thinking_config = gen_config.get("thinkingConfig").unwrap();
         assert_eq!(thinking_config["includeThoughts"], false);
@@ -730,7 +797,7 @@ mod tests {
             }
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None);
+        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None, crate::models::AccountType::Antigravity);
         let sys = result
             .get("request")
             .unwrap()
@@ -761,7 +828,7 @@ mod tests {
             }
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None);
+        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None, crate::models::AccountType::Antigravity);
         let sys = result
             .get("request")
             .unwrap()
@@ -793,7 +860,7 @@ mod tests {
             "contents": [{"parts": parts}]
         });
 
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-image", None, None);
+        let result = wrap_request(&body, "test-proj", "gemini-3-pro-image", None, None, crate::models::AccountType::Antigravity);
 
         let request = result.get("request").unwrap();
         let contents = request.get("contents").unwrap().as_array().unwrap();
@@ -828,7 +895,7 @@ mod tests {
         });
 
         // Test with Pro model
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None, None);
+        let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None, None, crate::models::AccountType::Antigravity);
         let req = result.get("request").unwrap();
         let gen_config = req.get("generationConfig").unwrap();
 
@@ -856,7 +923,7 @@ mod tests {
         fn test_claude_no_root_thinking_injection() {
             // 验证 Claude 模型不会在根目录注入 thinking，而是注入到 generationConfig.thinkingConfig
             // 并且 budget 默认为 16000
-            
+
             // 使用 Auto 模式避免干扰
             crate::proxy::config::update_thinking_budget_config(
                 crate::proxy::config::ThinkingBudgetConfig {
@@ -867,23 +934,35 @@ mod tests {
             );
 
             let body = json!({
-                "model": "claude-3-7-sonnet-thinking", 
+                "model": "claude-3-7-sonnet-thinking",
                 "messages": [{"role": "user", "content": "hi"}]
             });
 
-            let result = wrap_request(&body, "proj", "claude-3-7-sonnet-thinking", None, None);
+            let result = wrap_request(&body, "proj", "claude-3-7-sonnet-thinking", None, None, crate::models::AccountType::Antigravity);
             let req = result.get("request").unwrap();
 
             // 1. 确保根目录没有 thinking
-            assert!(req.get("thinking").is_none(), "Root level 'thinking' should NOT be present");
+            assert!(
+                req.get("thinking").is_none(),
+                "Root level 'thinking' should NOT be present"
+            );
 
             // 2. 确保 generationConfig.thinkingConfig 存在
-            let gen_config = req.get("generationConfig").expect("generationConfig should be present");
-            let thinking_config = gen_config.get("thinkingConfig").expect("thinkingConfig should be injected");
+            let gen_config = req
+                .get("generationConfig")
+                .expect("generationConfig should be present");
+            let thinking_config = gen_config
+                .get("thinkingConfig")
+                .expect("thinkingConfig should be injected");
 
             // 3. 验证 Claude 默认预算为 16000
-            let budget = thinking_config["thinkingBudget"].as_u64().expect("thinkingBudget should be a number");
-            assert_eq!(budget, 16000, "Claude default thinking budget should be 16000");
+            let budget = thinking_config["thinkingBudget"]
+                .as_u64()
+                .expect("thinkingBudget should be a number");
+            assert_eq!(
+                budget, 16000,
+                "Claude default thinking budget should be 16000"
+            );
         }
 
         #[test]
@@ -894,92 +973,99 @@ mod tests {
                 "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
             });
 
-            let result = wrap_request(&body, "proj", "gemini-2.0-flash-thinking-exp", None, None);
+            let result = wrap_request(&body, "proj", "gemini-2.0-flash-thinking-exp", None, None, crate::models::AccountType::Antigravity);
             let req = result.get("request").unwrap();
             let gen_config = req.get("generationConfig").unwrap();
             let thinking_config = gen_config.get("thinkingConfig").unwrap();
 
             let budget = thinking_config["thinkingBudget"].as_u64().unwrap();
-            assert_eq!(budget, 24576, "Gemini default thinking budget should be 24576");
+            assert_eq!(
+                budget, 24576,
+                "Gemini default thinking budget should be 24576"
+            );
         }
     }
 }
 
-    #[test]
-    fn test_gemini_pro_auto_inject_thinking() {
-        // Reset thinking budget to auto mode at the start to avoid interference from parallel tests
-        crate::proxy::config::update_thinking_budget_config(
-            crate::proxy::config::ThinkingBudgetConfig {
-                mode: crate::proxy::config::ThinkingBudgetMode::Auto,
-                custom_value: 24576,
-                effort: None,
-            },
-        );
+#[test]
+fn test_gemini_pro_auto_inject_thinking() {
+    // Reset thinking budget to auto mode at the start to avoid interference from parallel tests
+    crate::proxy::config::update_thinking_budget_config(
+        crate::proxy::config::ThinkingBudgetConfig {
+            mode: crate::proxy::config::ThinkingBudgetMode::Auto,
+            custom_value: 24576,
+            effort: None,
+        },
+    );
 
-        // Request WITHOUT thinkingConfig
-        let body = json!({
-            "model": "gemini-3-pro-preview",
-            // No generationConfig or empty one
-            "generationConfig": {}
-        });
+    // Request WITHOUT thinkingConfig
+    let body = json!({
+        "model": "gemini-3-pro-preview",
+        // No generationConfig or empty one
+        "generationConfig": {}
+    });
 
-        // Test with Pro-preview model (should NOT auto-inject to avoid 400)
-        let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None, None);
-        let req = result.get("request").unwrap();
-        let gen_config = req.get("generationConfig").unwrap();
+    // Test with Pro-preview model (should NOT auto-inject to avoid 400)
+    let result = wrap_request(&body, "test-proj", "gemini-3-pro-preview", None, None, crate::models::AccountType::Antigravity);
+    let req = result.get("request").unwrap();
+    let gen_config = req.get("generationConfig").unwrap();
 
-        // Should NOT have auto-injected thinkingConfig
-        assert!(
-            gen_config.get("thinkingConfig").is_none(),
-            "Should NOT auto-inject thinkingConfig for gemini-3-pro-preview to avoid 400 error"
-        );
+    // Should NOT have auto-injected thinkingConfig
+    assert!(
+        gen_config.get("thinkingConfig").is_none(),
+        "Should NOT auto-inject thinkingConfig for gemini-3-pro-preview to avoid 400 error"
+    );
 
-        // Test with standard gemini-3-pro (non-preview)
-        let body_std = json!({
-            "model": "gemini-3-pro",
-            "generationConfig": {}
-        });
-        let result_std = wrap_request(&body_std, "test-proj", "gemini-3-pro", None, None);
-        let gen_config_std = result_std.get("request").unwrap().get("generationConfig").unwrap();
-        
-        assert!(
-            gen_config_std.get("thinkingConfig").is_some(),
-            "Should still auto-inject thinkingConfig for standard gemini-3-pro"
-        );
-    }
+    // Test with standard gemini-3-pro (non-preview)
+    let body_std = json!({
+        "model": "gemini-3-pro",
+        "generationConfig": {}
+    });
+    let result_std = wrap_request(&body_std, "test-proj", "gemini-3-pro", None, None, crate::models::AccountType::Antigravity);
+    let gen_config_std = result_std
+        .get("request")
+        .unwrap()
+        .get("generationConfig")
+        .unwrap();
 
-    #[test]
-    fn test_openai_image_params_support() {
-        // Test Case 1: Standard Size + Quality (HD/4K)
-        let body_1 = json!({
-            "model": "gemini-3-pro-image",
-            "size": "1920x1080",
-            "quality": "hd",
-            "prompt": "Test"
-        });
+    assert!(
+        gen_config_std.get("thinkingConfig").is_some(),
+        "Should still auto-inject thinkingConfig for standard gemini-3-pro"
+    );
+}
 
-        let result_1 = wrap_request(&body_1, "test-proj", "gemini-3-pro-image", None, None);
-        let req_1 = result_1.get("request").unwrap();
-        let gen_config_1 = req_1.get("generationConfig").unwrap();
-        let image_config_1 = gen_config_1.get("imageConfig").unwrap();
+#[test]
+fn test_openai_image_params_support() {
+    // Test Case 1: Standard Size + Quality (HD/4K)
+    let body_1 = json!({
+        "model": "gemini-3-pro-image",
+        "size": "1920x1080",
+        "quality": "hd",
+        "prompt": "Test"
+    });
 
-        assert_eq!(image_config_1["aspectRatio"], "16:9");
-        assert_eq!(image_config_1["imageSize"], "4K");
+    let result_1 = wrap_request(&body_1, "test-proj", "gemini-3-pro-image", None, None, crate::models::AccountType::Antigravity);
+    let req_1 = result_1.get("request").unwrap();
+    let gen_config_1 = req_1.get("generationConfig").unwrap();
+    let image_config_1 = gen_config_1.get("imageConfig").unwrap();
 
-        // Test Case 2: Aspect Ratio String + Standard Quality
-        let body_2 = json!({
-            "model": "gemini-3-pro-image",
-            "size": "1:1",
-            "quality": "standard",
-             "prompt": "Test"
-        });
+    assert_eq!(image_config_1["aspectRatio"], "16:9");
+    assert_eq!(image_config_1["imageSize"], "4K");
 
-        let result_2 = wrap_request(&body_2, "test-proj", "gemini-3-pro-image", None, None);
-        let req_2 = result_2.get("request").unwrap();
-        let image_config_2 = req_2["generationConfig"]["imageConfig"]
-            .as_object()
-            .unwrap();
+    // Test Case 2: Aspect Ratio String + Standard Quality
+    let body_2 = json!({
+        "model": "gemini-3-pro-image",
+        "size": "1:1",
+        "quality": "standard",
+         "prompt": "Test"
+    });
 
-        assert_eq!(image_config_2["aspectRatio"], "1:1");
-        assert_eq!(image_config_2["imageSize"], "1K");
-    }
+    let result_2 = wrap_request(&body_2, "test-proj", "gemini-3-pro-image", None, None, crate::models::AccountType::Antigravity);
+    let req_2 = result_2.get("request").unwrap();
+    let image_config_2 = req_2["generationConfig"]["imageConfig"]
+        .as_object()
+        .unwrap();
+
+    assert_eq!(image_config_2["aspectRatio"], "1:1");
+    assert_eq!(image_config_2["imageSize"], "1K");
+}

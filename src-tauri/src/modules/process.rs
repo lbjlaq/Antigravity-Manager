@@ -573,7 +573,9 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
                 .and_then(|c| c.antigravity_executable)
                 .and_then(|p| std::path::PathBuf::from(p).canonicalize().ok());
 
-            crate::modules::logger::log_info("Analyzing Linux process list to identify main process:");
+            crate::modules::logger::log_info(
+                "Analyzing Linux process list to identify main process:",
+            );
             for pid_u32 in &pids {
                 let pid = sysinfo::Pid::from_u32(*pid_u32);
                 if let Some(process) = system.process(pid) {
@@ -643,7 +645,10 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
 
             // Phase 1: Graceful exit (SIGTERM)
             if let Some(pid) = main_pid {
-                crate::modules::logger::log_info(&format!("Attempting to gracefully close main process {} (SIGTERM)", pid));
+                crate::modules::logger::log_info(&format!(
+                    "Attempting to gracefully close main process {} (SIGTERM)",
+                    pid
+                ));
                 let _ = Command::new("kill")
                     .args(["-15", &pid.to_string()])
                     .output();
@@ -693,7 +698,9 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
 
     // Final check
     if is_antigravity_running() {
-        return Err("Unable to close Antigravity process, please close manually and retry".to_string());
+        return Err(
+            "Unable to close Antigravity process, please close manually and retry".to_string(),
+        );
     }
 
     crate::modules::logger::log_info("Antigravity closed successfully");
@@ -732,7 +739,10 @@ pub fn start_antigravity() -> Result<(), String> {
         }
 
         if path.exists() {
-            crate::modules::logger::log_info(&format!("Starting with manual configuration path: {}", path_str));
+            crate::modules::logger::log_info(&format!(
+                "Starting with manual configuration path: {}",
+                path_str
+            ));
 
             #[cfg(target_os = "macos")]
             {
@@ -748,7 +758,8 @@ pub fn start_antigravity() -> Result<(), String> {
                         }
                     }
 
-                    cmd.spawn().map_err(|e| format!("Startup failed (open): {}", e))?;
+                    cmd.spawn()
+                        .map_err(|e| format!("Startup failed (open): {}", e))?;
                 } else {
                     let mut cmd = Command::new(&path_str);
 
@@ -820,7 +831,7 @@ pub fn start_antigravity() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let has_args = args.as_ref().map_or(false, |a| !a.is_empty());
-        
+
         if has_args {
             if let Some(detected_path) = get_antigravity_executable_path() {
                 let path_str = detected_path.to_string_lossy().to_string();
@@ -828,7 +839,7 @@ pub fn start_antigravity() -> Result<(), String> {
                     "Starting with auto-detected path (has args): {}",
                     path_str
                 ));
-                
+
                 use crate::utils::command::CommandExtWrapper;
                 let mut cmd = Command::new(&path_str);
                 cmd.creation_flags_windows();
@@ -837,7 +848,7 @@ pub fn start_antigravity() -> Result<(), String> {
                         cmd.arg(arg);
                     }
                 }
-                
+
                 cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
             } else {
                 return Err("Startup arguments configured but cannot find Antigravity executable path. Please set the executable path manually in Settings.".to_string());
@@ -847,7 +858,7 @@ pub fn start_antigravity() -> Result<(), String> {
             let mut cmd = Command::new("cmd");
             cmd.creation_flags_windows();
             cmd.args(["/C", "start", "antigravity://"]);
-            
+
             let result = cmd.spawn();
             if result.is_err() {
                 return Err("Startup failed, please open Antigravity manually".to_string());

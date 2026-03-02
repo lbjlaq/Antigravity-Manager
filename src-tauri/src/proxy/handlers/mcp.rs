@@ -16,17 +16,18 @@ fn build_client(
     upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
     timeout_secs: u64,
 ) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs.max(5)));
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(timeout_secs.max(5)));
 
     if upstream_proxy.enabled && !upstream_proxy.url.is_empty() {
         let url = crate::proxy::config::normalize_proxy_url(&upstream_proxy.url);
-        let proxy = reqwest::Proxy::all(&url)
-            .map_err(|e| format!("Invalid upstream proxy url: {}", e))?;
+        let proxy =
+            reqwest::Proxy::all(&url).map_err(|e| format!("Invalid upstream proxy url: {}", e))?;
         builder = builder.proxy(proxy);
     }
 
-    builder.build().map_err(|e| format!("Failed to build HTTP client: {}", e))
+    builder
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
 
 fn copy_passthrough_headers(incoming: &HeaderMap) -> HeaderMap {
@@ -109,7 +110,11 @@ async fn forward_mcp(
     });
 
     out.body(Body::from_stream(stream)).unwrap_or_else(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to build response",
+        )
+            .into_response()
     })
 }
 
@@ -196,13 +201,14 @@ async fn handle_vision_get(state: AppState, headers: HeaderMap) -> Response {
         return (StatusCode::BAD_REQUEST, "Invalid Mcp-Session-Id").into_response();
     }
 
-    let ping_stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(15))).map(|_| {
-        Ok::<axum::response::sse::Event, std::convert::Infallible>(
-            axum::response::sse::Event::default()
-                .event("ping")
-                .data("keepalive"),
-        )
-    });
+    let ping_stream =
+        IntervalStream::new(tokio::time::interval(Duration::from_secs(15))).map(|_| {
+            Ok::<axum::response::sse::Event, std::convert::Infallible>(
+                axum::response::sse::Event::default()
+                    .event("ping")
+                    .data("keepalive"),
+            )
+        });
 
     let mut resp = axum::response::sse::Sse::new(ping_stream)
         .keep_alive(
@@ -244,7 +250,11 @@ async fn handle_vision_post(state: AppState, headers: HeaderMap, body: Body) -> 
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                axum::Json(jsonrpc_error(Value::Null, -32700, format!("Parse error: {}", e))),
+                axum::Json(jsonrpc_error(
+                    Value::Null,
+                    -32700,
+                    format!("Parse error: {}", e),
+                )),
             )
                 .into_response();
         }
@@ -296,14 +306,22 @@ async fn handle_vision_post(state: AppState, headers: HeaderMap, body: Body) -> 
     let Some(session_id) = mcp_session_id(&headers) else {
         return (
             StatusCode::BAD_REQUEST,
-            axum::Json(jsonrpc_error(id, -32000, "Bad Request: missing Mcp-Session-Id")),
+            axum::Json(jsonrpc_error(
+                id,
+                -32000,
+                "Bad Request: missing Mcp-Session-Id",
+            )),
         )
             .into_response();
     };
     if !state.zai_vision_mcp.has_session(&session_id).await {
         return (
             StatusCode::BAD_REQUEST,
-            axum::Json(jsonrpc_error(id, -32000, "Bad Request: invalid Mcp-Session-Id")),
+            axum::Json(jsonrpc_error(
+                id,
+                -32000,
+                "Bad Request: invalid Mcp-Session-Id",
+            )),
         )
             .into_response();
     }
@@ -331,7 +349,10 @@ async fn handle_vision_post(state: AppState, headers: HeaderMap, body: Body) -> 
                 }
             };
 
-            let arguments = params.get("arguments").cloned().unwrap_or(Value::Object(Default::default()));
+            let arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or(Value::Object(Default::default()));
 
             let zai = state.zai.read().await.clone();
             let upstream_proxy = state.upstream_proxy.read().await.clone();

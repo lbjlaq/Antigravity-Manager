@@ -152,7 +152,10 @@ pub fn clear_antigravity_cache(custom_paths: Option<Vec<String>>) -> Result<Clea
 
     for path in paths {
         if !path.exists() {
-            logger::log_info(&format!("Cache path does not exist, skipping: {}", path.display()));
+            logger::log_info(&format!(
+                "Cache path does not exist, skipping: {}",
+                path.display()
+            ));
             continue;
         }
 
@@ -160,7 +163,9 @@ pub fn clear_antigravity_cache(custom_paths: Option<Vec<String>>) -> Result<Clea
 
         match clear_directory(&path) {
             Ok(size) => {
-                result.cleared_paths.push(path.to_string_lossy().to_string());
+                result
+                    .cleared_paths
+                    .push(path.to_string_lossy().to_string());
                 result.total_size_freed += size;
                 logger::log_info(&format!(
                     "Cleared {}: {:.2} MB freed",

@@ -19,11 +19,11 @@ const MAX_RETRY_ATTEMPTS: usize = 3;
 use super::common::{
     apply_retry_strategy, determine_retry_strategy, should_rotate_account, RetryStrategy,
 };
+use crate::modules::account;
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; // [NEW] Adapter Registry
 use crate::proxy::session_manager::SessionManager;
 use axum::http::HeaderMap;
 use tokio::time::Duration;
-use crate::modules::account;
 
 pub async fn handle_chat_completions(
     State(state): State<AppState>,
@@ -31,9 +31,19 @@ pub async fn handle_chat_completions(
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     // [NEW] Check for Image Model Redirection
-    let model_name = body.get("model").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-    if model_name.contains("image") || model_name.contains("dall-e") || model_name.contains("midjourney") {
-        tracing::info!("[ChatRedirection] Redirecting model {} to image generations", model_name);
+    let model_name = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if model_name.contains("image")
+        || model_name.contains("dall-e")
+        || model_name.contains("midjourney")
+    {
+        tracing::info!(
+            "[ChatRedirection] Redirecting model {} to image generations",
+            model_name
+        );
         return intercept_chat_to_image(state, body, &model_name).await;
     }
 
@@ -183,34 +193,39 @@ pub async fn handle_chat_completions(
 
         // 4. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-            .get_token(
-                &config.request_type,
-                attempt > 0,
-                Some(&session_id),
-                &mapped_model,
-            )
-            .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                // [FIX] Attach headers to error response for logging visibility
-                let headers = [("X-Mapped-Model", mapped_model.as_str())];
-                return Ok((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    headers,
-                    format!("Token error: {}", e),
+        let (access_token, project_id, email, account_id, _wait_ms, account_type) =
+            match token_manager
+                .get_token(
+                    &config.request_type,
+                    attempt > 0,
+                    Some(&session_id),
+                    &mapped_model,
                 )
-                    .into_response());
-            }
-        };
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    // [FIX] Attach headers to error response for logging visibility
+                    let headers = [("X-Mapped-Model", mapped_model.as_str())];
+                    return Ok((
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        headers,
+                        format!("Token error: {}", e),
+                    )
+                        .into_response());
+                }
+            };
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
         // 4. 转换请求 (返回内容包含 session_id 和 message_count)
-        let (gemini_body, session_id, message_count) =
-            transform_openai_request(&openai_req, &project_id, &mapped_model, Some(account_id.as_str()));
+        let (gemini_body, session_id, message_count) = transform_openai_request(
+            &openai_req,
+            &project_id,
+            &mapped_model,
+            Some(account_id.as_str()),
+        );
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -277,6 +292,7 @@ pub async fn handle_chat_completions(
                 query_string,
                 extra_headers.clone(),
                 Some(account_id.as_str()),
+                &account_type,
             )
             .await
         {
@@ -1165,32 +1181,37 @@ pub async fn handle_completions(
         // 重试时强制轮换，除非只是简单的网络抖动但 Claude 逻辑里 attempt > 0 总是 force_rotate
         let force_rotate = attempt > 0;
 
-        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-            .get_token(
-                &config.request_type,
-                force_rotate,
-                session_id,
-                &mapped_model,
-            )
-            .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    [("X-Mapped-Model", mapped_model)],
-                    format!("Token error: {}", e),
+        let (access_token, project_id, email, account_id, _wait_ms, account_type) =
+            match token_manager
+                .get_token(
+                    &config.request_type,
+                    force_rotate,
+                    session_id,
+                    &mapped_model,
                 )
-                    .into_response()
-            }
-        };
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        [("X-Mapped-Model", mapped_model)],
+                        format!("Token error: {}", e),
+                    )
+                        .into_response()
+                }
+            };
 
         last_email = Some(email.clone());
 
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
-        let (gemini_body, session_id, message_count) =
-            transform_openai_request(&openai_req, &project_id, &mapped_model, Some(account_id.as_str()));
+        let (gemini_body, session_id, message_count) = transform_openai_request(
+            &openai_req,
+            &project_id,
+            &mapped_model,
+            Some(account_id.as_str()),
+        );
 
         // [New] 打印转换后的报文 (Gemini Body) 供调试 (Codex 路径) ———— 缩减为 simple debug
         debug!(
@@ -1220,6 +1241,7 @@ pub async fn handle_completions(
                 gemini_body,
                 query_string,
                 Some(account_id.as_str()),
+                &account_type,
             )
             .await
         {
@@ -1618,7 +1640,9 @@ async fn intercept_chat_to_image(
                     } else if let Some(arr) = content.as_array() {
                         for part in arr {
                             if part.get("type").and_then(|v| v.as_str()) == Some("text") {
-                                prompt.push_str(part.get("text").and_then(|v| v.as_str()).unwrap_or(""));
+                                prompt.push_str(
+                                    part.get("text").and_then(|v| v.as_str()).unwrap_or(""),
+                                );
                             }
                         }
                     }
@@ -1631,7 +1655,10 @@ async fn intercept_chat_to_image(
         prompt = "A beautiful painting".to_string(); // fallback
     }
 
-    let is_stream = body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_stream = body
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     // 2. Call internal image generator
     let img_req = json!({
@@ -1660,7 +1687,7 @@ async fn intercept_chat_to_image(
             // 3. Construct Chat Completion Response
             if is_stream {
                 use axum::body::Body;
-                
+
                 let chunk = json!({
                     "id": format!("chatcmpl-img-{}", uuid::Uuid::new_v4()),
                     "object": "chat.completion.chunk",
@@ -1675,7 +1702,7 @@ async fn intercept_chat_to_image(
                         "finish_reason": null
                     }]
                 });
-                
+
                 let done_chunk = json!({
                     "id": format!("chatcmpl-img-{}", uuid::Uuid::new_v4()),
                     "object": "chat.completion.chunk",
@@ -1688,8 +1715,12 @@ async fn intercept_chat_to_image(
                     }]
                 });
 
-                let sse_data = format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n", chunk.to_string(), done_chunk.to_string());
-                
+                let sse_data = format!(
+                    "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+                    chunk.to_string(),
+                    done_chunk.to_string()
+                );
+
                 let body = Body::from(sse_data);
                 Ok(Response::builder()
                     .header("Content-Type", "text/event-stream")
@@ -1716,14 +1747,13 @@ async fn intercept_chat_to_image(
 
                 Ok((
                     StatusCode::OK,
-                    [
-                        ("X-Account-Email", email.as_str()),
-                    ],
-                    Json(resp)
-                ).into_response())
+                    [("X-Account-Email", email.as_str())],
+                    Json(resp),
+                )
+                    .into_response())
             }
-        },
-        Err(e) => Err(e.into()) // using Err directly is fine since return type handles it
+        }
+        Err(e) => Err(e.into()), // using Err directly is fine since return type handles it
     }
 }
 
@@ -1762,18 +1792,14 @@ pub async fn handle_images_generations_internal(
 
     let n = body.get("n").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
 
-    let size = body
-        .get("size")
-        .and_then(|v| v.as_str());
+    let size = body.get("size").and_then(|v| v.as_str());
 
     let response_format = body
         .get("response_format")
         .and_then(|v| v.as_str())
         .unwrap_or("b64_json");
 
-    let quality = body
-        .get("quality")
-        .and_then(|v| v.as_str());
+    let quality = body.get("quality").and_then(|v| v.as_str());
 
     let image_size = body
         .get("image_size")
@@ -1796,12 +1822,10 @@ pub async fn handle_images_generations_internal(
     );
 
     // 2. 使用 common_utils 解析图片配置（统一逻辑，支持动态计算宽高比和 quality 映射）
-    let (image_config, clean_model_name) = crate::proxy::mappers::common_utils::parse_image_config_with_params(
-        model,
-        size,
-        quality,
-        image_size,
-    );
+    let (image_config, clean_model_name) =
+        crate::proxy::mappers::common_utils::parse_image_config_with_params(
+            model, size, quality, image_size,
+        );
 
     // 3. Prompt Enhancement（保留原有逻辑）
     let mut final_prompt = prompt.to_string();
@@ -1839,20 +1863,21 @@ pub async fn handle_images_generations_internal(
 
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
-                let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-                    .get_token("image_gen", attempt > 0, None, &model_to_use)
-                    .await
-                {
-                    Ok(t) => t,
-                    Err(e) => {
-                        last_error = format!("Token error: {}", e);
-                        if attempt < max_attempts - 1 {
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                            continue;
+                let (access_token, project_id, email, account_id, _wait_ms, account_type) =
+                    match token_manager
+                        .get_token("image_gen", attempt > 0, None, &model_to_use)
+                        .await
+                    {
+                        Ok(t) => t,
+                        Err(e) => {
+                            last_error = format!("Token error: {}", e);
+                            if attempt < max_attempts - 1 {
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                continue;
+                            }
+                            break;
                         }
-                        break;
-                    }
-                };
+                    };
 
                 let gemini_body = json!({
                     "project": project_id,
@@ -1886,6 +1911,7 @@ pub async fn handle_images_generations_internal(
                         gemini_body,
                         None,
                         Some(account_id.as_str()),
+                        &account_type,
                     )
                     .await
                 {
@@ -2234,20 +2260,21 @@ pub async fn handle_images_edits(
 
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
-                let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-                    .get_token("image_gen", attempt > 0, None, "gemini-3-pro-image")
-                    .await
-                {
-                    Ok(t) => t,
-                    Err(e) => {
-                        last_error = format!("Token error: {}", e);
-                        if attempt < max_attempts - 1 {
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                            continue;
+                let (access_token, project_id, email, account_id, _wait_ms, account_type) =
+                    match token_manager
+                        .get_token("image_gen", attempt > 0, None, "gemini-3-pro-image")
+                        .await
+                    {
+                        Ok(t) => t,
+                        Err(e) => {
+                            last_error = format!("Token error: {}", e);
+                            if attempt < max_attempts - 1 {
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                continue;
+                            }
+                            break;
                         }
-                        break;
-                    }
-                };
+                    };
 
                 // 4.2 Construct Request Body (Need project_id)
                 let gemini_body = json!({
@@ -2287,6 +2314,7 @@ pub async fn handle_images_edits(
                         gemini_body,
                         None,
                         Some(account_id.as_str()),
+                        &account_type,
                     )
                     .await
                 {

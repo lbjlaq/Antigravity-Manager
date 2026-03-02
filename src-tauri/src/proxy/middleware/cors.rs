@@ -1,6 +1,6 @@
 // CORS 中间件
-use tower_http::cors::{CorsLayer, Any};
 use axum::http::Method;
+use tower_http::cors::{Any, CorsLayer};
 
 /// 创建 CORS layer
 pub fn cors_layer() -> CorsLayer {

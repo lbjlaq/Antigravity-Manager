@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot, Terminal, CheckCircle, Eye } from 'lucide-react';
 import { Account } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -24,6 +24,8 @@ interface AccountCardProps {
     onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
+    onVerify?: () => void;
+    onConfigurePreview?: () => void;
 }
 
 // 使用统一的模型配置
@@ -34,7 +36,7 @@ const DEFAULT_MODELS = Object.entries(MODEL_CONFIG).map(([id, config]) => ({
     Icon: config.Icon
 }));
 
-function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice, onWarmup, onUpdateLabel, onViewError }: AccountCardProps) {
+function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice, onWarmup, onUpdateLabel, onViewError, onVerify, onConfigurePreview }: AccountCardProps) {
     const { t } = useTranslation();
     const { config, showAllQuotas } = useConfigStore();
     const isDisabled = Boolean(account.disabled);
@@ -140,6 +142,12 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                             {isCurrent && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[9px] font-bold shadow-sm border border-blue-200/50">
                                     {t('accounts.current').toUpperCase()}
+                                </span>
+                            )}
+                            {account.account_type === 'gemini_cli' && (
+                                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-[9px] font-bold shadow-sm border border-emerald-200/50 dark:border-emerald-800/50">
+                                    <Terminal className="w-2.5 h-2.5" />
+                                    GCLI
                                 </span>
                             )}
                             {isDisabled && (
@@ -350,6 +358,34 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                     >
                         <Download className="w-3.5 h-3.5" />
                     </button>
+                    {onVerify && (
+                        <button
+                            className={cn(
+                                "p-1.5 rounded-lg transition-all",
+                                (account.quota?.is_forbidden || account.proxy_disabled)
+                                    ? "text-amber-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/30"
+                                    : "text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30"
+                            )}
+                            onClick={(e) => { e.stopPropagation(); onVerify(); }}
+                            title={t('accounts.verify', 'Verify')}
+                        >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                    {onConfigurePreview && account.account_type === 'gemini_cli' && (
+                        <button
+                            className={cn(
+                                "p-1.5 rounded-lg transition-all",
+                                account.preview
+                                    ? "text-green-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30"
+                                    : "text-gray-400 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/30"
+                            )}
+                            onClick={(e) => { e.stopPropagation(); onConfigurePreview(); }}
+                            title={account.preview ? t('accounts.preview_configured', 'Preview Configured') : t('accounts.configure_preview', 'Configure Preview')}
+                        >
+                            <Eye className="w-3.5 h-3.5" />
+                        </button>
+                    )}
                     <button
                         className={cn(
                             "p-1.5 rounded-lg transition-all",

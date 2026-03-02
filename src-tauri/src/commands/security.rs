@@ -1,6 +1,6 @@
-use tauri::State;
-use serde::{Deserialize, Serialize};
 use crate::modules::security_db;
+use serde::{Deserialize, Serialize};
+use tauri::State;
 
 // ==================== 请求/响应结构 ====================
 
@@ -46,21 +46,19 @@ pub struct IpStatsResponse {
 
 /// 获取 IP 访问日志列表
 #[tauri::command]
-pub async fn get_ip_access_logs(
-    query: IpAccessLogQuery,
-) -> Result<IpAccessLogResponse, String> {
+pub async fn get_ip_access_logs(query: IpAccessLogQuery) -> Result<IpAccessLogResponse, String> {
     let offset = (query.page.max(1) - 1) * query.page_size;
-    
+
     let logs = security_db::get_ip_access_logs(
         query.page_size,
         offset,
         query.search.as_deref(),
         query.blocked_only,
     )?;
-    
+
     // 简单计算总数 (如果需要精确分页,可以添加 count 函数)
     let total = logs.len();
-    
+
     Ok(IpAccessLogResponse { logs, total })
 }
 
@@ -69,7 +67,7 @@ pub async fn get_ip_access_logs(
 pub async fn get_ip_stats() -> Result<IpStatsResponse, String> {
     let stats = security_db::get_ip_stats()?;
     let top_ips = security_db::get_top_ips(10, 24)?; // Top 10 IPs in last 24 hours
-    
+
     Ok(IpStatsResponse {
         total_requests: stats.total_requests as usize,
         unique_ips: stats.unique_ips as usize,
@@ -94,14 +92,15 @@ pub async fn get_ip_blacklist() -> Result<Vec<security_db::IpBlacklistEntry>, St
 
 /// 添加 IP 到黑名单
 #[tauri::command]
-pub async fn add_ip_to_blacklist(
-    request: AddBlacklistRequest,
-) -> Result<(), String> {
+pub async fn add_ip_to_blacklist(request: AddBlacklistRequest) -> Result<(), String> {
     // 验证 IP 格式
     if !is_valid_ip_pattern(&request.ip_pattern) {
-        return Err("Invalid IP pattern. Use IP address or CIDR notation (e.g., 192.168.1.0/24)".to_string());
+        return Err(
+            "Invalid IP pattern. Use IP address or CIDR notation (e.g., 192.168.1.0/24)"
+                .to_string(),
+        );
     }
-    
+
     security_db::add_to_blacklist(
         &request.ip_pattern,
         request.reason.as_deref(),
@@ -117,7 +116,7 @@ pub async fn remove_ip_from_blacklist(ip_pattern: String) -> Result<(), String> 
     // 先获取黑名单列表，找到对应的id
     let entries = security_db::get_blacklist()?;
     let entry = entries.iter().find(|e| e.ip_pattern == ip_pattern);
-    
+
     if let Some(entry) = entry {
         security_db::remove_from_blacklist(&entry.id)
     } else {
@@ -152,18 +151,16 @@ pub async fn get_ip_whitelist() -> Result<Vec<security_db::IpWhitelistEntry>, St
 
 /// 添加 IP 到白名单
 #[tauri::command]
-pub async fn add_ip_to_whitelist(
-    request: AddWhitelistRequest,
-) -> Result<(), String> {
+pub async fn add_ip_to_whitelist(request: AddWhitelistRequest) -> Result<(), String> {
     // 验证 IP 格式
     if !is_valid_ip_pattern(&request.ip_pattern) {
-        return Err("Invalid IP pattern. Use IP address or CIDR notation (e.g., 192.168.1.0/24)".to_string());
+        return Err(
+            "Invalid IP pattern. Use IP address or CIDR notation (e.g., 192.168.1.0/24)"
+                .to_string(),
+        );
     }
-    
-    security_db::add_to_whitelist(
-        &request.ip_pattern,
-        request.description.as_deref(),
-    )?;
+
+    security_db::add_to_whitelist(&request.ip_pattern, request.description.as_deref())?;
     Ok(())
 }
 
@@ -173,7 +170,7 @@ pub async fn remove_ip_from_whitelist(ip_pattern: String) -> Result<(), String> 
     // 先获取白名单列表，找到对应的id
     let entries = security_db::get_whitelist()?;
     let entry = entries.iter().find(|e| e.ip_pattern == ip_pattern);
-    
+
     if let Some(entry) = entry {
         security_db::remove_from_whitelist(&entry.id)
     } else {
@@ -253,12 +250,9 @@ pub async fn update_security_config(
 #[tauri::command]
 pub async fn get_ip_token_stats(
     limit: Option<usize>,
-    hours: Option<i64>
+    hours: Option<i64>,
 ) -> Result<Vec<crate::modules::proxy_db::IpTokenStats>, String> {
-    crate::modules::proxy_db::get_token_usage_by_ip(
-        limit.unwrap_or(100),
-        hours.unwrap_or(720)
-    )
+    crate::modules::proxy_db::get_token_usage_by_ip(limit.unwrap_or(100), hours.unwrap_or(720))
 }
 
 // ==================== 辅助函数 ====================
@@ -271,19 +265,19 @@ fn is_valid_ip_pattern(pattern: &str) -> bool {
         if parts.len() != 2 {
             return false;
         }
-        
+
         // 验证 IP 部分
         if !is_valid_ip(parts[0]) {
             return false;
         }
-        
+
         // 验证掩码部分
         if let Ok(mask) = parts[1].parse::<u8>() {
             return mask <= 32;
         }
         return false;
     }
-    
+
     // 单个 IP 地址
     is_valid_ip(pattern)
 }
@@ -294,13 +288,13 @@ fn is_valid_ip(ip: &str) -> bool {
     if parts.len() != 4 {
         return false;
     }
-    
+
     for part in parts {
         if part.parse::<u8>().is_err() {
             return false;
         }
     }
-    
+
     true
 }
 

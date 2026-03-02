@@ -39,18 +39,18 @@ pub fn get_antigravity_version() -> Result<AntigravityVersion, String> {
     // 1. 获取 Antigravity 可执行文件路径（复用现有功能）
     let exe_path = process::get_antigravity_executable_path()
         .ok_or("Unable to locate Antigravity executable")?;
-    
+
     // 2. 根据平台读取版本信息
     #[cfg(target_os = "macos")]
     {
         get_version_macos(&exe_path)
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         get_version_windows(&exe_path)
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         get_version_linux(&exe_path)
@@ -61,7 +61,7 @@ pub fn get_antigravity_version() -> Result<AntigravityVersion, String> {
 #[cfg(target_os = "macos")]
 fn get_version_macos(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     use plist::Value;
-    
+
     // exe_path 可能是 /Applications/Antigravity.app 或内部可执行文件
     // 需要找到 .app 目录
     let path_str = exe_path.to_string_lossy();
@@ -70,29 +70,32 @@ fn get_version_macos(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     } else {
         exe_path.clone()
     };
-    
+
     let info_plist_path = app_path.join("Contents/Info.plist");
     if !info_plist_path.exists() {
         return Err(format!("Info.plist not found: {:?}", info_plist_path));
     }
-    
-    let content = fs::read(&info_plist_path)
-        .map_err(|e| format!("Failed to read Info.plist: {}", e))?;
-    
-    let plist: Value = plist::from_bytes(&content)
-        .map_err(|e| format!("Failed to parse Info.plist: {}", e))?;
-    
-    let dict = plist.as_dictionary()
+
+    let content =
+        fs::read(&info_plist_path).map_err(|e| format!("Failed to read Info.plist: {}", e))?;
+
+    let plist: Value =
+        plist::from_bytes(&content).map_err(|e| format!("Failed to parse Info.plist: {}", e))?;
+
+    let dict = plist
+        .as_dictionary()
         .ok_or("Info.plist is not a dictionary")?;
-    
-    let short_version = dict.get("CFBundleShortVersionString")
+
+    let short_version = dict
+        .get("CFBundleShortVersionString")
         .and_then(|v| v.as_string())
         .ok_or("CFBundleShortVersionString not found")?;
-    
-    let bundle_version = dict.get("CFBundleVersion")
+
+    let bundle_version = dict
+        .get("CFBundleVersion")
         .and_then(|v| v.as_string())
         .unwrap_or(short_version);
-    
+
     Ok(AntigravityVersion {
         short_version: short_version.to_string(),
         bundle_version: bundle_version.to_string(),
@@ -102,9 +105,9 @@ fn get_version_macos(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
 /// Windows: 从可执行文件元数据读取版本
 #[cfg(target_os = "windows")]
 fn get_version_windows(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
-    use std::process::Command;
     use crate::utils::command::CommandExtWrapper;
-    
+    use std::process::Command;
+
     // Windows: 使用 PowerShell 读取文件版本信息
     let mut cmd = Command::new("powershell");
     let output = cmd
@@ -118,19 +121,17 @@ fn get_version_windows(exe_path: &PathBuf) -> Result<AntigravityVersion, String>
         ])
         .output()
         .map_err(|e| format!("Failed to execute PowerShell: {}", e))?;
-    
+
     if !output.status.success() {
         return Err("Failed to read version from executable".to_string());
     }
-    
-    let version = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .to_string();
-    
+
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
     if version.is_empty() {
         return Err("Version information not found in executable".to_string());
     }
-    
+
     Ok(AntigravityVersion {
         short_version: version.clone(),
         bundle_version: version,
@@ -141,17 +142,13 @@ fn get_version_windows(exe_path: &PathBuf) -> Result<AntigravityVersion, String>
 #[cfg(target_os = "linux")]
 fn get_version_linux(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
     use std::process::Command;
-    
+
     // 方法1: 尝试执行 --version
-    let output = Command::new(exe_path)
-        .arg("--version")
-        .output();
-    
+    let output = Command::new(exe_path).arg("--version").output();
+
     if let Ok(result) = output {
         if result.status.success() {
-            let raw_version = String::from_utf8_lossy(&result.stdout)
-                .trim()
-                .to_string();
+            let raw_version = String::from_utf8_lossy(&result.stdout).trim().to_string();
             if !raw_version.is_empty() {
                 let version = extract_semver(&raw_version).unwrap_or_else(|| {
                     raw_version
@@ -168,7 +165,7 @@ fn get_version_linux(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
             }
         }
     }
-    
+
     // 方法2: 尝试从安装目录的 package.json 读取
     if let Some(parent) = exe_path.parent() {
         let package_json = parent.join("resources/app/package.json");
@@ -185,7 +182,7 @@ fn get_version_linux(exe_path: &PathBuf) -> Result<AntigravityVersion, String> {
             }
         }
     }
-    
+
     Err("Unable to determine Antigravity version on Linux".to_string())
 }
 
@@ -196,15 +193,9 @@ pub fn is_new_version(version: &AntigravityVersion) -> bool {
 
 /// 比较版本号
 fn compare_version(v1: &str, v2: &str) -> std::cmp::Ordering {
-    let parts1: Vec<u32> = v1
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    let parts2: Vec<u32> = v2
-        .split('.')
-        .filter_map(|s| s.parse().ok())
-        .collect();
-    
+    let parts1: Vec<u32> = v1.split('.').filter_map(|s| s.parse().ok()).collect();
+    let parts2: Vec<u32> = v2.split('.').filter_map(|s| s.parse().ok()).collect();
+
     for i in 0..parts1.len().max(parts2.len()) {
         let p1 = parts1.get(i).unwrap_or(&0);
         let p2 = parts2.get(i).unwrap_or(&0);
@@ -222,11 +213,26 @@ mod tests {
 
     #[test]
     fn test_version_comparison() {
-        assert_eq!(compare_version("1.16.5", "1.16.4"), std::cmp::Ordering::Greater);
-        assert_eq!(compare_version("1.16.5", "1.16.5"), std::cmp::Ordering::Equal);
-        assert_eq!(compare_version("1.16.4", "1.16.5"), std::cmp::Ordering::Less);
-        assert_eq!(compare_version("1.17.0", "1.16.5"), std::cmp::Ordering::Greater);
-        assert_eq!(compare_version("2.0.0", "1.16.5"), std::cmp::Ordering::Greater);
+        assert_eq!(
+            compare_version("1.16.5", "1.16.4"),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_version("1.16.5", "1.16.5"),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_version("1.16.4", "1.16.5"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_version("1.17.0", "1.16.5"),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_version("2.0.0", "1.16.5"),
+            std::cmp::Ordering::Greater
+        );
     }
 
     #[test]
@@ -242,7 +248,7 @@ mod tests {
             bundle_version: "1.16.5".to_string(),
         };
         assert!(is_new_version(&new));
-        
+
         let newer = AntigravityVersion {
             short_version: "1.17.0".to_string(),
             bundle_version: "1.17.0".to_string(),

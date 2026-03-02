@@ -1,8 +1,13 @@
+use crate::proxy::server::AppState;
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::{json, Value};
 use tokio::time::{sleep, Duration};
 use tracing::{debug, info};
-use axum::{http::StatusCode, response::{IntoResponse, Response}, Json, extract::State};
-use serde_json::{json, Value};
-use crate::proxy::server::AppState;
 
 // ===== 统一重试与退避策略 =====
 
@@ -85,7 +90,10 @@ pub async fn apply_retry_strategy(
 ) -> bool {
     match strategy {
         RetryStrategy::NoRetry => {
-            debug!("[{}] Non-retryable error {}, stopping", trace_id, status_code);
+            debug!(
+                "[{}] Non-retryable error {}, stopping",
+                trace_id, status_code
+            );
             false
         }
 
@@ -152,7 +160,7 @@ pub async fn handle_detect_model(
     Json(body): Json<Value>,
 ) -> Response {
     let model_name = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
-    
+
     if model_name.is_empty() {
         return (StatusCode::BAD_REQUEST, "Missing 'model' field").into_response();
     }
