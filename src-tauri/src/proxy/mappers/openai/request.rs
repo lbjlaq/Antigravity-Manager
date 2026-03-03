@@ -705,7 +705,7 @@ pub fn transform_openai_request(
     });
 
     if config.inject_google_search {
-        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request, Some(mapped_model));
+        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request);
     }
 
     if let Some(image_config) = config.image_config {

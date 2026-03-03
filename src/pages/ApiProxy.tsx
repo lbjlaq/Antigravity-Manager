@@ -1516,7 +1516,15 @@ print(response.choices[0].message.content)`;
                                 defaultExpanded={false}
                             >
                                 <CliSyncCard
-                                    proxyUrl={status.running ? status.base_url : `http://127.0.0.1:${appConfig.proxy.port || 8045}`}
+                                    proxyUrl={(() => {
+                                        const port = status.running ? status.port : (appConfig.proxy.port || 8045);
+                                        if (!isTauri()) {
+                                            // Web/Docker mode: use the hostname the user accessed the UI from
+                                            const host = window.location.hostname;
+                                            return `http://${host}:${port}`;
+                                        }
+                                        return status.running ? status.base_url : `http://127.0.0.1:${port}`;
+                                    })()}
                                     apiKey={appConfig.proxy.api_key}
                                 />
                             </CollapsibleCard>

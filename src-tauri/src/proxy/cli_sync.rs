@@ -10,6 +10,15 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// Model tier configuration for Claude Code.
+/// Claude Code uses separate models for opus/sonnet/haiku tiers.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ClaudeModelTiers {
+    pub opus: Option<String>,
+    pub sonnet: Option<String>,
+    pub haiku: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum CliApp {
     Claude,
@@ -101,6 +110,26 @@ pub struct CliStatus {
     pub has_backup: bool,
     pub current_base_url: Option<String>,
     pub files: Vec<String>, // 返回关联的文件名列表供前端展示
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExportedFile {
+    pub name: String,
+    pub export_path: String,
+    pub target_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExportResult {
+    pub export_dir: String,
+    pub files: Vec<ExportedFile>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ExportStatus {
+    pub exported: bool,
+    pub export_dir: String,
+    pub files: Vec<ExportedFile>,
 }
 
 /// 检测 CLI 是否安装并获取版本
@@ -306,16 +335,211 @@ pub fn get_sync_status(app: &CliApp, proxy_url: &str) -> (bool, bool, Option<Str
     (all_synced, has_backup, current_base_url)
 }
 
+/// Generate config file content for a CLI app.
+/// Used by both sync_config (with existing content) and export_config (with empty content).
+fn generate_file_content(
+    app: &CliApp,
+    file_name: &str,
+    existing_content: &str,
+    proxy_url: &str,
+    api_key: &str,
+    model: Option<&str>,
+    claude_models: Option<&ClaudeModelTiers>,
+) -> String {
+    let mut content = existing_content.to_string();
+
+    match app {
+        CliApp::Claude => {
+            if file_name == ".claude.json" {
+                let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
+                if let Some(obj) = json.as_object_mut() {
+                    obj.insert("hasCompletedOnboarding".to_string(), Value::Bool(true));
+                }
+                content = serde_json::to_string_pretty(&json).unwrap();
+            } else if file_name == "settings.json" {
+                let mut json: serde_json::Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
+                if json.as_object().is_none() { json = serde_json::json!({}); }
+                let env = json.as_object_mut().unwrap().entry("env").or_insert(serde_json::json!({}));
+                if let Some(env_obj) = env.as_object_mut() {
+                    env_obj.insert("ANTHROPIC_BASE_URL".to_string(), Value::String(proxy_url.to_string()));
+                    if !api_key.is_empty() {
+                        env_obj.insert("ANTHROPIC_API_KEY".to_string(), Value::String(api_key.to_string()));
+                        // Remove conflicting auth token
+                        env_obj.remove("ANTHROPIC_AUTH_TOKEN");
+                    } else {
+                        env_obj.remove("ANTHROPIC_API_KEY");
+                    }
+
+                    // Set Claude Code model tier env vars
+                    if let Some(tiers) = claude_models {
+                        // Set or clear each tier: None = remove stale value
+                        if let Some(ref opus) = tiers.opus {
+                            env_obj.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), Value::String(opus.clone()));
+                        } else {
+                            env_obj.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
+                        }
+                        if let Some(ref sonnet) = tiers.sonnet {
+                            env_obj.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(), Value::String(sonnet.clone()));
+                            env_obj.insert("ANTHROPIC_MODEL".to_string(), Value::String(sonnet.clone()));
+                        } else {
+                            env_obj.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+                            env_obj.remove("ANTHROPIC_MODEL");
+                        }
+                        if let Some(ref haiku) = tiers.haiku {
+                            env_obj.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), Value::String(haiku.clone()));
+                            env_obj.insert("CLAUDE_CODE_SUBAGENT_MODEL".to_string(), Value::String(haiku.clone()));
+                        } else {
+                            env_obj.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+                            env_obj.remove("CLAUDE_CODE_SUBAGENT_MODEL");
+                        }
+                    } else if let Some(m) = model {
+                        // Fallback: single model — clean all tier vars first
+                        env_obj.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
+                        env_obj.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
+                        env_obj.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
+                        env_obj.remove("CLAUDE_CODE_SUBAGENT_MODEL");
+                        env_obj.insert("ANTHROPIC_MODEL".to_string(), Value::String(m.to_string()));
+                    }
+                }
+
+                // Root-level model field (Claude Code's own config)
+                if let Some(tiers) = claude_models {
+                    if let Some(ref sonnet) = tiers.sonnet {
+                        json.as_object_mut().unwrap().insert("model".to_string(), Value::String(sonnet.clone()));
+                    }
+                } else if let Some(m) = model {
+                    json.as_object_mut().unwrap().insert("model".to_string(), Value::String(m.to_string()));
+                }
+                content = serde_json::to_string_pretty(&json)
+                    .map_err(|e| format!("Failed to serialize Claude config: {}", e))
+                    .unwrap_or_else(|_| content);
+            }
+        }
+        CliApp::Codex => {
+            if file_name == "auth.json" {
+                let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
+                if let Some(obj) = json.as_object_mut() {
+                    obj.insert("OPENAI_API_KEY".to_string(), Value::String(api_key.to_string()));
+                    // Codex 的 auth.json 似乎也支持 OPENAI_BASE_URL，但 ccs 没写，我们也同步写一下
+                    obj.insert("OPENAI_BASE_URL".to_string(), Value::String(proxy_url.to_string()));
+                }
+                content = serde_json::to_string_pretty(&json).unwrap();
+            } else if file_name == "config.toml" {
+                use toml_edit::{DocumentMut, value};
+                let mut doc = content.parse::<DocumentMut>().unwrap_or_else(|_| DocumentMut::new());
+
+                // 设置层级 [model_providers.custom]
+                let providers = doc.entry("model_providers").or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+                if let Some(p_table) = providers.as_table_mut() {
+                    let custom = p_table.entry("custom").or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+                    if let Some(c_table) = custom.as_table_mut() {
+                        c_table.insert("name", value("custom"));
+                        c_table.insert("wire_api", value("responses"));
+                        c_table.insert("requires_openai_auth", value(true));
+                        c_table.insert("base_url", value(proxy_url));
+                        if let Some(m) = model {
+                            c_table.insert("model", value(m));
+                        }
+                    }
+                }
+                doc.insert("model_provider", value("custom"));
+                if let Some(m) = model {
+                    doc.insert("model", value(m));
+                }
+                // Codex 还需要清理可能存在的旧配置项
+                doc.remove("openai_api_key");
+                doc.remove("openai_base_url");
+                content = doc.to_string();
+            }
+        }
+        CliApp::Gemini => {
+            if file_name == ".env" {
+                let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+                let mut found_url = false;
+                let mut found_key = false;
+                for line in lines.iter_mut() {
+                    if line.starts_with("GOOGLE_GEMINI_BASE_URL=") {
+                        *line = format!("GOOGLE_GEMINI_BASE_URL={}", proxy_url);
+                        found_url = true;
+                    } else if line.trim().starts_with("GEMINI_API_KEY=") {
+                        *line = format!("GEMINI_API_KEY={}", api_key);
+                        found_key = true;
+                    }
+                }
+                if !found_url { lines.push(format!("GOOGLE_GEMINI_BASE_URL={}", proxy_url)); }
+                if !found_key { lines.push(format!("GEMINI_API_KEY={}", api_key)); }
+                if let Some(m) = model {
+                    let mut found_model = false;
+                    for line in lines.iter_mut() {
+                        if line.starts_with("GOOGLE_GEMINI_MODEL=") {
+                            *line = format!("GOOGLE_GEMINI_MODEL={}", m);
+                            found_model = true;
+                        }
+                    }
+                    if !found_model {
+                        lines.push(format!("GOOGLE_GEMINI_MODEL={}", m));
+                    }
+                }
+                content = lines.join("\n");
+            } else if file_name == "settings.json" || file_name == "config.json" {
+                let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
+                if json.as_object().is_none() { json = serde_json::json!({}); }
+                if let Some(root_obj) = json.as_object_mut() {
+                    let sec = root_obj.entry("security").or_insert_with(|| serde_json::json!({}));
+                    if !sec.is_object() { *sec = serde_json::json!({}); }
+                    if let Some(sec_obj) = sec.as_object_mut() {
+                        let auth = sec_obj.entry("auth").or_insert_with(|| serde_json::json!({}));
+                        if !auth.is_object() { *auth = serde_json::json!({}); }
+                        if let Some(auth_obj) = auth.as_object_mut() {
+                            auth_obj.insert("selectedType".to_string(), Value::String("gemini-api-key".to_string()));
+                        }
+                    }
+                }
+                content = serde_json::to_string_pretty(&json).unwrap_or_default();
+            }
+        }
+        CliApp::OpenCode => {
+            if file_name == "config.json" {
+                let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
+                if json.as_object().is_none() { json = serde_json::json!({}); }
+                if let Some(root_obj) = json.as_object_mut() {
+                    let providers = root_obj.entry("providers").or_insert_with(|| serde_json::json!({}));
+                    if !providers.is_object() { *providers = serde_json::json!({}); }
+                    if let Some(providers_obj) = providers.as_object_mut() {
+                        let openai = providers_obj.entry("openai").or_insert_with(|| serde_json::json!({}));
+                        if !openai.is_object() { *openai = serde_json::json!({}); }
+                        if let Some(openai_obj) = openai.as_object_mut() {
+                            openai_obj.insert("baseURL".to_string(), Value::String(proxy_url.to_string()));
+                            if !api_key.is_empty() {
+                                openai_obj.insert("apiKey".to_string(), Value::String(api_key.to_string()));
+                            }
+                        }
+                    }
+                }
+                content = serde_json::to_string_pretty(&json).unwrap_or_default();
+            }
+        }
+    }
+
+    content
+}
+
 /// 执行同步逻辑
-pub fn sync_config(app: &CliApp, proxy_url: &str, api_key: &str, model: Option<&str>) -> Result<(), String> {
+pub fn sync_config(
+    app: &CliApp,
+    proxy_url: &str,
+    api_key: &str,
+    model: Option<&str>,
+    claude_models: Option<&ClaudeModelTiers>,
+) -> Result<(), String> {
     let files = app.config_files();
-    
+
     for file in &files {
         // Gemini 兼容性逻辑：优先使用 settings.json
         if app == &CliApp::Gemini && file.name == "config.json" && !file.path.exists() {
             let settings_path = file.path.with_file_name("settings.json");
             if settings_path.exists() {
-                continue; 
+                continue;
             }
         }
 
@@ -336,151 +560,117 @@ pub fn sync_config(app: &CliApp, proxy_url: &str, api_key: &str, model: Option<&
             }
         }
 
-        let mut content = if file.path.exists() {
+        let existing_content = if file.path.exists() {
             fs::read_to_string(&file.path).unwrap_or_default()
         } else {
             String::new()
         };
 
-        match app {
-            CliApp::Claude => {
-                if file.name == ".claude.json" {
-                    let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
-                    if let Some(obj) = json.as_object_mut() {
-                        obj.insert("hasCompletedOnboarding".to_string(), Value::Bool(true));
-                    }
-                    content = serde_json::to_string_pretty(&json).unwrap();
-                } else if file.name == "settings.json" {
-                    let mut json: serde_json::Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
-                    if json.as_object().is_none() { json = serde_json::json!({}); }
-                    let env = json.as_object_mut().unwrap().entry("env").or_insert(serde_json::json!({}));
-                    if let Some(env_obj) = env.as_object_mut() {
-                        env_obj.insert("ANTHROPIC_BASE_URL".to_string(), Value::String(proxy_url.to_string()));
-                        if !api_key.is_empty() {
-                            env_obj.insert("ANTHROPIC_API_KEY".to_string(), Value::String(api_key.to_string()));
-                            
-                            // [FIX] 避免冲突：如果存在则移除 ANTHROPIC_AUTH_TOKEN
-                            env_obj.remove("ANTHROPIC_AUTH_TOKEN");
+        let content = generate_file_content(app, &file.name, &existing_content, proxy_url, api_key, model, claude_models);
 
-                            // [FIX] 清理可能来自其他 Provider 的模型覆盖设置
-                            env_obj.remove("ANTHROPIC_MODEL");
-                            env_obj.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL");
-                            env_obj.remove("ANTHROPIC_DEFAULT_OPUS_MODEL");
-                            env_obj.remove("ANTHROPIC_DEFAULT_SONNET_MODEL");
-                        } else {
-                            // 如果 API Key 为空，则移除该键，避免设置为空字符串
-                            env_obj.remove("ANTHROPIC_API_KEY");
-                        }
-                    }
-
-                    if let Some(m) = model {
-                        // 注意：Claude Code 的官方配置中，当前选定模型放在根节点的 model 字段
-                        json.as_object_mut().unwrap().insert("model".to_string(), Value::String(m.to_string()));
-                    }
-                    content = serde_json::to_string_pretty(&json).unwrap();
-                }
-            }
-            CliApp::Codex => {
-                if file.name == "auth.json" {
-                    let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
-                    if let Some(obj) = json.as_object_mut() {
-                        obj.insert("OPENAI_API_KEY".to_string(), Value::String(api_key.to_string()));
-                        // Codex 的 auth.json 似乎也支持 OPENAI_BASE_URL，但 ccs 没写，我们也同步写一下
-                        obj.insert("OPENAI_BASE_URL".to_string(), Value::String(proxy_url.to_string()));
-                    }
-                    content = serde_json::to_string_pretty(&json).unwrap();
-                } else if file.name == "config.toml" {
-                    use toml_edit::{DocumentMut, value};
-                    let mut doc = content.parse::<DocumentMut>().unwrap_or_else(|_| DocumentMut::new());
-                    
-                    // 设置层级 [model_providers.custom]
-                    let providers = doc.entry("model_providers").or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
-                    if let Some(p_table) = providers.as_table_mut() {
-                        let custom = p_table.entry("custom").or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
-                        if let Some(c_table) = custom.as_table_mut() {
-                            c_table.insert("name", value("custom"));
-                            c_table.insert("wire_api", value("responses"));
-                            c_table.insert("requires_openai_auth", value(true));
-                            c_table.insert("base_url", value(proxy_url));
-                            if let Some(m) = model {
-                                c_table.insert("model", value(m));
-                            }
-                        }
-                    }
-                    doc.insert("model_provider", value("custom"));
-                    if let Some(m) = model {
-                        doc.insert("model", value(m));
-                    }
-                    // Codex 还需要清理可能存在的旧配置项
-                    doc.remove("openai_api_key");
-                    doc.remove("openai_base_url");
-                    content = doc.to_string();
-                }
-            }
-            CliApp::Gemini => {
-                if file.name == ".env" {
-                    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-                    let mut found_url = false;
-                    let mut found_key = false;
-                    for line in lines.iter_mut() {
-                        if line.starts_with("GOOGLE_GEMINI_BASE_URL=") {
-                            *line = format!("GOOGLE_GEMINI_BASE_URL={}", proxy_url);
-                            found_url = true;
-                        } else if line.trim().starts_with("GEMINI_API_KEY=") {
-                            *line = format!("GEMINI_API_KEY={}", api_key);
-                            found_key = true;
-                        }
-                    }
-                    if !found_url { lines.push(format!("GOOGLE_GEMINI_BASE_URL={}", proxy_url)); }
-                    if !found_key { lines.push(format!("GEMINI_API_KEY={}", api_key)); }
-                    if let Some(m) = model {
-                        let mut found_model = false;
-                        for line in lines.iter_mut() {
-                            if line.starts_with("GOOGLE_GEMINI_MODEL=") {
-                                *line = format!("GOOGLE_GEMINI_MODEL={}", m);
-                                found_model = true;
-                            }
-                        }
-                        if !found_model {
-                            lines.push(format!("GOOGLE_GEMINI_MODEL={}", m));
-                        }
-                    }
-                    content = lines.join("\n");
-                } else if file.name == "settings.json" || file.name == "config.json" {
-                    let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
-                    if json.as_object().is_none() { json = serde_json::json!({}); }
-                    let sec = json.as_object_mut().unwrap().entry("security").or_insert(serde_json::json!({}));
-                    let auth = sec.as_object_mut().unwrap().entry("auth").or_insert(serde_json::json!({}));
-                    if let Some(auth_obj) = auth.as_object_mut() {
-                        auth_obj.insert("selectedType".to_string(), Value::String("gemini-api-key".to_string()));
-                    }
-                    content = serde_json::to_string_pretty(&json).unwrap();
-                }
-            }
-            CliApp::OpenCode => {
-                if file.name == "config.json" {
-                    let mut json: Value = serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({}));
-                    if json.as_object().is_none() { json = serde_json::json!({}); }
-                    let providers = json.as_object_mut().unwrap().entry("providers").or_insert(serde_json::json!({}));
-                    let openai = providers.as_object_mut().unwrap().entry("openai").or_insert(serde_json::json!({}));
-                    if let Some(openai_obj) = openai.as_object_mut() {
-                        openai_obj.insert("baseURL".to_string(), Value::String(proxy_url.to_string()));
-                        if !api_key.is_empty() {
-                            openai_obj.insert("apiKey".to_string(), Value::String(api_key.to_string()));
-                        }
-                    }
-                    content = serde_json::to_string_pretty(&json).unwrap();
-                }
-            }
-        }
-
-        // 使用临时文件原子写入
+        // Atomic write via temp file
         let tmp_path = file.path.with_extension("tmp");
-        fs::write(&tmp_path, &content).map_err(|e| format!("写入临时文件失败: {}", e))?;
-        fs::rename(&tmp_path, &file.path).map_err(|e| format!("重命名配置文件失败: {}", e))?;
+        fs::write(&tmp_path, &content).map_err(|e| format!("Failed to write temp file: {}", e))?;
+        // On Windows, rename fails if target exists — remove first
+        #[cfg(target_os = "windows")]
+        if file.path.exists() {
+            fs::remove_file(&file.path)
+                .map_err(|e| format!("Failed to remove existing config: {}", e))?;
+        }
+        fs::rename(&tmp_path, &file.path).map_err(|e| format!("Failed to rename config file: {}", e))?;
     }
 
     Ok(())
+}
+
+/// Export config files to the one-click-sync directory for Docker/web mode.
+/// Unlike sync_config, this generates fresh configs (no merge with existing)
+/// and writes to {data_dir}/one-click-sync/{app_name}/ instead of home dirs.
+pub fn export_config(
+    app: &CliApp,
+    proxy_url: &str,
+    api_key: &str,
+    model: Option<&str>,
+    claude_models: Option<&ClaudeModelTiers>,
+) -> Result<ExportResult, String> {
+    let data_dir = crate::modules::account::get_data_dir()?;
+    let export_base = data_dir.join("one-click-sync");
+    let app_name = app.as_str();
+    let app_dir = export_base.join(app_name);
+    fs::create_dir_all(&app_dir).map_err(|e| format!("Failed to create export dir: {}", e))?;
+
+    let files = app.config_files();
+    let mut exported = Vec::new();
+
+    for file in &files {
+        // For Gemini, skip config.json if we already have settings.json
+        if app == &CliApp::Gemini && file.name == "config.json" {
+            let settings_export = app_dir.join("settings.json");
+            if settings_export.exists() {
+                continue;
+            }
+        }
+
+        // Generate fresh content (empty existing = fresh config)
+        let content = generate_file_content(app, &file.name, "", proxy_url, api_key, model, claude_models);
+
+        let export_path = app_dir.join(&file.name);
+        let tmp_path = export_path.with_extension("tmp");
+        fs::write(&tmp_path, &content)
+            .map_err(|e| format!("Failed to write temp export file {}: {}", file.name, e))?;
+        fs::rename(&tmp_path, &export_path)
+            .map_err(|e| format!("Failed to finalize export file {}: {}", file.name, e))?;
+
+        exported.push(ExportedFile {
+            name: file.name.clone(),
+            export_path: export_path.to_string_lossy().to_string(),
+            target_path: file.path.to_string_lossy().to_string(),
+        });
+    }
+
+    Ok(ExportResult {
+        export_dir: app_dir.to_string_lossy().to_string(),
+        files: exported,
+    })
+}
+
+/// Check if configs have been exported for a CLI app.
+pub fn get_export_status(app: &CliApp) -> Result<ExportStatus, String> {
+    let data_dir = crate::modules::account::get_data_dir()?;
+    let export_base = data_dir.join("one-click-sync");
+    let app_name = app.as_str();
+    let app_dir = export_base.join(app_name);
+
+    let files = app.config_files();
+    let mut exported_files = Vec::new();
+    let mut expected_count = 0;
+
+    for file in &files {
+        // Mirror the skip logic from export_config: Gemini skips config.json when settings.json exists
+        if app == &CliApp::Gemini && file.name == "config.json" {
+            let settings_export = app_dir.join("settings.json");
+            if settings_export.exists() {
+                continue;
+            }
+        }
+        expected_count += 1;
+        let export_path = app_dir.join(&file.name);
+        if export_path.exists() {
+            exported_files.push(ExportedFile {
+                name: file.name.clone(),
+                export_path: export_path.to_string_lossy().to_string(),
+                target_path: file.path.to_string_lossy().to_string(),
+            });
+        }
+    }
+
+    let fully_exported = !exported_files.is_empty() && exported_files.len() == expected_count;
+
+    Ok(ExportStatus {
+        exported: fully_exported,
+        export_dir: app_dir.to_string_lossy().to_string(),
+        files: exported_files,
+    })
 }
 
 // Tauri Commands
@@ -505,8 +695,14 @@ pub async fn get_cli_sync_status(app_type: CliApp, proxy_url: String) -> Result<
 }
 
 #[tauri::command]
-pub async fn execute_cli_sync(app_type: CliApp, proxy_url: String, api_key: String, model: Option<String>) -> Result<(), String> {
-    sync_config(&app_type, &proxy_url, &api_key, model.as_deref())
+pub async fn execute_cli_sync(
+    app_type: CliApp,
+    proxy_url: String,
+    api_key: String,
+    model: Option<String>,
+    claude_models: Option<ClaudeModelTiers>,
+) -> Result<(), String> {
+    sync_config(&app_type, &proxy_url, &api_key, model.as_deref(), claude_models.as_ref())
 }
 
 #[tauri::command]
@@ -534,7 +730,7 @@ pub async fn execute_cli_restore(app_type: CliApp) -> Result<(), String> {
     // 如果没有备份，则执行原来的逻辑：恢复为默认配置
     let default_url = app_type.default_url();
     // 恢复默认时清空 API Key，让用户重新授权或使用官方 Key
-    sync_config(&app_type, default_url, "", None)
+    sync_config(&app_type, default_url, "", None, None)
 }
 
 #[tauri::command]
@@ -550,4 +746,20 @@ pub async fn get_cli_config_content(app_type: CliApp, file_name: Option<String>)
         return Err("配置文件不存在".to_string());
     }
     fs::read_to_string(&file.path).map_err(|e| format!("读取配置文件失败: {}", e))
+}
+
+#[tauri::command]
+pub async fn export_cli_config(
+    app_type: CliApp,
+    proxy_url: String,
+    api_key: String,
+    model: Option<String>,
+    claude_models: Option<ClaudeModelTiers>,
+) -> Result<ExportResult, String> {
+    export_config(&app_type, &proxy_url, &api_key, model.as_deref(), claude_models.as_ref())
+}
+
+#[tauri::command]
+pub async fn get_cli_export_status(app_type: CliApp) -> Result<ExportStatus, String> {
+    get_export_status(&app_type)
 }

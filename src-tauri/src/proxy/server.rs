@@ -506,15 +506,21 @@ impl AxumServer {
             .route("/proxy/cli/sync", post(admin_execute_cli_sync))
             .route("/proxy/cli/restore", post(admin_execute_cli_restore))
             .route("/proxy/cli/config", post(admin_get_cli_config_content))
+            .route("/proxy/cli/export", post(admin_export_cli_config))
+            .route("/proxy/cli/export-status", post(admin_get_cli_export_status))
             .route("/proxy/opencode/status", post(admin_get_opencode_sync_status))
             .route("/proxy/opencode/sync", post(admin_execute_opencode_sync))
             .route("/proxy/opencode/restore", post(admin_execute_opencode_restore))
             .route("/proxy/opencode/clear", post(admin_execute_opencode_clear))
             .route("/proxy/opencode/config", post(admin_get_opencode_config_content))
+            .route("/proxy/opencode/export", post(admin_export_opencode_config))
+            .route("/proxy/opencode/export-status", post(admin_get_opencode_export_status))
             .route("/proxy/droid/status", post(admin_get_droid_sync_status))
             .route("/proxy/droid/sync", post(admin_execute_droid_sync))
             .route("/proxy/droid/restore", post(admin_execute_droid_restore))
             .route("/proxy/droid/config", post(admin_get_droid_config_content))
+            .route("/proxy/droid/export", post(admin_export_droid_config))
+            .route("/proxy/droid/export-status", post(admin_get_droid_export_status))
             .route("/proxy/status", get(admin_get_proxy_status))
             .route("/proxy/pool/config", get(admin_get_proxy_pool_config))
             .route("/proxy/pool/bindings", get(admin_get_all_account_bindings))
@@ -2766,13 +2772,14 @@ struct CliSyncRequest {
     app_type: crate::proxy::cli_sync::CliApp,
     proxy_url: String,
     api_key: String,
-    pub model: Option<String>,
+    model: Option<String>,
+    claude_models: Option<crate::proxy::cli_sync::ClaudeModelTiers>,
 }
 
 async fn admin_execute_cli_sync(
     Json(payload): Json<CliSyncRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::proxy::cli_sync::execute_cli_sync(payload.app_type, payload.proxy_url, payload.api_key, payload.model)
+    crate::proxy::cli_sync::execute_cli_sync(payload.app_type, payload.proxy_url, payload.api_key, payload.model, payload.claude_models)
         .await
         .map(|_| StatusCode::OK)
         .map_err(|e| {
@@ -2814,6 +2821,101 @@ async fn admin_get_cli_config_content(
     Json(payload): Json<CliConfigContentRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     crate::proxy::cli_sync::get_cli_config_content(payload.app_type, payload.file_name)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+// --- CLI Export handlers (web/Docker mode) ---
+
+async fn admin_export_cli_config(
+    Json(payload): Json<CliSyncRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::cli_sync::export_cli_config(payload.app_type, payload.proxy_url, payload.api_key, payload.model, payload.claude_models)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CliExportStatusRequest {
+    app_type: crate::proxy::cli_sync::CliApp,
+}
+
+async fn admin_get_cli_export_status(
+    Json(payload): Json<CliExportStatusRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::cli_sync::get_cli_export_status(payload.app_type)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportConfigRequest {
+    proxy_url: String,
+    api_key: String,
+}
+
+async fn admin_export_opencode_config(
+    Json(payload): Json<ExportConfigRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::opencode_sync::export_opencode_config(payload.proxy_url, payload.api_key)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+async fn admin_get_opencode_export_status() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::opencode_sync::get_opencode_export_status()
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+async fn admin_export_droid_config(
+    Json(payload): Json<ExportConfigRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::droid_sync::export_droid_config(payload.proxy_url, payload.api_key)
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+async fn admin_get_droid_export_status() -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::droid_sync::get_droid_export_status()
         .await
         .map(Json)
         .map_err(|e| {

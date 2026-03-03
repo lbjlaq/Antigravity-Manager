@@ -5,6 +5,7 @@ use std::process::Command;
 use std::fs;
 use std::collections::HashMap;
 use std::env;
+use crate::proxy::cli_sync::{ExportedFile, ExportResult, ExportStatus};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -1727,4 +1728,96 @@ pub async fn execute_opencode_clear(
     clear_legacy: Option<bool>,
 ) -> Result<(), String> {
     clear_opencode_config(proxy_url, clear_legacy.unwrap_or(false))
+}
+
+/// Generate a fresh opencode config and write it to the export directory.
+/// Does not touch the user's actual ~/.config/opencode/ directory.
+fn do_export_opencode_config(proxy_url: &str, api_key: &str) -> Result<ExportResult, String> {
+    let data_dir = crate::modules::account::get_data_dir()?;
+    let export_dir = data_dir.join("one-click-sync").join("opencode");
+    fs::create_dir_all(&export_dir)
+        .map_err(|e| format!("Failed to create export directory: {}", e))?;
+
+    // Build a fresh config using apply_sync_to_config on an empty base
+    let fresh = serde_json::json!({});
+    let config = apply_sync_to_config(fresh, proxy_url, api_key, None);
+
+    let config_file = export_dir.join(OPENCODE_CONFIG_FILE);
+    let tmp_path = config_file.with_extension("tmp");
+    let config_content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize OpenCode config: {}", e))?;
+    fs::write(&tmp_path, config_content)
+        .map_err(|e| format!("Failed to write export temp file: {}", e))?;
+    if config_file.exists() {
+        fs::remove_file(&config_file)
+            .map_err(|e| format!("Failed to remove existing export config file: {}", e))?;
+    }
+    fs::rename(&tmp_path, &config_file)
+        .map_err(|e| format!("Failed to rename export config file: {}", e))?;
+
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
+    let target_path = home.join(OPENCODE_DIR).join(OPENCODE_CONFIG_FILE);
+
+    let exported_file = ExportedFile {
+        name: OPENCODE_CONFIG_FILE.to_string(),
+        export_path: config_file.to_string_lossy().to_string(),
+        target_path: target_path.to_string_lossy().to_string(),
+    };
+
+    Ok(ExportResult {
+        export_dir: export_dir.to_string_lossy().to_string(),
+        files: vec![exported_file],
+    })
+}
+
+/// Check whether a previously exported opencode config exists in the export directory.
+fn do_get_opencode_export_status() -> Result<ExportStatus, String> {
+    let data_dir = crate::modules::account::get_data_dir()?;
+    let export_dir = data_dir.join("one-click-sync").join("opencode");
+    let export_dir_str = export_dir.to_string_lossy().to_string();
+
+    if !export_dir.exists() {
+        return Ok(ExportStatus {
+            exported: false,
+            export_dir: export_dir_str,
+            files: vec![],
+        });
+    }
+
+    let config_file = export_dir.join(OPENCODE_CONFIG_FILE);
+    if !config_file.exists() {
+        return Ok(ExportStatus {
+            exported: false,
+            export_dir: export_dir_str,
+            files: vec![],
+        });
+    }
+
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
+    let target_path = home.join(OPENCODE_DIR).join(OPENCODE_CONFIG_FILE);
+
+    let exported_file = ExportedFile {
+        name: OPENCODE_CONFIG_FILE.to_string(),
+        export_path: config_file.to_string_lossy().to_string(),
+        target_path: target_path.to_string_lossy().to_string(),
+    };
+
+    Ok(ExportStatus {
+        exported: true,
+        export_dir: export_dir_str,
+        files: vec![exported_file],
+    })
+}
+
+#[tauri::command]
+pub async fn export_opencode_config(
+    proxy_url: String,
+    api_key: String,
+) -> Result<ExportResult, String> {
+    do_export_opencode_config(&proxy_url, &api_key)
+}
+
+#[tauri::command]
+pub async fn get_opencode_export_status() -> Result<ExportStatus, String> {
+    do_get_opencode_export_status()
 }

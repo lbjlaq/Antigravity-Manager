@@ -335,29 +335,27 @@ fn calculate_aspect_ratio_from_size(size: &str) -> &'static str {
     "1:1" // 默认回退
 }
 
-/// Inject current googleSearch tool and ensure no duplicate legacy search tools
-pub fn inject_google_search_tool(body: &mut Value, mapped_model: Option<&str>) {
+/// Inject current googleSearch tool and ensure no duplicate legacy search tools.
+///
+/// The Gemini standard API (`generateContent`) does not support combining built-in
+/// tools (`googleSearch`) with custom tools (`functionDeclarations`) in a single
+/// request — this is a model-level restriction, not an SDK limitation.
+/// See: https://github.com/google/adk-python/issues/969
+pub fn inject_google_search_tool(body: &mut Value) {
     if let Some(obj) = body.as_object_mut() {
         let tools_entry = obj.entry("tools").or_insert_with(|| json!([]));
         if let Some(tools_arr) = tools_entry.as_array_mut() {
-            // [安全校验] Gemini v1internal 对混合工具有严格要求。
-            // 只有 Gemini 2.0+ 及 3.0 系列模型确认支持混合工具 (Function Calling + Google Search)。
-            let mut supports_mixed_tools = false;
-            if let Some(model) = mapped_model {
-                let model_lower = model.to_lowercase();
-                supports_mixed_tools = model_lower.contains("gemini-2.0")
-                    || model_lower.contains("gemini-2.5")
-                    || model_lower.contains("gemini-3");
-            }
-
+            // [Safety] Gemini generateContent API forbids mixing googleSearch with
+            // functionDeclarations regardless of model version (gemini-2.0, 2.5, 3.x).
+            // Only the Live API (WebSocket) supports mixed tool types.
             let has_functions = tools_arr.iter().any(|t| {
                 t.as_object()
                     .map_or(false, |o| o.contains_key("functionDeclarations"))
             });
 
-            if has_functions && !supports_mixed_tools {
+            if has_functions {
                 tracing::debug!(
-                    "Skipping googleSearch injection due to existing functionDeclarations on older model"
+                    "Skipping googleSearch injection due to existing functionDeclarations (mixed tools unsupported)"
                 );
                 return;
             }

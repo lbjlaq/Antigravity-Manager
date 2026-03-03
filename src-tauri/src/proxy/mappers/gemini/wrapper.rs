@@ -395,7 +395,7 @@ pub fn wrap_request(
 
     // Inject googleSearch tool if needed
     if config.inject_google_search {
-        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request, Some(&config.final_model));
+        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request);
     }
 
     // Inject imageConfig if present (for image generation models)
@@ -1013,13 +1013,13 @@ mod tests {
         // 我们可以直接验证 inject_google_search_tool 在 native 格式下的表现。
         
         let mut inner_request = body.clone();
-        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request, Some("gemini-2.0-flash"));
-        
+        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request);
+
         let tools = inner_request["tools"].as_array().expect("Should have tools");
         let has_functions = tools.iter().any(|t| t.get("functionDeclarations").is_some());
         let has_google_search = tools.iter().any(|t| t.get("googleSearch").is_some());
-        
+
         assert!(has_functions, "Should contain functionDeclarations");
-        assert!(has_google_search, "Should contain googleSearch (Gemini 2.0+ supports mixed tools)");
+        assert!(!has_google_search, "googleSearch must NOT be injected alongside functionDeclarations (Gemini API limitation)");
     }
 }

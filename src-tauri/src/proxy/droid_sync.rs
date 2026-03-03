@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::fs;
 use std::env;
+use crate::proxy::cli_sync::{ExportedFile, ExportResult, ExportStatus};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -336,4 +337,111 @@ pub async fn execute_droid_restore() -> Result<(), String> {
 #[tauri::command]
 pub async fn get_droid_config_content() -> Result<String, String> {
     read_droid_config_content()
+}
+
+/// Build a representative set of AGM custom models for the export config.
+fn build_export_custom_models(proxy_url: &str, api_key: &str) -> Vec<Value> {
+    let representative_models = [
+        ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+        ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+        ("gpt-4o", "GPT-4o"),
+    ];
+
+    representative_models
+        .iter()
+        .map(|(model_id, model_name)| {
+            serde_json::json!({
+                "id": format!("{}{}",  AG_ID_PREFIX, model_id),
+                "name": model_name,
+                "baseUrl": proxy_url,
+                "apiKey": api_key,
+                "model": model_id,
+            })
+        })
+        .collect()
+}
+
+/// Generate a fresh Droid settings.json and write it to the export directory.
+/// Does not touch the user's actual ~/.factory/settings.json.
+fn do_export_droid_config(proxy_url: &str, api_key: &str) -> Result<ExportResult, String> {
+    let data_dir = crate::modules::account::get_data_dir()?;
+    let export_dir = data_dir.join("one-click-sync").join("droid");
+    fs::create_dir_all(&export_dir)
+        .map_err(|e| format!("Failed to create export directory: {}", e))?;
+
+    let custom_models = build_export_custom_models(proxy_url, api_key);
+    let config = serde_json::json!({
+        "customModels": custom_models,
+    });
+
+    let config_file = export_dir.join(DROID_CONFIG_FILE);
+    let tmp_path = config_file.with_extension("tmp");
+    let config_content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize Droid config: {}", e))?;
+    fs::write(&tmp_path, config_content)
+        .map_err(|e| format!("Failed to write export temp file: {}", e))?;
+    if config_file.exists() {
+        fs::remove_file(&config_file)
+            .map_err(|e| format!("Failed to remove existing export config file: {}", e))?;
+    }
+    fs::rename(&tmp_path, &config_file)
+        .map_err(|e| format!("Failed to rename export config file: {}", e))?;
+
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
+    let target_path = home.join(DROID_DIR).join(DROID_CONFIG_FILE);
+
+    let exported_file = ExportedFile {
+        name: DROID_CONFIG_FILE.to_string(),
+        export_path: config_file.to_string_lossy().to_string(),
+        target_path: target_path.to_string_lossy().to_string(),
+    };
+
+    Ok(ExportResult {
+        export_dir: export_dir.to_string_lossy().to_string(),
+        files: vec![exported_file],
+    })
+}
+
+/// Check whether a previously exported Droid config exists in the export directory.
+fn do_get_droid_export_status() -> Result<ExportStatus, String> {
+    let data_dir = crate::modules::account::get_data_dir()?;
+    let export_dir = data_dir.join("one-click-sync").join("droid");
+    let export_dir_str = export_dir.to_string_lossy().to_string();
+
+    let config_file = export_dir.join(DROID_CONFIG_FILE);
+    if !config_file.exists() {
+        return Ok(ExportStatus {
+            exported: false,
+            export_dir: export_dir_str,
+            files: vec![],
+        });
+    }
+
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
+    let target_path = home.join(DROID_DIR).join(DROID_CONFIG_FILE);
+
+    let exported_file = ExportedFile {
+        name: DROID_CONFIG_FILE.to_string(),
+        export_path: config_file.to_string_lossy().to_string(),
+        target_path: target_path.to_string_lossy().to_string(),
+    };
+
+    Ok(ExportStatus {
+        exported: true,
+        export_dir: export_dir_str,
+        files: vec![exported_file],
+    })
+}
+
+#[tauri::command]
+pub async fn export_droid_config(
+    proxy_url: String,
+    api_key: String,
+) -> Result<ExportResult, String> {
+    do_export_droid_config(&proxy_url, &api_key)
+}
+
+#[tauri::command]
+pub async fn get_droid_export_status() -> Result<ExportStatus, String> {
+    do_get_droid_export_status()
 }

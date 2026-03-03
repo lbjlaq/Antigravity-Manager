@@ -66,6 +66,8 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'execute_cli_sync': { url: '/api/proxy/cli/sync', method: 'POST' },
   'execute_cli_restore': { url: '/api/proxy/cli/restore', method: 'POST' },
   'get_cli_config_content': { url: '/api/proxy/cli/config', method: 'POST' },
+  'export_cli_config': { url: '/api/proxy/cli/export', method: 'POST' },
+  'get_cli_export_status': { url: '/api/proxy/cli/export-status', method: 'POST' },
 
   // OpenCode Sync
   'get_opencode_sync_status': { url: '/api/proxy/opencode/status', method: 'POST' },
@@ -73,6 +75,14 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'execute_opencode_restore': { url: '/api/proxy/opencode/restore', method: 'POST' },
   'execute_opencode_clear': { url: '/api/proxy/opencode/clear', method: 'POST' },
   'get_opencode_config_content': { url: '/api/proxy/opencode/config', method: 'POST' },
+  'export_opencode_config': { url: '/api/proxy/opencode/export', method: 'POST' },
+  'get_opencode_export_status': { url: '/api/proxy/opencode/export-status', method: 'POST' },
+
+  // Droid Sync (web mode)
+  'get_droid_sync_status': { url: '/api/proxy/droid/status', method: 'POST' },
+  'get_droid_config_content': { url: '/api/proxy/droid/config', method: 'POST' },
+  'export_droid_config': { url: '/api/proxy/droid/export', method: 'POST' },
+  'get_droid_export_status': { url: '/api/proxy/droid/export-status', method: 'POST' },
 
   // Stats
   'get_token_stats_hourly': { url: '/api/stats/token/hourly', method: 'GET' },

@@ -578,7 +578,7 @@ pub fn transform_claude_request_in(
     )?;
 
     // 3. Tools
-    let tools = build_tools(&claude_req.tools, has_web_search_tool, &mapped_model)?;
+    let tools = build_tools(&claude_req.tools, has_web_search_tool)?;
 
     // 5. Safety Settings (configurable via GEMINI_SAFETY_THRESHOLD env var)
     let safety_settings = build_safety_settings();
@@ -614,7 +614,7 @@ pub fn transform_claude_request_in(
 
 
     if config.inject_google_search && !has_web_search_tool {
-        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request, Some(&mapped_model));
+        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request);
     }
 
     // Inject imageConfig if present (for image generation models)
@@ -1671,7 +1671,6 @@ fn merge_adjacent_roles(mut contents: Vec<Value>) -> Vec<Value> {
 fn build_tools(
     tools: &Option<Vec<Tool>>,
     has_web_search: bool,
-    mapped_model: &str,
 ) -> Result<Option<Value>, String> {
     if let Some(tools_list) = tools {
         let mut function_declarations: Vec<Value> = Vec::new();
@@ -1716,48 +1715,30 @@ fn build_tools(
             }
         }
 
-        let mut tool_list = Vec::new();
-
-        // [优化] Gemini 2.0+ 及 3.0 系列模型通常支持混合工具调用 (Function Calling + Google Search)
-        // 只有针对老旧模型或特定受限环境才需要互斥。
-        let model_lower = mapped_model.to_lowercase();
-        let supports_mixed_tools = model_lower.contains("gemini-2.0")
-            || model_lower.contains("gemini-2.5")
-            || model_lower.contains("gemini-3");
+        // Gemini generateContent API forbids mixing googleSearch with functionDeclarations
+        // regardless of model version. Only the Live API (WebSocket) supports mixed tool types.
+        // See: https://github.com/google/adk-python/issues/969
+        let mut tool_obj = serde_json::Map::new();
 
         if !function_declarations.is_empty() {
-            let mut func_obj = serde_json::Map::new();
-            func_obj.insert(
+            tool_obj.insert(
                 "functionDeclarations".to_string(),
                 json!(function_declarations),
             );
-            tool_list.push(json!(func_obj));
 
             if has_google_search {
-                if supports_mixed_tools {
-                    tracing::info!(
-                        "[Claude-Request] Enabling MIXED tool calling for {}: Function Calling + Google Search.",
-                        mapped_model
-                    );
-                    let mut search_obj = serde_json::Map::new();
-                    search_obj.insert("googleSearch".to_string(), json!({}));
-                    tool_list.push(json!(search_obj));
-                } else {
-                    tracing::info!(
-                        "[Claude-Request] Skipping googleSearch injection for {} due to existing function declarations. \
-                         Older Gemini models may not support mixed tool types.",
-                        mapped_model
-                    );
-                }
+                tracing::info!(
+                    "[Claude-Request] Skipping googleSearch injection due to {} existing function declarations. \
+                     Gemini generateContent API does not support mixed tool types.",
+                    function_declarations.len()
+                );
             }
         } else if has_google_search {
-            let mut search_obj = serde_json::Map::new();
-            search_obj.insert("googleSearch".to_string(), json!({}));
-            tool_list.push(json!(search_obj));
+            tool_obj.insert("googleSearch".to_string(), json!({}));
         }
 
-        if !tool_list.is_empty() {
-            return Ok(Some(json!(tool_list)));
+        if !tool_obj.is_empty() {
+            return Ok(Some(json!([tool_obj])));
         }
     }
 
@@ -2973,21 +2954,19 @@ mod tests {
             quality: None,
         };
 
-        // 模拟映射到 Gemini 2.0
-        let mapped_model = "gemini-2.0-flash-exp";
-        
-        // 这里我们直接测试 build_tools 函数 (它是 pub(crate) 且在同模块下)
-        let result = build_tools(&req.tools, true, mapped_model);
+        // Gemini generateContent API does not support mixing googleSearch with
+        // functionDeclarations regardless of model version.
+        let result = build_tools(&req.tools, true);
         assert!(result.is_ok());
-        
+
         let tools_val = result.unwrap().expect("Should have tools");
         let tools_arr = tools_val.as_array().expect("Tools should be an array");
-        
+
         let has_google_search = tools_arr.iter().any(|t| t.get("googleSearch").is_some());
         let has_functions = tools_arr.iter().any(|t| t.get("functionDeclarations").is_some());
-        
-        assert!(has_google_search, "Gemini 2.0 should support mixed Google Search");
-        assert!(has_functions, "Gemini 2.0 should support mixed function declarations");
+
+        assert!(!has_google_search, "googleSearch must NOT be mixed with functionDeclarations");
+        assert!(has_functions, "functionDeclarations should be preserved");
     }
 
     #[test]
@@ -3024,20 +3003,17 @@ mod tests {
             quality: None,
         };
 
-        // 模拟映射到 Gemini 1.5
-        let mapped_model = "gemini-1.5-flash-002";
-        
-        // 测试 build_tools 函数
-        let result = build_tools(&req.tools, true, mapped_model);
+        // Mixed tools are never allowed regardless of model version
+        let result = build_tools(&req.tools, true);
         assert!(result.is_ok());
-        
+
         let tools_val = result.unwrap().expect("Should have tools");
         let tools_arr = tools_val.as_array().expect("Tools should be an array");
-        
+
         let has_google_search = tools_arr.iter().any(|t| t.get("googleSearch").is_some());
         let has_functions = tools_arr.iter().any(|t| t.get("functionDeclarations").is_some());
-        
-        assert!(!has_google_search, "Older Gemini models should NOT have mixed tools");
+
+        assert!(!has_google_search, "googleSearch must NOT be mixed with functionDeclarations");
         assert!(has_functions);
     }
 }
