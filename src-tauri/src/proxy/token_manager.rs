@@ -799,6 +799,101 @@ impl TokenManager {
         None
     }
 
+    fn get_available_models_from_json(account_path: &PathBuf) -> Option<HashSet<String>> {
+        let content = std::fs::read_to_string(account_path).ok()?;
+        let account: serde_json::Value = serde_json::from_str(&content).ok()?;
+        let models = account.get("quota")?.get("models")?.as_array()?;
+        let mut result = HashSet::new();
+        for model in models {
+            if let Some(name) = model.get("name").and_then(|v| v.as_str()) {
+                let normalized = name.trim().to_lowercase();
+                if !normalized.is_empty() {
+                    result.insert(normalized);
+                }
+            }
+        }
+        Some(result)
+    }
+
+    fn build_dynamic_model_candidates(model_name: &str) -> Option<Vec<String>> {
+        let model = model_name.trim().to_lowercase();
+        if model.is_empty() {
+            return None;
+        }
+
+        let pro_family = [
+            "gemini-3-pro",
+            "gemini-3-pro-preview",
+            "gemini-3-pro-high",
+            "gemini-3-pro-low",
+            "gemini-3.1-pro",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-pro-high",
+            "gemini-3.1-pro-low",
+        ];
+
+        if !pro_family.contains(&model.as_str()) {
+            return None;
+        }
+
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        let mut push = |candidate: &str| {
+            let c = candidate.to_string();
+            if seen.insert(c.clone()) {
+                out.push(c);
+            }
+        };
+
+        // Keep requested model as top priority, then fallback across the same family.
+        push(&model);
+        push("gemini-3.1-pro-preview");
+        push("gemini-3-pro-preview");
+        push("gemini-3.1-pro-high");
+        push("gemini-3-pro-high");
+        push("gemini-3.1-pro-low");
+        push("gemini-3-pro-low");
+
+        Some(out)
+    }
+
+    pub async fn resolve_dynamic_model_for_account(
+        &self,
+        account_id: &str,
+        mapped_model: &str,
+    ) -> String {
+        let candidates = match Self::build_dynamic_model_candidates(mapped_model) {
+            Some(c) => c,
+            None => return mapped_model.to_string(),
+        };
+
+        let account_path = match self.tokens.get(account_id) {
+            Some(token) => token.account_path.clone(),
+            None => return mapped_model.to_string(),
+        };
+
+        let available_models = match Self::get_available_models_from_json(&account_path) {
+            Some(models) if !models.is_empty() => models,
+            _ => return mapped_model.to_string(),
+        };
+
+        for candidate in candidates {
+            if available_models.contains(&candidate) {
+                if candidate != mapped_model.to_lowercase() {
+                    tracing::info!(
+                        "[Dynamic-Model-Rewrite] account={} {} -> {}",
+                        account_id,
+                        mapped_model,
+                        candidate
+                    );
+                }
+                return candidate;
+            }
+        }
+
+        mapped_model.to_string()
+    }
+
     /// 测试辅助函数：公开访问 get_model_quota_from_json
     #[cfg(test)]
     pub fn get_model_quota_from_json_for_test(

@@ -108,10 +108,10 @@ pub fn resolve_request_config(
     // Force a stable search model for search requests.
     let mut final_model = mapped_model.trim_end_matches("-online").to_string();
 
-    // [FIX] Map logic aliases back to physical model names for upstream compatibility
+    // Map explicit preview aliases that have stable physical counterparts.
+    // Note: gemini-3-pro-preview / gemini-3.1-pro-preview are intentionally NOT forced
+    // to *-high here; dynamic runtime rewrite is handled after account selection.
     final_model = match final_model.as_str() {
-        "gemini-3-pro-preview" => "gemini-3.1-pro-high".to_string(), // 3.0 preview redirects to 3.1 High
-        "gemini-3.1-pro-preview" => "gemini-3.1-pro-high".to_string(),
         "gemini-3-pro-image-preview" => "gemini-3-pro-image".to_string(),
         "gemini-3-flash-preview" => "gemini-3-flash".to_string(),
         _ => final_model,

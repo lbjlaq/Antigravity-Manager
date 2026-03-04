@@ -189,6 +189,10 @@ pub async fn handle_generate(
                 }
             };
 
+        let mapped_model = token_manager
+            .resolve_dynamic_model_for_account(&account_id, &mapped_model)
+            .await;
+
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 

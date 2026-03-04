@@ -218,6 +218,9 @@ pub async fn handle_chat_completions(
 
         // [NEW v4.1.28] 获取完整 Token 对象用于动态规格查询
         let proxy_token = token_manager.get_token_by_id(&account_id);
+        let mapped_model = token_manager
+            .resolve_dynamic_model_for_account(&account_id, &mapped_model)
+            .await;
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
@@ -1200,6 +1203,10 @@ pub async fn handle_completions(
                         .into_response()
                 }
             };
+
+        let mapped_model = token_manager
+            .resolve_dynamic_model_for_account(&account_id, &mapped_model)
+            .await;
 
         last_email = Some(email.clone());
 
