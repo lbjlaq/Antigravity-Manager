@@ -56,6 +56,9 @@ const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
     V1_INTERNAL_BASE_URL_PROD,    // 优先级 3: Prod (仅作为兜底)
 ];
 
+// GeminiCLI 只使用 PROD 端点
+const GEMINICLI_BASE_URL: &str = "https://cloudcode-pa.googleapis.com/v1internal";
+
 pub struct UpstreamClient {
     default_client: Client,
     proxy_pool: Option<Arc<crate::proxy::proxy_pool::ProxyPoolManager>>,
@@ -244,6 +247,7 @@ impl UpstreamClient {
         body: Value,
         query_string: Option<&str>,
         account_id: Option<&str>, // [NEW] Account ID for proxy selection
+        account_type: &crate::models::AccountType, // [NEW] Account type for endpoint/header selection
     ) -> Result<UpstreamCallResult, String> {
         self.call_v1_internal_with_headers(
             method,
@@ -252,6 +256,7 @@ impl UpstreamClient {
             query_string,
             std::collections::HashMap::new(),
             account_id,
+            account_type,
         )
         .await
     }
@@ -265,10 +270,13 @@ impl UpstreamClient {
         body: Value,
         query_string: Option<&str>,
         extra_headers: std::collections::HashMap<String, String>,
-        account_id: Option<&str>, // [NEW] Account ID
+        account_id: Option<&str>,                  // [NEW] Account ID
+        account_type: &crate::models::AccountType, // [NEW] Account type
     ) -> Result<UpstreamCallResult, String> {
         // [NEW] Get client based on account (cached in proxy pool manager)
         let client = self.get_client(account_id).await;
+
+        let is_gemini_cli = *account_type == crate::models::AccountType::GeminiCli;
 
         // 构建 Headers (所有端点复用)
         let mut headers = header::HeaderMap::new();
@@ -282,34 +290,43 @@ impl UpstreamClient {
                 .map_err(|e| e.to_string())?,
         );
 
-        headers.insert(
-            header::USER_AGENT,
-            header::HeaderValue::from_str(&self.get_user_agent().await).unwrap_or_else(|e| {
-                tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
-                header::HeaderValue::from_static("antigravity")
-            }),
-        );
+        if is_gemini_cli {
+            // GeminiCLI: 只发 Authorization + Content-Type + User-Agent
+            headers.insert(
+                header::USER_AGENT,
+                header::HeaderValue::from_static("GeminiCLI/0.1.5 (Windows; AMD64)"),
+            );
+        } else {
+            // Antigravity: 完整 Headers
+            headers.insert(
+                header::USER_AGENT,
+                header::HeaderValue::from_str(&self.get_user_agent().await).unwrap_or_else(|e| {
+                    tracing::warn!("Invalid User-Agent header value, using fallback: {}", e);
+                    header::HeaderValue::from_static("antigravity")
+                }),
+            );
 
-        // [ENHANCED] 注入 Antigravity 官方客户端关键特征 Headers
-        // 1. Client Identity
-        headers.insert(
-            "x-client-name",
-            header::HeaderValue::from_static("antigravity"),
-        );
-        if let Ok(ver) = header::HeaderValue::from_str(&crate::constants::CURRENT_VERSION) {
-            headers.insert("x-client-version", ver);
-        }
+            // [ENHANCED] 注入 Antigravity 官方客户端关键特征 Headers
+            // 1. Client Identity
+            headers.insert(
+                "x-client-name",
+                header::HeaderValue::from_static("antigravity"),
+            );
+            if let Ok(ver) = header::HeaderValue::from_str(&crate::constants::CURRENT_VERSION) {
+                headers.insert("x-client-version", ver);
+            }
 
-        // 2. Device & Session Identity
-        // Machine ID (Persistent)
-        if let Ok(mid) = machine_uid::get() {
-             if let Ok(mid_val) = header::HeaderValue::from_str(&mid) {
-                 headers.insert("x-machine-id", mid_val);
-             }
-        }
-        // Session ID (Per App Launch)
-        if let Ok(sess_val) = header::HeaderValue::from_str(&crate::constants::SESSION_ID) {
-            headers.insert("x-vscode-sessionid", sess_val);
+            // 2. Device & Session Identity
+            // Machine ID (Persistent)
+            if let Ok(mid) = machine_uid::get() {
+                if let Ok(mid_val) = header::HeaderValue::from_str(&mid) {
+                    headers.insert("x-machine-id", mid_val);
+                }
+            }
+            // Session ID (Per App Launch)
+            if let Ok(sess_val) = header::HeaderValue::from_str(&crate::constants::SESSION_ID) {
+                headers.insert("x-vscode-sessionid", sess_val);
+            }
         }
 
         // [REMOVED v4.1.24] x-goog-api-client (gl-node/fire/grpc) header has been removed.
@@ -332,10 +349,17 @@ impl UpstreamClient {
         // [NEW] 收集降级尝试记录
         let mut fallback_attempts: Vec<FallbackAttemptLog> = Vec::new();
 
+        // [NEW] GeminiCLI 只使用 PROD 端点；Antigravity 使用 3 端点降级链
+        let endpoints: Vec<&str> = if is_gemini_cli {
+            vec![GEMINICLI_BASE_URL]
+        } else {
+            V1_INTERNAL_BASE_URL_FALLBACKS.to_vec()
+        };
+
         // 遍历所有端点，失败时自动切换
-        for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
+        for (idx, base_url) in endpoints.iter().enumerate() {
             let url = Self::build_url(base_url, method, query_string);
-            let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
+            let has_next = idx + 1 < endpoints.len();
 
             let response = client
                 .post(&url)
@@ -353,7 +377,7 @@ impl UpstreamClient {
                                 "✓ Upstream fallback succeeded | Endpoint: {} | Status: {} | Next endpoints available: {}",
                                 base_url,
                                 status,
-                                V1_INTERNAL_BASE_URL_FALLBACKS.len() - idx - 1
+                                endpoints.len() - idx - 1
                             );
                         } else {
                             tracing::debug!(
@@ -452,6 +476,7 @@ impl UpstreamClient {
                 serde_json::json!({}),
                 None,
                 account_id,
+                &crate::models::AccountType::Antigravity, // Default to Antigravity for model discovery
             )
             .await?;
         let json: Value = result

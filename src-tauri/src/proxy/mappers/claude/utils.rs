@@ -18,7 +18,11 @@ pub fn get_context_limit_for_model(model: &str) -> u32 {
     }
 }
 
-pub fn to_claude_usage(usage_metadata: &super::models::UsageMetadata, scaling_enabled: bool, context_limit: u32) -> super::models::Usage {
+pub fn to_claude_usage(
+    usage_metadata: &super::models::UsageMetadata,
+    scaling_enabled: bool,
+    context_limit: u32,
+) -> super::models::Usage {
     let prompt_tokens = usage_metadata.prompt_token_count.unwrap_or(0);
     let cached_tokens = usage_metadata.cached_content_token_count.unwrap_or(0);
 
@@ -75,11 +79,14 @@ pub fn to_claude_usage(usage_metadata: &super::models::UsageMetadata, scaling_en
         let display_ratio = scaled_total as f64 / 195_000.0;
         tracing::debug!(
             "[Claude-Scaling] Raw: {} ({:.1}%), Display: {} ({:.1}%), Compression: {:.1}x",
-            total_raw, ratio * 100.0, scaled_total, display_ratio * 100.0,
+            total_raw,
+            ratio * 100.0,
+            scaled_total,
+            display_ratio * 100.0,
             total_raw as f64 / scaled_total as f64
         );
     }
-    
+
     // 按比例分配缩放后的总量到 input 和 cache_read
     let (reported_input, reported_cache) = if total_raw > 0 {
         let cache_ratio = (cached_tokens as f64) / (total_raw as f64);
@@ -88,7 +95,7 @@ pub fn to_claude_usage(usage_metadata: &super::models::UsageMetadata, scaling_en
     } else {
         (scaled_total, None)
     };
-    
+
     super::models::Usage {
         input_tokens: reported_input,
         output_tokens: usage_metadata.candidates_token_count.unwrap_or(0),

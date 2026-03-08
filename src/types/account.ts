@@ -1,7 +1,10 @@
+export type AccountType = 'antigravity' | 'gemini_cli';
+
 export interface Account {
     id: string;
     email: string;
     name?: string;
+    account_type?: AccountType;
     token: TokenData;
     device_profile?: DeviceProfile;
     device_history?: DeviceProfileVersion[];
@@ -18,6 +21,7 @@ export interface Account {
     validation_blocked_until?: number;
     validation_blocked_reason?: string;
     validation_url?: string;
+    preview?: boolean;
     created_at: number;
     last_used: number;
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Account } from '../types/account';
+import { Account, AccountType } from '../types/account';
 import * as accountService from '../services/accountService';
 
 interface AccountState {
@@ -11,7 +11,7 @@ interface AccountState {
     // Actions
     fetchAccounts: () => Promise<void>;
     fetchCurrentAccount: () => Promise<void>;
-    addAccount: (email: string, refreshToken: string) => Promise<void>;
+    addAccount: (email: string, refreshToken: string, accountType?: AccountType) => Promise<void>;
     deleteAccount: (accountId: string) => Promise<void>;
     deleteAccounts: (accountIds: string[]) => Promise<void>;
     switchAccount: (accountId: string) => Promise<void>;
@@ -20,8 +20,8 @@ interface AccountState {
     reorderAccounts: (accountIds: string[]) => Promise<void>;
 
     // 新增 actions
-    startOAuthLogin: () => Promise<void>;
-    completeOAuthLogin: () => Promise<void>;
+    startOAuthLogin: (accountType?: AccountType) => Promise<void>;
+    completeOAuthLogin: (accountType?: AccountType) => Promise<void>;
     cancelOAuthLogin: () => Promise<void>;
     importV1Accounts: () => Promise<void>;
     importFromDb: () => Promise<void>;
@@ -31,6 +31,8 @@ interface AccountState {
     warmUpAccounts: () => Promise<string>;
     warmUpAccount: (accountId: string) => Promise<string>;
     updateAccountLabel: (accountId: string, label: string) => Promise<void>;
+    verifyAccount: (accountId: string) => Promise<string>;
+    configurePreview: (accountId: string) => Promise<void>;
 }
 
 export const useAccountStore = create<AccountState>((set, get) => ({
@@ -61,10 +63,10 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    addAccount: async (email: string, refreshToken: string) => {
+    addAccount: async (email: string, refreshToken: string, accountType?: AccountType) => {
         set({ loading: true, error: null });
         try {
-            await accountService.addAccount(email, refreshToken);
+            await accountService.addAccount(email, refreshToken, accountType);
             await get().fetchAccounts();
             set({ loading: false });
         } catch (error) {
@@ -172,10 +174,10 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    startOAuthLogin: async () => {
+    startOAuthLogin: async (accountType?: AccountType) => {
         set({ loading: true, error: null });
         try {
-            await accountService.startOAuthLogin();
+            await accountService.startOAuthLogin(accountType);
             await get().fetchAccounts();
             set({ loading: false });
         } catch (error) {
@@ -184,10 +186,10 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    completeOAuthLogin: async () => {
+    completeOAuthLogin: async (accountType?: AccountType) => {
         set({ loading: true, error: null });
         try {
-            await accountService.completeOAuthLogin();
+            await accountService.completeOAuthLogin(accountType);
             await get().fetchAccounts();
             set({ loading: false });
         } catch (error) {
@@ -309,6 +311,27 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             set({ accounts: updatedAccounts });
         } catch (error) {
             console.error('[AccountStore] Update label failed:', error);
+            throw error;
+        }
+    },
+
+    verifyAccount: async (accountId: string) => {
+        try {
+            const projectId = await accountService.verifyAccount(accountId);
+            await get().fetchAccounts();
+            return projectId;
+        } catch (error) {
+            console.error('[AccountStore] Verify account failed:', error);
+            throw error;
+        }
+    },
+
+    configurePreview: async (accountId: string) => {
+        try {
+            await accountService.configurePreview(accountId);
+            await get().fetchAccounts();
+        } catch (error) {
+            console.error('[AccountStore] Configure preview failed:', error);
             throw error;
         }
     },

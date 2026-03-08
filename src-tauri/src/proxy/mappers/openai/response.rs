@@ -2,7 +2,11 @@
 use super::models::*;
 use serde_json::Value;
 
-pub fn transform_openai_response(gemini_response: &Value, session_id: Option<&str>, message_count: usize) -> OpenAIResponse {
+pub fn transform_openai_response(
+    gemini_response: &Value,
+    session_id: Option<&str>,
+    message_count: usize,
+) -> OpenAIResponse {
     // 解包 response 字段
     let raw = gemini_response.get("response").unwrap_or(gemini_response);
 

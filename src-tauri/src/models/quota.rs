@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelQuota {
     pub name: String,
-    pub percentage: i32,  // 剩余百分比 0-100
+    pub percentage: i32, // 剩余百分比 0-100
     pub reset_time: String,
-    
+
     // -- 动态参数解析与持久化 --
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,

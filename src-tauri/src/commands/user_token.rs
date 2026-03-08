@@ -1,5 +1,5 @@
+use crate::modules::user_token_db::{self, TokenIpBinding, UserToken};
 use serde::{Deserialize, Serialize};
-use crate::modules::user_token_db::{self, UserToken, TokenIpBinding};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateTokenRequest {
@@ -9,7 +9,7 @@ pub struct CreateTokenRequest {
     pub max_ips: i32,
     pub curfew_start: Option<String>,
     pub curfew_end: Option<String>,
-    pub custom_expires_at: Option<i64>,  // 自定义过期时间戳 (秒)
+    pub custom_expires_at: Option<i64>, // 自定义过期时间戳 (秒)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -89,16 +89,16 @@ pub struct UserTokenStats {
 pub async fn get_user_token_summary() -> Result<UserTokenStats, String> {
     let tokens = user_token_db::list_tokens()?;
     let active_tokens = tokens.iter().filter(|t| t.enabled).count();
-    
+
     // 统计唯一用户
     let mut users = std::collections::HashSet::new();
     for t in &tokens {
         users.insert(t.username.clone());
     }
-    
+
     // 这里简单返回一些数据，请求数最好从数据库聚合查询
     // 目前仅作为演示，请求数暂不精确统计今日的
-    
+
     Ok(UserTokenStats {
         total_tokens: tokens.len(),
         active_tokens,

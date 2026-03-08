@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::PathBuf;
-use std::process::Command;
-use std::fs;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -212,7 +212,10 @@ struct PluginAccount {
     added_at: i64,
     #[serde(rename = "lastUsed")]
     last_used: i64,
-    #[serde(rename = "rateLimitResetTimes", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "rateLimitResetTimes",
+        skip_serializing_if = "Option::is_none"
+    )]
     rate_limit_reset_times: Option<HashMap<String, i64>>,
     // Optional preserved state fields
     #[serde(rename = "managedProjectId", skip_serializing_if = "Option::is_none")]
@@ -229,7 +232,10 @@ struct PluginAccount {
     fingerprint: Option<Value>,
     #[serde(rename = "cachedQuota", skip_serializing_if = "Option::is_none")]
     cached_quota: Option<Value>,
-    #[serde(rename = "cachedQuotaUpdatedAt", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "cachedQuotaUpdatedAt",
+        skip_serializing_if = "Option::is_none"
+    )]
     cached_quota_updated_at: Option<i64>,
     #[serde(rename = "fingerprintHistory", skip_serializing_if = "Option::is_none")]
     fingerprint_history: Option<Value>,
@@ -262,7 +268,7 @@ fn get_config_paths() -> Option<(PathBuf, PathBuf, PathBuf)> {
 
 fn extract_version(raw: &str) -> String {
     let trimmed = raw.trim();
-    
+
     // Try to extract version from formats like "opencode/1.2.3" or "codex-cli 0.86.0"
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
     for part in parts {
@@ -278,18 +284,18 @@ fn extract_version(raw: &str) -> String {
             return part.to_string();
         }
     }
-    
+
     // Fallback: extract last sequence of digits and dots
     let version_chars: String = trimmed
         .chars()
         .skip_while(|c| !c.is_ascii_digit())
         .take_while(|c| c.is_ascii_digit() || *c == '.')
         .collect();
-    
+
     if !version_chars.is_empty() && version_chars.contains('.') {
         return version_chars;
     }
-    
+
     "unknown".to_string()
 }
 
@@ -306,7 +312,7 @@ fn resolve_opencode_path() -> Option<PathBuf> {
         tracing::debug!("Found opencode in PATH: {:?}", path);
         return Some(path);
     }
-    
+
     // Try fallback locations based on OS
     #[cfg(target_os = "windows")]
     {
@@ -333,21 +339,31 @@ fn resolve_opencode_path_windows() -> Option<PathBuf> {
             return Some(npm_opencode_exe);
         }
     }
-    
+
     // Check pnpm location
     if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-        let pnpm_opencode_cmd = PathBuf::from(&local_app_data).join("pnpm").join("opencode.cmd");
+        let pnpm_opencode_cmd = PathBuf::from(&local_app_data)
+            .join("pnpm")
+            .join("opencode.cmd");
         if pnpm_opencode_cmd.exists() {
-            tracing::debug!("Found opencode.cmd in LOCALAPPDATA\\pnpm: {:?}", pnpm_opencode_cmd);
+            tracing::debug!(
+                "Found opencode.cmd in LOCALAPPDATA\\pnpm: {:?}",
+                pnpm_opencode_cmd
+            );
             return Some(pnpm_opencode_cmd);
         }
-        let pnpm_opencode_exe = PathBuf::from(&local_app_data).join("pnpm").join("opencode.exe");
+        let pnpm_opencode_exe = PathBuf::from(&local_app_data)
+            .join("pnpm")
+            .join("opencode.exe");
         if pnpm_opencode_exe.exists() {
-            tracing::debug!("Found opencode.exe in LOCALAPPDATA\\pnpm: {:?}", pnpm_opencode_exe);
+            tracing::debug!(
+                "Found opencode.exe in LOCALAPPDATA\\pnpm: {:?}",
+                pnpm_opencode_exe
+            );
             return Some(pnpm_opencode_exe);
         }
     }
-    
+
     // Check Yarn location
     if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
         let yarn_opencode = PathBuf::from(&local_app_data)
@@ -359,14 +375,14 @@ fn resolve_opencode_path_windows() -> Option<PathBuf> {
             return Some(yarn_opencode);
         }
     }
-    
+
     // Scan NVM_HOME
     if let Ok(nvm_home) = env::var("NVM_HOME") {
         if let Some(path) = scan_nvm_directory(&nvm_home) {
             return Some(path);
         }
     }
-    
+
     // Try common NVM locations
     if let Some(home) = dirs::home_dir() {
         let nvm_default = home.join(".nvm");
@@ -374,14 +390,14 @@ fn resolve_opencode_path_windows() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    
+
     None
 }
 
 #[cfg(not(target_os = "windows"))]
 fn resolve_opencode_path_unix() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    
+
     // Common user bin locations
     let user_bins = [
         home.join(".local").join("bin").join("opencode"),
@@ -389,51 +405,52 @@ fn resolve_opencode_path_unix() -> Option<PathBuf> {
         home.join(".volta").join("bin").join("opencode"),
         home.join("bin").join("opencode"),
     ];
-    
+
     for path in &user_bins {
         if path.exists() {
             tracing::debug!("Found opencode in user bin: {:?}", path);
             return Some(path.clone());
         }
     }
-    
+
     // System-wide locations
     let system_bins = [
         PathBuf::from("/opt/homebrew/bin/opencode"),
         PathBuf::from("/usr/local/bin/opencode"),
         PathBuf::from("/usr/bin/opencode"),
     ];
-    
+
     for path in &system_bins {
         if path.exists() {
             tracing::debug!("Found opencode in system bin: {:?}", path);
             return Some(path.clone());
         }
     }
-    
+
     // Scan nvm directories
-    let nvm_dirs = [
-        home.join(".nvm").join("versions").join("node"),
-    ];
-    
+    let nvm_dirs = [home.join(".nvm").join("versions").join("node")];
+
     for nvm_dir in &nvm_dirs {
         if let Some(path) = scan_node_versions(nvm_dir) {
             return Some(path);
         }
     }
-    
+
     // Scan fnm directories
     let fnm_dirs = [
         home.join(".fnm").join("node-versions"),
-        home.join("Library").join("Application Support").join("fnm").join("node-versions"),
+        home.join("Library")
+            .join("Application Support")
+            .join("fnm")
+            .join("node-versions"),
     ];
-    
+
     for fnm_dir in &fnm_dirs {
         if let Some(path) = scan_fnm_versions(fnm_dir) {
             return Some(path);
         }
     }
-    
+
     None
 }
 
@@ -443,9 +460,9 @@ fn scan_nvm_directory(nvm_path: impl AsRef<std::path::Path>) -> Option<PathBuf> 
     if !nvm_path.exists() {
         return None;
     }
-    
+
     let entries = fs::read_dir(nvm_path).ok()?;
-    
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -461,7 +478,7 @@ fn scan_nvm_directory(nvm_path: impl AsRef<std::path::Path>) -> Option<PathBuf> 
             }
         }
     }
-    
+
     None
 }
 
@@ -471,9 +488,9 @@ fn scan_node_versions(versions_dir: impl AsRef<std::path::Path>) -> Option<PathB
     if !versions_dir.exists() {
         return None;
     }
-    
+
     let entries = fs::read_dir(versions_dir).ok()?;
-    
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -484,7 +501,7 @@ fn scan_node_versions(versions_dir: impl AsRef<std::path::Path>) -> Option<PathB
             }
         }
     }
-    
+
     None
 }
 
@@ -494,9 +511,9 @@ fn scan_fnm_versions(versions_dir: impl AsRef<std::path::Path>) -> Option<PathBu
     if !versions_dir.exists() {
         return None;
     }
-    
+
     let entries = fs::read_dir(versions_dir).ok()?;
-    
+
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -507,7 +524,7 @@ fn scan_fnm_versions(versions_dir: impl AsRef<std::path::Path>) -> Option<PathBu
             }
         }
     }
-    
+
     None
 }
 
@@ -526,7 +543,7 @@ fn find_in_path(executable: &str) -> Option<PathBuf> {
             }
         }
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         if let Ok(path_var) = env::var("PATH") {
@@ -538,17 +555,17 @@ fn find_in_path(executable: &str) -> Option<PathBuf> {
             }
         }
     }
-    
+
     None
 }
 
 #[cfg(target_os = "windows")]
 fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
     let path_str = opencode_path.to_string_lossy();
-    
+
     // Check if it's a .cmd or .bat file that needs cmd.exe
     let is_cmd = path_str.ends_with(".cmd") || path_str.ends_with(".bat");
-    
+
     let output = if is_cmd {
         let mut cmd = Command::new("cmd.exe");
         cmd.arg("/C")
@@ -558,23 +575,22 @@ fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
         cmd.output()
     } else {
         let mut cmd = Command::new(opencode_path);
-        cmd.arg("--version")
-            .creation_flags(CREATE_NO_WINDOW);
+        cmd.arg("--version").creation_flags(CREATE_NO_WINDOW);
         cmd.output()
     };
-    
+
     match output {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
+
             // Some tools output version to stderr
             let raw = if stdout.trim().is_empty() {
                 stderr.to_string()
             } else {
                 stdout.to_string()
             };
-            
+
             tracing::debug!("opencode --version output: {}", raw.trim());
             Some(extract_version(&raw))
         }
@@ -591,22 +607,20 @@ fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
 
 #[cfg(not(target_os = "windows"))]
 fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
-    let output = Command::new(opencode_path)
-        .arg("--version")
-        .output();
-    
+    let output = Command::new(opencode_path).arg("--version").output();
+
     match output {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            
+
             // Some tools output version to stderr
             let raw = if stdout.trim().is_empty() {
                 stderr.to_string()
             } else {
                 stdout.to_string()
             };
-            
+
             tracing::debug!("opencode --version output: {}", raw.trim());
             Some(extract_version(&raw))
         }
@@ -623,7 +637,7 @@ fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
 
 pub fn check_opencode_installed() -> (bool, Option<String>) {
     tracing::debug!("Checking opencode installation...");
-    
+
     let opencode_path = match resolve_opencode_path() {
         Some(path) => {
             tracing::debug!("Resolved opencode path: {:?}", path);
@@ -634,7 +648,7 @@ pub fn check_opencode_installed() -> (bool, Option<String>) {
             return (false, None);
         }
     };
-    
+
     match run_opencode_version(&opencode_path) {
         Some(version) => {
             tracing::debug!("opencode version detected: {}", version);
@@ -648,7 +662,8 @@ pub fn check_opencode_installed() -> (bool, Option<String>) {
 }
 
 fn get_provider_options<'a>(value: &'a Value, provider_name: &str) -> Option<&'a Value> {
-    value.get("provider")
+    value
+        .get("provider")
         .and_then(|p| p.get(provider_name))
         .and_then(|prov| prov.get("options"))
 }
@@ -662,12 +677,10 @@ pub fn get_sync_status(proxy_url: &str) -> (bool, bool, Option<String>) {
     let mut has_backup = false;
     let mut current_base_url = None;
 
-    let backup_path = config_path.with_file_name(
-        format!("{}{}", OPENCODE_CONFIG_FILE, BACKUP_SUFFIX)
-    );
-    let old_backup_path = config_path.with_file_name(
-        format!("{}{}", OPENCODE_CONFIG_FILE, OLD_BACKUP_SUFFIX)
-    );
+    let backup_path =
+        config_path.with_file_name(format!("{}{}", OPENCODE_CONFIG_FILE, BACKUP_SUFFIX));
+    let old_backup_path =
+        config_path.with_file_name(format!("{}{}", OPENCODE_CONFIG_FILE, OLD_BACKUP_SUFFIX));
     if backup_path.exists() || old_backup_path.exists() {
         has_backup = true;
     }
@@ -724,20 +737,22 @@ fn create_backup(path: &PathBuf) -> Result<(), String> {
         return Ok(());
     }
 
-    fs::copy(path, &backup_path)
-        .map_err(|e| format!("Failed to create backup: {}", e))?;
+    fs::copy(path, &backup_path).map_err(|e| format!("Failed to create backup: {}", e))?;
 
     Ok(())
 }
 
-fn restore_backup_to_target(backup_path: &PathBuf, target_path: &PathBuf, label: &str) -> Result<(), String> {
+fn restore_backup_to_target(
+    backup_path: &PathBuf,
+    target_path: &PathBuf,
+    label: &str,
+) -> Result<(), String> {
     if target_path.exists() {
         fs::remove_file(target_path)
             .map_err(|e| format!("Failed to remove existing {}: {}", label, e))?;
     }
 
-    fs::rename(backup_path, target_path)
-        .map_err(|e| format!("Failed to restore {}: {}", label, e))
+    fs::rename(backup_path, target_path).map_err(|e| format!("Failed to restore {}: {}", label, e))
 }
 
 fn ensure_object(value: &mut Value, key: &str) {
@@ -766,7 +781,7 @@ fn merge_provider_options(provider: &mut Value, base_url: &str, api_key: &str) {
     if provider.get("options").is_none() {
         provider["options"] = serde_json::json!({});
     }
-    
+
     if let Some(options) = provider.get_mut("options").and_then(|o| o.as_object_mut()) {
         options.insert("baseURL".to_string(), Value::String(base_url.to_string()));
         options.insert("apiKey".to_string(), Value::String(api_key.to_string()));
@@ -854,30 +869,33 @@ fn build_variants_object(variant_type: Option<VariantType>) -> Option<Value> {
 /// Build model JSON object with full metadata
 fn build_model_json(model_def: &ModelDef) -> Value {
     let mut model_obj = serde_json::Map::new();
-    
-    model_obj.insert("name".to_string(), Value::String(model_def.name.to_string()));
-    
+
+    model_obj.insert(
+        "name".to_string(),
+        Value::String(model_def.name.to_string()),
+    );
+
     let limits = serde_json::json!({
         "context": model_def.context_limit,
         "output": model_def.output_limit,
     });
     model_obj.insert("limit".to_string(), limits);
-    
+
     let modalities = serde_json::json!({
         "input": model_def.input_modalities,
         "output": model_def.output_modalities,
     });
     model_obj.insert("modalities".to_string(), modalities);
-    
+
     if model_def.reasoning {
         model_obj.insert("reasoning".to_string(), Value::Bool(true));
     }
-    
+
     // Build variants as object map instead of array
     if let Some(variants) = build_variants_object(model_def.variant_type) {
         model_obj.insert("variants".to_string(), variants);
     }
-    
+
     Value::Object(model_obj)
 }
 
@@ -886,32 +904,32 @@ fn merge_catalog_models(provider: &mut Value, model_ids: Option<&[&str]>) {
     if provider.get("models").is_none() {
         provider["models"] = serde_json::json!({});
     }
-    
+
     let catalog = build_model_catalog();
     let catalog_map: HashMap<&str, &ModelDef> = catalog.iter().map(|m| (m.id, m)).collect();
-    
+
     if let Some(models) = provider.get_mut("models").and_then(|m| m.as_object_mut()) {
         let ids_to_sync: Vec<&str> = match model_ids {
             Some(ids) => ids.to_vec(),
             None => catalog_map.keys().copied().collect(),
         };
-        
+
         for model_id in ids_to_sync {
             if let Some(model_def) = catalog_map.get(model_id) {
                 let catalog_model = build_model_json(model_def);
-                
+
                 if let Some(existing) = models.get(model_id) {
                     // Merge: keep user-defined fields, update catalog fields
                     if let Some(existing_obj) = existing.as_object() {
                         let mut merged = existing_obj.clone();
-                        
+
                         // Update/insert catalog fields
                         if let Some(catalog_obj) = catalog_model.as_object() {
                             for (key, value) in catalog_obj.iter() {
                                 merged.insert(key.clone(), value.clone());
                             }
                         }
-                        
+
                         models.insert(model_id.to_string(), Value::Object(merged));
                     } else {
                         // Existing is not an object, replace with catalog
@@ -988,11 +1006,14 @@ fn sync_accounts_file(accounts_path: &PathBuf) -> Result<(), String> {
     if let Some(ref content) = existing_content {
         if let Ok(existing_json) = serde_json::from_str::<Value>(content) {
             // Parse existing accounts
-            if let Some(existing_accounts) = existing_json.get("accounts").and_then(|a| a.as_array()) {
+            if let Some(existing_accounts) =
+                existing_json.get("accounts").and_then(|a| a.as_array())
+            {
                 for acc in existing_accounts {
                     if let Ok(plugin_acc) = serde_json::from_value::<PluginAccount>(acc.clone()) {
                         // Index by refresh_token (primary key for matching)
-                        existing_accounts_by_refresh_token.insert(plugin_acc.refresh_token.clone(), plugin_acc.clone());
+                        existing_accounts_by_refresh_token
+                            .insert(plugin_acc.refresh_token.clone(), plugin_acc.clone());
                         // Index by email (fallback)
                         if let Some(email) = &plugin_acc.email {
                             existing_accounts_by_email.insert(email.clone(), plugin_acc);
@@ -1004,7 +1025,10 @@ fn sync_accounts_file(accounts_path: &PathBuf) -> Result<(), String> {
             if let Some(idx) = existing_json.get("activeIndex").and_then(|v| v.as_i64()) {
                 existing_active_index = idx as i32;
             }
-            if let Some(family_indices) = existing_json.get("activeIndexByFamily").and_then(|v| v.as_object()) {
+            if let Some(family_indices) = existing_json
+                .get("activeIndexByFamily")
+                .and_then(|v| v.as_object())
+            {
                 for (key, val) in family_indices {
                     if let Some(idx) = val.as_i64() {
                         existing_active_index_by_family.insert(key.clone(), idx as i32);
@@ -1035,16 +1059,16 @@ fn sync_accounts_file(accounts_path: &PathBuf) -> Result<(), String> {
             .or_else(|| existing_accounts_by_email.get(&acc.email).cloned());
 
         let plugin_account = if let Some(existing) = existing {
-                // Preserve existing state
-                PluginAccount {
-                    email: Some(acc.email),
-                    refresh_token,
-                    project_id,
-                    added_at: existing.added_at,
-                    last_used: existing.last_used.max(acc.last_used),
-                    rate_limit_reset_times: existing.rate_limit_reset_times,
-                    managed_project_id: existing.managed_project_id,
-                    enabled: existing.enabled,
+            // Preserve existing state
+            PluginAccount {
+                email: Some(acc.email),
+                refresh_token,
+                project_id,
+                added_at: existing.added_at,
+                last_used: existing.last_used.max(acc.last_used),
+                rate_limit_reset_times: existing.rate_limit_reset_times,
+                managed_project_id: existing.managed_project_id,
+                enabled: existing.enabled,
                 last_switch_reason: existing.last_switch_reason,
                 cooling_down_until: existing.cooling_down_until,
                 cooldown_reason: existing.cooldown_reason,
@@ -1130,13 +1154,11 @@ pub fn restore_opencode_config() -> Result<(), String> {
     let mut restored = false;
 
     // Try new backup suffix first, fall back to old suffix for backward compatibility
-    let config_backup_new = config_path.with_file_name(format!(
-        "{}{}", OPENCODE_CONFIG_FILE, BACKUP_SUFFIX
-    ));
-    let config_backup_old = config_path.with_file_name(format!(
-        "{}{}", OPENCODE_CONFIG_FILE, OLD_BACKUP_SUFFIX
-    ));
-    
+    let config_backup_new =
+        config_path.with_file_name(format!("{}{}", OPENCODE_CONFIG_FILE, BACKUP_SUFFIX));
+    let config_backup_old =
+        config_path.with_file_name(format!("{}{}", OPENCODE_CONFIG_FILE, OLD_BACKUP_SUFFIX));
+
     if config_backup_new.exists() {
         restore_backup_to_target(&config_backup_new, &config_path, "config")?;
         restored = true;
@@ -1146,13 +1168,13 @@ pub fn restore_opencode_config() -> Result<(), String> {
     }
 
     // Try new backup suffix first, fall back to old suffix for backward compatibility
-    let accounts_backup_new = accounts_path.with_file_name(format!(
-        "{}{}", ANTIGRAVITY_ACCOUNTS_FILE, BACKUP_SUFFIX
-    ));
+    let accounts_backup_new =
+        accounts_path.with_file_name(format!("{}{}", ANTIGRAVITY_ACCOUNTS_FILE, BACKUP_SUFFIX));
     let accounts_backup_old = accounts_path.with_file_name(format!(
-        "{}{}", ANTIGRAVITY_ACCOUNTS_FILE, OLD_BACKUP_SUFFIX
+        "{}{}",
+        ANTIGRAVITY_ACCOUNTS_FILE, OLD_BACKUP_SUFFIX
     ));
-    
+
     if accounts_backup_new.exists() {
         restore_backup_to_target(&accounts_backup_new, &accounts_path, "accounts")?;
         restored = true;
@@ -1203,11 +1225,7 @@ fn apply_sync_to_config(
 
 /// Pure function: Apply clear logic to config JSON
 /// Returns the modified config Value
-fn apply_clear_to_config(
-    mut config: Value,
-    proxy_url: Option<&str>,
-    clear_legacy: bool,
-) -> Value {
+fn apply_clear_to_config(mut config: Value, proxy_url: Option<&str>, clear_legacy: bool) -> Value {
     if let Some(provider) = config.get_mut("provider").and_then(|p| p.as_object_mut()) {
         // 1. Remove antigravity-manager provider
         provider.remove(ANTIGRAVITY_PROVIDER_ID);
@@ -1268,27 +1286,51 @@ mod tests {
 
     #[test]
     fn test_normalize_opencode_base_url_without_v1() {
-        assert_eq!(normalize_opencode_base_url("http://localhost:3000"), "http://localhost:3000/v1");
-        assert_eq!(normalize_opencode_base_url("http://localhost:3000/"), "http://localhost:3000/v1");
+        assert_eq!(
+            normalize_opencode_base_url("http://localhost:3000"),
+            "http://localhost:3000/v1"
+        );
+        assert_eq!(
+            normalize_opencode_base_url("http://localhost:3000/"),
+            "http://localhost:3000/v1"
+        );
     }
 
     #[test]
     fn test_normalize_opencode_base_url_with_v1() {
-        assert_eq!(normalize_opencode_base_url("http://localhost:3000/v1"), "http://localhost:3000/v1");
-        assert_eq!(normalize_opencode_base_url("http://localhost:3000/v1/"), "http://localhost:3000/v1");
+        assert_eq!(
+            normalize_opencode_base_url("http://localhost:3000/v1"),
+            "http://localhost:3000/v1"
+        );
+        assert_eq!(
+            normalize_opencode_base_url("http://localhost:3000/v1/"),
+            "http://localhost:3000/v1"
+        );
     }
 
     #[test]
     fn test_normalize_opencode_base_url_with_whitespace() {
-        assert_eq!(normalize_opencode_base_url("  http://localhost:3000  "), "http://localhost:3000/v1");
-        assert_eq!(normalize_opencode_base_url("  http://localhost:3000/v1  "), "http://localhost:3000/v1");
+        assert_eq!(
+            normalize_opencode_base_url("  http://localhost:3000  "),
+            "http://localhost:3000/v1"
+        );
+        assert_eq!(
+            normalize_opencode_base_url("  http://localhost:3000/v1  "),
+            "http://localhost:3000/v1"
+        );
     }
 
     #[test]
     fn test_normalize_opencode_base_url_no_double_v1() {
         // Ensure we don't create double /v1/v1
-        assert_eq!(normalize_opencode_base_url("http://localhost:3000/v1"), "http://localhost:3000/v1");
-        assert_eq!(normalize_opencode_base_url("http://localhost:3000/v1/"), "http://localhost:3000/v1");
+        assert_eq!(
+            normalize_opencode_base_url("http://localhost:3000/v1"),
+            "http://localhost:3000/v1"
+        );
+        assert_eq!(
+            normalize_opencode_base_url("http://localhost:3000/v1/"),
+            "http://localhost:3000/v1"
+        );
     }
 
     // Tests for apply_sync_to_config
@@ -1313,14 +1355,32 @@ mod tests {
 
         // Existing providers should be preserved
         let provider = result.get("provider").unwrap();
-        assert!(provider.get("google").is_some(), "google provider should be preserved");
-        assert!(provider.get("anthropic").is_some(), "anthropic provider should be preserved");
+        assert!(
+            provider.get("google").is_some(),
+            "google provider should be preserved"
+        );
+        assert!(
+            provider.get("anthropic").is_some(),
+            "anthropic provider should be preserved"
+        );
         assert_eq!(
-            provider.get("google").unwrap().get("options").unwrap().get("apiKey").unwrap(),
+            provider
+                .get("google")
+                .unwrap()
+                .get("options")
+                .unwrap()
+                .get("apiKey")
+                .unwrap(),
             "google-key"
         );
         assert_eq!(
-            provider.get("anthropic").unwrap().get("options").unwrap().get("apiKey").unwrap(),
+            provider
+                .get("anthropic")
+                .unwrap()
+                .get("options")
+                .unwrap()
+                .get("apiKey")
+                .unwrap(),
             "anthropic-key"
         );
     }
@@ -1356,9 +1416,18 @@ mod tests {
         let models = ag.get("models").unwrap().as_object().unwrap();
 
         // Should have all catalog models
-        assert!(models.contains_key("claude-sonnet-4-6"), "should have claude-sonnet-4-6");
-        assert!(models.contains_key("gemini-3.1-pro-high"), "should have gemini-3.1-pro-high");
-        assert!(models.contains_key("gemini-2.5-pro"), "should have gemini-2.5-pro");
+        assert!(
+            models.contains_key("claude-sonnet-4-6"),
+            "should have claude-sonnet-4-6"
+        );
+        assert!(
+            models.contains_key("gemini-3.1-pro-high"),
+            "should have gemini-3.1-pro-high"
+        );
+        assert!(
+            models.contains_key("gemini-2.5-pro"),
+            "should have gemini-2.5-pro"
+        );
 
         // Check model structure
         let claude_model = models.get("claude-sonnet-4-6").unwrap();
@@ -1372,7 +1441,12 @@ mod tests {
         let config = serde_json::json!({});
         let models_to_sync = &["claude-sonnet-4-6", "gemini-3.1-pro-high"];
 
-        let result = apply_sync_to_config(config, "http://localhost:3000", "test-api-key", Some(models_to_sync));
+        let result = apply_sync_to_config(
+            config,
+            "http://localhost:3000",
+            "test-api-key",
+            Some(models_to_sync),
+        );
 
         let provider = result.get("provider").unwrap();
         let ag = provider.get(ANTIGRAVITY_PROVIDER_ID).unwrap();
@@ -1380,7 +1454,10 @@ mod tests {
 
         assert!(models.contains_key("claude-sonnet-4-6"));
         assert!(models.contains_key("gemini-3.1-pro-high"));
-        assert!(!models.contains_key("gemini-2.5-pro"), "should not have unselected models");
+        assert!(
+            !models.contains_key("gemini-2.5-pro"),
+            "should not have unselected models"
+        );
     }
 
     // Tests for apply_clear_to_config
@@ -1399,8 +1476,14 @@ mod tests {
         let result = apply_clear_to_config(config, None, false);
 
         let provider = result.get("provider").unwrap();
-        assert!(provider.get(ANTIGRAVITY_PROVIDER_ID).is_none(), "antigravity-manager should be removed");
-        assert!(provider.get("google").is_some(), "google should be preserved");
+        assert!(
+            provider.get(ANTIGRAVITY_PROVIDER_ID).is_none(),
+            "antigravity-manager should be removed"
+        );
+        assert!(
+            provider.get("google").is_some(),
+            "google should be preserved"
+        );
     }
 
     #[test]
@@ -1424,9 +1507,15 @@ mod tests {
         let models = anthropic.get("models").unwrap().as_object().unwrap();
 
         // Antigravity model IDs should be removed
-        assert!(!models.contains_key("claude-sonnet-4-5"), "antigravity model should be removed");
+        assert!(
+            !models.contains_key("claude-sonnet-4-5"),
+            "antigravity model should be removed"
+        );
         // Non-antigravity models should be preserved
-        assert!(models.contains_key("claude-3"), "non-antigravity model should be preserved");
+        assert!(
+            models.contains_key("claude-3"),
+            "non-antigravity model should be preserved"
+        );
     }
 
     #[test]
@@ -1445,7 +1534,10 @@ mod tests {
         let anthropic = provider.get("anthropic").unwrap();
 
         // Options should be removed when baseURL matches
-        assert!(anthropic.get("options").is_none(), "options should be removed when baseURL matches");
+        assert!(
+            anthropic.get("options").is_none(),
+            "options should be removed when baseURL matches"
+        );
     }
 
     #[test]
@@ -1487,29 +1579,56 @@ mod tests {
         let anthropic = provider.get("anthropic").unwrap();
 
         // Legacy cleanup should be skipped when proxy_url is None
-        assert!(anthropic.get("options").is_some(), "options should be preserved when no proxy_url");
-        assert!(anthropic.get("models").is_some(), "models should be preserved when no proxy_url");
+        assert!(
+            anthropic.get("options").is_some(),
+            "options should be preserved when no proxy_url"
+        );
+        assert!(
+            anthropic.get("models").is_some(),
+            "models should be preserved when no proxy_url"
+        );
     }
 
     // Tests for base_url_matches
 
     #[test]
     fn test_base_url_matches_with_v1() {
-        assert!(base_url_matches("http://localhost:3000/v1", "http://localhost:3000"));
-        assert!(base_url_matches("http://localhost:3000", "http://localhost:3000/v1"));
-        assert!(base_url_matches("http://localhost:3000/v1/", "http://localhost:3000"));
+        assert!(base_url_matches(
+            "http://localhost:3000/v1",
+            "http://localhost:3000"
+        ));
+        assert!(base_url_matches(
+            "http://localhost:3000",
+            "http://localhost:3000/v1"
+        ));
+        assert!(base_url_matches(
+            "http://localhost:3000/v1/",
+            "http://localhost:3000"
+        ));
     }
 
     #[test]
     fn test_base_url_matches_without_v1() {
-        assert!(base_url_matches("http://localhost:3000", "http://localhost:3000"));
-        assert!(base_url_matches("http://localhost:3000/", "http://localhost:3000/"));
+        assert!(base_url_matches(
+            "http://localhost:3000",
+            "http://localhost:3000"
+        ));
+        assert!(base_url_matches(
+            "http://localhost:3000/",
+            "http://localhost:3000/"
+        ));
     }
 
     #[test]
     fn test_base_url_matches_different_urls() {
-        assert!(!base_url_matches("http://localhost:3000", "http://other-host:3000"));
-        assert!(!base_url_matches("http://localhost:3000/v1", "http://localhost:4000/v1"));
+        assert!(!base_url_matches(
+            "http://localhost:3000",
+            "http://other-host:3000"
+        ));
+        assert!(!base_url_matches(
+            "http://localhost:3000/v1",
+            "http://localhost:4000/v1"
+        ));
     }
 
     #[test]
@@ -1525,7 +1644,10 @@ mod tests {
         let result = apply_clear_to_config(config, None, false);
 
         // Provider object should be removed when empty
-        assert!(result.get("provider").is_none(), "empty provider object should be removed");
+        assert!(
+            result.get("provider").is_none(),
+            "empty provider object should be removed"
+        );
     }
 }
 
@@ -1559,8 +1681,7 @@ pub fn read_opencode_config_content(file_name: Option<String>) -> Result<String,
         return Err(format!("Config file does not exist: {:?}", target_path));
     }
 
-    fs::read_to_string(&target_path)
-        .map_err(|e| format!("Failed to read config: {}", e))
+    fs::read_to_string(&target_path).map_err(|e| format!("Failed to read config: {}", e))
 }
 
 #[tauri::command]
@@ -1604,7 +1725,9 @@ pub struct GetOpencodeConfigRequest {
 }
 
 #[tauri::command]
-pub async fn get_opencode_config_content(request: GetOpencodeConfigRequest) -> Result<String, String> {
+pub async fn get_opencode_config_content(
+    request: GetOpencodeConfigRequest,
+) -> Result<String, String> {
     read_opencode_config_content(request.file_name)
 }
 
@@ -1647,9 +1770,9 @@ fn clear_opencode_config(proxy_url: Option<String>, clear_legacy: bool) -> Resul
 
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
-        
-        let config: Value = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))?;
+
+        let config: Value =
+            serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
         let config = apply_clear_to_config(config, proxy_url.as_deref(), clear_legacy);
 
         // Write updated config
@@ -1661,11 +1784,11 @@ fn clear_opencode_config(proxy_url: Option<String>, clear_legacy: bool) -> Resul
     }
 
     // Process antigravity-accounts.json
-    let accounts_backup_new = accounts_path.with_file_name(format!(
-        "{}{}", ANTIGRAVITY_ACCOUNTS_FILE, BACKUP_SUFFIX
-    ));
+    let accounts_backup_new =
+        accounts_path.with_file_name(format!("{}{}", ANTIGRAVITY_ACCOUNTS_FILE, BACKUP_SUFFIX));
     let accounts_backup_old = accounts_path.with_file_name(format!(
-        "{}{}", ANTIGRAVITY_ACCOUNTS_FILE, OLD_BACKUP_SUFFIX
+        "{}{}",
+        ANTIGRAVITY_ACCOUNTS_FILE, OLD_BACKUP_SUFFIX
     ));
 
     if accounts_backup_new.exists() {
@@ -1673,7 +1796,11 @@ fn clear_opencode_config(proxy_url: Option<String>, clear_legacy: bool) -> Resul
         restore_backup_to_target(&accounts_backup_new, &accounts_path, "accounts from backup")?;
     } else if accounts_backup_old.exists() {
         // Restore from old backup
-        restore_backup_to_target(&accounts_backup_old, &accounts_path, "accounts from old backup")?;
+        restore_backup_to_target(
+            &accounts_backup_old,
+            &accounts_path,
+            "accounts from old backup",
+        )?;
     } else if accounts_path.exists() {
         // No backup found, delete the file
         fs::remove_file(&accounts_path)
@@ -1687,7 +1814,10 @@ fn clear_opencode_config(proxy_url: Option<String>, clear_legacy: bool) -> Resul
 fn cleanup_legacy_provider(provider: &mut Value, proxy_url: &str) {
     if let Some(provider_obj) = provider.as_object_mut() {
         // Remove Antigravity model IDs from models list.
-        let remove_models_key = if let Some(models) = provider_obj.get_mut("models").and_then(|m| m.as_object_mut()) {
+        let remove_models_key = if let Some(models) = provider_obj
+            .get_mut("models")
+            .and_then(|m| m.as_object_mut())
+        {
             for model_id in ANTIGRAVITY_MODEL_IDS {
                 models.remove(*model_id);
             }
@@ -1700,7 +1830,10 @@ fn cleanup_legacy_provider(provider: &mut Value, proxy_url: &str) {
         }
 
         // Check and remove options.baseURL and options.apiKey if baseURL matches proxy.
-        let remove_options_key = if let Some(options) = provider_obj.get_mut("options").and_then(|o| o.as_object_mut()) {
+        let remove_options_key = if let Some(options) = provider_obj
+            .get_mut("options")
+            .and_then(|o| o.as_object_mut())
+        {
             let should_cleanup = options
                 .get("baseURL")
                 .and_then(|v| v.as_str())

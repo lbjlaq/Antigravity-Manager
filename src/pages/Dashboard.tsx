@@ -101,8 +101,8 @@ function Dashboard() {
         }
     };
 
-    const handleAddAccount = async (email: string, refreshToken: string) => {
-        await addAccount(email, refreshToken);
+    const handleAddAccount = async (email: string, refreshToken: string, accountType?: import('../types/account').AccountType) => {
+        await addAccount(email, refreshToken, accountType);
         await fetchAccounts(); // 刷新列表
     };
 

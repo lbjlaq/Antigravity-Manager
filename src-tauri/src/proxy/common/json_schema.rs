@@ -1,7 +1,7 @@
-use serde_json::{json, Value};
-use once_cell::sync::Lazy;
 use super::tool_adapter::ToolAdapter;
 use super::tool_adapters::PencilAdapter;
+use once_cell::sync::Lazy;
+use serde_json::{json, Value};
 
 /// 不被 Gemini 支持但包含重要语义信息的约束字段
 /// 这些字段将在删除前被转化为 description 提示
@@ -20,7 +20,7 @@ const CONSTRAINT_FIELDS: &[(&str, &str)] = &[
 ];
 
 /// 全局工具适配器注册表
-/// 
+///
 /// 所有注册的适配器都会在 Schema 清洗时被检查和应用
 static TOOL_ADAPTERS: Lazy<Vec<Box<dyn ToolAdapter>>> = Lazy::new(|| {
     vec![
@@ -64,13 +64,13 @@ pub fn clean_json_schema(value: &mut Value) {
 }
 
 /// 带工具适配器支持的 Schema 清洗
-/// 
+///
 /// 这是推荐的清洗入口,支持工具特定的优化
-/// 
+///
 /// # Arguments
 /// * `value` - 待清洗的 JSON Schema
 /// * `tool_name` - 工具名称,用于匹配适配器
-/// 
+///
 /// # 处理流程
 /// 1. 查找匹配的工具适配器
 /// 2. 执行适配器的预处理 (工具特定优化)
@@ -78,17 +78,16 @@ pub fn clean_json_schema(value: &mut Value) {
 /// 4. 执行适配器的后处理 (最终调整)
 pub fn clean_json_schema_for_tool(value: &mut Value, tool_name: &str) {
     // 1. 查找匹配的适配器
-    let adapter = TOOL_ADAPTERS.iter()
-        .find(|a| a.matches(tool_name));
-    
+    let adapter = TOOL_ADAPTERS.iter().find(|a| a.matches(tool_name));
+
     // 2. 执行预处理
     if let Some(adapter) = adapter {
         let _ = adapter.pre_process(value);
     }
-    
+
     // 3. 执行通用清洗
     clean_json_schema(value);
-    
+
     // 4. 执行后处理
     if let Some(adapter) = adapter {
         let _ = adapter.post_process(value);
@@ -192,7 +191,10 @@ fn flatten_refs(
 
 fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: usize) -> bool {
     if depth > MAX_RECURSION_DEPTH {
-        debug_assert!(false, "Max recursion depth reached in clean_json_schema_recursive");
+        debug_assert!(
+            false,
+            "Max recursion depth reached in clean_json_schema_recursive"
+        );
         return false;
     }
     let mut is_effectively_nullable = false;
@@ -206,10 +208,14 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
             // 针对某些 MCP 工具（如 pencil）误用 items 定义对象属性的情况进行修复。
             // 如果 type=object 或包含 properties，但又定义了 items，Gemini 会因为 items 只能出现在 array 中而报错。
             // 我们将 items 的内容“对齐”到 properties 中。
-            if map.get("type").and_then(|t| t.as_str()) == Some("object") || map.contains_key("properties") {
+            if map.get("type").and_then(|t| t.as_str()) == Some("object")
+                || map.contains_key("properties")
+            {
                 if let Some(items) = map.remove("items") {
                     tracing::warn!("[Schema-Normalization] Found 'items' in an Object-like node. Moving content to 'properties'.");
-                    let target_props = map.entry("properties".to_string()).or_insert_with(|| json!({}));
+                    let target_props = map
+                        .entry("properties".to_string())
+                        .or_insert_with(|| json!({}));
                     if let Some(target_map) = target_props.as_object_mut() {
                         if let Some(source_map) = items.as_object() {
                             for (k, v) in source_map {
@@ -249,7 +255,7 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                     map.insert("type".to_string(), Value::String("object".to_string()));
                 }
             }
-            
+
             // 处理 items (数组)
             if let Some(items) = map.get_mut("items") {
                 // items 的内容必须是一个独立的 Schema 节点
@@ -293,7 +299,8 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
             }
 
             if let Some(union_array) = union_to_merge {
-                if let Some((best_branch, all_types)) = extract_best_schema_from_union(&union_array) {
+                if let Some((best_branch, all_types)) = extract_best_schema_from_union(&union_array)
+                {
                     if let Value::Object(branch_obj) = best_branch {
                         // 合并分支属性到当前 map
                         for (k, v) in branch_obj {
@@ -330,7 +337,7 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                             }
                         }
                     }
-                    
+
                     // [NEW] 添加类型提示到描述中 (参考 CLIProxyAPI)
                     if all_types.len() > 1 {
                         let type_hint = format!("Accepts: {}", all_types.join(" | "));
@@ -351,14 +358,16 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                 "enum",
                 "title",
             ];
-            
+
             let has_standard_keyword = map.keys().any(|k| allowed_fields.contains(&k.as_str()));
 
             // [NEW] 启发式修复：如果明确是 Schema 节点，但没有标准关键字，却有其他 Key
             // 我们推测这是一个“简写”的对象定义，尝试将其内部 Key 移动到 properties 中。
             // 补充：必须确保它不是工具调用或结果 (含有 functionCall/functionResponse)，防止结构被破坏。
-            let is_not_schema_payload = map.contains_key("functionCall") || map.contains_key("functionResponse");
-            if is_schema_node && !has_standard_keyword && !map.is_empty() && !is_not_schema_payload {
+            let is_not_schema_payload =
+                map.contains_key("functionCall") || map.contains_key("functionResponse");
+            if is_schema_node && !has_standard_keyword && !map.is_empty() && !is_not_schema_payload
+            {
                 let mut properties = serde_json::Map::new();
                 let keys: Vec<String> = map.keys().cloned().collect();
                 for k in keys {
@@ -368,16 +377,17 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                 }
                 map.insert("type".to_string(), Value::String("object".to_string()));
                 map.insert("properties".to_string(), Value::Object(properties));
-                
+
                 // 递归清理刚刚移动进去的属性
                 if let Some(Value::Object(props_map)) = map.get_mut("properties") {
                     for v in props_map.values_mut() {
-                        clean_json_schema_recursive(v, true, depth + 1); 
+                        clean_json_schema_recursive(v, true, depth + 1);
                     }
                 }
             }
 
-            let looks_like_schema = (is_schema_node || has_standard_keyword) && !is_not_schema_payload;
+            let looks_like_schema =
+                (is_schema_node || has_standard_keyword) && !is_not_schema_payload;
 
             if looks_like_schema {
                 // 4. [ROBUST] 约束迁移：在被白名单过滤前，将校验项转为描述 Hint
@@ -467,7 +477,7 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                         }
                         _ => {}
                     }
-                    
+
                     *type_val =
                         Value::String(selected_type.unwrap_or_else(|| fallback.to_string()));
                 }
@@ -594,7 +604,7 @@ fn append_hint_to_description(map: &mut serde_json::Map<String, Value>, hint: St
     let desc_val = map
         .entry("description".to_string())
         .or_insert_with(|| Value::String("".to_string()));
-    
+
     if let Value::String(s) = desc_val {
         if s.is_empty() {
             *s = hint;
@@ -608,7 +618,7 @@ fn append_hint_to_description(map: &mut serde_json::Map<String, Value>, hint: St
 /// 在删除约束字段前,将其语义信息保留在描述中,让模型能够理解约束
 fn move_constraints_to_description(map: &mut serde_json::Map<String, Value>) {
     let mut hints = Vec::new();
-    
+
     for (field, label) in CONSTRAINT_FIELDS {
         if let Some(val) = map.get(*field) {
             if !val.is_null() {
@@ -621,7 +631,7 @@ fn move_constraints_to_description(map: &mut serde_json::Map<String, Value>) {
             }
         }
     }
-    
+
     if !hints.is_empty() {
         let constraint_hint = format!("[Constraint: {}]", hints.join(", "));
         append_hint_to_description(map, constraint_hint);
@@ -649,7 +659,6 @@ fn score_schema_option(val: &Value) -> i32 {
     0
 }
 
-
 /// [NEW] 从 anyOf/oneOf 联合类型数组中选取最佳非 null Schema 分支
 /// 返回: (最佳Schema, 所有可能的类型列表)
 /// 参考 CLIProxyAPI 的 selectBest 逻辑
@@ -660,14 +669,14 @@ fn extract_best_schema_from_union(union_array: &Vec<Value>) -> Option<(Value, Ve
 
     for item in union_array {
         let score = score_schema_option(item);
-        
+
         // 收集类型信息
         if let Some(type_str) = get_schema_type_name(item) {
             if !all_types.contains(&type_str) {
                 all_types.push(type_str);
             }
         }
-        
+
         if score > best_score {
             best_score = score;
             best_option = Some(item);
@@ -686,7 +695,7 @@ fn get_schema_type_name(schema: &Value) -> Option<String> {
                 return Some(s.to_string());
             }
         }
-        
+
         // 根据结构推断类型
         if obj.contains_key("properties") {
             return Some("object".to_string());
@@ -695,7 +704,7 @@ fn get_schema_type_name(schema: &Value) -> Option<String> {
             return Some("array".to_string());
         }
     }
-    
+
     None
 }
 
@@ -1425,11 +1434,17 @@ mod tests {
 
         // 验证 items 中的非标准字段被移动到了 properties 内部，并增加了 type: object
         let items = &schema["items"];
-        assert_eq!(items["type"], "object", "Malformed items should be healed to type object");
-        assert!(items.get("properties").is_some(), "Malformed items should have properties object");
+        assert_eq!(
+            items["type"], "object",
+            "Malformed items should be healed to type object"
+        );
+        assert!(
+            items.get("properties").is_some(),
+            "Malformed items should have properties object"
+        );
         assert_eq!(items["properties"]["cornerRadius"]["type"], "number");
         assert_eq!(items["properties"]["fillColor"]["type"], "string");
-        
+
         // 验证原始字段已从 items 顶层移除（白名单过滤）
         assert!(items.get("cornerRadius").is_none());
         assert!(items.get("fillColor").is_none());
@@ -1452,7 +1467,7 @@ mod tests {
 
         // 验证 values 被注入了 type: array
         assert_eq!(schema["properties"]["values"]["type"], "array");
-        
+
         // 验证 items 被启发式修复为 type: object 并包含 properties
         let items = &schema["properties"]["values"]["items"];
         assert_eq!(items["type"], "object");
@@ -1548,7 +1563,9 @@ mod tests {
 
         // 验证基本结构保留，没有崩溃
         assert_eq!(schema["properties"]["start"]["type"], "object");
-        assert!(schema["properties"]["start"]["properties"].get("toB").is_some());
+        assert!(schema["properties"]["start"]["properties"]
+            .get("toB")
+            .is_some());
     }
 
     #[test]
@@ -1567,8 +1584,11 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert!(schema.get("properties").is_some());
         assert_eq!(schema["properties"]["foo"]["type"], "string");
-        
+
         // 验证描述中增加了类型提示 (注意: null 分支在清洗后变为了带 (nullable) 标记的 string，因此去重后为 string | object)
-        assert!(schema["description"].as_str().unwrap().contains("Accepts: string | object"));
+        assert!(schema["description"]
+            .as_str()
+            .unwrap()
+            .contains("Accepts: string | object"));
     }
 }

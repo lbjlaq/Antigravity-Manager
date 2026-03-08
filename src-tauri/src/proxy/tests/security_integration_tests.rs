@@ -1,13 +1,13 @@
 //! IP Security Integration Tests
 //! IP 安全功能的集成测试
-//! 
+//!
 //! 这些测试需要启动完整的代理服务器来验证端到端的功能
 
 #[cfg(test)]
 mod integration_tests {
     use crate::modules::security_db::{
-        self, init_db, add_to_blacklist, remove_from_blacklist,
-        add_to_whitelist, remove_from_whitelist, get_blacklist, get_whitelist,
+        self, add_to_blacklist, add_to_whitelist, get_blacklist, get_whitelist, init_db,
+        remove_from_blacklist, remove_from_whitelist,
     };
     use std::time::Duration;
 
@@ -28,9 +28,9 @@ mod integration_tests {
     // ============================================================================
     // 集成测试场景 1：黑名单阻止请求
     // ============================================================================
-    
+
     /// 测试场景：当 IP 在黑名单中时，请求应该被拒绝
-    /// 
+    ///
     /// 预期行为：
     /// 1. 添加 IP 到黑名单
     /// 2. 该 IP 发起的请求返回 403 Forbidden
@@ -65,9 +65,9 @@ mod integration_tests {
     // ============================================================================
     // 集成测试场景 2：白名单优先模式
     // ============================================================================
-    
+
     /// 测试场景：白名单优先模式下，白名单 IP 跳过黑名单检查
-    /// 
+    ///
     /// 预期行为：
     /// 1. IP 同时存在于黑名单和白名单
     /// 2. 启用 whitelist_priority 模式
@@ -86,10 +86,7 @@ mod integration_tests {
         );
 
         // 添加相同 IP 到白名单
-        let _ = add_to_whitelist(
-            "10.0.0.50",
-            Some("Trusted - override blacklist"),
-        );
+        let _ = add_to_whitelist("10.0.0.50", Some("Trusted - override blacklist"));
 
         // 验证两个列表都包含该 IP
         assert!(security_db::is_ip_in_blacklist("10.0.0.50").unwrap());
@@ -105,9 +102,9 @@ mod integration_tests {
     // ============================================================================
     // 集成测试场景 3：临时封禁与过期
     // ============================================================================
-    
+
     /// 测试场景：临时封禁在过期后自动解除
-    /// 
+    ///
     /// 预期行为：
     /// 1. 添加临时封禁（已过期）
     /// 2. 查询时自动清理过期条目
@@ -141,9 +138,9 @@ mod integration_tests {
     // ============================================================================
     // 集成测试场景 4：CIDR 范围封禁
     // ============================================================================
-    
+
     /// 测试场景：CIDR 范围封禁覆盖整个子网
-    /// 
+    ///
     /// 预期行为：
     /// 1. 封禁 192.168.1.0/24
     /// 2. 192.168.1.x 的所有请求被拒绝
@@ -181,9 +178,9 @@ mod integration_tests {
     // ============================================================================
     // 集成测试场景 5：封禁消息详情
     // ============================================================================
-    
+
     /// 测试场景：封禁响应包含详细信息
-    /// 
+    ///
     /// 预期行为：
     /// 1. 添加带原因的封禁
     /// 2. 请求被拒绝时，响应包含：
@@ -215,9 +212,12 @@ mod integration_tests {
 
         assert_eq!(entry.reason.as_deref(), Some("Rate limit exceeded"));
         assert!(entry.expires_at.is_some());
-        
+
         let remaining = entry.expires_at.unwrap() - now;
-        assert!(remaining > 0 && remaining <= 7200, "Should have ~2h remaining");
+        assert!(
+            remaining > 0 && remaining <= 7200,
+            "Should have ~2h remaining"
+        );
 
         cleanup_test_data();
     }
@@ -225,9 +225,9 @@ mod integration_tests {
     // ============================================================================
     // 集成测试场景 6：访问日志记录
     // ============================================================================
-    
+
     /// 测试场景：被阻止的请求记录到日志
-    /// 
+    ///
     /// 预期行为：
     /// 1. 黑名单 IP 发起请求
     /// 2. 请求被拒绝
@@ -270,9 +270,9 @@ mod integration_tests {
     // ============================================================================
     // 集成测试场景 7：不影响正常请求性能
     // ============================================================================
-    
+
     /// 测试场景：安全检查不显著影响正常请求性能
-    /// 
+    ///
     /// 预期行为：
     /// 1. 黑名单/白名单检查时间 < 5ms
     /// 2. 与没有安全检查的基线相比，延迟增加 < 10ms
@@ -305,7 +305,7 @@ mod integration_tests {
         let avg_per_check = duration / (iterations * 2);
 
         println!("Average security check time: {:?}", avg_per_check);
-        
+
         // 断言：平均每次检查应该在 5ms 以内
         assert!(
             avg_per_check < Duration::from_millis(5),
@@ -318,9 +318,9 @@ mod integration_tests {
     // ============================================================================
     // 集成测试场景 8：数据持久化
     // ============================================================================
-    
+
     /// 测试场景：黑名单/白名单数据持久化
-    /// 
+    ///
     /// 预期行为：
     /// 1. 添加数据后重新初始化数据库连接
     /// 2. 数据仍然存在
@@ -351,9 +351,8 @@ mod integration_tests {
 #[cfg(test)]
 mod stress_tests {
     use crate::modules::security_db::{
-        init_db, add_to_blacklist, remove_from_blacklist,
-        is_ip_in_blacklist, get_blacklist, save_ip_access_log,
-        IpAccessLog, clear_ip_access_logs,
+        add_to_blacklist, clear_ip_access_logs, get_blacklist, init_db, is_ip_in_blacklist,
+        remove_from_blacklist, save_ip_access_log, IpAccessLog,
     };
     use std::thread;
     use std::time::{Duration, Instant};
@@ -379,7 +378,12 @@ mod stress_tests {
         // 批量添加
         let start = Instant::now();
         for i in 0..count {
-            let _ = add_to_blacklist(&format!("stress.{}.{}.{}.{}", i/256, (i/16)%16, i%16, i), None, None, "stress");
+            let _ = add_to_blacklist(
+                &format!("stress.{}.{}.{}.{}", i / 256, (i / 16) % 16, i % 16, i),
+                None,
+                None,
+                "stress",
+            );
         }
         let add_duration = start.elapsed();
         println!("Added {} entries in {:?}", count, add_duration);
@@ -387,7 +391,13 @@ mod stress_tests {
         // 随机查找测试
         let start = Instant::now();
         for i in 0..100 {
-            let _ = is_ip_in_blacklist(&format!("stress.{}.{}.{}.{}", i/256, (i/16)%16, i%16, i));
+            let _ = is_ip_in_blacklist(&format!(
+                "stress.{}.{}.{}.{}",
+                i / 256,
+                (i / 16) % 16,
+                i % 16,
+                i
+            ));
         }
         let lookup_duration = start.elapsed();
         println!("100 lookups in large blacklist took {:?}", lookup_duration);
@@ -479,7 +489,7 @@ mod stress_tests {
             .iter()
             .filter(|e| e.ip_pattern.starts_with("concurrent."))
             .collect();
-        
+
         assert!(
             concurrent_remaining.is_empty(),
             "All concurrent test data should be cleaned up"

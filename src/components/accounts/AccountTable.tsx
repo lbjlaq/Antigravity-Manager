@@ -43,6 +43,8 @@ import {
     Check,
     Clock,
     Bot,
+    CheckCircle,
+    Eye,
 } from 'lucide-react';
 import { Account } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -76,6 +78,8 @@ interface AccountTableProps {
     /** 拖拽排序回调，当用户完成拖拽时触发 */
     onReorder?: (accountIds: string[]) => void;
     onViewError: (accountId: string) => void;
+    onVerify?: (accountId: string) => void;
+    onConfigurePreview?: (accountId: string) => void;
 }
 
 interface SortableRowProps {
@@ -96,6 +100,8 @@ interface SortableRowProps {
     onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
+    onVerify?: () => void;
+    onConfigurePreview?: () => void;
 }
 
 interface AccountRowContentProps {
@@ -114,6 +120,8 @@ interface AccountRowContentProps {
     onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
+    onVerify?: () => void;
+    onConfigurePreview?: () => void;
 }
 
 // ============================================================================
@@ -216,6 +224,8 @@ function SortableAccountRow({
     onWarmup,
     onUpdateLabel,
     onViewError,
+    onVerify,
+    onConfigurePreview,
 }: SortableRowProps) {
     const { t } = useTranslation();
     const {
@@ -282,6 +292,8 @@ function SortableAccountRow({
                 onWarmup={onWarmup}
                 onUpdateLabel={onUpdateLabel}
                 onViewError={onViewError}
+                onVerify={onVerify}
+                onConfigurePreview={onConfigurePreview}
             />
         </tr>
     );
@@ -307,6 +319,8 @@ function AccountRowContent({
     onWarmup,
     onUpdateLabel,
     onViewError,
+    onVerify,
+    onConfigurePreview,
 }: AccountRowContentProps) {
     const { t } = useTranslation();
     const { config, showAllQuotas } = useConfigStore();
@@ -644,6 +658,34 @@ function AccountRowContent({
                     >
                         <Download className="w-3.5 h-3.5" />
                     </button>
+                    {onVerify && (
+                        <button
+                            className={cn(
+                                "p-1.5 rounded-lg transition-all",
+                                (account.quota?.is_forbidden || account.proxy_disabled)
+                                    ? "text-amber-500 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/30"
+                                    : "text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30"
+                            )}
+                            onClick={(e) => { e.stopPropagation(); onVerify(); }}
+                            title={t('accounts.verify', 'Verify')}
+                        >
+                            <CheckCircle className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                    {onConfigurePreview && account.account_type === 'gemini_cli' && (
+                        <button
+                            className={cn(
+                                "p-1.5 rounded-lg transition-all",
+                                account.preview
+                                    ? "text-green-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30"
+                                    : "text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/30"
+                            )}
+                            onClick={(e) => { e.stopPropagation(); onConfigurePreview(); }}
+                            title={account.preview ? t('accounts.preview_configured', 'Preview Configured') : t('accounts.configure_preview', 'Configure Preview')}
+                        >
+                            <Eye className="w-3.5 h-3.5" />
+                        </button>
+                    )}
                     <button
                         className={cn(
                             "p-1.5 rounded-lg transition-all",
@@ -700,6 +742,8 @@ function AccountTable({
     onWarmup,
     onUpdateLabel,
     onViewError,
+    onVerify,
+    onConfigurePreview,
 }: AccountTableProps) {
     const { t } = useTranslation();
 
@@ -798,6 +842,8 @@ function AccountTable({
                                     onWarmup={onWarmup ? () => onWarmup(account.id) : undefined}
                                     onUpdateLabel={onUpdateLabel ? (label: string) => onUpdateLabel(account.id, label) : undefined}
                                     onViewError={() => onViewError(account.id)}
+                                    onVerify={onVerify ? () => onVerify(account.id) : undefined}
+                                    onConfigurePreview={onConfigurePreview ? () => onConfigurePreview(account.id) : undefined}
                                 />
                             ))}
                         </tbody>

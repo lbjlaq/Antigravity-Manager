@@ -21,7 +21,38 @@ use axum::http::HeaderMap;
 
 const MAX_RETRY_ATTEMPTS: usize = 3;
 
-/// 处理 generateContent 和 streamGenerateContent
+fn estimate_token_count(body: &Value) -> usize {
+    fn estimate_from_contents(contents: &[Value]) -> usize {
+        let mut total_tokens = 0usize;
+        for content in contents {
+            if let Some(parts) = content.get("parts").and_then(|v| v.as_array()) {
+                for part in parts {
+                    if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                        // 与 gcli2api 对齐：简单启发式估算，约 4 字符 = 1 token
+                        total_tokens += (text.chars().count() / 4).max(1);
+                    }
+                }
+            }
+        }
+        total_tokens
+    }
+
+    if let Some(contents) = body.get("contents").and_then(|v| v.as_array()) {
+        return estimate_from_contents(contents);
+    }
+
+    if let Some(contents) = body
+        .get("generateContentRequest")
+        .and_then(|v| v.get("contents"))
+        .and_then(|v| v.as_array())
+    {
+        return estimate_from_contents(contents);
+    }
+
+    0
+}
+
+/// 处理 generateContent / streamGenerateContent / countTokens
 /// 路径参数: model_name, method (e.g. "gemini-pro", "generateContent")
 pub async fn handle_generate(
     State(state): State<AppState>,
@@ -53,7 +84,7 @@ pub async fn handle_generate(
     }
 
     // 1. 验证方法
-    if method != "generateContent" && method != "streamGenerateContent" {
+    if method != "generateContent" && method != "streamGenerateContent" && method != "countTokens" {
         return Err((
             StatusCode::BAD_REQUEST,
             format!("Unsupported method: {}", method),
@@ -76,6 +107,13 @@ pub async fn handle_generate(
         )
         .await;
     }
+    if method == "countTokens" {
+        return Ok(Json(json!({
+            "totalTokens": estimate_token_count(&body)
+        }))
+        .into_response());
+    }
+
     let client_wants_stream = method == "streamGenerateContent";
     // [AUTO-CONVERSION] 强制内部流式化
     let force_stream_internally = !client_wants_stream;
@@ -132,23 +170,28 @@ pub async fn handle_generate(
         let session_id = SessionManager::extract_gemini_session_id(&body, &model_name);
 
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
-        let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-            .get_token(
-                &config.request_type,
-                attempt > 0,
-                Some(&session_id),
-                &config.final_model,
-            )
-            .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                return Err((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    format!("Token error: {}", e),
-                ));
-            }
-        };
+        let (access_token, project_id, email, account_id, _wait_ms, account_type) =
+            match token_manager
+                .get_token(
+                    &config.request_type,
+                    attempt > 0,
+                    Some(&session_id),
+                    &config.final_model,
+                )
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    return Err((
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        format!("Token error: {}", e),
+                    ));
+                }
+            };
+
+        let mapped_model = token_manager
+            .resolve_dynamic_model_for_account(&account_id, &mapped_model)
+            .await;
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
@@ -157,7 +200,14 @@ pub async fn handle_generate(
         // [FIX #765] Pass session_id to wrap_request for signature injection
         // [NEW] 获取完整 Token 对象以注入动态规格 (dynamic > static default > 65535)
         let token_obj = token_manager.get_token_by_id(&account_id);
-        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(account_id.as_str()), Some(&session_id), token_obj.as_ref());
+        let wrapped_body = wrap_request(
+            &body,
+            &project_id,
+            &mapped_model,
+            Some(account_id.as_str()),
+            Some(&session_id),
+            token_obj.as_ref(),
+        );
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -205,6 +255,7 @@ pub async fn handle_generate(
                 query_string,
                 extra_headers.clone(),
                 Some(account_id.as_str()),
+                &account_type,
             )
             .await
         {
@@ -676,21 +727,11 @@ pub async fn handle_get_model(Path(model_name): Path<String>) -> impl IntoRespon
 }
 
 pub async fn handle_count_tokens(
-    State(state): State<AppState>,
+    _state: State<AppState>,
     Path(_model_name): Path<String>,
-    Json(_body): Json<Value>,
+    Json(body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let model_group = "gemini";
-    let (_access_token, _project_id, _, _, _wait_ms) = state
-        .token_manager
-        .get_token(model_group, false, None, "gemini")
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!("Token error: {}", e),
-            )
-        })?;
-
-    Ok(Json(json!({"totalTokens": 0})))
+    Ok(Json(json!({
+        "totalTokens": estimate_token_count(&body)
+    })))
 }

@@ -15,7 +15,12 @@ pub fn strip_all_thinking_blocks(contents: Vec<Value>) -> Vec<Value> {
             }
             content
         })
-        .filter(|msg| !msg["parts"].as_array().map(|a| a.is_empty()).unwrap_or(true))
+        .filter(|msg| {
+            !msg["parts"]
+                .as_array()
+                .map(|a| a.is_empty())
+                .unwrap_or(true)
+        })
         .collect()
 }
 
@@ -24,7 +29,7 @@ pub fn strip_all_thinking_blocks(contents: Vec<Value>) -> Vec<Value> {
 #[allow(dead_code)]
 pub fn close_tool_loop_for_thinking(contents: Vec<Value>) -> Vec<Value> {
     let mut stripped = strip_all_thinking_blocks(contents);
-    
+
     // 如果没有内容了，返回空
     if stripped.is_empty() {
         return stripped;

@@ -1,5 +1,5 @@
 import i18n from '../i18n';
-import { Account, DeviceProfile, DeviceProfileVersion, QuotaData } from '../types/account';
+import { Account, AccountType, DeviceProfile, DeviceProfileVersion, QuotaData } from '../types/account';
 import { request as invoke } from '../utils/request';
 
 // 检查环境 (可选)
@@ -24,8 +24,8 @@ export async function getCurrentAccount(): Promise<Account | null> {
     return await invoke('get_current_account');
 }
 
-export async function addAccount(email: string, refreshToken: string): Promise<Account> {
-    return await invoke('add_account', { email, refreshToken });
+export async function addAccount(email: string, refreshToken: string, accountType?: AccountType): Promise<Account> {
+    return await invoke('add_account', { email, refreshToken, accountType });
 }
 
 export async function deleteAccount(accountId: string): Promise<void> {
@@ -56,11 +56,11 @@ export async function refreshAllQuotas(): Promise<RefreshStats> {
 }
 
 // OAuth
-export async function startOAuthLogin(): Promise<Account> {
+export async function startOAuthLogin(accountType?: AccountType): Promise<Account> {
     ensureTauriEnvironment();
 
     try {
-        return await invoke('start_oauth_login');
+        return await invoke('start_oauth_login', { accountType });
     } catch (error) {
         // 增强错误信息
         if (typeof error === 'string') {
@@ -75,10 +75,10 @@ export async function startOAuthLogin(): Promise<Account> {
     }
 }
 
-export async function completeOAuthLogin(): Promise<Account> {
+export async function completeOAuthLogin(accountType?: AccountType): Promise<Account> {
     ensureTauriEnvironment();
     try {
-        return await invoke('complete_oauth_login');
+        return await invoke('complete_oauth_login', { accountType });
     } catch (error) {
         if (typeof error === 'string') {
             if (error.includes('Refresh Token') || error.includes('refresh_token')) {
@@ -188,6 +188,15 @@ export interface ExportAccountsResponse {
 
 export async function exportAccounts(accountIds: string[]): Promise<ExportAccountsResponse> {
     return await invoke('export_accounts', { accountIds });
+}
+
+// 检验 & 预览相关
+export async function verifyAccount(accountId: string): Promise<string> {
+    return await invoke('verify_account', { accountId });
+}
+
+export async function configurePreview(accountId: string): Promise<void> {
+    return await invoke('configure_preview', { accountId });
 }
 
 // 自定义标签相关

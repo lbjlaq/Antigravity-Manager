@@ -50,8 +50,7 @@ fn build_client(
     upstream_proxy: Option<crate::proxy::config::UpstreamProxyConfig>,
     timeout_secs: u64,
 ) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs.max(5)));
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(timeout_secs.max(5)));
 
     if let Some(config) = upstream_proxy {
         if config.enabled && !config.url.is_empty() {
@@ -116,7 +115,10 @@ pub fn deep_remove_cache_control(value: &mut Value) {
     match value {
         Value::Object(map) => {
             if let Some(v) = map.remove("cache_control") {
-                tracing::info!("[ISSUE-744] Deep Cleaning found nested cache_control: {:?}", v);
+                tracing::info!(
+                    "[ISSUE-744] Deep Cleaning found nested cache_control: {:?}",
+                    v
+                );
             }
             for v in map.values_mut() {
                 deep_remove_cache_control(v);
@@ -153,11 +155,15 @@ pub async fn forward_anthropic_json(
         body["model"] = Value::String(mapped.clone());
 
         // [FIX] Caching for z.ai (to support thinking-filter)
-        if let Some(sig) = body.get("thinking").and_then(|t| t.get("signature")).and_then(|s| s.as_str()) {
+        if let Some(sig) = body
+            .get("thinking")
+            .and_then(|t| t.get("signature"))
+            .and_then(|s| s.as_str())
+        {
             crate::proxy::SignatureCache::global().cache_session_signature(
-                "zai-session", 
-                sig.to_string(), 
-                message_count
+                "zai-session",
+                sig.to_string(),
+                message_count,
             );
             crate::proxy::SignatureCache::global().cache_thinking_family(sig.to_string(), mapped);
         }
@@ -186,7 +192,10 @@ pub async fn forward_anthropic_json(
     // [FIX #290] Clean cache_control before sending to Anthropic API
     // This prevents "Extra inputs are not permitted" errors
     if let Some(cc) = body.get("cache_control") {
-        tracing::info!("[ISSUE-744] Deep cleaning cache_control from ROOT: {:?}", cc);
+        tracing::info!(
+            "[ISSUE-744] Deep cleaning cache_control from ROOT: {:?}",
+            cc
+        );
     }
     deep_remove_cache_control(&mut body);
 
@@ -194,10 +203,15 @@ pub async fn forward_anthropic_json(
     // This avoids "Transfer-Encoding: chunked" for small bodies which caused connection errors.
     let body_bytes = serde_json::to_vec(&body).unwrap_or_default();
     let body_len = body_bytes.len();
-    
-    tracing::debug!("Forwarding request to z.ai (len: {} bytes): {}", body_len, url);
 
-    let req = client.request(method, &url)
+    tracing::debug!(
+        "Forwarding request to z.ai (len: {} bytes): {}",
+        body_len,
+        url
+    );
+
+    let req = client
+        .request(method, &url)
         .headers(headers)
         .body(body_bytes); // Use .body(Vec<u8>) instead of .json()
 
@@ -226,6 +240,10 @@ pub async fn forward_anthropic_json(
     });
 
     out.body(Body::from_stream(stream)).unwrap_or_else(|_| {
-        (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to build response",
+        )
+            .into_response()
     })
 }

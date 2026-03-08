@@ -7,18 +7,22 @@ use crate::proxy::ZaiConfig;
 
 const ZAI_PAAZ_CHAT_COMPLETIONS_URL: &str = "https://api.z.ai/api/paas/v4/chat/completions";
 
-fn build_client(upstream_proxy: UpstreamProxyConfig, timeout_secs: u64) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(timeout_secs.max(5)));
+fn build_client(
+    upstream_proxy: UpstreamProxyConfig,
+    timeout_secs: u64,
+) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(timeout_secs.max(5)));
 
     if upstream_proxy.enabled && !upstream_proxy.url.is_empty() {
         let url = crate::proxy::config::normalize_proxy_url(&upstream_proxy.url);
-        let proxy = reqwest::Proxy::all(&url)
-            .map_err(|e| format!("Invalid upstream proxy url: {}", e))?;
+        let proxy =
+            reqwest::Proxy::all(&url).map_err(|e| format!("Invalid upstream proxy url: {}", e))?;
         builder = builder.proxy(proxy);
     }
 
-    builder.build().map_err(|e| format!("Failed to build HTTP client: {}", e))
+    builder
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))
 }
 
 fn is_http_url(value: &str) -> bool {
@@ -152,7 +156,10 @@ async fn vision_chat_completion(
         return Err(format!("HTTP {}: {}", status, text));
     }
 
-    let v: Value = resp.json().await.map_err(|e| format!("Invalid JSON response: {}", e))?;
+    let v: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Invalid JSON response: {}", e))?;
     let content = v
         .get("choices")
         .and_then(|c| c.get(0))
@@ -295,7 +302,10 @@ pub async fn call_tool(
                 .get("output_type")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing output_type")?;
-            let prompt = arguments.get("prompt").and_then(|v| v.as_str()).ok_or("Missing prompt")?;
+            let prompt = arguments
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing prompt")?;
 
             let system_prompt = match output_type {
                 "code" => "You are a frontend engineer. Generate clean, accessible, responsive frontend code from the UI screenshot.",
@@ -313,7 +323,11 @@ pub async fn call_tool(
                 .get("image_source")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing image_source")?;
-            let mut prompt = arguments.get("prompt").and_then(|v| v.as_str()).ok_or("Missing prompt")?.to_string();
+            let mut prompt = arguments
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing prompt")?
+                .to_string();
             if let Some(lang) = arguments.get("language_hint").and_then(|v| v.as_str()) {
                 if !lang.trim().is_empty() {
                     prompt.push_str(&format!("\n\nLanguage hint: {}", lang.trim()));
@@ -328,7 +342,11 @@ pub async fn call_tool(
                 .get("image_source")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing image_source")?;
-            let mut prompt = arguments.get("prompt").and_then(|v| v.as_str()).ok_or("Missing prompt")?.to_string();
+            let mut prompt = arguments
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing prompt")?
+                .to_string();
             if let Some(ctx) = arguments.get("context").and_then(|v| v.as_str()) {
                 if !ctx.trim().is_empty() {
                     prompt.push_str(&format!("\n\nContext: {}", ctx.trim()));
@@ -343,7 +361,11 @@ pub async fn call_tool(
                 .get("image_source")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing image_source")?;
-            let mut prompt = arguments.get("prompt").and_then(|v| v.as_str()).ok_or("Missing prompt")?.to_string();
+            let mut prompt = arguments
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing prompt")?
+                .to_string();
             if let Some(diagram_type) = arguments.get("diagram_type").and_then(|v| v.as_str()) {
                 if !diagram_type.trim().is_empty() {
                     prompt.push_str(&format!("\n\nDiagram type: {}", diagram_type.trim()));
@@ -358,7 +380,11 @@ pub async fn call_tool(
                 .get("image_source")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing image_source")?;
-            let mut prompt = arguments.get("prompt").and_then(|v| v.as_str()).ok_or("Missing prompt")?.to_string();
+            let mut prompt = arguments
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing prompt")?
+                .to_string();
             if let Some(focus) = arguments.get("analysis_focus").and_then(|v| v.as_str()) {
                 if !focus.trim().is_empty() {
                     prompt.push_str(&format!("\n\nFocus: {}", focus.trim()));
@@ -377,7 +403,10 @@ pub async fn call_tool(
                 .get("actual_image_source")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing actual_image_source")?;
-            let prompt = arguments.get("prompt").and_then(|v| v.as_str()).ok_or("Missing prompt")?;
+            let prompt = arguments
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing prompt")?;
 
             let expected_img = image_source_to_content(expected, 5)?;
             let actual_img = image_source_to_content(actual, 5)?;
@@ -396,7 +425,10 @@ pub async fn call_tool(
                 .get("image_source")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing image_source")?;
-            let prompt = arguments.get("prompt").and_then(|v| v.as_str()).ok_or("Missing prompt")?;
+            let prompt = arguments
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing prompt")?;
             let image = image_source_to_content(image_source, 5)?;
             let system_prompt = "Analyze the image. Be precise and include relevant details.";
             vision_chat_completion(&client, api_key, system_prompt, vec![image], prompt).await?
@@ -406,7 +438,10 @@ pub async fn call_tool(
                 .get("video_source")
                 .and_then(|v| v.as_str())
                 .ok_or("Missing video_source")?;
-            let prompt = arguments.get("prompt").and_then(|v| v.as_str()).ok_or("Missing prompt")?;
+            let prompt = arguments
+                .get("prompt")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing prompt")?;
             let video = video_source_to_content(video_source, 8)?;
             let system_prompt = "Analyze the video content according to the user's request.";
             vision_chat_completion(&client, api_key, system_prompt, vec![video], prompt).await?

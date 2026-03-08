@@ -1,15 +1,15 @@
+mod commands;
+pub mod constants;
+pub mod error;
 mod models;
 mod modules;
-mod commands;
+mod proxy; // Proxy service module
 mod utils;
-mod proxy;  // Proxy service module
-pub mod error;
-pub mod constants;
 
-use tauri::Manager;
 use modules::logger;
-use tracing::{info, warn, error};
 use std::sync::Arc;
+use tauri::Manager;
+use tracing::{error, info, warn};
 
 #[derive(Clone, Copy)]
 struct AppRuntimeFlags {
@@ -18,7 +18,12 @@ struct AppRuntimeFlags {
 
 fn env_flag_enabled(name: &str) -> bool {
     std::env::var(name)
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -83,7 +88,10 @@ fn increase_nofile_limit() {
         };
 
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) == 0 {
-            info!("Current open file limit: soft={}, hard={}", rl.rlim_cur, rl.rlim_max);
+            info!(
+                "Current open file limit: soft={}, hard={}",
+                rl.rlim_cur, rl.rlim_max
+            );
 
             // Attempt to increase to 4096 or maximum hard limit
             let target = 4096.min(rl.rlim_max);
@@ -130,7 +138,7 @@ pub fn run() {
     if let Err(e) = modules::security_db::init_db() {
         error!("Failed to initialize security database: {}", e);
     }
-    
+
     // Initialize user token database
     if let Err(e) = modules::user_token_db::init_db() {
         error!("Failed to initialize user token database: {}", e);
@@ -302,13 +310,13 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let _ = app.get_webview_window("main")
-                .map(|window| {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    #[cfg(target_os = "macos")]
-                    app.set_activation_policy(tauri::ActivationPolicy::Regular).unwrap_or(());
-                });
+            let _ = app.get_webview_window("main").map(|window| {
+                let _ = window.show();
+                let _ = window.set_focus();
+                #[cfg(target_os = "macos")]
+                app.set_activation_policy(tauri::ActivationPolicy::Regular)
+                    .unwrap_or(());
+            });
         }))
         .manage(commands::proxy::ProxyServiceState::new())
         .manage(commands::cloudflared::CloudflaredState::new())
@@ -358,7 +366,8 @@ pub fn run() {
                 if let Ok(config) = modules::config::load_app_config() {
                     let state = handle.state::<commands::proxy::ProxyServiceState>();
                     let cf_state = handle.state::<commands::cloudflared::CloudflaredState>();
-                    let integration = crate::modules::integration::SystemManager::Desktop(handle.clone());
+                    let integration =
+                        crate::modules::integration::SystemManager::Desktop(handle.clone());
 
                     // 1. 确保管理后台开启
                     if let Err(e) = commands::proxy::ensure_admin_server(
@@ -366,10 +375,15 @@ pub fn run() {
                         &state,
                         integration.clone(),
                         Arc::new(cf_state.inner().clone()),
-                    ).await {
+                    )
+                    .await
+                    {
                         error!("Failed to start admin server: {}", e);
                     } else {
-                        info!("Admin server (port {}) started successfully", config.proxy.port);
+                        info!(
+                            "Admin server (port {}) started successfully",
+                            config.proxy.port
+                        );
                     }
 
                     // 2. 自动启动转发逻辑
@@ -379,7 +393,9 @@ pub fn run() {
                             &state,
                             integration,
                             Arc::new(cf_state.inner().clone()),
-                        ).await {
+                        )
+                        .await
+                        {
                             error!("Failed to auto-start proxy service: {}", e);
                         } else {
                             info!("Proxy service auto-started successfully");
@@ -514,6 +530,9 @@ pub fn run() {
             // Autostart commands
             commands::autostart::toggle_auto_launch,
             commands::autostart::is_auto_launch_enabled,
+            // Verify & Preview commands
+            commands::verify_account,
+            commands::configure_preview,
             // Warmup commands
             commands::warm_up_all_accounts,
             commands::warm_up_account,
@@ -590,23 +609,30 @@ pub fn run() {
                 // Handle app exit - cleanup background tasks
                 tauri::RunEvent::Exit => {
                     tracing::info!("Application exiting, cleaning up background tasks...");
-                    if let Some(state) = app_handle.try_state::<crate::commands::proxy::ProxyServiceState>() {
+                    if let Some(state) =
+                        app_handle.try_state::<crate::commands::proxy::ProxyServiceState>()
+                    {
                         tauri::async_runtime::block_on(async {
                             // Use timeout-based read() instead of try_read() to handle lock contention
                             match tokio::time::timeout(
                                 std::time::Duration::from_secs(3),
-                                state.instance.read()
-                            ).await {
+                                state.instance.read(),
+                            )
+                            .await
+                            {
                                 Ok(guard) => {
                                     if let Some(instance) = guard.as_ref() {
                                         // Use graceful_shutdown with 2s timeout for task cleanup
-                                        instance.token_manager
+                                        instance
+                                            .token_manager
                                             .graceful_shutdown(std::time::Duration::from_secs(2))
                                             .await;
                                     }
                                 }
                                 Err(_) => {
-                                    tracing::warn!("Lock acquisition timed out after 3s, forcing exit");
+                                    tracing::warn!(
+                                        "Lock acquisition timed out after 3s, forcing exit"
+                                    );
                                 }
                             }
                         });
@@ -619,7 +645,9 @@ pub fn run() {
                         let _ = window.show();
                         let _ = window.unminimize();
                         let _ = window.set_focus();
-                        app_handle.set_activation_policy(tauri::ActivationPolicy::Regular).unwrap_or(());
+                        app_handle
+                            .set_activation_policy(tauri::ActivationPolicy::Regular)
+                            .unwrap_or(());
                     }
                 }
                 _ => {}

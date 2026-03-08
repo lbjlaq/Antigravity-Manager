@@ -20,10 +20,10 @@ pub fn resolve_request_config(
     original_model: &str,
     mapped_model: &str,
     tools: &Option<Vec<Value>>,
-    size: Option<&str>,    // [NEW] Image size parameter
-    quality: Option<&str>, // [NEW] Image quality parameter
+    size: Option<&str>,       // [NEW] Image size parameter
+    quality: Option<&str>,    // [NEW] Image quality parameter
     image_size: Option<&str>, // [NEW] Direct imageSize parameter (e.g. "4K")
-    body: Option<&Value>,  // [NEW] Request body for Gemini native imageConfig
+    body: Option<&Value>,     // [NEW] Request body for Gemini native imageConfig
 ) -> RequestConfig {
     // 1. Image Generation Check (Priority)
     if mapped_model.starts_with("gemini-3-pro-image") {
@@ -39,16 +39,16 @@ pub fn resolve_request_config(
                     tracing::info!(
                         "[Common-Utils] Found imageConfig in body, merging with inferred config from suffix/params"
                     );
-                    
+
                     if let Some(inferred_obj) = inferred_config.as_object_mut() {
                         if let Some(body_obj) = body_image_config.as_object() {
                             // Merge body_obj into inferred_obj
                             for (key, value) in body_obj {
                                 // CRITICAL: Only allow body to override if inferred doesn't already have a high-priority value
                                 // Specifically, if we inferred imageSize from -4k, don't let body downgrade it if it's missing or standard.
-                                let is_size_downgrade = key == "imageSize" && 
-                                    (value.as_str() == Some("1K") || value.is_null()) &&
-                                    inferred_obj.contains_key("imageSize");
+                                let is_size_downgrade = key == "imageSize"
+                                    && (value.as_str() == Some("1K") || value.is_null())
+                                    && inferred_obj.contains_key("imageSize");
 
                                 if !is_size_downgrade {
                                     inferred_obj.insert(key.clone(), value.clone());
@@ -64,7 +64,8 @@ pub fn resolve_request_config(
 
         tracing::info!(
             "[Common-Utils] Final Image Config for {}: {:?}",
-            parsed_base_model, inferred_config
+            parsed_base_model,
+            inferred_config
         );
 
         return RequestConfig {
@@ -107,10 +108,10 @@ pub fn resolve_request_config(
     // Force a stable search model for search requests.
     let mut final_model = mapped_model.trim_end_matches("-online").to_string();
 
-    // [FIX] Map logic aliases back to physical model names for upstream compatibility
+    // Map explicit preview aliases that have stable physical counterparts.
+    // Note: gemini-3-pro-preview / gemini-3.1-pro-preview are intentionally NOT forced
+    // to *-high here; dynamic runtime rewrite is handled after account selection.
     final_model = match final_model.as_str() {
-        "gemini-3-pro-preview" => "gemini-3.1-pro-high".to_string(), // 3.0 preview redirects to 3.1 High
-        "gemini-3.1-pro-preview" => "gemini-3.1-pro-high".to_string(),
         "gemini-3-pro-image-preview" => "gemini-3-pro-image".to_string(),
         "gemini-3-flash-preview" => "gemini-3-flash".to_string(),
         _ => final_model,
@@ -231,24 +232,42 @@ pub fn parse_image_config_with_params(
 
     let clean_model_name = clean_image_model_name(model_name);
 
-    (
-        serde_json::Value::Object(config),
-        clean_model_name,
-    )
+    (serde_json::Value::Object(config), clean_model_name)
 }
 
 /// Helper function to clean image model names by removing resolution/aspect-ratio suffixes.
 /// E.g., "gemini-3.1-flash-image-16x9-4k" -> "gemini-3.1-flash-image"
 fn clean_image_model_name(model_name: &str) -> String {
     let mut clean_name = model_name.to_lowercase();
-    
+
     // Ordered list of known suffixes to strip
     let suffixes = [
-        "-4k", "-2k", "-1k", "-hd", "-standard", "-medium",
-        "-21x9", "-21-9", "-16x9", "-16-9", "-9x16", "-9-16",
-        "-4x3", "-4-3", "-3x4", "-3-4", "-3x2", "-3-2",
-        "-2x3", "-2-3", "-5x4", "-5-4", "-4x5", "-4-5",
-        "-1x1", "-1-1"
+        "-4k",
+        "-2k",
+        "-1k",
+        "-hd",
+        "-standard",
+        "-medium",
+        "-21x9",
+        "-21-9",
+        "-16x9",
+        "-16-9",
+        "-9x16",
+        "-9-16",
+        "-4x3",
+        "-4-3",
+        "-3x4",
+        "-3-4",
+        "-3x2",
+        "-3-2",
+        "-2x3",
+        "-2-3",
+        "-5x4",
+        "-5-4",
+        "-4x5",
+        "-4-5",
+        "-1x1",
+        "-1-1",
     ];
 
     // Repeatedly strip suffixes until no more are found
@@ -516,8 +535,12 @@ pub fn contains_non_networking_tool(tools: &Option<Vec<Value>>) -> bool {
                 if let Some(decls) = tool.get("functionDeclarations").and_then(|v| v.as_array()) {
                     for decl in decls {
                         if let Some(n) = decl.get("name").and_then(|v| v.as_str()) {
-                            let keywords =
-                                ["web_search", "google_search", "google_search_retrieval", "builtin_web_search"];
+                            let keywords = [
+                                "web_search",
+                                "google_search",
+                                "google_search_retrieval",
+                                "builtin_web_search",
+                            ];
                             if !keywords.contains(&n) {
                                 return true; // 发现本地函数
                             }
@@ -542,7 +565,8 @@ mod tests {
     #[test]
     fn test_high_quality_model_auto_grounding() {
         // Auto-grounding is currently disabled by default due to conflict with image gen
-        let config = resolve_request_config("gpt-4o", "gemini-2.5-flash", &None, None, None, None, None);
+        let config =
+            resolve_request_config("gpt-4o", "gemini-2.5-flash", &None, None, None, None, None);
         assert_eq!(config.request_type, "agent");
         assert!(!config.inject_google_search);
     }
@@ -559,8 +583,15 @@ mod tests {
 
     #[test]
     fn test_online_suffix_force_grounding() {
-        let config =
-            resolve_request_config("gemini-3-flash-online", "gemini-3-flash", &None, None, None, None, None);
+        let config = resolve_request_config(
+            "gemini-3-flash-online",
+            "gemini-3-flash",
+            &None,
+            None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(config.request_type, "web_search");
         assert!(config.inject_google_search);
         assert_eq!(config.final_model, "gemini-2.5-flash");
@@ -568,7 +599,15 @@ mod tests {
 
     #[test]
     fn test_default_no_grounding() {
-        let config = resolve_request_config("claude-sonnet", "gemini-3-flash", &None, None, None, None, None);
+        let config = resolve_request_config(
+            "claude-sonnet",
+            "gemini-3-flash",
+            &None,
+            None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(config.request_type, "agent");
         assert!(!config.inject_google_search);
     }
@@ -612,7 +651,8 @@ mod tests {
     #[test]
     fn test_parse_image_config_with_openai_params() {
         // Test quality parameter mapping
-        let (config_hd, model_hd) = parse_image_config_with_params("gemini-3-pro-image", None, Some("hd"), None);
+        let (config_hd, model_hd) =
+            parse_image_config_with_params("gemini-3-pro-image", None, Some("hd"), None);
         assert_eq!(config_hd["imageSize"], "4K");
         assert_eq!(config_hd["aspectRatio"], "1:1");
         assert_eq!(model_hd, "gemini-3-pro-image");
@@ -644,8 +684,12 @@ mod tests {
         assert_eq!(model_4_3, "gemini-3-pro-image");
 
         // Test combined size + quality
-        let (config_combined, model_combined) =
-            parse_image_config_with_params("gemini-3-pro-image", Some("1920x1080"), Some("hd"), None);
+        let (config_combined, model_combined) = parse_image_config_with_params(
+            "gemini-3-pro-image",
+            Some("1920x1080"),
+            Some("hd"),
+            None,
+        );
         assert_eq!(config_combined["aspectRatio"], "16:9");
         assert_eq!(config_combined["imageSize"], "4K");
         assert_eq!(model_combined, "gemini-3-pro-image");
@@ -671,18 +715,51 @@ mod tests {
 
     #[test]
     fn test_clean_image_model_name() {
-        assert_eq!(clean_image_model_name("gemini-3.1-flash-image"), "gemini-3.1-flash-image");
-        assert_eq!(clean_image_model_name("gemini-3.1-flash-image-4k"), "gemini-3.1-flash-image");
-        assert_eq!(clean_image_model_name("gemini-3-pro-image-16x9"), "gemini-3-pro-image");
-        assert_eq!(clean_image_model_name("gemini-3-pro-image-16x9-4k"), "gemini-3-pro-image");
+        assert_eq!(
+            clean_image_model_name("gemini-3.1-flash-image"),
+            "gemini-3.1-flash-image"
+        );
+        assert_eq!(
+            clean_image_model_name("gemini-3.1-flash-image-4k"),
+            "gemini-3.1-flash-image"
+        );
+        assert_eq!(
+            clean_image_model_name("gemini-3-pro-image-16x9"),
+            "gemini-3-pro-image"
+        );
+        assert_eq!(
+            clean_image_model_name("gemini-3-pro-image-16x9-4k"),
+            "gemini-3-pro-image"
+        );
         // Test varying order
-        assert_eq!(clean_image_model_name("gemini-3.1-flash-image-4k-16x9"), "gemini-3.1-flash-image");
-        assert_eq!(clean_image_model_name("gemini-3.1-flash-image-16-9-hd"), "gemini-3.1-flash-image");
-        assert_eq!(clean_image_model_name("gemini-3.1-flash-image-2k-9x16"), "gemini-3.1-flash-image");
-        assert_eq!(clean_image_model_name("gemini-3.1-flash-image-1x1"), "gemini-3.1-flash-image");
-        assert_eq!(clean_image_model_name("gemini-3.1-flash-image-standard"), "gemini-3.1-flash-image");
-        assert_eq!(clean_image_model_name("gemini-3.1-flash-image-medium"), "gemini-3.1-flash-image");
-        assert_eq!(clean_image_model_name("gemini-3.1-flash-image-21-9-4k"), "gemini-3.1-flash-image");
+        assert_eq!(
+            clean_image_model_name("gemini-3.1-flash-image-4k-16x9"),
+            "gemini-3.1-flash-image"
+        );
+        assert_eq!(
+            clean_image_model_name("gemini-3.1-flash-image-16-9-hd"),
+            "gemini-3.1-flash-image"
+        );
+        assert_eq!(
+            clean_image_model_name("gemini-3.1-flash-image-2k-9x16"),
+            "gemini-3.1-flash-image"
+        );
+        assert_eq!(
+            clean_image_model_name("gemini-3.1-flash-image-1x1"),
+            "gemini-3.1-flash-image"
+        );
+        assert_eq!(
+            clean_image_model_name("gemini-3.1-flash-image-standard"),
+            "gemini-3.1-flash-image"
+        );
+        assert_eq!(
+            clean_image_model_name("gemini-3.1-flash-image-medium"),
+            "gemini-3.1-flash-image"
+        );
+        assert_eq!(
+            clean_image_model_name("gemini-3.1-flash-image-21-9-4k"),
+            "gemini-3.1-flash-image"
+        );
     }
 
     #[test]
@@ -737,8 +814,14 @@ mod tests {
             Some(&body),
         );
         let image_config = config.image_config.unwrap();
-        assert_eq!(image_config["imageSize"], "4K", "Should shield inferred 4K from body downgrade");
-        assert_eq!(image_config["aspectRatio"], "1:1", "Should take aspectRatio from body");
+        assert_eq!(
+            image_config["imageSize"], "4K",
+            "Should shield inferred 4K from body downgrade"
+        );
+        assert_eq!(
+            image_config["aspectRatio"], "1:1",
+            "Should take aspectRatio from body"
+        );
 
         // Case 2: Suffix contains -16-9, Body contains aspectRatio: 1:1
         // Expected: Body overrides suffix for aspectRatio (since it's not a 'downgrade' shield case yet, only size is shielded)
@@ -759,7 +842,10 @@ mod tests {
             Some(&body_2),
         );
         let image_config_2 = config_2.image_config.unwrap();
-        assert_eq!(image_config_2["aspectRatio"], "1:1", "Body should be allowed to override aspectRatio");
+        assert_eq!(
+            image_config_2["aspectRatio"], "1:1",
+            "Body should be allowed to override aspectRatio"
+        );
     }
 
     #[test]

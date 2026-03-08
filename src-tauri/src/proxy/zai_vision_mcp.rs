@@ -40,4 +40,3 @@ impl ZaiVisionMcpState {
         sessions.remove(session_id);
     }
 }
-

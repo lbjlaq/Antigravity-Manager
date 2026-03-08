@@ -12,7 +12,7 @@ pub struct TokenData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,  // 新增：Antigravity sessionId
+    pub session_id: Option<String>, // 新增：Antigravity sessionId
 }
 
 impl TokenData {

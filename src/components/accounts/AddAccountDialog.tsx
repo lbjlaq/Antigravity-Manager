@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Database, Globe, FileClock, Loader2, CheckCircle2, XCircle, Copy, Check, Info, Link2 } from 'lucide-react';
+import { Plus, Database, Globe, FileClock, Loader2, CheckCircle2, XCircle, Copy, Check, Info, Link2, Terminal } from 'lucide-react';
 import { useAccountStore } from '../../stores/useAccountStore';
+import { AccountType } from '../../types/account';
 import { useTranslation } from 'react-i18next';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -10,7 +11,7 @@ import { isTauri } from '../../utils/env';
 import { copyToClipboard } from '../../utils/clipboard';
 
 interface AddAccountDialogProps {
-    onAdd: (email: string, refreshToken: string) => Promise<void>;
+    onAdd: (email: string, refreshToken: string, accountType?: AccountType) => Promise<void>;
     showText?: boolean;
 }
 
@@ -21,6 +22,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     const fetchAccounts = useAccountStore(state => state.fetchAccounts);
     const [isOpen, setIsOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<'oauth' | 'token' | 'import'>(isTauri() ? 'oauth' : 'token');
+    const [accountType, setAccountType] = useState<AccountType>('antigravity');
     const [refreshToken, setRefreshToken] = useState('');
     const [oauthUrl, setOauthUrl] = useState('');
     const [oauthUrlCopied, setOauthUrlCopied] = useState(false);
@@ -87,7 +89,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                 setMessage(`${t('accounts.add.tabs.oauth')}...`);
 
                 try {
-                    await completeOAuthLogin();
+                    await completeOAuthLogin(accountType);
                     setStatus('success');
                     setMessage(`${t('accounts.add.tabs.oauth')} ${t('common.success')}!`);
                     setTimeout(() => {
@@ -121,7 +123,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         if (activeTab !== 'oauth') return;
         if (oauthUrl) return;
 
-        invoke<any>('prepare_oauth_url')
+        invoke<any>('prepare_oauth_url', { accountType })
             .then((res) => {
                 const url = typeof res === 'string' ? res : res?.url;
                 if (url && url.length > 0) setOauthUrl(url);
@@ -129,7 +131,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             .catch((e) => {
                 console.error('Failed to prepare OAuth URL:', e);
             });
-    }, [isOpen, activeTab, oauthUrl]);
+    }, [isOpen, activeTab, oauthUrl, accountType]);
 
     // If user navigates away from OAuth tab, cancel prepared flow to release the port.
     useEffect(() => {
@@ -148,6 +150,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         setRefreshToken('');
         setOauthUrl('');
         setOauthUrlCopied(false);
+        setAccountType('antigravity');
     };
 
     const handleAction = async (
@@ -244,7 +247,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             setMessage(t('accounts.add.token.batch_progress', { current: i + 1, total: tokens.length }));
 
             try {
-                await onAdd("", currentToken);
+                await onAdd("", currentToken, accountType);
                 successCount++;
             } catch (error) {
                 console.error(`Failed to add token ${i + 1}:`, error);
@@ -280,7 +283,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             setMessage(t('accounts.add.oauth.btn_start') + '...');
 
             // 1. 获取 URL (指向 /auth/callback)
-            const res = await invoke<any>('prepare_oauth_url');
+            const res = await invoke<any>('prepare_oauth_url', { accountType });
             const url = typeof res === 'string' ? res : res.url;
 
             if (!url) {
@@ -346,12 +349,12 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         }
         // Default flow: opens the default browser and completes automatically.
         // (If user opened the URL manually, completion is also triggered by oauth-callback-received.)
-        handleAction(t('accounts.add.tabs.oauth'), startOAuthLogin, { clearOauthUrl: false });
+        handleAction(t('accounts.add.tabs.oauth'), () => startOAuthLogin(accountType), { clearOauthUrl: false });
     };
 
     const handleCompleteOAuth = () => {
         // Manual flow: user already authorized in their preferred browser, just finish the flow.
-        handleAction(t('accounts.add.tabs.oauth'), completeOAuthLogin, { clearOauthUrl: false });
+        handleAction(t('accounts.add.tabs.oauth'), () => completeOAuthLogin(accountType), { clearOauthUrl: false });
     };
 
     const handleCopyUrl = async () => {
@@ -515,6 +518,37 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                                 {t('accounts.add.tabs.import')}
                             </button>
                         </div>
+
+                        {/* Account Type Selector */}
+                        {(activeTab === 'oauth' || activeTab === 'token') && (
+                            <div className="flex items-center gap-2 mb-4">
+                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 shrink-0">
+                                    {t('accounts.add.account_type_label', 'Account Type')}:
+                                </span>
+                                <div className="flex gap-1 flex-1">
+                                    <button
+                                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-medium transition-all ${accountType === 'antigravity'
+                                            ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                                            : 'bg-gray-50 dark:bg-base-200 text-gray-500 dark:text-gray-400 border border-transparent hover:bg-gray-100 dark:hover:bg-base-300'
+                                            }`}
+                                        onClick={() => { setAccountType('antigravity'); setOauthUrl(''); }}
+                                    >
+                                        <Globe className="w-3.5 h-3.5" />
+                                        Antigravity
+                                    </button>
+                                    <button
+                                        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-medium transition-all ${accountType === 'gemini_cli'
+                                            ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                                            : 'bg-gray-50 dark:bg-base-200 text-gray-500 dark:text-gray-400 border border-transparent hover:bg-gray-100 dark:hover:bg-base-300'
+                                            }`}
+                                        onClick={() => { setAccountType('gemini_cli'); setOauthUrl(''); }}
+                                    >
+                                        <Terminal className="w-3.5 h-3.5" />
+                                        GeminiCLI
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         {/* 添加 Web 模式提示 */}
                         {!isTauri() && (

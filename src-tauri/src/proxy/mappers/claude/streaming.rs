@@ -5,8 +5,8 @@ use super::models::*;
 use super::utils::to_claude_usage;
 use crate::proxy::mappers::estimation_calibrator::get_calibrator;
 // use crate::proxy::mappers::signature_store::store_thought_signature; // Deprecated
-use crate::proxy::SignatureCache;
 use crate::proxy::common::client_adapter::{ClientAdapter, SignatureBufferStrategy}; // [NEW]
+use crate::proxy::SignatureCache;
 use bytes::Bytes;
 use serde_json::{json, Value};
 
@@ -779,7 +779,10 @@ impl<'a> PartProcessor<'a> {
         }
 
         // [NEW] Apply Client Adapter Strategy
-        let use_fifo = self.state.client_adapter.as_ref()
+        let use_fifo = self
+            .state
+            .client_adapter
+            .as_ref()
             .map(|a| a.signature_buffer_strategy() == SignatureBufferStrategy::Fifo)
             .unwrap_or(false);
 
@@ -796,11 +799,11 @@ impl<'a> PartProcessor<'a> {
                 // However, our cache implementation currently keys by session_id.
                 // For FIFO, we might just rely on the fact that we are processing in order.
                 // But specifically for opencode, it might be calling tools in parallel or sequence.
-                
+
                 SignatureCache::global().cache_session_signature(
-                    session_id, 
-                    sig.clone(), 
-                    self.state.message_count
+                    session_id,
+                    sig.clone(),
+                    self.state.message_count,
                 );
                 tracing::debug!(
                     "[Claude-SSE] Cached signature to session {} (length: {}) [FIFO: {}]",
@@ -817,8 +820,8 @@ impl<'a> PartProcessor<'a> {
         }
 
         // 暂存签名 (for local block handling)
-        // If FIFO, we strictly follow the sequence. The default logic is effectively LIFO for a single turn 
-        // (store latest, consume at end). 
+        // If FIFO, we strictly follow the sequence. The default logic is effectively LIFO for a single turn
+        // (store latest, consume at end).
         // For opencode, we just want to ensure we capture IT.
         self.state.store_signature(signature);
 
@@ -994,10 +997,13 @@ impl<'a> PartProcessor<'a> {
         // We attempt to find the closest registered tool name.
         if tool_name.starts_with("mcp__") && !self.state.registered_tool_names.is_empty() {
             if !self.state.registered_tool_names.contains(&tool_name) {
-                if let Some(matched) = fuzzy_match_mcp_tool(&tool_name, &self.state.registered_tool_names) {
+                if let Some(matched) =
+                    fuzzy_match_mcp_tool(&tool_name, &self.state.registered_tool_names)
+                {
                     tracing::warn!(
                         "[FIX #MCP] Corrected MCP tool name: '{}' → '{}'",
-                        tool_name, matched
+                        tool_name,
+                        matched
                     );
                     tool_name = matched;
                 } else {
@@ -1026,9 +1032,9 @@ impl<'a> PartProcessor<'a> {
             // 3. [NEW v3.3.17] Cache to session-based storage
             if let Some(session_id) = &self.state.session_id {
                 SignatureCache::global().cache_session_signature(
-                    session_id, 
+                    session_id,
                     sig.clone(),
-                    self.state.message_count
+                    self.state.message_count,
                 );
             }
 
@@ -1083,7 +1089,8 @@ impl<'a> PartProcessor<'a> {
 ///   2. Suffix contained: if the hallucinated name (without `mcp__`) is contained in a registered tool name
 ///   3. Longest common subsequence scoring: picks the registered tool with the best LCS ratio
 fn fuzzy_match_mcp_tool(hallucinated: &str, registered: &[String]) -> Option<String> {
-    let mcp_tools: Vec<&String> = registered.iter()
+    let mcp_tools: Vec<&String> = registered
+        .iter()
         .filter(|name| name.starts_with("mcp__"))
         .collect();
 
@@ -1125,7 +1132,7 @@ fn fuzzy_match_mcp_tool(hallucinated: &str, registered: &[String]) -> Option<Str
     }
 
     // Strategy 3: Normalized token overlap scoring
-    // Split both names into tokens by '_' and '__', compute overlap ratio  
+    // Split both names into tokens by '_' and '__', compute overlap ratio
     let hall_tokens: Vec<&str> = hallucinated_suffix
         .split(|c: char| c == '_')
         .filter(|s| !s.is_empty())
@@ -1171,7 +1178,9 @@ fn fuzzy_match_mcp_tool(hallucinated: &str, registered: &[String]) -> Option<Str
     if best_score >= threshold {
         tracing::debug!(
             "[FIX #MCP] Fuzzy match score for '{}': {:.2} -> {:?}",
-            hallucinated, best_score, best_match
+            hallucinated,
+            best_score,
+            best_match
         );
         best_match
     } else {
@@ -1261,14 +1270,15 @@ mod tests {
         // Gemini drops server prefix, produces: mcp__puppeteer_navigate
         // Should match mcp__puppeteer__puppeteer_navigate via suffix "puppeteer_navigate"
         let result = fuzzy_match_mcp_tool("mcp__puppeteer_navigate", &registered);
-        assert_eq!(result, Some("mcp__puppeteer__puppeteer_navigate".to_string()));
+        assert_eq!(
+            result,
+            Some("mcp__puppeteer__puppeteer_navigate".to_string())
+        );
     }
 
     #[test]
     fn test_fuzzy_match_mcp_tool_exact_match_no_correction() {
-        let registered = vec![
-            "mcp__puppeteer__puppeteer_navigate".to_string(),
-        ];
+        let registered = vec!["mcp__puppeteer__puppeteer_navigate".to_string()];
 
         // Already correct - should not be called (the caller checks contains first)
         // But if called, should find it
@@ -1286,7 +1296,10 @@ mod tests {
 
         // Gemini produces a partial-but-contained name
         let result = fuzzy_match_mcp_tool("mcp__navigate", &registered);
-        assert_eq!(result, Some("mcp__puppeteer__puppeteer_navigate".to_string()));
+        assert_eq!(
+            result,
+            Some("mcp__puppeteer__puppeteer_navigate".to_string())
+        );
     }
 
     #[test]
@@ -1304,9 +1317,7 @@ mod tests {
 
     #[test]
     fn test_fuzzy_match_mcp_tool_no_match() {
-        let registered = vec![
-            "mcp__puppeteer__puppeteer_navigate".to_string(),
-        ];
+        let registered = vec!["mcp__puppeteer__puppeteer_navigate".to_string()];
 
         // Completely unrelated name
         let result = fuzzy_match_mcp_tool("mcp__totally_unrelated_xyz", &registered);
@@ -1315,10 +1326,7 @@ mod tests {
 
     #[test]
     fn test_fuzzy_match_mcp_tool_no_mcp_tools() {
-        let registered = vec![
-            "regular_tool".to_string(),
-            "another_tool".to_string(),
-        ];
+        let registered = vec!["regular_tool".to_string(), "another_tool".to_string()];
 
         // No MCP tools in registry
         let result = fuzzy_match_mcp_tool("mcp__puppeteer_navigate", &registered);
@@ -1334,6 +1342,9 @@ mod tests {
         ];
 
         let result = fuzzy_match_mcp_tool("mcp__puppeteer_screenshot", &registered);
-        assert_eq!(result, Some("mcp__puppeteer__puppeteer_screenshot".to_string()));
+        assert_eq!(
+            result,
+            Some("mcp__puppeteer__puppeteer_screenshot".to_string())
+        );
     }
 }

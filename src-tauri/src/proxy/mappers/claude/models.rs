@@ -48,7 +48,6 @@ pub struct ThinkingConfig {
     pub effort: Option<String>, // "low", "high", or "max"
 }
 
-
 /// System Prompt
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]

@@ -1,6 +1,29 @@
+use super::{quota::QuotaData, token::TokenData};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use super::{token::TokenData, quota::QuotaData};
+
+/// 账号类型枚举
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountType {
+    Antigravity,
+    GeminiCli,
+}
+
+impl Default for AccountType {
+    fn default() -> Self {
+        AccountType::Antigravity
+    }
+}
+
+impl std::fmt::Display for AccountType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AccountType::Antigravity => write!(f, "antigravity"),
+            AccountType::GeminiCli => write!(f, "gemini_cli"),
+        }
+    }
+}
 
 /// 账号数据结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,10 +83,16 @@ pub struct Account {
     /// 用户自定义标签
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_label: Option<String>,
+    /// 账号类型 (antigravity / gemini_cli)
+    #[serde(default)]
+    pub account_type: AccountType,
+    /// 是否已配置预览（仅 GeminiCLI）
+    #[serde(default)]
+    pub preview: bool,
 }
 
 impl Account {
-    pub fn new(id: String, email: String, token: TokenData) -> Self {
+    pub fn new(id: String, email: String, token: TokenData, account_type: AccountType) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
             id,
@@ -89,6 +118,8 @@ impl Account {
             proxy_id: None,
             proxy_bound_at: None,
             custom_label: None,
+            account_type,
+            preview: false,
         }
     }
 
@@ -124,6 +155,9 @@ pub struct AccountSummary {
     pub protected_models: HashSet<String>,
     pub created_at: i64,
     pub last_used: i64,
+    /// 账号类型
+    #[serde(default)]
+    pub account_type: AccountType,
 }
 
 impl AccountIndex {

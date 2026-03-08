@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::fs;
-use std::env;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -100,7 +100,9 @@ fn resolve_droid_path() -> Option<PathBuf> {
             }
         }
         if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-            let pnpm_path = PathBuf::from(&local_app_data).join("pnpm").join("droid.cmd");
+            let pnpm_path = PathBuf::from(&local_app_data)
+                .join("pnpm")
+                .join("droid.cmd");
             if pnpm_path.exists() {
                 return Some(pnpm_path);
             }
@@ -120,7 +122,8 @@ fn extract_version(raw: &str) -> String {
                 return after.to_string();
             }
         }
-        if part.contains('.') && part.chars().next().map_or(false, |c| c.is_ascii_digit())
+        if part.contains('.')
+            && part.chars().next().map_or(false, |c| c.is_ascii_digit())
             && part.chars().all(|c| c.is_ascii_digit() || c == '.')
         {
             return part.to_string();
@@ -160,14 +163,16 @@ pub fn check_droid_installed() -> (bool, Option<String>) {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let raw = if stdout.trim().is_empty() { stderr.to_string() } else { stdout.to_string() };
+            let raw = if stdout.trim().is_empty() {
+                stderr.to_string()
+            } else {
+                stdout.to_string()
+            };
             tracing::debug!("droid --version output: {}", raw.trim());
             let version = extract_version(&raw);
             (true, Some(version))
         }
-        _ => {
-            (true, Some("unknown".to_string()))
-        }
+        _ => (true, Some("unknown".to_string())),
     }
 }
 
@@ -184,7 +189,10 @@ fn count_synced_models(json: &Value) -> (usize, Option<String>) {
             }
             count += 1;
             if first_url.is_none() {
-                first_url = m.get("baseUrl").and_then(|v| v.as_str()).map(|s| s.to_string());
+                first_url = m
+                    .get("baseUrl")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
             }
         }
     }
@@ -226,16 +234,15 @@ fn create_backup(path: &PathBuf) -> Result<(), String> {
     if backup_path.exists() {
         return Ok(());
     }
-    fs::copy(path, &backup_path)
-        .map_err(|e| format!("Failed to create backup: {}", e))?;
+    fs::copy(path, &backup_path).map_err(|e| format!("Failed to create backup: {}", e))?;
     tracing::info!("Created backup: {:?}", backup_path);
     Ok(())
 }
 
 /// 接收前端 preview 里完整的 customModels 数组，直接替换写入
 pub fn sync_droid_config(full_custom_models: Vec<Value>) -> Result<usize, String> {
-    let config_path = get_config_path()
-        .ok_or_else(|| "Failed to get Droid config directory".to_string())?;
+    let config_path =
+        get_config_path().ok_or_else(|| "Failed to get Droid config directory".to_string())?;
 
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
@@ -246,8 +253,7 @@ pub fn sync_droid_config(full_custom_models: Vec<Value>) -> Result<usize, String
     let mut config: Value = if config_path.exists() {
         let content = fs::read_to_string(&config_path)
             .map_err(|e| format!("Failed to read config: {}", e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))?
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?
     } else {
         serde_json::json!({})
     };
@@ -256,12 +262,19 @@ pub fn sync_droid_config(full_custom_models: Vec<Value>) -> Result<usize, String
         config = serde_json::json!({});
     }
 
-    let ag_count = full_custom_models.iter()
-        .filter(|m| m.get("id").and_then(|v| v.as_str())
-            .map(|s| s.starts_with(AG_ID_PREFIX)).unwrap_or(false))
+    let ag_count = full_custom_models
+        .iter()
+        .filter(|m| {
+            m.get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.starts_with(AG_ID_PREFIX))
+                .unwrap_or(false)
+        })
         .count();
 
-    config.as_object_mut().unwrap()
+    config
+        .as_object_mut()
+        .unwrap()
         .insert("customModels".to_string(), Value::Array(full_custom_models));
 
     let tmp_path = config_path.with_extension("tmp");
@@ -274,8 +287,8 @@ pub fn sync_droid_config(full_custom_models: Vec<Value>) -> Result<usize, String
 }
 
 pub fn restore_droid_config() -> Result<(), String> {
-    let config_path = get_config_path()
-        .ok_or_else(|| "Failed to get Droid config directory".to_string())?;
+    let config_path =
+        get_config_path().ok_or_else(|| "Failed to get Droid config directory".to_string())?;
 
     let backup_path = config_path.with_file_name(format!("{}{}", DROID_CONFIG_FILE, BACKUP_SUFFIX));
     if backup_path.exists() {
@@ -288,15 +301,14 @@ pub fn restore_droid_config() -> Result<(), String> {
 }
 
 pub fn read_droid_config_content() -> Result<String, String> {
-    let config_path = get_config_path()
-        .ok_or_else(|| "Failed to get Droid config directory".to_string())?;
+    let config_path =
+        get_config_path().ok_or_else(|| "Failed to get Droid config directory".to_string())?;
 
     if !config_path.exists() {
         return Ok("{}".to_string());
     }
 
-    fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read config: {}", e))
+    fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config: {}", e))
 }
 
 // Tauri Commands
@@ -322,9 +334,7 @@ pub async fn get_droid_sync_status(proxy_url: String) -> Result<DroidStatus, Str
 }
 
 #[tauri::command]
-pub async fn execute_droid_sync(
-    custom_models: Vec<Value>,
-) -> Result<usize, String> {
+pub async fn execute_droid_sync(custom_models: Vec<Value>) -> Result<usize, String> {
     sync_droid_config(custom_models)
 }
 

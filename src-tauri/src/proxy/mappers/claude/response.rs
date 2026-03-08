@@ -250,8 +250,11 @@ impl NonStreamingProcessor {
         // [FIX #765] Cache signature in NonStreamingProcessor
         if let Some(sig) = &signature {
             if let Some(s_id) = &self.session_id {
-                crate::proxy::SignatureCache::global()
-                    .cache_session_signature(s_id, sig.to_string(), self.message_count);
+                crate::proxy::SignatureCache::global().cache_session_signature(
+                    s_id,
+                    sig.to_string(),
+                    self.message_count,
+                );
                 crate::proxy::SignatureCache::global()
                     .cache_thinking_family(sig.to_string(), self.model_name.clone());
                 tracing::debug!(

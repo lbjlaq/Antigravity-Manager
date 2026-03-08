@@ -4,7 +4,7 @@
 use crate::proxy::model_specs;
 
 /// 获取模型的输出 Token 限额
-/// 
+///
 /// # 参数
 /// - `model_name`: 映射后的模型名
 /// - `dynamic_limit`: 如果已知动态限额则传入（已废弃，建议直接传入 ProxyToken 到 model_specs）

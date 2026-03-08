@@ -119,7 +119,7 @@ mod tests {
     fn test_encrypt_decrypt_cycle() {
         let password = "my_secret_password";
         let encrypted = encrypt_string(password).unwrap();
-        
+
         assert!(encrypted.starts_with(ENCRYPTED_PREFIX));
         assert_ne!(password, encrypted);
 

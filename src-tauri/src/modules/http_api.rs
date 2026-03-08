@@ -65,8 +65,7 @@ pub fn load_settings() -> Result<HttpApiSettings, String> {
     let content = std::fs::read_to_string(&settings_path)
         .map_err(|e| format!("Failed to read settings file: {}", e))?;
 
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse settings: {}", e))
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))
 }
 
 /// Save HTTP API settings
@@ -237,24 +236,26 @@ async fn list_accounts() -> Result<impl IntoResponse, (StatusCode, Json<ErrorRes
         )
     })?;
 
-    let current_id = account::get_current_account_id()
-        .ok()
-        .flatten();
+    let current_id = account::get_current_account_id().ok().flatten();
 
     let account_responses: Vec<AccountResponse> = accounts
         .into_iter()
         .map(|acc| {
             let is_current = current_id.as_ref().map(|id| id == &acc.id).unwrap_or(false);
             let quota = acc.quota.map(|q| QuotaResponse {
-                models: q.models.into_iter().map(|m| ModelQuota {
-                    name: m.name,
-                    percentage: m.percentage,
-                    reset_time: m.reset_time,
-                }).collect(),
+                models: q
+                    .models
+                    .into_iter()
+                    .map(|m| ModelQuota {
+                        name: m.name,
+                        percentage: m.percentage,
+                        reset_time: m.reset_time,
+                    })
+                    .collect(),
                 updated_at: Some(q.last_updated),
                 subscription_tier: q.subscription_tier,
             });
-            
+
             AccountResponse {
                 id: acc.id,
                 email: acc.email,
@@ -285,11 +286,15 @@ async fn get_current_account() -> Result<impl IntoResponse, (StatusCode, Json<Er
 
     let response = current.map(|acc| {
         let quota = acc.quota.map(|q| QuotaResponse {
-            models: q.models.into_iter().map(|m| ModelQuota {
-                name: m.name,
-                percentage: m.percentage,
-                reset_time: m.reset_time,
-            }).collect(),
+            models: q
+                .models
+                .into_iter()
+                .map(|m| ModelQuota {
+                    name: m.name,
+                    percentage: m.percentage,
+                    reset_time: m.reset_time,
+                })
+                .collect(),
             updated_at: Some(q.last_updated),
             subscription_tier: q.subscription_tier,
         });
@@ -338,11 +343,17 @@ async fn switch_account(
 
     // Execute switch asynchronously (non-blocking response)
     tokio::spawn(async move {
-        logger::log_info(&format!("[HTTP API] Starting account switch: {}", account_id));
-        
+        logger::log_info(&format!(
+            "[HTTP API] Starting account switch: {}",
+            account_id
+        ));
+
         match account::switch_account(&account_id, &state_clone.integration).await {
             Ok(()) => {
-                logger::log_info(&format!("[HTTP API] Account switch successful: {}", account_id));
+                logger::log_info(&format!(
+                    "[HTTP API] Account switch successful: {}",
+                    account_id
+                ));
             }
             Err(e) => {
                 logger::log_error(&format!("[HTTP API] Account switch failed: {}", e));
@@ -428,16 +439,24 @@ async fn get_logs(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let limit = if params.limit == 0 { 50 } else { params.limit };
 
-    let total = proxy_db::get_logs_count_filtered(&params.filter, params.errors_only)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let total =
+        proxy_db::get_logs_count_filtered(&params.filter, params.errors_only).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
 
-    let logs = proxy_db::get_logs_filtered(&params.filter, params.errors_only, limit, params.offset)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e })))?;
+    let logs =
+        proxy_db::get_logs_filtered(&params.filter, params.errors_only, limit, params.offset)
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error: e }),
+                )
+            })?;
 
-    Ok(Json(LogsResponse {
-        total,
-        logs,
-    }))
+    Ok(Json(LogsResponse { total, logs }))
 }
 
 // ============================================================================
@@ -445,7 +464,10 @@ async fn get_logs(
 // ============================================================================
 
 /// Start HTTP API server
-pub async fn start_server(port: u16, integration: crate::modules::integration::SystemManager) -> Result<(), String> {
+pub async fn start_server(
+    port: u16,
+    integration: crate::modules::integration::SystemManager,
+) -> Result<(), String> {
     let state = ApiState::new(integration);
 
     // CORS config - allow local calls

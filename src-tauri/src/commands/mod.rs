@@ -28,12 +28,19 @@ pub async fn add_account(
     app: tauri::AppHandle,
     _email: String,
     refresh_token: String,
+    account_type: Option<String>,
 ) -> Result<Account, String> {
+    let account_type = match account_type.as_deref() {
+        Some("gemini_cli") | Some("geminicli") | Some("GeminiCli") => {
+            crate::models::AccountType::GeminiCli
+        }
+        _ => crate::models::AccountType::Antigravity,
+    };
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app.clone()),
     );
 
-    let mut account = service.add_account(&refresh_token).await?;
+    let mut account = service.add_account(&refresh_token, account_type).await?;
 
     // 自动刷新配额
     let _ = internal_refresh_account_quota(&app, &mut account).await;
@@ -395,13 +402,22 @@ pub async fn save_config(
 // --- OAuth 命令 ---
 
 #[tauri::command]
-pub async fn start_oauth_login(app_handle: tauri::AppHandle) -> Result<Account, String> {
+pub async fn start_oauth_login(
+    app_handle: tauri::AppHandle,
+    account_type: Option<String>,
+) -> Result<Account, String> {
     modules::logger::log_info("开始 OAuth 授权流程...");
+    let account_type = match account_type.as_deref() {
+        Some("gemini_cli") | Some("geminicli") | Some("GeminiCli") => {
+            crate::models::AccountType::GeminiCli
+        }
+        _ => crate::models::AccountType::Antigravity,
+    };
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
     );
 
-    let mut account = service.start_oauth_login().await?;
+    let mut account = service.start_oauth_login(account_type).await?;
 
     // 自动触发刷新额度
     let _ = internal_refresh_account_quota(&app_handle, &mut account).await;
@@ -417,13 +433,22 @@ pub async fn start_oauth_login(app_handle: tauri::AppHandle) -> Result<Account, 
 
 /// 完成 OAuth 授权（不自动打开浏览器）
 #[tauri::command]
-pub async fn complete_oauth_login(app_handle: tauri::AppHandle) -> Result<Account, String> {
+pub async fn complete_oauth_login(
+    app_handle: tauri::AppHandle,
+    account_type: Option<String>,
+) -> Result<Account, String> {
     modules::logger::log_info("完成 OAuth 授权流程 (manual)...");
+    let account_type = match account_type.as_deref() {
+        Some("gemini_cli") | Some("geminicli") | Some("GeminiCli") => {
+            crate::models::AccountType::GeminiCli
+        }
+        _ => crate::models::AccountType::Antigravity,
+    };
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
     );
 
-    let mut account = service.complete_oauth_login().await?;
+    let mut account = service.complete_oauth_login(account_type).await?;
 
     // 自动触发刷新额度
     let _ = internal_refresh_account_quota(&app_handle, &mut account).await;
@@ -439,11 +464,20 @@ pub async fn complete_oauth_login(app_handle: tauri::AppHandle) -> Result<Accoun
 
 /// 预生成 OAuth 授权链接 (不打开浏览器)
 #[tauri::command]
-pub async fn prepare_oauth_url(app_handle: tauri::AppHandle) -> Result<String, String> {
+pub async fn prepare_oauth_url(
+    app_handle: tauri::AppHandle,
+    account_type: Option<String>,
+) -> Result<String, String> {
+    let account_type = match account_type.as_deref() {
+        Some("gemini_cli") | Some("geminicli") | Some("GeminiCli") => {
+            crate::models::AccountType::GeminiCli
+        }
+        _ => crate::models::AccountType::Antigravity,
+    };
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
     );
-    service.prepare_oauth_url().await
+    service.prepare_oauth_url(account_type).await
 }
 
 #[tauri::command]
@@ -744,7 +778,6 @@ pub async fn update_last_check_time() -> Result<(), String> {
     crate::modules::update_checker::update_last_check_time()
 }
 
-
 /// 检测是否通过 Homebrew Cask 安装
 #[tauri::command]
 pub async fn check_homebrew_installation() -> Result<bool, String> {
@@ -757,7 +790,6 @@ pub async fn brew_upgrade_cask() -> Result<String, String> {
     modules::logger::log_info("收到前端触发的 Homebrew 升级请求");
     crate::modules::update_checker::brew_upgrade_cask().await
 }
-
 
 /// 获取更新设置
 #[tauri::command]
@@ -862,6 +894,29 @@ pub async fn toggle_proxy_status(
     crate::modules::tray::update_tray_menus(&app);
 
     Ok(())
+}
+
+/// 检验账号：重新获取 project_id 并解除 403
+#[tauri::command]
+pub async fn verify_account(
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+    account_id: String,
+) -> Result<String, String> {
+    let result = modules::account::verify_account(&account_id).await?;
+
+    // Sync to running proxy service
+    let instance_lock = proxy_state.instance.read().await;
+    if let Some(instance) = instance_lock.as_ref() {
+        let _ = instance.token_manager.reload_account(&account_id).await;
+    }
+
+    Ok(result)
+}
+
+/// 设置预览（仅 GeminiCLI）
+#[tauri::command]
+pub async fn configure_preview(account_id: String) -> Result<(), String> {
+    modules::account::configure_preview(&account_id).await
 }
 
 /// 预热所有可用账号
