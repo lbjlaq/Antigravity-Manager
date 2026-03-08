@@ -21,6 +21,7 @@ pub mod opencode_sync; // OpenCode 配置同步
 pub mod providers; // Extra upstream providers (z.ai, etc.)
 pub mod proxy_pool; // 代理池管理器
 pub mod rate_limit; // 限流跟踪
+pub mod model_specs; // 模型规格管理 (v4.1.28)
 pub mod session_manager; // 会话指纹管理
 pub mod signature_cache; // Signature Cache (v3.3.16)
 pub mod sticky_config; // 粘性调度配置

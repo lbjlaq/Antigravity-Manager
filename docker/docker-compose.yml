@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: antigravity-manager
+    image: lbjlaq/antigravity-manager
     container_name: antigravity-manager
     network_mode: host  # 使用宿主机网络，可直接访问 localhost:8045
     # ports:  # host 模式不需要端口映射
@@ -11,7 +11,7 @@ services:
     volumes:
       - ~/.antigravity_tools:/root/.antigravity_tools
     environment:
-      - LOG_LEVEL=info
-      - API_KEY=test  # [重要] 請設置您的安全密鑰，若不設置則在日誌中查看隨機密鑰
-      - ABV_BIND_LOCAL_ONLY=true  # 僅綁定 127.0.0.1
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - API_KEY=${API_KEY:-test}  # [重要] 請設置您的安全密鑰，若不設置則在日誌中查看隨機密鑰
+      - ABV_BIND_LOCAL_ONLY=${ABV_BIND_LOCAL_ONLY:-true}  # 僅綁定 127.0.0.1
     restart: unless-stopped

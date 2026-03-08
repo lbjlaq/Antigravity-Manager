@@ -50,7 +50,7 @@ pub struct OpenAIRequest {
 pub struct ThinkingConfig {
     #[serde(rename = "type")]
     pub thinking_type: Option<String>, // "enabled", "disabled", or "adaptive"
-    #[serde(rename = "budget_tokens")]
+    #[serde(rename = "budget_tokens", alias = "budgetTokens")]
     pub budget_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>, // "low", "high", or "max"

@@ -802,7 +802,8 @@ fn build_claude_thinking_variant(budget: u32) -> Value {
         },
         "thinking": {
             "type": "enabled",
-            "budget_tokens": budget
+            "budget_tokens": budget,
+            "budgetTokens": budget
         }
     })
 }
@@ -822,7 +823,8 @@ fn build_gemini25_thinking_variant(budget: u32) -> Value {
         },
         "thinking": {
             "type": "enabled",
-            "budget_tokens": budget
+            "budget_tokens": budget,
+            "budgetTokens": budget
         }
     })
 }

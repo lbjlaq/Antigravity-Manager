@@ -69,16 +69,8 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     // Gemini 协议映射表
     m.insert("gemini-2.5-flash-lite", "gemini-2.5-flash");
     m.insert("gemini-2.5-flash-thinking", "gemini-2.5-flash-thinking");
-    // [Migrate] Gemini 3 Pro High/Low -> Gemini 3.1 Pro High/Low
-    // Keep 3.0 aliases for backward compatibility.
-    m.insert("gemini-3.1-pro-low", "gemini-3.1-pro-preview");
-    m.insert("gemini-3.1-pro-high", "gemini-3.1-pro-preview");
-    m.insert("gemini-3.1-pro-preview", "gemini-3.1-pro-preview");
-    m.insert("gemini-3.1-pro", "gemini-3.1-pro-preview");
-    m.insert("gemini-3-pro-low", "gemini-3.1-pro-preview");
-    m.insert("gemini-3-pro-high", "gemini-3.1-pro-preview");
-    m.insert("gemini-3-pro-preview", "gemini-3.1-pro-preview");
-    m.insert("gemini-3-pro", "gemini-3.1-pro-preview");
+    // [NOTE] gemini-3.1-pro-low / high / preview 直接透传，不再映射到 gemini-3.1-pro-preview
+    // 让 Google API 路由到正确的实体模型，避免因 model ID 失效导致 400 INVALID_ARGUMENT
     m.insert("gemini-2.5-flash", "gemini-2.5-flash");
     m.insert("gemini-3-flash", "gemini-3-flash");
     m.insert("gemini-3-pro-image", "gemini-3-pro-image");
@@ -374,23 +366,26 @@ mod tests {
             map_claude_model_to_gemini("gemini-2.5-flash-mini-test"),
             "gemini-2.5-flash-mini-test"
         );
-        assert_eq!(map_claude_model_to_gemini("unknown-model"), "unknown-model");
-        // [Migrate] Gemini 3 Pro High/Low should route to Gemini 3.1 Pro
+        assert_eq!(
+            map_claude_model_to_gemini("unknown-model"),
+            "unknown-model"
+        );
+        // gemini-3.x-pro-low/high/preview 现在直接透传（不再映射到 pro-preview）
         assert_eq!(
             map_claude_model_to_gemini("gemini-3-pro-high"),
-            "gemini-3.1-pro-preview"
+            "gemini-3-pro-high"
         );
         assert_eq!(
             map_claude_model_to_gemini("gemini-3-pro-low"),
-            "gemini-3.1-pro-preview"
+            "gemini-3-pro-low"
         );
         assert_eq!(
             map_claude_model_to_gemini("gemini-3.1-pro-high"),
-            "gemini-3.1-pro-preview"
+            "gemini-3.1-pro-high"
         );
         assert_eq!(
             map_claude_model_to_gemini("gemini-3.1-pro-low"),
-            "gemini-3.1-pro-preview"
+            "gemini-3.1-pro-low"
         );
 
         // Test Normalization (Opus 4.6 now merged into "claude" group)

@@ -504,18 +504,31 @@ where
                                             if let Some(candidate) = candidates.get(0) {
                                                 if let Some(parts) = candidate.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
                                                     for part in parts {
+                                                        let is_thought = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false);
                                                         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                                                             if !text.is_empty() {
-                                                                accumulated_text.push_str(text);
-                                                                // 4. response.output_text.delta - 文本增量
-                                                                let delta_ev = json!({
-                                                                    "type": "response.output_text.delta",
-                                                                    "item_id": &item_id,
-                                                                    "output_index": 0,
-                                                                    "content_index": 0,
-                                                                    "delta": text
-                                                                });
-                                                                yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&delta_ev).unwrap())));
+                                                                if is_thought {
+                                                                    // 思维链内容 → response.reasoning.delta
+                                                                    let reasoning_ev = json!({
+                                                                        "type": "response.reasoning.delta",
+                                                                        "item_id": &item_id,
+                                                                        "output_index": 0,
+                                                                        "content_index": 0,
+                                                                        "delta": text
+                                                                    });
+                                                                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&reasoning_ev).unwrap())));
+                                                                } else {
+                                                                    accumulated_text.push_str(text);
+                                                                    // 4. response.output_text.delta - 文本增量
+                                                                    let delta_ev = json!({
+                                                                        "type": "response.output_text.delta",
+                                                                        "item_id": &item_id,
+                                                                        "output_index": 0,
+                                                                        "content_index": 0,
+                                                                        "delta": text
+                                                                    });
+                                                                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&delta_ev).unwrap())));
+                                                                }
                                                             }
                                                         }
                                                         if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
@@ -528,6 +541,7 @@ where
                                                             }
                                                         }
                                                     }
+
                                                 }
 
                                                 // 处理 groundingMetadata (搜索引文)

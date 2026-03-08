@@ -294,22 +294,34 @@
                 answer: {
                     zh: `
                         <p class="mb-4">这通常是因为 Google 对于通过第三方工具登录的账号加强了风控，缺少官方客户端登录后的初始化操作，导致服务端的项目绑定关系缺失。</p>
-                        <div class="bg-black/30 p-4 rounded-xl border border-emerald-900/20">
-                            <h4 class="text-emerald-400 font-bold mb-2 text-sm">解决方法：</h4>
-                            <ol class="list-decimal pl-5 space-y-2 text-xs">
-                                <li>使用官方客户端手动登录一次该账号，触发服务端的初始化和项目绑定。</li>
-                                <li>登录成功后即可退出，之后再切回本工具使用旧的 Refresh Token 即可恢复正常。</li>
-                            </ol>
+                        <div class="space-y-4">
+                            <div class="bg-black/30 p-4 rounded-xl border border-emerald-900/20">
+                                <h4 class="text-emerald-400 font-bold mb-2 text-sm">方案一（最简单）：</h4>
+                                <p class="text-xs">重新通过 antigravity 应用登录获取授权即可恢复。</p>
+                            </div>
+                            <div class="bg-black/30 p-4 rounded-xl border border-emerald-900/20">
+                                <h4 class="text-emerald-400 font-bold mb-2 text-sm">方案二：</h4>
+                                <ol class="list-decimal pl-5 space-y-2 text-xs">
+                                    <li>使用官方客户端手动登录一次该账号，触发服务端的初始化和项目绑定。</li>
+                                    <li>登录成功后即可退出，之后再切回本工具使用旧的 Refresh Token 即可恢复正常。</li>
+                                </ol>
+                            </div>
                         </div>
                     `,
                     en: `
                         <p class="mb-4">This usually occurs because Google has strengthened risk control for accounts logged in via third-party tools, skipping necessary initialization. This results in missing project bindings on the server side.</p>
-                        <div class="bg-black/30 p-4 rounded-xl border border-emerald-900/20">
-                            <h4 class="text-emerald-400 font-bold mb-2 text-sm">Solution:</h4>
-                            <ol class="list-decimal pl-5 space-y-2 text-xs">
-                                <li>Manually log in to the account once using the official client to trigger server-side initialization and project binding.</li>
-                                <li>After a successful login, you can log out and return to this tool. Using your existing Refresh Token should now work correctly.</li>
-                            </ol>
+                        <div class="space-y-4">
+                            <div class="bg-black/30 p-4 rounded-xl border border-emerald-900/20">
+                                <h4 class="text-emerald-400 font-bold mb-2 text-sm">Option 1 (Easiest):</h4>
+                                <p class="text-xs">Simply re-login via the antigravity app to refresh your authorization.</p>
+                            </div>
+                            <div class="bg-black/30 p-4 rounded-xl border border-emerald-900/20">
+                                <h4 class="text-emerald-400 font-bold mb-2 text-sm">Option 2:</h4>
+                                <ol class="list-decimal pl-5 space-y-2 text-xs">
+                                    <li>Manually log in to the account once using the official client to trigger server-side initialization and project binding.</li>
+                                    <li>After a successful login, you can log out and return to this tool. Using your existing Refresh Token should now work correctly.</li>
+                                </ol>
+                            </div>
                         </div>
                     `
                 }

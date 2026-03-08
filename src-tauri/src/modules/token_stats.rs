@@ -133,7 +133,7 @@ pub fn record_usage(
     output_tokens: u32,
 ) -> Result<(), String> {
     let conn = connect_db()?;
-    let timestamp = chrono::Utc::now().timestamp();
+    let timestamp = chrono::Local::now().timestamp();
     let total_tokens = input_tokens + output_tokens;
 
     // Insert into raw usage table
@@ -143,7 +143,7 @@ pub fn record_usage(
         params![timestamp, account_email, model, input_tokens, output_tokens, total_tokens],
     ).map_err(|e| e.to_string())?;
 
-    let hour_bucket = chrono::Utc::now().format("%Y-%m-%d %H:00").to_string();
+    let hour_bucket = chrono::Local::now().format("%Y-%m-%d %H:00").to_string();
     conn.execute(
         "INSERT INTO token_stats_hourly (hour_bucket, account_email, total_input_tokens, total_output_tokens, total_tokens, request_count)
          VALUES (?1, ?2, ?3, ?4, ?5, 1)
@@ -161,7 +161,7 @@ pub fn record_usage(
 /// Get hourly aggregated stats for a time range
 pub fn get_hourly_stats(hours: i64) -> Result<Vec<TokenStatsAggregated>, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
+    let cutoff = chrono::Local::now() - chrono::Duration::hours(hours);
     let cutoff_bucket = cutoff.format("%Y-%m-%d %H:00").to_string();
 
     let mut stmt = conn
@@ -200,7 +200,7 @@ pub fn get_hourly_stats(hours: i64) -> Result<Vec<TokenStatsAggregated>, String>
 /// Get daily aggregated stats for a time range
 pub fn get_daily_stats(days: i64) -> Result<Vec<TokenStatsAggregated>, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(days);
+    let cutoff = chrono::Local::now() - chrono::Duration::days(days);
     let cutoff_bucket = cutoff.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn
@@ -239,12 +239,12 @@ pub fn get_daily_stats(days: i64) -> Result<Vec<TokenStatsAggregated>, String> {
 /// Get weekly aggregated stats
 pub fn get_weekly_stats(weeks: i64) -> Result<Vec<TokenStatsAggregated>, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now() - chrono::Duration::weeks(weeks);
+    let cutoff = chrono::Local::now() - chrono::Duration::weeks(weeks);
     let cutoff_timestamp = cutoff.timestamp();
 
     let mut stmt = conn
         .prepare(
-            "SELECT strftime('%Y-W%W', datetime(timestamp, 'unixepoch')) as week_bucket,
+            "SELECT strftime('%Y-W%W', datetime(timestamp, 'unixepoch', 'localtime')) as week_bucket,
                 SUM(input_tokens) as input, 
                 SUM(output_tokens) as output,
                 SUM(total_tokens) as total,
@@ -278,7 +278,7 @@ pub fn get_weekly_stats(weeks: i64) -> Result<Vec<TokenStatsAggregated>, String>
 /// Get per-account statistics for a time range
 pub fn get_account_stats(hours: i64) -> Result<Vec<AccountTokenStats>, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
+    let cutoff = chrono::Local::now() - chrono::Duration::hours(hours);
     let cutoff_bucket = cutoff.format("%Y-%m-%d %H:00").to_string();
 
     let mut stmt = conn
@@ -317,7 +317,7 @@ pub fn get_account_stats(hours: i64) -> Result<Vec<AccountTokenStats>, String> {
 /// Get summary statistics for a time range
 pub fn get_summary_stats(hours: i64) -> Result<TokenStatsSummary, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
+    let cutoff = chrono::Local::now() - chrono::Duration::hours(hours);
     let cutoff_bucket = cutoff.format("%Y-%m-%d %H:00").to_string();
 
     let (total_input, total_output, total, requests): (u64, u64, u64, u64) = conn
@@ -352,7 +352,7 @@ pub fn get_summary_stats(hours: i64) -> Result<TokenStatsSummary, String> {
 
 pub fn get_model_stats(hours: i64) -> Result<Vec<ModelTokenStats>, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now().timestamp() - (hours * 3600);
+    let cutoff = chrono::Local::now().timestamp() - (hours * 3600);
 
     let mut stmt = conn
         .prepare(
@@ -389,11 +389,11 @@ pub fn get_model_stats(hours: i64) -> Result<Vec<ModelTokenStats>, String> {
 
 pub fn get_model_trend_hourly(hours: i64) -> Result<Vec<ModelTrendPoint>, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now().timestamp() - (hours * 3600);
+    let cutoff = chrono::Local::now().timestamp() - (hours * 3600);
 
     let mut stmt = conn
         .prepare(
-            "SELECT strftime('%Y-%m-%d %H:00', datetime(timestamp, 'unixepoch')) as hour_bucket,
+            "SELECT strftime('%Y-%m-%d %H:00', datetime(timestamp, 'unixepoch', 'localtime')) as hour_bucket,
                 model,
                 SUM(total_tokens) as total
          FROM token_usage
@@ -429,11 +429,11 @@ pub fn get_model_trend_hourly(hours: i64) -> Result<Vec<ModelTrendPoint>, String
 
 pub fn get_model_trend_daily(days: i64) -> Result<Vec<ModelTrendPoint>, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now().timestamp() - (days * 24 * 3600);
+    let cutoff = chrono::Local::now().timestamp() - (days * 24 * 3600);
 
     let mut stmt = conn
         .prepare(
-            "SELECT strftime('%Y-%m-%d', datetime(timestamp, 'unixepoch')) as day_bucket,
+            "SELECT strftime('%Y-%m-%d', datetime(timestamp, 'unixepoch', 'localtime')) as day_bucket,
                 model,
                 SUM(total_tokens) as total
          FROM token_usage
@@ -469,11 +469,11 @@ pub fn get_model_trend_daily(days: i64) -> Result<Vec<ModelTrendPoint>, String> 
 
 pub fn get_account_trend_hourly(hours: i64) -> Result<Vec<AccountTrendPoint>, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now().timestamp() - (hours * 3600);
+    let cutoff = chrono::Local::now().timestamp() - (hours * 3600);
 
     let mut stmt = conn
         .prepare(
-            "SELECT strftime('%Y-%m-%d %H:00', datetime(timestamp, 'unixepoch')) as hour_bucket,
+            "SELECT strftime('%Y-%m-%d %H:00', datetime(timestamp, 'unixepoch', 'localtime')) as hour_bucket,
                 account_email,
                 SUM(total_tokens) as total
          FROM token_usage
@@ -512,11 +512,11 @@ pub fn get_account_trend_hourly(hours: i64) -> Result<Vec<AccountTrendPoint>, St
 
 pub fn get_account_trend_daily(days: i64) -> Result<Vec<AccountTrendPoint>, String> {
     let conn = connect_db()?;
-    let cutoff = chrono::Utc::now().timestamp() - (days * 24 * 3600);
+    let cutoff = chrono::Local::now().timestamp() - (days * 24 * 3600);
 
     let mut stmt = conn
         .prepare(
-            "SELECT strftime('%Y-%m-%d', datetime(timestamp, 'unixepoch')) as day_bucket,
+            "SELECT strftime('%Y-%m-%d', datetime(timestamp, 'unixepoch', 'localtime')) as day_bucket,
                 account_email,
                 SUM(total_tokens) as total
          FROM token_usage

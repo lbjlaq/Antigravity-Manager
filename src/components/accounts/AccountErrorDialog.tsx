@@ -49,24 +49,29 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
         return raw;
     };
 
-    const extractValidationUrl = (raw: string): string | null => {
-        if (account.validation_url) return account.validation_url;
+    const extractActionInfo = (raw: string): { url: string | null, label: string | null } => {
+        if (account.validation_url) {
+            return { url: account.validation_url, label: null };
+        }
 
         const trimmed = raw.trim();
         try {
             const parsed = JSON.parse(trimmed);
-            // Google API 返回的 validation_url 通常在 metadata 中
-            let url = parsed?.error?.details?.[0]?.metadata?.validation_url
-                || parsed?.validation_url;
+            // Google API 返回的链接通常在 metadata 中
+            const metadata = parsed?.error?.details?.[0]?.metadata;
+            let url = metadata?.appeal_url || metadata?.validation_url || parsed?.validation_url || parsed?.appeal_url;
+            let label = metadata?.appeal_url_link_text || metadata?.validation_url_link_text || parsed?.appeal_url_link_text || parsed?.validation_url_link_text;
 
             if (!url && typeof parsed?.error === 'string') {
                 try {
                     const innerParsed = JSON.parse(parsed.error);
-                    url = innerParsed?.error?.details?.[0]?.metadata?.validation_url;
+                    const innerMeta = innerParsed?.error?.details?.[0]?.metadata;
+                    url = innerMeta?.appeal_url || innerMeta?.validation_url;
+                    label = innerMeta?.appeal_url_link_text || innerMeta?.validation_url_link_text;
                 } catch (_) { }
             }
 
-            if (url) return String(url);
+            if (url) return { url: String(url), label: label ? String(label) : null };
         } catch (_) { }
 
         // 最后降级到正则匹配
@@ -78,17 +83,17 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
             if (extracted.endsWith(',')) {
                 extracted = extracted.slice(0, -1);
             }
-            return extracted;
+            return { url: extracted, label: null };
         }
-        return null;
+        return { url: null, label: null };
     };
 
     const message = extractErrorMessage(rawReason);
-    const validationUrl = extractValidationUrl(rawReason);
+    const { url: actionUrl, label: actionLabel } = extractActionInfo(rawReason);
 
     // 识别错误类型
     const isViolation = rawReason.toLowerCase().includes('terms of service') || rawReason.toLowerCase().includes('violation');
-    const isVerificationNeeded = !isViolation && (rawReason.toLowerCase().includes('verify your account') || !!validationUrl);
+    const isVerificationNeeded = !isViolation && (rawReason.toLowerCase().includes('verify your account') || !!account.validation_url);
 
     // 复制功能
     const handleCopyUrl = (url: string) => {
@@ -200,28 +205,28 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
                         {showRaw ? (
                             <pre className="whitespace-pre-wrap break-all">{rawReason}</pre>
                         ) : (
-                            message ? (isViolation ? message : renderMessageWithLinks(message)) : t('common.unknown')
+                            message ? renderMessageWithLinks(message) : t('common.unknown')
                         )}
                     </div>
 
-                    {/* Action Buttons for Verification */}
-                    {isVerificationNeeded && validationUrl && !showRaw && (
+                    {/* Action Buttons for Verification / Appeal */}
+                    {actionUrl && !showRaw && (
                         <div className="mt-3 flex gap-2">
                             <a
-                                href={validationUrl}
+                                href={actionUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all shadow-md shadow-blue-500/20 active:scale-[0.98]"
                             >
                                 <ExternalLink className="w-3 h-3" />
-                                {t('accounts.click_to_verify', '点击去验证')}
+                                {actionLabel || (isViolation ? t('accounts.go_to_appeal', '前往申诉') : t('accounts.click_to_verify', '点击去验证'))}
                             </a>
                             <button
-                                onClick={() => handleCopyUrl(validationUrl)}
+                                onClick={() => handleCopyUrl(actionUrl)}
                                 className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold bg-gray-100 dark:bg-base-300 hover:bg-gray-200 dark:hover:bg-base-200 text-gray-700 dark:text-gray-300 rounded-lg transition-all active:scale-[0.98]"
                             >
                                 <Copy className="w-3 h-3" />
-                                {t('accounts.copy_validation_url', '复制验证链接')}
+                                {isViolation ? t('accounts.copy_appeal_url', '复制申诉链接') : t('accounts.copy_validation_url', '复制验证链接')}
                             </button>
                         </div>
                     )}

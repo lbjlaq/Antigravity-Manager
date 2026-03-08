@@ -337,7 +337,8 @@ pub fn transform_claude_request_in(
     project_id: &str,
     is_retry: bool,
     account_id: Option<&str>,
-    session_id: &str,
+    _session_id: &str,
+    token: Option<&crate::proxy::token_manager::ProxyToken>, // [NEW] 支持动态规格
 ) -> Result<Value, String> {
     let message_count = claude_req.messages.len();
 
@@ -360,13 +361,15 @@ pub fn transform_claude_request_in(
     // ThinkingConfig was provided by the client, inject a default config with a budget
     // to prevent 'thinking requires a budget' errors from upstream APIs.
     if cleaned_req.thinking.is_none() && should_enable_thinking_by_default(&cleaned_req.model) {
+        let default_budget = crate::proxy::model_specs::get_thinking_budget(&cleaned_req.model, token);
         tracing::info!(
-            "[Thinking-Mode] Injecting default ThinkingConfig (budget=10000) for model: {}",
+            "[Thinking-Mode] Injecting default ThinkingConfig (budget={}) for model: {}",
+            default_budget,
             cleaned_req.model
         );
         cleaned_req.thinking = Some(ThinkingConfig {
             type_: "enabled".to_string(),
-            budget_tokens: Some(10000),
+            budget_tokens: Some(default_budget as u32),
             effort: None,
         });
     }
@@ -469,7 +472,10 @@ pub fn transform_claude_request_in(
         || mapped_model.starts_with("claude-")
         || mapped_model.contains("gemini-2.0-pro")
         || mapped_model.contains("gemini-3-pro")
-        || mapped_model.contains("gemini-3.1-pro");
+        || mapped_model.contains("gemini-3.1-pro")
+        // [FIX #2167] gemini-3-flash / gemini-3.1-flash 支持 thinking，必须纳入识别范围
+        || mapped_model.contains("gemini-3-flash")
+        || mapped_model.contains("gemini-3.1-flash");
 
     if is_thinking_enabled && !target_model_supports_thinking {
         tracing::warn!(
@@ -530,11 +536,23 @@ pub fn transform_claude_request_in(
                 &session_id,
             )
         {
-            tracing::warn!(
-                "[Thinking-Mode] [FIX #295] No valid signature found for function calls. \
-                 Disabling thinking to prevent Gemini 3 Pro rejection."
-            );
-            is_thinking_enabled = false;
+            // [FIX #2167] Flash 模型无签名时使用哨兵值而不是禁用 thinking
+            // 禁用 thinking 会导致模型失去思考能力，哨兵值可让 Gemini 跳过签名校验
+            let is_flash_model = mapped_model.contains("gemini-3-flash")
+                || mapped_model.contains("gemini-3.1-flash");
+            if is_flash_model {
+                tracing::info!(
+                    "[Thinking-Mode] [FIX #2167] No signature for flash model function calls. \
+                     Will rely on sentinel injection in build_contents."
+                );
+                // 保持 is_thinking_enabled = true，由 build_contents 内的哨兵处理覆盖
+            } else {
+                tracing::warn!(
+                    "[Thinking-Mode] [FIX #295] No valid signature found for function calls. \
+                     Disabling thinking to prevent Gemini 3 Pro rejection."
+                );
+                is_thinking_enabled = false;
+            }
         }
     }
 
@@ -544,6 +562,7 @@ pub fn transform_claude_request_in(
         &mapped_model,
         has_web_search_tool,
         is_thinking_enabled,
+        token, // [NEW] 传递 token 用于动态限额
     );
 
     // 2. Contents (Messages)
@@ -560,7 +579,7 @@ pub fn transform_claude_request_in(
     )?;
 
     // 3. Tools
-    let tools = build_tools(&claude_req.tools, has_web_search_tool)?;
+    let tools = build_tools(&claude_req.tools, has_web_search_tool, &mapped_model)?;
 
     // 5. Safety Settings (configurable via GEMINI_SAFETY_THRESHOLD env var)
     let safety_settings = build_safety_settings();
@@ -594,7 +613,7 @@ pub fn transform_claude_request_in(
     crate::proxy::mappers::common_utils::deep_clean_undefined(&mut inner_request, 0);
 
     if config.inject_google_search && !has_web_search_tool {
-        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request);
+        crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request, Some(&mapped_model));
     }
 
     // Inject imageConfig if present (for image generation models)
@@ -706,6 +725,16 @@ fn should_enable_thinking_by_default(model: &str) -> bool {
     {
         tracing::debug!(
             "[Thinking-Mode] Auto-enabling thinking for Gemini Pro model: {}",
+            model
+        );
+        return true;
+    }
+
+    // [FEATURE] 为 gemini-3-flash / gemini-3.1-flash 自动开启 thinking
+    // 让 Cherry Studio 等客户端即使未显式传 thinking.type 也能获取思维链内容
+    if model_lower.contains("gemini-3-flash") || model_lower.contains("gemini-3.1-flash") {
+        tracing::debug!(
+            "[Thinking-Mode] Auto-enabling thinking for Flash model: {}",
             model
         );
         return true;
@@ -1261,31 +1290,36 @@ fn build_contents(
                             tool_result_compressor::sanitize_tool_result_blocks(blocks);
                         }
 
-                        // Smart Truncation: strict image removal
-                        // Remove all Base64 images from historical tool results to save context.
-                        // Only allow text.
+                        // Smart Truncation: No longer stripping images from Tool Results
+                        // Tool results should pass transparency. If images are present, map them to inlineData.
+                        let mut extra_parts = Vec::new();
+
                         let mut merged_content = match &compacted_content {
                             serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Array(arr) => arr
-                                .iter()
-                                .filter_map(|block| {
+                            serde_json::Value::Array(arr) => {
+                                let mut texts = Vec::new();
+                                for block in arr {
                                     if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                                        Some(text.to_string())
+                                        texts.push(text.to_string());
                                     } else if block.get("source").is_some() {
-                                        // If it's an image/document, replace with placeholder
-                                        if block.get("type").and_then(|v| v.as_str())
-                                            == Some("image")
-                                        {
-                                            Some("[image omitted to save context]".to_string())
-                                        } else {
-                                            None
+                                        if block.get("type").and_then(|v| v.as_str()) == Some("image") {
+                                            let source = block.get("source").unwrap();
+                                            if let (Some(media_type), Some(data)) = (
+                                                source.get("media_type").and_then(|v| v.as_str()),
+                                                source.get("data").and_then(|v| v.as_str())
+                                            ) {
+                                                extra_parts.push(json!({
+                                                    "inlineData": {
+                                                        "mimeType": media_type,
+                                                        "data": data
+                                                    }
+                                                }));
+                                            }
                                         }
-                                    } else {
-                                        None
                                     }
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n"),
+                                }
+                                texts.join("\n")
+                            }
                             _ => content.to_string(),
                         };
 
@@ -1315,19 +1349,24 @@ fn build_contents(
                             }
                         }
 
-                        parts.push(json!({
+                        let mut part = json!({
                             "functionResponse": {
                                 "name": func_name,
                                 "response": {"result": merged_content},
                                 "id": tool_use_id
                             }
-                        }));
+                        });
 
                         // [FIX] Tool Result 也需要回填签名（如果上下文中有）
                         if let Some(sig) = last_thought_signature.as_ref() {
-                            if let Some(last_part) = parts.last_mut() {
-                                last_part["thoughtSignature"] = json!(sig);
-                            }
+                            part["thoughtSignature"] = json!(sig);
+                        }
+
+                        parts.push(part);
+
+                        // 追加图片 parts
+                        for extra in extra_parts {
+                            parts.push(extra);
                         }
 
                         // 标记状态，用于下一条 User 消息的去重判断
@@ -1631,7 +1670,11 @@ fn merge_adjacent_roles(mut contents: Vec<Value>) -> Vec<Value> {
 }
 
 /// 构建 Tools
-fn build_tools(tools: &Option<Vec<Tool>>, has_web_search: bool) -> Result<Option<Value>, String> {
+fn build_tools(
+    tools: &Option<Vec<Tool>>,
+    has_web_search: bool,
+    mapped_model: &str,
+) -> Result<Option<Value>, String> {
     if let Some(tools_list) = tools {
         let mut function_declarations: Vec<Value> = Vec::new();
         let mut has_google_search = has_web_search;
@@ -1672,33 +1715,48 @@ fn build_tools(tools: &Option<Vec<Tool>>, has_web_search: bool) -> Result<Option
             }
         }
 
-        let mut tool_obj = serde_json::Map::new();
+        let mut tool_list = Vec::new();
 
-        // [修复] 解决 "Multiple tools are supported only when they are all search tools" 400 错误
-        // 原理：Gemini v1internal 接口非常挑剔，通常不允许在同一个工具定义中混用 Google Search 和 Function Declarations。
-        // 对于 Claude CLI 等携带 MCP 工具的客户端，必须优先保证 Function Declarations 正常工作。
+        // [优化] Gemini 2.0+ 及 3.0 系列模型通常支持混合工具调用 (Function Calling + Google Search)
+        // 只有针对老旧模型或特定受限环境才需要互斥。
+        let model_lower = mapped_model.to_lowercase();
+        let supports_mixed_tools = model_lower.contains("gemini-2.0")
+            || model_lower.contains("gemini-2.5")
+            || model_lower.contains("gemini-3");
+
         if !function_declarations.is_empty() {
-            // 如果有本地工具，则只使用本地工具，放弃注入的 Google Search
-            tool_obj.insert(
+            let mut func_obj = serde_json::Map::new();
+            func_obj.insert(
                 "functionDeclarations".to_string(),
                 json!(function_declarations),
             );
+            tool_list.push(json!(func_obj));
 
-            // [IMPROVED] 记录跳过 googleSearch 注入的原因
             if has_google_search {
-                tracing::info!(
-                    "[Claude-Request] Skipping googleSearch injection due to {} existing function declarations. \
-                     Gemini v1internal does not support mixed tool types.",
-                    function_declarations.len()
-                );
+                if supports_mixed_tools {
+                    tracing::info!(
+                        "[Claude-Request] Enabling MIXED tool calling for {}: Function Calling + Google Search.",
+                        mapped_model
+                    );
+                    let mut search_obj = serde_json::Map::new();
+                    search_obj.insert("googleSearch".to_string(), json!({}));
+                    tool_list.push(json!(search_obj));
+                } else {
+                    tracing::info!(
+                        "[Claude-Request] Skipping googleSearch injection for {} due to existing function declarations. \
+                         Older Gemini models may not support mixed tool types.",
+                        mapped_model
+                    );
+                }
             }
         } else if has_google_search {
-            // 只有在没有本地工具时，才允许注入 Google Search
-            tool_obj.insert("googleSearch".to_string(), json!({}));
+            let mut search_obj = serde_json::Map::new();
+            search_obj.insert("googleSearch".to_string(), json!({}));
+            tool_list.push(json!(search_obj));
         }
 
-        if !tool_obj.is_empty() {
-            return Ok(Some(json!([tool_obj])));
+        if !tool_list.is_empty() {
+            return Ok(Some(json!(tool_list)));
         }
     }
 
@@ -1711,6 +1769,7 @@ fn build_generation_config(
     mapped_model: &str,
     _has_web_search: bool,
     is_thinking_enabled: bool,
+    token: Option<&crate::proxy::token_manager::ProxyToken>, // [NEW]
 ) -> Value {
     let mut config = json!({});
 
@@ -1724,26 +1783,28 @@ fn build_generation_config(
             .thinking
             .as_ref()
             .and_then(|t| t.budget_tokens)
-            .unwrap_or(16000);
+            .unwrap_or_else(|| crate::proxy::model_specs::get_thinking_budget(mapped_model, token) as u32);
+
+        let thinking_budget_cap = crate::proxy::model_specs::get_thinking_budget(mapped_model, token);
 
         let tb_config = crate::proxy::config::get_thinking_budget_config();
         let budget = match tb_config.mode {
-            crate::proxy::config::ThinkingBudgetMode::Passthrough => budget_tokens,
+            crate::proxy::config::ThinkingBudgetMode::Passthrough => budget_tokens as u64,
             crate::proxy::config::ThinkingBudgetMode::Custom => {
-                let mut custom_value = tb_config.custom_value;
-                // [FIX #1602] 针对 Gemini 系列模型，在自定义模式下也强制执行 24576 上限
+                let mut custom_value = tb_config.custom_value as u64;
+                // [FIX #1602] 针对 Gemini 系列模型，在自定义模式下也强制执行动态限额
                 let model_lower = mapped_model.to_lowercase();
                 let is_gemini_limited = (model_lower.contains("gemini")
                     && !model_lower.contains("-image"))
                     || model_lower.contains("flash")
                     || model_lower.ends_with("-thinking");
 
-                if is_gemini_limited && custom_value > 24576 {
+                if is_gemini_limited && custom_value > thinking_budget_cap {
                     tracing::warn!(
-                        "[Claude-Request] Custom mode: capping thinking_budget from {} to 24576 for Gemini model {}",
-                        custom_value, mapped_model
+                        "[Claude-Request] Custom mode: capping thinking_budget from {} to {} for Gemini model {}",
+                        custom_value, thinking_budget_cap, mapped_model
                     );
-                    custom_value = 24576;
+                    custom_value = thinking_budget_cap;
                 }
                 custom_value
             }
@@ -1754,26 +1815,27 @@ fn build_generation_config(
                     && !model_lower.contains("-image"))
                     || model_lower.contains("flash")
                     || model_lower.ends_with("-thinking");
-                if is_gemini_limited && budget_tokens > 24576 {
+                if is_gemini_limited && budget_tokens as u64 > thinking_budget_cap {
                     tracing::info!(
-                        "[Claude-Request] Auto mode: capping thinking_budget from {} to 24576 for Gemini model {}", 
-                        budget_tokens, mapped_model
+                        "[Claude-Request] Auto mode: capping thinking_budget from {} to {} for Gemini model {}", 
+                        budget_tokens, thinking_budget_cap, mapped_model
                     );
-                    24576
+                    thinking_budget_cap
                 } else {
-                    budget_tokens
+                    budget_tokens as u64
                 }
             }
-            crate::proxy::config::ThinkingBudgetMode::Adaptive => budget_tokens, // Adaptive 模式透传原始预算（但不作为限制），用于后续逻辑判断
+            crate::proxy::config::ThinkingBudgetMode::Adaptive => budget_tokens as u64, // Adaptive 模式透传原始预算（但不作为限制），用于后续逻辑判断
         };
 
         let global_mode_is_adaptive = matches!(
             tb_config.mode,
             crate::proxy::config::ThinkingBudgetMode::Adaptive
         );
-        // 只要用户指定 adaptive 或者全局配置为 adaptive，且是 Claude 模型，就启用自适应
+        // 只要用户指定 adaptive 或者全局配置为 adaptive，且是支持的思维模型，就启用自适应
         let should_use_adaptive = (user_is_adaptive || global_mode_is_adaptive)
-            && mapped_model.to_lowercase().contains("claude");
+            && (mapped_model.to_lowercase().contains("claude")
+                || mapped_model.to_lowercase().contains("gemini-3"));
 
         let effort = claude_req
             .output_config
@@ -1782,24 +1844,30 @@ fn build_generation_config(
             .or_else(|| claude_req.thinking.as_ref().and_then(|t| t.effort.as_ref()));
 
         if should_use_adaptive {
-            // [FIX #1825] Claude 4.6+ adaptive 模式下映射为动态预算或分级思维
+            // [FIX #2208] thinkingLevel is ONLY supported by Claude models via Vertex AI native protocol.
+            // Gemini models (including gemini-3.x) use v1internal which only accepts thinkingBudget.
+            // Previous code incorrectly used contains("gemini-3") as the condition, causing 400 INVALID_ARGUMENT
+            // for gemini-3.1-pro-high / gemini-3.1-pro-low in adaptive mode.
             let lower_mapped = mapped_model.to_lowercase();
-            if lower_mapped.contains("gemini-3") {
-                // Gemini 3.x 支持分级指标格式，联动用户选择的强度
+            if lower_mapped.contains("claude") {
+                // Claude 系列走 Vertex AI 原生协议，支持 thinkingLevel 分级参数
                 let mapped_level = match effort.map(|e| e.to_lowercase()).as_deref() {
                     Some("low") => "low",
                     Some("medium") => "medium",
                     Some("high") | Some("max") => "high",
                     _ => "high",
                 };
-                tracing::debug!("[Claude-Request] Mapping adaptive mode to thinkingLevel: {} for Gemini 3 model", mapped_level);
+                tracing::debug!("[Claude-Request] Mapping adaptive mode to thinkingLevel: {} for Claude model", mapped_level);
                 thinking_config["thinkingLevel"] = json!(mapped_level);
+                // Claude using thinkingLevel must NOT have thinkingBudget to avoid conflict
+                thinking_config.as_object_mut().unwrap().remove("thinkingBudget");
             } else {
+                // Gemini 系列（含 gemini-3.x）走 v1internal 协议，只接受 thinkingBudget，不支持 thinkingLevel
                 // [FIX #2007] Cherry Studio / Claude Protocol 400 Error Fix
                 // Gemini 1.5/2.0 models via Vertex AI often reject thinkingBudget: -1 (Adaptive) with 400 Invalid Argument
                 // especially when maxOutputTokens is high.
                 // We align with OpenAI mapper behavior: use 24576 as safe adaptive budget.
-                tracing::debug!("[Claude-Request] Mapping adaptive mode to safe budget (24576) for Gemini model");
+                tracing::debug!("[Claude-Request] Mapping adaptive mode to safe budget (24576) for Gemini model (thinkingLevel not supported)");
                 thinking_config["thinkingBudget"] = json!(24576);
             }
 
@@ -1886,15 +1954,12 @@ fn build_generation_config(
             let current = final_max_tokens.unwrap_or(0);
             if current <= budget as i64 {
                 // [FIX #1675] 针对图像模型使用更小的增量 (2048)
-                let overhead = if mapped_model.contains("-image") {
-                    2048
-                } else {
-                    8192
-                };
-                final_max_tokens = Some((budget + overhead) as i64);
+                let overhead = if mapped_model.contains("-image") { 2048 } else { 8192 };
+                let boosted = (budget + overhead).min(65536); // [FIX] Never exceed hard limit
+                final_max_tokens = Some(boosted as i64);
                 tracing::info!(
                     "[Generation-Config] Bumping maxOutputTokens to {} due to thinking budget of {}", 
-                    final_max_tokens.unwrap(), budget
+                    boosted, budget
                 );
             }
         } else if is_adaptive_effective {
@@ -2071,12 +2136,12 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session");
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         let body = result.unwrap();
         assert_eq!(body["project"], "test-project");
-        assert!(body["requestId"].as_str().unwrap().starts_with("agent-"));
+        assert!(body["requestId"].as_str().unwrap().starts_with("agent/"));
     }
 
     #[test]
@@ -2168,7 +2233,7 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session");
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         let body = result.unwrap();
@@ -2238,7 +2303,7 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session");
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         // 验证请求成功转换
@@ -2312,7 +2377,7 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session");
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         let body = result.unwrap();
@@ -2362,7 +2427,7 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session");
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
 
         let body = result.unwrap();
@@ -2418,7 +2483,7 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session");
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok(), "Transformation failed");
         let body = result.unwrap();
         let contents = body["request"]["contents"].as_array().unwrap();
@@ -2466,7 +2531,7 @@ mod tests {
             quality: None,
         };
 
-        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session");
+        let result = transform_claude_request_in(&req, "test-project", false, None, "test_session", None);
         assert!(result.is_ok());
         let body = result.unwrap();
         let parts = body["request"]["contents"][0]["parts"].as_array().unwrap();
@@ -2657,8 +2722,7 @@ mod tests {
             quality: None,
         };
 
-        let result =
-            transform_claude_request_in(&req, "test-v", false, None, "test_session").unwrap();
+        let result = transform_claude_request_in(&req, "test-v", false, None, "test_session", None).unwrap();
         // [FIX] Since we removed the default 81920, maxOutputTokens should NOT be present
         // when max_tokens is None and thinking is disabled
         let gen_config = &result["request"]["generationConfig"];
@@ -2695,15 +2759,11 @@ mod tests {
             quality: None,
         };
 
-        // Should cap at 24576
-        let result =
-            transform_claude_request_in(&req, "proj", false, None, "test_session").unwrap();
-
-        let gen_config = &result["request"]["generationConfig"]; // Corrected path
-        let budget = gen_config["thinkingConfig"]["thinkingBudget"]
+        let result = transform_claude_request_in(&req, "proj", false, None, "test_session", None).unwrap();
+        let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_u64()
             .unwrap();
-        assert_eq!(budget, 24576);
+        assert_eq!(budget, 24576); // capped by model_specs.get_thinking_budget("gemini-2.0-flash-thinking-exp")
 
         // Setup request for Pro thinking model (mock name for testing)
         let req_pro = ClaudeRequest {
@@ -2728,14 +2788,8 @@ mod tests {
         };
 
         // Should cap
-        let result_pro =
-            transform_claude_request_in(&req_pro, "proj", false, None, "test_session").unwrap();
-        let budget_pro = result_pro["request"]["generationConfig"]["thinkingConfig"]
-            ["thinkingBudget"]
-            .as_u64()
-            .unwrap();
-        // [FIX #1592] Gemini Pro models are now also capped to 24576
-        assert_eq!(budget_pro, 24576);
+        let result_pro = transform_claude_request_in(&req_pro, "proj", false, None, "test_session", None).unwrap();
+        assert_eq!(result_pro["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"], 24576);
     }
 
     #[test]
@@ -2766,8 +2820,7 @@ mod tests {
         };
 
         // Transform
-        let result =
-            transform_claude_request_in(&req, "proj", false, None, "test_session").unwrap();
+        let result = transform_claude_request_in(&req, "proj", false, None, "test_session", None).unwrap();
         let gen_config = &result["request"]["generationConfig"];
 
         // thinkingConfig should be present (not forced disabled)
@@ -2807,8 +2860,7 @@ mod tests {
         };
 
         // Transform
-        let result =
-            transform_claude_request_in(&req, "proj", false, None, "test_session").unwrap();
+        let result = transform_claude_request_in(&req, "proj", false, None, "test_session", None).unwrap();
         let gen_config = &result["request"]["generationConfig"];
 
         // thinkingConfig SHOULD be injected because of default-on logic
@@ -2845,8 +2897,7 @@ mod tests {
         };
 
         // 3. Transform request
-        let result =
-            transform_claude_request_in(&req, "test-proj", false, None, "test_session").unwrap();
+        let result = transform_claude_request_in(&req, "test-proj", false, None, "test_session", None).unwrap();
 
         // 4. Verify thinkingConfig has includeThoughts: false
         let gen_config = result["request"]["generationConfig"]
@@ -2895,8 +2946,8 @@ mod tests {
         };
 
         // Transform
-        let result =
-            transform_claude_request_in(&req, "test-proj", false, None, "test_session").unwrap();
+        let result = transform_claude_request_in(&req, "test-proj", false, None, "test_session", None).unwrap();
+
 
         let gen_config = result["request"]["generationConfig"].as_object().unwrap();
         let thinking_config = gen_config["thinkingConfig"].as_object().unwrap();
@@ -2913,5 +2964,107 @@ mod tests {
 
         // Reset global config
         crate::proxy::config::update_thinking_budget_config(ThinkingBudgetConfig::default());
+    }
+
+    #[test]
+    fn test_mixed_tools_injection_for_gemini_2_0() {
+        // [场景] 使用 Gemini 2.0 模型，同时提供自定义工具和启用全网搜索
+        // 期望: 转换后的请求应同时包含 googleSearch 和 functionDeclarations
+        let req = ClaudeRequest {
+            model: "claude-sonnet-4-6".to_string(), // 映射到 gemini-2.0-flash-exp
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Help me search and use tools".to_string()),
+            }],
+            system: None,
+            tools: Some(vec![Tool {
+                type_: None,
+                name: Some("get_weather".to_string()),
+                description: Some("Get weather".to_string()),
+                input_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string"}
+                    }
+                })),
+            }]),
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+            output_config: None,
+            size: None,
+            quality: None,
+        };
+
+        // 模拟映射到 Gemini 2.0
+        let mapped_model = "gemini-2.0-flash-exp";
+        
+        // 这里我们直接测试 build_tools 函数 (它是 pub(crate) 且在同模块下)
+        let result = build_tools(&req.tools, true, mapped_model);
+        assert!(result.is_ok());
+        
+        let tools_val = result.unwrap().expect("Should have tools");
+        let tools_arr = tools_val.as_array().expect("Tools should be an array");
+        
+        let has_google_search = tools_arr.iter().any(|t| t.get("googleSearch").is_some());
+        let has_functions = tools_arr.iter().any(|t| t.get("functionDeclarations").is_some());
+        
+        assert!(has_google_search, "Gemini 2.0 should support mixed Google Search");
+        assert!(has_functions, "Gemini 2.0 should support mixed function declarations");
+    }
+
+    #[test]
+    fn test_no_mixed_tools_for_older_gemini() {
+        // [场景] 使用 Gemini 1.5 模型，同时提供自定义工具和启用全网搜索
+        // 期望: 转换后的请求应只包含 functionDeclarations，googleSearch 被跳过以避免 400
+        let req = ClaudeRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Help me search and use tools".to_string()),
+            }],
+            system: None,
+            tools: Some(vec![Tool {
+                type_: None,
+                name: Some("get_weather".to_string()),
+                description: Some("Get weather".to_string()),
+                input_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string"}
+                    }
+                })),
+            }]),
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+            output_config: None,
+            size: None,
+            quality: None,
+        };
+
+        // 模拟映射到 Gemini 1.5
+        let mapped_model = "gemini-1.5-flash-002";
+        
+        // 测试 build_tools 函数
+        let result = build_tools(&req.tools, true, mapped_model);
+        assert!(result.is_ok());
+        
+        let tools_val = result.unwrap().expect("Should have tools");
+        let tools_arr = tools_val.as_array().expect("Tools should be an array");
+        
+        let has_google_search = tools_arr.iter().any(|t| t.get("googleSearch").is_some());
+        let has_functions = tools_arr.iter().any(|t| t.get("functionDeclarations").is_some());
+        
+        assert!(!has_google_search, "Older Gemini models should NOT have mixed tools");
+        assert!(has_functions);
     }
 }

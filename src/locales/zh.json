@@ -167,6 +167,8 @@
         "click_to_verify": "点击去验证",
         "copy_validation_url": "复制验证链接",
         "validation_url_copied": "验证链接已复制到剪贴板",
+        "go_to_appeal": "前往申诉",
+        "copy_appeal_url": "复制申诉链接",
         "fix_guide": {
             "title": "终端一键自救指南 (解决部分 403 拦截)",
             "step1_title": "🚀 终极杀招（最快方案）",

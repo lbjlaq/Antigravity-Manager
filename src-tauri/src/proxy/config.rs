@@ -118,7 +118,6 @@ pub fn update_image_thinking_mode(mode: Option<String>) {
         }
     } else {
         let _ = GLOBAL_IMAGE_THINKING_MODE.set(RwLock::new(val.clone()));
-        tracing::info!("[Image-Thinking] Global config initialized: {}", val);
     }
 }
 
