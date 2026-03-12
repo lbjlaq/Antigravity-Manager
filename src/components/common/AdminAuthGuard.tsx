@@ -112,6 +112,29 @@ export const AdminAuthGuard: React.FC<{ children: React.ReactNode }> = ({ childr
         { code: 'es', name: 'Español' },
         { code: 'my', name: 'Bahasa Melayu' },
     ];
+    const configHintText = t('login.config_hint');
+    const configHintCommand = `grep -E '"api_key"|"admin_password"' ~/.antigravity_tools/gui_config.json`;
+    const configHintCommandIndex = configHintText.indexOf(configHintCommand);
+    const configHintPrefix = configHintCommandIndex >= 0 ? configHintText.slice(0, configHintCommandIndex) : '';
+    const configHintSuffix =
+        configHintCommandIndex >= 0
+            ? configHintText.slice(configHintCommandIndex + configHintCommand.length)
+            : '';
+    const configHintContent = (
+        <span className="group">
+            {configHintCommandIndex >= 0 ? (
+                <>
+                    {configHintPrefix}
+                    <span className="rounded px-1 transition-colors duration-150 group-hover:bg-amber-200/80 dark:group-hover:bg-amber-400/20">
+                        {configHintCommand}
+                    </span>
+                    {configHintSuffix}
+                </>
+            ) : (
+                configHintText
+            )}
+        </span>
+    );
 
     if (isAuthenticated) {
         return <>{children}</>;
@@ -196,7 +219,7 @@ export const AdminAuthGuard: React.FC<{ children: React.ReactNode }> = ({ childr
                             <br />
                             {t('login.lookup_hint')}
                             <br />
-                            {t('login.config_hint')}
+                            {configHintContent}
                         </p>
                     </div>
                 </div>
