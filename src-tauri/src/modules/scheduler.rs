@@ -106,7 +106,8 @@ pub fn start_scheduler(app_handle: Option<tauri::AppHandle>, proxy_state: crate:
                         "[Scheduler] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
                         account.email
                     ));
-                    let _ = account::mark_account_forbidden(&account.id, "Scheduler: 403 Forbidden - quota fetch denied");
+                    let reason = fresh_quota.forbidden_reason.as_deref().unwrap_or("403 Forbidden - quota fetch denied");
+                    let _ = account::mark_account_forbidden(&account.id, reason);
                     continue;
                 }
 
@@ -289,7 +290,8 @@ pub async fn trigger_warmup_for_account(account: &Account) {
             "[Scheduler] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
             account.email
         ));
-        let _ = account::mark_account_forbidden(&account.id, "Scheduler: 403 Forbidden - quota fetch denied");
+        let reason = fresh_quota.forbidden_reason.as_deref().unwrap_or("403 Forbidden - quota fetch denied");
+        let _ = account::mark_account_forbidden(&account.id, reason);
         return;
     }
 

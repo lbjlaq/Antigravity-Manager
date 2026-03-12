@@ -226,11 +226,13 @@ pub async fn fetch_quota_with_cache(
                     
                     // ✅ Special handling for 403 Forbidden - return directly, no retry
                     if status == rquest::StatusCode::FORBIDDEN {
+                        let body = response.text().await.unwrap_or_default();
                         crate::modules::logger::log_warn(&format!(
-                            "Account unauthorized (403 Forbidden), marking as forbidden"
+                            "Account unauthorized (403 Forbidden): {}", body
                         ));
                         let mut q = QuotaData::new();
                         q.is_forbidden = true;
+                        q.forbidden_reason = Some(if body.is_empty() { "403 Forbidden".to_string() } else { body });
                         q.subscription_tier = subscription_tier.clone();
                         return Ok((q, project_id.clone()));
                     }
@@ -453,7 +455,8 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                             "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
                             email
                         ));
-                        let _ = crate::modules::account::mark_account_forbidden(&id, "Warmup: 403 Forbidden - quota fetch denied");
+                        let reason = fresh_quota.forbidden_reason.as_deref().unwrap_or("403 Forbidden - quota fetch denied");
+                        let _ = crate::modules::account::mark_account_forbidden(&id, reason);
                         continue;
                     }
                     let mut account_warmed_series = std::collections::HashSet::new();
@@ -582,9 +585,9 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
             "[Warmup] Account {} returned 403 Forbidden during quota fetch, marking as forbidden",
             email
         ));
-        let reason = "Warmup: 403 Forbidden - quota fetch denied";
+        let reason = fresh_quota.forbidden_reason.as_deref().unwrap_or("403 Forbidden - quota fetch denied");
         let _ = crate::modules::account::mark_account_forbidden(account_id, reason);
-        return Err("Account is forbidden (403)".to_string());
+        return Err(format!("Account is forbidden: {}", reason));
     }
 
     let mut models_to_warm = Vec::new();

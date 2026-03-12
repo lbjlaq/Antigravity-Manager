@@ -1295,7 +1295,7 @@ pub async fn handle_messages(
             if let Err(e) = token_manager.set_forbidden(&account_id, &error_text).await {
                 tracing::error!("Failed to set forbidden status for {}: {}", email, e);
             } else {
-                tracing::warn!("[Claude] Account {} marked as forbidden due to 403", email);
+                tracing::warn!("[Claude] Account {} marked as forbidden due to 403: {}", email, &error_text[..error_text.len().min(500)]);
             }
         }
 
