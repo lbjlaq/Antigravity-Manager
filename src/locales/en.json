@@ -170,6 +170,8 @@
         "click_to_verify": "Click to Verify",
         "copy_validation_url": "Copy Verification Link",
         "validation_url_copied": "Verification link copied to clipboard",
+        "go_to_appeal": "Submit Appeal",
+        "copy_appeal_url": "Copy Appeal URL",
         "fix_guide": {
             "title": "Terminal Quick Fix (Resolves internal 403s)",
             "step1_title": "🚀 Quickest Solution",
