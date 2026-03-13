@@ -75,6 +75,7 @@ mod tests {
                 Some(email.to_string()),
                 None,
                 None,
+                true,
             ),
         );
         
@@ -1536,6 +1537,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     account.token.email.clone(),
                     account.token.project_id.clone(), // Keep original project_id
                     None,                             // Add None as session_id
+                    account.token.is_gcp_tos,
                 );
 
                 // Re-fetch display name

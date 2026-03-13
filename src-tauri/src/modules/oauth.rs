@@ -244,6 +244,7 @@ pub async fn ensure_fresh_token(
         current_token.email.clone(),
         current_token.project_id.clone(), // Keep original project_id
         None,  // session_id will be generated in token_manager
+        current_token.is_gcp_tos,
     ))
 }
 

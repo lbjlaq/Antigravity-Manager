@@ -35,6 +35,7 @@ impl AccountService {
             Some(user_info.email.clone()),
             project_id,
             None,
+            true,
         );
 
         // 5. 持久化
@@ -163,6 +164,7 @@ impl AccountService {
             Some(user_info.email.clone()),
             project_id,
             None,
+            true,
         );
 
         let account = modules::upsert_account(

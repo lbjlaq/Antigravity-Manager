@@ -48,6 +48,8 @@ impl SystemIntegration for DesktopIntegration {
             &account.token.refresh_token,
             account.token.expiry_timestamp,
             &account.email,
+            account.token.is_gcp_tos,
+            account.token.project_id.as_deref(),
         )?;
 
         // 5. 重启外部进程
