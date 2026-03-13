@@ -343,7 +343,9 @@ pub async fn handle_generate(
                             Some(Ok(b)) => b,
                             Some(Err(e)) => {
                                 error!("[Gemini-SSE] Connection error: {}", e);
-                                yield Err(format!("Stream error: {}", e));
+                                // Yield error as SSE content to prevent hyper aborting chunked encoding (TransferEncodingError)
+                                let error_msg = format!("{}", e).replace('"', "'");
+                                yield Ok(Bytes::from(format!("data: {{\"error\":{{\"message\":\"{}\",\"type\":\"stream_error\"}}}}\n\n", error_msg)));
                                 break;
                             }
                             None => break,
