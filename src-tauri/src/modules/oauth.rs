@@ -9,18 +9,9 @@ const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const OAUTH_CLIENTS_ENV: &str = "ANTIGRAVITY_OAUTH_CLIENTS";
 const ACTIVE_OAUTH_CLIENT_ENV: &str = "ANTIGRAVITY_OAUTH_CLIENT_KEY";
 const DEFAULT_OAUTH_CLIENT_KEY: &str = "antigravity_enterprise";
-
-/// Built-in OAuth clients.
-/// Additional clients can be provided via ANTIGRAVITY_OAUTH_CLIENTS.
-/// Format: (key, label, client_id, client_secret)
-const BUILTIN_OAUTH_CLIENTS: [(&str, &str, &str, &str); 1] = [
-    (
-        "antigravity_enterprise",
-        "Antigravity Enterprise",
-        "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-        "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",
-    ),
-];
+const DEFAULT_OAUTH_CLIENT_ID_ENV: &str = "ANTIGRAVITY_OAUTH_CLIENT_ID";
+const DEFAULT_OAUTH_CLIENT_SECRET_ENV: &str = "ANTIGRAVITY_OAUTH_CLIENT_SECRET";
+const DEFAULT_OAUTH_CLIENT_LABEL: &str = "Antigravity Enterprise";
 
 #[derive(Debug, Clone)]
 struct OAuthClientConfig {
@@ -52,17 +43,48 @@ fn normalize_client_key(key: &str) -> String {
     key.trim().to_ascii_lowercase()
 }
 
-fn build_registry() -> OAuthClientRegistry {
-    let mut clients: Vec<OAuthClientConfig> = BUILTIN_OAUTH_CLIENTS
-        .iter()
-        .map(|(key, label, client_id, client_secret)| OAuthClientConfig {
-            key: normalize_client_key(key),
-            label: (*label).to_string(),
-            client_id: (*client_id).to_string(),
-            client_secret: (*client_secret).to_string(),
+fn read_non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn load_default_client_from_env() -> Option<OAuthClientConfig> {
+    let client_id = read_non_empty_env(DEFAULT_OAUTH_CLIENT_ID_ENV);
+    let client_secret = read_non_empty_env(DEFAULT_OAUTH_CLIENT_SECRET_ENV);
+
+    match (client_id, client_secret) {
+        (Some(client_id), Some(client_secret)) => Some(OAuthClientConfig {
+            key: normalize_client_key(DEFAULT_OAUTH_CLIENT_KEY),
+            label: DEFAULT_OAUTH_CLIENT_LABEL.to_string(),
+            client_id,
+            client_secret,
             is_builtin: true,
-        })
-        .collect();
+        }),
+        (None, None) => {
+            crate::modules::logger::log_warn(&format!(
+                "Default OAuth client not configured. Set {} and {} to enable built-in OAuth.",
+                DEFAULT_OAUTH_CLIENT_ID_ENV, DEFAULT_OAUTH_CLIENT_SECRET_ENV
+            ));
+            None
+        }
+        _ => {
+            crate::modules::logger::log_warn(&format!(
+                "Default OAuth client configuration is incomplete. Both {} and {} are required.",
+                DEFAULT_OAUTH_CLIENT_ID_ENV, DEFAULT_OAUTH_CLIENT_SECRET_ENV
+            ));
+            None
+        }
+    }
+}
+
+fn build_registry() -> OAuthClientRegistry {
+    let mut clients: Vec<OAuthClientConfig> = Vec::new();
+
+    if let Some(default_client) = load_default_client_from_env() {
+        clients.push(default_client);
+    }
 
     if let Ok(raw_extra_clients) = std::env::var(OAUTH_CLIENTS_ENV) {
         for entry in raw_extra_clients.split(';') {
