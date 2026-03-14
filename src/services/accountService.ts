@@ -56,11 +56,11 @@ export async function refreshAllQuotas(): Promise<RefreshStats> {
 }
 
 // OAuth
-export async function startOAuthLogin(): Promise<Account> {
+export async function startOAuthLogin(oauthClientKey?: string): Promise<Account> {
     ensureTauriEnvironment();
 
     try {
-        return await invoke('start_oauth_login');
+        return await invoke('start_oauth_login', oauthClientKey ? { oauthClientKey } : undefined);
     } catch (error) {
         // 增强错误信息
         if (typeof error === 'string') {
@@ -93,6 +93,30 @@ export async function completeOAuthLogin(): Promise<Account> {
 export async function cancelOAuthLogin(): Promise<void> {
     ensureTauriEnvironment();
     return await invoke('cancel_oauth_login');
+}
+
+export interface OAuthClientInfo {
+    key: string;
+    label: string;
+    client_id: string;
+    is_active: boolean;
+    is_builtin: boolean;
+}
+
+export async function listOAuthClients(): Promise<OAuthClientInfo[]> {
+    const res = await invoke<{ clients: OAuthClientInfo[] }>('list_oauth_clients');
+    if (res && Array.isArray(res.clients)) return res.clients;
+    return (res as unknown as OAuthClientInfo[]) || [];
+}
+
+export async function getActiveOAuthClient(): Promise<string> {
+    const res = await invoke<{ client_key: string } | string>('get_active_oauth_client');
+    if (typeof res === 'string') return res;
+    return res?.client_key || '';
+}
+
+export async function setActiveOAuthClient(clientKey: string): Promise<void> {
+    return await invoke('set_active_oauth_client', { clientKey });
 }
 
 // 导入
@@ -194,4 +218,3 @@ export async function exportAccounts(accountIds: string[]): Promise<ExportAccoun
 export async function updateAccountLabel(accountId: string, label: string): Promise<void> {
     return await invoke('update_account_label', { accountId, label });
 }
-

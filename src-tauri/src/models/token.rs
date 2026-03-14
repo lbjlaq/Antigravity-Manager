@@ -15,6 +15,9 @@ pub struct TokenData {
     /// Google Cloud 项目ID，用于 API 请求标识
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
+    /// OAuth client key used to obtain/refresh this token
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>, // 新增：Antigravity sessionId
     #[serde(default = "default_is_gcp_tos")]
@@ -40,8 +43,14 @@ impl TokenData {
             token_type: "Bearer".to_string(),
             email,
             project_id,
+            oauth_client_key: None,
             session_id,
             is_gcp_tos,
         }
+    }
+
+    pub fn with_oauth_client_key(mut self, oauth_client_key: Option<String>) -> Self {
+        self.oauth_client_key = oauth_client_key;
+        self
     }
 }

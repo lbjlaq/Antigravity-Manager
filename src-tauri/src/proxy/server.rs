@@ -544,6 +544,11 @@ impl AxumServer {
             .route("/accounts/oauth/complete", post(admin_complete_oauth_login))
             .route("/accounts/oauth/cancel", post(admin_cancel_oauth_login))
             .route("/accounts/oauth/submit-code", post(admin_submit_oauth_code))
+            .route("/accounts/oauth/clients", get(admin_list_oauth_clients))
+            .route(
+                "/accounts/oauth/client",
+                get(admin_get_active_oauth_client).post(admin_set_active_oauth_client),
+            )
             .route("/zai/models/fetch", post(admin_fetch_zai_models))
             .route(
                 "/proxy/monitor/toggle",
@@ -1082,7 +1087,7 @@ async fn admin_prepare_oauth_url(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let url = state
         .account_service
-        .prepare_oauth_url()
+        .prepare_oauth_url(None)
         .await
         .map_err(|e| {
             (
@@ -1098,7 +1103,7 @@ async fn admin_start_oauth_login(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let account = state
         .account_service
-        .start_oauth_login()
+        .start_oauth_login(None)
         .await
         .map_err(|e| {
             (
@@ -1164,6 +1169,46 @@ async fn admin_submit_oauth_code(
                 Json(ErrorResponse { error: e }),
             )
         })?;
+    Ok(StatusCode::OK)
+}
+
+#[derive(Deserialize)]
+struct SetOAuthClientRequest {
+    #[serde(alias = "clientKey", alias = "oauthClientKey")]
+    client_key: String,
+}
+
+async fn admin_list_oauth_clients(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let clients = crate::modules::oauth::list_oauth_clients().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "clients": clients })))
+}
+
+async fn admin_get_active_oauth_client(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let client_key = crate::modules::oauth::get_active_oauth_client_key().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    Ok(Json(serde_json::json!({ "client_key": client_key })))
+}
+
+async fn admin_set_active_oauth_client(
+    Json(payload): Json<SetOAuthClientRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::modules::oauth::set_active_oauth_client_key(&payload.client_key).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
     Ok(StatusCode::OK)
 }
 
@@ -2948,7 +2993,19 @@ async fn handle_oauth_callback(
     }
 }
 
+#[derive(Deserialize, Default)]
+struct WebOAuthClientQuery {
+    #[serde(
+        default,
+        alias = "client_key",
+        alias = "clientKey",
+        alias = "oauthClientKey"
+    )]
+    oauth_client_key: Option<String>,
+}
+
 async fn admin_prepare_oauth_url_web(
+    Query(client_query): Query<WebOAuthClientQuery>,
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
@@ -2965,6 +3022,7 @@ async fn admin_prepare_oauth_url_web(
     let (auth_url, mut code_rx) = crate::modules::oauth_server::prepare_oauth_flow_manually(
         redirect_uri.clone(),
         state_str.clone(),
+        client_query.oauth_client_key,
     )
     .map_err(|e| {
         (

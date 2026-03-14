@@ -36,7 +36,8 @@ impl AccountService {
             project_id,
             None,
             true,
-        );
+        )
+        .with_oauth_client_key(token_res.oauth_client_key.clone());
 
         // 5. 持久化
         let mut account =
@@ -103,20 +104,20 @@ impl AccountService {
 
     // --- OAuth 逻辑 ---
 
-    pub async fn prepare_oauth_url(&self) -> Result<String, String> {
+    pub async fn prepare_oauth_url(&self, oauth_client_key: Option<String>) -> Result<String, String> {
         let handle = match &self.integration {
             modules::integration::SystemManager::Desktop(h) => Some(h.clone()),
             modules::integration::SystemManager::Headless => None,
         };
-        modules::oauth_server::prepare_oauth_url(handle).await
+        modules::oauth_server::prepare_oauth_url(handle, oauth_client_key).await
     }
 
-    pub async fn start_oauth_login(&self) -> Result<Account, String> {
+    pub async fn start_oauth_login(&self, oauth_client_key: Option<String>) -> Result<Account, String> {
         let handle = match &self.integration {
             modules::integration::SystemManager::Desktop(h) => Some(h.clone()),
             modules::integration::SystemManager::Headless => None,
         };
-        let token_res = modules::oauth_server::start_oauth_flow(handle).await?;
+        let token_res = modules::oauth_server::start_oauth_flow(handle, oauth_client_key).await?;
         self.process_oauth_token(token_res).await
     }
 
@@ -165,7 +166,8 @@ impl AccountService {
             project_id,
             None,
             true,
-        );
+        )
+        .with_oauth_client_key(token_res.oauth_client_key.clone());
 
         let account = modules::upsert_account(
             user_info.email.clone(),

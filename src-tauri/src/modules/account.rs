@@ -1510,9 +1510,12 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 ));
 
                 // Force refresh
-                let token_res = match oauth::refresh_access_token(&account.token.refresh_token, Some(&account.id))
-                    .await
-                {
+                let token_res = match oauth::refresh_access_token_with_client(
+                    &account.token.refresh_token,
+                    Some(&account.id),
+                    account.token.oauth_client_key.as_deref(),
+                )
+                .await {
                     Ok(t) => t,
                     Err(e) => {
                         if e.contains("invalid_grant") {
@@ -1538,6 +1541,12 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     account.token.project_id.clone(), // Keep original project_id
                     None,                             // Add None as session_id
                     account.token.is_gcp_tos,
+                )
+                .with_oauth_client_key(
+                    token_res
+                        .oauth_client_key
+                        .clone()
+                        .or_else(|| account.token.oauth_client_key.clone()),
                 );
 
                 // Re-fetch display name

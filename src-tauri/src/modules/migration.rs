@@ -166,20 +166,23 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                             "Importing account: {}",
                             email_placeholder
                         ));
-                        let (email, access_token, expires_in) =
+                        let (email, access_token, expires_in, oauth_client_key) =
                             match oauth::refresh_access_token(&refresh_token, None).await {
                                 Ok(token_resp) => {
+                                    let oauth_client_key = token_resp.oauth_client_key.clone();
                                     match oauth::get_user_info(&token_resp.access_token, None).await
                                     {
                                         Ok(user_info) => (
                                             user_info.email,
                                             token_resp.access_token,
                                             token_resp.expires_in,
+                                            oauth_client_key,
                                         ),
                                         Err(_) => (
                                             email_placeholder.clone(),
                                             token_resp.access_token,
                                             token_resp.expires_in,
+                                            oauth_client_key,
                                         ),
                                     }
                                 }
@@ -192,10 +195,10 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                                         email_placeholder.clone(),
                                         "imported_access_token".to_string(),
                                         0,
+                                        None,
                                     )
                                 }
                             };
-
                         let token_data = TokenData::new(
                             access_token,
                             refresh_token,
@@ -204,8 +207,8 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                             None, // project_id will be fetched on demand
                             None, // session_id
                             true, // V1 tokens are Antigravity Google OAuth tokens
-                        );
-
+                        )
+                        .with_oauth_client_key(oauth_client_key);
                         // Name already fetched in get_user_info at line 153, but outside match scope, use None to be safe
                         match account::upsert_account(email.clone(), None, token_data) {
                             Ok(acc) => {
@@ -267,8 +270,8 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
         oauth_state.project_id,
         None, // session_id will be generated in token_manager
         oauth_state.is_gcp_tos,
-    );
-
+    )
+    .with_oauth_client_key(token_resp.oauth_client_key);
     // 4. Add or update account
     account::upsert_account(email.clone(), user_info.name, token_data)
 }
