@@ -343,7 +343,13 @@ pub async fn handle_generate(
                             Some(Ok(b)) => b,
                             Some(Err(e)) => {
                                 error!("[Gemini-SSE] Connection error: {}", e);
-                                yield Err(format!("Stream error: {}", e));
+                                let error_json = serde_json::json!({
+                                    "error": {
+                                        "message": format!("Stream error: {}", e),
+                                        "type": "stream_error"
+                                    }
+                                });
+                                yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", error_json)));
                                 break;
                             }
                             None => break,
