@@ -340,24 +340,17 @@ pub fn inject_google_search_tool(body: &mut Value, mapped_model: Option<&str>) {
     if let Some(obj) = body.as_object_mut() {
         let tools_entry = obj.entry("tools").or_insert_with(|| json!([]));
         if let Some(tools_arr) = tools_entry.as_array_mut() {
-            // [安全校验] Gemini v1internal 对混合工具有严格要求。
-            // 只有 Gemini 2.0+ 及 3.0 系列模型确认支持混合工具 (Function Calling + Google Search)。
-            let mut supports_mixed_tools = false;
-            if let Some(model) = mapped_model {
-                let model_lower = model.to_lowercase();
-                supports_mixed_tools = model_lower.contains("gemini-2.0")
-                    || model_lower.contains("gemini-2.5")
-                    || model_lower.contains("gemini-3");
-            }
-
             let has_functions = tools_arr.iter().any(|t| {
                 t.as_object()
                     .map_or(false, |o| o.contains_key("functionDeclarations"))
             });
 
-            if has_functions && !supports_mixed_tools {
+            // [FIX] v1internal (cloudcode-pa) does NOT support mixing googleSearch
+            // with functionDeclarations — it lacks includeServerSideToolInvocations.
+            // Skip googleSearch injection entirely when function tools are present.
+            if has_functions {
                 tracing::debug!(
-                    "Skipping googleSearch injection due to existing functionDeclarations on older model"
+                    "Skipping googleSearch injection: functionDeclarations present (v1internal incompatible)"
                 );
                 return;
             }
