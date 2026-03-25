@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{debug, error, info};
 
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
@@ -44,20 +44,14 @@ pub async fn handle_generate(
     let debug_cfg = state.debug_logging.read().await.clone();
 
     // [NEW] Detect Client Adapter
-    let client_adapter = CLIENT_ADAPTERS
-        .iter()
-        .find(|a| a.matches(&headers))
-        .cloned();
+    let client_adapter = CLIENT_ADAPTERS.iter().find(|a| a.matches(&headers)).cloned();
     if client_adapter.is_some() {
         debug!("[{}] Client Adapter detected", trace_id);
     }
 
     // 1. 验证方法
     if method != "generateContent" && method != "streamGenerateContent" {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!("Unsupported method: {}", method),
-        ));
+        return Err((StatusCode::BAD_REQUEST, format!("Unsupported method: {}", method)));
     }
     if debug_logger::is_enabled(&debug_cfg) {
         let original_payload = json!({
@@ -105,9 +99,8 @@ pub async fn handle_generate(
             body.get("tools").and_then(|t| t.as_array()).map(|arr| {
                 let mut flattened = Vec::new();
                 for tool_entry in arr {
-                    if let Some(decls) = tool_entry
-                        .get("functionDeclarations")
-                        .and_then(|v| v.as_array())
+                    if let Some(decls) =
+                        tool_entry.get("functionDeclarations").and_then(|v| v.as_array())
                     {
                         flattened.extend(decls.iter().cloned());
                     } else {
@@ -133,26 +126,17 @@ pub async fn handle_generate(
 
         // 关键：在重试尝试 (attempt > 0) 时强制轮换账号
         let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
-            .get_token(
-                &config.request_type,
-                attempt > 0,
-                Some(&session_id),
-                &config.final_model,
-            )
+            .get_token(&config.request_type, attempt > 0, Some(&session_id), &config.final_model)
             .await
         {
             Ok(t) => t,
             Err(e) => {
-                return Err((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    format!("Token error: {}", e),
-                ));
-            }
+                return Err((StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)));
+            },
         };
 
-        let mapped_model = token_manager
-            .resolve_dynamic_model_for_account(&account_id, &mapped_model)
-            .await;
+        let mapped_model =
+            token_manager.resolve_dynamic_model_for_account(&account_id, &mapped_model).await;
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
@@ -161,7 +145,14 @@ pub async fn handle_generate(
         // [FIX #765] Pass session_id to wrap_request for signature injection
         // [NEW] 获取完整 Token 对象以注入动态规格 (dynamic > static default > 65535)
         let token_obj = token_manager.get_token_by_id(&account_id);
-        let wrapped_body = wrap_request(&body, &project_id, &mapped_model, Some(account_id.as_str()), Some(&session_id), token_obj.as_ref());
+        let wrapped_body = wrap_request(
+            &body,
+            &project_id,
+            &mapped_model,
+            Some(account_id.as_str()),
+            Some(&session_id),
+            token_obj.as_ref(),
+        );
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -185,11 +176,7 @@ pub async fn handle_generate(
 
         // 5. 上游调用
         let query_string = if is_stream { Some("alt=sse") } else { None };
-        let upstream_method = if is_stream {
-            "streamGenerateContent"
-        } else {
-            "generateContent"
-        };
+        let upstream_method = if is_stream { "streamGenerateContent" } else { "generateContent" };
 
         // [FIX #1522] Inject Anthropic Beta Headers for Claude models
         let mut extra_headers = std::collections::HashMap::new();
@@ -215,14 +202,9 @@ pub async fn handle_generate(
             Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
-                debug!(
-                    "Gemini Request failed on attempt {}/{}: {}",
-                    attempt + 1,
-                    max_attempts,
-                    e
-                );
+                debug!("Gemini Request failed on attempt {}/{}: {}", attempt + 1, max_attempts, e);
                 continue;
-            }
+            },
         };
 
         // [NEW] 记录端点降级日志到 debug 文件
@@ -306,22 +288,22 @@ pub async fn handle_generate(
                         } else {
                             first_chunk = Some(bytes);
                         }
-                    }
+                    },
                     Ok(Some(Err(e))) => {
                         tracing::warn!("[Gemini] Stream error during peek: {}, retrying...", e);
                         last_error = format!("Stream error: {}", e);
                         retry_gemini = true;
-                    }
+                    },
                     Ok(None) => {
                         tracing::warn!("[Gemini] Stream ended immediately, retrying...");
                         last_error = "Empty response".to_string();
                         retry_gemini = true;
-                    }
+                    },
                     Err(_) => {
                         tracing::warn!("[Gemini] Timeout waiting for first chunk, retrying...");
                         last_error = "Timeout".to_string();
                         retry_gemini = true;
-                    }
+                    },
                 }
 
                 if retry_gemini {
@@ -343,11 +325,16 @@ pub async fn handle_generate(
                             Some(Ok(b)) => b,
                             Some(Err(e)) => {
                                 error!("[Gemini-SSE] Connection error: {}", e);
+                                // Wrap error as a valid Gemini candidate so downstream
+                                // OpenAI mappers can translate it into choices[0].delta.content
                                 let error_json = serde_json::json!({
-                                    "error": {
-                                        "message": format!("Stream error: {}", e),
-                                        "type": "stream_error"
-                                    }
+                                    "candidates": [{
+                                        "content": {
+                                            "parts": [{"text": format!("\n\n[Antigravity Error: {}]", e)}],
+                                            "role": "model"
+                                        },
+                                        "finishReason": "STOP"
+                                    }]
                                 });
                                 yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", error_json)));
                                 break;
@@ -455,7 +442,7 @@ pub async fn handle_generate(
                                 Json(unwrapped),
                             )
                                 .into_response());
-                        }
+                        },
                         Err(e) => {
                             error!("Stream collection error: {}", e);
                             return Ok((
@@ -463,7 +450,7 @@ pub async fn handle_generate(
                                 format!("Stream collection error: {}", e),
                             )
                                 .into_response());
-                        }
+                        },
                     }
                 }
             }
@@ -503,7 +490,11 @@ pub async fn handle_generate(
                                         sig.to_string(),
                                         1,
                                     );
-                                    debug!("[Gemini-Response] Cached signature (len: {}) for session: {}", sig.len(), session_id);
+                                    debug!(
+                                        "[Gemini-Response] Cached signature (len: {}) for session: {}",
+                                        sig.len(),
+                                        session_id
+                                    );
                                 }
                             }
                         }
@@ -514,10 +505,7 @@ pub async fn handle_generate(
             let unwrapped = unwrap_response(&gemini_resp);
             return Ok((
                 StatusCode::OK,
-                [
-                    ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", mapped_model.as_str()),
-                ],
+                [("X-Account-Email", email.as_str()), ("X-Mapped-Model", mapped_model.as_str())],
                 Json(unwrapped),
             )
                 .into_response());
@@ -525,10 +513,7 @@ pub async fn handle_generate(
 
         // 处理错误并重试
         let status_code = status.as_u16();
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| format!("HTTP {}", status_code));
+        let error_text = response.text().await.unwrap_or_else(|_| format!("HTTP {}", status_code));
         last_error = format!("HTTP {}: {}", status_code, error_text);
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
@@ -610,16 +595,10 @@ pub async fn handle_generate(
         }
 
         // 404 等由于模型配置或路径错误的 HTTP 异常，直接报错，不进行无效轮换
-        error!(
-            "Gemini Upstream non-retryable error {}: {}",
-            status_code, error_text
-        );
+        error!("Gemini Upstream non-retryable error {}: {}", status_code, error_text);
         return Ok((
             status,
-            [
-                ("X-Account-Email", email.as_str()),
-                ("X-Mapped-Model", mapped_model.as_str()),
-            ],
+            [("X-Account-Email", email.as_str()), ("X-Mapped-Model", mapped_model.as_str())],
             // [FIX] Return JSON error
             Json(json!({
                 "error": {
@@ -695,12 +674,7 @@ pub async fn handle_count_tokens(
         .token_manager
         .get_token(model_group, false, None, "gemini")
         .await
-        .map_err(|e| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                format!("Token error: {}", e),
-            )
-        })?;
+        .map_err(|e| (StatusCode::SERVICE_UNAVAILABLE, format!("Token error: {}", e)))?;
 
     Ok(Json(json!({"totalTokens": 0})))
 }

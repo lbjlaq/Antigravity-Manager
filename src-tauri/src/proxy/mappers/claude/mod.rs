@@ -1,21 +1,25 @@
 // Claude mapper 模块
 // 负责 Claude ↔ Gemini 协议转换
 
+pub mod collector;
 pub mod models;
 pub mod request;
 pub mod response;
 pub mod streaming;
-pub mod utils;
 pub mod thinking_utils;
-pub mod collector;
+pub mod utils;
 
+use crate::proxy::common::client_adapter::ClientAdapter;
+pub use collector::collect_stream_to_json;
 pub use models::*;
-pub use request::{transform_claude_request_in, clean_cache_control_from_messages, merge_consecutive_messages};
+pub use request::{
+    clean_cache_control_from_messages, merge_consecutive_messages, transform_claude_request_in,
+};
 pub use response::transform_response;
 pub use streaming::{PartProcessor, StreamingState};
-pub use thinking_utils::{close_tool_loop_for_thinking, filter_invalid_thinking_blocks_with_family};
-pub use collector::collect_stream_to_json;
-use crate::proxy::common::client_adapter::ClientAdapter; // [NEW]
+pub use thinking_utils::{
+    close_tool_loop_for_thinking, filter_invalid_thinking_blocks_with_family,
+}; // [NEW]
 
 use bytes::Bytes;
 use futures::Stream;
@@ -27,13 +31,13 @@ pub fn create_claude_sse_stream<S, E>(
     trace_id: String,
     email: String,
     session_id: Option<String>, // [NEW v3.3.17] Session ID for signature caching
-    scaling_enabled: bool, // [NEW] Flag for context usage scaling
+    scaling_enabled: bool,      // [NEW] Flag for context usage scaling
     context_limit: u32,
     estimated_prompt_tokens: Option<u32>, // [FIX] Estimated tokens for calibrator learning
-    message_count: usize, // [NEW v4.0.0] Message count for rewind detection
+    message_count: usize,                 // [NEW v4.0.0] Message count for rewind detection
     client_adapter: Option<std::sync::Arc<dyn ClientAdapter>>, // [NEW] Adapter reference
-    registered_tool_names: Vec<String>, // [FIX #MCP] Tool names for fuzzy matching
-) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>> 
+    registered_tool_names: Vec<String>,   // [FIX #MCP] Tool names for fuzzy matching
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
     E: std::fmt::Display + Send + 'static,
@@ -82,13 +86,18 @@ where
                             }
                         }
                         Err(e) => {
-                            let error_json = serde_json::json!({
-                                "error": {
-                                    "message": format!("Stream error: {}", e),
-                                    "type": "stream_error"
-                                }
-                            });
-                            yield Ok(Bytes::from(format!("data: {}\n\n", error_json)));
+                            // Wrap stream error as valid Claude SSE content so IDE
+                            // parsers don't crash on non-standard JSON shape
+                            let error_msg = format!(
+                                "\n\n[Antigravity Error: Stream error: {}]", e
+                            );
+                            let start_chunks = state.start_block(
+                                crate::proxy::mappers::claude::streaming::BlockType::Text,
+                                serde_json::json!({ "type": "text", "text": error_msg }),
+                            );
+                            for chunk in start_chunks { yield Ok(chunk); }
+                            let stop_chunks = state.end_block();
+                            for chunk in stop_chunks { yield Ok(chunk); }
                             break;
                         }
                     }
@@ -100,7 +109,7 @@ where
                 }
             }
         }
-        
+
         // [FIX #1732] Mandatory Flush remaining buffer on stream termination
         // Prevents hangs when the last SSE chunk doesn't end with a newline (network fragmentation)
         if !buffer.is_empty() {
@@ -123,7 +132,7 @@ where
         // we must provide a fallback to prevent 0-token errors on client side.
         if state.has_thinking && !state.has_content {
             tracing::warn!("[{}] Stream interrupted after thinking (No Content). Triggering recovery...", trace_id);
-            
+
             // 1. Force close thinking block if open
             if state.current_block_type() == crate::proxy::mappers::claude::streaming::BlockType::Thinking {
                let close_chunks = state.end_block();
@@ -136,11 +145,11 @@ where
             // We use a new text block for this.
             let recovery_msg = "\n\n[System] Upstream model interrupted after thinking. (Recovered by Antigravity)";
             let start_chunks = state.start_block(
-                crate::proxy::mappers::claude::streaming::BlockType::Text, 
+                crate::proxy::mappers::claude::streaming::BlockType::Text,
                 serde_json::json!({ "type": "text", "text": recovery_msg })
             );
             for chunk in start_chunks { yield Ok(chunk); }
-            
+
             let stop_chunks = state.end_block();
             for chunk in stop_chunks { yield Ok(chunk); }
 
@@ -174,7 +183,12 @@ where
 }
 
 /// 处理单行 SSE 数据
-fn process_sse_line(line: &str, state: &mut StreamingState, trace_id: &str, email: &str) -> Option<Vec<Bytes>> {
+fn process_sse_line(
+    line: &str,
+    state: &mut StreamingState,
+    trace_id: &str,
+    email: &str,
+) -> Option<Vec<Bytes>> {
     if !line.starts_with("data: ") {
         return None;
     }
@@ -212,7 +226,8 @@ fn process_sse_line(line: &str, state: &mut StreamingState, trace_id: &str, emai
     if let Some(candidate) = raw_json.get("candidates").and_then(|c| c.get(0)) {
         if let Some(grounding) = candidate.get("groundingMetadata") {
             // 提取搜索词
-            if let Some(query) = grounding.get("webSearchQueries")
+            if let Some(query) = grounding
+                .get("webSearchQueries")
                 .and_then(|v| v.as_array())
                 .and_then(|arr| arr.get(0))
                 .and_then(|v| v.as_str())
@@ -223,7 +238,11 @@ fn process_sse_line(line: &str, state: &mut StreamingState, trace_id: &str, emai
             // 提取结果块
             if let Some(chunks_arr) = grounding.get("groundingChunks").and_then(|v| v.as_array()) {
                 state.grounding_chunks = Some(chunks_arr.clone());
-            } else if let Some(chunks_arr) = grounding.get("grounding_metadata").and_then(|m| m.get("groundingChunks")).and_then(|v| v.as_array()) {
+            } else if let Some(chunks_arr) = grounding
+                .get("grounding_metadata")
+                .and_then(|m| m.get("groundingChunks"))
+                .and_then(|v| v.as_array())
+            {
                 state.grounding_chunks = Some(chunks_arr.clone());
             }
         }
@@ -280,25 +299,21 @@ fn process_sse_line(line: &str, state: &mut StreamingState, trace_id: &str, emai
             } else {
                 String::new()
             };
-            
-             tracing::info!(
-                 "[{}] ✓ Stream completed | Account: {} | In: {} tokens | Out: {} tokens{}", 
-                 trace_id,
-                 email,
-                 u.prompt_token_count.unwrap_or(0).saturating_sub(cached_tokens), 
-                 u.candidates_token_count.unwrap_or(0),
-                 cache_info
-             );
+
+            tracing::info!(
+                "[{}] ✓ Stream completed | Account: {} | In: {} tokens | Out: {} tokens{}",
+                trace_id,
+                email,
+                u.prompt_token_count.unwrap_or(0).saturating_sub(cached_tokens),
+                u.candidates_token_count.unwrap_or(0),
+                cache_info
+            );
         }
 
         chunks.extend(state.emit_finish(Some(finish_reason), usage.as_ref()));
     }
 
-    if chunks.is_empty() {
-        None
-    } else {
-        Some(chunks)
-    }
+    if chunks.is_empty() { None } else { Some(chunks) }
 }
 
 /// 发送强制结束事件
@@ -306,9 +321,7 @@ pub fn emit_force_stop(state: &mut StreamingState) -> Vec<Bytes> {
     if !state.message_stop_sent {
         let mut chunks = state.emit_finish(None, None);
         if chunks.is_empty() {
-            chunks.push(Bytes::from(
-                "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-            ));
+            chunks.push(Bytes::from("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"));
             state.message_stop_sent = true;
         }
         return chunks;
@@ -338,19 +351,13 @@ fn process_grounding_metadata(
     }
 
     // Generate a unique tool_use_id
-    let tool_use_id = format!(
-        "srvtoolu_{}",
-        crate::proxy::common::utils::generate_random_id()
-    );
+    let tool_use_id = format!("srvtoolu_{}", crate::proxy::common::utils::generate_random_id());
 
     // Build search results array
     let mut search_results = Vec::new();
     for chunk in grounding_chunks.iter() {
         if let Some(web) = chunk.get("web") {
-            let title = web
-                .get("title")
-                .and_then(|t| t.as_str())
-                .unwrap_or("Source");
+            let title = web.get("title").and_then(|t| t.as_str()).unwrap_or("Source");
             let uri = web.get("uri").and_then(|u| u.as_str()).unwrap_or("");
             if !uri.is_empty() {
                 search_results.push(json!({
@@ -367,10 +374,7 @@ fn process_grounding_metadata(
         return None;
     }
 
-    let search_query = search_queries
-        .first()
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let search_query = search_queries.first().map(|s| s.to_string()).unwrap_or_default();
 
     tracing::debug!(
         "[Grounding] Emitting {} search results for query: {}",
@@ -419,20 +423,15 @@ fn process_grounding_metadata(
             "content": search_results
         }
     });
-    chunks.push(Bytes::from(format!(
-        "event: content_block_start\ndata: {}\n\n",
-        tool_result_start
-    )));
+    chunks
+        .push(Bytes::from(format!("event: content_block_start\ndata: {}\n\n", tool_result_start)));
 
     // web_search_tool_result block stop
     let tool_result_stop = json!({
         "type": "content_block_stop",
         "index": state.block_index
     });
-    chunks.push(Bytes::from(format!(
-        "event: content_block_stop\ndata: {}\n\n",
-        tool_result_stop
-    )));
+    chunks.push(Bytes::from(format!("event: content_block_stop\ndata: {}\n\n", tool_result_stop)));
     state.block_index += 1;
 
     Some(chunks)
@@ -450,10 +449,8 @@ mod tests {
         let chunks = result.unwrap();
         assert!(!chunks.is_empty());
 
-        let all_text: String = chunks
-            .iter()
-            .map(|b| String::from_utf8(b.to_vec()).unwrap_or_default())
-            .collect();
+        let all_text: String =
+            chunks.iter().map(|b| String::from_utf8(b.to_vec()).unwrap_or_default()).collect();
         assert!(all_text.contains("message_stop"));
     }
 
@@ -462,7 +459,7 @@ mod tests {
         let mut state = StreamingState::new();
 
         let test_data = r#"data: {"candidates":[{"content":{"parts":[{"text":"Hello"}]}}],"usageMetadata":{},"modelVersion":"test","responseId":"123"}"#;
-        
+
         let result = process_sse_line(test_data, &mut state, "test_id", "test@example.com");
         assert!(result.is_some());
 
@@ -470,10 +467,8 @@ mod tests {
         assert!(!chunks.is_empty());
 
         // 应该包含 message_start 和 text delta
-        let all_text: String = chunks
-            .iter()
-            .map(|b| String::from_utf8(b.to_vec()).unwrap_or_default())
-            .collect();
+        let all_text: String =
+            chunks.iter().map(|b| String::from_utf8(b.to_vec()).unwrap_or_default()).collect();
 
         assert!(all_text.contains("message_start"));
         assert!(all_text.contains("content_block_start"));
@@ -483,7 +478,7 @@ mod tests {
     #[tokio::test]
     async fn test_thinking_only_interruption_recovery() {
         use futures::StreamExt;
-        
+
         // 1. 模拟一个只发送 Thinking 然后就结束的流
         let mock_stream = async_stream::stream! {
             // 发送 Thinking 块
@@ -497,7 +492,7 @@ mod tests {
                 "responseId": "msg_interrupted"
             });
             yield Ok::<_, String>(bytes::Bytes::from(format!("data: {}\n\n", thinking_json)));
-            
+
             // 然后突然结束 (没有 Text, 没有 Usage, 直接 None)
         };
 
@@ -510,8 +505,8 @@ mod tests {
             false,
             1_000,
             None,
-            1, // message_count
-            None, // client_adapter
+            1,          // message_count
+            None,       // client_adapter
             Vec::new(), // registered_tool_names
         );
 
@@ -527,10 +522,10 @@ mod tests {
         // 4. 验证恢复逻辑
         // 必须包含 Thinking
         assert!(output.contains("Thinking..."));
-        
+
         // 必须包含恢复的系统提示
         assert!(output.contains("Recovered by Antigravity"));
-        
+
         // 必须包含模拟的 Usage
         assert!(output.contains("\"usage\":"));
         assert!(output.contains("\"output_tokens\":100")); // Should contain the recovery usage

@@ -48,7 +48,6 @@ pub struct ThinkingConfig {
     pub effort: Option<String>, // "low", "high", or "max"
 }
 
-
 /// System Prompt
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -131,17 +130,10 @@ pub enum ContentBlock {
     },
 
     #[serde(rename = "server_tool_use")]
-    ServerToolUse {
-        id: String,
-        name: String,
-        input: serde_json::Value,
-    },
+    ServerToolUse { id: String, name: String, input: serde_json::Value },
 
     #[serde(rename = "web_search_tool_result")]
-    WebSearchToolResult {
-        tool_use_id: String,
-        content: serde_json::Value,
-    },
+    WebSearchToolResult { tool_use_id: String, content: serde_json::Value },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

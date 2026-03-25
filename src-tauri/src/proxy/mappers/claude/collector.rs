@@ -4,7 +4,7 @@
 use super::models::*;
 use bytes::Bytes;
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io;
 
 /// SSE 事件类型
@@ -29,9 +29,7 @@ fn parse_sse_line(line: &str) -> Option<(String, String)> {
 ///
 /// 此函数接收一个 SSE 字节流，解析所有事件，并重建完整的 ClaudeResponse 对象。
 /// 这使得非 Stream 客户端可以透明地享受 Stream 模式的配额优势。
-pub async fn collect_stream_to_json<S>(
-    mut stream: S,
-) -> Result<ClaudeResponse, String>
+pub async fn collect_stream_to_json<S>(mut stream: S) -> Result<ClaudeResponse, String>
 where
     S: futures::Stream<Item = Result<Bytes, io::Error>> + Unpin,
 {
@@ -49,10 +47,7 @@ where
                 // 空行表示事件结束
                 if !current_data.is_empty() {
                     if let Ok(data) = serde_json::from_str::<Value>(&current_data) {
-                        events.push(SseEvent {
-                            event_type: current_event_type.clone(),
-                            data,
-                        });
+                        events.push(SseEvent { event_type: current_event_type.clone(), data });
                     }
                     current_event_type.clear();
                     current_data.clear();
@@ -61,7 +56,7 @@ where
                 match key.as_str() {
                     "event" => current_event_type = value,
                     "data" => current_data = value,
-                    _ => {}
+                    _ => {},
                 }
             }
         }
@@ -109,7 +104,7 @@ where
                         }
                     }
                 }
-            }
+            },
 
             "content_block_start" => {
                 if let Some(content_block) = event.data.get("content_block") {
@@ -119,19 +114,20 @@ where
                             "thinking" => {
                                 current_thinking.clear();
                                 // Extract signature from content_block
-                                current_signature = content_block.get("signature")
+                                current_signature = content_block
+                                    .get("signature")
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
-                            }
+                            },
                             "tool_use" => {
                                 current_tool_use = Some(content_block.clone());
                                 current_tool_input.clear();
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                 }
-            }
+            },
 
             "content_block_delta" => {
                 if let Some(delta) = event.data.get("delta") {
@@ -141,33 +137,35 @@ where
                                 if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
                                     current_text.push_str(text);
                                 }
-                            }
+                            },
                             "thinking_delta" => {
-                                if let Some(thinking) = delta.get("thinking").and_then(|v| v.as_str()) {
+                                if let Some(thinking) =
+                                    delta.get("thinking").and_then(|v| v.as_str())
+                                {
                                     current_thinking.push_str(thinking);
                                 }
                                 // In case signature comes in delta (less likely but possible update)
                                 if let Some(sig) = delta.get("signature").and_then(|v| v.as_str()) {
                                     current_signature = Some(sig.to_string());
                                 }
-                            }
+                            },
                             "input_json_delta" => {
-                                if let Some(partial_json) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                                if let Some(partial_json) =
+                                    delta.get("partial_json").and_then(|v| v.as_str())
+                                {
                                     current_tool_input.push_str(partial_json);
                                 }
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                 }
-            }
+            },
 
             "content_block_stop" => {
                 // 完成当前块
                 if !current_text.is_empty() {
-                    response.content.push(ContentBlock::Text {
-                        text: current_text.clone(),
-                    });
+                    response.content.push(ContentBlock::Text { text: current_text.clone() });
                     current_text.clear();
                 } else if !current_thinking.is_empty() {
                     response.content.push(ContentBlock::Thinking {
@@ -178,8 +176,16 @@ where
                     current_thinking.clear();
                 } else if let Some(tool_use) = current_tool_use.take() {
                     // 构建 tool_use 块
-                    let id = tool_use.get("id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                    let name = tool_use.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    let id = tool_use
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let name = tool_use
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
                     let input = if !current_tool_input.is_empty() {
                         serde_json::from_str(&current_tool_input).unwrap_or(json!({}))
                     } else {
@@ -195,7 +201,7 @@ where
                     });
                     current_tool_input.clear();
                 }
-            }
+            },
 
             "message_delta" => {
                 if let Some(delta) = event.data.get("delta") {
@@ -208,23 +214,26 @@ where
                         response.usage = u;
                     }
                 }
-            }
+            },
 
             "message_stop" => {
                 // Stream 结束
                 break;
-            }
+            },
 
             "error" => {
                 // 错误事件
                 let error_data = event.data.get("error").unwrap_or(&event.data);
-                let message = error_data.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown stream error");
+                let message = error_data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown stream error");
                 return Err(message.to_string());
-            }
+            },
 
             _ => {
                 // 忽略未知事件类型
-            }
+            },
         }
     }
 
@@ -249,9 +258,8 @@ mod tests {
             "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
         ];
 
-        let byte_stream = stream::iter(
-            sse_data.into_iter().map(|s| Ok::<Bytes, io::Error>(Bytes::from(s)))
-        );
+        let byte_stream =
+            stream::iter(sse_data.into_iter().map(|s| Ok::<Bytes, io::Error>(Bytes::from(s))));
 
         let result = collect_stream_to_json(byte_stream).await;
         assert!(result.is_ok());
@@ -260,7 +268,7 @@ mod tests {
         assert_eq!(response.id, "msg_123");
         assert_eq!(response.model, "claude-3-5-sonnet");
         assert_eq!(response.content.len(), 1);
-        
+
         if let ContentBlock::Text { text } = &response.content[0] {
             assert_eq!(text, "Hello World");
         } else {
@@ -282,15 +290,14 @@ mod tests {
             "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
         ];
 
-        let byte_stream = stream::iter(
-            sse_data.into_iter().map(|s| Ok::<Bytes, io::Error>(Bytes::from(s)))
-        );
+        let byte_stream =
+            stream::iter(sse_data.into_iter().map(|s| Ok::<Bytes, io::Error>(Bytes::from(s))));
 
         let result = collect_stream_to_json(byte_stream).await;
         assert!(result.is_ok());
 
         let response = result.unwrap();
-        
+
         if let ContentBlock::Thinking { thinking, signature, .. } = &response.content[0] {
             assert_eq!(thinking, "I am thinking");
             // 验证签名是否被正确提取

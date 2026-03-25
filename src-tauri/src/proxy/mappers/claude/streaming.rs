@@ -8,7 +8,7 @@ use crate::proxy::mappers::estimation_calibrator::get_calibrator;
 use crate::proxy::SignatureCache;
 use crate::proxy::common::client_adapter::{ClientAdapter, SignatureBufferStrategy}; // [NEW]
 use bytes::Bytes;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Known parameter remappings for Gemini → Claude compatibility
 /// [FIX] Gemini sometimes uses different parameter names than specified in tool schema
@@ -51,10 +51,7 @@ pub fn remap_function_call_args(name: &str, args: &mut Value) {
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.remove("paths") {
                         let path_str = if let Some(arr) = paths.as_array() {
-                            arr.get(0)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(".")
-                                .to_string()
+                            arr.get(0).and_then(|v| v.as_str()).unwrap_or(".").to_string()
                         } else if let Some(s) = paths.as_str() {
                             s.to_string()
                         } else {
@@ -73,7 +70,7 @@ pub fn remap_function_call_args(name: &str, args: &mut Value) {
                 }
 
                 // Note: We keep "-n" and "output_mode" if present as they are valid in Grep schema
-            }
+            },
             "glob" => {
                 // [FIX] Gemini hallucination: maps parameter description to "description" field
                 if let Some(desc) = obj.remove("description") {
@@ -95,10 +92,7 @@ pub fn remap_function_call_args(name: &str, args: &mut Value) {
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.remove("paths") {
                         let path_str = if let Some(arr) = paths.as_array() {
-                            arr.get(0)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(".")
-                                .to_string()
+                            arr.get(0).and_then(|v| v.as_str()).unwrap_or(".").to_string()
                         } else if let Some(s) = paths.as_str() {
                             s.to_string()
                         } else {
@@ -115,7 +109,7 @@ pub fn remap_function_call_args(name: &str, args: &mut Value) {
                         tracing::debug!("[Streaming] Added default path: \".\"");
                     }
                 }
-            }
+            },
             "read" => {
                 // Gemini might use "path" vs "file_path"
                 if let Some(path) = obj.remove("path") {
@@ -124,14 +118,14 @@ pub fn remap_function_call_args(name: &str, args: &mut Value) {
                         tracing::debug!("[Streaming] Remapped Read: path → file_path");
                     }
                 }
-            }
+            },
             "ls" => {
                 // LS tool: ensure "path" parameter exists
                 if !obj.contains_key("path") {
                     obj.insert("path".to_string(), json!("."));
                     tracing::debug!("[Streaming] Remapped LS: default path → \".\"");
                 }
-            }
+            },
             other => {
                 // [NEW] [Issue #785] Generic Property Mapping for all tools
                 // If a tool has "paths" (array of 1) but no "path", convert it.
@@ -159,7 +153,7 @@ pub fn remap_function_call_args(name: &str, args: &mut Value) {
                     other,
                     obj.keys()
                 );
-            }
+            },
         }
     }
 }
@@ -446,10 +440,7 @@ impl StreamingState {
                 let mut links = Vec::new();
                 for (i, chunk) in chunks.iter().enumerate() {
                     if let Some(web) = chunk.get("web") {
-                        let title = web
-                            .get("title")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("网页来源");
+                        let title = web.get("title").and_then(|v| v.as_str()).unwrap_or("网页来源");
                         let uri = web.get("uri").and_then(|v| v.as_str()).unwrap_or("#");
                         links.push(format!("[{}] [{}]({})", i + 1, title, uri));
                     }
@@ -527,9 +518,7 @@ impl StreamingState {
         ));
 
         if !self.message_stop_sent {
-            chunks.push(Bytes::from(
-                "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-            ));
+            chunks.push(Bytes::from("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"));
             self.message_stop_sent = true;
         }
 
@@ -668,10 +657,10 @@ impl<'a> PartProcessor<'a> {
                                 decoded_str.len()
                             );
                             decoded_str
-                        }
+                        },
                         Err(_) => sig.clone(), // Not valid UTF-8, keep as is
                     }
-                }
+                },
                 Err(_) => sig.clone(), // Not base64, keep as is
             }
         });
@@ -690,10 +679,7 @@ impl<'a> PartProcessor<'a> {
                             "content_block": { "type": "thinking", "thinking": "" }
                         }),
                     ));
-                    chunks.push(
-                        self.state
-                            .emit_delta("thinking_delta", json!({ "thinking": "" })),
-                    );
+                    chunks.push(self.state.emit_delta("thinking_delta", json!({ "thinking": "" })));
                     chunks.push(
                         self.state
                             .emit_delta("signature_delta", json!({ "signature": trailing_sig })),
@@ -748,13 +734,9 @@ impl<'a> PartProcessor<'a> {
                         "content_block": { "type": "thinking", "thinking": "" }
                     }),
                 ));
+                chunks.push(self.state.emit_delta("thinking_delta", json!({ "thinking": "" })));
                 chunks.push(
-                    self.state
-                        .emit_delta("thinking_delta", json!({ "thinking": "" })),
-                );
-                chunks.push(
-                    self.state
-                        .emit_delta("signature_delta", json!({ "signature": trailing_sig })),
+                    self.state.emit_delta("signature_delta", json!({ "signature": trailing_sig })),
                 );
                 chunks.extend(self.state.end_block());
             }
@@ -762,24 +744,26 @@ impl<'a> PartProcessor<'a> {
 
         // 开始或继续 thinking 块
         if self.state.current_block_type() != BlockType::Thinking {
-            chunks.extend(self.state.start_block(
-                BlockType::Thinking,
-                json!({ "type": "thinking", "thinking": "" }),
-            ));
+            chunks.extend(
+                self.state.start_block(
+                    BlockType::Thinking,
+                    json!({ "type": "thinking", "thinking": "" }),
+                ),
+            );
         }
 
         // [FIX #859] Mark that we have received thinking content
         self.state.has_thinking = true;
 
         if !text.is_empty() {
-            chunks.push(
-                self.state
-                    .emit_delta("thinking_delta", json!({ "thinking": text })),
-            );
+            chunks.push(self.state.emit_delta("thinking_delta", json!({ "thinking": text })));
         }
 
         // [NEW] Apply Client Adapter Strategy
-        let use_fifo = self.state.client_adapter.as_ref()
+        let use_fifo = self
+            .state
+            .client_adapter
+            .as_ref()
             .map(|a| a.signature_buffer_strategy() == SignatureBufferStrategy::Fifo)
             .unwrap_or(false);
 
@@ -796,11 +780,11 @@ impl<'a> PartProcessor<'a> {
                 // However, our cache implementation currently keys by session_id.
                 // For FIFO, we might just rely on the fact that we are processing in order.
                 // But specifically for opencode, it might be calling tools in parallel or sequence.
-                
+
                 SignatureCache::global().cache_session_signature(
-                    session_id, 
-                    sig.clone(), 
-                    self.state.message_count
+                    session_id,
+                    sig.clone(),
+                    self.state.message_count,
                 );
                 tracing::debug!(
                     "[Claude-SSE] Cached signature to session {} (length: {}) [FIFO: {}]",
@@ -817,8 +801,8 @@ impl<'a> PartProcessor<'a> {
         }
 
         // 暂存签名 (for local block handling)
-        // If FIFO, we strictly follow the sequence. The default logic is effectively LIFO for a single turn 
-        // (store latest, consume at end). 
+        // If FIFO, we strictly follow the sequence. The default logic is effectively LIFO for a single turn
+        // (store latest, consume at end).
         // For opencode, we just want to ensure we capture IT.
         self.state.store_signature(signature);
 
@@ -852,13 +836,9 @@ impl<'a> PartProcessor<'a> {
                         "content_block": { "type": "thinking", "thinking": "" }
                     }),
                 ));
+                chunks.push(self.state.emit_delta("thinking_delta", json!({ "thinking": "" })));
                 chunks.push(
-                    self.state
-                        .emit_delta("thinking_delta", json!({ "thinking": "" })),
-                );
-                chunks.push(
-                    self.state
-                        .emit_delta("signature_delta", json!({ "signature": trailing_sig })),
+                    self.state.emit_delta("signature_delta", json!({ "signature": trailing_sig })),
                 );
                 chunks.extend(self.state.end_block());
             }
@@ -872,8 +852,7 @@ impl<'a> PartProcessor<'a> {
             self.state.store_signature(signature);
 
             chunks.extend(
-                self.state
-                    .start_block(BlockType::Text, json!({ "type": "text", "text": "" })),
+                self.state.start_block(BlockType::Text, json!({ "type": "text", "text": "" })),
             );
             chunks.push(self.state.emit_delta("text_delta", json!({ "text": text })));
             chunks.extend(self.state.end_block());
@@ -954,8 +933,7 @@ impl<'a> PartProcessor<'a> {
 
         if self.state.current_block_type() != BlockType::Text {
             chunks.extend(
-                self.state
-                    .start_block(BlockType::Text, json!({ "type": "text", "text": "" })),
+                self.state.start_block(BlockType::Text, json!({ "type": "text", "text": "" })),
             );
         }
 
@@ -975,11 +953,7 @@ impl<'a> PartProcessor<'a> {
         self.state.mark_tool_used();
 
         let tool_id = fc.id.clone().unwrap_or_else(|| {
-            format!(
-                "{}-{}",
-                fc.name,
-                crate::proxy::common::utils::generate_random_id()
-            )
+            format!("{}-{}", fc.name, crate::proxy::common::utils::generate_random_id())
         });
 
         let mut tool_name = fc.name.clone();
@@ -994,10 +968,13 @@ impl<'a> PartProcessor<'a> {
         // We attempt to find the closest registered tool name.
         if tool_name.starts_with("mcp__") && !self.state.registered_tool_names.is_empty() {
             if !self.state.registered_tool_names.contains(&tool_name) {
-                if let Some(matched) = fuzzy_match_mcp_tool(&tool_name, &self.state.registered_tool_names) {
+                if let Some(matched) =
+                    fuzzy_match_mcp_tool(&tool_name, &self.state.registered_tool_names)
+                {
                     tracing::warn!(
                         "[FIX #MCP] Corrected MCP tool name: '{}' → '{}'",
-                        tool_name, matched
+                        tool_name,
+                        matched
                     );
                     tool_name = matched;
                 } else {
@@ -1026,9 +1003,9 @@ impl<'a> PartProcessor<'a> {
             // 3. [NEW v3.3.17] Cache to session-based storage
             if let Some(session_id) = &self.state.session_id {
                 SignatureCache::global().cache_session_signature(
-                    session_id, 
+                    session_id,
                     sig.clone(),
-                    self.state.message_count
+                    self.state.message_count,
                 );
             }
 
@@ -1058,8 +1035,7 @@ impl<'a> PartProcessor<'a> {
             let json_str =
                 serde_json::to_string(&remapped_args).unwrap_or_else(|_| "{}".to_string());
             chunks.push(
-                self.state
-                    .emit_delta("input_json_delta", json!({ "partial_json": json_str })),
+                self.state.emit_delta("input_json_delta", json!({ "partial_json": json_str })),
             );
         }
 
@@ -1083,9 +1059,8 @@ impl<'a> PartProcessor<'a> {
 ///   2. Suffix contained: if the hallucinated name (without `mcp__`) is contained in a registered tool name
 ///   3. Longest common subsequence scoring: picks the registered tool with the best LCS ratio
 fn fuzzy_match_mcp_tool(hallucinated: &str, registered: &[String]) -> Option<String> {
-    let mcp_tools: Vec<&String> = registered.iter()
-        .filter(|name| name.starts_with("mcp__"))
-        .collect();
+    let mcp_tools: Vec<&String> =
+        registered.iter().filter(|name| name.starts_with("mcp__")).collect();
 
     if mcp_tools.is_empty() {
         return None;
@@ -1125,11 +1100,9 @@ fn fuzzy_match_mcp_tool(hallucinated: &str, registered: &[String]) -> Option<Str
     }
 
     // Strategy 3: Normalized token overlap scoring
-    // Split both names into tokens by '_' and '__', compute overlap ratio  
-    let hall_tokens: Vec<&str> = hallucinated_suffix
-        .split(|c: char| c == '_')
-        .filter(|s| !s.is_empty())
-        .collect();
+    // Split both names into tokens by '_' and '__', compute overlap ratio
+    let hall_tokens: Vec<&str> =
+        hallucinated_suffix.split(|c: char| c == '_').filter(|s| !s.is_empty()).collect();
 
     if hall_tokens.is_empty() {
         return None;
@@ -1141,10 +1114,8 @@ fn fuzzy_match_mcp_tool(hallucinated: &str, registered: &[String]) -> Option<Str
 
     for tool in &mcp_tools {
         let tool_after_mcp = &tool[5..]; // skip "mcp__"
-        let tool_tokens: Vec<&str> = tool_after_mcp
-            .split(|c: char| c == '_')
-            .filter(|s| !s.is_empty())
-            .collect();
+        let tool_tokens: Vec<&str> =
+            tool_after_mcp.split(|c: char| c == '_').filter(|s| !s.is_empty()).collect();
 
         if tool_tokens.is_empty() {
             continue;
@@ -1171,7 +1142,9 @@ fn fuzzy_match_mcp_tool(hallucinated: &str, registered: &[String]) -> Option<Str
     if best_score >= threshold {
         tracing::debug!(
             "[FIX #MCP] Fuzzy match score for '{}': {:.2} -> {:?}",
-            hallucinated, best_score, best_match
+            hallucinated,
+            best_score,
+            best_match
         );
         best_match
     } else {
@@ -1266,9 +1239,7 @@ mod tests {
 
     #[test]
     fn test_fuzzy_match_mcp_tool_exact_match_no_correction() {
-        let registered = vec![
-            "mcp__puppeteer__puppeteer_navigate".to_string(),
-        ];
+        let registered = vec!["mcp__puppeteer__puppeteer_navigate".to_string()];
 
         // Already correct - should not be called (the caller checks contains first)
         // But if called, should find it
@@ -1304,9 +1275,7 @@ mod tests {
 
     #[test]
     fn test_fuzzy_match_mcp_tool_no_match() {
-        let registered = vec![
-            "mcp__puppeteer__puppeteer_navigate".to_string(),
-        ];
+        let registered = vec!["mcp__puppeteer__puppeteer_navigate".to_string()];
 
         // Completely unrelated name
         let result = fuzzy_match_mcp_tool("mcp__totally_unrelated_xyz", &registered);
@@ -1315,10 +1284,7 @@ mod tests {
 
     #[test]
     fn test_fuzzy_match_mcp_tool_no_mcp_tools() {
-        let registered = vec![
-            "regular_tool".to_string(),
-            "another_tool".to_string(),
-        ];
+        let registered = vec!["regular_tool".to_string(), "another_tool".to_string()];
 
         // No MCP tools in registry
         let result = fuzzy_match_mcp_tool("mcp__puppeteer_navigate", &registered);

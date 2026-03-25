@@ -38,10 +38,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.remove("paths") {
                         let path_str = if let Some(arr) = paths.as_array() {
-                            arr.get(0)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(".")
-                                .to_string()
+                            arr.get(0).and_then(|v| v.as_str()).unwrap_or(".").to_string()
                         } else if let Some(s) = paths.as_str() {
                             s.to_string()
                         } else {
@@ -57,7 +54,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                 }
 
                 // Note: We keep "-n" and "output_mode" if present as they are valid in Grep schema
-            }
+            },
             "glob" => {
                 // [FIX] Gemini hallucination: maps parameter description to "description" field
                 if let Some(desc) = obj.remove("description") {
@@ -79,10 +76,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                 if !obj.contains_key("path") {
                     if let Some(paths) = obj.remove("paths") {
                         let path_str = if let Some(arr) = paths.as_array() {
-                            arr.get(0)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(".")
-                                .to_string()
+                            arr.get(0).and_then(|v| v.as_str()).unwrap_or(".").to_string()
                         } else if let Some(s) = paths.as_str() {
                             s.to_string()
                         } else {
@@ -96,7 +90,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                         tracing::debug!("[Response] Added default path: \".\"");
                     }
                 }
-            }
+            },
             "read" => {
                 // Gemini might use "path" vs "file_path"
                 if let Some(path) = obj.remove("path") {
@@ -105,14 +99,14 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                         tracing::debug!("[Response] Remapped Read: path → file_path");
                     }
                 }
-            }
+            },
             "ls" => {
                 // LS tool: ensure "path" parameter exists
                 if !obj.contains_key("path") {
                     obj.insert("path".to_string(), serde_json::json!("."));
                     tracing::debug!("[Response] Remapped LS: default path → \".\"");
                 }
-            }
+            },
             other => {
                 // [NEW] [Issue #785] Generic Property Mapping for all tools
                 // If a tool has "paths" (array of 1) but no "path", convert it.
@@ -140,7 +134,7 @@ fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
                     other,
                     obj.keys()
                 );
-            }
+            },
         }
     }
 }
@@ -239,10 +233,10 @@ impl NonStreamingProcessor {
                                 decoded_str.len()
                             );
                             decoded_str
-                        }
+                        },
                         Err(_) => sig.clone(), // Not valid UTF-8, keep as is
                     }
-                }
+                },
                 Err(_) => sig.clone(), // Not base64, keep as is
             }
         });
@@ -250,8 +244,11 @@ impl NonStreamingProcessor {
         // [FIX #765] Cache signature in NonStreamingProcessor
         if let Some(sig) = &signature {
             if let Some(s_id) = &self.session_id {
-                crate::proxy::SignatureCache::global()
-                    .cache_session_signature(s_id, sig.to_string(), self.message_count);
+                crate::proxy::SignatureCache::global().cache_session_signature(
+                    s_id,
+                    sig.to_string(),
+                    self.message_count,
+                );
                 crate::proxy::SignatureCache::global()
                     .cache_thinking_family(sig.to_string(), self.model_name.clone());
                 tracing::debug!(
@@ -280,11 +277,7 @@ impl NonStreamingProcessor {
 
             // 生成 tool_use id
             let tool_id = fc.id.clone().unwrap_or_else(|| {
-                format!(
-                    "{}-{}",
-                    fc.name,
-                    crate::proxy::common::utils::generate_random_id()
-                )
+                format!("{}-{}", fc.name, crate::proxy::common::utils::generate_random_id())
             });
 
             let mut tool_name = fc.name.clone();
@@ -471,8 +464,7 @@ impl NonStreamingProcessor {
         }
 
         if !current_text.is_empty() {
-            self.content_blocks
-                .push(ContentBlock::Text { text: current_text });
+            self.content_blocks.push(ContentBlock::Text { text: current_text });
         }
     }
 
@@ -600,7 +592,7 @@ mod tests {
         match &claude_resp.content[0] {
             ContentBlock::Text { text } => {
                 assert_eq!(text, "Hello, world!");
-            }
+            },
             _ => panic!("Expected Text block"),
         }
     }
@@ -653,21 +645,17 @@ mod tests {
         assert_eq!(claude_resp.content.len(), 2);
 
         match &claude_resp.content[0] {
-            ContentBlock::Thinking {
-                thinking,
-                signature,
-                ..
-            } => {
+            ContentBlock::Thinking { thinking, signature, .. } => {
                 assert_eq!(thinking, "Let me think...");
                 assert_eq!(signature.as_deref(), Some("sig123"));
-            }
+            },
             _ => panic!("Expected Thinking block"),
         }
 
         match &claude_resp.content[1] {
             ContentBlock::Text { text } => {
                 assert_eq!(text, "The answer is 42");
-            }
+            },
             _ => panic!("Expected Text block"),
         }
     }
