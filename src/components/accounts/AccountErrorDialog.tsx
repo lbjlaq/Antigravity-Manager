@@ -107,7 +107,7 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
     };
 
     const renderMessageWithLinks = (text: string) => {
-        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        const urlRegex = /(https?:\/\/[^\s"'}\]>]+)/g;
         const parts = text.split(urlRegex);
         return parts.map((part, i) => {
             if (part.match(urlRegex)) {
