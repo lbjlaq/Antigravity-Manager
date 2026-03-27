@@ -19,8 +19,9 @@ pub struct TrayTexts {
 fn load_translations(lang: &str) -> HashMap<String, String> {
     let json_content = match lang {
         "en" | "en-US" => include_str!("../../../src/locales/en.json"),
+        "es" | "es-ES" | "es-MX" => include_str!("../../../src/locales/es.json"),
         "tr" | "tr-TR" => include_str!("../../../src/locales/tr.json"),
-        _ => include_str!("../../../src/locales/zh.json"),
+        _ => include_str!("../../../src/locales/es.json"),
     };
     
     let v: Value = serde_json::from_str(json_content)
