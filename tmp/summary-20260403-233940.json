@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-04-03T23:39:40+03:00",
+  "objective": "Add an upstream-compatible Codex CLI provider to Antigravity-Manager and assess the value of a separate headless Codex MCP companion.",
+  "edits": [
+    "Added `proxy.codex` config types/defaults in Rust and TypeScript.",
+    "Added `src-tauri/src/proxy/providers/codex_cli.rs` with a Codex app-server runtime manager, JSON-RPC worker pool, model discovery, request shaping, and response helpers.",
+    "Wired Codex runtime state through proxy service state, Axum server state, save-config hot updates, and new Tauri/admin commands.",
+    "Hooked OpenAI handlers to route `codex:*` model targets through the Codex provider for `/v1/chat/completions`, `/v1/responses`, and `/v1/completions` compatibility paths.",
+    "Extended `/v1/models` and the API Proxy UI with Codex provider diagnostics, controls, and router-target copy helpers."
+  ],
+  "commands": [
+    "Get-ChildItem -Name",
+    "git status -sb",
+    "codex.cmd --version",
+    "codex.cmd --help",
+    "codex.cmd login --help",
+    "codex.cmd login status",
+    "codex.cmd app-server --help",
+    "codex.cmd app-server generate-json-schema --out tmp/codex-schema",
+    "codex.cmd app-server generate-ts --out tmp/codex-ts",
+    "python inline probes against `codex.cmd app-server` for initialize/model/list/thread/start/turn/start",
+    "git diff --check",
+    "npm run build",
+    "npm exec -- tsc --noEmit"
+  ],
+  "verification": {
+    "passed": [
+      "Confirmed Codex app-server uses newline-delimited JSON-RPC over stdio and supports initialize, getAuthStatus, model/list, thread/start, and turn/start.",
+      "Confirmed `git diff --check` passed with no whitespace/conflict-marker issues."
+    ],
+    "failed_or_blocked": [
+      {
+        "command": "npm run build",
+        "reason": "`tsc` is not available because project frontend dependencies are not installed locally (`node_modules/.bin/tsc` missing)."
+      },
+      {
+        "command": "npm exec -- tsc --noEmit",
+        "reason": "TypeScript compiler is not installed in the project; npm attempted to fall back to the unrelated `tsc` package."
+      },
+      {
+        "command": "cargo test ... / cargo build",
+        "reason": "Rust toolchain is not installed or not on PATH on this machine (`cargo` and `rustc` are unavailable)."
+      }
+    ]
+  },
+  "outcome": {
+    "status": "implemented_with_unverified_build",
+    "notes": [
+      "The Codex provider currently treats OpenAI payloads as a compatibility layer by flattening them into prompt text plus optional image inputs for ephemeral Codex app-server turns.",
+      "Client-supplied tool schemas are rejected clearly for Codex-backed requests because the Codex app-server protocol is not a direct OpenAI Responses tool-schema passthrough."
+    ]
+  }
+}

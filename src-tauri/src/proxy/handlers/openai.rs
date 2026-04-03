@@ -162,6 +162,10 @@ pub async fn handle_chat_completions(
         &*state.custom_mapping.read().await,
     );
 
+    if crate::proxy::providers::codex_cli::is_codex_target(&mapped_model) {
+        return Ok(handle_codex_chat_request(state.clone(), original_body, mapped_model).await);
+    }
+
     for attempt in 0..max_attempts {
         // 将 OpenAI 工具转为 Value 数组以便探测联网
         let tools_val: Option<Vec<Value>> = openai_req
@@ -758,6 +762,7 @@ pub async fn handle_completions(
     State(state): State<AppState>,
     Json(mut body): Json<Value>,
 ) -> Response {
+    let original_body = body.clone();
     debug!(
         "Received /v1/completions or /v1/responses payload: {:?}",
         body
@@ -1144,6 +1149,16 @@ pub async fn handle_completions(
         &openai_req.model,
         &*state.custom_mapping.read().await,
     );
+    if crate::proxy::providers::codex_cli::is_codex_target(&mapped_model) {
+        return handle_codex_responses_request(
+            state.clone(),
+            original_body,
+            body,
+            mapped_model,
+            is_codex_style,
+        )
+        .await;
+    }
     let trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
 
     for attempt in 0..max_attempts {
@@ -1580,10 +1595,404 @@ pub async fn handle_completions(
     }
 }
 
+async fn handle_codex_chat_request(
+    state: AppState,
+    body: Value,
+    mapped_model: String,
+) -> Response {
+    let request = match crate::proxy::providers::codex_cli::codex_request_from_chat_body(
+        &body,
+        &mapped_model,
+    ) {
+        Ok(request) => request,
+        Err(error) => {
+            return (StatusCode::BAD_REQUEST, error).into_response();
+        }
+    };
+
+    if request.stream {
+        return match state.codex.start_stream(request.clone()).await {
+            Ok(receiver) => build_codex_chat_stream_response(receiver, request.model),
+            Err(error) => (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
+        };
+    }
+
+    match state.codex.run_request(request.clone()).await {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(crate::proxy::providers::codex_cli::build_chat_completion_response(
+                &request.model,
+                &result.text,
+                result.usage.as_ref(),
+            )),
+        )
+            .into_response(),
+        Err(error) => (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
+    }
+}
+
+async fn handle_codex_responses_request(
+    state: AppState,
+    original_body: Value,
+    normalized_body: Value,
+    mapped_model: String,
+    is_codex_style: bool,
+) -> Response {
+    let request = if is_codex_style {
+        crate::proxy::providers::codex_cli::codex_request_from_responses_body(
+            &original_body,
+            &mapped_model,
+        )
+    } else {
+        crate::proxy::providers::codex_cli::codex_request_from_chat_body(
+            &normalized_body,
+            &mapped_model,
+        )
+    };
+
+    let request = match request {
+        Ok(request) => request,
+        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
+    };
+
+    if request.stream {
+        return match state.codex.start_stream(request.clone()).await {
+            Ok(receiver) => {
+                if is_codex_style {
+                    build_codex_responses_stream_response(receiver, request.model)
+                } else {
+                    build_codex_legacy_completion_stream_response(receiver, request.model)
+                }
+            }
+            Err(error) => (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
+        };
+    }
+
+    match state.codex.run_request(request.clone()).await {
+        Ok(result) => {
+            if is_codex_style {
+                (
+                    StatusCode::OK,
+                    Json(crate::proxy::providers::codex_cli::build_responses_response(
+                        &request.model,
+                        &result.text,
+                        result.usage.as_ref(),
+                    )),
+                )
+                    .into_response()
+            } else {
+                let chat = crate::proxy::providers::codex_cli::build_chat_completion_response(
+                    &request.model,
+                    &result.text,
+                    result.usage.as_ref(),
+                );
+                let text = chat["choices"][0]["message"]["content"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "id": chat["id"],
+                        "object": "text_completion",
+                        "created": chat["created"],
+                        "model": chat["model"],
+                        "choices": [{
+                            "text": text,
+                            "index": 0,
+                            "logprobs": null,
+                            "finish_reason": "stop"
+                        }],
+                        "usage": chat["usage"]
+                    })),
+                )
+                    .into_response()
+            }
+        }
+        Err(error) => (StatusCode::SERVICE_UNAVAILABLE, error).into_response(),
+    }
+}
+
+fn build_codex_chat_stream_response(
+    mut receiver: tokio::sync::mpsc::Receiver<crate::proxy::CodexStreamEvent>,
+    model: String,
+) -> Response {
+    use axum::body::Body;
+
+    let stream_id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
+    let created = chrono::Utc::now().timestamp();
+    let stream = async_stream::stream! {
+        while let Some(event) = receiver.recv().await {
+            match event {
+                crate::proxy::CodexStreamEvent::TextDelta(delta) => {
+                    let chunk = json!({
+                        "id": &stream_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": &model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": { "content": delta },
+                            "finish_reason": null
+                        }]
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", chunk)));
+                }
+                crate::proxy::CodexStreamEvent::Completed(result) => {
+                    let chunk = json!({
+                        "id": &stream_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": result.model,
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "stop"
+                        }],
+                        "usage": {
+                            "prompt_tokens": result.usage.as_ref().and_then(|u| u.input_tokens).unwrap_or(0),
+                            "completion_tokens": result.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
+                            "total_tokens": result.usage.as_ref().and_then(|u| u.total_tokens).unwrap_or(0)
+                        }
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", chunk)));
+                    yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
+                    break;
+                }
+                crate::proxy::CodexStreamEvent::Error(error) => {
+                    let chunk = json!({
+                        "id": &stream_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": &model,
+                        "choices": [],
+                        "error": { "message": error, "type": "codex_error" }
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", chunk)));
+                    yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
+                    break;
+                }
+            }
+        }
+    };
+
+    Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
+fn build_codex_legacy_completion_stream_response(
+    mut receiver: tokio::sync::mpsc::Receiver<crate::proxy::CodexStreamEvent>,
+    model: String,
+) -> Response {
+    use axum::body::Body;
+
+    let stream_id = format!("cmpl-{}", uuid::Uuid::new_v4().simple());
+    let created = chrono::Utc::now().timestamp();
+    let stream = async_stream::stream! {
+        while let Some(event) = receiver.recv().await {
+            match event {
+                crate::proxy::CodexStreamEvent::TextDelta(delta) => {
+                    let chunk = json!({
+                        "id": &stream_id,
+                        "object": "text_completion",
+                        "created": created,
+                        "model": &model,
+                        "choices": [{
+                            "text": delta,
+                            "index": 0,
+                            "logprobs": null,
+                            "finish_reason": null
+                        }]
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", chunk)));
+                }
+                crate::proxy::CodexStreamEvent::Completed(result) => {
+                    let chunk = json!({
+                        "id": &stream_id,
+                        "object": "text_completion",
+                        "created": created,
+                        "model": result.model,
+                        "choices": [{
+                            "text": "",
+                            "index": 0,
+                            "logprobs": null,
+                            "finish_reason": "stop"
+                        }],
+                        "usage": {
+                            "prompt_tokens": result.usage.as_ref().and_then(|u| u.input_tokens).unwrap_or(0),
+                            "completion_tokens": result.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
+                            "total_tokens": result.usage.as_ref().and_then(|u| u.total_tokens).unwrap_or(0)
+                        }
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", chunk)));
+                    yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
+                    break;
+                }
+                crate::proxy::CodexStreamEvent::Error(error) => {
+                    let chunk = json!({
+                        "id": &stream_id,
+                        "object": "text_completion",
+                        "created": created,
+                        "model": &model,
+                        "choices": [],
+                        "error": { "message": error, "type": "codex_error" }
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", chunk)));
+                    yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
+                    break;
+                }
+            }
+        }
+    };
+
+    Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
+fn build_codex_responses_stream_response(
+    mut receiver: tokio::sync::mpsc::Receiver<crate::proxy::CodexStreamEvent>,
+    model: String,
+) -> Response {
+    use axum::body::Body;
+
+    let response_id = format!("resp-{}", uuid::Uuid::new_v4().simple());
+    let item_id = format!("item-{}", uuid::Uuid::new_v4().simple());
+    let stream = async_stream::stream! {
+        let created = json!({
+            "type": "response.created",
+            "response": {
+                "id": &response_id,
+                "object": "response",
+                "status": "in_progress",
+                "model": &model,
+                "output": []
+            }
+        });
+        yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", created)));
+        let item_added = json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "item": { "id": &item_id, "type": "message", "role": "assistant", "status": "in_progress", "content": [] }
+        });
+        yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", item_added)));
+        let part_added = json!({
+            "type": "response.content_part.added",
+            "item_id": &item_id,
+            "output_index": 0,
+            "content_index": 0,
+            "part": { "type": "output_text", "text": "" }
+        });
+        yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", part_added)));
+
+        let mut final_model = model.clone();
+        let mut final_text = String::new();
+        let mut final_usage = json!({ "input_tokens": 0, "output_tokens": 0, "total_tokens": 0 });
+
+        while let Some(event) = receiver.recv().await {
+            match event {
+                crate::proxy::CodexStreamEvent::TextDelta(delta) => {
+                    final_text.push_str(&delta);
+                    let ev = json!({
+                        "type": "response.output_text.delta",
+                        "item_id": &item_id,
+                        "output_index": 0,
+                        "content_index": 0,
+                        "delta": delta
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", ev)));
+                }
+                crate::proxy::CodexStreamEvent::Completed(result) => {
+                    final_model = result.model;
+                    final_usage = json!({
+                        "input_tokens": result.usage.as_ref().and_then(|u| u.input_tokens).unwrap_or(0),
+                        "output_tokens": result.usage.as_ref().and_then(|u| u.output_tokens).unwrap_or(0),
+                        "total_tokens": result.usage.as_ref().and_then(|u| u.total_tokens).unwrap_or(0)
+                    });
+                    if final_text.is_empty() {
+                        final_text = result.text;
+                    }
+                    let text_done = json!({
+                        "type": "response.output_text.done",
+                        "item_id": &item_id,
+                        "output_index": 0,
+                        "content_index": 0,
+                        "text": final_text.clone()
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", text_done)));
+                    let item_done = json!({
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": {
+                            "id": &item_id,
+                            "type": "message",
+                            "role": "assistant",
+                            "status": "completed",
+                            "content": [{ "type": "output_text", "text": final_text.clone() }]
+                        }
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", item_done)));
+                    let completed = json!({
+                        "type": "response.completed",
+                        "response": {
+                            "id": &response_id,
+                            "object": "response",
+                            "status": "completed",
+                            "model": final_model.clone(),
+                            "output": [{
+                                "id": &item_id,
+                                "type": "message",
+                                "role": "assistant",
+                                "status": "completed",
+                                "content": [{ "type": "output_text", "text": final_text.clone() }]
+                            }],
+                            "usage": final_usage.clone()
+                        }
+                    });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", completed)));
+                    break;
+                }
+                crate::proxy::CodexStreamEvent::Error(error) => {
+                    let ev = json!({ "type": "response.failed", "error": { "message": error, "type": "codex_error" } });
+                    yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", ev)));
+                    break;
+                }
+            }
+        }
+    };
+
+    Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from_stream(stream))
+        .unwrap()
+}
+
 pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoResponse {
     use crate::proxy::common::model_mapping::get_all_dynamic_models;
 
-    let model_ids = get_all_dynamic_models(&state.custom_mapping, Some(&state.token_manager)).await;
+    let mut model_ids =
+        get_all_dynamic_models(&state.custom_mapping, Some(&state.token_manager)).await;
+    if let Ok(status) = state.codex.refresh_status().await {
+        let codex_config = state.codex.get_config().await;
+        if status.enabled && codex_config.expose_in_router {
+            if let Ok(codex_models) = state.codex.refresh_models().await {
+                for model in codex_models {
+                    model_ids.push(format!("codex:{}", model));
+                }
+            }
+        }
+    }
+    model_ids.sort();
+    model_ids.dedup();
 
     let data: Vec<_> = model_ids
         .into_iter()

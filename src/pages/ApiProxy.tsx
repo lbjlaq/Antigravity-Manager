@@ -45,6 +45,21 @@ interface ProxyStatus {
     active_accounts: number;
 }
 
+interface CodexProviderStatus {
+    enabled: boolean;
+    command: string;
+    executable_path?: string | null;
+    version?: string | null;
+    login_status: string;
+    login_message?: string | null;
+    desired_workers: number;
+    healthy_workers: number;
+    busy_workers: number;
+    models: string[];
+    last_error?: string | null;
+    warnings: string[];
+}
+
 interface CustomPreset {
     id: string;
     name: string;
@@ -166,6 +181,8 @@ export default function ApiProxy() {
     const [zaiAvailableModels, setZaiAvailableModels] = useState<string[]>([]);
     const [zaiModelsLoading, setZaiModelsLoading] = useState(false);
     const [, setZaiModelsError] = useState<string | null>(null);
+    const [codexStatus, setCodexStatus] = useState<CodexProviderStatus | null>(null);
+    const [codexModelsLoading, setCodexModelsLoading] = useState(false);
     const [zaiNewMappingFrom, setZaiNewMappingFrom] = useState('');
     const [zaiNewMappingTo, setZaiNewMappingTo] = useState('');
     const [customMappingValue, setCustomMappingValue] = useState(''); // 自定义映射表单的选中值
@@ -216,6 +233,22 @@ export default function ApiProxy() {
         return appConfig?.proxy.zai?.model_mapping || {};
     }, [appConfig?.proxy.zai?.model_mapping]);
 
+    const getDefaultCodexConfig = (): NonNullable<ProxyConfig['codex']> => ({
+        enabled: false,
+        command: navigator.userAgent.includes('Windows') ? 'codex.cmd' : 'codex',
+        worker_count: 1,
+        request_timeout_ms: 120000,
+        queue_timeout_ms: 5000,
+        restart_on_failure: true,
+        model_catalog_mode: 'detected',
+        models: [],
+        login_mode_hint: 'browser',
+        env: {},
+        expose_in_router: true,
+    });
+
+    const codexConfig = appConfig?.proxy.codex || getDefaultCodexConfig();
+
 
     // 生成自定义映射表单的选项 (从 models 动态生成)
     const customMappingOptions: SelectOption[] = useMemo(() => {
@@ -230,14 +263,17 @@ export default function ApiProxy() {
     useEffect(() => {
         loadConfig();
         loadStatus();
+        loadCodexStatus();
         loadAccounts();
         loadPreferredAccount();
         loadCfStatus();
         loadCustomPresets();
         const interval = setInterval(loadStatus, 3000);
+        const codexInterval = setInterval(loadCodexStatus, 5000);
         const cfInterval = setInterval(loadCfStatus, 5000);
         return () => {
             clearInterval(interval);
+            clearInterval(codexInterval);
             clearInterval(cfInterval);
         };
     }, []);
@@ -446,12 +482,22 @@ export default function ApiProxy() {
         }
     };
 
+    const loadCodexStatus = async () => {
+        try {
+            const status = await invoke<CodexProviderStatus>('get_codex_provider_status');
+            setCodexStatus(status);
+        } catch (error) {
+            console.error('获取 Codex 状态失败:', error);
+        }
+    };
+
 
     const saveConfig = async (newConfig: AppConfig) => {
         // 1. 立即更新 UI 状态，确保流畅
         setAppConfig(newConfig);
         try {
             await invoke('save_config', { config: newConfig });
+            loadCodexStatus();
         } catch (error) {
             console.error('保存配置失败:', error);
             showToast(`${t('common.error')}: ${error}`, 'error');
@@ -788,6 +834,58 @@ export default function ApiProxy() {
             setZaiModelsError(error.toString());
         } finally {
             setZaiModelsLoading(false);
+        }
+    };
+
+    const refreshCodexModels = async () => {
+        setCodexModelsLoading(true);
+        try {
+            const models = await invoke<string[]>('refresh_codex_models');
+            setCodexStatus(prev => prev ? { ...prev, models } : prev);
+            if (appConfig) {
+                const nextConfig = {
+                    ...appConfig,
+                    proxy: {
+                        ...appConfig.proxy,
+                        codex: {
+                            ...codexConfig,
+                            models
+                        }
+                    }
+                };
+                setAppConfig(nextConfig);
+            }
+        } catch (error) {
+            console.error('Failed to refresh Codex models:', error);
+            showToast(`${t('common.error')}: ${error}`, 'error');
+        } finally {
+            setCodexModelsLoading(false);
+            loadCodexStatus();
+        }
+    };
+
+    const updateCodexConfig = (updates: Partial<NonNullable<ProxyConfig['codex']>>) => {
+        if (!appConfig) return;
+        const newConfig = {
+            ...appConfig,
+            proxy: {
+                ...appConfig.proxy,
+                codex: {
+                    ...codexConfig,
+                    ...updates
+                }
+            }
+        };
+        saveConfig(newConfig);
+    };
+
+    const runCodexProviderAction = async (command: 'start_codex_provider' | 'stop_codex_provider' | 'restart_codex_provider') => {
+        try {
+            const nextStatus = await invoke<CodexProviderStatus>(command);
+            setCodexStatus(nextStatus);
+        } catch (error) {
+            console.error('Codex provider action failed:', error);
+            showToast(`${t('common.error')}: ${error}`, 'error');
         }
     };
 
@@ -1519,6 +1617,220 @@ print(response.choices[0].message.content)`;
                                     proxyUrl={status.running ? status.base_url : `http://127.0.0.1:${appConfig.proxy.port || 8045}`}
                                     apiKey={appConfig.proxy.api_key}
                                 />
+                            </CollapsibleCard>
+
+                            <CollapsibleCard
+                                title="Codex CLI Provider"
+                                icon={<Code size={18} className="text-emerald-500" />}
+                                enabled={!!codexConfig.enabled}
+                                onToggle={(checked) => updateCodexConfig({ enabled: checked })}
+                                rightElement={
+                                    <div className="text-[10px] text-gray-500 font-mono">
+                                        {codexStatus ? `${codexStatus.healthy_workers}/${codexStatus.desired_workers} ready` : 'idle'}
+                                    </div>
+                                }
+                            >
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                Command
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={codexConfig.command}
+                                                onChange={(e) => updateCodexConfig({ command: e.target.value })}
+                                                className="input input-sm input-bordered w-full font-mono text-xs"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                Login Hint
+                                            </label>
+                                            <select
+                                                className="select select-sm select-bordered w-full text-xs"
+                                                value={codexConfig.login_mode_hint}
+                                                onChange={(e) => updateCodexConfig({ login_mode_hint: e.target.value as any })}
+                                            >
+                                                <option value="browser">Browser</option>
+                                                <option value="device">Device</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                Workers
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={8}
+                                                value={codexConfig.worker_count}
+                                                onChange={(e) => updateCodexConfig({ worker_count: Math.max(1, Number(e.target.value || 1)) })}
+                                                className="input input-sm input-bordered w-full text-xs"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                Request Timeout (ms)
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={1000}
+                                                step={1000}
+                                                value={codexConfig.request_timeout_ms}
+                                                onChange={(e) => updateCodexConfig({ request_timeout_ms: Math.max(1000, Number(e.target.value || 120000)) })}
+                                                className="input input-sm input-bordered w-full text-xs"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                Queue Timeout (ms)
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={500}
+                                                step={500}
+                                                value={codexConfig.queue_timeout_ms}
+                                                onChange={(e) => updateCodexConfig({ queue_timeout_ms: Math.max(500, Number(e.target.value || 5000)) })}
+                                                className="input input-sm input-bordered w-full text-xs"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                Model Catalog
+                                            </label>
+                                            <select
+                                                className="select select-sm select-bordered w-full text-xs"
+                                                value={codexConfig.model_catalog_mode}
+                                                onChange={(e) => updateCodexConfig({ model_catalog_mode: e.target.value as any })}
+                                            >
+                                                <option value="detected">Detected</option>
+                                                <option value="static">Static</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="checkbox checkbox-xs"
+                                                checked={!!codexConfig.restart_on_failure}
+                                                onChange={(e) => updateCodexConfig({ restart_on_failure: e.target.checked })}
+                                            />
+                                            <span>Restart failed workers</span>
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="checkbox checkbox-xs"
+                                                checked={!!codexConfig.expose_in_router}
+                                                onChange={(e) => updateCodexConfig({ expose_in_router: e.target.checked })}
+                                            />
+                                            <span>Expose `codex:*` models in router</span>
+                                        </label>
+                                    </div>
+
+                                    {codexConfig.model_catalog_mode === 'static' && (
+                                        <div className="space-y-1">
+                                            <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                Static Models
+                                            </label>
+                                            <textarea
+                                                className="textarea textarea-bordered w-full h-24 font-mono text-xs"
+                                                value={codexConfig.models.join('\n')}
+                                                onChange={(e) => updateCodexConfig({
+                                                    models: e.target.value
+                                                        .split(/[\n,]/)
+                                                        .map((item) => item.trim())
+                                                        .filter(Boolean)
+                                                })}
+                                                placeholder={'gpt-5.4\ngpt-5.4-mini\ncodex-mini-latest'}
+                                            />
+                                        </div>
+                                    )}
+
+                                    <div className="rounded-xl border border-gray-100 dark:border-base-200 bg-slate-50 dark:bg-slate-800/70 p-4 space-y-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
+                                                Runtime Diagnostics
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                <button onClick={loadCodexStatus} className="btn btn-xs btn-ghost gap-1">
+                                                    <RefreshCw size={12} />
+                                                    Refresh
+                                                </button>
+                                                <button onClick={refreshCodexModels} className="btn btn-xs btn-ghost gap-1" disabled={codexModelsLoading}>
+                                                    <RefreshCw size={12} className={codexModelsLoading ? 'animate-spin' : ''} />
+                                                    Models
+                                                </button>
+                                                <button onClick={() => runCodexProviderAction('restart_codex_provider')} className="btn btn-xs btn-ghost gap-1">
+                                                    <RefreshCw size={12} />
+                                                    Restart
+                                                </button>
+                                                <button
+                                                    onClick={() => runCodexProviderAction((codexStatus?.healthy_workers || 0) > 0 ? 'stop_codex_provider' : 'start_codex_provider')}
+                                                    className="btn btn-xs btn-ghost gap-1"
+                                                >
+                                                    <Power size={12} />
+                                                    {(codexStatus?.healthy_workers || 0) > 0 ? 'Stop' : 'Start'}
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
+                                            <div><span className="text-gray-500">Executable:</span> <span className="font-mono break-all">{codexStatus?.executable_path || codexConfig.command}</span></div>
+                                            <div><span className="text-gray-500">Version:</span> <span className="font-mono">{codexStatus?.version || 'Unknown'}</span></div>
+                                            <div><span className="text-gray-500">Login:</span> <span className="font-mono">{codexStatus?.login_status || 'unknown'}</span></div>
+                                            <div><span className="text-gray-500">Pool:</span> <span className="font-mono">{codexStatus ? `${codexStatus.healthy_workers} ready / ${codexStatus.busy_workers} busy` : 'Unknown'}</span></div>
+                                        </div>
+
+                                        {codexStatus?.login_message && (
+                                            <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 break-all">
+                                                {codexStatus.login_message}
+                                            </div>
+                                        )}
+                                        {codexStatus?.last_error && (
+                                            <div className="text-[10px] text-red-500 font-mono break-all">
+                                                {codexStatus.last_error}
+                                            </div>
+                                        )}
+                                        {!!codexStatus?.warnings?.length && (
+                                            <div className="text-[10px] text-amber-600 dark:text-amber-400 font-mono space-y-1">
+                                                {codexStatus.warnings.slice(0, 3).map((warning, index) => (
+                                                    <div key={`${warning}-${index}`}>{warning}</div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                            <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
+                                                Router Targets
+                                            </div>
+                                            <div className="text-[10px] text-gray-500">
+                                                Map incoming models to values like <code>codex:gpt-5.4</code>.
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2">
+                                            {(codexStatus?.models?.length ? codexStatus.models : codexConfig.models).map((model) => (
+                                                <button
+                                                    key={model}
+                                                    type="button"
+                                                    className="px-2 py-1 rounded border border-emerald-200 dark:border-emerald-700 text-[10px] font-mono text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
+                                                    onClick={() => copyToClipboardHandler(`codex:${model}`, `codex-${model}`)}
+                                                    title="Click to copy router target"
+                                                >
+                                                    {`codex:${model}`}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
                             </CollapsibleCard>
 
                             {/* z.ai (GLM) Dispatcher */}
