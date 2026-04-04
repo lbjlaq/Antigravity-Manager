@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -13,6 +15,8 @@ use crate::proxy::{CodexConfig, CodexModelCatalogMode};
 
 const CLIENT_NAME: &str = "antigravity-manager";
 const INIT_OPTOUT_NOTIFICATIONS: &[&str] = &["mcpServer/startupStatus/updated"];
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CodexUsage {
@@ -131,6 +135,22 @@ impl CodexRuntimeManager {
 
     pub async fn refresh_status(&self) -> Result<CodexProviderStatus, String> {
         let config = self.config.read().await.clone();
+        if !config.enabled {
+            let status = CodexProviderStatus {
+                enabled: false,
+                command: config.command,
+                login_status: "disabled".to_string(),
+                desired_workers: config.worker_count.max(1),
+                healthy_workers: 0,
+                busy_workers: 0,
+                models: self.cached_models.read().await.clone(),
+                ..CodexProviderStatus::default()
+            };
+
+            *self.status.write().await = status.clone();
+            return Ok(status);
+        }
+
         let executable_path = resolve_command_path(&config.command).await.ok();
         let version = run_command_capture(&config.command, &["--version"])
             .await
@@ -368,6 +388,7 @@ impl CodexRuntimeManager {
 impl CodexWorker {
     async fn spawn(id: usize, config: &CodexConfig) -> Result<Self, String> {
         let mut command = Command::new(&config.command);
+        configure_background_command(&mut command);
         command
             .arg("app-server")
             .stdin(Stdio::piped())
@@ -739,7 +760,9 @@ pub async fn resolve_command_path(command: &str) -> Result<String, String> {
     }
 
     let locator = if cfg!(target_os = "windows") { "where.exe" } else { "which" };
-    let output = Command::new(locator)
+    let mut lookup = Command::new(locator);
+    configure_background_command(&mut lookup);
+    let output = lookup
         .arg(trimmed)
         .output()
         .await
@@ -758,7 +781,9 @@ pub async fn resolve_command_path(command: &str) -> Result<String, String> {
 }
 
 async fn run_command_capture(command: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(command)
+    let mut process = Command::new(command);
+    configure_background_command(&mut process);
+    let output = process
         .args(args)
         .output()
         .await
@@ -793,6 +818,13 @@ async fn detect_login_status(command: &str) -> (String, Option<String>) {
             }
         }
         Err(error) => ("not_logged_in".to_string(), Some(error)),
+    }
+}
+
+fn configure_background_command(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 

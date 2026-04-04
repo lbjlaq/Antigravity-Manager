@@ -297,20 +297,31 @@ export default function ApiProxy() {
     useEffect(() => {
         loadConfig();
         loadStatus();
-        loadCodexStatus();
         loadAccounts();
         loadPreferredAccount();
         loadCfStatus();
         loadCustomPresets();
         const interval = setInterval(loadStatus, 3000);
-        const codexInterval = setInterval(loadCodexStatus, 5000);
         const cfInterval = setInterval(loadCfStatus, 5000);
         return () => {
             clearInterval(interval);
-            clearInterval(codexInterval);
             clearInterval(cfInterval);
         };
     }, []);
+
+    useEffect(() => {
+        if (!appConfig) {
+            return;
+        }
+
+        loadCodexStatus();
+        if (!codexConfig.enabled) {
+            return;
+        }
+
+        const codexInterval = setInterval(loadCodexStatus, 15000);
+        return () => clearInterval(codexInterval);
+    }, [appConfig, codexConfig.enabled, codexConfig.command]);
 
 
 
