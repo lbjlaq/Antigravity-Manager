@@ -148,7 +148,7 @@ pub async fn handle_chat_completions(
 
     // 1. 获取 UpstreamClient (Clone handle)
     let upstream = state.upstream.clone();
-    let token_manager = state.token_manager;
+    let token_manager = state.token_manager.clone();
     let pool_size = token_manager.len();
     // [FIX] Ensure max_attempts is at least 2 to allow for internal retries
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
@@ -1136,7 +1136,7 @@ pub async fn handle_completions(
     }
 
     let upstream = state.upstream.clone();
-    let token_manager = state.token_manager;
+    let token_manager = state.token_manager.clone();
     let pool_size = token_manager.len();
     // [FIX] Ensure max_attempts is at least 2 to allow for internal retries
     let max_attempts = MAX_RETRY_ATTEMPTS.min(pool_size.saturating_add(1)).max(2);
