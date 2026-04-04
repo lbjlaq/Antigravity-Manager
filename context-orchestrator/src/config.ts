@@ -16,8 +16,10 @@ export interface OrchestratorConfig {
     skills: string;
     sessionSummaries: string;
     repoDocs: string;
+    mcpServers: string;
   };
   skillRoots: string[];
+  mcpConfigPaths: string[];
 }
 
 function parseRoots(raw: string | undefined): string[] {
@@ -26,6 +28,17 @@ function parseRoots(raw: string | undefined): string[] {
       path.join(os.homedir(), ".codex", "skills"),
       path.join(os.homedir(), ".codex", "shared", "skills-general"),
     ];
+  }
+
+  return raw
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseOptionalPaths(raw: string | undefined): string[] {
+  if (!raw) {
+    return [];
   }
 
   return raw
@@ -63,7 +76,15 @@ export function loadConfig(): OrchestratorConfig {
         "context_mcp_session_summaries",
       repoDocs:
         process.env.CONTEXT_MCP_QDRANT_REPO_DOCS_COLLECTION ?? "context_mcp_repo_docs",
+      mcpServers:
+        process.env.CONTEXT_MCP_QDRANT_MCP_SERVERS_COLLECTION ?? "context_mcp_mcp_servers",
     },
     skillRoots: parseRoots(process.env.CONTEXT_MCP_SKILL_ROOTS),
+    mcpConfigPaths: parseOptionalPaths(process.env.CONTEXT_MCP_CONFIG_PATHS).length
+      ? parseOptionalPaths(process.env.CONTEXT_MCP_CONFIG_PATHS)
+      : [
+          path.join(os.homedir(), ".codex", "config.toml"),
+          path.resolve(process.cwd(), "mcp-settings.json"),
+        ],
   };
 }

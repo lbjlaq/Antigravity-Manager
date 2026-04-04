@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-04-04T16:59:34.0053498+03:00",
+  "task": "Expanded context-orchestrator with MCP gateway tests, corpus freshness status, and Qdrant-inspired doc chunking",
+  "edits": [
+    "context-orchestrator/src/storage/sqlite.ts",
+    "context-orchestrator/src/storage/index.ts",
+    "context-orchestrator/src/services/index-service.ts",
+    "context-orchestrator/src/gateway/server.ts",
+    "context-orchestrator/tests/gateway.test.ts",
+    "context-orchestrator/tests/index-service.test.ts",
+    "context-orchestrator/package.json"
+  ],
+  "commands": [
+    "npm test",
+    "npm run build"
+  ],
+  "verification": [
+    "7 Node tests passed",
+    "TypeScript build passed"
+  ],
+  "notes": [
+    "Added protocol-level MCP gateway coverage using the SDK Client + InMemoryTransport.",
+    "Added index run tracking so status/reindex responses include freshness metadata, chunk counts, document counts, embedding model, and cache/artifact dashboard stats.",
+    "Adopted selective codex-orch-unified Qdrant ingest ideas: ignore noisy directories and chunk large repo docs before embedding."
+  ],
+  "outcome": "The orchestrator now exposes richer status/reindex payloads and has broader reliability coverage over both services and MCP tool outputs."
+}

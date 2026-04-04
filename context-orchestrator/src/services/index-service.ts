@@ -37,6 +37,44 @@ function normalizeRepoScope(repoRoot: string): string {
   return repoRoot.replace(/[\\/:]+/g, "_").toLowerCase();
 }
 
+const IGNORE_DIRS = new Set([
+  ".git",
+  "node_modules",
+  ".next",
+  ".venv",
+  "dist",
+  "build",
+  "__pycache__",
+  "tmp",
+  ".codex-swarm",
+]);
+
+function shouldIgnorePath(filePath: string): boolean {
+  return filePath.split(path.sep).some((segment) => IGNORE_DIRS.has(segment));
+}
+
+function chunkText(text: string, maxChars = 1600): string[] {
+  const lines = text.split(/\r?\n/);
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const line of lines) {
+    const next = current ? `${current}\n${line}` : line;
+    if (next.length > maxChars && current) {
+      chunks.push(current);
+      current = line;
+      continue;
+    }
+    current = next;
+  }
+
+  if (current.trim()) {
+    chunks.push(current);
+  }
+
+  return chunks.length > 0 ? chunks : [text];
+}
+
 function walk(root: string): string[] {
   if (!fs.existsSync(root)) {
     return [];
@@ -46,6 +84,9 @@ function walk(root: string): string[] {
   const stack = [root];
   while (stack.length > 0) {
     const current = stack.pop()!;
+    if (shouldIgnorePath(current)) {
+      continue;
+    }
     const stat = fs.statSync(current);
     if (stat.isDirectory()) {
       for (const entry of fs.readdirSync(current)) {
@@ -75,23 +116,172 @@ function collectSkillDocuments(skillRoots: string[]): IndexedDocument[] {
     }));
 }
 
+function parseCodexTomlMcpServers(filePath: string): IndexedDocument[] {
+  const raw = fs.readFileSync(filePath, "utf8");
+  const lines = raw.split(/\r?\n/);
+  const docs: IndexedDocument[] = [];
+  let currentName: string | undefined;
+  let currentBody: string[] = [];
+
+  const flush = () => {
+    if (!currentName) {
+      return;
+    }
+    const body = currentBody.join("\n").trim();
+    docs.push({
+      id: `${filePath}#${currentName}`,
+      title: currentName,
+      text: `${currentName}\n${body}`.trim(),
+      path: filePath,
+      collection: "mcp_servers",
+      metadata: {
+        title: currentName,
+        path: filePath,
+        serverName: currentName,
+        sourceKind: "codex_toml",
+      },
+    });
+  };
+
+  for (const line of lines) {
+    const section = line.match(/^\[mcp_servers\.("?)([^"\]]+)\1\]\s*$/);
+    if (section) {
+      flush();
+      currentName = section[2]?.trim();
+      currentBody = [];
+      continue;
+    }
+
+    if (/^\[[^\]]+\]\s*$/.test(line)) {
+      flush();
+      currentName = undefined;
+      currentBody = [];
+      continue;
+    }
+
+    if (currentName) {
+      currentBody.push(line);
+    }
+  }
+
+  flush();
+  return docs;
+}
+
+function parseJsonMcpServers(filePath: string): IndexedDocument[] {
+  const raw = fs.readFileSync(filePath, "utf8");
+  const json = JSON.parse(raw) as Record<string, unknown>;
+  const docs: IndexedDocument[] = [];
+
+  const mcpServers =
+    json.mcpServers && typeof json.mcpServers === "object"
+      ? (json.mcpServers as Record<string, unknown>)
+      : {};
+  for (const [name, config] of Object.entries(mcpServers)) {
+    docs.push({
+      id: `${filePath}#${name}`,
+      title: name,
+      text: `${name}\n${JSON.stringify(config, null, 2)}`,
+      path: filePath,
+      collection: "mcp_servers",
+      metadata: {
+        title: name,
+        path: filePath,
+        serverName: name,
+        sourceKind: "mcpServers_json",
+      },
+    });
+  }
+
+  const dockerRegistry =
+    json.dockerRegistry && typeof json.dockerRegistry === "object"
+      ? (json.dockerRegistry as Record<string, unknown>)
+      : undefined;
+  const dockerServers =
+    dockerRegistry?.servers && typeof dockerRegistry.servers === "object"
+      ? (dockerRegistry.servers as Record<string, unknown>)
+      : {};
+  for (const [name, config] of Object.entries(dockerServers)) {
+    docs.push({
+      id: `${filePath}#docker:${name}`,
+      title: `docker:${name}`,
+      text: `docker:${name}\n${JSON.stringify(config, null, 2)}`,
+      path: filePath,
+      collection: "mcp_servers",
+      metadata: {
+        title: `docker:${name}`,
+        path: filePath,
+        serverName: name,
+        sourceKind: "docker_registry_json",
+      },
+    });
+  }
+
+  return docs;
+}
+
+function candidateMcpConfigPaths(config: OrchestratorConfig, repoRoot?: string): string[] {
+  const out = [...config.mcpConfigPaths];
+  if (repoRoot) {
+    out.push(path.join(repoRoot, "mcp-settings.json"));
+    out.push(path.join(repoRoot, "mcp.json"));
+  }
+  return Array.from(new Set(out));
+}
+
+export function listMcpServers(
+  configPaths: string[],
+  repoRoot?: string,
+): IndexedDocument[] {
+  return Array.from(new Set(configPaths))
+    .filter((filePath) => fs.existsSync(filePath))
+    .flatMap((filePath) => {
+      try {
+        if (filePath.toLowerCase().endsWith(".json")) {
+          return parseJsonMcpServers(filePath);
+        }
+        if (filePath.toLowerCase().endsWith(".toml")) {
+          return parseCodexTomlMcpServers(filePath);
+        }
+      } catch {
+        return [];
+      }
+      return [];
+    })
+    .map((document) => ({
+      ...document,
+      metadata: {
+        ...document.metadata,
+        repoRoot,
+        repoScope: repoRoot ? normalizeRepoScope(repoRoot) : "global",
+      },
+    }));
+}
+
 export function listRepoDocs(repoRoot: string): IndexedDocument[] {
   const docsRoot = path.join(repoRoot, "docs");
   return walk(docsRoot)
     .filter((filePath) => /\.(md|txt)$/i.test(filePath))
-    .map((filePath) => ({
-      id: filePath,
-      title: path.relative(repoRoot, filePath),
-      text: fs.readFileSync(filePath, "utf8").replace(/\s+/g, " ").trim().slice(0, 12000),
-      path: filePath,
-      collection: "repo_docs",
-      metadata: {
-        repoRoot,
-        repoScope: normalizeRepoScope(repoRoot),
-        title: path.relative(repoRoot, filePath),
+    .flatMap((filePath) => {
+      const relativePath = path.relative(repoRoot, filePath);
+      const raw = fs.readFileSync(filePath, "utf8").slice(0, 24000);
+      return chunkText(raw).map((chunk, index, chunks) => ({
+        id: `${filePath}#${index}`,
+        title: chunks.length > 1 ? `${relativePath} (chunk ${index + 1}/${chunks.length})` : relativePath,
+        text: chunk.replace(/\s+/g, " ").trim(),
         path: filePath,
-      },
-    }));
+        collection: "repo_docs" as const,
+        metadata: {
+          repoRoot,
+          repoScope: normalizeRepoScope(repoRoot),
+          title: relativePath,
+          path: filePath,
+          sourceDocumentId: filePath,
+          chunkIndex: index,
+          chunkCount: chunks.length,
+        },
+      }));
+    });
 }
 
 function buildSessionDocuments(
@@ -136,6 +326,8 @@ function collectionNameFor(
       return config.qdrantCollections.sessionSummaries;
     case "repo_docs":
       return config.qdrantCollections.repoDocs;
+    case "mcp_servers":
+      return config.qdrantCollections.mcpServers;
   }
 }
 
@@ -184,14 +376,23 @@ export class IndexService {
   async bootstrap(): Promise<void> {
     await this.ingestSkills();
     await this.ingestSessionSummaries();
+    await this.ingestMcpServers();
+  }
+
+  getMcpConfigPaths(repoRoot?: string): string[] {
+    return candidateMcpConfigPaths(this.config, repoRoot);
+  }
+
+  listMcpServerDocuments(repoRoot?: string): IndexedDocument[] {
+    return listMcpServers(this.getMcpConfigPaths(repoRoot), repoRoot);
   }
 
   async ingestSkills(): Promise<void> {
-    await this.indexDocuments(collectSkillDocuments(this.config.skillRoots));
+    await this.indexDocuments(collectSkillDocuments(this.config.skillRoots), undefined, "skills");
   }
 
   async ingestSessionSummaries(limit = 150): Promise<void> {
-    await this.indexDocuments(buildSessionDocuments(this.artifacts, limit));
+    await this.indexDocuments(buildSessionDocuments(this.artifacts, limit), undefined, "memory");
   }
 
   async ingestArtifact(artifact: CompanionArtifact, filePath?: string): Promise<void> {
@@ -209,11 +410,19 @@ export class IndexService {
           createdAt: artifact.created_at,
         },
       },
-    ]);
+    ], undefined, "memory");
   }
 
   async ingestRepoDocs(repoRoot: string): Promise<void> {
-    await this.indexDocuments(listRepoDocs(repoRoot), repoRoot);
+    await this.indexDocuments(listRepoDocs(repoRoot), repoRoot, "docs");
+  }
+
+  async ingestMcpServers(repoRoot?: string): Promise<void> {
+    await this.indexDocuments(
+      this.listMcpServerDocuments(repoRoot),
+      repoRoot,
+      "mcp_servers",
+    );
   }
 
   async searchSkills(query: string, limit: number): Promise<SearchHit[]> {
@@ -246,16 +455,32 @@ export class IndexService {
     });
   }
 
-  async reindex(scope: "skills" | "memory" | "docs" | "all", repoRoot?: string): Promise<{
-    scope: "skills" | "memory" | "docs" | "all";
+  async searchMcpServers(repoRoot: string | undefined, query: string, limit: number): Promise<SearchHit[]> {
+    await this.ingestMcpServers(repoRoot);
+    return this.semanticSearch(this.config.qdrantCollections.mcpServers, "mcp_server", query, limit, {
+      must: [
+        {
+          key: "repoScope",
+          match: {
+            value: repoRoot ? normalizeRepoScope(repoRoot) : "global",
+          },
+        },
+      ],
+    });
+  }
+
+  async reindex(scope: "skills" | "memory" | "docs" | "mcp_servers" | "all", repoRoot?: string): Promise<{
+    scope: "skills" | "memory" | "docs" | "mcp_servers" | "all";
     repoRoot?: string;
     skillsIndexed: boolean;
     memoryIndexed: boolean;
     docsIndexed: boolean;
+    mcpServersIndexed: boolean;
   }> {
     let skillsIndexed = false;
     let memoryIndexed = false;
     let docsIndexed = false;
+    let mcpServersIndexed = false;
 
     if (scope === "skills" || scope === "all") {
       await this.ingestSkills();
@@ -272,53 +497,93 @@ export class IndexService {
       docsIndexed = true;
     }
 
+    if (scope === "mcp_servers" || scope === "all") {
+      await this.ingestMcpServers(repoRoot);
+      mcpServersIndexed = true;
+    }
+
     return {
       scope,
       repoRoot,
       skillsIndexed,
       memoryIndexed,
       docsIndexed,
+      mcpServersIndexed,
     };
   }
 
   async getStatus(repoRoot?: string): Promise<{
     semanticReady: boolean;
     qdrant: { ok: boolean; collectionCount?: number; error?: string };
-    collections: {
-      skills: { name: string; points: number };
-      sessionSummaries: { name: string; points: number };
-      repoDocs: { name: string; points: number; repoRoot?: string };
+    dashboard: {
+      artifactsTotal: number;
+      latestArtifactAt?: string;
+      cacheEntries: number;
     };
+      collections: {
+        skills: CollectionStatus;
+        sessionSummaries: CollectionStatus;
+        repoDocs: CollectionStatus;
+        mcpServers: CollectionStatus;
+      };
   }> {
     const qdrant = await checkQdrantHealth(this.qdrant);
-    const [skillsPoints, sessionPoints, repoDocsPoints] = await Promise.all([
+    const [skillsPoints, sessionPoints, repoDocsPoints, mcpServersPoints] = await Promise.all([
       getCollectionPointCount(this.qdrant, this.config.qdrantCollections.skills),
       getCollectionPointCount(this.qdrant, this.config.qdrantCollections.sessionSummaries),
       getCollectionPointCount(this.qdrant, this.config.qdrantCollections.repoDocs),
+      getCollectionPointCount(this.qdrant, this.config.qdrantCollections.mcpServers),
     ]);
+
+    const skillsRun = this.artifacts.getIndexRun("skills");
+    const sessionRun = this.artifacts.getIndexRun("memory");
+    const repoRun = repoRoot
+      ? this.artifacts.getIndexRun(`docs:${normalizeRepoScope(repoRoot)}`)
+      : this.artifacts.latestIndexRunByPrefix("docs");
+    const mcpRun = repoRoot
+      ? this.artifacts.getIndexRun(`mcp_servers:${normalizeRepoScope(repoRoot)}`)
+      : this.artifacts.latestIndexRunByPrefix("mcp_servers");
 
     return {
       semanticReady: this.isSemanticReady(),
       qdrant,
+      dashboard: {
+        artifactsTotal: this.artifacts.count(),
+        latestArtifactAt: this.artifacts.latestCreatedAt(),
+        cacheEntries: this.cache.count(),
+      },
       collections: {
         skills: {
           name: this.config.qdrantCollections.skills,
           points: skillsPoints,
+          freshness: describeFreshness(skillsRun),
         },
         sessionSummaries: {
           name: this.config.qdrantCollections.sessionSummaries,
           points: sessionPoints,
+          freshness: describeFreshness(sessionRun),
         },
         repoDocs: {
           name: this.config.qdrantCollections.repoDocs,
           points: repoDocsPoints,
           repoRoot,
+          freshness: describeFreshness(repoRun),
+        },
+        mcpServers: {
+          name: this.config.qdrantCollections.mcpServers,
+          points: mcpServersPoints,
+          repoRoot,
+          freshness: describeFreshness(mcpRun),
         },
       },
     };
   }
 
-  private async indexDocuments(documents: IndexedDocument[], repoRoot?: string): Promise<void> {
+  private async indexDocuments(
+    documents: IndexedDocument[],
+    repoRoot?: string,
+    runScope?: "skills" | "memory" | "docs" | "mcp_servers",
+  ): Promise<void> {
     if (!this.isSemanticReady() || documents.length === 0) {
       return;
     }
@@ -389,8 +654,10 @@ export class IndexService {
         id: item.pointId,
         vector: item.vector,
         payload: item.payload,
-      })),
+        })),
     );
+
+    this.recordIndexRun(runScope ?? documents[0].collection, documents, repoRoot);
   }
 
   private async semanticSearch(
@@ -414,4 +681,81 @@ export class IndexService {
       return [];
     }
   }
+
+  private recordIndexRun(
+    scope: "skills" | "memory" | "docs" | "mcp_servers" | IndexedDocument["collection"],
+    documents: IndexedDocument[],
+    repoRoot?: string,
+  ): void {
+    const normalizedScope =
+      scope === "docs" || scope === "repo_docs"
+        ? `docs:${normalizeRepoScope(repoRoot ?? "unknown")}`
+        : scope === "mcp_servers"
+          ? `mcp_servers:${normalizeRepoScope(repoRoot ?? "global")}`
+        : scope === "memory" || scope === "session_summaries"
+          ? "memory"
+          : "skills";
+
+    this.artifacts.recordIndexRun({
+      scope: normalizedScope,
+      updated_at: new Date().toISOString(),
+      document_count: new Set(
+        documents.map((document) =>
+          typeof document.metadata?.sourceDocumentId === "string"
+            ? document.metadata.sourceDocumentId
+            : document.id,
+        ),
+      ).size,
+      chunk_count: documents.length,
+      embedding_model: this.config.embeddingModel,
+      repo_root: repoRoot ?? null,
+    });
+  }
+}
+
+interface CollectionFreshness {
+  lastIndexedAt?: string;
+  ageSeconds?: number;
+  documentCount?: number;
+  chunkCount?: number;
+  embeddingModel?: string;
+  stale: boolean;
+}
+
+interface CollectionStatus {
+  name: string;
+  points: number;
+  repoRoot?: string;
+  freshness: CollectionFreshness;
+}
+
+function describeFreshness(
+  run:
+    | {
+        updated_at: string;
+        document_count: number;
+        chunk_count: number;
+        embedding_model: string;
+      }
+    | undefined,
+): CollectionFreshness {
+  if (!run) {
+    return {
+      stale: true,
+    };
+  }
+
+  const ageSeconds = Math.max(
+    0,
+    Math.floor((Date.now() - new Date(run.updated_at).getTime()) / 1000),
+  );
+
+  return {
+    lastIndexedAt: run.updated_at,
+    ageSeconds,
+    documentCount: run.document_count,
+    chunkCount: run.chunk_count,
+    embeddingModel: run.embedding_model,
+    stale: ageSeconds > 3600,
+  };
 }

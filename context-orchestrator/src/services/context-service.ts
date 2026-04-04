@@ -96,13 +96,13 @@ export function classifyTask(goal: string): TaskClass {
 function toolShortlist(taskClass: TaskClass): string[] {
   switch (taskClass) {
     case "architecture":
-      return ["search_docs", "search_skills", "plan_or_review"];
+      return ["search_docs", "search_skills", "search_mcp_servers", "plan_or_review"];
     case "review":
-      return ["search_memory", "search_docs", "plan_or_review"];
+      return ["search_memory", "search_docs", "search_mcp_servers", "plan_or_review"];
     case "debugging":
-      return ["search_memory", "search_docs", "prepare_task_context"];
+      return ["search_memory", "search_docs", "search_mcp_servers", "prepare_task_context"];
     default:
-      return ["search_skills", "search_docs", "search_memory"];
+      return ["search_skills", "search_docs", "search_mcp_servers", "search_memory"];
   }
 }
 
@@ -116,6 +116,7 @@ export class ContextService {
       skills: string;
       sessionSummaries: string;
       repoDocs: string;
+      mcpServers: string;
     },
   ) {}
 
@@ -171,6 +172,23 @@ export class ContextService {
     return hits;
   }
 
+  async searchMcpServers(repoRoot: string | undefined, query: string, limit: number): Promise<SearchHit[]> {
+    const normalizedScope = repoRoot ? repoScope(repoRoot) : "global";
+    const scope = `search:mcp_servers:${normalizedScope}`;
+    const versionToken = this.mcpServersVersion(repoRoot);
+    const cacheKey = this.cache.buildKey(scope, [query, String(limit)], versionToken);
+    const cached = this.cache.get<SearchHit[]>(cacheKey, versionToken);
+    if (cached) {
+      return cached.value;
+    }
+
+    const semanticHits = await this.indexService.searchMcpServers(repoRoot, query, limit);
+    const deterministicHits = this.searchMcpServersFallback(repoRoot, query, limit);
+    const hits = mergeHits(semanticHits, deterministicHits, limit);
+    this.cache.set(scope, cacheKey, versionToken, hits);
+    return hits;
+  }
+
   async prepareContext(
     goal: string,
     cwd: string,
@@ -186,6 +204,7 @@ export class ContextService {
       this.skillsVersion(),
       this.docsVersion(cwd),
       this.memoryVersion(),
+      this.mcpServersVersion(cwd),
     ]);
     const cacheKey = this.cache.buildKey(
       scope,
@@ -200,15 +219,17 @@ export class ContextService {
       };
     }
 
-    const [selectedSkills, memoryHits, docHits] = await Promise.all([
+    const [selectedSkills, memoryHits, docHits, mcpServerHits] = await Promise.all([
       this.searchSkills(query || goal, 5),
       this.searchMemory(query || goal, 5),
       this.searchDocs(cwd, query || goal, 5),
+      this.searchMcpServers(cwd, query || goal, 5),
     ]);
 
     const contextPack: ContextPack = {
       taskClass,
       selectedSkills,
+      mcpServerHits,
       selectedTools: toolShortlist(taskClass),
       memoryHits,
       docHits,
@@ -225,11 +246,15 @@ export class ContextService {
         ? ["search:skills", `embedding:${this.collectionNames.skills}`]
         : scope === "memory"
           ? ["search:memory", `embedding:${this.collectionNames.sessionSummaries}`]
+          : scope === "mcp_servers"
+            ? ["search:mcp_servers", `embedding:${this.collectionNames.mcpServers}`, "mcp_servers"]
           : [
               scope,
               `search:docs:${repoScope(scope)}`,
+              `search:mcp_servers:${repoScope(scope)}`,
               `context:prepare:${repoScope(scope)}`,
               `embedding:${this.collectionNames.repoDocs}:${repoScope(scope)}`,
+              `embedding:${this.collectionNames.mcpServers}:${repoScope(scope)}`,
             ];
 
     let deletedCount = 0;
@@ -260,6 +285,12 @@ export class ContextService {
   private memoryVersion(): string {
     const rows = this.artifacts.listRecent(200);
     return hashParts(rows.map((row) => `${row.id}:${row.created_at}:${row.summary}`));
+  }
+
+  private mcpServersVersion(repoRoot?: string): string {
+    const paths = this.indexService.getMcpConfigPaths(repoRoot);
+    const existing = paths.filter((filePath) => fs.existsSync(filePath));
+    return fileVersionToken(existing);
   }
 
   private searchSkillsFallback(query: string, limit: number): SearchHit[] {
@@ -369,5 +400,21 @@ export class ContextService {
       path: row.file_path,
       score: scoreText(query, `${row.summary} ${row.explanation}`),
     }));
+  }
+
+  private searchMcpServersFallback(repoRoot: string | undefined, query: string, limit: number): SearchHit[] {
+    return this.indexService
+      .listMcpServerDocuments(repoRoot)
+      .map((document) => ({
+        id: document.id,
+        kind: "mcp_server" as const,
+        title: document.title,
+        snippet: document.text.slice(0, 240).replace(/\s+/g, " ").trim(),
+        path: document.path,
+        score: scoreText(query, `${document.title} ${document.text}`),
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
   }
 }

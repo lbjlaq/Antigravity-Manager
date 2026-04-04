@@ -28,8 +28,19 @@ export const OrchestratorStatusInputSchema = z.object({
 });
 
 export const ReindexInputSchema = z.object({
-  scope: z.enum(["skills", "memory", "docs", "all"]).default("all"),
+  scope: z.enum(["skills", "memory", "docs", "mcp_servers", "all"]).default("all"),
   cwd: z.string().optional(),
+});
+
+export const MemorySummaryInputSchema = z.object({
+  source: z.string().min(1),
+  summary: z.string().min(1),
+  details: z.string().optional(),
+  category: z.enum(["decision", "pattern", "finding", "other"]).default("other"),
+  relatedFiles: z.array(z.string()).optional().default([]),
+  cwd: z.string().optional(),
+  repoId: z.string().optional(),
+  profileId: z.string().optional(),
 });
 
 export type PrepareTaskContextInput = z.infer<typeof PrepareTaskContextInputSchema>;
@@ -37,3 +48,4 @@ export type PlanOrReviewInput = z.infer<typeof PlanOrReviewInputSchema>;
 export type SearchQueryInput = z.infer<typeof SearchQuerySchema>;
 export type OrchestratorStatusInput = z.infer<typeof OrchestratorStatusInputSchema>;
 export type ReindexInput = z.infer<typeof ReindexInputSchema>;
+export type MemorySummaryInput = z.infer<typeof MemorySummaryInputSchema>;

@@ -26,7 +26,7 @@ export interface QuestionItem {
 }
 
 export interface EvidenceItem {
-  kind: "memory" | "doc" | "skill" | "repo_fact" | "user_input";
+  kind: "memory" | "doc" | "skill" | "mcp_server" | "repo_fact" | "user_input";
   ref: string;
   note: string;
 }
@@ -51,7 +51,7 @@ export interface CompanionArtifact {
 export interface SearchHit {
   [key: string]: unknown;
   id: string;
-  kind: "memory" | "doc" | "skill";
+  kind: "memory" | "doc" | "skill" | "mcp_server";
   title: string;
   snippet: string;
   path?: string;
@@ -62,11 +62,23 @@ export interface ContextPack {
   [key: string]: unknown;
   taskClass: TaskClass;
   selectedSkills: SearchHit[];
+  mcpServerHits: SearchHit[];
   selectedTools: string[];
   memoryHits: SearchHit[];
   docHits: SearchHit[];
   cacheHit: boolean;
   plannerArtifactId?: string;
+}
+
+export interface MemorySummaryInput {
+  source: string;
+  summary: string;
+  details?: string;
+  category: "decision" | "pattern" | "finding" | "other";
+  relatedFiles?: string[];
+  cwd?: string;
+  repoId?: string;
+  profileId?: string;
 }
 
 export interface CacheEntry<T = unknown> {
@@ -96,6 +108,6 @@ export interface IndexedDocument {
   title: string;
   text: string;
   path: string;
-  collection: "skills" | "session_summaries" | "repo_docs";
+  collection: "skills" | "session_summaries" | "repo_docs" | "mcp_servers";
   metadata?: Record<string, unknown>;
 }

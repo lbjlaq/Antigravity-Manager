@@ -23,6 +23,15 @@ export interface CacheRow {
   created_at: string;
 }
 
+export interface IndexRunRow {
+  scope: string;
+  updated_at: string;
+  document_count: number;
+  chunk_count: number;
+  embedding_model: string;
+  repo_root: string | null;
+}
+
 export class SqliteStore {
   readonly db: DatabaseSync;
 
@@ -49,6 +58,15 @@ export class SqliteStore {
         value_json TEXT NOT NULL,
         version_token TEXT NOT NULL,
         created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS index_runs (
+        scope TEXT PRIMARY KEY,
+        updated_at TEXT NOT NULL,
+        document_count INTEGER NOT NULL,
+        chunk_count INTEGER NOT NULL,
+        embedding_model TEXT NOT NULL,
+        repo_root TEXT
       );
     `);
   }
@@ -118,6 +136,18 @@ export class SqliteStore {
     return Number(row?.count ?? 0);
   }
 
+  latestArtifactCreatedAt(): string | undefined {
+    const stmt = this.db.prepare(`
+      SELECT created_at
+      FROM artifacts
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+
+    const row = stmt.get() as { created_at?: string } | undefined;
+    return row?.created_at;
+  }
+
   upsertCacheRow(row: CacheRow): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO cache_entries (
@@ -162,5 +192,44 @@ export class SqliteStore {
 
     const row = stmt.get() as { count?: number } | undefined;
     return Number(row?.count ?? 0);
+  }
+
+  upsertIndexRun(row: IndexRunRow): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO index_runs (
+        scope, updated_at, document_count, chunk_count, embedding_model, repo_root
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      row.scope,
+      row.updated_at,
+      row.document_count,
+      row.chunk_count,
+      row.embedding_model,
+      row.repo_root,
+    );
+  }
+
+  getIndexRun(scope: string): IndexRunRow | undefined {
+    const stmt = this.db.prepare(`
+      SELECT scope, updated_at, document_count, chunk_count, embedding_model, repo_root
+      FROM index_runs
+      WHERE scope = ?
+    `);
+
+    return stmt.get(scope) as unknown as IndexRunRow | undefined;
+  }
+
+  latestIndexRunByPrefix(prefix: string): IndexRunRow | undefined {
+    const stmt = this.db.prepare(`
+      SELECT scope, updated_at, document_count, chunk_count, embedding_model, repo_root
+      FROM index_runs
+      WHERE scope = ? OR scope LIKE ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `);
+
+    return stmt.get(prefix, `${prefix}:%`) as unknown as IndexRunRow | undefined;
   }
 }

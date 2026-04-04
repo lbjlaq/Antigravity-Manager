@@ -1,6 +1,6 @@
 import type { CompanionArtifact } from "../types.js";
 import { readArtifact, writeArtifact } from "./artifacts.js";
-import { type ArtifactRow, SqliteStore } from "./sqlite.js";
+import { type ArtifactRow, type IndexRunRow, SqliteStore } from "./sqlite.js";
 
 export class ArtifactRepository {
   constructor(
@@ -43,5 +43,21 @@ export class ArtifactRepository {
 
   count(): number {
     return this.sqlite.countArtifacts();
+  }
+
+  latestCreatedAt(): string | undefined {
+    return this.sqlite.latestArtifactCreatedAt();
+  }
+
+  recordIndexRun(row: IndexRunRow): void {
+    this.sqlite.upsertIndexRun(row);
+  }
+
+  getIndexRun(scope: string): IndexRunRow | undefined {
+    return this.sqlite.getIndexRun(scope);
+  }
+
+  latestIndexRunByPrefix(prefix: string): IndexRunRow | undefined {
+    return this.sqlite.latestIndexRunByPrefix(prefix);
   }
 }

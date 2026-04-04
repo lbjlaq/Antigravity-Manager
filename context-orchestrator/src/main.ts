@@ -35,6 +35,7 @@ async function main(): Promise<void> {
       skills: config.qdrantCollections.skills,
       sessionSummaries: config.qdrantCollections.sessionSummaries,
       repoDocs: config.qdrantCollections.repoDocs,
+      mcpServers: config.qdrantCollections.mcpServers,
     },
   );
   const plannerService = new PlannerService(openai, config);

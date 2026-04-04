@@ -32,6 +32,7 @@ function createHarness() {
     searchSkills: 0,
     searchRepoDocs: 0,
     searchSessionSummaries: 0,
+    searchMcpServers: 0,
   };
 
   const skillHit: SearchHit = {
@@ -56,6 +57,13 @@ function createHarness() {
     snippet: "semantic memory",
     score: 0.7,
   };
+  const mcpHit: SearchHit = {
+    id: "mcp-1",
+    kind: "mcp_server",
+    title: "filesystem",
+    snippet: "semantic mcp server",
+    score: 0.85,
+  };
 
   const indexService = {
     searchSkills: async () => {
@@ -70,6 +78,12 @@ function createHarness() {
       calls.searchSessionSummaries += 1;
       return [memoryHit];
     },
+    searchMcpServers: async () => {
+      calls.searchMcpServers += 1;
+      return [mcpHit];
+    },
+    getMcpConfigPaths: () => [],
+    listMcpServerDocuments: () => [],
   };
 
   const service = new ContextService(
@@ -81,6 +95,7 @@ function createHarness() {
       skills: "skills_collection",
       sessionSummaries: "memory_collection",
       repoDocs: "docs_collection",
+      mcpServers: "mcp_collection",
     },
   );
 
@@ -95,7 +110,9 @@ test("ContextService caches prepareContext results and invalidates repo-scoped e
   assert.equal(calls.searchSkills, 1);
   assert.equal(calls.searchRepoDocs, 1);
   assert.equal(calls.searchSessionSummaries, 1);
+  assert.equal(calls.searchMcpServers, 1);
   assert.equal(first.selectedSkills[0]?.title, "sample-skill");
+  assert.equal(first.mcpServerHits[0]?.title, "filesystem");
   assert.equal(first.docHits[0]?.title, "docs/guide.md");
 
   const second = await service.prepareContext("review docs", root, undefined, ["docs"], ["docs/guide.md"]);
@@ -103,6 +120,7 @@ test("ContextService caches prepareContext results and invalidates repo-scoped e
   assert.equal(calls.searchSkills, 1);
   assert.equal(calls.searchRepoDocs, 1);
   assert.equal(calls.searchSessionSummaries, 1);
+  assert.equal(calls.searchMcpServers, 1);
 
   const invalidation = service.invalidate(root);
   assert.equal(invalidation.invalidated, true);
@@ -113,4 +131,5 @@ test("ContextService caches prepareContext results and invalidates repo-scoped e
   assert.equal(calls.searchSkills, 1);
   assert.equal(calls.searchRepoDocs, 2);
   assert.equal(calls.searchSessionSummaries, 1);
+  assert.equal(calls.searchMcpServers, 2);
 });

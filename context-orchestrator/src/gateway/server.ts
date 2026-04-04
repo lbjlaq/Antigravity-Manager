@@ -5,6 +5,7 @@ import { ContextService } from "../services/context-service.js";
 import { IndexService } from "../services/index-service.js";
 import { PlannerService } from "../services/planner-service.js";
 import {
+  MemorySummaryInputSchema,
   OrchestratorStatusInputSchema,
   PlanOrReviewInputSchema,
   PrepareTaskContextInputSchema,
@@ -128,6 +129,62 @@ export function createGateway(
   );
 
   server.registerTool(
+    "submit_memory_summary",
+    {
+      description: "Persist a lightweight agent/client summary into the shared memory inbox using the global artifact format.",
+      inputSchema: MemorySummaryInputSchema,
+    },
+    async ({ source, summary, details, category, relatedFiles, cwd, repoId, profileId }) => {
+      const artifact = await plannerService.buildArtifact({
+        mode: "auto",
+        taskClass: contextService.classify(`${summary}\n${details ?? ""}`),
+        taskDescription: summary,
+        repoId,
+        evidence: [
+          {
+            kind: "user_input",
+            ref: source,
+            note: details ?? summary,
+          },
+          ...relatedFiles.map((filePath) => ({
+            kind: "repo_fact" as const,
+            ref: filePath,
+            note: `Related file: ${filePath}`,
+          })),
+        ],
+      });
+
+      const enrichedArtifact = {
+        ...artifact,
+        summary,
+        explanation: details?.trim() ? details : artifact.explanation,
+        profile_id: profileId,
+        source_client: source,
+        memory_category: category,
+        memory_status: "NEW",
+        related_files: relatedFiles,
+        cwd,
+      };
+
+      const filePath = artifacts.save(enrichedArtifact);
+      await indexService.ingestArtifact(enrichedArtifact, filePath);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ artifact: enrichedArtifact, filePath }, null, 2),
+          },
+        ],
+        structuredContent: {
+          artifact: enrichedArtifact,
+          filePath,
+        },
+      };
+    },
+  );
+
+  server.registerTool(
     "search_memory",
     {
       description: "Search persisted local planning and review artifacts using semantic retrieval plus deterministic fallback.",
@@ -176,6 +233,26 @@ export function createGateway(
     },
     async ({ query, limit }) => {
       const hits = await contextService.searchSkills(query, limit);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(hits, null, 2),
+          },
+        ],
+        structuredContent: { hits },
+      };
+    },
+  );
+
+  server.registerTool(
+    "search_mcp_servers",
+    {
+      description: "Search globally compatible MCP server inventories from Codex config and workspace mcp-settings files.",
+      inputSchema: SearchQuerySchema,
+    },
+    async ({ query, cwd, limit }) => {
+      const hits = await contextService.searchMcpServers(cwd, query, limit);
       return {
         content: [
           {
@@ -271,17 +348,12 @@ export function createGateway(
   server.registerTool(
     "get_orchestrator_status",
     {
-      description: "Report orchestrator health, semantic readiness, Qdrant collection counts, and artifact totals.",
+      description: "Report orchestrator health, semantic readiness, corpus freshness, MCP inventory status, and artifact/cache totals.",
       inputSchema: OrchestratorStatusInputSchema,
     },
     async ({ cwd }) => {
       const status = await indexService.getStatus(cwd);
-      const payload = {
-        ...status,
-        artifacts: {
-          total: artifacts.count(),
-        },
-      };
+      const payload = status;
 
       return {
         content: [
@@ -298,7 +370,7 @@ export function createGateway(
   server.registerTool(
     "reindex_context_sources",
     {
-      description: "Force reindexing for skills, memory, docs, or all corpora and invalidate the matching caches.",
+      description: "Force reindexing for skills, memory, docs, MCP inventories, or all corpora and invalidate the matching caches.",
       inputSchema: ReindexInputSchema,
     },
     async ({ scope, cwd }) => {
@@ -310,6 +382,7 @@ export function createGateway(
           ? [
               contextService.invalidate("skills"),
               contextService.invalidate("memory"),
+              contextService.invalidate("mcp_servers"),
               contextService.invalidate(repoRoot),
             ]
           : [contextService.invalidate(scope === "docs" ? repoRoot : scope)];
@@ -317,9 +390,7 @@ export function createGateway(
       const payload = {
         ...result,
         invalidations,
-        artifacts: {
-          total: artifacts.count(),
-        },
+        status: await indexService.getStatus(scope === "docs" || scope === "all" ? repoRoot : cwd),
       };
 
       return {
