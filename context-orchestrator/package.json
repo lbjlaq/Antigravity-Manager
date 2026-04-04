@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "dev": "tsx watch src/main.ts"
+    "dev": "tsx watch src/main.ts",
+    "test": "node --import tsx --test tests/**/*.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
