@@ -111,3 +111,48 @@ export interface IndexedDocument {
   collection: "skills" | "session_summaries" | "repo_docs" | "mcp_servers";
   metadata?: Record<string, unknown>;
 }
+
+export type McpServerTransport = "stdio" | "streamable_http" | "docker_registry" | "unknown";
+
+export type McpProbeStatus = "healthy" | "unreachable" | "invalid_config" | "inventory_only";
+
+export interface McpServerInventoryEntry {
+  inventoryId: string;
+  name: string;
+  title: string;
+  sourcePath: string;
+  sourceKind: string;
+  repoRoot?: string;
+  repoScope: string;
+  transport: McpServerTransport;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  url?: string;
+  text?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface McpProbeResult {
+  inventoryId: string;
+  serverName: string;
+  transport: McpServerTransport;
+  status: McpProbeStatus;
+  checkedAt: string;
+  responseTimeMs?: number;
+  toolCount?: number;
+  error?: string;
+  sourcePath: string;
+  repoRoot?: string;
+  repoScope: string;
+  endpoint?: string;
+}
+
+export interface McpProbeSummary {
+  configured: number;
+  healthy: number;
+  unreachable: number;
+  invalidConfig: number;
+  inventoryOnly: number;
+  stale: number;
+}

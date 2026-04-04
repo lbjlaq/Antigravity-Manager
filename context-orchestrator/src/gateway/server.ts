@@ -3,11 +3,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ArtifactRepository } from "../storage/index.js";
 import { ContextService } from "../services/context-service.js";
 import { IndexService } from "../services/index-service.js";
+import { McpHealthService } from "../services/mcp-health.js";
 import { PlannerService } from "../services/planner-service.js";
 import {
   MemorySummaryInputSchema,
   OrchestratorStatusInputSchema,
   PlanOrReviewInputSchema,
+  ProbeMcpServersInputSchema,
   PrepareTaskContextInputSchema,
   ReindexInputSchema,
   SearchQuerySchema,
@@ -31,6 +33,7 @@ export function createGateway(
   contextService: ContextService,
   plannerService: PlannerService,
   indexService: IndexService,
+  mcpHealthService: McpHealthService,
   artifacts: ArtifactRepository,
 ): McpServer {
   const server = new McpServer({
@@ -266,6 +269,28 @@ export function createGateway(
   );
 
   server.registerTool(
+    "probe_mcp_servers",
+    {
+      description: "Probe configured MCP servers live and persist the latest reachability snapshot.",
+      inputSchema: ProbeMcpServersInputSchema,
+    },
+    async ({ cwd }) => {
+      const inventory = indexService.listMcpServerInventory(cwd);
+      const payload = await mcpHealthService.probeServers(inventory);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(payload, null, 2),
+          },
+        ],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
     "get_context_artifact",
     {
       description: "Fetch a previously persisted context artifact by id.",
@@ -353,7 +378,14 @@ export function createGateway(
     },
     async ({ cwd }) => {
       const status = await indexService.getStatus(cwd);
-      const payload = status;
+      const inventory = indexService.listMcpServerInventory(cwd);
+      const payload = {
+        ...status,
+        mcpHealth: mcpHealthService.getStatus(
+          inventory,
+          cwd ? cwd.replace(/[\\/:]+/g, "_").toLowerCase() : undefined,
+        ),
+      };
 
       return {
         content: [

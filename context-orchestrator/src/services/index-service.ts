@@ -5,7 +5,13 @@ import path from "node:path";
 import type { QdrantClient } from "@qdrant/js-client-rest";
 
 import type { OrchestratorConfig } from "../config.js";
-import type { CompanionArtifact, IndexedDocument, SearchHit } from "../types.js";
+import type {
+  CompanionArtifact,
+  IndexedDocument,
+  McpServerInventoryEntry,
+  McpServerTransport,
+  SearchHit,
+} from "../types.js";
 import { CacheRepository } from "../storage/cache.js";
 import { ArtifactRepository } from "../storage/index.js";
 import {
@@ -116,10 +122,66 @@ function collectSkillDocuments(skillRoots: string[]): IndexedDocument[] {
     }));
 }
 
-function parseCodexTomlMcpServers(filePath: string): IndexedDocument[] {
+function parseTomlString(raw: string): string | undefined {
+  const match = raw.match(/^\s*(['"])(.*)\1\s*$/);
+  return match?.[2];
+}
+
+function parseTomlArray(raw: string): string[] | undefined {
+  const match = raw.match(/^\s*\[(.*)\]\s*$/);
+  if (!match) {
+    return undefined;
+  }
+
+  const values = match[1]
+    .split(",")
+    .map((item) => parseTomlString(item.trim()))
+    .filter((item): item is string => Boolean(item));
+
+  return values.length > 0 ? values : [];
+}
+
+function detectTransport(sourceKind: string, command?: string, url?: string): McpServerTransport {
+  if (sourceKind === "docker_registry_json") {
+    return "docker_registry";
+  }
+  if (url) {
+    return "streamable_http";
+  }
+  if (command) {
+    return "stdio";
+  }
+  return "unknown";
+}
+
+function inventoryToDocument(entry: McpServerInventoryEntry): IndexedDocument {
+  return {
+    id: entry.inventoryId,
+    title: entry.title,
+    text: entry.text ?? `${entry.name}\n${JSON.stringify(entry.metadata ?? {}, null, 2)}`,
+    path: entry.sourcePath,
+    collection: "mcp_servers",
+    metadata: {
+      title: entry.title,
+      path: entry.sourcePath,
+      serverName: entry.name,
+      sourceKind: entry.sourceKind,
+      repoRoot: entry.repoRoot,
+      repoScope: entry.repoScope,
+      transport: entry.transport,
+      command: entry.command,
+      args: entry.args,
+      cwd: entry.cwd,
+      url: entry.url,
+      ...(entry.metadata ?? {}),
+    },
+  };
+}
+
+function parseCodexTomlMcpServers(filePath: string): McpServerInventoryEntry[] {
   const raw = fs.readFileSync(filePath, "utf8");
   const lines = raw.split(/\r?\n/);
-  const docs: IndexedDocument[] = [];
+  const entries: McpServerInventoryEntry[] = [];
   let currentName: string | undefined;
   let currentBody: string[] = [];
 
@@ -128,17 +190,41 @@ function parseCodexTomlMcpServers(filePath: string): IndexedDocument[] {
       return;
     }
     const body = currentBody.join("\n").trim();
-    docs.push({
-      id: `${filePath}#${currentName}`,
+    const command = currentBody
+      .map((line) => line.match(/^\s*command\s*=\s*(.+)\s*$/)?.[1])
+      .find((value): value is string => Boolean(value));
+    const args = currentBody
+      .map((line) => line.match(/^\s*args\s*=\s*(.+)\s*$/)?.[1])
+      .find((value): value is string => Boolean(value));
+    const cwd = currentBody
+      .map((line) => line.match(/^\s*cwd\s*=\s*(.+)\s*$/)?.[1])
+      .find((value): value is string => Boolean(value));
+    const url = currentBody
+      .map((line) => line.match(/^\s*url\s*=\s*(.+)\s*$/)?.[1])
+      .find((value): value is string => Boolean(value));
+
+    const parsedCommand = command ? parseTomlString(command) : undefined;
+    const parsedArgs = args ? parseTomlArray(args) : undefined;
+    const parsedCwd = cwd ? parseTomlString(cwd) : undefined;
+    const parsedUrl = url ? parseTomlString(url) : undefined;
+
+    entries.push({
+      inventoryId: `${filePath}#${currentName}`,
+      name: currentName,
       title: currentName,
+      sourcePath: filePath,
+      sourceKind: "codex_toml",
+      repoScope: "global",
+      transport: detectTransport("codex_toml", parsedCommand, parsedUrl),
+      command: parsedCommand,
+      args: parsedArgs,
+      cwd: parsedCwd,
+      url: parsedUrl,
       text: `${currentName}\n${body}`.trim(),
-      path: filePath,
-      collection: "mcp_servers",
       metadata: {
         title: currentName,
         path: filePath,
         serverName: currentName,
-        sourceKind: "codex_toml",
       },
     });
   };
@@ -165,30 +251,48 @@ function parseCodexTomlMcpServers(filePath: string): IndexedDocument[] {
   }
 
   flush();
-  return docs;
+  return entries;
 }
 
-function parseJsonMcpServers(filePath: string): IndexedDocument[] {
+function parseJsonMcpServers(filePath: string): McpServerInventoryEntry[] {
   const raw = fs.readFileSync(filePath, "utf8");
   const json = JSON.parse(raw) as Record<string, unknown>;
-  const docs: IndexedDocument[] = [];
+  const entries: McpServerInventoryEntry[] = [];
 
   const mcpServers =
     json.mcpServers && typeof json.mcpServers === "object"
       ? (json.mcpServers as Record<string, unknown>)
       : {};
   for (const [name, config] of Object.entries(mcpServers)) {
-    docs.push({
-      id: `${filePath}#${name}`,
+    const settings =
+      config && typeof config === "object"
+        ? (config as Record<string, unknown>)
+        : {};
+    const command = typeof settings.command === "string" ? settings.command : undefined;
+    const args = Array.isArray(settings.args)
+      ? settings.args.filter((item): item is string => typeof item === "string")
+      : undefined;
+    const cwd = typeof settings.cwd === "string" ? settings.cwd : undefined;
+    const url = typeof settings.url === "string" ? settings.url : undefined;
+
+    entries.push({
+      inventoryId: `${filePath}#${name}`,
+      name,
       title: name,
+      sourcePath: filePath,
+      sourceKind: "mcpServers_json",
+      repoScope: "global",
+      transport: detectTransport("mcpServers_json", command, url),
+      command,
+      args,
+      cwd,
+      url,
       text: `${name}\n${JSON.stringify(config, null, 2)}`,
-      path: filePath,
-      collection: "mcp_servers",
       metadata: {
         title: name,
         path: filePath,
         serverName: name,
-        sourceKind: "mcpServers_json",
+        ...(settings ?? {}),
       },
     });
   }
@@ -202,22 +306,25 @@ function parseJsonMcpServers(filePath: string): IndexedDocument[] {
       ? (dockerRegistry.servers as Record<string, unknown>)
       : {};
   for (const [name, config] of Object.entries(dockerServers)) {
-    docs.push({
-      id: `${filePath}#docker:${name}`,
+    entries.push({
+      inventoryId: `${filePath}#docker:${name}`,
+      name,
       title: `docker:${name}`,
+      sourcePath: filePath,
+      sourceKind: "docker_registry_json",
+      repoScope: "global",
+      transport: "docker_registry",
       text: `docker:${name}\n${JSON.stringify(config, null, 2)}`,
-      path: filePath,
-      collection: "mcp_servers",
       metadata: {
         title: `docker:${name}`,
         path: filePath,
         serverName: name,
-        sourceKind: "docker_registry_json",
+        ...(config && typeof config === "object" ? (config as Record<string, unknown>) : {}),
       },
     });
   }
 
-  return docs;
+  return entries;
 }
 
 function candidateMcpConfigPaths(config: OrchestratorConfig, repoRoot?: string): string[] {
@@ -229,10 +336,10 @@ function candidateMcpConfigPaths(config: OrchestratorConfig, repoRoot?: string):
   return Array.from(new Set(out));
 }
 
-export function listMcpServers(
+export function listMcpServerInventory(
   configPaths: string[],
   repoRoot?: string,
-): IndexedDocument[] {
+): McpServerInventoryEntry[] {
   return Array.from(new Set(configPaths))
     .filter((filePath) => fs.existsSync(filePath))
     .flatMap((filePath) => {
@@ -248,14 +355,23 @@ export function listMcpServers(
       }
       return [];
     })
-    .map((document) => ({
-      ...document,
+    .map((entry) => ({
+      ...entry,
+      repoRoot,
+      repoScope: repoRoot ? normalizeRepoScope(repoRoot) : "global",
       metadata: {
-        ...document.metadata,
+        ...(entry.metadata ?? {}),
         repoRoot,
         repoScope: repoRoot ? normalizeRepoScope(repoRoot) : "global",
       },
     }));
+}
+
+export function listMcpServers(
+  configPaths: string[],
+  repoRoot?: string,
+): IndexedDocument[] {
+  return listMcpServerInventory(configPaths, repoRoot).map(inventoryToDocument);
 }
 
 export function listRepoDocs(repoRoot: string): IndexedDocument[] {
@@ -381,6 +497,10 @@ export class IndexService {
 
   getMcpConfigPaths(repoRoot?: string): string[] {
     return candidateMcpConfigPaths(this.config, repoRoot);
+  }
+
+  listMcpServerInventory(repoRoot?: string): McpServerInventoryEntry[] {
+    return listMcpServerInventory(this.getMcpConfigPaths(repoRoot), repoRoot);
   }
 
   listMcpServerDocuments(repoRoot?: string): IndexedDocument[] {

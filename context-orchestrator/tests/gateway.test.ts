@@ -116,6 +116,19 @@ async function createHarness() {
     ingestArtifact: async () => {
       counters.ingestArtifactCalls += 1;
     },
+    listMcpServerInventory: (cwd?: string) => [
+      {
+        inventoryId: "mcp-1",
+        name: "filesystem",
+        title: "filesystem",
+        transport: "stdio",
+        command: "npx",
+        args: ["@modelcontextprotocol/server-filesystem"],
+        sourcePath: cwd ? `${cwd}/mcp-settings.json` : "C:/repo/mcp-settings.json",
+        sourceKind: "mcpServers_json",
+        repoScope: "c_repo",
+      },
+    ],
     getStatus: async (cwd?: string) => ({
       semanticReady: true,
       qdrant: {
@@ -179,6 +192,29 @@ async function createHarness() {
           },
         },
       },
+      mcpHealth: {
+        summary: {
+          configured: 3,
+          healthy: 2,
+          unreachable: 1,
+          invalidConfig: 0,
+          inventoryOnly: 0,
+          stale: 0,
+        },
+        probes: [
+          {
+            inventoryId: "mcp-1",
+            serverName: "filesystem",
+            transport: "stdio",
+            status: "healthy",
+            checkedAt: "2026-04-04T10:08:00.000Z",
+            toolCount: 1,
+            responseTimeMs: 42,
+            sourcePath: "C:/repo/mcp-settings.json",
+            repoScope: "c_repo",
+          },
+        ],
+      },
     }),
     reindex: async (scope: "skills" | "memory" | "docs" | "all", repoRoot?: string) => ({
       scope,
@@ -214,10 +250,70 @@ async function createHarness() {
     count: () => savedArtifacts.size,
   };
 
+  const mcpHealthService = {
+    getStatus: () => ({
+      summary: {
+        configured: 3,
+        healthy: 2,
+        unreachable: 1,
+        invalidConfig: 0,
+        inventoryOnly: 0,
+        stale: 0,
+      },
+      probes: [
+        {
+          inventoryId: "mcp-1",
+          serverName: "filesystem",
+          transport: "stdio",
+          status: "healthy",
+          checkedAt: "2026-04-04T10:08:00.000Z",
+          toolCount: 1,
+          responseTimeMs: 42,
+          sourcePath: "C:/repo/mcp-settings.json",
+          repoScope: "c_repo",
+        },
+      ],
+    }),
+    probeServers: async (cwd?: string) => ({
+      repoRoot: cwd,
+      summary: {
+        configured: 2,
+        healthy: 1,
+        unreachable: 0,
+        invalidConfig: 0,
+        inventoryOnly: 1,
+        stale: 0,
+      },
+      probes: [
+        {
+          inventoryId: "mcp-1",
+          serverName: "filesystem",
+          transport: "stdio",
+          status: "healthy",
+          checkedAt: "2026-04-04T10:08:00.000Z",
+          toolCount: 1,
+          responseTimeMs: 30,
+          sourcePath: "C:/repo/mcp-settings.json",
+          repoScope: "c_repo",
+        },
+        {
+          inventoryId: "mcp-2",
+          serverName: "docker:github",
+          transport: "docker_registry",
+          status: "inventory_only",
+          checkedAt: "2026-04-04T10:08:01.000Z",
+          sourcePath: "C:/repo/mcp-settings.json",
+          repoScope: "c_repo",
+        },
+      ],
+    }),
+  };
+
   const server = createGateway(
     contextService as never,
     plannerService as never,
     indexService as never,
+    mcpHealthService as never,
     artifacts as never,
   );
   const client = new Client({
@@ -242,6 +338,7 @@ test("gateway exposes the expected MCP tools", async () => {
     "list_recent_artifacts",
     "plan_or_review",
     "prepare_task_context",
+    "probe_mcp_servers",
     "reindex_context_sources",
     "search_docs",
     "search_mcp_servers",
@@ -293,12 +390,23 @@ test("gateway returns planner-backed prepared context and status freshness paylo
         };
       };
     };
+    mcpHealth: {
+      summary: {
+        healthy: number;
+        unreachable: number;
+      };
+      probes: Array<{
+        status: string;
+      }>;
+    };
   };
 
   assert.equal(statusPayload.dashboard.cacheEntries, 5);
   assert.equal(statusPayload.collections.repoDocs.freshness.chunkCount, 7);
   assert.equal(statusPayload.collections.repoDocs.freshness.stale, false);
   assert.equal(statusPayload.collections.mcpServers.freshness.documentCount, 2);
+  assert.equal(statusPayload.mcpHealth.summary.healthy, 2);
+  assert.equal(statusPayload.mcpHealth.probes[0]?.status, "healthy");
 });
 
 test("gateway reindex tool returns invalidations plus refreshed status", async () => {
@@ -361,4 +469,31 @@ test("gateway can ingest client-agnostic memory summaries", async () => {
   assert.equal(payload.artifact.memory_status, "NEW");
   assert.equal(payload.artifact.related_files[0], "src/services/context-service.ts");
   assert.equal(counters.ingestArtifactCalls, 1);
+});
+
+test("gateway can trigger live MCP probes and return probe summary", async () => {
+  const { client } = await createHarness();
+
+  const result = await client.callTool({
+    name: "probe_mcp_servers",
+    arguments: {
+      cwd: "C:/repo",
+    },
+  });
+
+  const payload = result.structuredContent as {
+    summary: {
+      healthy: number;
+      inventoryOnly: number;
+    };
+    probes: Array<{
+      serverName: string;
+      status: string;
+    }>;
+  };
+
+  assert.equal(payload.summary.healthy, 1);
+  assert.equal(payload.summary.inventoryOnly, 1);
+  assert.equal(payload.probes[0]?.serverName, "filesystem");
+  assert.equal(payload.probes[1]?.status, "inventory_only");
 });

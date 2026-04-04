@@ -7,6 +7,7 @@ import { loadConfig } from "./config.js";
 import { createGateway } from "./gateway/server.js";
 import { ContextService } from "./services/context-service.js";
 import { IndexService } from "./services/index-service.js";
+import { McpHealthService } from "./services/mcp-health.js";
 import { OpenAIService } from "./services/openai.js";
 import { PlannerService } from "./services/planner-service.js";
 import { checkQdrantHealth, createQdrantClient } from "./services/qdrant.js";
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
     },
   );
   const plannerService = new PlannerService(openai, config);
+  const mcpHealthService = new McpHealthService(config, artifacts);
   const qdrantHealth = await checkQdrantHealth(qdrant);
 
   console.error(
@@ -53,7 +55,7 @@ async function main(): Promise<void> {
     await indexService.bootstrap();
   }
 
-  const server = createGateway(contextService, plannerService, indexService, artifacts);
+  const server = createGateway(contextService, plannerService, indexService, mcpHealthService, artifacts);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Context Orchestrator MCP server connected over stdio");

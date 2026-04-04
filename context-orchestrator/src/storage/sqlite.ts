@@ -32,6 +32,21 @@ export interface IndexRunRow {
   repo_root: string | null;
 }
 
+export interface McpProbeRow {
+  inventory_id: string;
+  server_name: string;
+  transport: string;
+  status: string;
+  checked_at: string;
+  response_time_ms: number | null;
+  tool_count: number | null;
+  error_text: string | null;
+  source_path: string;
+  repo_root: string | null;
+  repo_scope: string;
+  endpoint: string | null;
+}
+
 export class SqliteStore {
   readonly db: DatabaseSync;
 
@@ -67,6 +82,21 @@ export class SqliteStore {
         chunk_count INTEGER NOT NULL,
         embedding_model TEXT NOT NULL,
         repo_root TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS mcp_server_probes (
+        inventory_id TEXT PRIMARY KEY,
+        server_name TEXT NOT NULL,
+        transport TEXT NOT NULL,
+        status TEXT NOT NULL,
+        checked_at TEXT NOT NULL,
+        response_time_ms INTEGER,
+        tool_count INTEGER,
+        error_text TEXT,
+        source_path TEXT NOT NULL,
+        repo_root TEXT,
+        repo_scope TEXT NOT NULL,
+        endpoint TEXT
       );
     `);
   }
@@ -231,5 +261,53 @@ export class SqliteStore {
     `);
 
     return stmt.get(prefix, `${prefix}:%`) as unknown as IndexRunRow | undefined;
+  }
+
+  upsertMcpProbeRow(row: McpProbeRow): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO mcp_server_probes (
+        inventory_id, server_name, transport, status, checked_at,
+        response_time_ms, tool_count, error_text, source_path, repo_root, repo_scope, endpoint
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    stmt.run(
+      row.inventory_id,
+      row.server_name,
+      row.transport,
+      row.status,
+      row.checked_at,
+      row.response_time_ms,
+      row.tool_count,
+      row.error_text,
+      row.source_path,
+      row.repo_root,
+      row.repo_scope,
+      row.endpoint,
+    );
+  }
+
+  listMcpProbeRows(limit: number, repoScope?: string): McpProbeRow[] {
+    if (repoScope) {
+      const stmt = this.db.prepare(`
+        SELECT inventory_id, server_name, transport, status, checked_at,
+               response_time_ms, tool_count, error_text, source_path, repo_root, repo_scope, endpoint
+        FROM mcp_server_probes
+        WHERE repo_scope = ?
+        ORDER BY checked_at DESC
+        LIMIT ?
+      `);
+      return stmt.all(repoScope, limit) as unknown as McpProbeRow[];
+    }
+
+    const stmt = this.db.prepare(`
+      SELECT inventory_id, server_name, transport, status, checked_at,
+             response_time_ms, tool_count, error_text, source_path, repo_root, repo_scope, endpoint
+      FROM mcp_server_probes
+      ORDER BY checked_at DESC
+      LIMIT ?
+    `);
+
+    return stmt.all(limit) as unknown as McpProbeRow[];
   }
 }

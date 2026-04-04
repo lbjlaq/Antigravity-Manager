@@ -80,7 +80,7 @@ const ARTIFACT_SCHEMA: Record<string, unknown> = {
         properties: {
           kind: {
             type: "string",
-            enum: ["memory", "doc", "skill", "repo_fact", "user_input"],
+            enum: ["memory", "doc", "skill", "mcp_server", "repo_fact", "user_input"],
           },
           ref: { type: "string" },
           note: { type: "string" },
