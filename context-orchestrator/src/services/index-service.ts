@@ -93,9 +93,24 @@ function walk(root: string): string[] {
     if (shouldIgnorePath(current)) {
       continue;
     }
-    const stat = fs.statSync(current);
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(current);
+    } catch {
+      // Skip unreadable or cyclic entries such as broken Windows junctions/symlinks.
+      continue;
+    }
+
     if (stat.isDirectory()) {
-      for (const entry of fs.readdirSync(current)) {
+      let entries: string[];
+      try {
+        entries = fs.readdirSync(current);
+      } catch {
+        continue;
+      }
+
+      for (const entry of entries) {
         stack.push(path.join(current, entry));
       }
       continue;
