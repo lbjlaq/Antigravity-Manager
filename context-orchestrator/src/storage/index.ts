@@ -40,4 +40,8 @@ export class ArtifactRepository {
   search(query: string, limit: number): ArtifactRow[] {
     return this.sqlite.searchArtifactSummaries(query, limit);
   }
+
+  count(): number {
+    return this.sqlite.countArtifacts();
+  }
 }

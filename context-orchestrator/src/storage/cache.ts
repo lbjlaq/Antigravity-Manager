@@ -56,4 +56,8 @@ export class CacheRepository {
       deletedCount,
     };
   }
+
+  count(): number {
+    return this.sqlite.countCacheEntries();
+  }
 }

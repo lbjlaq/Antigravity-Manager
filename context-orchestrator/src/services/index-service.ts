@@ -9,7 +9,9 @@ import type { CompanionArtifact, IndexedDocument, SearchHit } from "../types.js"
 import { CacheRepository } from "../storage/cache.js";
 import { ArtifactRepository } from "../storage/index.js";
 import {
+  checkQdrantHealth,
   ensureCollection,
+  getCollectionPointCount,
   searchCollection,
   upsertDocuments,
 } from "./qdrant.js";
@@ -242,6 +244,78 @@ export class IndexService {
         },
       ],
     });
+  }
+
+  async reindex(scope: "skills" | "memory" | "docs" | "all", repoRoot?: string): Promise<{
+    scope: "skills" | "memory" | "docs" | "all";
+    repoRoot?: string;
+    skillsIndexed: boolean;
+    memoryIndexed: boolean;
+    docsIndexed: boolean;
+  }> {
+    let skillsIndexed = false;
+    let memoryIndexed = false;
+    let docsIndexed = false;
+
+    if (scope === "skills" || scope === "all") {
+      await this.ingestSkills();
+      skillsIndexed = true;
+    }
+
+    if (scope === "memory" || scope === "all") {
+      await this.ingestSessionSummaries();
+      memoryIndexed = true;
+    }
+
+    if ((scope === "docs" || scope === "all") && repoRoot) {
+      await this.ingestRepoDocs(repoRoot);
+      docsIndexed = true;
+    }
+
+    return {
+      scope,
+      repoRoot,
+      skillsIndexed,
+      memoryIndexed,
+      docsIndexed,
+    };
+  }
+
+  async getStatus(repoRoot?: string): Promise<{
+    semanticReady: boolean;
+    qdrant: { ok: boolean; collectionCount?: number; error?: string };
+    collections: {
+      skills: { name: string; points: number };
+      sessionSummaries: { name: string; points: number };
+      repoDocs: { name: string; points: number; repoRoot?: string };
+    };
+  }> {
+    const qdrant = await checkQdrantHealth(this.qdrant);
+    const [skillsPoints, sessionPoints, repoDocsPoints] = await Promise.all([
+      getCollectionPointCount(this.qdrant, this.config.qdrantCollections.skills),
+      getCollectionPointCount(this.qdrant, this.config.qdrantCollections.sessionSummaries),
+      getCollectionPointCount(this.qdrant, this.config.qdrantCollections.repoDocs),
+    ]);
+
+    return {
+      semanticReady: this.isSemanticReady(),
+      qdrant,
+      collections: {
+        skills: {
+          name: this.config.qdrantCollections.skills,
+          points: skillsPoints,
+        },
+        sessionSummaries: {
+          name: this.config.qdrantCollections.sessionSummaries,
+          points: sessionPoints,
+        },
+        repoDocs: {
+          name: this.config.qdrantCollections.repoDocs,
+          points: repoDocsPoints,
+          repoRoot,
+        },
+      },
+    };
   }
 
   private async indexDocuments(documents: IndexedDocument[], repoRoot?: string): Promise<void> {

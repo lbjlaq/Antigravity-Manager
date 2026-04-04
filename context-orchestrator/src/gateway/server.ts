@@ -5,8 +5,10 @@ import { ContextService } from "../services/context-service.js";
 import { IndexService } from "../services/index-service.js";
 import { PlannerService } from "../services/planner-service.js";
 import {
+  OrchestratorStatusInputSchema,
   PlanOrReviewInputSchema,
   PrepareTaskContextInputSchema,
+  ReindexInputSchema,
   SearchQuerySchema,
 } from "../schema.js";
 
@@ -262,6 +264,72 @@ export function createGateway(
         structuredContent: {
           ...result,
         },
+      };
+    },
+  );
+
+  server.registerTool(
+    "get_orchestrator_status",
+    {
+      description: "Report orchestrator health, semantic readiness, Qdrant collection counts, and artifact totals.",
+      inputSchema: OrchestratorStatusInputSchema,
+    },
+    async ({ cwd }) => {
+      const status = await indexService.getStatus(cwd);
+      const payload = {
+        ...status,
+        artifacts: {
+          total: artifacts.count(),
+        },
+      };
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(payload, null, 2),
+          },
+        ],
+        structuredContent: payload,
+      };
+    },
+  );
+
+  server.registerTool(
+    "reindex_context_sources",
+    {
+      description: "Force reindexing for skills, memory, docs, or all corpora and invalidate the matching caches.",
+      inputSchema: ReindexInputSchema,
+    },
+    async ({ scope, cwd }) => {
+      const repoRoot = cwd ?? process.cwd();
+      const result = await indexService.reindex(scope, repoRoot);
+
+      const invalidations =
+        scope === "all"
+          ? [
+              contextService.invalidate("skills"),
+              contextService.invalidate("memory"),
+              contextService.invalidate(repoRoot),
+            ]
+          : [contextService.invalidate(scope === "docs" ? repoRoot : scope)];
+
+      const payload = {
+        ...result,
+        invalidations,
+        artifacts: {
+          total: artifacts.count(),
+        },
+      };
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(payload, null, 2),
+          },
+        ],
+        structuredContent: payload,
       };
     },
   );

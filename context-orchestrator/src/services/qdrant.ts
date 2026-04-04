@@ -105,3 +105,15 @@ export async function searchCollection(
     filter,
   });
 }
+
+export async function getCollectionPointCount(
+  client: QdrantClient,
+  collectionName: string,
+): Promise<number> {
+  try {
+    const details = await client.getCollection(collectionName);
+    return Number(details.points_count ?? 0);
+  } catch {
+    return 0;
+  }
+}

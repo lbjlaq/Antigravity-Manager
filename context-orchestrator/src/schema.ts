@@ -23,6 +23,17 @@ export const SearchQuerySchema = z.object({
   limit: z.number().int().positive().max(20).optional().default(5),
 });
 
+export const OrchestratorStatusInputSchema = z.object({
+  cwd: z.string().optional(),
+});
+
+export const ReindexInputSchema = z.object({
+  scope: z.enum(["skills", "memory", "docs", "all"]).default("all"),
+  cwd: z.string().optional(),
+});
+
 export type PrepareTaskContextInput = z.infer<typeof PrepareTaskContextInputSchema>;
 export type PlanOrReviewInput = z.infer<typeof PlanOrReviewInputSchema>;
 export type SearchQueryInput = z.infer<typeof SearchQuerySchema>;
+export type OrchestratorStatusInput = z.infer<typeof OrchestratorStatusInputSchema>;
+export type ReindexInput = z.infer<typeof ReindexInputSchema>;

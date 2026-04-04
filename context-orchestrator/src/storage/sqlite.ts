@@ -108,6 +108,16 @@ export class SqliteStore {
     return stmt.all(like, like, limit) as unknown as ArtifactRow[];
   }
 
+  countArtifacts(): number {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM artifacts
+    `);
+
+    const row = stmt.get() as { count?: number } | undefined;
+    return Number(row?.count ?? 0);
+  }
+
   upsertCacheRow(row: CacheRow): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO cache_entries (
@@ -142,5 +152,15 @@ export class SqliteStore {
 
     const result = stmt.run(scope, `${scope}:%`);
     return Number(result.changes ?? 0);
+  }
+
+  countCacheEntries(): number {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM cache_entries
+    `);
+
+    const row = stmt.get() as { count?: number } | undefined;
+    return Number(row?.count ?? 0);
   }
 }
