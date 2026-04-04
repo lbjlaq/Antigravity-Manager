@@ -52,7 +52,14 @@ async function main(): Promise<void> {
   );
 
   if (qdrantHealth.ok && openai.isConfigured()) {
-    await indexService.bootstrap();
+    try {
+      await indexService.bootstrap();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(
+        `Context Orchestrator bootstrap warning: semantic indexing unavailable during startup: ${message}`,
+      );
+    }
   }
 
   const server = createGateway(contextService, plannerService, indexService, mcpHealthService, artifacts);

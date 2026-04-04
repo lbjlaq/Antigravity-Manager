@@ -153,16 +153,47 @@ export class OpenAIService {
       body: JSON.stringify(body),
     });
 
-    const payload = (await response.json()) as T & {
+    const rawText = await response.text();
+    if (!rawText.trim()) {
+      throw new Error(
+        response.ok
+          ? `${endpoint} request returned an empty response body.`
+          : `${endpoint} request failed with ${response.status} and an empty response body.`,
+      );
+    }
+
+    let payload: (T & {
+      error?: {
+        message?: string;
+      };
+    }) | undefined;
+    try {
+      payload = JSON.parse(rawText) as T & {
+        error?: {
+          message?: string;
+        };
+      };
+    } catch {
+      const snippet = rawText.slice(0, 240);
+      throw new Error(
+        `${endpoint} request returned non-JSON content: ${snippet}`,
+      );
+    }
+
+    if (!payload) {
+      throw new Error(`${endpoint} request returned no parseable payload.`);
+    }
+
+    const parsedPayload = payload as T & {
       error?: {
         message?: string;
       };
     };
 
     if (!response.ok) {
-      throw new Error(payload.error?.message ?? `${endpoint} request failed with ${response.status}`);
+      throw new Error(parsedPayload.error?.message ?? `${endpoint} request failed with ${response.status}`);
     }
 
-    return payload;
+    return parsedPayload;
   }
 }

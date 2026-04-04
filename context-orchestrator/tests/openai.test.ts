@@ -110,3 +110,48 @@ test("OpenAIService surfaces upstream error messages", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("OpenAIService rejects empty response bodies with a clear error", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    ({
+      ok: true,
+      text: async () => "",
+    }) as Response) as typeof fetch;
+
+  try {
+    const service = new OpenAIService("test-key", "https://api.openai.com/v1");
+    await assert.rejects(
+      service.createEmbeddings(["one"], "text-embedding-3-small"),
+      /empty response body/i,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("OpenAIService rejects non-JSON response bodies with a clear error", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    ({
+      ok: true,
+      text: async () => "<html>proxy error</html>",
+    }) as Response) as typeof fetch;
+
+  try {
+    const service = new OpenAIService("test-key", "https://api.openai.com/v1");
+    await assert.rejects(
+      service.createStructuredResponse({
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        schemaName: "test",
+        schema: { type: "object" },
+        instructions: "Return JSON",
+        input: "Hello",
+      }),
+      /non-json content/i,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
