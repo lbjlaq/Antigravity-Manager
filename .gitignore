@@ -46,3 +46,12 @@ __pycache__/
 
 DOCKER_DEPLOYMENT.md
 pnpm-lock.yaml
+
+# Copilot Orchestrator temporary files
+.orchestrator/
+.worktrees/
+
+
+# Added by cargo
+
+/target

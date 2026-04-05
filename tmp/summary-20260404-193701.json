@@ -1,0 +1,14 @@
+{
+  "task": "Harden context-orchestrator startup against empty/non-JSON OpenAI-compatible proxy responses",
+  "timestamp": "2026-04-04T16:37:01.730Z",
+  "edits": [
+    "Updated context-orchestrator/src/services/openai.ts to parse either text() or json() response bodies and produce clearer errors for empty/non-JSON proxy responses.",
+    "Updated context-orchestrator/src/main.ts so semantic bootstrap failures log a warning and do not crash MCP server startup.",
+    "Extended context-orchestrator/tests/openai.test.ts with empty-body and non-JSON regressions."
+  ],
+  "verification": [
+    "npm test passed with 27/27 tests.",
+    "npm run build passed."
+  ],
+  "outcome": "The orchestrator should now keep starting even if Antigravity returns malformed or empty JSON during startup indexing."
+}

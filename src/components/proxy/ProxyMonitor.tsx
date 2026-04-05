@@ -284,7 +284,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         fetchAccounts();
 
         let unlistenFn: (() => void) | null = null;
-        let updateTimeout: number | null = null;
+        let updateTimeout: ReturnType<typeof setTimeout> | null = null;
 
         const setupListener = async () => {
             if (!isTauri()) return;

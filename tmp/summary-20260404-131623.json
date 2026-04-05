@@ -1,0 +1,23 @@
+{
+  "task": "Restore lost Antigravity fixes for Codex API compatibility and the API Proxy VS Code helper UI.",
+  "edits": [
+    {
+      "path": "src-tauri/src/proxy/providers/codex_cli.rs",
+      "summary": "Strip top-level tools from Codex-routed bodies instead of rejecting the request and update the adapter test."
+    },
+    {
+      "path": "src/pages/ApiProxy.tsx",
+      "summary": "Restore computed proxy endpoint helpers and add the VS Code / Copilot custom OAI setup card with copy buttons and generated chatLanguageModels.json."
+    }
+  ],
+  "commands": [
+    "cargo test --manifest-path .\\src-tauri\\Cargo.toml ignores_client_tools",
+    "npm run build"
+  ],
+  "verification": {
+    "rust_test": "passed",
+    "frontend_build": "passed",
+    "notes": "Build emitted existing Vite chunk-size and dynamic-import warnings but no new errors."
+  },
+  "outcome": "The lost backend and GUI fixes are restored. Codex-backed requests no longer fail just because a client sends tools, and the API Proxy page again exposes the VS Code setup guidance and copyable config."
+}
