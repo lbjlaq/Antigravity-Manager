@@ -146,17 +146,6 @@ impl ProxyMonitor {
                 }
             }
 
-            // Record token stats if available
-            if let (Some(account), Some(input), Some(output)) = (
-                &log_to_save.account_email,
-                log_to_save.input_tokens,
-                log_to_save.output_tokens,
-            ) {
-                let model = log_to_save.model.clone().unwrap_or_else(|| "unknown".to_string());
-                if let Err(e) = crate::modules::token_stats::record_usage(account, &model, input, output) {
-                    tracing::debug!("Failed to record token stats: {}", e);
-                }
-            }
         });
 
         // Emit event (send summary only, without body to reduce memory)
