@@ -21,7 +21,7 @@ import {
   searchCollection,
   upsertDocuments,
 } from "./qdrant.js";
-import { OpenAIService } from "./openai.js";
+import type { EmbeddingService } from "./embeddings.js";
 
 interface EmbeddedPoint {
   pointId: string;
@@ -615,13 +615,13 @@ export class IndexService {
   constructor(
     private readonly config: OrchestratorConfig,
     private readonly qdrant: QdrantClient,
-    private readonly openai: OpenAIService,
+    private readonly embeddings: EmbeddingService,
     private readonly cache: CacheRepository,
     private readonly artifacts: ArtifactRepository,
   ) {}
 
   isSemanticReady(): boolean {
-    return this.openai.isConfigured();
+    return this.embeddings.isConfigured();
   }
 
   async bootstrap(): Promise<void> {
@@ -866,7 +866,7 @@ export class IndexService {
 
     for (let index = 0; index < pending.length; index += 32) {
       const batch = pending.slice(index, index + 32);
-      const vectors = await this.openai.createEmbeddings(
+      const vectors = await this.embeddings.createEmbeddings(
         batch.map((item) => item.text),
         this.config.embeddingModel,
       );
@@ -927,7 +927,7 @@ export class IndexService {
     }
 
     try {
-      const [vector] = await this.openai.createEmbeddings([query], this.config.embeddingModel);
+      const [vector] = await this.embeddings.createEmbeddings([query], this.config.embeddingModel);
       const points = await searchCollection(this.qdrant, collectionName, vector, limit, filter);
       return points
         .map((point) => hitFromPayload(kind, point))

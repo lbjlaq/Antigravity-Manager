@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { loadConfig } from "./config.js";
 import { createGateway } from "./gateway/server.js";
 import { ContextService } from "./services/context-service.js";
+import { createEmbeddingService } from "./services/embeddings.js";
 import { IndexService } from "./services/index-service.js";
 import { McpHealthService } from "./services/mcp-health.js";
 import { OpenAIService } from "./services/openai.js";
@@ -26,7 +27,8 @@ async function main(): Promise<void> {
   const artifacts = new ArtifactRepository(sqlite, config.artifactsDir);
   const qdrant = createQdrantClient(config.qdrantUrl, config.qdrantApiKey);
   const openai = new OpenAIService(config.openaiApiKey, config.openaiBaseUrl);
-  const indexService = new IndexService(config, qdrant, openai, cache, artifacts);
+  const embeddings = createEmbeddingService(config, openai);
+  const indexService = new IndexService(config, qdrant, embeddings, cache, artifacts);
   const contextService = new ContextService(
     config.skillRoots,
     artifacts,
@@ -45,13 +47,14 @@ async function main(): Promise<void> {
 
   console.error(
     `Context Orchestrator starting. Qdrant ok=${qdrantHealth.ok}` +
-      ` openai=${openai.isConfigured()}` +
+      ` planner=${openai.isConfigured()}` +
+      ` embeddings=${embeddings.isConfigured()}` +
       (qdrantHealth.ok
         ? ` collections=${qdrantHealth.collectionCount ?? 0}`
         : ` error=${qdrantHealth.error}`),
   );
 
-  if (qdrantHealth.ok && openai.isConfigured()) {
+  if (qdrantHealth.ok && embeddings.isConfigured()) {
     try {
       await indexService.bootstrap();
     } catch (error) {
