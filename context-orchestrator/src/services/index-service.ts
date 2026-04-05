@@ -56,7 +56,10 @@ const IGNORE_DIRS = new Set([
 ]);
 
 function shouldIgnorePath(filePath: string): boolean {
-  return filePath.split(path.sep).some((segment) => IGNORE_DIRS.has(segment));
+  return filePath
+    .split(path.sep)
+    .filter(Boolean)
+    .some((segment) => IGNORE_DIRS.has(segment));
 }
 
 function chunkText(text: string, maxChars = 1600): string[] {
@@ -64,21 +67,157 @@ function chunkText(text: string, maxChars = 1600): string[] {
   const chunks: string[] = [];
   let current = "";
 
-  for (const line of lines) {
-    const next = current ? `${current}\n${line}` : line;
-    if (next.length > maxChars && current) {
+  const pushCurrent = () => {
+    if (current.trim()) {
       chunks.push(current);
-      current = line;
-      continue;
+    }
+    current = "";
+  };
+
+  const appendOrFlush = (segment: string) => {
+    const next = current ? `${current}\n${segment}` : segment;
+    if (next.length > maxChars && current) {
+      pushCurrent();
+      current = segment;
+      return;
     }
     current = next;
+  };
+
+  for (const line of lines) {
+    if (line.length <= maxChars) {
+      appendOrFlush(line);
+      continue;
+    }
+
+    for (let index = 0; index < line.length; index += maxChars) {
+      const segment = line.slice(index, index + maxChars);
+      appendOrFlush(segment);
+    }
   }
 
-  if (current.trim()) {
-    chunks.push(current);
-  }
+  pushCurrent();
 
   return chunks.length > 0 ? chunks : [text];
+}
+
+function stripTomlComment(line: string): string {
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\" && inDoubleQuote) {
+      escaped = true;
+      continue;
+    }
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+
+    if (char === "#" && !inSingleQuote && !inDoubleQuote) {
+      return line.slice(0, index).trim();
+    }
+  }
+
+  return line.trim();
+}
+
+function parseTomlString(raw: string): string | undefined {
+  const value = stripTomlComment(raw);
+  if (!value) {
+    return undefined;
+  }
+
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1);
+  }
+
+  return undefined;
+}
+
+function parseTomlArray(raw: string): string[] | undefined {
+  const value = stripTomlComment(raw);
+  if (!value.startsWith("[") || !value.endsWith("]")) {
+    return undefined;
+  }
+
+  const body = value.slice(1, -1).trim();
+  if (!body) {
+    return [];
+  }
+
+  const items: string[] = [];
+  let token = "";
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (escaped) {
+      token += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\" && inDoubleQuote) {
+      token += char;
+      escaped = true;
+      continue;
+    }
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      token += char;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      token += char;
+      continue;
+    }
+
+    if (char === "," && !inSingleQuote && !inDoubleQuote) {
+      const parsed = parseTomlString(token.trim());
+      if (parsed !== undefined) {
+        items.push(parsed);
+      }
+      token = "";
+      continue;
+    }
+
+    token += char;
+  }
+
+  const parsed = parseTomlString(token.trim());
+  if (parsed !== undefined) {
+    items.push(parsed);
+  }
+
+  return items;
 }
 
 function walk(root: string): string[] {
@@ -90,7 +229,7 @@ function walk(root: string): string[] {
   const stack = [root];
   while (stack.length > 0) {
     const current = stack.pop()!;
-    if (shouldIgnorePath(current)) {
+    if (shouldIgnorePath(path.relative(root, current))) {
       continue;
     }
 
@@ -135,25 +274,6 @@ function collectSkillDocuments(skillRoots: string[]): IndexedDocument[] {
         path: filePath,
       },
     }));
-}
-
-function parseTomlString(raw: string): string | undefined {
-  const match = raw.match(/^\s*(['"])(.*)\1\s*$/);
-  return match?.[2];
-}
-
-function parseTomlArray(raw: string): string[] | undefined {
-  const match = raw.match(/^\s*\[(.*)\]\s*$/);
-  if (!match) {
-    return undefined;
-  }
-
-  const values = match[1]
-    .split(",")
-    .map((item) => parseTomlString(item.trim()))
-    .filter((item): item is string => Boolean(item));
-
-  return values.length > 0 ? values : [];
 }
 
 function detectTransport(sourceKind: string, command?: string, url?: string): McpServerTransport {
@@ -204,24 +324,24 @@ function parseCodexTomlMcpServers(filePath: string): McpServerInventoryEntry[] {
     if (!currentName) {
       return;
     }
+
     const body = currentBody.join("\n").trim();
     const command = currentBody
       .map((line) => line.match(/^\s*command\s*=\s*(.+)\s*$/)?.[1])
+      .map((value) => (value ? parseTomlString(value) : undefined))
       .find((value): value is string => Boolean(value));
     const args = currentBody
       .map((line) => line.match(/^\s*args\s*=\s*(.+)\s*$/)?.[1])
-      .find((value): value is string => Boolean(value));
+      .map((value) => (value ? parseTomlArray(value) : undefined))
+      .find((value): value is string[] => Array.isArray(value));
     const cwd = currentBody
       .map((line) => line.match(/^\s*cwd\s*=\s*(.+)\s*$/)?.[1])
+      .map((value) => (value ? parseTomlString(value) : undefined))
       .find((value): value is string => Boolean(value));
     const url = currentBody
       .map((line) => line.match(/^\s*url\s*=\s*(.+)\s*$/)?.[1])
+      .map((value) => (value ? parseTomlString(value) : undefined))
       .find((value): value is string => Boolean(value));
-
-    const parsedCommand = command ? parseTomlString(command) : undefined;
-    const parsedArgs = args ? parseTomlArray(args) : undefined;
-    const parsedCwd = cwd ? parseTomlString(cwd) : undefined;
-    const parsedUrl = url ? parseTomlString(url) : undefined;
 
     entries.push({
       inventoryId: `${filePath}#${currentName}`,
@@ -230,11 +350,11 @@ function parseCodexTomlMcpServers(filePath: string): McpServerInventoryEntry[] {
       sourcePath: filePath,
       sourceKind: "codex_toml",
       repoScope: "global",
-      transport: detectTransport("codex_toml", parsedCommand, parsedUrl),
-      command: parsedCommand,
-      args: parsedArgs,
-      cwd: parsedCwd,
-      url: parsedUrl,
+      transport: detectTransport("codex_toml", command, url),
+      command,
+      args,
+      cwd,
+      url,
       text: `${currentName}\n${body}`.trim(),
       metadata: {
         title: currentName,

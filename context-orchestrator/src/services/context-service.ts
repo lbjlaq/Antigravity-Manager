@@ -16,9 +16,10 @@ function scoreText(query: string, haystack: string): number {
     return 0;
   }
 
+  const words = new Set(h.match(/[a-z0-9_]+/g) ?? []);
   let score = 0;
-  for (const token of q.split(/\s+/).filter(Boolean)) {
-    if (h.includes(token)) {
+  for (const token of q.split(/\W+/).filter(Boolean)) {
+    if (words.has(token)) {
       score += 1;
     }
   }
@@ -40,9 +41,24 @@ function walkFiles(root: string, matcher: (filePath: string) => boolean): string
 
   while (stack.length > 0) {
     const current = stack.pop()!;
-    const stat = fs.statSync(current);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(current);
+    } catch {
+      // Skip transient entries (deleted/moved) and unreadable paths.
+      continue;
+    }
+
     if (stat.isDirectory()) {
-      for (const entry of fs.readdirSync(current)) {
+      let entries: string[];
+      try {
+        entries = fs.readdirSync(current);
+      } catch {
+        // Ignore unreadable directories.
+        continue;
+      }
+
+      for (const entry of entries) {
         stack.push(path.join(current, entry));
       }
       continue;
@@ -59,9 +75,15 @@ function walkFiles(root: string, matcher: (filePath: string) => boolean): string
 function fileVersionToken(files: string[]): string {
   const fingerprints = files
     .map((filePath) => {
-      const stat = fs.statSync(filePath);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(filePath);
+      } catch {
+        return undefined;
+      }
       return `${filePath}:${stat.size}:${stat.mtimeMs}`;
     })
+    .filter((fingerprint): fingerprint is string => Boolean(fingerprint))
     .sort();
   return hashParts(fingerprints);
 }
