@@ -46,3 +46,7 @@ __pycache__/
 
 DOCKER_DEPLOYMENT.md
 pnpm-lock.yaml
+AI.local.md
+CLAUDE.local.md
+MEMORY.md
+.antigravity/local.json
