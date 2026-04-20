@@ -52,6 +52,17 @@ pub async fn handle_generate(
         debug!("[{}] Client Adapter detected", trace_id);
     }
 
+    // ===== 新增的分支流程：默认使用信贷积分兜底 =====
+    let force_credits = std::env::var("ANTIGRAVITY_FORCE_CREDITS").unwrap_or_else(|_| "false".to_string()) == "true";
+    if force_credits {
+        if let serde_json::Value::Object(ref mut map) = body {
+            let credit_types = serde_json::json!(["GOOGLE_ONE_AI"]);
+            map.insert("enabledCreditTypes".to_string(), credit_types);
+            debug!("[{}] Injected enabledCreditTypes=GOOGLE_ONE_AI into proxy payload via env override", trace_id);
+        }
+    }
+    // ===============================================
+
     // 1. 验证方法
     if method != "generateContent" && method != "streamGenerateContent" {
         return Err((

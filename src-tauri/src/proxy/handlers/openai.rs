@@ -215,8 +215,18 @@ pub async fn handle_chat_completions(
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
         // 4. 转换请求 (返回内容包含 session_id 和 message_count)
-        let (gemini_body, session_id, message_count) =
+        let (mut gemini_body, session_id, message_count) =
             transform_openai_request(&openai_req, &project_id, &mapped_model, proxy_token.as_ref());
+
+        // ===== 新增的分支流程：默认使用信贷积分兜底 =====
+        let force_credits = std::env::var("ANTIGRAVITY_FORCE_CREDITS").unwrap_or_else(|_| "false".to_string()) == "true";
+        if force_credits {
+            if let serde_json::Value::Object(ref mut map) = gemini_body {
+                map.insert("enabledCreditTypes".to_string(), serde_json::json!(["GOOGLE_ONE_AI"]));
+                tracing::debug!("[{}] Injected enabledCreditTypes=GOOGLE_ONE_AI into proxy payload via env override", trace_id);
+            }
+        }
+        // ===============================================
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({

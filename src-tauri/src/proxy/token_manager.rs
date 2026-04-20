@@ -1122,7 +1122,12 @@ impl TokenManager {
         }
 
         // [NEW] 1. 动态能力过滤 (Capability Filter)
-        
+
+        // --- 新增：读取是否强制开启信贷积分兜底 ---
+        // (仅用作状态位透传，用于指示系统是否应无视原生的0配额限制)
+        let force_credits = std::env::var("ANTIGRAVITY_FORCE_CREDITS")
+            .unwrap_or_else(|_| "false".to_string()) == "true";
+
         // 定义常量
         const RESET_TIME_THRESHOLD_SECS: i64 = 600; // 10 分钟阈值
 
@@ -1133,10 +1138,17 @@ impl TokenManager {
         // 仅保留明确拥有该模型配额的账号
         // 这一步确保了 "保证有模型才可以进入轮询"，特别是对 Opus 4.6 等高端模型
         let candidate_count_before = tokens_snapshot.len();
-        
-        // 此处假设所有受支持的模型都会出现在 model_quotas 中
-        // 如果 API 返回的配额信息不完整，可能会导致误杀，但为了严格性，我们执行此过滤
-        tokens_snapshot.retain(|t| t.model_quotas.contains_key(&normalized_target));
+
+        // ---【核心修改：放行积分特权流量】---
+        if !force_credits {
+            // 原生机制：剥离缺乏额度映射的账号
+            // 此处假设所有受支持的模型都会出现在 model_quotas 中
+            // 如果 API 返回的配额信息不完整，可能会导致误杀，但为了严格性，我们执行此过滤
+            tokens_snapshot.retain(|t| t.model_quotas.contains_key(&normalized_target));
+        } else {
+            // 积分机制：账号配额耗尽不进行淘汰。它们随后的 `unwrap_or(0)` 将使其降至优先级最低兜底
+            tracing::debug!("ANTIGRAVITY_FORCE_CREDITS is true: Skipped token elimination based on raw empty quotas.");
+        }
 
         if tokens_snapshot.is_empty() {
             if candidate_count_before > 0 {
@@ -1218,10 +1230,15 @@ impl TokenManager {
         let scheduling = self.sticky_config.read().await.clone();
         use crate::proxy::sticky_config::SchedulingMode;
 
-        // 【新增】检查配额保护是否启用（如果关闭，则忽略 protected_models 检查）
-        let quota_protection_enabled = crate::modules::config::load_app_config()
-            .map(|cfg| cfg.quota_protection.enabled)
-            .unwrap_or(false);
+        // 【新增/修改】检查配额保护是否启用（如果关闭，则忽略 protected_models 检查）
+        // 当开启强制使用信贷积分兜底时，强制将免费额度耗尽产生的本地风控拦截视为 false
+        let quota_protection_enabled = if force_credits {
+            false
+        } else {
+            crate::modules::config::load_app_config()
+                .map(|cfg| cfg.quota_protection.enabled)
+                .unwrap_or(false)
+        };
 
         // ===== [FIX #820] 固定账号模式：优先使用指定账号 =====
         let preferred_id = self.preferred_account_id.read().await.clone();

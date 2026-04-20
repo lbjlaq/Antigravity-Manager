@@ -796,7 +796,7 @@ pub async fn handle_messages(
         // let _trace_id = format!("req_{}", chrono::Utc::now().timestamp_subsec_millis());
 
         let token_obj = token_manager.get_token_by_id(&account_id);
-        let gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id, retried_without_thinking, Some(account_id.as_str()), &session_id_str, token_obj.as_ref()) {
+        let mut gemini_body = match transform_claude_request_in(&request_with_mapped, &project_id, retried_without_thinking, Some(account_id.as_str()), &session_id_str, token_obj.as_ref()) {
             Ok(b) => {
                 debug!("[{}] Transformed Gemini Body: {}", trace_id, serde_json::to_string_pretty(&b).unwrap_or_default());
                 b
@@ -819,6 +819,16 @@ pub async fn handle_messages(
                 ).into_response();
             }
         };
+
+        // ===== 新增的分支流程：默认使用信贷积分兜底 =====
+        let force_credits = std::env::var("ANTIGRAVITY_FORCE_CREDITS").unwrap_or_else(|_| "false".to_string()) == "true";
+        if force_credits {
+            if let serde_json::Value::Object(ref mut map) = gemini_body {
+                map.insert("enabledCreditTypes".to_string(), serde_json::json!(["GOOGLE_ONE_AI"]));
+                tracing::info!("[{}] Injected enabledCreditTypes=GOOGLE_ONE_AI into proxy payload via env override", trace_id);
+            }
+        }
+        // ===============================================
 
         if debug_logger::is_enabled(&debug_cfg) {
             let payload = json!({
