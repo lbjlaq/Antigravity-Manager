@@ -1104,17 +1104,56 @@ impl TokenManager {
 
         // 【优化 Issue #284】添加 5 秒超时，防止死锁
         let timeout_duration = std::time::Duration::from_secs(5);
-        match tokio::time::timeout(
+        let first_result = match tokio::time::timeout(
             timeout_duration,
             self.get_token_internal(quota_group, force_rotate, session_id, target_model),
         )
         .await
         {
             Ok(result) => result,
-            Err(_) => Err(
-                "Token acquisition timeout (5s) - system too busy or deadlock detected".to_string(),
-            ),
+            Err(_) => {
+                return Err(
+                    "Token acquisition timeout (5s) - system too busy or deadlock detected".to_string(),
+                )
+            }
+        };
+
+        if let Err(error) = &first_result {
+            if Self::should_reload_after_token_error(error) {
+                tracing::warn!(
+                    "[Token Recovery] {} Reloading account cache once before failing.",
+                    error
+                );
+                self.reload_all_accounts()
+                    .await
+                    .map_err(|reload_err| {
+                        format!("{} (account cache reload failed: {})", error, reload_err)
+                    })?;
+
+                return match tokio::time::timeout(
+                    timeout_duration,
+                    self.get_token_internal(quota_group, force_rotate, session_id, target_model),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(
+                        "Token acquisition timeout (5s) after account cache reload".to_string(),
+                    ),
+                };
+            }
         }
+
+        first_result
+    }
+
+    fn should_reload_after_token_error(error: &str) -> bool {
+        matches!(
+            error,
+            "All accounts failed or unhealthy."
+                | "All accounts failed"
+                | "All accounts failed after optimistic reset."
+        )
     }
 
     /// 内部实现：获取 Token 的核心逻辑
@@ -2001,6 +2040,7 @@ impl TokenManager {
 
         // 【替代方案】转换 email -> account_id
         let key = self.email_to_account_id(email).unwrap_or_else(|| email.to_string());
+        self.record_failure(&key);
 
         self.rate_limit_tracker.parse_from_error(
             &key,
@@ -2067,8 +2107,12 @@ impl TokenManager {
     ///
     /// 在请求成功完成后调用，将该账号的失败计数归零，
     /// 下次失败时从最短的锁定时间开始（智能限流）。
-    pub fn mark_account_success(&self, account_id: &str) {
-        self.rate_limit_tracker.mark_success(account_id);
+    pub fn mark_account_success(&self, account_id_or_email: &str) {
+        let account_id = self
+            .email_to_account_id(account_id_or_email)
+            .unwrap_or_else(|| account_id_or_email.to_string());
+        self.rate_limit_tracker.mark_success(&account_id);
+        self.record_success(&account_id);
     }
 
     /// 检查是否有可用的 Google 账号
@@ -2301,6 +2345,7 @@ impl TokenManager {
 
         // [FIX] Convert email to account_id for consistent tracking
         let account_id = self.email_to_account_id(email).unwrap_or_else(|| email.to_string());
+        self.record_failure(&account_id);
 
         // 检查 API 是否返回了精确的重试时间
         let has_explicit_retry_time = retry_after_header.is_some() ||
@@ -2505,19 +2550,33 @@ impl TokenManager {
 
     /// 记录请求成功，增加健康分
     pub fn record_success(&self, account_id: &str) {
-        self.health_scores
+        let score = self
+            .health_scores
             .entry(account_id.to_string())
             .and_modify(|s| *s = (*s + 0.05).min(1.0))
             .or_insert(1.0);
+        let updated_score = *score;
+        drop(score);
+
+        if let Some(mut token) = self.tokens.get_mut(account_id) {
+            token.health_score = updated_score;
+        }
         tracing::debug!("📈 Health score increased for account {}", account_id);
     }
 
     /// 记录请求失败，降低健康分
     pub fn record_failure(&self, account_id: &str) {
-        self.health_scores
+        let score = self
+            .health_scores
             .entry(account_id.to_string())
             .and_modify(|s| *s = (*s - 0.2).max(0.0))
             .or_insert(0.8);
+        let updated_score = *score;
+        drop(score);
+
+        if let Some(mut token) = self.tokens.get_mut(account_id) {
+            token.health_score = updated_score;
+        }
         tracing::warn!("📉 Health score decreased for account {}", account_id);
     }
 
@@ -2955,6 +3014,41 @@ mod tests {
             model_quotas: HashMap::new(),
             model_limits: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn test_mark_account_success_accepts_email() {
+        let manager = TokenManager::new(PathBuf::from("/tmp/test"));
+        let mut token = create_test_token("user@example.com", Some("PRO"), 0.8, None, Some(50));
+        token.account_id = "acc1".to_string();
+        manager.tokens.insert(token.account_id.clone(), token);
+
+        manager.rate_limit_tracker.parse_from_error(
+            "acc1",
+            429,
+            Some("60"),
+            "quota exhausted",
+            None,
+            &[60],
+        );
+        assert!(manager.rate_limit_tracker.is_rate_limited("acc1", None));
+
+        manager.mark_account_success("user@example.com");
+
+        assert!(!manager.rate_limit_tracker.is_rate_limited("acc1", None));
+    }
+
+    #[test]
+    fn test_stale_token_pool_errors_trigger_reload() {
+        assert!(TokenManager::should_reload_after_token_error(
+            "All accounts failed or unhealthy."
+        ));
+        assert!(TokenManager::should_reload_after_token_error(
+            "All accounts failed"
+        ));
+        assert!(!TokenManager::should_reload_after_token_error(
+            "All accounts limited. Wait 60s."
+        ));
     }
 
     /// 测试排序比较函数（与 get_token_internal 中的逻辑一致）

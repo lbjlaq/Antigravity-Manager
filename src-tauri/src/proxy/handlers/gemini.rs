@@ -269,6 +269,8 @@ pub async fn handle_generate(
             .map(|s| s.to_string());
 
         if status.is_success() {
+            token_manager.mark_account_success(&account_id);
+
             // 6. 响应处理
             if is_stream {
                 use axum::body::Body;
