@@ -1121,14 +1121,12 @@ impl TokenManager {
         if let Err(error) = &first_result {
             if Self::should_reload_after_token_error(error) {
                 tracing::warn!(
-                    "[Token Recovery] {} Reloading account cache once before failing.",
+                    "[Token Recovery] {} Refreshing account cache once before failing; preserving rate limits.",
                     error
                 );
-                self.reload_all_accounts()
-                    .await
-                    .map_err(|reload_err| {
-                        format!("{} (account cache reload failed: {})", error, reload_err)
-                    })?;
+                self.load_accounts().await.map_err(|reload_err| {
+                    format!("{} (account cache reload failed: {})", error, reload_err)
+                })?;
 
                 return match tokio::time::timeout(
                     timeout_duration,
@@ -1467,8 +1465,9 @@ impl TokenManager {
                         let key = self
                             .email_to_account_id(&bound_token.email)
                             .unwrap_or_else(|| bound_token.account_id.clone());
-                        // [FIX] Pass None for specific model wait time if not applicable
-                        let reset_sec = self.rate_limit_tracker.get_remaining_wait(&key, None);
+                        let reset_sec = self
+                            .rate_limit_tracker
+                            .get_remaining_wait(&key, Some(&normalized_target));
                         if reset_sec > 0 {
                             // 【修复 Issue #284】立即解绑并切换账号，不再阻塞等待
                             // 原因：阻塞等待会导致并发请求时客户端 socket 超时 (UND_ERR_SOCKET)
@@ -1605,10 +1604,14 @@ impl TokenManager {
                 Some(t) => t,
                 None => {
                     // 乐观重置策略: 双层防护机制
-                    // 计算最短等待时间
+                    // 计算最短等待时间，必须包含模型级限流。
                     let min_wait = tokens_snapshot
                         .iter()
-                        .filter_map(|t| self.rate_limit_tracker.get_reset_seconds(&t.account_id))
+                        .map(|t| {
+                            self.rate_limit_tracker
+                                .get_remaining_wait(&t.account_id, Some(&normalized_target))
+                        })
+                        .filter(|wait_sec| *wait_sec > 0)
                         .min();
 
                     // Layer 1: 如果最短等待时间 <= 2秒,执行缓冲延迟
@@ -3049,6 +3052,191 @@ mod tests {
         assert!(!TokenManager::should_reload_after_token_error(
             "All accounts limited. Wait 60s."
         ));
+    }
+
+    #[tokio::test]
+    async fn test_model_level_rate_limits_are_reported_as_limited() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "antigravity-token-manager-test-model-limit-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let write_account = |id: &str, email: &str, percentage: i64| {
+            let account_path = accounts_dir.join(format!("{}.json", id));
+            let json = serde_json::json!({
+                "id": id,
+                "email": email,
+                "token": {
+                    "access_token": format!("atk-{}", id),
+                    "refresh_token": format!("rtk-{}", id),
+                    "expires_in": 3600,
+                    "expiry_timestamp": now + 3600,
+                    "project_id": format!("pid-{}", id)
+                },
+                "quota": {
+                    "models": [
+                        { "name": "gemini-1.5-flash", "percentage": percentage }
+                    ]
+                },
+                "disabled": false,
+                "proxy_disabled": false,
+                "created_at": now,
+                "last_used": now
+            });
+            std::fs::write(&account_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+        };
+
+        write_account("acc1", "a@test.com", 80);
+        write_account("acc2", "b@test.com", 70);
+
+        let manager = TokenManager::new(tmp_root.clone());
+        manager.load_accounts().await.unwrap();
+        let normalized_model = "gemini-3-flash";
+
+        let reset_time =
+            std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        manager.rate_limit_tracker.set_lockout_until(
+            "acc1",
+            reset_time,
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+            Some(normalized_model.to_string()),
+        );
+        manager.rate_limit_tracker.set_lockout_until(
+            "acc2",
+            reset_time,
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+            Some(normalized_model.to_string()),
+        );
+
+        let err = manager
+            .get_token("gemini", false, None, "gemini-1.5-flash")
+            .await
+            .unwrap_err();
+
+        assert!(err.starts_with("All accounts limited. Wait "), "{err}");
+        assert!(!TokenManager::should_reload_after_token_error(&err));
+        assert!(manager
+            .rate_limit_tracker
+            .is_rate_limited("acc1", Some(normalized_model)));
+        assert!(manager
+            .rate_limit_tracker
+            .is_rate_limited("acc2", Some(normalized_model)));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_sticky_session_skips_model_level_limited_bound_account() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "antigravity-token-manager-test-sticky-model-limit-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let write_account = |id: &str, email: &str, percentage: i64| {
+            let account_path = accounts_dir.join(format!("{}.json", id));
+            let json = serde_json::json!({
+                "id": id,
+                "email": email,
+                "token": {
+                    "access_token": format!("atk-{}", id),
+                    "refresh_token": format!("rtk-{}", id),
+                    "expires_in": 3600,
+                    "expiry_timestamp": now + 3600,
+                    "project_id": format!("pid-{}", id)
+                },
+                "quota": {
+                    "models": [
+                        { "name": "gemini-1.5-flash", "percentage": percentage }
+                    ]
+                },
+                "disabled": false,
+                "proxy_disabled": false,
+                "created_at": now,
+                "last_used": now
+            });
+            std::fs::write(&account_path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+        };
+
+        write_account("acc1", "a@test.com", 90);
+        write_account("acc2", "b@test.com", 10);
+
+        let manager = TokenManager::new(tmp_root.clone());
+        manager.load_accounts().await.unwrap();
+
+        let (_token, _project_id, _email, account_id, _wait_ms) = manager
+            .get_token("gemini", false, Some("sid1"), "gemini-1.5-flash")
+            .await
+            .unwrap();
+        assert_eq!(account_id, "acc1");
+
+        manager.rate_limit_tracker.set_lockout_until(
+            "acc1",
+            std::time::SystemTime::now() + std::time::Duration::from_secs(60),
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+            Some("gemini-3-flash".to_string()),
+        );
+
+        let (_token, _project_id, email, account_id, _wait_ms) = manager
+            .get_token("gemini", false, Some("sid1"), "gemini-1.5-flash")
+            .await
+            .unwrap();
+
+        assert_eq!(account_id, "acc2");
+        assert_eq!(email, "b@test.com");
+        assert_eq!(
+            manager.session_accounts.get("sid1").map(|v| v.clone()),
+            Some("acc2".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_token_recovery_preserves_existing_rate_limits() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "antigravity-token-manager-test-recovery-preserves-limits-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(tmp_root.join("accounts")).unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        let mut stale_token = create_test_token("stale@test.com", Some("PRO"), 1.0, None, Some(80));
+        stale_token.account_id = "stale-acc".to_string();
+        stale_token.account_path = tmp_root.join("accounts").join("missing.json");
+        stale_token.project_id = Some("pid-stale".to_string());
+        stale_token
+            .model_quotas
+            .insert("gemini-3-flash".to_string(), 80);
+        manager
+            .tokens
+            .insert(stale_token.account_id.clone(), stale_token);
+
+        let reset_time =
+            std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        manager.rate_limit_tracker.set_lockout_until(
+            "limited-acc",
+            reset_time,
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+            Some("gemini-3-flash".to_string()),
+        );
+
+        let err = manager
+            .get_token("gemini", false, None, "gemini-1.5-flash")
+            .await
+            .unwrap_err();
+
+        assert_eq!(err, "Token pool is empty");
+        assert!(manager
+            .rate_limit_tracker
+            .is_rate_limited("limited-acc", Some("gemini-3-flash")));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
     }
 
     /// 测试排序比较函数（与 get_token_internal 中的逻辑一致）
