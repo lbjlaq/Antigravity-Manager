@@ -57,6 +57,8 @@ export interface GlobalSystemPromptConfig {
     enabled: boolean;
     /** 提示词内容 */
     content: string;
+    /** 是否注入内置 Antigravity 身份提示词 */
+    include_default_prompt: boolean;
 }
 
 export interface DebugLoggingConfig {

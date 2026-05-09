@@ -53,7 +53,7 @@ export default function AdvancedThinking({
                     {/* 3. 全局系统提示词 (Global System Prompt) */}
                     <div className="pt-4">
                         <GlobalSystemPrompt
-                            config={config.global_system_prompt || { enabled: false, content: '' }}
+                            config={config.global_system_prompt || { enabled: false, content: '', include_default_prompt: true }}
                             onChange={(newConfig) => onChange({ ...config, global_system_prompt: newConfig })}
                         />
                     </div>

@@ -468,6 +468,8 @@ pub fn wrap_request(
             **Proactiveness**"
         };
 
+        let global_prompt_config = crate::proxy::config::get_global_system_prompt();
+
         // [HYBRID] 检查是否已有 systemInstruction
         if let Some(system_instruction) = inner_request.get_mut("systemInstruction") {
             // [NEW] 补全 role: user
@@ -487,18 +489,24 @@ pub fn wrap_request(
                         .map(|s| s.contains("You are Antigravity"))
                         .unwrap_or(false);
 
-                    if !has_antigravity {
+                    let should_inject_default_prompt =
+                        global_prompt_config.include_default_prompt && !has_antigravity;
+
+                    if should_inject_default_prompt {
                         // 在前面插入 Antigravity 身份
                         parts_array.insert(0, json!({"text": antigravity_identity}));
                     }
 
                     // [NEW] 注入全局系统提示词 (紧跟 Antigravity 身份之后，用户指令之前)
-                    let global_prompt_config = crate::proxy::config::get_global_system_prompt();
                     if global_prompt_config.enabled
                         && !global_prompt_config.content.trim().is_empty()
                     {
-                        // 插入位置：Antigravity 身份之后 (index 1)
-                        let insert_pos = if has_antigravity { 1 } else { 1 };
+                        // 插入位置：内置或用户已有 Antigravity 身份之后，否则放在最前
+                        let insert_pos = if should_inject_default_prompt || has_antigravity {
+                            1
+                        } else {
+                            0
+                        };
                         if insert_pos <= parts_array.len() {
                             parts_array
                                 .insert(insert_pos, json!({"text": global_prompt_config.content}));
@@ -510,16 +518,20 @@ pub fn wrap_request(
             }
         } else {
             // 没有 systemInstruction,创建一个新的
-            let mut parts = vec![json!({"text": antigravity_identity})];
+            let mut parts = Vec::new();
+            if global_prompt_config.include_default_prompt {
+                parts.push(json!({"text": antigravity_identity}));
+            }
             // [NEW] 注入全局系统提示词
-            let global_prompt_config = crate::proxy::config::get_global_system_prompt();
             if global_prompt_config.enabled && !global_prompt_config.content.trim().is_empty() {
                 parts.push(json!({"text": global_prompt_config.content}));
             }
-            inner_request["systemInstruction"] = json!({
-                "role": "user",
-                "parts": parts
-            });
+            if !parts.is_empty() {
+                inner_request["systemInstruction"] = json!({
+                    "role": "user",
+                    "parts": parts
+                });
+            }
         }
     }
 
@@ -673,6 +685,7 @@ pub fn inject_ids_to_response(response: &mut Value, model_name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::config::{update_global_system_prompt_config, GlobalSystemPromptConfig};
     use serde_json::json;
 
     #[test]
@@ -716,6 +729,38 @@ mod tests {
             .unwrap()
             .get("systemInstruction")
             .unwrap();
+    }
+
+    #[test]
+    fn test_default_system_prompt_can_be_disabled_gemini_native() {
+        update_global_system_prompt_config(GlobalSystemPromptConfig {
+            enabled: false,
+            content: String::new(),
+            include_default_prompt: false,
+        });
+
+        let body = json!({
+            "model": "gemini-pro",
+            "systemInstruction": {
+                "parts": [{"text": "Custom system only"}]
+            },
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}]
+        });
+
+        let result = wrap_request(&body, "test-proj", "gemini-pro", None, None, None);
+        let parts = result["request"]["systemInstruction"]["parts"]
+            .as_array()
+            .unwrap();
+        let system_text = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!system_text.contains("You are Antigravity"));
+        assert!(system_text.contains("Custom system only"));
+
+        update_global_system_prompt_config(GlobalSystemPromptConfig::default());
     }
 
     #[test]

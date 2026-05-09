@@ -682,14 +682,16 @@ pub fn transform_openai_request(
         .any(|s| s.contains("You are Antigravity"));
 
     let mut parts = Vec::new();
+    let global_prompt_config = crate::proxy::config::get_global_system_prompt();
+    let should_inject_default_prompt =
+        global_prompt_config.include_default_prompt && !user_has_antigravity;
 
     // 1. Antigravity 身份 (如果需要, 作为独立 Part 插入)
-    if !user_has_antigravity {
+    if should_inject_default_prompt {
         parts.push(json!({"text": antigravity_identity}));
     }
 
     // 2. [NEW] 注入全局系统提示词 (紧跟 Antigravity 身份之后)
-    let global_prompt_config = crate::proxy::config::get_global_system_prompt();
     if global_prompt_config.enabled && !global_prompt_config.content.trim().is_empty() {
         parts.push(json!({"text": global_prompt_config.content}));
     }
@@ -699,10 +701,12 @@ pub fn transform_openai_request(
         parts.push(json!({"text": inst}));
     }
 
-    inner_request["systemInstruction"] = json!({
-        "role": "user",
-        "parts": parts
-    });
+    if !parts.is_empty() {
+        inner_request["systemInstruction"] = json!({
+            "role": "user",
+            "parts": parts
+        });
+    }
 
     if config.inject_google_search {
         crate::proxy::mappers::common_utils::inject_google_search_tool(&mut inner_request, Some(mapped_model));
@@ -769,9 +773,56 @@ fn enforce_uppercase_types(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::mappers::openai::models::*;
+    use crate::proxy::config::{update_global_system_prompt_config, GlobalSystemPromptConfig};
 
     #[test]
+    fn test_default_system_prompt_can_be_disabled_openai() {
+        update_global_system_prompt_config(GlobalSystemPromptConfig {
+            enabled: false,
+            content: String::new(),
+            include_default_prompt: false,
+        });
+
+        let req = OpenAIRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![
+                OpenAIMessage {
+                    role: "system".to_string(),
+                    content: Some(OpenAIContent::String("Custom system only".to_string())),
+                    reasoning_content: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                },
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("Hello".to_string())),
+                    reasoning_content: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (result, _, _) =
+            transform_openai_request(&req, "test-project", "gemini-2.0-flash", None);
+        let parts = result["request"]["systemInstruction"]["parts"]
+            .as_array()
+            .unwrap();
+        let system_text = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!system_text.contains("You are Antigravity"));
+        assert!(system_text.contains("Custom system only"));
+
+        update_global_system_prompt_config(GlobalSystemPromptConfig::default());
+    }
+
     #[test]
     fn test_issue_1592_gemini_3_pro_budget_capping() {
         // [FIX #1592] Regression test for gemini-3-pro thinking budget capping

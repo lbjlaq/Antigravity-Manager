@@ -78,8 +78,9 @@ pub fn update_global_system_prompt_config(config: GlobalSystemPromptConfig) {
         if let Ok(mut cfg) = lock.write() {
             *cfg = config.clone();
             tracing::info!(
-                "[Global-System-Prompt] Config updated: enabled={}, content_len={}",
+                "[Global-System-Prompt] Config updated: enabled={}, include_default_prompt={}, content_len={}",
                 config.enabled,
+                config.include_default_prompt,
                 config.content.len()
             );
         }
@@ -87,8 +88,9 @@ pub fn update_global_system_prompt_config(config: GlobalSystemPromptConfig) {
         // 首次初始化
         let _ = GLOBAL_SYSTEM_PROMPT_CONFIG.set(RwLock::new(config.clone()));
         tracing::info!(
-            "[Global-System-Prompt] Config initialized: enabled={}, content_len={}",
+            "[Global-System-Prompt] Config initialized: enabled={}, include_default_prompt={}, content_len={}",
             config.enabled,
+            config.include_default_prompt,
             config.content.len()
         );
     }
@@ -130,6 +132,13 @@ pub struct GlobalSystemPromptConfig {
     /// 系统提示词内容
     #[serde(default)]
     pub content: String,
+    /// 是否注入内置 Antigravity 身份提示词
+    #[serde(default = "default_include_default_prompt")]
+    pub include_default_prompt: bool,
+}
+
+fn default_include_default_prompt() -> bool {
+    true
 }
 
 impl Default for GlobalSystemPromptConfig {
@@ -137,6 +146,7 @@ impl Default for GlobalSystemPromptConfig {
         Self {
             enabled: false,
             content: String::new(),
+            include_default_prompt: true,
         }
     }
 }
