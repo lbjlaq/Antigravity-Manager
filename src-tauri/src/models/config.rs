@@ -171,7 +171,7 @@ impl Default for CircuitBreakerConfig {
 impl AppConfig {
     pub fn new() -> Self {
         Self {
-            language: "zh".to_string(),
+            language: "es".to_string(),
             theme: "system".to_string(),
             auto_refresh: true,
             refresh_interval: 15,

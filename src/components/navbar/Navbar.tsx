@@ -122,7 +122,7 @@ function Navbar() {
                     {/* 设置按钮 - 自己处理响应式 */}
                     <NavSettings
                         theme={(config?.theme as 'light' | 'dark') || 'light'}
-                        currentLanguage={config?.language || 'en'}
+                        currentLanguage={config?.language || 'es'}
                         onThemeToggle={toggleTheme}
                         onLanguageChange={handleLanguageChange}
                     />

@@ -1,0 +1,27 @@
+{
+  "project_name": "antigravity-manager-src",
+  "base_branch": "main",
+  "branch_prefix": "codex/",
+  "git": {
+    "push_remote": "fork",
+    "base_remote": "origin"
+  },
+  "validation": {
+    "local": [
+      "if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw 'npm no esta en PATH' } else { npm run build }",
+      "if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { throw 'cargo no esta en PATH' } else { cargo check --manifest-path src-tauri\\Cargo.toml }"
+    ],
+    "ci": [
+      "npm install --legacy-peer-deps",
+      "npx tsc --noEmit",
+      "npm run build",
+      "(cd src-tauri && cargo fmt -- --check)",
+      "(cd src-tauri && cargo clippy --all-targets --all-features -- -D warnings)",
+      "(cd src-tauri && cargo check)"
+    ]
+  },
+  "pull_request": {
+    "enabled": true,
+    "draft": true
+  }
+}

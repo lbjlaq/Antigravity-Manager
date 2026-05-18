@@ -25,7 +25,7 @@ function Settings() {
     const { enable, disable, isEnabled } = useDebugConsole();
     const [activeTab, setActiveTab] = useState<'general' | 'account' | 'proxy' | 'advanced' | 'debug' | 'about'>('general');
     const [formData, setFormData] = useState<AppConfig>({
-        language: 'zh',
+        language: 'es',
         theme: 'system',
         auto_refresh: false,
         refresh_interval: 15,
