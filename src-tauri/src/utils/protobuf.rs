@@ -212,8 +212,28 @@ pub fn create_oauth_info(
     access_token: &str,
     refresh_token: &str,
     expiry: i64,
-    is_gcp_tos: bool,
+    mut is_gcp_tos: bool,
+    id_token: Option<&str>,
+    email: Option<&str>,
 ) -> Vec<u8> {
+    // 智能纠正 is_gcp_tos (兼容性核心逻辑)
+    // 逻辑：如果确定是个人账号（通过邮件后缀），或者被明确要求修正，则强制关闭 Field 6
+    if let Some(email_str) = email {
+        let is_personal = email_str.to_lowercase().ends_with("@gmail.com") 
+            || email_str.to_lowercase().ends_with("@outlook.com")
+            || email_str.to_lowercase().ends_with("@hotmail.com")
+            || email_str.to_lowercase().ends_with("@qq.com")
+            || email_str.to_lowercase().ends_with("@163.com");
+
+        if is_personal && is_gcp_tos {
+            crate::modules::logger::log_info(&format!(
+                "[Protobuf] 自动纠正个人账号 ({}) 的 GCP 标志位以确保 IDE 刷新兼容性。",
+                email_str
+            ));
+            is_gcp_tos = false;
+        }
+    }
+
     // Field 1: access_token
     let field1 = encode_string_field(1, access_token);
     
@@ -224,12 +244,22 @@ pub fn create_oauth_info(
     let field3 = encode_string_field(3, refresh_token);
     
     // Field 4: expiry (嵌套的 Timestamp 消息)
-    let timestamp_tag = (1 << 3) | 0;
-    let mut timestamp_msg = encode_varint(timestamp_tag);
+    // message Timestamp { int64 seconds = 1; int32 nanos = 2; }
+    let seconds_tag = (1 << 3) | 0;
+    let mut timestamp_msg = encode_varint(seconds_tag);
     timestamp_msg.extend(encode_varint(expiry as u64));
+    
+    // 添加 Field 2: nanos (0)
+    let nanos_tag = (2 << 3) | 0;
+    timestamp_msg.extend(encode_varint(nanos_tag));
+    timestamp_msg.extend(encode_varint(0));
+    
     let field4 = encode_len_delim_field(4, &timestamp_msg);
     
-    // Field 6: is_gcp_tos = true
+    // Field 5: id_token (如果存在)
+    let field5 = id_token.map(|it| encode_string_field(5, it));
+
+    // Field 6: is_gcp_tos
     let field6 = is_gcp_tos.then(|| encode_varint_field(6, 1));
 
     // 合并所有字段为 OAuthTokenInfo 消息
@@ -238,6 +268,9 @@ pub fn create_oauth_info(
     oauth_info.extend(field2);
     oauth_info.extend(field3);
     oauth_info.extend(field4);
+    if let Some(field5) = field5 {
+        oauth_info.extend(field5);
+    }
     if let Some(field6) = field6 {
         oauth_info.extend(field6);
     }

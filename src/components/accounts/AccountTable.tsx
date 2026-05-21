@@ -43,6 +43,7 @@ import {
     Check,
     Clock,
     Bot,
+    Repeat2,
 } from 'lucide-react';
 import { Account } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -65,7 +66,7 @@ interface AccountTableProps {
     onToggleAll: () => void;
     currentAccountId: string | null;
     switchingAccountId: string | null;
-    onSwitch: (accountId: string) => void;
+    onSwitch: (accountId: string, targetIde?: string) => void;
     onRefresh: (accountId: string) => void;
     onViewDevice: (accountId: string) => void;
     onViewDetails: (accountId: string) => void;
@@ -87,7 +88,7 @@ interface SortableRowProps {
     isSwitching: boolean;
     isDragging?: boolean;
     onSelect: () => void;
-    onSwitch: () => void;
+    onSwitch: (targetIde?: string) => void;
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
@@ -105,7 +106,7 @@ interface AccountRowContentProps {
     isRefreshing: boolean;
     isSwitching: boolean;
     isDisabled: boolean;
-    onSwitch: () => void;
+    onSwitch: (targetIde?: string) => void;
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
@@ -616,10 +617,18 @@ function AccountRowContent({
                     <button
                         className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}
                         onClick={(e) => { e.stopPropagation(); onSwitch(); }}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to'))}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_classic', '切换到 Antigravity (经典版)'))}
                         disabled={isSwitching || isDisabled}
                     >
                         <ArrowRightLeft className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button
+                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/30'}`}
+                        onClick={(e) => { e.stopPropagation(); onSwitch('ide'); }}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_ide', '切换到 Antigravity IDE'))}
+                        disabled={isSwitching || isDisabled}
+                    >
+                        <Repeat2 className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
                     </button>
                     {onWarmup && (
                         <button
@@ -790,7 +799,7 @@ function AccountTable({
                                     isSwitching={account.id === switchingAccountId}
                                     isDragging={account.id === activeId}
                                     onSelect={() => onToggleSelect(account.id)}
-                                    onSwitch={() => onSwitch(account.id)}
+                                    onSwitch={(targetIde?: string) => onSwitch(account.id, targetIde)}
                                     onRefresh={() => onRefresh(account.id)}
                                     onViewDevice={() => onViewDevice(account.id)}
                                     onViewDetails={() => onViewDetails(account.id)}

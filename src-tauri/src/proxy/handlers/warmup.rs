@@ -347,7 +347,7 @@ pub async fn handle_warmup(
                     "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
                     req.model
                 )),
-                response_body: None,
+                response_body: Some(e.clone()),
                 input_tokens: None,
                 output_tokens: None,
                 protocol: Some("warmup".to_string()),

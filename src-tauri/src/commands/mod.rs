@@ -118,12 +118,13 @@ pub async fn switch_account(
     app: tauri::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     account_id: String,
+    target_ide: Option<String>,
 ) -> Result<(), String> {
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app.clone()),
     );
 
-    service.switch_account(&account_id).await?;
+    service.switch_account(&account_id, target_ide.as_deref()).await?;
 
     // 同步托盘
     crate::modules::tray::update_tray_menus(&app);
@@ -723,7 +724,7 @@ pub async fn get_antigravity_path(bypass_config: Option<bool>) -> Result<String,
     }
 
     // 2. 执行实时探测
-    match crate::modules::process::get_antigravity_executable_path() {
+    match crate::modules::process::get_antigravity_executable_path(None) {
         Some(path) => Ok(path.to_string_lossy().to_string()),
         None => Err("未找到 Antigravity 安装路径".to_string()),
     }
@@ -732,7 +733,7 @@ pub async fn get_antigravity_path(bypass_config: Option<bool>) -> Result<String,
 /// 获取 Antigravity 启动参数
 #[tauri::command]
 pub async fn get_antigravity_args() -> Result<Vec<String>, String> {
-    match crate::modules::process::get_args_from_running_process() {
+    match crate::modules::process::get_args_from_running_process(None) {
         Some(args) => Ok(args),
         None => Err("未找到正在运行的 Antigravity 进程".to_string()),
     }

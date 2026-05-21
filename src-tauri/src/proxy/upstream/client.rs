@@ -357,98 +357,131 @@ impl UpstreamClient {
         // [DEBUG] Log headers for verification
         tracing::debug!(?headers, "Final Upstream Request Headers");
 
-        let mut last_err: Option<String> = None;
-        // [NEW] 收集降级尝试记录
-        let mut fallback_attempts: Vec<FallbackAttemptLog> = Vec::new();
+        let mut has_triggered_downgrade = false;
+        
+        // [TEMPORARY FIX #3074] 针对 403 SERVICE_DISABLED 的自动降级重试逻辑
+        // 我们包装一层循环，以便在检测到特定错误时移除 Header 并重试
+        loop {
+            let mut last_err: Option<String> = None;
+            let mut fallback_attempts: Vec<FallbackAttemptLog> = Vec::new();
+            let mut should_retry_without_header = false;
 
-        // 遍历所有端点，失败时自动切换
-        for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
-            let url = Self::build_url(base_url, method, query_string);
-            let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
+            // 遍历所有端点，失败时自动切换
+            for (idx, base_url) in V1_INTERNAL_BASE_URL_FALLBACKS.iter().enumerate() {
+                let url = Self::build_url(base_url, method, query_string);
+                let has_next = idx + 1 < V1_INTERNAL_BASE_URL_FALLBACKS.len();
 
-            let body_bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
+                let body_bytes = serde_json::to_vec(&body).map_err(|e| e.to_string())?;
 
-            let response = client
-                .post(&url)
-                .headers(headers.clone())
-                // [NEW] 强制分块传输仿真: 包装为流以触发 Transfer-Encoding: chunked
-                // 这对齐了官方 Go Worker 通过遮蔽 Content-Length 来模拟 IDE 流量的行为
-                .body(rquest::Body::wrap_stream(futures::stream::once(async move { 
-                    Ok::<_, std::io::Error>(body_bytes) 
-                })))
-                .send()
-                .await;
+                let mut req_builder = client
+                    .post(&url)
+                    .headers(headers.clone());
 
-            match response {
-                Ok(resp) => {
-                    let status = resp.status();
-                    if status.is_success() {
-                        if idx > 0 {
-                            tracing::info!(
-                                "✓ Upstream fallback succeeded | Endpoint: {} | Status: {} | Next endpoints available: {}",
-                                base_url,
-                                status,
-                                V1_INTERNAL_BASE_URL_FALLBACKS.len() - idx - 1
-                            );
-                        } else {
-                            tracing::debug!(
-                                "✓ Upstream request succeeded | Endpoint: {} | Status: {}",
-                                base_url,
-                                status
-                            );
+                // [FIX] 仅对流式接口 (streamGenerateContent) 使用分块传输仿真
+                // 对其他接口 (如 generateContent, loadCodeAssist) 发送正常的固定长度 Body
+                // 否则图像生成会因为缺少 Content-Length 而被 Google 服务端拒绝或限流 (429)
+                if method == "streamGenerateContent" {
+                    let stream_bytes = body_bytes.clone();
+                    req_builder = req_builder.body(rquest::Body::wrap_stream(futures::stream::once(async move { 
+                        Ok::<_, std::io::Error>(stream_bytes) 
+                    })));
+                } else {
+                    req_builder = req_builder.body(body_bytes.clone());
+                }
+
+                let response = req_builder.send().await;
+
+                match response {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        if status.is_success() {
+                            if idx > 0 {
+                                tracing::info!(
+                                    "✓ Upstream fallback succeeded | Endpoint: {} | Status: {} | Next endpoints available: {}",
+                                    base_url,
+                                    status,
+                                    V1_INTERNAL_BASE_URL_FALLBACKS.len() - idx - 1
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "✓ Upstream request succeeded | Endpoint: {} | Status: {}",
+                                    base_url,
+                                    status
+                                );
+                            }
+                            return Ok(UpstreamCallResult {
+                                response: resp,
+                                fallback_attempts,
+                            });
                         }
+
+                        // [NEW] 检测 403 错误 (Issue #3074)
+                        // 只要带有项目 Header 且返回 403，我们就尝试降级重试一次
+                        if status == StatusCode::FORBIDDEN && !has_triggered_downgrade && headers.contains_key("x-goog-user-project") {
+                            tracing::warn!(
+                                "Detected 403 Forbidden with project header, retrying WITHOUT x-goog-user-project header (Account: {:?})",
+                                account_id
+                            );
+                            should_retry_without_header = true;
+                            break;
+                        }
+
+                        // 如果有下一个端点且当前错误可重试，则切换
+                        if has_next && Self::should_try_next_endpoint(status) {
+                            let err_msg = format!("Upstream {} returned {}", base_url, status);
+                            tracing::warn!(
+                                "Upstream endpoint returned {} at {} (method={}), trying next endpoint",
+                                status,
+                                base_url,
+                                method
+                            );
+                            // [NEW] 记录降级尝试
+                            fallback_attempts.push(FallbackAttemptLog {
+                                endpoint_url: url.clone(),
+                                status: Some(status.as_u16()),
+                                error: err_msg.clone(),
+                            });
+                            last_err = Some(err_msg);
+                            continue;
+                        }
+
+                        // 不可重试的错误或已是最后一个端点，直接返回
                         return Ok(UpstreamCallResult {
                             response: resp,
                             fallback_attempts,
                         });
                     }
-
-                    // 如果有下一个端点且当前错误可重试，则切换
-                    if has_next && Self::should_try_next_endpoint(status) {
-                        let err_msg = format!("Upstream {} returned {}", base_url, status);
-                        tracing::warn!(
-                            "Upstream endpoint returned {} at {} (method={}), trying next endpoint",
-                            status,
-                            base_url,
-                            method
-                        );
-                        // [NEW] 记录降级尝试
+                    Err(e) => {
+                        let msg = format!("HTTP request failed at {}: {}", base_url, e);
+                        tracing::debug!("{}", msg);
+                        // [NEW] 记录网络错误的降级尝试
                         fallback_attempts.push(FallbackAttemptLog {
                             endpoint_url: url.clone(),
-                            status: Some(status.as_u16()),
-                            error: err_msg.clone(),
+                            status: None,
+                            error: msg.clone(),
                         });
-                        last_err = Some(err_msg);
+                        last_err = Some(msg);
+
+                        // 如果是最后一个端点，退出循环
+                        if !has_next {
+                            break;
+                        }
                         continue;
                     }
-
-                    // 不可重试的错误或已是最后一个端点，直接返回
-                    return Ok(UpstreamCallResult {
-                        response: resp,
-                        fallback_attempts,
-                    });
-                }
-                Err(e) => {
-                    let msg = format!("HTTP request failed at {}: {}", base_url, e);
-                    tracing::debug!("{}", msg);
-                    // [NEW] 记录网络错误的降级尝试
-                    fallback_attempts.push(FallbackAttemptLog {
-                        endpoint_url: url.clone(),
-                        status: None,
-                        error: msg.clone(),
-                    });
-                    last_err = Some(msg);
-
-                    // 如果是最后一个端点，退出循环
-                    if !has_next {
-                        break;
-                    }
-                    continue;
                 }
             }
-        }
+            
+            // 处理降级逻辑
+            if should_retry_without_header {
+                headers.remove("x-goog-user-project");
+                has_triggered_downgrade = true;
+                // 重启外层 loop，从第一个端点再次尝试
+                continue;
+            }
 
-        Err(last_err.unwrap_or_else(|| "All endpoints failed".to_string()))
+            // 如果没有触发降级且所有端点都尝试过，返回最后的错误
+            return Err(last_err.unwrap_or_else(|| "All endpoints failed".to_string()));
+        }
     }
 
     /// 调用 v1internal API（带 429 重试,支持闭包）

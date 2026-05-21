@@ -1,4 +1,4 @@
-{
+﻿{
     "common": {
         "empty": "Trống",
         "loading": "Đang tải...",
@@ -158,6 +158,8 @@
         "last_used": "Dùng lần cuối",
         "reset_time": "Thời gian reset",
         "switch_to": "Chuyển sang tài khoản này",
+        "switch_to_classic": "Chuyển sang Antigravity (Cổ điển)",
+        "switch_to_ide": "Chuyển sang Antigravity IDE",
         "actions": "Thao tác",
         "device_fingerprint": "Vân Tay Thiết Bị",
         "show_all_quotas": "Hiển thị tất cả hạn ngạch",
@@ -430,6 +432,10 @@
             "antigravity_path_desc": "Nếu bạn cài Antigravity ở vị trí không chuẩn, hãy chỉ định đường dẫn file thực thi tại đây (Trỏ tới .app trên MacOS).",
             "antigravity_path_select": "Chọn file thực thi Antigravity",
             "antigravity_path_detected": "Đã cập nhật đường dẫn được phát hiện",
+            "antigravity_ide_path": "Đường dẫn Antigravity IDE",
+            "antigravity_ide_path_placeholder": "D:\\Antigravity\\Antigravity.exe",
+            "antigravity_ide_path_desc": "Chỉ định đường dẫn file thực thi của Antigravity IDE (trình soạn thảo code). Sau khi thiết lập, quá trình chuyển đổi tài khoản sẽ bảo vệ nghiêm ngặt các tiến trình tại đường dẫn này khỏi bị tắt.",
+            "antigravity_ide_path_select": "Chọn file thực thi Antigravity IDE",
             "detect_btn": "Phát hiện",
             "antigravity_args": "Tham số Khởi động Antigravity",
             "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",

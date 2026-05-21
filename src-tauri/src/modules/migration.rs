@@ -193,6 +193,7 @@ pub async fn import_from_v1() -> Result<Vec<Account>, String> {
                             None, // project_id will be fetched on demand
                             None, // session_id
                             true, // V1 tokens are Antigravity Google OAuth tokens
+                            None, // V1 doesn't have id_token saved
                         )
                         .with_oauth_client_key(oauth_client_key);
                         // Name already fetched in get_user_info at line 153, but outside match scope, use None to be safe
@@ -256,6 +257,7 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
         oauth_state.project_id,
         None, // session_id will be generated in token_manager
         oauth_state.is_gcp_tos,
+        token_resp.id_token,
     )
     .with_oauth_client_key(token_resp.oauth_client_key);
     // 4. Add or update account
@@ -264,7 +266,7 @@ pub async fn import_from_custom_db_path(path_str: String) -> Result<Account, Str
 
 /// Import current logged-in account from default IDE database
 pub async fn import_from_db() -> Result<Account, String> {
-    let db_path = db::get_db_path()?;
+    let db_path = db::get_db_path(None)?;
     import_from_custom_db_path(db_path.to_string_lossy().to_string()).await
 }
 
@@ -393,6 +395,6 @@ fn extract_oauth_state_from_file(db_path: &PathBuf) -> Result<ImportedOAuthState
 
 /// Get current Refresh Token from default database (backwards compatibility)
 pub fn get_refresh_token_from_db() -> Result<String, String> {
-    let db_path = db::get_db_path()?;
+    let db_path = db::get_db_path(None)?;
     extract_refresh_token_from_file(&db_path)
 }

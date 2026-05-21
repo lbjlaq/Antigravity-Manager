@@ -9,7 +9,7 @@ interface AccountGridProps {
     onToggleSelect: (id: string) => void;
     currentAccountId: string | null;
     switchingAccountId: string | null;
-    onSwitch: (accountId: string) => void;
+    onSwitch: (accountId: string, targetIde?: string) => void;
     onRefresh: (accountId: string) => void;
     onViewDevice: (accountId: string) => void;
     onViewDetails: (accountId: string) => void;
@@ -44,7 +44,7 @@ function AccountGrid({ accounts, selectedIds, refreshingIds, onToggleSelect, cur
                     onSelect={() => onToggleSelect(account.id)}
                     isCurrent={account.id === currentAccountId}
                     isSwitching={account.id === switchingAccountId}
-                    onSwitch={() => onSwitch(account.id)}
+                    onSwitch={(targetIde?: string) => onSwitch(account.id, targetIde)}
                     onRefresh={() => onRefresh(account.id)}
                     onViewDevice={() => onViewDevice(account.id)}
                     onViewDetails={() => onViewDetails(account.id)}

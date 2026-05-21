@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Protocol Proxy System (v4.1.32)
+> Professional AI Account Management & Protocol Proxy System (v4.2.1)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.1.32-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.2.1-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -43,7 +43,8 @@ By leveraging this app, you can transform common Web Sessions (Google/Anthropic)
 | :---: | :--- |
 | <img src="docs/images/packycode_logo.png" width="200" alt="PackyCode Logo"> | Thanks to **PackyCode** for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relays for various services such as Claude Code, Codex, and Gemini. PackyCode provides a special offer for users of this project: Register using [this link](https://www.packyapi.com/register?aff=Ctrler) and enter the **"Ctrler"** coupon code when topping up to enjoy a **10% discount**. |
 | <img src="docs/images/AICodeMirror.jpg" width="200" alt="AICodeMirror Logo"> | Thanks to **AICodeMirror** for sponsoring this project! AICodeMirror provides official high-stability relay services for Claude Code / Codex / Gemini CLI, supporting enterprise-grade concurrency, fast invoicing, and 24/7 dedicated technical support. Claude Code / Codex / Gemini official channels at 38% / 2% / 9% of original price, with extra discounts on top-ups! AICodeMirror offers special benefits for Antigravity-Manager users: register via [this link](https://www.aicodemirror.com/register?invitecode=MV5XUM) to enjoy 20% off your first top-up, and enterprise customers can get up to 25% off! |
-| <img src="https://coder.visioncoder.cn/logo.png" width="200" alt="VisionCoder Logo"> | Thanks to VisionCoder for supporting this project. [VisionCoder Developer Platform](https://coder.visioncoder.cn) is a reliable and efficient API relay service provider, offering access to mainstream AI models such as Claude Code, Codex, and Gemini. It helps developers and teams integrate AI capabilities more easily and improve productivity. VisionCoder is offering a limited-time [Token Plan](https://coder.visioncoder.cn) promotion for our users: register via [this link](https://coder.visioncoder.cn) and buy 1 month to get 1 month free. |
+| <img src="https://coder.visioncoder.cn/logo.png" width="200" alt="VisionCoder Logo"> | Thanks to **VisionCoder** for supporting this project. [VisionCoder Developer Platform](https://coder.visioncoder.cn) is a reliable and efficient API relay service provider, offering access to mainstream AI models such as Claude Code, Codex, and Gemini. It helps developers and teams integrate AI capabilities more easily and improve productivity. **VisionCoder** is offering a limited-time [Token Plan](https://coder.visioncoder.cn) promotion for our users: register via [this link](https://coder.visioncoder.cn) and buy **1 month to get 1 month** free. |
+| <img src="docs/images/hvoy.png" width="200" alt="hvoy.ai Logo"> | Thanks to **hvoy.ai** for sponsoring this project! [hvoy.ai](https://hvoy.ai/?source=am) is a one-stop AI API service free testing and relay station navigation platform. With comprehensive inclusion and real-time data detection, it has become the preferred tool for many technical teams and enterprises during selection. The platform has aggregated hundreds of relay stations and continuously monitors the performance of dozens of sites across various dimensions, providing objective and transparent basis for relay service selection and helping users avoid pitfalls. Users in need of AI API services can visit [hvoy.ai](https://hvoy.ai/?source=am) to experience it. |
 
 
 
@@ -131,7 +132,7 @@ Automatically detects your OS, architecture, and package manager — one command
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.32/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.2.1/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -141,7 +142,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.1.32`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.2.1`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
@@ -292,6 +293,30 @@ print(response.choices[0].message.content)
 ## 📝 Developer & Community
 
 *   **Changelog**:
+    *   **v4.2.1 (2026-05-20)**:
+        -   **[Core Fix] Windows Process Segregation & Precision Termination (Windows Process Segregation)**:
+            -   **Bug Fix**: Resolved an issue on Windows where switching accounts or closing applications resulted in accidental process termination of both Antigravity Classic and Antigravity IDE due to fuzzy process name matching.
+            -   **Strict Path Matching**: Introduced a strict filtering mechanism based on the absolute path of the executable (`canonicalize()`). When custom paths are configured, the system executes targeted process control matching the path rather than relying on process names.
+            -   **⚠️ Important Note**: Windows users are **strongly advised** to configure custom executable paths for both Classic (`antigravity_executable`) and IDE (`antigravity_ide_executable`) versions under **Settings -> Advanced Settings**. Without these settings, the system will fall back to fuzzy process name matching, which may cause unexpected program closures when switching accounts.
+    *   **v4.2.0 (2026-05-20)**:
+        -   **[Core Feature] Brand New Antigravity IDE Account Switching & Independent Dual Switching Buttons**:
+            -   **Dual-Channel One-Click Switch**: Added a dedicated, **independent switching button** for the new IDE version in the Account Management actions panel, alongside the existing Classic switch, allowing direct, parallel account switching from a single dashboard.
+            -   **Physical Isolation & Multi-Version Coexistence**: Achieved strict physical path isolation for runtime data, `state.vscdb` databases, and configuration settings, ensuring Classic and IDE settings coexist harmoniously and conflict-free.
+            -   **Intelligent Process Evading**: Refactored the Rust process supervisor to precisely terminate and control processes matching the targeted version, completely preventing the IDE module from mistakenly interrupting active Classic backend processes.
+        -   **[Multi-Version Compatibility Refactor] Intelligent Multi-Version Account Switcher & OS Keychain/Keyring Credentials Manager Integration**:
+            -   **Native 2.0.0+ Client Keychain Injection**: Implemented secure OAuth credential serialization into the OS credentials store (Keychain on macOS) formatted as raw Base64 JSON payloads required by the official Go-based >= 2.0.0 client, bypassing old `storage.json` dependencies and completely eliminating previous switching-lock blockings.
+            -   **Cross-Platform Silent Credential Injection**: Outfitted macOS with silent `security` CLI injection backed by `-A` flag authorization, ensuring fully automatic password-less token access; fully supported quiet `cmdkey` scripts for Windows and native Secret Service `secret-tool` utilities for Linux desktops.
+            -   **Version-Aware Detection & Seamless Fallback**: Introduced automatic installed version detection. Gracefully falls back to legacy SQLite injection & service machine ID synchronization paths on detected < 2.0.0 clients to ensure backward compatibility, while keeping the customized Antigravity IDE SQLite pipeline strictly untouched for robust architectural partition.
+        -   **[UX & Animation Upgrade] Distinctive Switching Icons & Silky Clockwise Spin Effects**:
+            -   **Differentiated Brand Icons**: Outfitted the new IDE switcher with a modern geometric **`Repeat2`** vector icon to stand distinct from Classic's `ArrowRightLeft` arrow icon, dramatically enhancing UI visual hierarchy.
+            -   **Silky Spin Animation**: Upgraded the toggling state (isSwitching) transition from standard `animate-pulse` breathing to a snappy, clockwise **`animate-spin`** loop micro-animation for an premium tactile interaction.
+        -   **[i18n Bug Fix] 12-Language Alignment & Fixed Tooltip Hover Fallback**:
+            -   **Translation Alignment**: Fixed a bug where the hover tooltips on the switching buttons fell back to default Chinese under non-Chinese system locales.
+            -   **Full Localizations Coverage**: Added and aligned `accounts.switch_to_classic` and `accounts.switch_to_ide` translation keys across all **12 localization packages** (including `en.json`, `zh.json`, `zh-TW.json`, `ja.json`, `ko.json`, etc.), ensuring accurate globally-localized tooltips.
+    *   **v4.1.33 (2026-05-01)**:
+        -   **[Core Fix] Resolve Antigravity IDE  OAuth Token refresh failure and invalid_grant error.**
+        -   **[Core Fix] Resolve 403 Forbidden errors caused by Project ID conflicts and implement automatic retry/downgrade for enterprise/personal quotas.**
+        -   **[Enhancement] Support automatic compatibility and silent upgrade of old account data, restoring functionality for legacy users without re-login.**
     *   **v4.1.32 (2026-04-18)**:
         -   **[Proxy Enhancement] Gemini Proxy Production-Grade Stability Refactoring**:
             -   **Fingerprint Alignment**: Rewrote `requestId` generation logic to strictly follow the official `agent/{timestamp}/{hex8}` path fingerprint.

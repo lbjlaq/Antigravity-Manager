@@ -1,4 +1,4 @@
-{
+﻿{
     "common": {
         "empty": "Boş",
         "loading": "Yükleniyor...",
@@ -156,6 +156,8 @@
         "last_used": "Son Kullanım",
         "reset_time": "Sıfırlama Zamanı",
         "switch_to": "Bu hesaba geç",
+        "switch_to_classic": "Antigravity (Klasik) sürümüne geç",
+        "switch_to_ide": "Antigravity IDE sürümüne geç",
         "actions": "İşlemler",
         "device_fingerprint": "Cihaz Parmak İzi",
         "show_all_quotas": "Tüm kotaları göster",
@@ -396,6 +398,10 @@
             "antigravity_path_desc": "Antigravity'yi standart olmayan bir konuma yüklediyseniz, buradan çalıştırılabilir dosya yolunu manuel olarak belirtebilirsiniz (MacOS'ta .app'i işaret eder).",
             "antigravity_path_select": "Antigravity Çalıştırılabilir Dosyasını Seç",
             "antigravity_path_detected": "Algılanan yol güncellendi",
+            "antigravity_ide_path": "Antigravity IDE Yolu",
+            "antigravity_ide_path_placeholder": "D:\\Antigravity\\Antigravity.exe",
+            "antigravity_ide_path_desc": "Antigravity IDE (kod düzenleyici) çalıştırılabilir dosya yolunu belirtin. Ayarlandığında, hesap değiştirme bu yoldaki süreçleri yanlışlıkla kapatılmaktan koruyacaktır.",
+            "antigravity_ide_path_select": "Antigravity IDE Çalıştırılabilir Dosyasını Seç",
             "detect_btn": "Algıla",
             "antigravity_args": "Antigravity Başlangıç Parametreleri",
             "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",

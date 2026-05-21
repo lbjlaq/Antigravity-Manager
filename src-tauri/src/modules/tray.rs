@@ -127,7 +127,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                              let integration = crate::modules::integration::DesktopIntegration {
                                  app_handle: app_handle.clone(),
                              };
-                             if let Ok(_) = modules::switch_account(&next_account.id, &integration).await {
+                             if let Ok(_) = modules::switch_account(&next_account.id, None, &integration).await {
                                  // 3. Notify frontend
                                  let _ = app_handle.emit("tray://account-switched", next_account.id.clone());
                                  // 4. Update tray

@@ -1,4 +1,4 @@
-{
+﻿{
     "common": {
         "loading": "جاري التحميل...",
         "load_more": "تحميل المزيد",
@@ -162,6 +162,8 @@
         "last_used": "آخر استخدام",
         "reset_time": "وقت إعادة التعيين",
         "switch_to": "التبديل لهذا الحساب",
+        "switch_to_classic": "التبديل إلى Antigravity (الكلاسيكي)",
+        "switch_to_ide": "التبديل إلى Antigravity IDE",
         "actions": "إجراءات",
         "device_fingerprint": "بصمة الجهاز",
         "show_all_quotas": "إظهار جميع الحصص",
@@ -433,6 +435,10 @@
             "antigravity_path_desc": "إذا قمت بتثبيت Antigravity في موقع غير قياسي، يمكنك تحديد مسار الملف التنفيذي يدويًا هنا (يشير إلى .app على macOS).",
             "antigravity_path_select": "تحديد تنفيذي Antigravity",
             "antigravity_path_detected": "تم تحديث المسار المكتشف",
+            "antigravity_ide_path": "مسار Antigravity IDE",
+            "antigravity_ide_path_placeholder": "D:\\Antigravity\\Antigravity.exe",
+            "antigravity_ide_path_desc": "حدد مسار الملف التنفيذي لـ Antigravity IDE (محرر الأكواد). بعد التعيين، سيتم حماية العمليات في هذا المسار بشكل صارم من الإنهاء عند تبديل الحسابات.",
+            "antigravity_ide_path_select": "اختيار ملف Antigravity IDE التنفيذي",
             "detect_btn": "كشف",
             "antigravity_args": "وسائط بدء Antigravity",
             "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",

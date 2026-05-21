@@ -1,4 +1,4 @@
-{
+﻿{
     "common": {
         "empty": "Пусто",
         "loading": "Загрузка...",
@@ -158,6 +158,8 @@
         "last_used": "Последнее использование",
         "reset_time": "Время сброса",
         "switch_to": "Переключить на этот аккаунт",
+        "switch_to_classic": "Переключить на Antigravity (Классическая)",
+        "switch_to_ide": "Переключить на Antigravity IDE",
         "actions": "Действия",
         "device_fingerprint": "Отпечаток Устройства",
         "show_all_quotas": "Показать все квоты",
@@ -430,6 +432,10 @@
             "antigravity_path_desc": "Если вы установили Antigravity в нестандартное место, вы можете вручную указать путь к исполняемому файлу здесь (Указывает на .app на macOS).",
             "antigravity_path_select": "Выбрать исполняемый файл Antigravity",
             "antigravity_path_detected": "Обнаруженный путь обновлен",
+            "antigravity_ide_path": "Путь к Antigravity IDE",
+            "antigravity_ide_path_placeholder": "D:\\Antigravity\\Antigravity.exe",
+            "antigravity_ide_path_desc": "Укажите путь к исполняемому файлу Antigravity IDE (редактор кода). После настройки переключение аккаунтов будет строго защищать процессы по этому пути от завершения.",
+            "antigravity_ide_path_select": "Выбрать исполняемый файл Antigravity IDE",
             "detect_btn": "Обнаружить",
             "antigravity_args": "Аргументы запуска Antigravity",
             "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",

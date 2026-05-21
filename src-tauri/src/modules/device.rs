@@ -21,9 +21,9 @@ fn get_data_dir() -> Result<PathBuf, String> {
 }
 
 /// Find storage.json path (prefer custom/portable paths)
-pub fn get_storage_path() -> Result<PathBuf, String> {
+pub fn get_storage_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
     // 1) --user-data-dir flag
-    if let Some(user_data_dir) = process::get_user_data_dir_from_process() {
+    if let Some(user_data_dir) = process::get_user_data_dir_from_process(target_ide) {
         let path = user_data_dir
             .join("User")
             .join("globalStorage")
@@ -34,7 +34,7 @@ pub fn get_storage_path() -> Result<PathBuf, String> {
     }
 
     // 2) Portable mode (based on executable data/user-data)
-    if let Some(exe_path) = process::get_antigravity_executable_path() {
+    if let Some(exe_path) = process::get_antigravity_executable_path(target_ide) {
         if let Some(parent) = exe_path.parent() {
             let portable = parent
                 .join("data")
@@ -48,12 +48,14 @@ pub fn get_storage_path() -> Result<PathBuf, String> {
         }
     }
 
+    let folder_name = if target_ide == Some("ide") { "Antigravity IDE" } else { "Antigravity" };
+
     // 3) Standard installation location
     #[cfg(target_os = "macos")]
     {
         let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
         let path =
-            home.join("Library/Application Support/Antigravity/User/globalStorage/storage.json");
+            home.join(format!("Library/Application Support/{}/User/globalStorage/storage.json", folder_name));
         if path.exists() {
             return Ok(path);
         }
@@ -63,7 +65,7 @@ pub fn get_storage_path() -> Result<PathBuf, String> {
     {
         let appdata =
             std::env::var("APPDATA").map_err(|_| "failed_to_get_appdata_env".to_string())?;
-        let path = PathBuf::from(appdata).join("Antigravity\\User\\globalStorage\\storage.json");
+        let path = PathBuf::from(appdata).join(folder_name).join("User\\globalStorage\\storage.json");
         if path.exists() {
             return Ok(path);
         }
@@ -72,7 +74,7 @@ pub fn get_storage_path() -> Result<PathBuf, String> {
     #[cfg(target_os = "linux")]
     {
         let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
-        let path = home.join(".config/Antigravity/User/globalStorage/storage.json");
+        let path = home.join(format!(".config/{}/User/globalStorage/storage.json", folder_name));
         if path.exists() {
             return Ok(path);
         }
@@ -83,7 +85,7 @@ pub fn get_storage_path() -> Result<PathBuf, String> {
 
 /// Get directory of storage.json
 pub fn get_storage_dir() -> Result<PathBuf, String> {
-    let path = get_storage_path()?;
+    let path = get_storage_path(None)?;
     path.parent()
         .map(|p| p.to_path_buf())
         .ok_or_else(|| "failed_to_get_storage_parent_dir".to_string())

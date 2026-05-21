@@ -76,6 +76,7 @@ mod tests {
                 None,
                 None,
                 true,
+                None,
             ),
         );
         
@@ -938,6 +939,7 @@ pub fn reorder_accounts(account_ids: &[String]) -> Result<(), String> {
 /// Switch current account (Core Logic)
 pub async fn switch_account(
     account_id: &str,
+    target_ide: Option<&str>,
     integration: &(impl modules::integration::SystemIntegration + ?Sized),
 ) -> Result<(), String> {
     use crate::modules::oauth;
@@ -956,8 +958,8 @@ pub async fn switch_account(
 
     let mut account = load_account(account_id)?;
     crate::modules::logger::log_info(&format!(
-        "Switching to account: {} (ID: {})",
-        account.email, account.id
+        "Switching to account: {} (ID: {}) (target_ide: {:?})",
+        account.email, account.id, target_ide
     ));
 
     // 2. Ensure token is valid before switch. Surface clearer hints for known account-state failures.
@@ -995,7 +997,7 @@ pub async fn switch_account(
     }
 
     // 3. Execute platform-specific system integration (Close proc, Inject DB, Start proc, etc.)
-    integration.on_account_switch(&account).await?;
+    integration.on_account_switch(&account, target_ide).await?;
 
     // 4. Update tool internal state
     {
@@ -1210,7 +1212,7 @@ pub struct DeviceProfiles {
 
 pub fn get_device_profiles(account_id: &str) -> Result<DeviceProfiles, String> {
     // In headless/Docker mode, storage.json may not exist - handle gracefully
-    let current = crate::modules::device::get_storage_path()
+    let current = crate::modules::device::get_storage_path(None)
         .ok()
         .and_then(|path| crate::modules::device::read_profile(&path).ok());
     let account = load_account(account_id)?;
@@ -1227,7 +1229,7 @@ pub fn bind_device_profile(account_id: &str, mode: &str) -> Result<DeviceProfile
     use crate::modules::device;
 
     let profile = match mode {
-        "capture" => device::read_profile(&device::get_storage_path()?)?,
+        "capture" => device::read_profile(&device::get_storage_path(None)?)?,
         "generate" => device::generate_profile(),
         _ => return Err("mode must be 'capture' or 'generate'".to_string()),
     };
@@ -1336,7 +1338,7 @@ pub fn apply_device_profile(account_id: &str) -> Result<DeviceProfile, String> {
         .device_profile
         .clone()
         .ok_or("Account has no bound device profile")?;
-    let storage_path = device::get_storage_path()?;
+    let storage_path = device::get_storage_path(None)?;
     device::write_profile(&storage_path, &profile)?;
     account.update_last_used();
     save_account(&account)?;
@@ -1729,6 +1731,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     account.token.project_id.clone(), // Keep original project_id
                     None,                             // Add None as session_id
                     account.token.is_gcp_tos,
+                    token_res.id_token.clone(),
                 )
                 .with_oauth_client_key(
                     token_res

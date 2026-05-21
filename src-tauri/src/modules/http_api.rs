@@ -340,7 +340,7 @@ async fn switch_account(
     tokio::spawn(async move {
         logger::log_info(&format!("[HTTP API] Starting account switch: {}", account_id));
         
-        match account::switch_account(&account_id, &state_clone.integration).await {
+        match account::switch_account(&account_id, None, &state_clone.integration).await {
             Ok(()) => {
                 logger::log_info(&format!("[HTTP API] Account switch successful: {}", account_id));
             }

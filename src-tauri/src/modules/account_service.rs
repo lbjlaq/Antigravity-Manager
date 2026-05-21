@@ -35,7 +35,8 @@ impl AccountService {
             Some(user_info.email.clone()),
             project_id,
             None,
-            true,
+            false, // 个人账号默认不开启 GCP TOS
+            token_res.id_token.clone(),
         )
         .with_oauth_client_key(token_res.oauth_client_key.clone());
 
@@ -88,8 +89,8 @@ impl AccountService {
     }
 
     /// 切换账号逻辑
-    pub async fn switch_account(&self, account_id: &str) -> Result<(), String> {
-        modules::account::switch_account(account_id, &self.integration).await
+    pub async fn switch_account(&self, account_id: &str, target_ide: Option<&str>) -> Result<(), String> {
+        modules::account::switch_account(account_id, target_ide, &self.integration).await
     }
 
     /// 列表获取
@@ -165,7 +166,8 @@ impl AccountService {
             Some(user_info.email.clone()),
             project_id,
             None,
-            true,
+            false, // 默认不开启，由后续逻辑或用户手动调整
+            token_res.id_token,
         )
         .with_oauth_client_key(token_res.oauth_client_key.clone());
 

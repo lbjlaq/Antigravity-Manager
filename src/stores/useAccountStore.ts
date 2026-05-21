@@ -14,7 +14,7 @@ interface AccountState {
     addAccount: (email: string, refreshToken: string) => Promise<void>;
     deleteAccount: (accountId: string) => Promise<void>;
     deleteAccounts: (accountIds: string[]) => Promise<void>;
-    switchAccount: (accountId: string) => Promise<void>;
+    switchAccount: (accountId: string, targetIde?: string) => Promise<void>;
     refreshQuota: (accountId: string) => Promise<void>;
     refreshAllQuotas: () => Promise<accountService.RefreshStats>;
     reorderAccounts: (accountIds: string[]) => Promise<void>;
@@ -103,10 +103,10 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    switchAccount: async (accountId: string) => {
+    switchAccount: async (accountId: string, targetIde?: string) => {
         set({ loading: true, error: null });
         try {
-            await accountService.switchAccount(accountId);
+            await accountService.switchAccount(accountId, targetIde);
             await get().fetchCurrentAccount();
             set({ loading: false });
         } catch (error) {

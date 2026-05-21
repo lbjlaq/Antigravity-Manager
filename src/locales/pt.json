@@ -1,4 +1,4 @@
-{
+﻿{
     "common": {
         "loading": "Carregando...",
         "load_more": "Carregar mais",
@@ -156,6 +156,8 @@
         "last_used": "Último Uso",
         "reset_time": "Tempo de Reset",
         "switch_to": "Alternar para esta conta",
+        "switch_to_classic": "Alternar para Antigravity (Clássico)",
+        "switch_to_ide": "Alternar para Antigravity IDE",
         "actions": "Ações",
         "device_fingerprint": "Impressão Digital do Dispositivo",
         "show_all_quotas": "Mostrar todas as cotas",
@@ -427,6 +429,10 @@
             "antigravity_path_desc": "Se você instalou o Antigravity em um local não padrão, pode especificar manualmente o caminho do executável aqui (Aponta para .app no MacOS).",
             "antigravity_path_select": "Selecionar Executável do Antigravity",
             "antigravity_path_detected": "Caminho detectado atualizado",
+            "antigravity_ide_path": "Caminho do Antigravity IDE",
+            "antigravity_ide_path_placeholder": "D:\\Antigravity\\Antigravity.exe",
+            "antigravity_ide_path_desc": "Especifique o caminho do executável do Antigravity IDE (editor de código). Após configurado, a troca de contas protegerá rigorosamente os processos neste caminho contra encerramento.",
+            "antigravity_ide_path_select": "Selecionar Executável do Antigravity IDE",
             "detect_btn": "Detectar",
             "antigravity_args": "Argumentos de Inicialização do Antigravity",
             "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",

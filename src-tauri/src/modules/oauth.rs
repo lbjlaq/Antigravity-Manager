@@ -17,6 +17,8 @@ pub struct TokenResponse {
     pub token_type: String,
     #[serde(default)]
     pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub id_token: Option<String>,
     #[serde(skip)]
     pub oauth_client_key: Option<String>,
 }
@@ -332,6 +334,7 @@ pub fn get_auth_url_with_client(
     let client = select_auth_client(client_key)?;
 
     let scopes = vec![
+        "openid",
         "https://www.googleapis.com/auth/cloud-platform",
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/userinfo.profile",
@@ -698,6 +701,7 @@ pub async fn ensure_fresh_token(
         current_token.project_id.clone(), // Keep original project_id
         None,  // session_id will be generated in token_manager
         current_token.is_gcp_tos,
+        response.id_token.or(current_token.id_token.clone()), // Use new id_token or keep old one
     )
     .with_oauth_client_key(oauth_client_key))
 }

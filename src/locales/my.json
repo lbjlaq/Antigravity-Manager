@@ -1,4 +1,4 @@
-{
+﻿{
     "common": {
         "loading": "Memuatkan...",
         "load_more": "Muat Lagi",
@@ -160,6 +160,8 @@
         "last_used": "Terakhir Digunakan",
         "reset_time": "Masa Reset",
         "switch_to": "Tukar ke akaun ini",
+        "switch_to_classic": "Tukar ke Antigravity (Klasik)",
+        "switch_to_ide": "Tukar ke Antigravity IDE",
         "actions": "Tindakan",
         "device_fingerprint": "Cap Jari Peranti",
         "show_all_quotas": "Tunjukkan semua kuota",
@@ -431,6 +433,10 @@
             "antigravity_path_desc": "Jika anda memasang Antigravity di lokasi bukan standard, anda boleh nyatakan laluan executable secara manual di sini (Tunjuk ke .app pada MacOS).",
             "antigravity_path_select": "Pilih Executable Antigravity",
             "antigravity_path_detected": "Laluan dikesan dikemas kini",
+            "antigravity_ide_path": "Laluan Antigravity IDE",
+            "antigravity_ide_path_placeholder": "D:\\Antigravity\\Antigravity.exe",
+            "antigravity_ide_path_desc": "Nyatakan laluan executable Antigravity IDE (editor kod). Selepas ditetapkan, penukaran akaun akan melindungi proses di laluan ini daripada ditamatkan secara tidak sengaja.",
+            "antigravity_ide_path_select": "Pilih Executable Antigravity IDE",
             "detect_btn": "Kesan",
             "antigravity_args": "Argumen Permulaan Antigravity",
             "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",

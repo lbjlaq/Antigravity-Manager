@@ -327,13 +327,13 @@ function Accounts() {
     null,
   );
 
-  const handleSwitch = async (accountId: string) => {
+  const handleSwitch = async (accountId: string, targetIde?: string) => {
     if (loading || switchingAccountId) return;
 
     setSwitchingAccountId(accountId);
-    console.log("[Accounts] handleSwitch called for:", accountId);
+    console.log("[Accounts] handleSwitch called for:", accountId, "targetIde:", targetIde);
     try {
-      await switchAccount(accountId);
+      await switchAccount(accountId, targetIde);
       showToast(t("common.success"), "success");
     } catch (error) {
       console.error("[Accounts] Switch failed:", error);

@@ -2,7 +2,7 @@ use crate::utils::protobuf;
 use rusqlite::Connection;
 use std::path::PathBuf;
 
-fn get_antigravity_path() -> Option<PathBuf> {
+fn get_antigravity_path(target_ide: Option<&str>) -> Option<PathBuf> {
     if let Ok(config) = crate::modules::config::load_app_config() {
         if let Some(path_str) = config.antigravity_executable {
             let path = PathBuf::from(path_str);
@@ -11,13 +11,13 @@ fn get_antigravity_path() -> Option<PathBuf> {
             }
         }
     }
-    crate::modules::process::get_antigravity_executable_path()
+    crate::modules::process::get_antigravity_executable_path(target_ide)
 }
 
 /// Get Antigravity database path (cross-platform)
-pub fn get_db_path() -> Result<PathBuf, String> {
+pub fn get_db_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
     // Prefer path specified by --user-data-dir argument
-    if let Some(user_data_dir) = crate::modules::process::get_user_data_dir_from_process() {
+    if let Some(user_data_dir) = crate::modules::process::get_user_data_dir_from_process(target_ide) {
         let custom_db_path = user_data_dir.join("User").join("globalStorage").join("state.vscdb");
         if custom_db_path.exists() {
             return Ok(custom_db_path);
@@ -25,7 +25,7 @@ pub fn get_db_path() -> Result<PathBuf, String> {
     }
 
     // Check if in portable mode
-    if let Some(antigravity_path) = get_antigravity_path() {
+    if let Some(antigravity_path) = get_antigravity_path(target_ide) {
         if let Some(parent_dir) = antigravity_path.parent() {
             let portable_db_path = PathBuf::from(parent_dir)
                 .join("data")
@@ -40,24 +40,26 @@ pub fn get_db_path() -> Result<PathBuf, String> {
         }
     }
 
+    let folder_name = if target_ide == Some("ide") { "Antigravity IDE" } else { "Antigravity" };
+
     // Standard mode: use system default path
     #[cfg(target_os = "macos")]
     {
         let home = dirs::home_dir().ok_or("Failed to get home directory")?;
-        Ok(home.join("Library/Application Support/Antigravity/User/globalStorage/state.vscdb"))
+        Ok(home.join(format!("Library/Application Support/{}/User/globalStorage/state.vscdb", folder_name)))
     }
 
     #[cfg(target_os = "windows")]
     {
         let appdata =
             std::env::var("APPDATA").map_err(|_| "Failed to get APPDATA environment variable".to_string())?;
-        Ok(PathBuf::from(appdata).join("Antigravity\\User\\globalStorage\\state.vscdb"))
+        Ok(PathBuf::from(appdata).join(folder_name).join("User\\globalStorage\\state.vscdb"))
     }
 
     #[cfg(target_os = "linux")]
     {
         let home = dirs::home_dir().ok_or("Failed to get home directory")?;
-        Ok(home.join(".config/Antigravity/User/globalStorage/state.vscdb"))
+        Ok(home.join(format!(".config/{}/User/globalStorage/state.vscdb", folder_name)))
     }
 }
 
@@ -68,13 +70,27 @@ pub fn inject_token(
     refresh_token: &str,
     expiry: i64,
     email: &str,
-    is_gcp_tos: bool,
+    mut is_gcp_tos: bool,
     project_id: Option<&str>,
+    id_token: Option<&str>,
+    oauth_client_key: Option<&str>,
+    target_ide: Option<&str>,
 ) -> Result<String, String> {
     crate::modules::logger::log_info("Starting Token injection...");
     
+    // 如果使用的是本项目的内置 Client ID (antigravity_enterprise 实际上是标准版)
+    // 则强制关闭 GCP TOS 标志，以确保 IDE 使用标准 Client ID 进行刷新
+    if let Some(key) = oauth_client_key {
+        if key == "antigravity_enterprise" {
+            if is_gcp_tos {
+                crate::modules::logger::log_info("[DB] Built-in client detected, forcing Standard mode for injection.");
+                is_gcp_tos = false;
+            }
+        }
+    }
+    
     // 1. Detect Antigravity version
-    let version_result = crate::modules::version::get_antigravity_version();
+    let version_result = crate::modules::version::get_antigravity_version(target_ide);
     
     match version_result {
         Ok(ver) => {
@@ -97,6 +113,7 @@ pub fn inject_token(
                     email,
                     is_gcp_tos,
                     project_id,
+                    id_token,
                 )
             } else {
                 // < 1.16.5: Use old format only
@@ -122,6 +139,7 @@ pub fn inject_token(
                 email,
                 is_gcp_tos,
                 project_id,
+                id_token,
             );
             
             // Try old format
@@ -150,11 +168,19 @@ fn inject_new_format(
     email: &str,
     is_gcp_tos: bool,
     project_id: Option<&str>,
+    id_token: Option<&str>,
 ) -> Result<String, String> {
     let conn = Connection::open(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
     
     // Create OAuthTokenInfo (binary)
-    let oauth_info = protobuf::create_oauth_info(access_token, refresh_token, expiry, is_gcp_tos);
+    let oauth_info = protobuf::create_oauth_info(
+        access_token,
+        refresh_token,
+        expiry,
+        is_gcp_tos,
+        id_token,
+        Some(email),
+    );
     let outer_b64 = protobuf::create_unified_state_entry("oauthTokenInfoSentinelKey", &oauth_info);
     
     conn.execute(

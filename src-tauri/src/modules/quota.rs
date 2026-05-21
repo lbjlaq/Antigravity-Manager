@@ -217,51 +217,64 @@ pub async fn fetch_quota_with_cache(
     for (ep_idx, ep_url) in QUOTA_API_ENDPOINTS.iter().enumerate() {
         let has_next = ep_idx + 1 < QUOTA_API_ENDPOINTS.len();
 
-        match client
-            .post(*ep_url)
-            .bearer_auth(access_token)
-            .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
-            .json(&payload)
-            .send()
-            .await
-        {
-            Ok(response) => {
-                // Convert HTTP error status to AppError
-                if let Err(_) = response.error_for_status_ref() {
-                    let status = response.status();
-                    
-                    // ✅ Special handling for 403 Forbidden - return directly, no retry
-                    if status == rquest::StatusCode::FORBIDDEN {
-                        crate::modules::logger::log_warn(&format!(
-                            "Account unauthorized (403 Forbidden), marking as forbidden"
-                        ));
-                        let mut q = QuotaData::new();
-                        q.is_forbidden = true;
-                        q.subscription_tier = subscription_tier.clone();
-                        return Ok((q, project_id.clone()));
+        let mut current_payload = payload.clone();
+        let mut retry_without_project = false;
+
+        loop {
+            match client
+                .post(*ep_url)
+                .bearer_auth(access_token)
+                .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
+                .json(&current_payload)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    // Convert HTTP error status to AppError
+                    if let Err(_) = response.error_for_status_ref() {
+                        let status = response.status();
+                        
+                        // [FIX] 403 Forbidden 处理：如果是带有 project_id 的请求，尝试剥离后重试
+                        if status == rquest::StatusCode::FORBIDDEN {
+                            if current_payload.get("project").is_some() && !retry_without_project {
+                                crate::modules::logger::log_warn(&format!(
+                                    "Quota fetch got 403 with project ID, retrying without project ID..."
+                                ));
+                                current_payload = json!({});
+                                retry_without_project = true;
+                                continue;
+                            }
+
+                            crate::modules::logger::log_warn(&format!(
+                                "Account unauthorized (403 Forbidden), marking as forbidden"
+                            ));
+                            let mut q = QuotaData::new();
+                            q.is_forbidden = true;
+                            q.subscription_tier = subscription_tier.clone();
+                            return Ok((q, project_id.clone()));
+                        }
+                        
+                        let text = response.text().await.unwrap_or_default();
+
+                        // 429/5xx: fallback to next endpoint
+                        if has_next && (status == rquest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) {
+                             crate::modules::logger::log_warn(&format!("Quota API {} returned {}, falling back to next endpoint", ep_url, status));
+                             last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
+                             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                             break; // Break the inner retry loop, continue to next endpoint
+                        }
+
+                        return Err(AppError::Unknown(format!("API Error: {} - {}", status, text)));
                     }
-                    
-                    let text = response.text().await.unwrap_or_default();
 
-                    // 429/5xx: fallback to next endpoint
-                    if has_next && (status == rquest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) {
-                         crate::modules::logger::log_warn(&format!("Quota API {} returned {}, falling back to next endpoint", ep_url, status));
-                         last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
-                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                         continue;
+                    if ep_idx > 0 {
+                        crate::modules::logger::log_info(&format!("Quota API fallback succeeded at endpoint #{}", ep_idx + 1));
                     }
 
-                    return Err(AppError::Unknown(format!("API Error: {} - {}", status, text)));
-                }
-
-                if ep_idx > 0 {
-                    crate::modules::logger::log_info(&format!("Quota API fallback succeeded at endpoint #{}", ep_idx + 1));
-                }
-
-                let quota_response: QuotaResponse = response
-                    .json()
-                    .await
-                    .map_err(AppError::from)?;
+                    let quota_response: QuotaResponse = response
+                        .json()
+                        .await
+                        .map_err(AppError::from)?;
                 
                 let mut quota_data = QuotaData::new();
                 
@@ -314,8 +327,10 @@ pub async fn fetch_quota_with_cache(
                 if has_next {
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
+                break; // Break the inner retry loop on network error, continue to next endpoint
             }
         }
+        } // End of inner loop
     }
     
     Err(last_error.unwrap_or_else(|| AppError::Unknown("Quota fetch failed: all endpoints exhausted".to_string())))

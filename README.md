@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.1.32)
+> 专业级 AI 账号管理与协议代理系统 (v4.2.1)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.1.32-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.2.1-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -42,7 +42,8 @@
 | :---: | :--- |
 | <img src="docs/images/packycode_logo.png" width="200" alt="PackyCode Logo"> | 感谢 **PackyCode** 对本项目的赞助！PackyCode 是一家可靠高效的 API 中转服务商，提供 Claude Code、Codex、Gemini 等多种服务的中转。PackyCode 为本项目的用户提供了特别优惠：使用[此链接](https://www.packyapi.com/register?aff=Ctrler)注册，并在充值时输入 **“Ctrler”** 优惠码即可享受 **九折优惠**。 |
 | <img src="docs/images/AICodeMirror.jpg" width="200" alt="AICodeMirror Logo"> | 感谢 AICodeMirror 赞助了本项目！AICodeMirror 提供 Claude Code / Codex / Gemini CLI 官方高稳定中转服务，支持企业级高并发、极速开票、7×24 专属技术支持。 Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更有折上折！AICodeMirror 为 Antigravity-Manager 的用户提供了特别福利，通过[此链接](https://www.aicodemirror.com/register?invitecode=MV5XUM)注册的用户，可享受首充8折，企业客户最高可享 7.5 折！ |
-| <img src="https://coder.visioncoder.cn/logo.png" width="200" alt="VisionCoder Logo"> | 感谢 VisionCoder 对本项目的支持。[VisionCoder 开发平台](https://coder.visioncoder.cn) 是一个可靠高效性 API 中继服务提供商，提供 Claude Code、Codex、Gemini 等主流 AI 模型，帮助开发者和团队更轻松地集成 AI 功能，提升工作效率。VisionCoder 为本站用户提供了专属福利：通过[此链接](https://coder.visioncoder.cn)注册并购买 [Token Plan](https://coder.visioncoder.cn) 限时活动，可享受“买 1 个月赠 1 个月”优惠。 |
+| <img src="https://coder.visioncoder.cn/logo.png" width="200" alt="VisionCoder Logo"> | 感谢 **VisionCoder** 对本项目的支持。[VisionCoder 开发平台](https://coder.visioncoder.cn) 是一个可靠高效性 API 中继服务提供商，提供 Claude Code、Codex、Gemini 等主流 AI 模型，帮助开发者和团队更轻松地集成 AI 功能，提升工作效率。**VisionCoder** 为本站用户提供了专属福利：通过[此链接](https://coder.visioncoder.cn)注册并购买 [Token Plan](https://coder.visioncoder.cn) 限时活动，可享受“**买 1 个月赠 1 个月**”优惠。 |
+| <img src="docs/images/hvoy.png" width="200" alt="hvoy.ai Logo"> | 感谢 **hvoy.ai** 赞助了本项目！[hvoy.ai](https://hvoy.ai/?source=am) 是一站式 AI API 服务免费检测与中转站收录导航平台，凭借全面的收录与实时数据探测，已成为众多技术团队与企业在选型时的的首选工具。平台已收录覆盖数百家中转站、持续探测几十家站点的性能及各纬度评测，为用户提供客观、透明的中转服务选型依据，助力高效避坑。需要使用AI API服务的用户可以前往 [hvoy.ai](https://hvoy.ai/?source=am) 体验使用。 |
 
 
 
@@ -130,7 +131,7 @@ graph TD
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.1.32/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.2.1/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -140,7 +141,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **支持的格式**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.1.32`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
+> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.2.1`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 如果您已安装 [Homebrew](https://brew.sh/)，也可以通过以下命令安装：
@@ -440,6 +441,30 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.2.1 (2026-05-20)**:
+        -   **[核心修复] Windows 进程隔离与进程查杀优化 (Windows Process Segregation)**:
+            -   **问题修复**: 解决了在 Windows 平台切换 Antigravity 与 Antigravity IDE 时导致双方进程意外互相误杀的问题。
+            -   **严格路径过滤**: 引入了基于可执行文件绝对路径 (`canonicalize()`) 的严格匹配机制。当用户在配置中显式指定路径后，系统将仅管理与该路径匹配的进程，避免由于模糊匹配引发意外查杀。
+            -   **⚠️ 重要提示**: Windows 用户务必在“设置 -> 高级”中，分别配置**经典版自定义路径 (antigravity_executable)** 和 **IDE 自定义路径 (antigravity_ide_executable)**，以激活严格的路径隔离机制。若未配置路径，系统将回退至模糊的进程名称匹配，这可能会在切换账号时导致意外关闭。
+    *   **v4.2.0 (2026-05-20)**:
+        -   **[核心功能] 新增 Antigravity IDE 账号一键切换与独立的双切换按钮**:
+            -   **双通道一键切换**: 在账号管理的操作面板中，针对经典版（Classic）与新版（IDE）分别提供了**独立的账号切换按钮**，支持用户在同一界面直接控制两个版本的账号状态。
+            -   **物理隔离与多版本共存**: 实现了经典版与 IDE 版底层数据、`state.vscdb` 数据库及配置文件路径的完全物理隔离，保障两版本配置与凭证互不干扰、完美共存。
+            -   **进程智能避让控制**: 重构了 Rust 后端的进程管理逻辑，确保在进行 IDE 切换或关闭操作时，能够精准定位对应进程，绝不误伤或错误关闭 Classic 版本的后台运行状态。
+        -   **[多版本兼容性重构] 智能多版本切换与 OS Keychain 系统凭据管理器支持**:
+            -   **原生 2.0.0+ 客户端 Keychain 注入**: 针对 >= 2.0.0 以上的原生客户端，实现了将 OAuth 凭据以特定 JSON Base64 格式写入系统凭据管理器的功能，免除了对 `storage.json` 的强依赖，彻底解决因文件缺失导致的切换中断问题。
+            -   **跨平台无感静默写入**: 针对 macOS 提供 `security` 命令行配合 `-A` 彻底打通本地应用免密读取权限，实现零弹窗无感切换；同时完美实现 Windows (`cmdkey` 静默命令) 与 Linux (`secret-tool`) 平台的原生 Keychain/Keyring 凭据极速注入。
+            -   **版本自动检测与平滑降级**: 引入智能版本探测机制。检测到原生应用版本 < 2.0.0 时自动采用原有的 SQLite 数据库和机器指纹注入分支以向下兼容；若检测到版本 >= 2.0.0 则优雅执行 Keychain 注入；针对 Antigravity IDE 版则强制保持原有的 SQLite 注入机制绝对不变，达成完美的逻辑隔离。
+        -   **[前端交互与动效升级] 独立的个性化切换图标与顺滑旋转微动效**:
+            -   **差异化专属图标**: 为新版 IDE 设计了独立且极具折角循环几何感的全新 **`Repeat2`** 切换图标，与 Classic 版的 `ArrowRightLeft` 箭头形成清晰直观的差异化，提升交互辨识度。
+            -   **旋转微动效升级**: 将切换状态 (isSwitching) 下的动画从温和的 `animate-pulse` 升级为顺时针匀速旋转的 **`animate-spin`** 微动画，使得切换过程在视觉反馈上更具流畅度和动感质感。
+        -   **[国际化缺陷修复] 全系统 12 国语言无缝对齐，彻底解决 Tooltip 汉字回退**:
+            -   **多语言翻译对齐**: 修复了此前非中文环境下，经典版和新版切换按钮悬停提示 Tooltip 回退为默认中文的缺陷。
+            -   **全语系包覆盖**: 在 `en.json`, `zh.json`, `zh-TW.json`, `ja.json`, `ko.json` 等全部 **12 个多语言翻译包** 中精准补充并对齐了 `accounts.switch_to_classic` 与 `accounts.switch_to_ide` 翻译键，实现全球多语言悬停精准提示。
+    *   **v4.1.33 (2026-05-01)**:
+        -   **[核心修复] 解决 Antigravity IDE  OAuth Token 刷新失效及 invalid_grant 报错问题。**
+        -   **[核心修复] 解决由于项目 ID 冲突导致的 403 报错，并实现企业/个人配额的自动重试降级。**
+        -   **[功能增强] 支持旧账号数据的自动兼容与静默升级，旧用户无需重新登录即可恢复功能。**
     *   **v4.1.32 (2026-04-18)**:
         -   **[代理增强] Gemini 代理生产级稳定性重构**:
             -   **指纹同构化**: 重写 `requestId` 生成逻辑，严格遵循官方 `agent/{timestamp}/{hex8}` 路径指纹。

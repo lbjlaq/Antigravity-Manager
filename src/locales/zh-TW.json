@@ -1,4 +1,4 @@
-{
+﻿{
     "common": {
         "empty": "空",
         "loading": "載入中...",
@@ -159,6 +159,8 @@
         "last_used": "最後使用",
         "reset_time": "重置時間",
         "switch_to": "切換到此帳號",
+        "switch_to_classic": "切換到 Antigravity (經典版)",
+        "switch_to_ide": "切換到 Antigravity IDE",
         "actions": "操作",
         "device_fingerprint": "裝置指紋",
         "show_all_quotas": "顯示所有配額",
@@ -431,6 +433,10 @@
             "antigravity_path_desc": "如果您將 Antigravity 應用安裝在非標準位置，可在此手動指定可執行檔案路徑（MacOS 指向 .app 目錄）。",
             "antigravity_path_select": "選擇 Antigravity 程式可執行檔案",
             "antigravity_path_detected": "已更新偵測到的路徑",
+            "antigravity_ide_path": "Antigravity IDE 路徑",
+            "antigravity_ide_path_placeholder": "D:\\Antigravity\\Antigravity.exe",
+            "antigravity_ide_path_desc": "指定 Antigravity IDE（程式碼編輯器）的可執行檔案路徑。設定後，切換帳號時將嚴格保護此路徑的進程不被關閉。",
+            "antigravity_ide_path_select": "選擇 Antigravity IDE 可執行檔案",
             "detect_btn": "偵測",
             "antigravity_args": "Antigravity 程式啟動參數",
             "antigravity_args_placeholder": "--user-data-dir=/path/to/data --some-other-flag",

@@ -1877,6 +1877,16 @@ impl TokenManager {
         content["token"]["expires_in"] = serde_json::Value::Number(token_response.expires_in.into());
         content["token"]["expiry_timestamp"] = serde_json::Value::Number((now + token_response.expires_in).into());
 
+        // 如果获取到了新的 id_token，则保存它
+        if let Some(ref id_token) = token_response.id_token {
+            content["token"]["id_token"] = serde_json::Value::String(id_token.clone());
+        }
+
+        // 如果获取到了新的 refresh_token（Token 轮转），也一并保存
+        if let Some(ref rt) = token_response.refresh_token {
+            content["token"]["refresh_token"] = serde_json::Value::String(rt.clone());
+        }
+
         std::fs::write(path, serde_json::to_string_pretty(&content).unwrap())
             .map_err(|e| format!("写入文件失败: {}", e))?;
 
@@ -2478,7 +2488,8 @@ impl TokenManager {
                 Some(email_clone.clone()),
                 Some(project_id),
                 None, // session_id
-                true,
+                false, // 默认不开启
+                token_info.id_token,
             )
             .with_oauth_client_key(token_info.oauth_client_key.clone());
 

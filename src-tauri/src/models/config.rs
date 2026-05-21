@@ -15,6 +15,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub proxy: ProxyConfig,
     pub antigravity_executable: Option<String>, // [NEW] Manually specified Antigravity executable path
+    pub antigravity_ide_executable: Option<String>, // [NEW] Manually specified Antigravity IDE executable path
     pub antigravity_args: Option<Vec<String>>, // [NEW] Antigravity startup arguments
     #[serde(default)]
     pub auto_launch: bool,  // Launch on startup
@@ -180,6 +181,7 @@ impl AppConfig {
             default_export_path: None,
             proxy: ProxyConfig::default(),
             antigravity_executable: None,
+            antigravity_ide_executable: None,
             antigravity_args: None,
             auto_launch: false,
             scheduled_warmup: ScheduledWarmupConfig::default(),

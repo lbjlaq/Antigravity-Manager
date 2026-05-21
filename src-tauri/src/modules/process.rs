@@ -13,18 +13,56 @@ fn get_current_exe_path() -> Option<std::path::PathBuf> {
         .and_then(|p| p.canonicalize().ok())
 }
 
+/// Helper to extract executable paths of Antigravity IDE instances
+/// Uses config path as primary, and falls back to cmd() arg scanning (works on macOS/Linux)
+fn get_ide_exe_paths(system: &System) -> std::collections::HashSet<String> {
+    let mut immune_exe_paths = std::collections::HashSet::new();
+
+    // Primary: load from explicit config setting (most reliable on Windows)
+    if let Ok(config) = crate::modules::config::load_app_config() {
+        if let Some(ide_path) = config.antigravity_ide_executable {
+            if let Ok(canonical) = std::path::PathBuf::from(&ide_path).canonicalize() {
+                immune_exe_paths.insert(canonical.to_string_lossy().to_lowercase());
+            } else {
+                immune_exe_paths.insert(ide_path.to_lowercase());
+            }
+        }
+    }
+
+    // Fallback: scan process cmd() args (works on macOS/Linux, may be empty on Windows)
+    for (_pid, process) in system.processes() {
+        let args = process.cmd();
+        let args_str = args
+            .iter()
+            .map(|arg| arg.to_string_lossy().to_lowercase())
+            .collect::<Vec<String>>()
+            .join(" ");
+        
+        if args_str.contains("antigravity ide") || args_str.contains("antigravity-ide") {
+            if let Some(exe_path) = process.exe().and_then(|p| p.to_str()) {
+                immune_exe_paths.insert(exe_path.to_lowercase());
+            }
+        }
+    }
+    immune_exe_paths
+}
+
 /// Check if Antigravity is running
-pub fn is_antigravity_running() -> bool {
+pub fn is_antigravity_running(target_ide: Option<&str>) -> bool {
     let mut system = System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    let ide_exe_paths = get_ide_exe_paths(&system);
 
     let current_exe = get_current_exe_path();
     let current_pid = std::process::id();
 
-    // Recognition ref 1: Load manual config path (moved outside loop for performance)
-    let manual_path = crate::modules::config::load_app_config()
-        .ok()
-        .and_then(|c| c.antigravity_executable)
+    // Load both manual paths from config
+    let config = crate::modules::config::load_app_config().ok();
+    let manual_path = config.as_ref()
+        .and_then(|c| c.antigravity_executable.as_ref())
+        .and_then(|p| std::path::PathBuf::from(p).canonicalize().ok());
+    let ide_manual_path = config.as_ref()
+        .and_then(|c| c.antigravity_ide_executable.as_ref())
         .and_then(|p| std::path::PathBuf::from(p).canonicalize().ok());
 
     for (pid, process) in system.processes() {
@@ -49,46 +87,6 @@ pub fn is_antigravity_running() -> bool {
             }
         }
 
-        // Recognition ref 2: Priority check for manual path match
-        if let (Some(ref m_path), Some(p_exe)) = (&manual_path, process.exe()) {
-            if let Ok(p_path) = p_exe.canonicalize() {
-                // macOS: Check if within the same .app bundle
-                #[cfg(target_os = "macos")]
-                {
-                    let m_path_str = m_path.to_string_lossy();
-                    let p_path_str = p_path.to_string_lossy();
-                    if let (Some(m_idx), Some(p_idx)) =
-                        (m_path_str.find(".app"), p_path_str.find(".app"))
-                    {
-                        if m_path_str[..m_idx + 4] == p_path_str[..p_idx + 4] {
-                            // Even if path matches, must confirm via name and args that it's not a Helper
-                            let args = process.cmd();
-                            let is_helper_by_args = args
-                                .iter()
-                                .any(|arg| arg.to_string_lossy().contains("--type="));
-                            let is_helper_by_name = name.contains("helper")
-                                || name.contains("plugin")
-                                || name.contains("renderer")
-                                || name.contains("gpu")
-                                || name.contains("crashpad")
-                                || name.contains("utility")
-                                || name.contains("audio")
-                                || name.contains("sandbox");
-                            if !is_helper_by_args && !is_helper_by_name {
-                                return true;
-                            }
-                        }
-                    }
-                }
-
-                #[cfg(not(target_os = "macos"))]
-                if m_path == &p_path {
-                    return true;
-                }
-            }
-        }
-
-        // Common helper process exclusion logic
         // Common helper process exclusion logic
         let args = process.cmd();
         let args_str = args
@@ -108,28 +106,84 @@ pub fn is_antigravity_running() -> bool {
             || name.contains("sandbox")
             || exe_path.contains("crashpad");
 
-        #[cfg(target_os = "macos")]
-        {
-            if exe_path.contains("antigravity.app") && !is_helper {
-                return true;
+        if is_helper {
+            continue;
+        }
+
+        // Recognition ref 2: If targeting IDE and ide_manual_path is configured, check it first
+        if target_ide == Some("ide") {
+            if let (Some(ref ide_m_path), Some(p_exe)) = (&ide_manual_path, process.exe()) {
+                if let Ok(p_path) = p_exe.canonicalize() {
+                    #[cfg(target_os = "macos")]
+                    {
+                        let m = ide_m_path.to_string_lossy();
+                        let p = p_path.to_string_lossy();
+                        if let (Some(mi), Some(pi)) = (m.find(".app"), p.find(".app")) {
+                            if m[..mi + 4] == p[..pi + 4] {
+                                return true;
+                            }
+                        }
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    if ide_m_path == &p_path {
+                        return true;
+                    }
+                }
             }
         }
 
-        #[cfg(target_os = "windows")]
-        {
-            if name == "antigravity.exe" && !is_helper {
-                return true;
+        // Recognition ref 3: Priority check for manual path match (client)
+        if target_ide != Some("ide") {
+            if let (Some(ref m_path), Some(p_exe)) = (&manual_path, process.exe()) {
+                if let Ok(p_path) = p_exe.canonicalize() {
+                    // macOS: Check if within the same .app bundle
+                    #[cfg(target_os = "macos")]
+                    {
+                        let m_path_str = m_path.to_string_lossy();
+                        let p_path_str = p_path.to_string_lossy();
+                        if let (Some(m_idx), Some(p_idx)) =
+                            (m_path_str.find(".app"), p_path_str.find(".app"))
+                        {
+                            if m_path_str[..m_idx + 4] == p_path_str[..p_idx + 4] {
+                                return true;
+                            }
+                        }
+                    }
+
+                    #[cfg(not(target_os = "macos"))]
+                    if m_path == &p_path {
+                        return true;
+                    }
+                }
             }
         }
 
-        #[cfg(target_os = "linux")]
-        {
-            if (name.contains("antigravity") || exe_path.contains("/antigravity"))
-                && !name.contains("tools")
-                && !is_helper
-            {
-                return true;
+        // 3. Strict mode: If the relevant manual path is configured, we strictly enforce it
+        // and DO NOT fallback to fuzzy string matching.
+        if manual_path.is_some() && target_ide != Some("ide") {
+            continue;
+        }
+        if ide_manual_path.is_some() && target_ide == Some("ide") {
+            continue;
+        }
+
+        // Check if the process matches target_ide
+        let is_ide_match = if target_ide == Some("ide") {
+            exe_path.contains("antigravity ide") || exe_path.contains("antigravity-ide") || name.contains("antigravity ide") || name.contains("antigravity-ide") || ide_exe_paths.contains(&exe_path)
+        } else {
+            if ide_exe_paths.contains(&exe_path) {
+                false // Explicitly immune (it is an IDE)
+            } else {
+                (exe_path.contains("antigravity") || name.contains("antigravity"))
+                    && !exe_path.contains("antigravity ide")
+                    && !exe_path.contains("antigravity-ide")
+                    && !name.contains("antigravity ide")
+                    && !name.contains("antigravity-ide")
             }
+        };
+
+        if is_ide_match {
+            return true;
         }
     }
 
@@ -191,9 +245,10 @@ fn get_self_family_pids(system: &sysinfo::System) -> std::collections::HashSet<u
 }
 
 /// Get PIDs of all Antigravity processes (including main and helper processes)
-fn get_antigravity_pids() -> Vec<u32> {
+fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
     let mut system = System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    let ide_exe_paths = get_ide_exe_paths(&system);
 
     // Linux: Enable family process tree exclusion
     #[cfg(target_os = "linux")]
@@ -203,10 +258,13 @@ fn get_antigravity_pids() -> Vec<u32> {
     let current_pid = std::process::id();
     let current_exe = get_current_exe_path();
 
-    // Load manual config path as auxiliary reference
-    let manual_path = crate::modules::config::load_app_config()
-        .ok()
-        .and_then(|c| c.antigravity_executable)
+    // Load both manual paths from config
+    let config = crate::modules::config::load_app_config().ok();
+    let manual_path = config.as_ref()
+        .and_then(|c| c.antigravity_executable.as_ref())
+        .and_then(|p| std::path::PathBuf::from(p).canonicalize().ok());
+    let ide_manual_path = config.as_ref()
+        .and_then(|c| c.antigravity_ide_executable.as_ref())
         .and_then(|p| std::path::PathBuf::from(p).canonicalize().ok());
 
     for (pid, process) in system.processes() {
@@ -226,7 +284,7 @@ fn get_antigravity_pids() -> Vec<u32> {
             }
         }
 
-        let _name = process.name().to_string_lossy().to_lowercase();
+        let name = process.name().to_string_lossy().to_lowercase();
 
         #[cfg(target_os = "linux")]
         {
@@ -235,7 +293,7 @@ fn get_antigravity_pids() -> Vec<u32> {
                 continue;
             }
             // 2. Extra protection: match "tools" likely manager if not a child
-            if _name.contains("tools") {
+            if name.contains("tools") {
                 continue;
             }
         }
@@ -248,43 +306,84 @@ fn get_antigravity_pids() -> Vec<u32> {
             }
         }
 
-        // Recognition ref 3: Check manual config path match
-        if let (Some(ref m_path), Some(p_exe)) = (&manual_path, process.exe()) {
+        // Recognition ref IDE manual path: If the process exactly matches the configured IDE path,
+        // NEVER add it to kill list regardless of target_ide
+        if let (Some(ref ide_m_path), Some(p_exe)) = (&ide_manual_path, process.exe()) {
             if let Ok(p_path) = p_exe.canonicalize() {
                 #[cfg(target_os = "macos")]
-                {
-                    let m_path_str = m_path.to_string_lossy();
-                    let p_path_str = p_path.to_string_lossy();
-                    if let (Some(m_idx), Some(p_idx)) =
-                        (m_path_str.find(".app"), p_path_str.find(".app"))
-                    {
-                        if m_path_str[..m_idx + 4] == p_path_str[..p_idx + 4] {
-                            let args = process.cmd();
-                            let is_helper_by_args = args
-                                .iter()
-                                .any(|arg| arg.to_string_lossy().contains("--type="));
-                            let is_helper_by_name = _name.contains("helper")
-                                || _name.contains("plugin")
-                                || _name.contains("renderer")
-                                || _name.contains("gpu")
-                                || _name.contains("crashpad")
-                                || _name.contains("utility")
-                                || _name.contains("audio")
-                                || _name.contains("sandbox");
-                            if !is_helper_by_args && !is_helper_by_name {
-                                pids.push(pid_u32);
-                                continue;
-                            }
-                        }
-                    }
-                }
-
+                let matches = {
+                    let m = ide_m_path.to_string_lossy();
+                    let p = p_path.to_string_lossy();
+                    matches!(m.find(".app").zip(p.find(".app")), Some((mi, pi)) if m[..mi + 4] == p[..pi + 4])
+                };
                 #[cfg(not(target_os = "macos"))]
-                if m_path == &p_path {
+                let matches = ide_m_path == &p_path;
+
+                if matches && target_ide != Some("ide") {
+                    // This is explicitly the IDE we must NOT kill when switching client
+                    continue;
+                }
+                if matches && target_ide == Some("ide") {
+                    // This is the IDE we WANT to close
                     pids.push(pid_u32);
                     continue;
                 }
             }
+        }
+
+        // Recognition ref 3: Check manual config path match (client)
+        if let (Some(ref m_path), Some(p_exe)) = (&manual_path, process.exe()) {
+            if let Ok(p_path) = p_exe.canonicalize() {
+                #[cfg(target_os = "macos")]
+                let matches = {
+                    let m_path_str = m_path.to_string_lossy();
+                    let p_path_str = p_path.to_string_lossy();
+                    matches!(m_path_str.find(".app").zip(p_path_str.find(".app")), Some((m_idx, p_idx)) if m_path_str[..m_idx + 4] == p_path_str[..p_idx + 4])
+                };
+                #[cfg(not(target_os = "macos"))]
+                let matches = m_path == &p_path;
+
+                if matches {
+                    #[cfg(target_os = "macos")]
+                    let is_main = {
+                        let args = process.cmd();
+                        let is_helper_by_args = args
+                            .iter()
+                            .any(|arg| arg.to_string_lossy().contains("--type="));
+                        let is_helper_by_name = name.contains("helper")
+                            || name.contains("plugin")
+                            || name.contains("renderer")
+                            || name.contains("gpu")
+                            || name.contains("crashpad")
+                            || name.contains("utility")
+                            || name.contains("audio")
+                            || name.contains("sandbox");
+                        !is_helper_by_args && !is_helper_by_name
+                    };
+                    #[cfg(not(target_os = "macos"))]
+                    let is_main = true;
+
+                    if is_main {
+                        if target_ide == Some("ide") {
+                            // This is explicitly the client we must NOT kill when switching IDE
+                            continue;
+                        } else {
+                            // This is the client we WANT to close
+                            pids.push(pid_u32);
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Strict mode: If the relevant manual path is configured, we strictly enforce it
+        // and DO NOT fallback to fuzzy string matching.
+        if manual_path.is_some() && target_ide != Some("ide") {
+            continue;
+        }
+        if ide_manual_path.is_some() && target_ide == Some("ide") {
+            continue;
         }
 
         // Get executable path
@@ -303,48 +402,41 @@ fn get_antigravity_pids() -> Vec<u32> {
             .join(" ");
 
         let is_helper = args_str.contains("--type=")
-            || _name.contains("helper")
-            || _name.contains("plugin")
-            || _name.contains("renderer")
-            || _name.contains("gpu")
-            || _name.contains("crashpad")
-            || _name.contains("utility")
-            || _name.contains("audio")
-            || _name.contains("sandbox")
+            || name.contains("helper")
+            || name.contains("plugin")
+            || name.contains("renderer")
+            || name.contains("gpu")
+            || name.contains("crashpad")
+            || name.contains("utility")
+            || name.contains("audio")
+            || name.contains("sandbox")
             || exe_path.contains("crashpad");
 
-        #[cfg(target_os = "macos")]
-        {
-            // Match processes within Antigravity main app bundle, excluding Helper/Plugin/Renderer etc.
-            if exe_path.contains("antigravity.app") && !is_helper {
-                pids.push(pid_u32);
+        // Check if the process matches target_ide
+        let is_ide_match = if target_ide == Some("ide") {
+            exe_path.contains("antigravity ide") || exe_path.contains("antigravity-ide") || name.contains("antigravity ide") || name.contains("antigravity-ide") || ide_exe_paths.contains(&exe_path)
+        } else {
+            if ide_exe_paths.contains(&exe_path) {
+                false // Explicitly immune (it is an IDE)
+            } else {
+                (exe_path.contains("antigravity") || name.contains("antigravity"))
+                    && !exe_path.contains("antigravity ide")
+                    && !exe_path.contains("antigravity-ide")
+                    && !name.contains("antigravity ide")
+                    && !name.contains("antigravity-ide")
             }
-        }
+        };
 
-        #[cfg(target_os = "windows")]
-        {
-            let name = process.name().to_string_lossy().to_lowercase();
-            if name == "antigravity.exe" && !is_helper {
-                pids.push(pid_u32);
-            }
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            let name = process.name().to_string_lossy().to_lowercase();
-            if (name == "antigravity" || exe_path.contains("/antigravity"))
-                && !name.contains("tools")
-                && !is_helper
-            {
-                pids.push(pid_u32);
-            }
+        if is_ide_match && !is_helper {
+            pids.push(pid_u32);
         }
     }
 
     if !pids.is_empty() {
         crate::modules::logger::log_info(&format!(
-            "Found {} Antigravity processes: {:?}",
+            "Found {} Antigravity ({:?}) processes: {:?}",
             pids.len(),
+            target_ide,
             pids
         ));
     }
@@ -353,13 +445,13 @@ fn get_antigravity_pids() -> Vec<u32> {
 }
 
 /// Close Antigravity processes
-pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result<(), String> {
-    crate::modules::logger::log_info("Closing Antigravity...");
+pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<(), String> {
+    crate::modules::logger::log_info(&format!("Closing Antigravity ({:?})...", target_ide));
 
     #[cfg(target_os = "windows")]
     {
         // Windows: Precise kill by PID to support multiple versions or custom filenames
-        let pids = get_antigravity_pids();
+        let pids = get_antigravity_pids(target_ide);
         if !pids.is_empty() {
             crate::modules::logger::log_info(&format!(
                 "Precisely closing {} identified processes on Windows...",
@@ -381,10 +473,9 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
         // macOS: Optimize closing strategy to avoid "Window terminated unexpectedly" popups
         // Strategy: SEND SIGTERM to main process only, let it coordinate closing children
 
-        let pids = get_antigravity_pids();
+        let pids = get_antigravity_pids(target_ide);
         if !pids.is_empty() {
             // 1. Identify main process (PID)
-            // Strategy: Principal processes of Electron/Tauri do not have the `--type` parameter, while Helper processes have `--type=renderer/gpu/utility`, etc.
             let mut system = System::new();
             system.refresh_processes(sysinfo::ProcessesToUpdate::All);
 
@@ -479,22 +570,12 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
                     "Sending SIGTERM to main process PID: {}",
                     pid
                 ));
-                let output = Command::new("kill")
+                let _ = Command::new("kill")
                     .args(["-15", &pid.to_string()])
                     .output();
-
-                if let Ok(result) = output {
-                    if !result.status.success() {
-                        let error = String::from_utf8_lossy(&result.stderr);
-                        crate::modules::logger::log_warn(&format!(
-                            "Main process SIGTERM failed: {}",
-                            error
-                        ));
-                    }
-                }
             } else {
                 crate::modules::logger::log_warn(
-                    "No clear main process identified, attempting SIGTERM for all processes (may cause popups)",
+                    "No main process identified, sending SIGTERM to all associated processes",
                 );
                 for pid in &pids {
                     let _ = Command::new("kill")
@@ -507,7 +588,7 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
             let graceful_timeout = (timeout_secs * 7) / 10;
             let start = std::time::Instant::now();
             while start.elapsed() < Duration::from_secs(graceful_timeout) {
-                if !is_antigravity_running() {
+                if !is_antigravity_running(target_ide) {
                     crate::modules::logger::log_info("All Antigravity processes gracefully closed");
                     return Ok(());
                 }
@@ -515,8 +596,8 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
             }
 
             // Phase 2: Force kill (SIGKILL) - targeting all remaining processes (Helpers)
-            if is_antigravity_running() {
-                let remaining_pids = get_antigravity_pids();
+            if is_antigravity_running(target_ide) {
+                let remaining_pids = get_antigravity_pids(target_ide);
                 if !remaining_pids.is_empty() {
                     crate::modules::logger::log_warn(&format!(
                         "Graceful exit timeout, force killing {} remaining processes (SIGKILL)",
@@ -542,7 +623,7 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
                 }
 
                 // Final check
-                if !is_antigravity_running() {
+                if !is_antigravity_running(target_ide) {
                     crate::modules::logger::log_info("All processes exited after forced cleanup");
                     return Ok(());
                 }
@@ -559,25 +640,18 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
 
     #[cfg(target_os = "linux")]
     {
-        // Linux: Also attempt to identify main process and delegate exit
-        let pids = get_antigravity_pids();
+        // Linux: precise closing
+        let pids = get_antigravity_pids(target_ide);
         if !pids.is_empty() {
             let mut system = System::new();
             system.refresh_processes(sysinfo::ProcessesToUpdate::All);
 
             let mut main_pid = None;
 
-            // Load manual configuration path as highest priority reference
-            let manual_path = crate::modules::config::load_app_config()
-                .ok()
-                .and_then(|c| c.antigravity_executable)
-                .and_then(|p| std::path::PathBuf::from(p).canonicalize().ok());
-
-            crate::modules::logger::log_info("Analyzing Linux process list to identify main process:");
             for pid_u32 in &pids {
                 let pid = sysinfo::Pid::from_u32(*pid_u32);
                 if let Some(process) = system.process(pid) {
-                    let name = process.name().to_string_lossy().to_lowercase();
+                    let name = process.name().to_string_lossy();
                     let args = process.cmd();
                     let args_str = args
                         .iter()
@@ -585,65 +659,25 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
                         .collect::<Vec<String>>()
                         .join(" ");
 
-                    crate::modules::logger::log_info(&format!(
-                        " - PID: {} | Name: {} | Args: {}",
-                        pid_u32, name, args_str
-                    ));
+                    let is_helper_by_name = name.to_lowercase().contains("helper")
+                        || name.to_lowercase().contains("crashpad")
+                        || name.to_lowercase().contains("utility")
+                        || name.to_lowercase().contains("audio")
+                        || name.to_lowercase().contains("sandbox")
+                        || name.to_lowercase().contains("plugin")
+                        || name.to_lowercase().contains("renderer");
 
-                    // 1. Priority to manual path matching
-                    if let (Some(ref m_path), Some(p_exe)) = (&manual_path, process.exe()) {
-                        if let Ok(p_path) = p_exe.canonicalize() {
-                            if &p_path == m_path {
-                                // Confirm not a Helper
-                                let is_helper_by_args = args_str.contains("--type=");
-                                let is_helper_by_name = name.contains("helper")
-                                    || name.contains("renderer")
-                                    || name.contains("gpu")
-                                    || name.contains("crashpad")
-                                    || name.contains("utility")
-                                    || name.contains("audio")
-                                    || name.contains("sandbox");
-                                if !is_helper_by_args && !is_helper_by_name {
-                                    main_pid = Some(pid_u32);
-                                    crate::modules::logger::log_info(&format!(
-                                        "   => Identified as main process (manual path match)"
-                                    ));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    // 2. Feature analysis matching
                     let is_helper_by_args = args_str.contains("--type=");
-                    let is_helper_by_name = name.contains("helper")
-                        || name.contains("renderer")
-                        || name.contains("gpu")
-                        || name.contains("crashpad")
-                        || name.contains("utility")
-                        || name.contains("audio")
-                        || name.contains("sandbox")
-                        || name.contains("plugin")
-                        || name.contains("language_server");
 
-                    if !is_helper_by_args && !is_helper_by_name {
-                        if main_pid.is_none() {
-                            main_pid = Some(pid_u32);
-                            crate::modules::logger::log_info(&format!(
-                                "   => Identified as main process (Feature analysis)"
-                            ));
-                        }
-                    } else {
-                        crate::modules::logger::log_info(&format!(
-                            "   => Identified as helper process (Helper/Args)"
-                        ));
+                    if !is_helper_by_name && !is_helper_by_args {
+                        main_pid = Some(pid_u32);
+                        break;
                     }
                 }
             }
 
-            // Phase 1: Graceful exit (SIGTERM)
+            // Phase 1: SIGTERM
             if let Some(pid) = main_pid {
-                crate::modules::logger::log_info(&format!("Attempting to gracefully close main process {} (SIGTERM)", pid));
                 let _ = Command::new("kill")
                     .args(["-15", &pid.to_string()])
                     .output();
@@ -662,16 +696,16 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
             let graceful_timeout = (timeout_secs * 7) / 10;
             let start = std::time::Instant::now();
             while start.elapsed() < Duration::from_secs(graceful_timeout) {
-                if !is_antigravity_running() {
+                if !is_antigravity_running(target_ide) {
                     crate::modules::logger::log_info("Antigravity gracefully closed");
                     return Ok(());
                 }
                 thread::sleep(Duration::from_millis(500));
             }
 
-            // Phase 2: Force kill (SIGKILL) - targeting all remaining processes
-            if is_antigravity_running() {
-                let remaining_pids = get_antigravity_pids();
+            // Phase 2: SIGKILL
+            if is_antigravity_running(target_ide) {
+                let remaining_pids = get_antigravity_pids(target_ide);
                 if !remaining_pids.is_empty() {
                     crate::modules::logger::log_warn(&format!(
                         "Graceful exit timeout, force killing {} remaining processes (SIGKILL)",
@@ -684,7 +718,6 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
                 }
             }
         } else {
-            // pids is empty, meaning no process detected or all excluded by logic
             crate::modules::logger::log_info(
                 "No Antigravity processes found to close (possibly filtered or not running)",
             );
@@ -692,7 +725,7 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
     }
 
     // Final check
-    if is_antigravity_running() {
+    if is_antigravity_running(target_ide) {
         return Err("Unable to close Antigravity process, please close manually and retry".to_string());
     }
 
@@ -702,14 +735,16 @@ pub fn close_antigravity(#[allow(unused_variables)] timeout_secs: u64) -> Result
 
 /// Start Antigravity
 #[allow(unused_mut)]
-pub fn start_antigravity() -> Result<(), String> {
-    crate::modules::logger::log_info("Starting Antigravity...");
+pub fn start_antigravity(target_ide: Option<&str>) -> Result<(), String> {
+    crate::modules::logger::log_info(&format!("Starting Antigravity ({:?})...", target_ide));
 
     // Prefer manually specified path and args from configuration
     let config = crate::modules::config::load_app_config().ok();
-    let manual_path = config
-        .as_ref()
-        .and_then(|c| c.antigravity_executable.clone());
+    let manual_path = if target_ide == Some("ide") {
+        config.as_ref().and_then(|c| c.antigravity_ide_executable.clone())
+    } else {
+        config.as_ref().and_then(|c| c.antigravity_executable.clone())
+    };
     let args = config.and_then(|c| c.antigravity_args.clone());
 
     if let Some(mut path_str) = manual_path {
@@ -795,7 +830,8 @@ pub fn start_antigravity() -> Result<(), String> {
     {
         // Improvement: Use output() to wait for open command completion and capture "app not found" error
         let mut cmd = Command::new("open");
-        cmd.args(["-a", "Antigravity"]);
+        let app_name = if target_ide == Some("ide") { "Antigravity IDE" } else { "Antigravity" };
+        cmd.args(["-a", app_name]);
 
         // Add startup arguments
         if let Some(ref args) = args {
@@ -804,82 +840,47 @@ pub fn start_antigravity() -> Result<(), String> {
             }
         }
 
-        let output = cmd
-            .output()
-            .map_err(|e| format!("Unable to execute open command: {}", e))?;
-
+        let output = cmd.output().map_err(|e| format!("Execute open command failed: {}", e))?;
         if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            return Err(format!(
-                "Startup failed (open exited with {}): {}",
-                output.status, error
-            ));
+            let err_msg = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Startup failed: {}", err_msg.trim()));
         }
+
+        crate::modules::logger::log_info("Antigravity startup command sent (macOS open)");
+        return Ok(());
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(not(target_os = "macos"))]
     {
-        let has_args = args.as_ref().map_or(false, |a| !a.is_empty());
-        
-        if has_args {
-            if let Some(detected_path) = get_antigravity_executable_path() {
-                let path_str = detected_path.to_string_lossy().to_string();
-                crate::modules::logger::log_info(&format!(
-                    "Starting with auto-detected path (has args): {}",
-                    path_str
-                ));
-                
-                use crate::utils::command::CommandExtWrapper;
-                let mut cmd = Command::new(&path_str);
-                cmd.creation_flags_windows();
-                if let Some(ref args) = args {
-                    for arg in args {
-                        cmd.arg(arg);
-                    }
+        // Windows/Linux Auto-detection and Startup
+        if let Some(detected_path) = get_antigravity_executable_path(target_ide) {
+            let mut cmd = Command::new(&detected_path);
+
+            // Add startup arguments
+            if let Some(ref args) = args {
+                for arg in args {
+                    cmd.arg(arg);
                 }
-                
-                cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
-            } else {
-                return Err("Startup arguments configured but cannot find Antigravity executable path. Please set the executable path manually in Settings.".to_string());
             }
+
+            #[cfg(target_os = "windows")]
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+            cmd.spawn()
+                .map_err(|e| format!("Startup failed (detected path {:?}): {}", detected_path, e))?;
+
+            crate::modules::logger::log_info(&format!(
+                "Antigravity startup command sent (detected path: {:?})",
+                detected_path
+            ));
+            Ok(())
         } else {
-            use crate::utils::command::CommandExtWrapper;
-            let mut cmd = Command::new("cmd");
-            cmd.creation_flags_windows();
-            cmd.args(["/C", "start", "antigravity://"]);
-            
-            let result = cmd.spawn();
-            if result.is_err() {
-                return Err("Startup failed, please open Antigravity manually".to_string());
-            }
+            Err("Unable to start Antigravity: executable not found".to_string())
         }
     }
-
-    #[cfg(target_os = "linux")]
-    {
-        let mut cmd = Command::new("antigravity");
-
-        // Add startup arguments
-        if let Some(ref args) = args {
-            for arg in args {
-                cmd.arg(arg);
-            }
-        }
-
-        cmd.spawn().map_err(|e| format!("Startup failed: {}", e))?;
-    }
-
-    crate::modules::logger::log_info(&format!(
-        "Antigravity startup command sent (default detection, args: {:?})",
-        args
-    ));
-    Ok(())
 }
 
-/// Get Antigravity executable path and startup arguments from running processes
-///
-/// This is the most reliable method to find installations and startup args anywhere
-fn get_process_info() -> (Option<std::path::PathBuf>, Option<Vec<String>>) {
+fn get_process_info(target_ide: Option<&str>) -> (Option<std::path::PathBuf>, Option<Vec<String>>) {
     let mut system = System::new_all();
     system.refresh_all();
 
@@ -936,37 +937,37 @@ fn get_process_info() -> (Option<std::path::PathBuf>, Option<Vec<String>>) {
 
             let path = Some(exe.to_path_buf());
             let args = Some(args);
-            #[cfg(target_os = "macos")]
-            {
-                // macOS: Exclude helper processes, match main app only, and check Frameworks
-                if exe_path.contains("antigravity.app")
-                    && !is_helper
-                    && !exe_path.contains("frameworks")
+
+            // Is the process a match for target_ide?
+            let is_ide_match = if target_ide == Some("ide") {
+                exe_path.contains("antigravity ide") || exe_path.contains("antigravity-ide") || name.contains("antigravity ide") || name.contains("antigravity-ide")
+            } else {
+                (exe_path.contains("antigravity") || name.contains("antigravity"))
+                    && !exe_path.contains("antigravity ide")
+                    && !exe_path.contains("antigravity-ide")
+                    && !name.contains("antigravity ide")
+                    && !name.contains("antigravity-ide")
+            };
+
+            if is_ide_match && !is_helper {
+                #[cfg(target_os = "macos")]
                 {
-                    // Try to extract .app path for better open command support
-                    if let Some(app_idx) = exe_path.find(".app") {
-                        let app_path_str = &exe.to_string_lossy()[..app_idx + 4];
-                        let path = Some(std::path::PathBuf::from(app_path_str));
-                        return (path, args);
+                    if !exe_path.contains("frameworks") {
+                        if let Some(app_idx) = exe_path.find(".app") {
+                            let app_path_str = &exe.to_string_lossy()[..app_idx + 4];
+                            let path = Some(std::path::PathBuf::from(app_path_str));
+                            return (path, args);
+                        }
                     }
                     return (path, args);
                 }
-            }
 
-            #[cfg(target_os = "windows")]
-            {
-                // Windows: Strictly match process name and exclude helpers
-                if name == "antigravity.exe" && !is_helper {
+                #[cfg(target_os = "windows")]
+                {
                     return (path, args);
                 }
-            }
 
-            #[cfg(target_os = "linux")]
-            {
-                // Linux: Check process name or path for antigravity, excluding helpers and manager
-                if (name == "antigravity" || exe_path.contains("/antigravity"))
-                    && !name.contains("tools")
-                    && !is_helper
+                #[cfg(target_os = "linux")]
                 {
                     return (path, args);
                 }
@@ -979,19 +980,19 @@ fn get_process_info() -> (Option<std::path::PathBuf>, Option<Vec<String>>) {
 /// Get Antigravity executable path from running processes
 ///
 /// Most reliable method to find installation anywhere
-pub fn get_path_from_running_process() -> Option<std::path::PathBuf> {
-    let (path, _) = get_process_info();
+pub fn get_path_from_running_process(target_ide: Option<&str>) -> Option<std::path::PathBuf> {
+    let (path, _) = get_process_info(target_ide);
     path
 }
 
 /// Get Antigravity startup arguments from running processes
-pub fn get_args_from_running_process() -> Option<Vec<String>> {
-    let (_, args) = get_process_info();
+pub fn get_args_from_running_process(target_ide: Option<&str>) -> Option<Vec<String>> {
+    let (_, args) = get_process_info(target_ide);
     args
 }
 
 /// Get --user-data-dir argument value (if exists)
-pub fn get_user_data_dir_from_process() -> Option<std::path::PathBuf> {
+pub fn get_user_data_dir_from_process(target_ide: Option<&str>) -> Option<std::path::PathBuf> {
     // Prefer getting startup arguments from config
     if let Ok(config) = crate::modules::config::load_app_config() {
         if let Some(args) = config.antigravity_args {
@@ -1019,7 +1020,7 @@ pub fn get_user_data_dir_from_process() -> Option<std::path::PathBuf> {
     }
 
     // If not in config, get arguments from running process
-    if let Some(args) = get_args_from_running_process() {
+    if let Some(args) = get_args_from_running_process(target_ide) {
         for i in 0..args.len() {
             if args[i] == "--user-data-dir" && i + 1 < args.len() {
                 // Next argument is the path
@@ -1050,21 +1051,23 @@ pub fn get_user_data_dir_from_process() -> Option<std::path::PathBuf> {
 /// 1. Get path from running process (most reliable, supports any location)
 /// 2. Iterate standard installation locations
 /// 3. Return None
-pub fn get_antigravity_executable_path() -> Option<std::path::PathBuf> {
+pub fn get_antigravity_executable_path(target_ide: Option<&str>) -> Option<std::path::PathBuf> {
     // Strategy 1: Get from running process (supports any location)
-    if let Some(path) = get_path_from_running_process() {
+    if let Some(path) = get_path_from_running_process(target_ide) {
         return Some(path);
     }
 
     // Strategy 2: Check standard installation locations
-    check_standard_locations()
+    check_standard_locations(target_ide)
 }
 
 /// Check standard installation locations
-fn check_standard_locations() -> Option<std::path::PathBuf> {
+fn check_standard_locations(target_ide: Option<&str>) -> Option<std::path::PathBuf> {
+    let folder_name = if target_ide == Some("ide") { "Antigravity IDE" } else { "Antigravity" };
+
     #[cfg(target_os = "macos")]
     {
-        let path = std::path::PathBuf::from("/Applications/Antigravity.app");
+        let path = std::path::PathBuf::from(format!("/Applications/{}.app", folder_name));
         if path.exists() {
             return Some(path);
         }
@@ -1088,23 +1091,23 @@ fn check_standard_locations() -> Option<std::path::PathBuf> {
             possible_paths.push(
                 std::path::PathBuf::from(&local)
                     .join("Programs")
-                    .join("Antigravity")
-                    .join("Antigravity.exe"),
+                    .join(folder_name)
+                    .join(format!("{}.exe", folder_name)),
             );
         }
 
         // System installation location
         possible_paths.push(
             std::path::PathBuf::from(&program_files)
-                .join("Antigravity")
-                .join("Antigravity.exe"),
+                .join(folder_name)
+                .join(format!("{}.exe", folder_name)),
         );
 
         // 32-bit compatibility location
         possible_paths.push(
             std::path::PathBuf::from(&program_files_x86)
-                .join("Antigravity")
-                .join("Antigravity.exe"),
+                .join(folder_name)
+                .join(format!("{}.exe", folder_name)),
         );
 
         // Return the first existing path
@@ -1117,15 +1120,16 @@ fn check_standard_locations() -> Option<std::path::PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
+        let exe_name = if target_ide == Some("ide") { "antigravity-ide" } else { "antigravity" };
         let possible_paths = vec![
-            std::path::PathBuf::from("/usr/bin/antigravity"),
-            std::path::PathBuf::from("/opt/Antigravity/antigravity"),
-            std::path::PathBuf::from("/usr/share/antigravity/antigravity"),
+            std::path::PathBuf::from(format!("/usr/bin/{}", exe_name)),
+            std::path::PathBuf::from(format!("/opt/{}/{}", folder_name, exe_name)),
+            std::path::PathBuf::from(format!("/usr/share/{}/{}", folder_name, exe_name)),
         ];
 
         // User local installation
         if let Some(home) = dirs::home_dir() {
-            let user_local = home.join(".local/bin/antigravity");
+            let user_local = home.join(format!(".local/bin/{}", exe_name));
             if user_local.exists() {
                 return Some(user_local);
             }
