@@ -37,13 +37,29 @@ fn map_model_for_zai(original: &str, state: &crate::proxy::ZaiConfig) -> String 
 }
 
 fn join_base_url(base: &str, path: &str) -> Result<String, String> {
-    let base = base.trim_end_matches('/');
-    let path = if path.starts_with('/') {
-        path.to_string()
+    let mut url =
+        url::Url::parse(base.trim()).map_err(|e| format!("Invalid z.ai base_url: {}", e))?;
+    let request_path = path.trim_start_matches('/');
+    let base_path = url.path().trim_end_matches('/');
+
+    let target_path = if base_path.ends_with(request_path) {
+        base_path.to_string()
+    } else if request_path.starts_with("v1/messages") && base_path.ends_with("v1/messages") {
+        let suffix = request_path.strip_prefix("v1/messages").unwrap_or_default();
+        format!("{}{}", base_path, suffix)
+    } else if request_path.starts_with("v1/") && base_path.ends_with("v1") {
+        let suffix = request_path.strip_prefix("v1").unwrap_or_default();
+        format!("{}{}", base_path, suffix)
+    } else if base_path.is_empty() {
+        request_path.to_string()
     } else {
-        format!("/{}", path)
+        format!("{}/{}", base_path, request_path)
     };
-    Ok(format!("{}{}", base, path))
+
+    url.set_path(&format!("/{}", target_path.trim_start_matches('/')));
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
 }
 
 fn build_client(
@@ -78,13 +94,16 @@ fn copy_passthrough_headers(incoming: &HeaderMap) -> HeaderMap {
             "content-type" | "accept" | "anthropic-version" | "user-agent" => {
                 out.insert(k.clone(), v.clone());
             }
-            // Some clients use these for streaming; safe to pass through.
-            "accept-encoding" | "cache-control" => {
+            // Some clients use this for streaming; safe to pass through.
+            "cache-control" => {
                 out.insert(k.clone(), v.clone());
             }
             _ => {}
         }
     }
+
+    out.entry("anthropic-version")
+        .or_insert(HeaderValue::from_static("2023-06-01"));
 
     out
 }
@@ -155,8 +174,8 @@ pub async fn forward_anthropic_json(
         // [FIX] Caching for z.ai (to support thinking-filter)
         if let Some(sig) = body.get("thinking").and_then(|t| t.get("signature")).and_then(|s| s.as_str()) {
             crate::proxy::SignatureCache::global().cache_session_signature(
-                "zai-session", 
-                sig.to_string(), 
+                "zai-session",
+                sig.to_string(),
                 message_count
             );
             crate::proxy::SignatureCache::global().cache_thinking_family(sig.to_string(), mapped);
@@ -194,7 +213,7 @@ pub async fn forward_anthropic_json(
     // This avoids "Transfer-Encoding: chunked" for small bodies which caused connection errors.
     let body_bytes = serde_json::to_vec(&body).unwrap_or_default();
     let body_len = body_bytes.len();
-    
+
     tracing::debug!("Forwarding request to z.ai (len: {} bytes): {}", body_len, url);
 
     let req = client.request(method, &url)
@@ -228,4 +247,79 @@ pub async fn forward_anthropic_json(
     out.body(Body::from_stream(stream)).unwrap_or_else(|_| {
         (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn join_base_url_accepts_shannon_messages_endpoint() {
+        let url = join_base_url("https://api.shannon-ai.com/v1/messages", "/v1/messages")
+            .expect("valid joined URL");
+
+        assert_eq!(url, "https://api.shannon-ai.com/v1/messages");
+    }
+
+    #[test]
+    fn join_base_url_accepts_shannon_messages_endpoint_for_count_tokens() {
+        let url = join_base_url(
+            "https://api.shannon-ai.com/v1/messages",
+            "/v1/messages/count_tokens",
+        )
+        .expect("valid joined URL");
+
+        assert_eq!(url, "https://api.shannon-ai.com/v1/messages/count_tokens");
+    }
+
+    #[test]
+    fn join_base_url_accepts_shannon_v1_base() {
+        let url = join_base_url("https://api.shannon-ai.com/v1", "/v1/messages")
+            .expect("valid joined URL");
+
+        assert_eq!(url, "https://api.shannon-ai.com/v1/messages");
+    }
+
+    #[test]
+    fn join_base_url_accepts_provider_root_base() {
+        let url =
+            join_base_url("https://api.shannon-ai.com", "/v1/messages").expect("valid joined URL");
+
+        assert_eq!(url, "https://api.shannon-ai.com/v1/messages");
+    }
+
+    #[test]
+    fn copy_passthrough_headers_injects_default_anthropic_version() {
+        let headers = HeaderMap::new();
+
+        let out = copy_passthrough_headers(&headers);
+
+        assert_eq!(
+            out.get("anthropic-version").and_then(|v| v.to_str().ok()),
+            Some("2023-06-01")
+        );
+    }
+
+    #[test]
+    fn copy_passthrough_headers_preserves_incoming_anthropic_version() {
+        let mut headers = HeaderMap::new();
+        headers.insert("anthropic-version", HeaderValue::from_static("2024-01-01"));
+
+        let out = copy_passthrough_headers(&headers);
+
+        assert_eq!(
+            out.get("anthropic-version").and_then(|v| v.to_str().ok()),
+            Some("2024-01-01")
+        );
+    }
+
+    #[test]
+    fn copy_passthrough_headers_does_not_forward_accept_encoding() {
+        let mut headers = HeaderMap::new();
+        headers.insert("accept-encoding", HeaderValue::from_static("gzip, br"));
+
+        let out = copy_passthrough_headers(&headers);
+
+        assert!(out.get("accept-encoding").is_none());
+    }
 }
