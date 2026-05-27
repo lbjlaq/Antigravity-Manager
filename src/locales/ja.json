@@ -1092,6 +1092,7 @@
             "model": "モデル",
             "protocol": "プロトコル",
             "account": "アカウント",
+            "user": "ユーザー",
             "path": "パス",
             "usage": "トークン",
             "duration": "所要時間",

@@ -975,6 +975,7 @@
             "model": "Model",
             "protocol": "Giao thức",
             "account": "Tài khoản",
+            "user": "Người dùng",
             "path": "Đường dẫn (Path)",
             "usage": "Tokens",
             "duration": "Thời gian",

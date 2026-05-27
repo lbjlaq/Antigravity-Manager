@@ -1002,6 +1002,7 @@
             "model": "模型",
             "protocol": "協定",
             "account": "帳號",
+            "user": "用戶",
             "path": "路徑",
             "usage": "Token 消耗",
             "duration": "耗時",

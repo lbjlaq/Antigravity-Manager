@@ -968,6 +968,7 @@
             "model": "Model",
             "protocol": "Protokol",
             "account": "Akaun",
+            "user": "Pengguna",
             "path": "Laluan",
             "usage": "Token",
             "duration": "Tempoh",

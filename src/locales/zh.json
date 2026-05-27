@@ -1139,6 +1139,7 @@
             "model": "模型",
             "protocol": "协议",
             "account": "账号",
+            "user": "用户",
             "path": "路径",
             "usage": "Token 消耗",
             "duration": "耗时",
@@ -1335,6 +1336,7 @@
         "ip_limit": "IP 限制",
         "created": "创建时间",
         "today_requests": "今日请求数",
+        "today_tokens": "今日 Tokens",
         "never": "永不过期",
         "renew": "续期",
         "renew_button": "续费",
@@ -1354,6 +1356,21 @@
         "placeholder_desc": "选填备注",
         "placeholder_max_ips": "0 = 不限制",
         "hint_max_ips": "0 表示不限制",
-        "hint_curfew": "留空则禁用。基于服务器时间。"
+        "hint_curfew": "留空则禁用。基于服务器时间。",
+        "allowed_models": "允许使用的模型",
+        "select_all": "全选",
+        "clear_all": "清空",
+        "models_unlimited": "留空 = 所有模型可用",
+        "models_selected": "个模型已选",
+        "custom_expires_at": "自定义过期时间",
+        "hint_custom_expires": "选择此 Token 过期的确切日期和时间",
+        "expires_custom": "自定义",
+        "copy_failed": "复制失败",
+        "load_failed": "加载失败",
+        "custom_expires_required": "请选择自定义过期时间",
+        "expires_in": "有效期",
+        "curfew_time_range": "宵禁时间段",
+        "curfew_to": "至",
+        "curfew_hint": "留空则禁用宵禁。基于服务器时间。"
     }
 }

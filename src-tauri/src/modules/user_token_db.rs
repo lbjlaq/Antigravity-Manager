@@ -6,6 +6,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json;
 use std::path::PathBuf;
 use uuid::Uuid;
 use chrono::{Utc, Local, Timelike, FixedOffset};
@@ -28,6 +29,7 @@ pub struct UserToken {
     pub last_used_at: Option<i64>,
     pub total_requests: i64,
     pub total_tokens_used: i64,
+    pub allowed_models: Vec<String>,  // 允许访问的模型列表，空列表表示不限制
 }
 
 /// 令牌 IP 绑定结构体
@@ -105,6 +107,8 @@ pub fn init_db() -> Result<(), String> {
     let _ = conn.execute("ALTER TABLE user_tokens ADD COLUMN last_used_at INTEGER", []);
     let _ = conn.execute("ALTER TABLE user_tokens ADD COLUMN curfew_start TEXT", []);
     let _ = conn.execute("ALTER TABLE user_tokens ADD COLUMN curfew_end TEXT", []);
+    let _ = conn.execute("ALTER TABLE user_tokens ADD COLUMN allowed_models TEXT", []);
+    let _ = conn.execute("UPDATE user_tokens SET allowed_models = '[]' WHERE allowed_models IS NULL", []);
 
     // 创建 token_ip_bindings 表
     conn.execute(
@@ -161,7 +165,8 @@ pub fn create_token(
     max_ips: i32,
     curfew_start: Option<String>,
     curfew_end: Option<String>,
-    custom_expires_at: Option<i64>  // 自定义过期时间戳 (秒)
+    custom_expires_at: Option<i64>,
+    allowed_models: Vec<String>  // 允许访问的模型列表
 ) -> Result<UserToken, String> {
     let conn = connect_db()?;
     let id = Uuid::new_v4().to_string();
@@ -192,14 +197,15 @@ pub fn create_token(
         last_used_at: None,
         total_requests: 0,
         total_tokens_used: 0,
+        allowed_models,
     };
 
     conn.execute(
         "INSERT INTO user_tokens (
             id, token, username, description, enabled, expires_type, expires_at, max_ips,
             curfew_start, curfew_end,
-            created_at, updated_at, total_requests, total_tokens_used
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            created_at, updated_at, total_requests, total_tokens_used, allowed_models
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             user_token.id,
             user_token.token,
@@ -215,6 +221,7 @@ pub fn create_token(
             user_token.updated_at,
             user_token.total_requests,
             user_token.total_tokens_used,
+            serde_json::to_string(&user_token.allowed_models).unwrap_or_else(|_| "[]".to_string()),
         ],
     ).map_err(|e| format!("Failed to insert user token: {}", e))?;
 
@@ -244,6 +251,9 @@ pub fn list_tokens() -> Result<Vec<UserToken>, String> {
             last_used_at: row.get("last_used_at").unwrap_or(None),
             total_requests: row.get("total_requests").unwrap_or(0),
             total_tokens_used: row.get("total_tokens_used").unwrap_or(0),
+            allowed_models: row.get::<_, Option<String>>("allowed_models")?
+                .map(|s| serde_json::from_str(&s).unwrap_or_default())
+                .unwrap_or_default(),
         })
     }).map_err(|e| format!("Failed to query tokens: {}", e))?;
 
@@ -278,6 +288,9 @@ pub fn get_token_by_id(id: &str) -> Result<Option<UserToken>, String> {
             last_used_at: row.get("last_used_at")?,
             total_requests: row.get("total_requests")?,
             total_tokens_used: row.get("total_tokens_used")?,
+            allowed_models: row.get::<_, Option<String>>("allowed_models")?
+                .map(|s| serde_json::from_str(&s).unwrap_or_default())
+                .unwrap_or_default(),
         })
     }).optional().map_err(|e| format!("Failed to query token: {}", e))?;
     
@@ -307,6 +320,9 @@ pub fn get_token_by_value(token: &str) -> Result<Option<UserToken>, String> {
             last_used_at: row.get("last_used_at")?,
             total_requests: row.get("total_requests")?,
             total_tokens_used: row.get("total_tokens_used")?,
+            allowed_models: row.get::<_, Option<String>>("allowed_models")?
+                .map(|s| serde_json::from_str(&s).unwrap_or_default())
+                .unwrap_or_default(),
         })
     }).optional().map_err(|e| format!("Failed to query token: {}", e))?;
     
@@ -321,7 +337,8 @@ pub fn update_token(
     enabled: Option<bool>,
     max_ips: Option<i32>,
     curfew_start: Option<Option<String>>,
-    curfew_end: Option<Option<String>>
+    curfew_end: Option<Option<String>>,
+    allowed_models: Option<Vec<String>>
 ) -> Result<(), String> {
     let conn = connect_db()?;
     let now = Utc::now().timestamp();
@@ -363,6 +380,12 @@ pub fn update_token(
     if let Some(end) = curfew_end {
         query.push_str(&format!(", curfew_end = ?{}", param_idx));
         params_vec.push(Box::new(end));
+        param_idx += 1;
+    }
+
+    if let Some(models) = allowed_models {
+        query.push_str(&format!(", allowed_models = ?{}", param_idx));
+        params_vec.push(Box::new(serde_json::to_string(&models).unwrap_or_else(|_| "[]".to_string())));
         param_idx += 1;
     }
 
@@ -498,9 +521,9 @@ pub fn record_token_usage_and_ip(
     Ok(())
 }
 
-/// 检查 Token 是否有效 (包含过期时间检查和 IP 限制检查)
+/// 检查 Token 是否有效 (包含过期时间检查、IP 限制检查和模型访问控制)
 /// 返回: (是否有效, 拒绝原因)
-pub fn validate_token(token_str: &str, ip: &str) -> Result<(bool, Option<String>), String> {
+pub fn validate_token(token_str: &str, ip: &str, model: Option<&str>) -> Result<(bool, Option<String>), String> {
     let token_opt = get_token_by_value(token_str)?;
 
     if let Some(token) = token_opt {
@@ -556,6 +579,19 @@ pub fn validate_token(token_str: &str, ip: &str) -> Result<(bool, Option<String>
 
                 if is_curfew {
                      return Ok((false, Some(format!("Service is not available between {} and {} Beijing Time (Curfew enabled). Current Beijing time: {}", start_str, end_str, current_time_str))));
+                }
+            }
+        }
+
+        // 4. 检查模型访问限制
+        if let Some(model_name) = model {
+            if !token.allowed_models.is_empty() {
+                if !token.allowed_models.contains(&model_name.to_string()) {
+                    return Ok((false, Some(format!(
+                        "Model '{}' is not allowed for this token. Allowed models: {}",
+                        model_name,
+                        token.allowed_models.join(", ")
+                    ))));
                 }
             }
         }

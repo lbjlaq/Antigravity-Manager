@@ -968,6 +968,7 @@
             "model": "Modelo",
             "protocol": "Protocolo",
             "account": "Conta",
+            "user": "Usuário",
             "path": "Caminho",
             "usage": "Tokens",
             "duration": "Duração",

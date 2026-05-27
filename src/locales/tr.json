@@ -944,6 +944,7 @@
             "model": "Model",
             "protocol": "Protokol",
             "account": "Hesap",
+            "user": "Kullanıcı",
             "path": "Yol",
             "usage": "Token'lar",
             "duration": "Süre",

@@ -182,7 +182,8 @@ async fn auth_middleware_internal(
             .unwrap_or_else(|| "127.0.0.1".to_string()); // Default fallback
 
         // 验证 Token
-        match crate::modules::user_token_db::validate_token(token, &client_ip) {
+        // 注意：模型验证在后续请求处理器中进行，这里暂时传递 None
+        match crate::modules::user_token_db::validate_token(token, &client_ip, None) {
             Ok((true, _)) => {
                 // Token 有效，查询信息以便传递
                 if let Ok(Some(user_token)) = crate::modules::user_token_db::get_token_by_value(token) {

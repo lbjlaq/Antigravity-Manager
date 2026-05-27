@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::modules::user_token_db::{self, UserToken, TokenIpBinding};
+use crate::modules::security_db;
+use crate::modules::token_stats;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateTokenRequest {
@@ -10,6 +12,7 @@ pub struct CreateTokenRequest {
     pub curfew_start: Option<String>,
     pub curfew_end: Option<String>,
     pub custom_expires_at: Option<i64>,  // 自定义过期时间戳 (秒)
+    pub allowed_models: Vec<String>,     // 允许访问的模型列表，空列表表示不限制
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -20,6 +23,7 @@ pub struct UpdateTokenRequest {
     pub max_ips: Option<i32>,
     pub curfew_start: Option<Option<String>>,
     pub curfew_end: Option<Option<String>>,
+    pub allowed_models: Option<Vec<String>>,  // 允许访问的模型列表，None=不更新
 }
 
 // 命令实现
@@ -41,6 +45,7 @@ pub async fn create_user_token(request: CreateTokenRequest) -> Result<UserToken,
         request.curfew_start,
         request.curfew_end,
         request.custom_expires_at,
+        request.allowed_models,
     )
 }
 
@@ -55,6 +60,7 @@ pub async fn update_user_token(id: String, request: UpdateTokenRequest) -> Resul
         request.max_ips,
         request.curfew_start,
         request.curfew_end,
+        request.allowed_models,
     )
 }
 
@@ -82,6 +88,7 @@ pub struct UserTokenStats {
     pub active_tokens: usize,
     pub total_users: usize,
     pub today_requests: i64,
+    pub today_tokens: i64,
 }
 
 /// 获取简单的统计信息
@@ -96,13 +103,17 @@ pub async fn get_user_token_summary() -> Result<UserTokenStats, String> {
         users.insert(t.username.clone());
     }
     
-    // 这里简单返回一些数据，请求数最好从数据库聚合查询
-    // 目前仅作为演示，请求数暂不精确统计今日的
+    // 从安全数据库获取今日请求数
+    let ip_stats = security_db::get_ip_stats()?;
+    
+    // 从 token_stats 获取今日 tokens (24小时)
+    let token_summary = token_stats::get_summary_stats(24)?;
     
     Ok(UserTokenStats {
         total_tokens: tokens.len(),
         active_tokens,
         total_users: users.len(),
-        today_requests: 0, // TODO: Implement daily stats query
+        today_requests: ip_stats.today_requests as i64,
+        today_tokens: token_summary.total_tokens as i64,
     })
 }

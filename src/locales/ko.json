@@ -1002,6 +1002,7 @@
             "model": "모델",
             "protocol": "프로토콜",
             "account": "계정",
+            "user": "사용자",
             "path": "경로",
             "usage": "토큰",
             "duration": "소요 시간",
