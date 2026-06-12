@@ -1835,11 +1835,12 @@ impl TokenManager {
                                     e
                                 );
                                 if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
-                                    let _ = self.disable_account(
-                                        &token.account_id,
-                                        &format!("invalid_grant: {}", e),
-                                    )
-                                    .await;
+                                    let _ = self
+                                        .disable_account(
+                                            &token.account_id,
+                                            &format!("invalid_grant: {}", e),
+                                        )
+                                        .await;
                                 }
                                 last_error = Some(format!("Token refresh failed: {}", e));
                                 attempted.insert(token.account_id.clone());
@@ -1903,8 +1904,7 @@ impl TokenManager {
                         };
 
                     // 广播结果并清理 inflight
-                    if let Some(_entry) =
-                        self.load_code_assist_inflight.get_mut(&token.account_id)
+                    if let Some(_entry) = self.load_code_assist_inflight.get_mut(&token.account_id)
                     {
                         // 这里虽然是 rx，但在 Rust 中 watch 不需要 tx 也可以通过私有方式操作？
                         // 修正：我们需要持有 tx。重新设计此处：使用 Mutex 或在 scope 外持有 tx。

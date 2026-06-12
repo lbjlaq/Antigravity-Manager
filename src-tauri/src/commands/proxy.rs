@@ -439,7 +439,8 @@ pub async fn export_proxy_logs_json(file_path: String, json_data: String) -> Res
     let pretty_json =
         serde_json::to_string_pretty(&logs).map_err(|e| format!("Failed to serialize: {}", e))?;
 
-    std::fs::write(&validated_path, pretty_json).map_err(|e| format!("Failed to write file: {}", e))?;
+    std::fs::write(&validated_path, pretty_json)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
 
     Ok(count)
 }

@@ -179,7 +179,7 @@ fn write_to_system_keyring(account: &crate::models::Account) -> Result<(), Strin
     #[cfg(target_os = "macos")]
     {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
-    use std::process::Command;
+        use std::process::Command;
         let encoded_payload = STANDARD.encode(&payload_json);
         let full_keyring_value = format!("go-keyring-base64:{}", encoded_payload);
 
