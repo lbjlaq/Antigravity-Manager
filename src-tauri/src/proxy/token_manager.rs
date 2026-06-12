@@ -1835,7 +1835,7 @@ impl TokenManager {
                                     e
                                 );
                                 if e.contains("\"invalid_grant\"") || e.contains("invalid_grant") {
-                                    self.disable_account(
+                                    let _ = self.disable_account(
                                         &token.account_id,
                                         &format!("invalid_grant: {}", e),
                                     )

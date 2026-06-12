@@ -355,7 +355,7 @@ fn calculate_aspect_ratio_from_size(size: &str) -> &'static str {
 }
 
 /// Inject current googleSearch tool and ensure no duplicate legacy search tools
-pub fn inject_google_search_tool(body: &mut Value, mapped_model: Option<&str>) {
+pub fn inject_google_search_tool(body: &mut Value, _mapped_model: Option<&str>) {
     if let Some(obj) = body.as_object_mut() {
         let tools_entry = obj.entry("tools").or_insert_with(|| json!([]));
         if let Some(tools_arr) = tools_entry.as_array_mut() {

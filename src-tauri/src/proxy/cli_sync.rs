@@ -162,6 +162,7 @@ fn run_version_command(executable_path: &PathBuf) -> Option<String> {
 }
 
 /// 提取版本号（使用更精确的 semver 匹配）
+#[cfg(target_os = "windows")]
 fn extract_version(s: &str) -> Option<String> {
     // 匹配 semver 格式: x.y.z 或 x.y
     let re = regex::Regex::new(r"(\d+\.\d+(?:\.\d+)?)").ok()?;

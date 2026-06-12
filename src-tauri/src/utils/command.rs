@@ -1,3 +1,5 @@
+#![cfg(target_os = "windows")]
+
 use std::process::Command as StdCommand;
 use tokio::process::Command as TokioCommand;
 

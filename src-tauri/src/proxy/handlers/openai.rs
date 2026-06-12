@@ -632,15 +632,11 @@ pub async fn handle_chat_completions(
 
             // 判断是否需要轮换账号
             // 判断是否需要轮换账号
-            let mut force_rotate = false;
             if !should_rotate_account(status_code, Some(&strategy)) {
                 debug!(
                     "[{}] Keeping same account for status {} (Grace Retry or Server Issue)",
                     trace_id, status_code
                 );
-                force_rotate = false;
-            } else {
-                force_rotate = true;
             }
 
             // 2. [REMOVED] 不再特殊处理 QUOTA_EXHAUSTED，允许账号轮换
