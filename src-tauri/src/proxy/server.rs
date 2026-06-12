@@ -101,6 +101,7 @@ pub struct AppState {
     pub upstream_proxy: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
     pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     pub zai: Arc<RwLock<crate::proxy::ZaiConfig>>,
+    pub codex: Arc<crate::proxy::CodexRuntimeManager>,
     pub provider_rr: Arc<AtomicUsize>,
     pub zai_vision_mcp: Arc<crate::proxy::zai_vision_mcp::ZaiVisionMcpState>,
     pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
@@ -219,6 +220,7 @@ pub struct AxumServer {
     upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     security_state: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,
     zai_state: Arc<RwLock<crate::proxy::ZaiConfig>>,
+    codex_state: Arc<crate::proxy::CodexRuntimeManager>,
     experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
     debug_logging: Arc<RwLock<crate::proxy::config::DebugLoggingConfig>>,
     #[allow(dead_code)] // 预留给 cloudflared 运行状态查询与后续控制
@@ -264,6 +266,12 @@ impl AxumServer {
         tracing::info!("z.ai 配置已热更新");
     }
 
+    pub async fn update_codex(&self, config: &crate::proxy::config::ProxyConfig) {
+        if let Err(error) = self.codex_state.apply_config(config.codex.clone()).await {
+            tracing::warn!("Codex provider hot update failed: {}", error);
+        }
+    }
+
     pub async fn update_experimental(&self, config: &crate::proxy::config::ProxyConfig) {
         let mut exp = self.experimental.write().await;
         *exp = config.experimental.clone();
@@ -300,6 +308,7 @@ impl AxumServer {
         user_agent_override: Option<String>,
         security_config: crate::proxy::ProxySecurityConfig,
         zai_config: crate::proxy::ZaiConfig,
+        codex_state: Arc<crate::proxy::CodexRuntimeManager>,
         monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
         experimental_config: crate::proxy::config::ExperimentalConfig,
         debug_logging: crate::proxy::config::DebugLoggingConfig,
@@ -343,6 +352,7 @@ impl AxumServer {
                 u
             },
             zai: zai_state.clone(),
+            codex: codex_state.clone(),
             provider_rr: provider_rr.clone(),
             zai_vision_mcp: zai_vision_mcp_state,
             monitor: monitor.clone(),
@@ -550,6 +560,11 @@ impl AxumServer {
                 get(admin_get_active_oauth_client).post(admin_set_active_oauth_client),
             )
             .route("/zai/models/fetch", post(admin_fetch_zai_models))
+            .route("/proxy/codex/status", get(admin_get_codex_status))
+            .route("/proxy/codex/models/fetch", post(admin_refresh_codex_models))
+            .route("/proxy/codex/start", post(admin_start_codex_provider))
+            .route("/proxy/codex/stop", post(admin_stop_codex_provider))
+            .route("/proxy/codex/restart", post(admin_restart_codex_provider))
             .route(
                 "/proxy/monitor/toggle",
                 post(admin_set_proxy_monitor_enabled),
@@ -714,6 +729,7 @@ impl AxumServer {
             upstream: state.upstream.clone(),
             security_state,
             zai_state,
+            codex_state,
             experimental: experimental_state.clone(),
             debug_logging: debug_logging_state.clone(),
             cloudflared_state,
@@ -1342,6 +1358,13 @@ async fn admin_save_config(
         *zai = new_config.clone().proxy.zai;
     }
 
+    if let Err(error) = state.codex.apply_config(new_config.clone().proxy.codex).await {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error }),
+        ));
+    }
+
     // 更新实验性配置
     {
         let mut exp = state.experimental.write().await;
@@ -1639,6 +1662,66 @@ async fn admin_fetch_zai_models(
         .unwrap_or_default();
 
     Ok(Json(models))
+}
+
+async fn admin_get_codex_status(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    state.codex.refresh_status().await.map(Json).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error }),
+        )
+    })
+}
+
+async fn admin_refresh_codex_models(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    state.codex.refresh_models().await.map(Json).map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error }),
+        )
+    })
+}
+
+async fn admin_start_codex_provider(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let config = crate::modules::config::load_app_config().map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error }),
+        )
+    })?;
+
+    state
+        .codex
+        .apply_config(config.proxy.codex.clone())
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error }),
+            )
+        })?;
+
+    admin_get_codex_status(State(state)).await
+}
+
+async fn admin_stop_codex_provider(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    state.codex.shutdown().await;
+    admin_get_codex_status(State(state)).await
+}
+
+async fn admin_restart_codex_provider(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    state.codex.shutdown().await;
+    admin_start_codex_provider(State(state)).await
 }
 
 async fn admin_set_proxy_monitor_enabled(

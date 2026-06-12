@@ -1,0 +1,11 @@
+{
+  "task": "Fix context-orchestrator startup crash caused by cyclic Windows skill links",
+  "timestamp": "2026-04-04T16:11:11.542Z",
+  "edits": [
+    "Updated context-orchestrator/src/services/index-service.ts so walk() skips unreadable or cyclic entries when statSync/readdirSync hit Windows junction or symlink issues."
+  ],
+  "verification": [
+    "npm run build passed."
+  ],
+  "outcome": "Startup should now skip the problematic .codex skill link instead of failing with ELOOP."
+}

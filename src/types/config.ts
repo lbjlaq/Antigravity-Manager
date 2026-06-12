@@ -17,6 +17,7 @@ export interface ProxyConfig {
     debug_logging?: DebugLoggingConfig;
     upstream_proxy: UpstreamProxyConfig;
     zai?: ZaiConfig;
+    codex?: CodexConfig;
     scheduling?: StickySessionConfig;
     experimental?: ExperimentalConfig;
     user_agent_override?: string;
@@ -94,6 +95,23 @@ export interface ZaiConfig {
     model_mapping?: Record<string, string>;
     models: ZaiModelDefaults;
     mcp: ZaiMcpConfig;
+}
+
+export type CodexModelCatalogMode = 'static' | 'detected';
+export type CodexLoginModeHint = 'browser' | 'device';
+
+export interface CodexConfig {
+    enabled: boolean;
+    command: string;
+    worker_count: number;
+    request_timeout_ms: number;
+    queue_timeout_ms: number;
+    restart_on_failure: boolean;
+    model_catalog_mode: CodexModelCatalogMode;
+    models: string[];
+    login_mode_hint: CodexLoginModeHint;
+    env: Record<string, string>;
+    expose_in_router: boolean;
 }
 
 export interface ScheduledWarmupConfig {
