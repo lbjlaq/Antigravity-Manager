@@ -1,0 +1,18 @@
+{
+  "task": "Split planner and embedding providers, add Gemini embedding support, and repair broken sibling MCP configs",
+  "timestamp": "2026-04-05T08:14:16.908Z",
+  "edits": [
+    "Added split embedding provider config in context-orchestrator/src/config.ts.",
+    "Added Gemini/OpenAI embedding service abstraction in context-orchestrator/src/services/embeddings.ts and wired it in src/main.ts and src/services/index-service.ts.",
+    "Added embedding service tests in context-orchestrator/tests/embeddings.test.ts.",
+    "Removed the broken MCP_DOCKER entry from C:/Users/Gabi/.codex/config.toml and fixed the Playwright MCP entry to use npx.cmd without isolated mode.",
+    "Repaired the shared qdrant-semantic-search MCP runtime by restoring a complete @modelcontextprotocol/sdk dist/esm tree from the known-good local copy."
+  ],
+  "verification": [
+    "npm test passed with 30/30 tests.",
+    "npm run build passed.",
+    "Direct qdrant-semantic-search wrapper launch no longer crashes immediately on missing SDK imports.",
+    "Direct Playwright MCP launch no longer fails immediately on the isolated/userDataDir conflict."
+  ],
+  "outcome": "The orchestrator can now use a separate Gemini embeddings path, and the surrounding Codex MCP config is cleaner and healthier."
+}

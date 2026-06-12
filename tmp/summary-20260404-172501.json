@@ -1,0 +1,18 @@
+{
+  "task": "Restore local skill router compatibility indexes and fallback behavior",
+  "timestamp": "2026-04-04T14:25:01.028Z",
+  "edits": [
+    "Patched C:/Users/Gabi/.gemini/antigravity/scripts/skill_router.py to resolve missing client-local skills_index.json via shared indexes.",
+    "Restored C:/Users/Gabi/.codex/skills_index.json from shared codex index.",
+    "Restored C:/Users/Gabi/.gemini/skills_index.json from shared general index."
+  ],
+  "verification": [
+    "Verified Codex-root skill router query returns ranked results.",
+    "Verified Gemini-root skill router query returns ranked results without explicit index path.",
+    "Verified both client skills_index.json files now exist."
+  ],
+  "outcome": "Local skill routing works again with both compatibility files and shared-index fallback.",
+  "assumptions": [
+    "The shared indexes under C:/Users/Gabi/.codex/shared/indexes remain the source of truth for compact runtime skill metadata."
+  ]
+}

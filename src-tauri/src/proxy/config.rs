@@ -175,6 +175,76 @@ impl Default for ZaiDispatchMode {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexModelCatalogMode {
+    Static,
+    Detected,
+}
+
+impl Default for CodexModelCatalogMode {
+    fn default() -> Self {
+        Self::Detected
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexLoginModeHint {
+    Browser,
+    Device,
+}
+
+impl Default for CodexLoginModeHint {
+    fn default() -> Self {
+        Self::Browser
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_codex_command")]
+    pub command: String,
+    #[serde(default = "default_codex_worker_count")]
+    pub worker_count: usize,
+    #[serde(default = "default_codex_request_timeout_ms")]
+    pub request_timeout_ms: u64,
+    #[serde(default = "default_codex_queue_timeout_ms")]
+    pub queue_timeout_ms: u64,
+    #[serde(default = "default_true")]
+    pub restart_on_failure: bool,
+    #[serde(default)]
+    pub model_catalog_mode: CodexModelCatalogMode,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub login_mode_hint: CodexLoginModeHint,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub expose_in_router: bool,
+}
+
+impl Default for CodexConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            command: default_codex_command(),
+            worker_count: default_codex_worker_count(),
+            request_timeout_ms: default_codex_request_timeout_ms(),
+            queue_timeout_ms: default_codex_queue_timeout_ms(),
+            restart_on_failure: true,
+            model_catalog_mode: CodexModelCatalogMode::default(),
+            models: Vec::new(),
+            login_mode_hint: CodexLoginModeHint::default(),
+            env: HashMap::new(),
+            expose_in_router: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZaiModelDefaults {
     /// Default model for "opus" family (when the incoming model is a Claude id).
@@ -510,6 +580,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub zai: ZaiConfig,
 
+    /// Codex CLI provider configuration.
+    #[serde(default)]
+    pub codex: CodexConfig,
+
     /// 自定义 User-Agent 请求头 (可选覆盖)
     #[serde(default)]
     pub user_agent_override: Option<String>,
@@ -582,6 +656,7 @@ impl Default for ProxyConfig {
             debug_logging: DebugLoggingConfig::default(),
             upstream_proxy: UpstreamProxyConfig::default(),
             zai: ZaiConfig::default(),
+            codex: CodexConfig::default(),
             scheduling: crate::proxy::sticky_config::StickySessionConfig::default(),
             experimental: ExperimentalConfig::default(),
             security_monitor: SecurityMonitorConfig::default(),
@@ -598,6 +673,26 @@ impl Default for ProxyConfig {
 
 fn default_request_timeout() -> u64 {
     120 // 默认 120 秒,原来 60 秒太短
+}
+
+fn default_codex_command() -> String {
+    if cfg!(target_os = "windows") {
+        "codex.cmd".to_string()
+    } else {
+        "codex".to_string()
+    }
+}
+
+fn default_codex_worker_count() -> usize {
+    1
+}
+
+fn default_codex_request_timeout_ms() -> u64 {
+    120_000
+}
+
+fn default_codex_queue_timeout_ms() -> u64 {
+    5_000
 }
 
 fn default_zai_base_url() -> String {
@@ -720,5 +815,17 @@ mod tests {
         // 测试边缘情况
         assert_eq!(normalize_proxy_url(""), "");
         assert_eq!(normalize_proxy_url("   "), "");
+    }
+
+    #[test]
+    fn test_codex_config_defaults() {
+        let config = CodexConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.worker_count, 1);
+        assert_eq!(config.request_timeout_ms, 120_000);
+        assert_eq!(config.queue_timeout_ms, 5_000);
+        assert!(config.restart_on_failure);
+        assert!(config.expose_in_router);
+        assert_eq!(config.model_catalog_mode, CodexModelCatalogMode::Detected);
     }
 }

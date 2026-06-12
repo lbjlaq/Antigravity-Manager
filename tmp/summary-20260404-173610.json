@@ -1,0 +1,18 @@
+{
+  "task": "Implement live MCP server health probing in context-orchestrator",
+  "timestamp": "2026-04-04T14:36:10.857Z",
+  "edits": [
+    "Added MCP inventory typing, transport classification, and richer parsing in context-orchestrator/src/services/index-service.ts and src/types.ts.",
+    "Added persisted MCP probe storage in context-orchestrator/src/storage/sqlite.ts and src/storage/index.ts.",
+    "Added live probe service in context-orchestrator/src/services/mcp-health.ts.",
+    "Added probe_mcp_servers tool and merged mcpHealth into get_orchestrator_status in context-orchestrator/src/gateway/server.ts and wired startup in src/main.ts.",
+    "Added probe/input schema support in context-orchestrator/src/schema.ts.",
+    "Added test fixture and coverage in tests/fixtures/stdio-test-server.mjs, tests/mcp-health.test.ts, tests/index-service.test.ts, and tests/gateway.test.ts."
+  ],
+  "verification": [
+    "npm test passed with 25/25 tests.",
+    "npm run build passed.",
+    "Short-run node dist/main.js launch was inconclusive; process stayed alive until forced termination and only emitted the SQLite experimental warning during capture."
+  ],
+  "outcome": "Orchestrator can now classify configured MCP servers, probe live reachability, persist latest probe state, and surface MCP health in status and dedicated gateway tool output."
+}
