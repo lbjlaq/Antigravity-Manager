@@ -570,7 +570,6 @@ pub fn transform_openai_request(
             { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
             { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
             { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-            { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
         ]
     });
 

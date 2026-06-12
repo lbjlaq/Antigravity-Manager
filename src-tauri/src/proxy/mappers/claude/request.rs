@@ -61,7 +61,6 @@ fn build_safety_settings() -> Value {
         { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": threshold_str },
         { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": threshold_str },
         { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": threshold_str },
-        { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": threshold_str },
     ])
 }
 
