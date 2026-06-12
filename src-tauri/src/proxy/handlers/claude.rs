@@ -1562,7 +1562,6 @@ pub async fn handle_messages(
             determine_retry_strategy(status_code, &error_text, retried_without_thinking);
 
         // 执行退避
-        let mut force_rotate = false;
         if apply_retry_strategy(
             retry_strategy.clone(),
             attempt,
@@ -1578,9 +1577,6 @@ pub async fn handle_messages(
                     "[{}] Keeping same account for status {} (Grace Retry or Server Issue)",
                     trace_id, status_code
                 );
-                force_rotate = false;
-            } else {
-                force_rotate = true;
             }
             continue;
         } else {

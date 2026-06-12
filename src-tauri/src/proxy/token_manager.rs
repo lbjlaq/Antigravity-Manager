@@ -1871,13 +1871,13 @@ impl TokenManager {
             } else {
                 // [NEW] 针对 fetch_project_id 实现基于 SingleFlight 的异步合并
                 // 1. 检查是否已有 inflight 请求
-                let (mut rx, is_new) = {
+                let (_rx, is_new) = {
                     if let Some(existing_rx) = self.load_code_assist_inflight.get(&token.account_id)
                     {
                         (existing_rx.value().clone(), false)
                     } else {
                         // 创建新的 inflight 频道
-                        let (tx, rx) = tokio::sync::watch::channel(None);
+                        let (_tx, rx) = tokio::sync::watch::channel(None);
                         self.load_code_assist_inflight
                             .insert(token.account_id.clone(), rx.clone());
                         (rx, true)
@@ -1888,7 +1888,7 @@ impl TokenManager {
                     // 仅由“第一个发现者”执行真实请求
                     tracing::debug!("账号 {} 启动 [SingleFlight] ProjectID 探测...", token.email);
 
-                    let result =
+                    let _result =
                         match crate::proxy::project_resolver::fetch_project_id(&token.access_token)
                             .await
                         {
@@ -1903,7 +1903,7 @@ impl TokenManager {
                         };
 
                     // 广播结果并清理 inflight
-                    if let Some(mut entry) =
+                    if let Some(_entry) =
                         self.load_code_assist_inflight.get_mut(&token.account_id)
                     {
                         // 这里虽然是 rx，但在 Rust 中 watch 不需要 tx 也可以通过私有方式操作？

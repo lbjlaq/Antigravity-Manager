@@ -2006,6 +2006,7 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
 
 /// Check and trigger warmup for models that have recovered to 100%
 /// Called automatically after quota refresh to enable immediate warmup
+#[allow(dead_code)]
 pub async fn check_and_trigger_warmup_for_recovered_models() {
     let accounts = match list_accounts() {
         Ok(acc) => acc,

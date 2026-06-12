@@ -1674,6 +1674,7 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
 
 /// OpenAI Images API: POST /v1/images/generations
 /// 处理图像生成请求，转换为 Gemini API 格式
+#[allow(dead_code)]
 pub async fn handle_chat_redirection(
     State(state): State<AppState>,
     headers: HeaderMap,

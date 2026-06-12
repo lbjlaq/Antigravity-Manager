@@ -50,6 +50,7 @@ pub fn check_cooldown(key: &str, cooldown_seconds: i64) -> bool {
     }
 }
 
+#[allow(dead_code)]
 pub fn start_scheduler(
     app_handle: Option<tauri::AppHandle>,
     proxy_state: crate::commands::proxy::ProxyServiceState,
@@ -306,6 +307,7 @@ pub fn start_scheduler(
 }
 
 /// Trigger immediate smart warmup check for a single account
+#[allow(dead_code)]
 pub async fn trigger_warmup_for_account(account: &Account) {
     // Get valid token
     let Ok((token, pid)) = quota::get_valid_token_for_warmup(account).await else {

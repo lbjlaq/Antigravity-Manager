@@ -12,6 +12,7 @@ pub struct AntigravityVersion {
 }
 
 /// 从任意字符串中提取第一个语义化版本号 (X.Y.Z)
+#[allow(dead_code)]
 fn extract_semver(raw: &str) -> Option<String> {
     for token in raw.split(|c: char| c.is_whitespace() || c == ',' || c == ';') {
         let t = token.trim_matches(|c: char| c == '"' || c == '\'' || c == '(' || c == ')');

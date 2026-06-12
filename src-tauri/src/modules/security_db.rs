@@ -359,6 +359,7 @@ pub fn get_top_ips(limit: usize, hours: i64) -> Result<Vec<IpRanking>, String> {
 }
 
 /// 清理旧的 IP 访问日志
+#[allow(dead_code)]
 pub fn cleanup_old_ip_logs(days: i64) -> Result<usize, String> {
     let conn = connect_db()?;
 
@@ -655,6 +656,7 @@ pub fn clear_ip_access_logs() -> Result<(), String> {
 }
 
 /// 获取 IP 访问日志总数
+#[allow(dead_code)]
 pub fn get_ip_access_logs_count(
     ip_filter: Option<&str>,
     blocked_only: bool,

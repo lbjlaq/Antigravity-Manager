@@ -44,6 +44,7 @@ pub fn mask_email(email: &str) -> String {
 }
 
 /// [NEW] 错误日志脱敏：抹除报错信息中的 access_token, proxy_url 等敏感凭证
+#[allow(dead_code)]
 pub fn sanitize_error_for_log(error_text: &str) -> String {
     // 抹除常见敏感 key 的值
     let re = regex::Regex::new(r#"(?i)(access_token|refresh_token|id_token|authorization|api_key|secret|password|proxy_url|http_proxy|https_proxy)\s*[:=]\s*[^"'\\\s,}\]]+"#).unwrap();
