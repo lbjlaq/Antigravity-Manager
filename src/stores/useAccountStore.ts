@@ -107,7 +107,16 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         set({ loading: true, error: null });
         try {
             await accountService.switchAccount(accountId, targetIde);
-            await get().fetchCurrentAccount();
+            await Promise.all([
+                get().fetchCurrentAccount(),
+                get().fetchAccounts()
+            ]);
+            
+            // Asynchronously refresh quota to update the dashboard, do not block the UI
+            get().refreshQuota(accountId).catch(e => {
+                console.error('[Store] Background quota refresh failed after switch:', e);
+            });
+            
             set({ loading: false });
         } catch (error) {
             set({ error: String(error), loading: false });
@@ -120,6 +129,12 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         try {
             await accountService.fetchAccountQuota(accountId);
             await get().fetchAccounts();
+            
+            const { currentAccount } = get();
+            if (currentAccount && currentAccount.id === accountId) {
+                await get().fetchCurrentAccount();
+            }
+            
             set({ loading: false });
         } catch (error) {
             set({ error: String(error), loading: false });
