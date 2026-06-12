@@ -1846,7 +1846,6 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                             q.is_forbidden = true;
                             return Ok(q);
                         }
-                    }
                 }
 
                 match retry_result {
@@ -1870,7 +1869,6 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     }
                 }
             }
-        }
     }
 
     // fetch_quota already handles 403, with additional local fallback/validation handling.
