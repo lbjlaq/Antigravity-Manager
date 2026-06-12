@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 // 用户令牌存储，部分接口留作后续扩展
 
-use chrono::{FixedOffset, Local, Timelike, Utc};
+use chrono::{FixedOffset, Timelike, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

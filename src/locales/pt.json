@@ -1011,7 +1011,7 @@
         "placeholder": "Insira a senha de administrador ou a Chave de API",
         "btn_login": "Verificar e Entrar",
         "note": "Nota: Se uma senha de administração separada estiver definida, insira-a; caso contrário, insira a API_KEY.",
-        "lookup_hint": "Se esqueceu, execute docker logs antigravity-manager para encontrar a Chave de API atual ou a senha da Web UI.",
+        "lookup_hint": "View gui_config.json or check environment variables to find them.",
         "config_hint": "Ou execute grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json para visualizar."
     },
     "errors": {

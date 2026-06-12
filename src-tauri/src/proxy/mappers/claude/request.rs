@@ -430,6 +430,7 @@ pub fn transform_claude_request_in(
 
     //  Map model name (Use standard mapping)
     // [IMPROVED] 提取 web search 模型为常量，便于维护
+    #[allow(dead_code)]
     const WEB_SEARCH_FALLBACK_MODEL: &str = "gemini-2.5-flash";
 
     let mapped_model =

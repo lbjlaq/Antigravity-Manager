@@ -1048,7 +1048,7 @@
         "error_invalid_key": "비밀번호 또는 API 키가 잘못되었습니다. 다시 시도하십시오",
         "error_network": "네트워크 연결에 실패했습니다. 서비스가 실행 중인지 확인하십시오",
         "note": "참고: 별도의 관리 비밀번호가 설정된 경우 관리 비밀번호를 입력하십시오. 그렇지 않으면 API_KEY를 입력하십시오.",
-        "lookup_hint": "잊으신 경우 docker logs antigravity-manager를 실행하여 Current API Key 또는 Web UI Password를 찾으십시오.",
+        "lookup_hint": "View gui_config.json or check environment variables to find them.",
         "config_hint": "또는 grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json을 실행하여 확인하십시오."
     },
     "token_stats": {

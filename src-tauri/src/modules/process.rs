@@ -457,7 +457,7 @@ fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
 }
 
 /// Close Antigravity processes
-pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<(), String> {
+pub fn close_antigravity(_timeout_secs: u64, target_ide: Option<&str>) -> Result<(), String> {
     crate::modules::logger::log_info(&format!("Closing Antigravity ({:?})...", target_ide));
 
     #[cfg(target_os = "windows")]
@@ -597,7 +597,7 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
             }
 
             // Wait for graceful exit (max 70% of timeout_secs)
-            let graceful_timeout = (timeout_secs * 7) / 10;
+            let graceful_timeout = (_timeout_secs * 7) / 10;
             let start = std::time::Instant::now();
             while start.elapsed() < Duration::from_secs(graceful_timeout) {
                 if !is_antigravity_running(target_ide) {
@@ -705,7 +705,7 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
             }
 
             // Wait for graceful exit
-            let graceful_timeout = (timeout_secs * 7) / 10;
+            let graceful_timeout = (_timeout_secs * 7) / 10;
             let start = std::time::Instant::now();
             while start.elapsed() < Duration::from_secs(graceful_timeout) {
                 if !is_antigravity_running(target_ide) {

@@ -1015,7 +1015,7 @@
         "placeholder": "أدخل كلمة مرور الإدارة أو مفتاح API",
         "btn_login": "تحقق ودخول",
         "note": "ملاحظة: إذا تم تعيين كلمة مرور إدارة منفصلة، يرجى إدخالها؛ وإلا، أدخل مفتاح API.",
-        "lookup_hint": "إذا نسيت، قم بتشغيل docker logs antigravity-manager للعثور على مفتاح API الحالي أو كلمة مرور واجهة الويب",
+        "lookup_hint": "View gui_config.json or check environment variables to find them.",
         "config_hint": "أو قم بتشغيل grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json للعرض."
     },
     "token_stats": {

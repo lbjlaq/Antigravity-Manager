@@ -261,7 +261,7 @@ pub fn run() {
                         info!("🔐 Web UI Password: (Same as API Key)");
                     }
                     info!("💡 Tips: You can use these keys to login to Web UI and access AI APIs.");
-                    info!("💡 Search docker logs or grep gui_config.json to find them.");
+                    info!("💡 View gui_config.json or check environment variables to find them.");
                     info!("--------------------------------------------------");
 
                     // [FIX #1460] Persist environment overrides to ensure they are visible in Web UI/load_config
