@@ -1286,7 +1286,7 @@ pub async fn handle_completions(
         let status = response.status();
         if status.is_success() {
             // [智能限流] 请求成功，重置该账号的连续失败计数
-            token_manager.mark_account_success(&email);
+            token_manager.mark_account_success(&account_id);
 
             if list_response {
                 use axum::body::Body;

@@ -610,6 +610,8 @@
             "hint": "Automatically injected into all systemInstructions",
             "placeholder": "Enter global system prompt...\nExample: You are a senior full-stack developer. Please respond in English.",
             "char_count": "{{count}} characters",
+            "default_prompt_label": "Built-in Antigravity identity prompt",
+            "default_prompt_hint": "Controls whether the default coding assistant identity is injected",
             "long_prompt_warning": "Prompt is quite long (over 2000 chars) and may consume significant context space."
         },
         "branding": {

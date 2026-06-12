@@ -9,6 +9,7 @@ interface GlobalSystemPromptProps {
 const DEFAULT_CONFIG: GlobalSystemPromptConfig = {
     enabled: false,
     content: '',
+    include_default_prompt: true,
 };
 
 export default function GlobalSystemPrompt({
@@ -16,6 +17,7 @@ export default function GlobalSystemPrompt({
     onChange,
 }: GlobalSystemPromptProps) {
     const { t } = useTranslation();
+    const effectiveConfig = { ...DEFAULT_CONFIG, ...config };
 
     return (
         <div className="space-y-3">
@@ -31,14 +33,14 @@ export default function GlobalSystemPrompt({
                 </div>
 
                 <div className="flex items-center gap-3">
-                    <span className={`text-[10px] font-medium ${config.enabled ? 'text-purple-600 dark:text-purple-400' : 'text-gray-400'}`}>
-                        {config.enabled ? t("common.enabled", { defaultValue: "已启用" }) : t("common.disabled", { defaultValue: "已禁用" })}
+                    <span className={`text-[10px] font-medium ${effectiveConfig.enabled ? 'text-purple-600 dark:text-purple-400' : 'text-gray-400'}`}>
+                        {effectiveConfig.enabled ? t("common.enabled", { defaultValue: "已启用" }) : t("common.disabled", { defaultValue: "已禁用" })}
                     </span>
                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                         <input
                             type="checkbox"
-                            checked={config.enabled}
-                            onChange={(e) => onChange({ ...config, enabled: e.target.checked })}
+                            checked={effectiveConfig.enabled}
+                            onChange={(e) => onChange({ ...effectiveConfig, enabled: e.target.checked })}
                             className="sr-only peer"
                         />
                         <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-600 peer-checked:bg-purple-600"></div>
@@ -46,12 +48,32 @@ export default function GlobalSystemPrompt({
                 </div>
             </div>
 
+            <div className="flex items-center justify-between gap-3 bg-white dark:bg-base-100 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-3">
+                <div className="space-y-0.5">
+                    <h5 className="font-semibold text-xs text-gray-800 dark:text-gray-200">
+                        {t("settings.global_system_prompt.default_prompt_label", { defaultValue: "内置 Antigravity 身份提示词" })}
+                    </h5>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                        {t("settings.global_system_prompt.default_prompt_hint", { defaultValue: "控制是否自动注入默认编码助手身份" })}
+                    </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                        type="checkbox"
+                        checked={effectiveConfig.include_default_prompt}
+                        onChange={(e) => onChange({ ...effectiveConfig, include_default_prompt: e.target.checked })}
+                        className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:after:border-gray-600 peer-checked:bg-purple-600"></div>
+                </label>
+            </div>
+
             {/* 编辑区域 (仅在启用时显示) */}
-            {config.enabled && (
+            {effectiveConfig.enabled && (
                 <div className="space-y-3">
                     <textarea
-                        value={config.content}
-                        onChange={(e) => onChange({ ...config, content: e.target.value })}
+                        value={effectiveConfig.content}
+                        onChange={(e) => onChange({ ...effectiveConfig, content: e.target.value })}
                         placeholder={t("settings.global_system_prompt.placeholder", {
                             defaultValue: "输入全局系统提示词...\n例如：你是一位资深的全栈开发工程师，擅长 React 和 Rust。请使用简体中文回复。",
                         })}
@@ -62,11 +84,11 @@ export default function GlobalSystemPrompt({
                         <p className="text-xs text-gray-400 dark:text-gray-500">
                             {t("settings.global_system_prompt.char_count", {
                                 defaultValue: "{{count}} 字符",
-                                count: config.content.length,
+                                count: effectiveConfig.content.length,
                             })}
                         </p>
                     </div>
-                    {config.content.length > 2000 && (
+                    {effectiveConfig.content.length > 2000 && (
                         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/30 rounded-lg p-3">
                             <p className="text-xs text-amber-700 dark:text-amber-400">
                                 {t("settings.global_system_prompt.long_prompt_warning", {

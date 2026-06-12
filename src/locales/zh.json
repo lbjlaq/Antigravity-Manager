@@ -610,6 +610,8 @@
             "hint": "自动注入所有请求的 systemInstruction",
             "placeholder": "输入全局系统提示词...\n例如：你是一位资深的全栈开发工程师，擅长 React 和 Rust。请使用简体中文回复。",
             "char_count": "{{count}} 字符",
+            "default_prompt_label": "内置 Antigravity 身份提示词",
+            "default_prompt_hint": "控制是否自动注入默认编码助手身份",
             "long_prompt_warning": "提示词较长（超过 2000 字符），可能会占用较多的上下文窗口空间。"
         }
     },

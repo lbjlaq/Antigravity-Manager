@@ -841,13 +841,16 @@ fn build_system_instruction(
         }
     }
 
-    // 如果用户没有提供 Antigravity 身份,则注入
-    if !user_has_antigravity {
+    let global_prompt_config = crate::proxy::config::get_global_system_prompt();
+    let should_inject_default_prompt =
+        global_prompt_config.include_default_prompt && !user_has_antigravity;
+
+    // 如果用户没有提供 Antigravity 身份,且配置允许,则注入
+    if should_inject_default_prompt {
         parts.push(json!({"text": antigravity_identity}));
     }
 
     // [NEW] 注入全局系统提示词 (紧跟 Antigravity 身份之后)
-    let global_prompt_config = crate::proxy::config::get_global_system_prompt();
     if global_prompt_config.enabled && !global_prompt_config.content.trim().is_empty() {
         parts.push(json!({"text": global_prompt_config.content}));
     }
@@ -884,15 +887,19 @@ fn build_system_instruction(
         parts.push(json!({"text": mcp_xml_prompt}));
     }
 
-    // 如果用户没有提供任何系统提示词,添加结束标记
-    if !user_has_antigravity {
+    // 只有注入了内置默认提示词时才添加结束标记
+    if should_inject_default_prompt {
         parts.push(json!({"text": "\n--- [SYSTEM_PROMPT_END] ---"}));
     }
 
-    Some(json!({
-        "role": "user",
-        "parts": parts
-    }))
+    if parts.is_empty() {
+        None
+    } else {
+        Some(json!({
+            "role": "user",
+            "parts": parts
+        }))
+    }
 }
 
 /// 构建 Contents (Messages)
@@ -2053,7 +2060,9 @@ fn is_model_compatible(cached: &str, target: &str) -> bool {
 mod tests {
     use super::*;
     use crate::proxy::common::json_schema::clean_json_schema;
-    use crate::proxy::config::{ThinkingBudgetConfig, update_thinking_budget_config};
+    use crate::proxy::config::{
+        update_global_system_prompt_config, GlobalSystemPromptConfig, ThinkingBudgetConfig,
+    };
 
     #[test]
     fn test_ephemeral_injection_debug() {
@@ -2121,6 +2130,53 @@ mod tests {
         let body = result.unwrap();
         assert_eq!(body["project"], "test-project");
         assert!(body["requestId"].as_str().unwrap().starts_with("agent/"));
+    }
+
+    #[test]
+    fn test_default_system_prompt_can_be_disabled() {
+        update_global_system_prompt_config(GlobalSystemPromptConfig {
+            enabled: false,
+            content: String::new(),
+            include_default_prompt: false,
+        });
+
+        let req = ClaudeRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Hello".to_string()),
+            }],
+            system: Some(SystemPrompt::String("Custom system only".to_string())),
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+            output_config: None,
+            size: None,
+            quality: None,
+        };
+
+        let body =
+            transform_claude_request_in(&req, "test-project", false, None, "test_session", None)
+                .unwrap();
+        let parts = body["request"]["systemInstruction"]["parts"]
+            .as_array()
+            .unwrap();
+        let system_text = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!system_text.contains("You are Antigravity"));
+        assert!(!system_text.contains("SYSTEM_PROMPT_END"));
+        assert!(system_text.contains("Custom system only"));
+
+        update_global_system_prompt_config(GlobalSystemPromptConfig::default());
     }
 
     #[test]
