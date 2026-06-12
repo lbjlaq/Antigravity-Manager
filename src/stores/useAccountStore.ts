@@ -113,9 +113,13 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             ]);
             
             // Asynchronously refresh quota to update the dashboard, do not block the UI
-            get().refreshQuota(accountId).catch(e => {
-                console.error('[Store] Background quota refresh failed after switch:', e);
-            });
+            // NOTE: We call the service directly instead of get().refreshQuota() to avoid
+            // re-setting loading=true after we just set loading=false.
+            accountService.fetchAccountQuota(accountId)
+                .then(() => Promise.all([get().fetchAccounts(), get().fetchCurrentAccount()]))
+                .catch(e => {
+                    console.error('[Store] Background quota refresh failed after switch:', e);
+                });
             
             set({ loading: false });
         } catch (error) {
