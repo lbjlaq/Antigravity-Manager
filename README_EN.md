@@ -155,7 +155,6 @@ brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manage
 # 2. Install the app
 brew install --cask antigravity-tools
 ```
-> **Tip**: If you encounter permission issues, add the `--no-quarantine` flag.
 
 #### Arch Linux
 You can choose to install via the one-click script or Homebrew:

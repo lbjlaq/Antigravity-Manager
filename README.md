@@ -154,7 +154,6 @@ brew tap lbjlaq/antigravity-manager https://github.com/lbjlaq/Antigravity-Manage
 # 2. 安装应用
 brew install --cask antigravity-tools
 ```
-> **提示**: 如果遇到权限问题，建议添加 `--no-quarantine` 参数。
 
 #### Arch Linux
 您可以选择通过一键安装脚本或 Homebrew 进行安装：
@@ -244,11 +243,8 @@ Copyright © 2024-2026 [lbjlaq](https://github.com/lbjlaq)
     ```bash
     sudo xattr -rd com.apple.quarantine "/Applications/Antigravity Tools.app"
     ```
-2.  **Homebrew 安装技巧**:
-    如果您使用 brew 安装，可以添加 `--no-quarantine` 参数来规避此问题：
-    ```bash
-    brew install --cask --no-quarantine antigravity-tools
-    ```
+2.  **Homebrew 安装优势**:
+    现在通过 Homebrew (`brew install --cask antigravity-tools`) 安装时，系统会在安装末尾自动执行清理属性的操作，**真正实现开箱即用**。
 
 ## 🔌 快速接入示例
 
