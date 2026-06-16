@@ -318,6 +318,53 @@ mod tests {
     }
 
     #[test]
+    fn test_set_current_account_id_with_target() {
+        let _guard = TEST_MUTEX.lock().unwrap();
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        // Create a dummy account index with some accounts
+        let now = chrono::Utc::now().timestamp();
+        let index = AccountIndex {
+            version: "2.0".to_string(),
+            accounts: vec![
+                AccountSummary {
+                    id: "acc-1".to_string(),
+                    email: "user1@example.com".to_string(),
+                    name: Some("User One".to_string()),
+                    disabled: false,
+                    proxy_disabled: false,
+                    protected_models: HashSet::new(),
+                    created_at: now,
+                    last_used: now,
+                },
+            ],
+            current_account_id: None,
+            current_target_ide: None,
+        };
+        save_account_index_in_dir(dir.path(), &index).unwrap();
+
+        // 1. Call set_current_account_id_with_target with Some("agy")
+        set_current_account_id_with_target("acc-1", Some("agy")).unwrap();
+
+        // Load back and verify
+        let index = load_account_index_in_dir(dir.path()).unwrap();
+        assert_eq!(index.current_account_id, Some("acc-1".to_string()));
+        assert_eq!(index.current_target_ide, Some("agy".to_string()));
+
+        // 2. Call set_current_account_id (which sets target to None)
+        set_current_account_id("acc-1").unwrap();
+
+        // Load back and verify target is None
+        let index = load_account_index_in_dir(dir.path()).unwrap();
+        assert_eq!(index.current_account_id, Some("acc-1".to_string()));
+        assert_eq!(index.current_target_ide, None);
+
+        // Clean up environment variable
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
     fn test_backup_created_on_parse_failure() {
         let _guard = TEST_MUTEX.lock().unwrap();
         let dir = TestDataDir::new();
