@@ -44,5 +44,10 @@ __pycache__/
 
 # Reference projects (for development only)
 
-DOCKER_DEPLOYMENT.md
+# Temporary quota probing scripts & dumps (one-off debugging artifacts)
+scripts/_*.json
+scripts/dump_quota_raw.py
+scripts/dump_full.py
+scripts/probe_weekly.py
+scripts/probe_quota_summary.pyDOCKER_DEPLOYMENT.md
 pnpm-lock.yaml

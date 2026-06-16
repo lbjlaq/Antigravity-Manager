@@ -154,6 +154,8 @@ struct QuotaResponse {
     last_updated: i64,
     subscription_tier: Option<String>,
     is_forbidden: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quota_groups: Option<Vec<QuotaGroupDto>>,
 }
 
 #[derive(Serialize)]
@@ -161,6 +163,46 @@ struct ModelQuota {
     name: String,
     percentage: i32,
     reset_time: String,
+}
+
+#[derive(Serialize)]
+struct QuotaGroupDto {
+    display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    buckets: Vec<QuotaBucketDto>,
+}
+
+#[derive(Serialize)]
+struct QuotaBucketDto {
+    bucket_id: String,
+    window: String,
+    remaining_fraction: f64,
+    reset_time: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+/// Map a model-side QuotaGroup to the API DTO.
+fn quota_group_to_dto(g: &crate::models::quota::QuotaGroup) -> QuotaGroupDto {
+    QuotaGroupDto {
+        display_name: g.display_name.clone(),
+        description: g.description.clone(),
+        buckets: g
+            .buckets
+            .iter()
+            .map(|b| QuotaBucketDto {
+                bucket_id: b.bucket_id.clone(),
+                window: b.window.clone(),
+                remaining_fraction: b.remaining_fraction,
+                reset_time: b.reset_time.clone(),
+                display_name: b.display_name.clone(),
+                description: b.description.clone(),
+            })
+            .collect(),
+    }
 }
 
 #[derive(Serialize)]
@@ -198,6 +240,10 @@ fn to_account_response(
             last_updated: q.last_updated,
             subscription_tier: q.subscription_tier.clone(),
             is_forbidden: q.is_forbidden,
+            quota_groups: q
+                .quota_groups
+                .as_ref()
+                .map(|groups| groups.iter().map(quota_group_to_dto).collect()),
         }),
         device_bound: account.device_profile.is_some(),
         last_used: account.last_used,
@@ -874,6 +920,9 @@ async fn admin_list_accounts(
                 last_updated: q.last_updated,
                 subscription_tier: q.subscription_tier,
                 is_forbidden: q.is_forbidden,
+                quota_groups: q
+                    .quota_groups
+                    .map(|groups| groups.iter().map(quota_group_to_dto).collect()),
             });
 
             AccountResponse {
@@ -951,6 +1000,9 @@ async fn admin_get_current_account(
                 last_updated: q.last_updated,
                 subscription_tier: q.subscription_tier,
                 is_forbidden: q.is_forbidden,
+                quota_groups: q
+                    .quota_groups
+                    .map(|groups| groups.iter().map(quota_group_to_dto).collect()),
             });
 
             AccountResponse {

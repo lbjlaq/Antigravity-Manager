@@ -11,6 +11,13 @@ const QUOTA_API_ENDPOINTS: [&str; 3] = [
     "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
 ];
 
+// Quota Summary API endpoints (weekly + 5h grouped quota, fallback order 同上)
+const QUOTA_SUMMARY_ENDPOINTS: [&str; 3] = [
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+];
+
 /// Critical retry threshold: considered near recovery when quota reaches 95%
 const NEAR_READY_THRESHOLD: i32 = 95;
 const MAX_RETRIES: u32 = 3;
@@ -56,6 +63,35 @@ struct QuotaInfo {
     remaining_fraction: Option<f64>,
     #[serde(rename = "resetTime")]
     reset_time: Option<String>,
+}
+
+// ---- retrieveUserQuotaSummary 响应反序列化结构 ----
+
+#[derive(Debug, Deserialize)]
+struct QuotaSummaryResponse {
+    groups: Vec<QuotaSummaryGroup>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuotaSummaryGroup {
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+    description: Option<String>,
+    buckets: Vec<QuotaSummaryBucket>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuotaSummaryBucket {
+    #[serde(rename = "bucketId")]
+    bucket_id: Option<String>,
+    window: Option<String>,
+    #[serde(rename = "remainingFraction")]
+    remaining_fraction: Option<f64>,
+    #[serde(rename = "resetTime")]
+    reset_time: Option<String>,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+    description: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -370,6 +406,16 @@ pub async fn fetch_quota_with_cache(
                     // Set subscription tier
                     quota_data.subscription_tier = subscription_tier.clone();
 
+                    // Best-effort: fetch grouped quota summary (weekly + 5h windows).
+                    // Failure here must not block the primary quota result.
+                    quota_data.quota_groups = fetch_quota_summary(
+                        access_token,
+                        email,
+                        project_id.as_deref(),
+                        account_id,
+                    )
+                    .await;
+
                     return Ok((quota_data, project_id.clone()));
                 }
                 Err(e) => {
@@ -390,6 +436,103 @@ pub async fn fetch_quota_with_cache(
     Err(last_error.unwrap_or_else(|| {
         AppError::Unknown("Quota fetch failed: all endpoints exhausted".to_string())
     }))
+}
+
+/// Fetch grouped quota summary (weekly + 5h windows) via retrieveUserQuotaSummary.
+///
+/// Best-effort: returns `None` on any failure so that the primary 5h quota fetch
+/// (fetchAvailableModels) is never blocked by this auxiliary endpoint.
+async fn fetch_quota_summary(
+    access_token: &str,
+    email: &str,
+    project_id: Option<&str>,
+    account_id: Option<&str>,
+) -> Option<Vec<crate::models::quota::QuotaGroup>> {
+    let client = create_standard_client(account_id).await;
+    let payload = if let Some(pid) = project_id {
+        json!({ "project": pid })
+    } else {
+        json!({})
+    };
+
+    for ep_url in QUOTA_SUMMARY_ENDPOINTS.iter() {
+        let res = client
+            .post(*ep_url)
+            .bearer_auth(access_token)
+            .header(
+                rquest::header::USER_AGENT,
+                crate::constants::NATIVE_OAUTH_USER_AGENT.as_str(),
+            )
+            .json(&payload)
+            .send()
+            .await;
+
+        match res {
+            Ok(response) => {
+                let status = response.status();
+                if !status.is_success() {
+                    crate::modules::logger::log_warn(&format!(
+                        "QuotaSummary API {} returned {}, trying next endpoint",
+                        ep_url, status
+                    ));
+                    // 4xx (非 429) 通常所有端点行为一致,直接退出避免无谓重试
+                    if status.is_client_error() && status != rquest::StatusCode::TOO_MANY_REQUESTS
+                    {
+                        return None;
+                    }
+                    continue;
+                }
+
+                let summary: QuotaSummaryResponse = match response.json().await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        crate::modules::logger::log_warn(&format!(
+                            "QuotaSummary JSON parse failed for {}: {}",
+                            email, e
+                        ));
+                        return None;
+                    }
+                };
+
+                let groups = summary
+                    .groups
+                    .into_iter()
+                    .map(|g| crate::models::quota::QuotaGroup {
+                        display_name: g.display_name.unwrap_or_default(),
+                        description: g.description,
+                        buckets: g
+                            .buckets
+                            .into_iter()
+                            .map(|b| crate::models::quota::QuotaBucket {
+                                bucket_id: b.bucket_id.unwrap_or_default(),
+                                window: b.window.unwrap_or_default(),
+                                remaining_fraction: b.remaining_fraction.unwrap_or(0.0),
+                                reset_time: b.reset_time.unwrap_or_default(),
+                                display_name: b.display_name,
+                                description: b.description,
+                            })
+                            .collect(),
+                    })
+                    .collect();
+
+                tracing::debug!(
+                    "[{}] QuotaSummary fetched {} groups",
+                    email,
+                    groups.len()
+                );
+                return Some(groups);
+            }
+            Err(e) => {
+                crate::modules::logger::log_warn(&format!(
+                    "QuotaSummary API request failed at {}: {}",
+                    ep_url, e
+                ));
+                continue;
+            }
+        }
+    }
+
+    None
 }
 
 /// Internal fetch quota logic
