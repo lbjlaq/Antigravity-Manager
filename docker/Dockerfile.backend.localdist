@@ -50,6 +50,8 @@ RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3
 WORKDIR /app
 COPY src-tauri ./src-tauri
 COPY src/locales ./src/locales
+# Copy local dist so tauri::generate_context!() can find frontendDist ("../dist")
+COPY dist ./dist
 
 WORKDIR /app/src-tauri
 RUN --mount=type=cache,target=/root/.cargo/registry \

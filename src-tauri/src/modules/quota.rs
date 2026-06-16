@@ -494,7 +494,7 @@ async fn fetch_quota_summary(
                     }
                 };
 
-                let groups = summary
+                let groups: Vec<crate::models::quota::QuotaGroup> = summary
                     .groups
                     .into_iter()
                     .map(|g| crate::models::quota::QuotaGroup {
