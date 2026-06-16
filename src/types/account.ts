@@ -38,6 +38,7 @@ export interface QuotaData {
     forbidden_reason?: string;
     subscription_tier?: string;  // 订阅类型: FREE/PRO/ULTRA
     model_forwarding_rules?: Record<string, string>; // 废弃模型转发表
+    quota_groups?: QuotaGroup[]; // 按模型组的配额摘要 (weekly + 5h 双窗口)
 }
 
 export interface ModelQuota {
@@ -52,6 +53,23 @@ export interface ModelQuota {
     max_tokens?: number;
     max_output_tokens?: number;
     supported_mime_types?: Record<string, boolean>;
+}
+
+/** 单个配额桶 (weekly / 5h) */
+export interface QuotaBucket {
+    bucket_id: string;
+    window: string;  // "weekly" | "5h"
+    remaining_fraction: number;
+    reset_time: string;
+    display_name?: string;
+    description?: string;
+}
+
+/** 模型组配额 (如 Gemini Models / Claude and GPT models) */
+export interface QuotaGroup {
+    display_name: string;
+    description?: string;
+    buckets: QuotaBucket[];
 }
 
 export interface DeviceProfile {
