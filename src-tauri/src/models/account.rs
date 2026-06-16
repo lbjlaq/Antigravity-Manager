@@ -107,6 +107,8 @@ pub struct AccountIndex {
     pub version: String,
     pub accounts: Vec<AccountSummary>,
     pub current_account_id: Option<String>,
+    #[serde(default)]
+    pub current_target_ide: Option<String>,
 }
 
 /// 账号摘要信息
@@ -132,6 +134,7 @@ impl AccountIndex {
             version: "2.0".to_string(),
             accounts: Vec::new(),
             current_account_id: None,
+            current_target_ide: None,
         }
     }
 }

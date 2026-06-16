@@ -272,6 +272,7 @@ mod tests {
                 },
             ],
             current_account_id: Some("acc-1".to_string()),
+            current_target_ide: None,
         };
 
         // Save the index
@@ -556,6 +557,7 @@ fn rebuild_index_from_accounts_in_dir(data_dir: &PathBuf) -> Result<AccountIndex
         version: "2.0".to_string(),
         accounts: summaries,
         current_account_id,
+        current_target_ide: None,
     })
 }
 
@@ -1051,14 +1053,7 @@ pub async fn switch_account(
     integration.on_account_switch(&account, target_ide).await?;
 
     // 4. Update tool internal state
-    {
-        let _lock = ACCOUNT_INDEX_LOCK
-            .lock()
-            .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
-        let mut index = load_account_index()?;
-        index.current_account_id = Some(account_id.to_string());
-        save_account_index(&index)?;
-    }
+    set_current_account_id_with_target(account_id, target_ide)?;
 
     account.update_last_used();
     save_account(&account)?;
@@ -1430,11 +1425,17 @@ pub fn get_current_account() -> Result<Option<Account>, String> {
 
 /// Set current active account ID
 pub fn set_current_account_id(account_id: &str) -> Result<(), String> {
+    set_current_account_id_with_target(account_id, None)
+}
+
+/// Set current active account ID and target IDE
+pub fn set_current_account_id_with_target(account_id: &str, target_ide: Option<&str>) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
     index.current_account_id = Some(account_id.to_string());
+    index.current_target_ide = target_ide.map(|s| s.to_string());
     save_account_index(&index)
 }
 

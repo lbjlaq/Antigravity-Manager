@@ -511,7 +511,7 @@ pub async fn import_from_db(
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
 ) -> Result<Account, String> {
     // 同步函数包装为 async
-    let mut account = modules::migration::import_from_db().await?;
+    let mut account = modules::migration::import_from_db(None).await?;
 
     // 既然是从数据库导入（即 IDE 当前账号），自动将其设为 Manager 的当前账号
     let account_id = account.id.clone();
@@ -560,8 +560,16 @@ pub async fn sync_account_from_db(
     app: tauri::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
 ) -> Result<Option<Account>, String> {
+    // Check if the current target is one we should not sync (like agy CLI)
+    let index = modules::account::load_account_index()?;
+    let current_target = index.current_target_ide.as_deref();
+    if current_target == Some("agy") {
+        modules::logger::log_info("Auto-sync skipped: current target is agy CLI");
+        return Ok(None);
+    }
+
     // 1. 获取 DB 中的 Refresh Token
-    let db_refresh_token = match modules::migration::get_refresh_token_from_db() {
+    let db_refresh_token = match modules::migration::get_refresh_token_from_db(current_target) {
         Ok(token) => token,
         Err(e) => {
             modules::logger::log_info(&format!("自动同步跳过: {}", e));
@@ -588,7 +596,21 @@ pub async fn sync_account_from_db(
     }
 
     // 4. 执行完整导入
-    let account = import_from_db(app, proxy_state).await?;
+    let mut account = modules::migration::import_from_db(current_target).await?;
+
+    // 既然是从数据库导入，自动将其设为 Manager 的当前账号并保留当前 target
+    let account_id = account.id.clone();
+    modules::account::set_current_account_id_with_target(&account_id, current_target)?;
+
+    // 自动触发刷新额度
+    let _ = internal_refresh_account_quota(&app, &mut account).await;
+
+    // 刷新托盘图标展示
+    crate::modules::tray::update_tray_menus(&app);
+
+    // Reload token pool
+    let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
+
     Ok(Some(account))
 }
 

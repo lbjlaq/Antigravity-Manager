@@ -2807,12 +2807,15 @@ async fn admin_import_v1_accounts(
 async fn admin_import_from_db(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let account = migration::import_from_db().await.map_err(|e| {
+    let account = migration::import_from_db(None).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
         )
     })?;
+
+    // [FIX #820] 导入后清除过期的会话绑定
+    state.token_manager.clear_all_sessions();
 
     // [FIX #1166] 导入后立即加载
     let _ = state.token_manager.load_accounts().await;
@@ -2854,6 +2857,9 @@ async fn admin_import_custom_db(
             )
         })?;
 
+    // [FIX #820] 导入后清除过期的会话绑定
+    state.token_manager.clear_all_sessions();
+
     // [FIX #1166] 导入后立即加载
     let _ = state.token_manager.load_accounts().await;
 
@@ -2869,8 +2875,19 @@ async fn admin_import_custom_db(
 async fn admin_sync_account_from_db(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let index = account::load_account_index().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    let current_target = index.current_target_ide.as_deref();
+    if current_target == Some("agy") {
+        return Ok(Json(None));
+    }
+
     // 逻辑参考自 sync_account_from_db command
-    let db_refresh_token = match migration::get_refresh_token_from_db() {
+    let db_refresh_token = match migration::get_refresh_token_from_db(current_target) {
         Ok(token) => token,
         Err(_e) => {
             return Ok(Json(None));
@@ -2889,12 +2906,23 @@ async fn admin_sync_account_from_db(
         }
     }
 
-    let account = migration::import_from_db().await.map_err(|e| {
+    let account = migration::import_from_db(current_target).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse { error: e }),
         )
     })?;
+
+    let account_id = account.id.clone();
+    account::set_current_account_id_with_target(&account_id, current_target).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    // [FIX #820] 同步后清除过期的会话绑定
+    state.token_manager.clear_all_sessions();
 
     // [FIX #1166] 同步后立即重新加载 TokenManager
     let _ = state.token_manager.load_accounts().await;
