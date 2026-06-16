@@ -327,18 +327,16 @@ mod tests {
         let now = chrono::Utc::now().timestamp();
         let index = AccountIndex {
             version: "2.0".to_string(),
-            accounts: vec![
-                AccountSummary {
-                    id: "acc-1".to_string(),
-                    email: "user1@example.com".to_string(),
-                    name: Some("User One".to_string()),
-                    disabled: false,
-                    proxy_disabled: false,
-                    protected_models: HashSet::new(),
-                    created_at: now,
-                    last_used: now,
-                },
-            ],
+            accounts: vec![AccountSummary {
+                id: "acc-1".to_string(),
+                email: "user1@example.com".to_string(),
+                name: Some("User One".to_string()),
+                disabled: false,
+                proxy_disabled: false,
+                protected_models: HashSet::new(),
+                created_at: now,
+                last_used: now,
+            }],
             current_account_id: None,
             current_target_ide: None,
         };
@@ -1476,7 +1474,10 @@ pub fn set_current_account_id(account_id: &str) -> Result<(), String> {
 }
 
 /// Set current active account ID and target IDE
-pub fn set_current_account_id_with_target(account_id: &str, target_ide: Option<&str>) -> Result<(), String> {
+pub fn set_current_account_id_with_target(
+    account_id: &str,
+    target_ide: Option<&str>,
+) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;

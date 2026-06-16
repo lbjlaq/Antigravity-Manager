@@ -45,9 +45,15 @@ impl SystemIntegration for DesktopIntegration {
 
             let is_running = process::is_process_running_by_name("agy");
             let msg = if is_running {
-                format!("Account {} activated. Agy is running, token will be picked up automatically.", account.email)
+                format!(
+                    "Account {} activated. Agy is running, token will be picked up automatically.",
+                    account.email
+                )
             } else {
-                format!("Account {} activated. Token is ready for your next CLI command.", account.email)
+                format!(
+                    "Account {} activated. Token is ready for your next CLI command.",
+                    account.email
+                )
             };
             self.show_notification("Antigravity CLI", &msg);
             self.update_tray();

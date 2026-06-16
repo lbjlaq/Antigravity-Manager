@@ -288,9 +288,7 @@ impl AxumServer {
             *proxy = new_config.clone();
         }
         // [HOT-RELOAD] Rebuild default HTTP client with new upstream proxy
-        self.upstream
-            .rebuild_default_client(Some(new_config))
-            .await;
+        self.upstream.rebuild_default_client(Some(new_config)).await;
         // Stale per-proxy clients may also be affected (e.g. fallback path)
         self.upstream.clear_client_cache();
         tracing::info!("Upstream proxy config hot-reloaded");
@@ -2906,12 +2904,14 @@ async fn admin_sync_account_from_db(
         }
     }
 
-    let account = migration::import_from_db(current_target).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })?;
+    let account = migration::import_from_db(current_target)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })?;
 
     let account_id = account.id.clone();
     account::set_current_account_id_with_target(&account_id, current_target).map_err(|e| {

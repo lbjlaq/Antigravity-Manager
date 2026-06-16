@@ -408,13 +408,9 @@ pub async fn fetch_quota_with_cache(
 
                     // Best-effort: fetch grouped quota summary (weekly + 5h windows).
                     // Failure here must not block the primary quota result.
-                    quota_data.quota_groups = fetch_quota_summary(
-                        access_token,
-                        email,
-                        project_id.as_deref(),
-                        account_id,
-                    )
-                    .await;
+                    quota_data.quota_groups =
+                        fetch_quota_summary(access_token, email, project_id.as_deref(), account_id)
+                            .await;
 
                     return Ok((quota_data, project_id.clone()));
                 }
@@ -476,8 +472,7 @@ async fn fetch_quota_summary(
                         ep_url, status
                     ));
                     // 4xx (非 429) 通常所有端点行为一致,直接退出避免无谓重试
-                    if status.is_client_error() && status != rquest::StatusCode::TOO_MANY_REQUESTS
-                    {
+                    if status.is_client_error() && status != rquest::StatusCode::TOO_MANY_REQUESTS {
                         return None;
                     }
                     continue;
@@ -515,11 +510,7 @@ async fn fetch_quota_summary(
                     })
                     .collect();
 
-                tracing::debug!(
-                    "[{}] QuotaSummary fetched {} groups",
-                    email,
-                    groups.len()
-                );
+                tracing::debug!("[{}] QuotaSummary fetched {} groups", email, groups.len());
                 return Some(groups);
             }
             Err(e) => {
