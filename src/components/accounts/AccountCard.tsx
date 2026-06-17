@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot, Repeat2, Terminal } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot, Repeat2, Terminal, Activity } from 'lucide-react';
 import { Account } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -7,6 +7,7 @@ import { useConfigStore } from '../../stores/useConfigStore';
 import { QuotaItem } from './QuotaItem';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
+import { getQuotaSummary } from '../../utils/quota';
 
 interface AccountCardProps {
     account: Account;
@@ -197,6 +198,33 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                                         </span>
                                     );
                                 }
+                            })()}
+                            {/* 配额概要徽章 */}
+                            {(() => {
+                                const summary = getQuotaSummary(account.quota);
+                                if (!summary) return null;
+                                const { weeklyPct, fiveHourPct } = summary;
+
+                                return (
+                                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold shadow-sm border font-mono bg-blue-50/50 dark:bg-blue-900/10 border-blue-100/50 dark:border-blue-900/20 text-blue-700 dark:text-blue-300">
+                                        <Activity className="w-2 h-2 shrink-0" />
+                                        {weeklyPct !== null && (
+                                            <span className={cn(
+                                                weeklyPct < 20 ? "text-rose-500 font-extrabold" : weeklyPct < 50 ? "text-amber-500" : "text-emerald-500"
+                                            )}>
+                                                W:{weeklyPct}%
+                                            </span>
+                                        )}
+                                        {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
+                                        {fiveHourPct !== null && (
+                                            <span className={cn(
+                                                fiveHourPct < 20 ? "text-rose-500 font-extrabold" : fiveHourPct < 50 ? "text-amber-500" : "text-emerald-500"
+                                            )}>
+                                                5H:{fiveHourPct}%
+                                            </span>
+                                        )}
+                                    </span>
+                                );
                             })()}
                             {/* 自定义标签 */}
                             {account.custom_label && (
