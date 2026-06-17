@@ -160,8 +160,12 @@ fn inject_new_format(
         .map(|val| general_purpose::STANDARD.decode(val).unwrap_or_default())
         .unwrap_or_default();
 
-    let mut topic = protobuf::remove_unified_topic_entry(&current_topic, "oauthTokenInfoSentinelKey")?;
-    topic.extend(protobuf::create_unified_topic_entry("oauthTokenInfoSentinelKey", &oauth_info));
+    let mut topic =
+        protobuf::remove_unified_topic_entry(&current_topic, "oauthTokenInfoSentinelKey")?;
+    topic.extend(protobuf::create_unified_topic_entry(
+        "oauthTokenInfoSentinelKey",
+        &oauth_info,
+    ));
 
     let topic_b64 = general_purpose::STANDARD.encode(&topic);
 

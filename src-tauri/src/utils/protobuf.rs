@@ -460,4 +460,3 @@ fn unified_topic_entry_key(data: &[u8]) -> Option<&str> {
 
     None
 }
-
