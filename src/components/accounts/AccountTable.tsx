@@ -490,7 +490,7 @@ function AccountRowContent({
                                                     ? "text-amber-500 dark:text-amber-400"
                                                     : "text-emerald-500 dark:text-emerald-400"
                                         }>
-                                            W:{weeklyPct}%
+                                            {t('accounts.quota.weekly_abbr', 'W:')}{weeklyPct}%
                                         </span>
                                     )}
                                     {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
@@ -502,7 +502,7 @@ function AccountRowContent({
                                                     ? "text-amber-500 dark:text-amber-400"
                                                     : "text-emerald-500 dark:text-emerald-400"
                                         }>
-                                            5H:{fiveHourPct}%
+                                            {t('accounts.quota.five_hour_abbr', '5H:')}{fiveHourPct}%
                                         </span>
                                     )}
                                 </span>

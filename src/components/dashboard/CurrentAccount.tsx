@@ -99,7 +99,7 @@ function CurrentAccount({ account, onSwitch }: CurrentAccountProps) {
                                     <span className={
                                         weeklyPct < 20 ? "text-rose-500 dark:text-rose-400 font-extrabold" : weeklyPct < 50 ? "text-amber-500 dark:text-amber-400" : "text-emerald-500 dark:text-emerald-400"
                                     }>
-                                        W:{weeklyPct}%
+                                        {t('accounts.quota.weekly_abbr', 'W:')}{weeklyPct}%
                                     </span>
                                 )}
                                 {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
@@ -107,7 +107,7 @@ function CurrentAccount({ account, onSwitch }: CurrentAccountProps) {
                                     <span className={
                                         fiveHourPct < 20 ? "text-rose-500 dark:text-rose-400 font-extrabold" : fiveHourPct < 50 ? "text-amber-500 dark:text-amber-400" : "text-emerald-500 dark:text-emerald-400"
                                     }>
-                                        5H:{fiveHourPct}%
+                                        {t('accounts.quota.five_hour_abbr', '5H:')}{fiveHourPct}%
                                     </span>
                                 )}
                             </span>
