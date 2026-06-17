@@ -7,8 +7,11 @@ export const getQuotaSummary = (quota?: QuotaData) => {
     let fiveHourPct: number | null = null;
 
     for (const group of quota.quota_groups) {
-        for (const bucket of group.buckets) {
-            const pct = Math.round(bucket.remaining_fraction * 100);
+        for (const bucket of group.buckets || []) {
+            const fraction = bucket.remaining_fraction;
+            if (typeof fraction !== 'number' || isNaN(fraction)) continue;
+            
+            const pct = Math.round(fraction * 100);
             if (bucket.window === 'weekly') {
                 if (weeklyPct === null || pct < weeklyPct) weeklyPct = pct;
             } else if (bucket.window === '5h') {

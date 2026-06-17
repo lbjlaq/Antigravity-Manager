@@ -1,6 +1,6 @@
 /**
- * 账号表格组件
- * 支持拖拽排序功能，用户可以通过拖拽行来调整账号顺序
+ * Компонент таблицы аккаунтов
+ * Поддерживает функцию drag-and-drop сортировки, пользователи могут изменять порядок аккаунтов перетаскиванием строк
  */
 import { useMemo, useState } from 'react';
 import {
@@ -58,7 +58,7 @@ import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { getQuotaSummary } from '../../utils/quota';
 
 // ============================================================================
-// 类型定义
+// Определение типов
 // ============================================================================
 
 interface AccountTableProps {
@@ -78,7 +78,7 @@ interface AccountTableProps {
     onToggleProxy: (accountId: string) => void;
     onWarmup?: (accountId: string) => void;
     onUpdateLabel?: (accountId: string, label: string) => void;
-    /** 拖拽排序回调，当用户完成拖拽时触发 */
+    /** Коллбек сортировки перетаскиванием, срабатывает при завершении перетаскивания пользователем */
     onReorder?: (accountIds: string[]) => void;
     onViewError: (accountId: string) => void;
 }
@@ -122,13 +122,13 @@ interface AccountRowContentProps {
 }
 
 // ============================================================================
-// 辅助函数
+// Вспомогательные функции
 // ============================================================================
 
 
 
 // ============================================================================
-// 模型分组配置
+// Конфигурация группировки моделей
 // ============================================================================
 
 const MODEL_GROUPS = {
@@ -191,17 +191,17 @@ function isModelProtected(protectedModels: string[] | undefined, modelName: stri
         return isGroupProtected(MODEL_GROUPS.GEMINI_FLASH);
     }
 
-    // 兜底直接检查 (Strict check for exact match or normalized ID)
+    // Прямая проверка по умолчанию (Strict check for exact match or normalized ID)
     return protectedModels.includes(lowerName);
 }
 
 // ============================================================================
-// 子组件
+// Дочерние компоненты
 // ============================================================================
 
 /**
- * 可拖拽的表格行组件
- * 使用 @dnd-kit/sortable 实现拖拽功能
+ * Компонент перетаскиваемой строки таблицы
+ * Использует @dnd-kit/sortable для реализации функции перетаскивания
  */
 function SortableAccountRow({
     account,
@@ -250,7 +250,7 @@ function SortableAccountRow({
                 !isDragging && "hover:bg-gray-50 dark:hover:bg-base-200"
             )}
         >
-            {/* 拖拽手柄 */}
+            {/* Ручка перетаскивания */}
             <td className="pl-2 py-1 w-8 align-middle">
                 <div
                     {...attributes}
@@ -261,7 +261,7 @@ function SortableAccountRow({
                     <GripVertical className="w-4 h-4" />
                 </div>
             </td>
-            {/* 复选框 */}
+            {/* Чекбокс */}
             <td className="px-2 py-1 w-10 align-middle">
                 <input
                     type="checkbox"
@@ -293,8 +293,8 @@ function SortableAccountRow({
 }
 
 /**
- * 账号行内容组件
- * 渲染邮箱、配额、最后使用时间和操作按钮等列
+ * Компонент содержимого строки аккаунта
+ * Рендерит колонки email, квот, времени последнего использования и кнопок действий
  */
 function AccountRowContent({
     account,
@@ -317,7 +317,7 @@ function AccountRowContent({
     const { config, showAllQuotas } = useConfigStore();
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
 
-    // 自定义标签编辑状态
+    // Состояние редактирования пользовательской метки
     const [isEditingLabel, setIsEditingLabel] = useState(false);
     const [labelInput, setLabelInput] = useState(account.custom_label || '');
 
@@ -341,12 +341,12 @@ function AccountRowContent({
         }
     };
 
-    // 使用统一的模型配置
+    // Использование единой конфигурации моделей
 
-    // 获取要显示的模型列表
+    // Получение списка моделей для отображения
     const pinnedModels = config?.pinned_quota_models?.models || Object.keys(MODEL_CONFIG);
 
-    // 根据 show_all 状态决定显示哪些模型
+    // Определение отображаемых моделей на основе состояния show_all
     const uniqueLabels = new Set<string>();
     const displayModels = sortModels(
         (showAllQuotas
@@ -373,13 +373,13 @@ function AccountRowContent({
                 };
             }).filter(Boolean) as any[]
         ).filter(m => {
-            // 过滤特定的 Claude/Gemini 思考变体 (在列表页隐藏)
+            // Фильтрация специфических вариантов рассуждений Claude/Gemini (скрыты на странице списка)
             const isHiddenThinking = m.id.includes('thinking');
 
             if (isHiddenThinking) return false;
 
-            // 基于标签去重 (例如 G3.1 Pro 只显示一次)
-            // 优先显示有配额数据的 ID
+            // Дедупликация на основе меток (например, G3.1 Pro отображается только один раз)
+            // Приоритетное отображение ID с данными о квотах
             const labelKey = `${m.label}-${m.protectedKey}`;
             if (uniqueLabels.has(labelKey)) {
                 return false;
@@ -391,7 +391,7 @@ function AccountRowContent({
             return true;
         })
     ).filter((m, index, self) => {
-        // 第二次过滤：确保即使没有数据的重复 Label 也只保留一个
+        // Вторая фильтрация: гарантирует сохранение только одной копии дублирующейся метки, даже если нет данных
         const labelKey = `${m.label}-${m.protectedKey}`;
         return self.findIndex(t => `${t.label}-${t.protectedKey}` === labelKey) === index;
     });
@@ -399,7 +399,7 @@ function AccountRowContent({
 
     return (
         <>
-            {/* 邮箱列 */}
+            {/* Колонка email */}
             <td className="px-2 py-1 align-middle">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span className={cn(
@@ -447,7 +447,7 @@ function AccountRowContent({
                         )}
 
 
-                        {/* 订阅类型徽章 */}
+                        {/* Бадж типа подписки */}
                         {account.quota?.subscription_tier && (() => {
                             const tier = account.quota.subscription_tier.toLowerCase();
                             if (tier.includes('ultra')) {
@@ -483,31 +483,39 @@ function AccountRowContent({
                                 <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-sm border font-mono bg-blue-50/50 dark:bg-blue-900/10 border-blue-100/50 dark:border-blue-900/20 text-blue-700 dark:text-blue-300">
                                     <Activity className="w-2.5 h-2.5" />
                                     {weeklyPct !== null && (
-                                        <span className={cn(
-                                            weeklyPct < 20 ? "text-rose-500 font-extrabold" : weeklyPct < 50 ? "text-amber-500" : "text-emerald-500"
-                                        )}>
+                                        <span className={
+                                            weeklyPct < 20
+                                                ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                : weeklyPct < 50
+                                                    ? "text-amber-500 dark:text-amber-400"
+                                                    : "text-emerald-500 dark:text-emerald-400"
+                                        }>
                                             W:{weeklyPct}%
                                         </span>
                                     )}
                                     {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
                                     {fiveHourPct !== null && (
-                                        <span className={cn(
-                                            fiveHourPct < 20 ? "text-rose-500 font-extrabold" : fiveHourPct < 50 ? "text-amber-500" : "text-emerald-500"
-                                        )}>
+                                        <span className={
+                                            fiveHourPct < 20
+                                                ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                : fiveHourPct < 50
+                                                    ? "text-amber-500 dark:text-amber-400"
+                                                    : "text-emerald-500 dark:text-emerald-400"
+                                        }>
                                             5H:{fiveHourPct}%
                                         </span>
                                     )}
                                 </span>
                             );
                         })()}
-                        {/* 自定义标签 */}
+                        {/* Пользовательская метка */}
                         {account.custom_label && !isEditingLabel && (
                             <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-bold shadow-sm border border-orange-200/50 dark:border-orange-800/50">
                                 <Tag className="w-2.5 h-2.5" />
                                 {account.custom_label}
                             </span>
                         )}
-                        {/* 标签编辑输入框 */}
+                        {/* Поле ввода для редактирования метки */}
                         {isEditingLabel && (
                             <div className="flex items-center gap-1">
                                 <input
@@ -540,7 +548,7 @@ function AccountRowContent({
                 </div>
             </td>
 
-            {/* 模型配额列 */}
+            {/* Колонка квот моделей */}
             <td className="px-2 py-1 align-middle">
                 {isDisabled || account.quota?.is_forbidden || account.validation_blocked ? (
                     <div className={cn(
@@ -593,7 +601,7 @@ function AccountRowContent({
                 )}
             </td>
 
-            {/* 最后使用时间列 */}
+            {/* Колонка времени последнего использования */}
             <td className="px-2 py-1 align-middle">
                 <div className="flex flex-col">
                     <span className="text-xs font-medium text-gray-600 dark:text-gray-400 font-mono whitespace-nowrap">
@@ -605,10 +613,10 @@ function AccountRowContent({
                 </div>
             </td>
 
-            {/* 操作列 */}
+            {/* Колонка действий */}
             <td className={cn(
                 "px-1 py-1 sticky right-0 z-10 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center align-middle",
-                // 动态背景色处理
+                // Обработка динамического фонового цвета
                 isCurrent
                     ? "bg-[#f1f6ff] dark:bg-[#1e2330]" // 接近 blue-50/50 的实色
                     : "bg-white dark:bg-base-100",
@@ -629,7 +637,7 @@ function AccountRowContent({
                     >
                         <Fingerprint className="w-3.5 h-3.5" />
                     </button>
-                    {/* 自定义标签按钮 */}
+                    {/* Кнопка пользовательской метки */}
                     {onUpdateLabel && (
                         <button
                             className={cn(
@@ -723,12 +731,12 @@ function AccountRowContent({
 }
 
 // ============================================================================
-// 主组件
+// Главный компонент
 // ============================================================================
 
 /**
- * 账号表格组件
- * 支持拖拽排序、多选、批量操作等功能
+ * Компонент таблицы аккаунтов
+ * Поддерживает сортировку перетаскиванием, множественный выбор, массовые операции и т. д.
  */
 function AccountTable({
     accounts,
@@ -753,12 +761,12 @@ function AccountTable({
     const { t } = useTranslation();
 
     const [activeId, setActiveId] = useState<string | null>(null);
-    // showAllQuotas 已经在 useConfigStore 中解构获取
+    // showAllQuotas уже деструктурирован и получен в useConfigStore
 
-    // 配置拖拽传感器
+    // Настройка сенсоров перетаскивания
     const sensors = useSensors(
         useSensor(PointerSensor, {
-            activationConstraint: { distance: 8 }, // 需要移动 8px 才触发拖拽
+            activationConstraint: { distance: 8 }, // Требуется перемещение на 8px для триггера перетаскивания
         }),
         useSensor(KeyboardSensor, {
             coordinateGetter: sortableKeyboardCoordinates,
@@ -854,7 +862,7 @@ function AccountTable({
                 </table >
             </div >
 
-            {/* 拖拽悬浮预览层 */}
+            {/* Слой превью при перетаскивании */}
             <DragOverlay>
                 {
                     activeAccount ? (

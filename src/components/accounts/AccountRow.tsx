@@ -25,7 +25,7 @@ interface AccountRowProps {
 
 function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice }: AccountRowProps) {
     const { t } = useTranslation();
-    // [重构] 按组聚合查找逻辑，优先显示组内配额最低的型号以与锁定状态（🔒）对齐
+    // [Рефакторинг] Логика агрегации по группам, приоритет показа модели с наименьшей квотой в группе для соответствия статусу блокировки (🔒)
     const geminiProModel = account.quota?.models
         .filter(m =>
             m.name.toLowerCase() === 'gemini-3-pro-high'
@@ -48,7 +48,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
         .sort((a, b) => (a.percentage || 0) - (b.percentage || 0))[0];
     const isDisabled = Boolean(account.disabled);
 
-    // 颜色映射，避免动态类名被 Tailwind purge
+    // Маппинг цветов для предотвращения удаления динамических классов Tailwind
     const getColorClass = (percentage: number) => {
         const color = getQuotaColor(percentage);
         switch (color) {
@@ -74,7 +74,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
             isCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
             (isRefreshing || isDisabled) && "opacity-70"
         )}>
-            {/* 序号 */}
+            {/* Выбор */}
             <td className="pl-6 py-1 w-12">
                 <input
                     type="checkbox"
@@ -85,7 +85,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                 />
             </td>
 
-            {/* 邮箱 */}
+            {/* Email */}
             <td className="px-4 py-1">
                 <div className="flex items-center gap-3">
                     <span className={cn(
@@ -129,7 +129,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                             </span>
                         )}
 
-                        {/* 订阅类型徽章 */}
+                        {/* Бадж типа подписки */}
                         {account.quota?.subscription_tier && (() => {
                             const tier = account.quota.subscription_tier.toLowerCase();
                             if (tier.includes('ultra')) {
@@ -165,17 +165,25 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                 <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-sm border font-mono bg-blue-50/50 dark:bg-blue-900/10 border-blue-100/50 dark:border-blue-900/20 text-blue-700 dark:text-blue-300">
                                     <Activity className="w-2.5 h-2.5" />
                                     {weeklyPct !== null && (
-                                        <span className={cn(
-                                            weeklyPct < 20 ? "text-rose-500 font-extrabold" : weeklyPct < 50 ? "text-amber-500" : "text-emerald-500"
-                                        )}>
+                                        <span className={
+                                            weeklyPct < 20
+                                                ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                : weeklyPct < 50
+                                                    ? "text-amber-500 dark:text-amber-400"
+                                                    : "text-emerald-500 dark:text-emerald-400"
+                                        }>
                                             W:{weeklyPct}%
                                         </span>
                                     )}
                                     {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
                                     {fiveHourPct !== null && (
-                                        <span className={cn(
-                                            fiveHourPct < 20 ? "text-rose-500 font-extrabold" : fiveHourPct < 50 ? "text-amber-500" : "text-emerald-500"
-                                        )}>
+                                        <span className={
+                                            fiveHourPct < 20
+                                                ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                : fiveHourPct < 50
+                                                    ? "text-amber-500 dark:text-amber-400"
+                                                    : "text-emerald-500 dark:text-emerald-400"
+                                        }>
                                             5H:{fiveHourPct}%
                                         </span>
                                     )}
@@ -186,7 +194,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                 </div>
             </td>
 
-            {/* 模型配额 */}
+            {/* Квоты моделей */}
             <td className="px-4 py-1">
                 {account.quota?.is_forbidden ? (
                     <div className="flex items-center gap-2 text-xs text-red-500 dark:text-red-400 bg-red-50/50 dark:bg-red-900/10 p-1.5 rounded-lg border border-red-100 dark:border-red-900/30">
@@ -326,7 +334,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                 )}
             </td>
 
-            {/* 最后使用 */}
+            {/* Последнее использование */}
             <td className="px-4 py-1">
                 <div className="flex flex-col">
                     <span className="text-xs font-medium text-gray-600 dark:text-gray-400 font-mono whitespace-nowrap">
@@ -338,7 +346,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                 </div>
             </td>
 
-            {/* 操作 */}
+            {/* Действия */}
             <td className="px-4 py-1">
                 <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
                     <button
