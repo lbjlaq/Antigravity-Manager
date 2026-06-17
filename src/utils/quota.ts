@@ -14,7 +14,7 @@ export const getQuotaSummary = (quota?: QuotaData) => {
         for (const bucket of group.buckets || []) {
             if (!bucket) continue;
             const fraction = bucket.remaining_fraction;
-            if (typeof fraction !== 'number' || isNaN(fraction)) continue;
+            if (typeof fraction !== 'number' || !Number.isFinite(fraction)) continue;
 
             const pct = Math.round(fraction * 100);
             
