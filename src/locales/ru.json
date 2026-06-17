@@ -112,6 +112,10 @@
         }
     },
     "accounts": {
+        "quota": {
+            "weekly_abbr": "Нед:",
+            "five_hour_abbr": "5ч:"
+        },
         "account": "Аккаунт",
         "search_placeholder": "Поиск почты...",
         "all": "Все",

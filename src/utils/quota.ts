@@ -28,7 +28,7 @@ export const getQuotaSummary = (quota?: QuotaData) => {
             const fraction = bucket.remaining_fraction;
             if (typeof fraction !== 'number' || !Number.isFinite(fraction)) continue;
 
-            const pct = Math.max(0, Math.round(fraction * 100));
+            const pct = Math.min(100, Math.max(0, Math.round(fraction * 100)));
             
             const isWeekly = bucket.bucket_id === 'gemini-weekly' || 
                              bucket.window === 'gemini-weekly' || 
