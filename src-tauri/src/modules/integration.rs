@@ -168,7 +168,7 @@ impl SystemIntegration for DesktopIntegration {
 }
 
 /// 辅助方法：向宿主操作系统的 Keychain/Credentials Manager 写入 Token
-fn write_to_system_keyring(account: &crate::models::Account) -> Result<(), String> {
+pub fn write_to_system_keyring(account: &crate::models::Account) -> Result<(), String> {
     // 1. 构建 Token 的 JSON Payload，并将过期时间戳格式化为符合 RFC3339 的带微秒格式
     let expiry_datetime = chrono::DateTime::from_timestamp(account.token.expiry_timestamp, 0)
         .unwrap_or_else(|| chrono::Utc::now());

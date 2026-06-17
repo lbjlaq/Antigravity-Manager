@@ -2078,6 +2078,28 @@ impl TokenManager {
         std::fs::write(path, serde_json::to_string_pretty(&content).unwrap())
             .map_err(|e| format!("写入文件失败: {}", e))?;
 
+        // If this is the current active account, sync the refreshed token to system keyring
+        if let Ok(Some(current_id)) = crate::modules::account::get_current_account_id() {
+            if current_id == account_id {
+                if let Ok(account) = crate::modules::account::load_account(account_id) {
+                    let _ = &account;
+                    #[cfg(not(test))]
+                    {
+                        if let Err(e) =
+                            crate::modules::integration::write_to_system_keyring(&account)
+                        {
+                            tracing::warn!(
+                                "[Keyring] Failed to sync refreshed token to keyring: {}",
+                                e
+                            );
+                        } else {
+                            tracing::info!("[Keyring] Successfully synchronized refreshed token to keyring for: {}", account.email);
+                        }
+                    }
+                }
+            }
+        }
+
         tracing::debug!("已保存刷新后的 token 到账号 {}", account_id);
         Ok(())
     }
