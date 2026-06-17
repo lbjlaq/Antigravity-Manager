@@ -393,3 +393,71 @@ pub fn create_string_value_payload(value: &str) -> Vec<u8> {
 pub fn create_minimal_user_status_payload(email: &str) -> Vec<u8> {
     [encode_string_field(3, email), encode_string_field(7, email)].concat()
 }
+
+/// 创建 unified-state Topic.data entry。
+pub fn create_unified_topic_entry(sentinel_key: &str, payload: &[u8]) -> Vec<u8> {
+    use base64::{engine::general_purpose, Engine as _};
+    let row = encode_string_field(1, &general_purpose::STANDARD.encode(payload));
+    let entry = [
+        encode_string_field(1, sentinel_key),
+        encode_len_delim_field(2, &row),
+    ]
+    .concat();
+    encode_len_delim_field(1, &entry)
+}
+
+/// 从 Topic.data 中移除指定 map entry，保留同 topic 下其他 sentinel row。
+pub fn remove_unified_topic_entry(data: &[u8], target_key: &str) -> Result<Vec<u8>, String> {
+    let mut result = Vec::new();
+    let mut offset = 0;
+
+    while offset < data.len() {
+        let start_offset = offset;
+        let (tag, new_offset) = read_varint(data, offset)?;
+        let wire_type = (tag & 7) as u8;
+        let field_num = (tag >> 3) as u32;
+        let next_offset = skip_field(data, new_offset, wire_type)?;
+
+        let should_remove = if field_num == 1 && wire_type == 2 {
+            let (length, content_offset) = read_varint(data, new_offset)?;
+            let length = length as usize;
+            if content_offset + length > data.len() {
+                return Err("Topic.data entry 数据不完整".to_string());
+            }
+            let entry = &data[content_offset..content_offset + length];
+            unified_topic_entry_key(entry) == Some(target_key)
+        } else {
+            false
+        };
+
+        if !should_remove {
+            result.extend_from_slice(&data[start_offset..next_offset]);
+        }
+        offset = next_offset;
+    }
+
+    Ok(result)
+}
+
+fn unified_topic_entry_key(data: &[u8]) -> Option<&str> {
+    let mut offset = 0;
+    while offset < data.len() {
+        let (tag, new_offset) = read_varint(data, offset).ok()?;
+        let wire_type = (tag & 7) as u8;
+        let field_num = (tag >> 3) as u32;
+
+        if field_num == 1 && wire_type == 2 {
+            let (length, content_offset) = read_varint(data, new_offset).ok()?;
+            let length = length as usize;
+            if content_offset + length > data.len() {
+                return None;
+            }
+            return std::str::from_utf8(&data[content_offset..content_offset + length]).ok();
+        }
+
+        offset = skip_field(data, new_offset, wire_type).ok()?;
+    }
+
+    None
+}
+

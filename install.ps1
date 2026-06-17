@@ -85,12 +85,12 @@ function Get-ReleaseVersion {
     }
 
     Script-Error "Failed to determine latest version. Try specifying version manually:"
-    Write-Host '  $Version = "4.2.3"; irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps1 | iex' -ForegroundColor Yellow
+    Write-Host '  $Version = "4.2.4"; irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps1 | iex' -ForegroundColor Yellow
     return $false
 }
 
 function Get-DownloadUrl {
-    # NSIS installer: Antigravity.Tools_4.2.3_x64-setup.exe
+    # NSIS installer: Antigravity.Tools_4.2.4_x64-setup.exe
     $script:DownloadUrl = "https://github.com/$Repo/releases/download/v$($script:ReleaseVersion)/Antigravity.Tools_$($script:ReleaseVersion)_x64-setup.exe"
     $script:Filename = "Antigravity.Tools_$($script:ReleaseVersion)_x64-setup.exe"
 

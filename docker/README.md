@@ -126,7 +126,7 @@ docker build --build-arg USE_MIRROR=true -t antigravity-manager:latest -f docker
 ```bash
 # 打上版本標籤並推送
 docker tag antigravity-manager:latest lbjlaq/antigravity-manager:latest
-docker tag antigravity-manager:latest lbjlaq/antigravity-manager:4.2.3
+docker tag antigravity-manager:latest lbjlaq/antigravity-manager:4.2.4
 docker push lbjlaq/antigravity-manager:latest
-docker push lbjlaq/antigravity-manager:4.2.3
+docker push lbjlaq/antigravity-manager:4.2.4
 ```

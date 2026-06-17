@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.2.3)
+> 专业级 AI 账号管理与协议代理系统 (v4.2.4)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.2.3-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.2.4-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -132,7 +132,7 @@ graph TD
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.2.3/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.2.4/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -142,7 +142,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **支持的格式**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.2.3`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
+> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.2.4`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 如果您已安装 [Homebrew](https://brew.sh/)，也可以通过以下命令安装：
@@ -438,6 +438,13 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.2.4 (2026-06-17)**:
+        -   **[核心修复] 修复 IDE 新版协议下切换账号丢失历史会话的 Bug (History Loss Fix)**:
+            -   **问题修复**: 修复了由于在写入新的 OAuth 凭证时，暴力覆盖 `antigravityUnifiedStateSync.oauthToken` 导致原本与 Token 存放在同一个 Topic 中的 `authStateWithContextSentinelKey` 等状态被意外抹除的问题。
+            -   **合并注入**: 重构了底层 Protobuf 二进制协议解析，实现了针对新版状态字典的安全合并注入逻辑（Merge）。现在切换账号时，系统能完美保留现有项目上下文与登录态记录，IDE 不再会因状态残缺而意外清空历史对话。
+        -   **[核心修复] 解决 Antigravity CLI (agy) 账号切换时的状态同步冲突问题 (CLI Sync Isolation)**:
+            -   **状态隔离**: 在底层账户索引中引入 `current_target_ide` 字段，精准跟踪账号切换的目标环境。
+            -   **冲突规避**: 增强了自动同步逻辑，如果当前处于 `agy` 目标环境，系统将主动跳过状态的同步拉取与回写，避免 CLI 专用的临时凭据与 Manager 主界面环境互相覆盖串扰 ([PR #3186](https://github.com/lbjlaq/Antigravity-Manager/pull/3186))。
     *   **v4.2.3 (2026-06-16)**:
         -   **[体验优化] 优化 Homebrew 安装体验，彻底免除“应用已损坏”弹窗 (Brew Cask Quarantine Auto-Clear)**:
             -   **问题修复**: 为 macOS 的 Homebrew Cask 安装添加了自动清理 `com.apple.quarantine` 属性的脚本，彻底解决了由于系统安全机制导致初次打开应用时弹出“应用已损坏”拦截的问题 ([PR #3180](https://github.com/lbjlaq/Antigravity-Manager/pull/3180))。

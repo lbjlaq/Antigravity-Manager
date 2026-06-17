@@ -1583,7 +1583,6 @@ pub fn synchronize_keyring(_current_account_id: Option<&str>) -> Result<(), Stri
     }
     Ok(())
 }
-
 /// Set current active account ID and target IDE
 pub fn set_current_account_id_with_target(
     account_id: &str,

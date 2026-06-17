@@ -145,11 +145,29 @@ fn inject_new_format(
         id_token,
         Some(email),
     );
-    let outer_b64 = protobuf::create_unified_state_entry("oauthTokenInfoSentinelKey", &oauth_info);
+
+    use base64::{engine::general_purpose, Engine as _};
+    use rusqlite::OptionalExtension;
+
+    let current_topic = conn
+        .query_row(
+            "SELECT value FROM ItemTable WHERE key = ?",
+            ["antigravityUnifiedStateSync.oauthToken"],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("Failed to read oauthToken: {}", e))?
+        .map(|val| general_purpose::STANDARD.decode(val).unwrap_or_default())
+        .unwrap_or_default();
+
+    let mut topic = protobuf::remove_unified_topic_entry(&current_topic, "oauthTokenInfoSentinelKey")?;
+    topic.extend(protobuf::create_unified_topic_entry("oauthTokenInfoSentinelKey", &oauth_info));
+
+    let topic_b64 = general_purpose::STANDARD.encode(&topic);
 
     conn.execute(
         "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",
-        ["antigravityUnifiedStateSync.oauthToken", &outer_b64],
+        ["antigravityUnifiedStateSync.oauthToken", &topic_b64],
     )
     .map_err(|e| format!("Failed to write new format: {}", e))?;
 
@@ -167,6 +185,13 @@ fn inject_new_format(
         ["antigravityOnboarding", "true"],
     )
     .map_err(|e| format!("Failed to write onboarding flag: {}", e))?;
+
+    // Fix for missing history: Delete the old format state to prevent the IDE from reading a stale UserID
+    // which causes history fetching to fail.
+    let _ = conn.execute(
+        "DELETE FROM ItemTable WHERE key = ?",
+        ["jetskiStateSync.agentManagerInitState"],
+    );
 
     Ok("Token injection successful (new format)".to_string())
 }

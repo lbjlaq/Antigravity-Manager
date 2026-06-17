@@ -175,7 +175,7 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
                         </div>
                     )}
 
-                    {/* Quota Groups Section (New in 4.2.3) */}
+                    {/* Quota Groups Section (New in 4.2.4) */}
                     {activeTab === 'detailed' && account.quota?.quota_groups && account.quota.quota_groups.length > 0 && (
                         <div className="flex flex-col gap-4">
                             {account.quota.quota_groups.map((group, idx) => (

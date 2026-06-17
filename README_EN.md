@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Protocol Proxy System (v4.2.3)
+> Professional AI Account Management & Protocol Proxy System (v4.2.4)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.2.3-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.2.4-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -133,7 +133,7 @@ Automatically detects your OS, architecture, and package manager — one command
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.2.3/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.2.4/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -143,7 +143,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.2.3`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.2.4`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
@@ -293,6 +293,13 @@ print(response.choices[0].message.content)
 ## 📝 Developer & Community
 
 *   **Changelog**:
+    *   **v4.2.4 (2026-06-17)**:
+        -   **[Core Fix] Fixed History Session Loss Bug on IDE Account Switch (History Loss Fix)**:
+            -   **Bug Fix**: Fixed an issue where violently overwriting `antigravityUnifiedStateSync.oauthToken` during OAuth credential injection accidentally erased `authStateWithContextSentinelKey` and other vital states stored in the same topic.
+            -   **Merge Injection**: Refactored the underlying Protobuf binary protocol parsing to implement a secure merge injection logic for the new state dictionary. Now, when switching accounts, the system perfectly preserves the existing project context and login state records, preventing the IDE from unexpectedly clearing historical dialogs due to incomplete states.
+        -   **[Core Fix] Resolve State Synchronization Conflicts during Antigravity CLI (agy) Account Switching (CLI Sync Isolation)**:
+            -   **State Isolation**: Introduced the `current_target_ide` field into the underlying account index to precisely track the target environment of account switches.
+            -   **Conflict Avoidance**: Enhanced the automatic synchronization logic so that if the current target environment is `agy`, the system proactively skips state sync fetch and rewrite, preventing CLI-specific temporary credentials from colliding with the Manager's main interface environment ([PR #3186](https://github.com/lbjlaq/Antigravity-Manager/pull/3186)).
     *   **v4.2.3 (2026-06-16)**:
         -   **[UX Enhancement] Optimize Homebrew installation to eliminate "App is damaged" warnings (Brew Cask Quarantine Auto-Clear)**:
             -   **Bug Fix**: Added a postflight hook to the macOS Homebrew Cask configuration to automatically remove the `com.apple.quarantine` attribute, fully resolving the "App is damaged" security warning upon first launch ([PR #3180](https://github.com/lbjlaq/Antigravity-Manager/pull/3180)).
