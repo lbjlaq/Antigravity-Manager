@@ -25,7 +25,7 @@ interface AccountRowProps {
 
 function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice }: AccountRowProps) {
     const { t } = useTranslation();
-    // [Рефакторинг] Логика агрегации по группам, приоритет показа модели с наименьшей квотой в группе для соответствия статусу блокировки (🔒)
+    // [重构] 按组聚合查找逻辑，优先显示组内配额最低的型号以与锁定状态（🔒）对齐
     const geminiProModel = account.quota?.models
         .filter(m =>
             m.name.toLowerCase() === 'gemini-3-pro-high'
@@ -48,7 +48,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
         .sort((a, b) => (a.percentage || 0) - (b.percentage || 0))[0];
     const isDisabled = Boolean(account.disabled);
 
-    // Маппинг цветов для предотвращения удаления динамических классов Tailwind
+    // 颜色映射，避免动态类名被 Tailwind purge
     const getColorClass = (percentage: number) => {
         const color = getQuotaColor(percentage);
         switch (color) {
@@ -74,7 +74,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
             isCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
             (isRefreshing || isDisabled) && "opacity-70"
         )}>
-            {/* Выбор */}
+            {/* 序号 */}
             <td className="pl-6 py-1 w-12">
                 <input
                     type="checkbox"
@@ -85,7 +85,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                 />
             </td>
 
-            {/* Email */}
+            {/* 邮箱 */}
             <td className="px-4 py-1">
                 <div className="flex items-center gap-3">
                     <span className={cn(
@@ -129,7 +129,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                             </span>
                         )}
 
-                        {/* Бадж типа подписки */}
+                        {/* 订阅类型徽章 */}
                         {account.quota?.subscription_tier && (() => {
                             const tier = account.quota.subscription_tier.toLowerCase();
                             if (tier.includes('ultra')) {
@@ -194,7 +194,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                 </div>
             </td>
 
-            {/* Квоты моделей */}
+            {/* 模型配额 */}
             <td className="px-4 py-1">
                 {account.quota?.is_forbidden ? (
                     <div className="flex items-center gap-2 text-xs text-red-500 dark:text-red-400 bg-red-50/50 dark:bg-red-900/10 p-1.5 rounded-lg border border-red-100 dark:border-red-900/30">
@@ -334,7 +334,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                 )}
             </td>
 
-            {/* Последнее использование */}
+            {/* 最后使用 */}
             <td className="px-4 py-1">
                 <div className="flex flex-col">
                     <span className="text-xs font-medium text-gray-600 dark:text-gray-400 font-mono whitespace-nowrap">
@@ -346,7 +346,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                 </div>
             </td>
 
-            {/* Действия */}
+            {/* 操作 */}
             <td className="px-4 py-1">
                 <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
                     <button

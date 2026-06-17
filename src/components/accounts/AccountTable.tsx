@@ -317,7 +317,7 @@ function AccountRowContent({
     const { config, showAllQuotas } = useConfigStore();
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
 
-    // Состояние редактирования пользовательской метки
+    // 自定义标签编辑状态
     const [isEditingLabel, setIsEditingLabel] = useState(false);
     const [labelInput, setLabelInput] = useState(account.custom_label || '');
 
@@ -341,12 +341,12 @@ function AccountRowContent({
         }
     };
 
-    // Использование единой конфигурации моделей
+    // 使用统一的模型配置
 
-    // Получение списка моделей для отображения
+    // 获取要显示的模型列表
     const pinnedModels = config?.pinned_quota_models?.models || Object.keys(MODEL_CONFIG);
 
-    // Определение отображаемых моделей на основе состояния show_all
+    // 根据 show_all 状态决定显示哪些模型
     const uniqueLabels = new Set<string>();
     const displayModels = sortModels(
         (showAllQuotas
@@ -378,8 +378,8 @@ function AccountRowContent({
 
             if (isHiddenThinking) return false;
 
-            // Дедупликация на основе меток (например, G3.1 Pro отображается только один раз)
-            // Приоритетное отображение ID с данными о квотах
+            // 基于标签去重 (例如 G3.1 Pro 只显示一次)
+            // 优先显示有配额数据的 ID
             const labelKey = `${m.label}-${m.protectedKey}`;
             if (uniqueLabels.has(labelKey)) {
                 return false;
@@ -391,7 +391,7 @@ function AccountRowContent({
             return true;
         })
     ).filter((m, index, self) => {
-        // Вторая фильтрация: гарантирует сохранение только одной копии дублирующейся метки, даже если нет данных
+        // 第二次过滤：确保即使没有数据的重复 Label 也只保留一个
         const labelKey = `${m.label}-${m.protectedKey}`;
         return self.findIndex(t => `${t.label}-${t.protectedKey}` === labelKey) === index;
     });
@@ -399,7 +399,7 @@ function AccountRowContent({
 
     return (
         <>
-            {/* Колонка email */}
+            {/* 邮箱列 */}
             <td className="px-2 py-1 align-middle">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <span className={cn(
@@ -447,7 +447,7 @@ function AccountRowContent({
                         )}
 
 
-                        {/* Бадж типа подписки */}
+                        {/* 订阅类型徽章 */}
                         {account.quota?.subscription_tier && (() => {
                             const tier = account.quota.subscription_tier.toLowerCase();
                             if (tier.includes('ultra')) {
@@ -508,14 +508,14 @@ function AccountRowContent({
                                 </span>
                             );
                         })()}
-                        {/* Пользовательская метка */}
+                        {/* 自定义标签 */}
                         {account.custom_label && !isEditingLabel && (
                             <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-bold shadow-sm border border-orange-200/50 dark:border-orange-800/50">
                                 <Tag className="w-2.5 h-2.5" />
                                 {account.custom_label}
                             </span>
                         )}
-                        {/* Поле ввода для редактирования метки */}
+                        {/* 标签编辑输入框 */}
                         {isEditingLabel && (
                             <div className="flex items-center gap-1">
                                 <input
@@ -548,7 +548,7 @@ function AccountRowContent({
                 </div>
             </td>
 
-            {/* Колонка квот моделей */}
+            {/* 模型配额列 */}
             <td className="px-2 py-1 align-middle">
                 {isDisabled || account.quota?.is_forbidden || account.validation_blocked ? (
                     <div className={cn(
@@ -601,7 +601,7 @@ function AccountRowContent({
                 )}
             </td>
 
-            {/* Колонка времени последнего использования */}
+            {/* 最后使用时间列 */}
             <td className="px-2 py-1 align-middle">
                 <div className="flex flex-col">
                     <span className="text-xs font-medium text-gray-600 dark:text-gray-400 font-mono whitespace-nowrap">
@@ -613,10 +613,10 @@ function AccountRowContent({
                 </div>
             </td>
 
-            {/* Колонка действий */}
+            {/* 操作列 */}
             <td className={cn(
                 "px-1 py-1 sticky right-0 z-10 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center align-middle",
-                // Обработка динамического фонового цвета
+                // 动态背景色处理
                 isCurrent
                     ? "bg-[#f1f6ff] dark:bg-[#1e2330]" // 接近 blue-50/50 的实色
                     : "bg-white dark:bg-base-100",
@@ -637,7 +637,7 @@ function AccountRowContent({
                     >
                         <Fingerprint className="w-3.5 h-3.5" />
                     </button>
-                    {/* Кнопка пользовательской метки */}
+                    {/* 自定义标签按钮 */}
                     {onUpdateLabel && (
                         <button
                             className={cn(
@@ -731,12 +731,12 @@ function AccountRowContent({
 }
 
 // ============================================================================
-// Главный компонент
+// 主组件
 // ============================================================================
 
 /**
- * Компонент таблицы аккаунтов
- * Поддерживает сортировку перетаскиванием, множественный выбор, массовые операции и т. д.
+ * 账号表格组件
+ * 支持拖拽排序、多选、批量操作等功能
  */
 function AccountTable({
     accounts,
@@ -761,12 +761,12 @@ function AccountTable({
     const { t } = useTranslation();
 
     const [activeId, setActiveId] = useState<string | null>(null);
-    // showAllQuotas уже деструктурирован и получен в useConfigStore
+    // showAllQuotas 已经在 useConfigStore 中解构获取
 
-    // Настройка сенсоров перетаскивания
+    // 配置拖拽传感器
     const sensors = useSensors(
         useSensor(PointerSensor, {
-            activationConstraint: { distance: 8 }, // Требуется перемещение на 8px для триггера перетаскивания
+            activationConstraint: { distance: 8 }, // 需要移动 8px 才触发拖拽
         }),
         useSensor(KeyboardSensor, {
             coordinateGetter: sortableKeyboardCoordinates,
@@ -862,7 +862,7 @@ function AccountTable({
                 </table >
             </div >
 
-            {/* Слой превью при перетаскивании */}
+            {/* 拖拽悬浮预览层 */}
             <DragOverlay>
                 {
                     activeAccount ? (
