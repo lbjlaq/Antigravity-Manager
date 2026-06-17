@@ -45,6 +45,7 @@ import {
     Bot,
     Repeat2,
     Terminal,
+    Activity,
 } from 'lucide-react';
 import { Account } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -54,6 +55,7 @@ import { useConfigStore } from '../../stores/useConfigStore';
 import { QuotaItem } from './QuotaItem';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
+import { getQuotaSummary } from '../../utils/quota';
 
 // ============================================================================
 // 类型定义
@@ -470,6 +472,33 @@ function AccountRowContent({
                                     </span>
                                 );
                             }
+                        })()}
+
+                        {(() => {
+                            const summary = getQuotaSummary(account.quota);
+                            if (!summary) return null;
+                            const { weeklyPct, fiveHourPct } = summary;
+
+                            return (
+                                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-sm border font-mono bg-blue-50/50 dark:bg-blue-900/10 border-blue-100/50 dark:border-blue-900/20 text-blue-700 dark:text-blue-300">
+                                    <Activity className="w-2.5 h-2.5" />
+                                    {weeklyPct !== null && (
+                                        <span className={cn(
+                                            weeklyPct < 20 ? "text-rose-500 font-extrabold" : weeklyPct < 50 ? "text-amber-500" : "text-emerald-500"
+                                        )}>
+                                            W:{weeklyPct}%
+                                        </span>
+                                    )}
+                                    {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
+                                    {fiveHourPct !== null && (
+                                        <span className={cn(
+                                            fiveHourPct < 20 ? "text-rose-500 font-extrabold" : fiveHourPct < 50 ? "text-amber-500" : "text-emerald-500"
+                                        )}>
+                                            5H:{fiveHourPct}%
+                                        </span>
+                                    )}
+                                </span>
+                            );
                         })()}
                         {/* 自定义标签 */}
                         {account.custom_label && !isEditingLabel && (
