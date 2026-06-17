@@ -2047,12 +2047,14 @@ impl TokenManager {
         account_id: &str,
         token_response: &crate::modules::oauth::TokenResponse,
     ) -> Result<(), String> {
-        let entry = self.tokens.get(account_id).ok_or("账号不存在")?;
-
-        let path = &entry.account_path;
+        let path = self
+            .tokens
+            .get(account_id)
+            .map(|entry| entry.account_path.clone())
+            .ok_or("账号不存在")?;
 
         let mut content: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?,
+            &std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败: {}", e))?,
         )
         .map_err(|e| format!("解析 JSON 失败: {}", e))?;
 
@@ -2075,7 +2077,7 @@ impl TokenManager {
             content["token"]["refresh_token"] = serde_json::Value::String(rt.clone());
         }
 
-        std::fs::write(path, serde_json::to_string_pretty(&content).unwrap())
+        std::fs::write(&path, serde_json::to_string_pretty(&content).unwrap())
             .map_err(|e| format!("写入文件失败: {}", e))?;
 
         // If this is the current active account, sync the refreshed token to system keyring

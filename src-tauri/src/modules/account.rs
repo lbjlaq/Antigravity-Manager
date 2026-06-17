@@ -844,7 +844,12 @@ pub fn add_account(
     save_account_index(&index)?;
 
     if current_changed {
-        let _ = synchronize_keyring(Some(&account_id));
+        if let Err(e) = synchronize_keyring(Some(&account_id)) {
+            crate::modules::logger::log_warn(&format!(
+                "[Keyring] Failed to synchronize keyring on account add: {}",
+                e
+            ));
+        }
     }
 
     Ok(account)
@@ -954,7 +959,12 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
     save_account_index(&index)?;
 
     if current_id_changed {
-        let _ = synchronize_keyring(new_current_id.as_deref());
+        if let Err(e) = synchronize_keyring(new_current_id.as_deref()) {
+            crate::modules::logger::log_warn(&format!(
+                "[Keyring] Failed to synchronize keyring on account delete: {}",
+                e
+            ));
+        }
     }
 
     // Delete account file
@@ -1014,7 +1024,12 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
     save_account_index(&index)?;
 
     if current_id_changed {
-        let _ = synchronize_keyring(index.current_account_id.as_deref());
+        if let Err(e) = synchronize_keyring(index.current_account_id.as_deref()) {
+            crate::modules::logger::log_warn(&format!(
+                "[Keyring] Failed to synchronize keyring on batch account delete: {}",
+                e
+            ));
+        }
     }
 
     Ok(())
@@ -1510,13 +1525,20 @@ pub fn set_current_account_id(account_id: &str) -> Result<(), String> {
 /// Helper to synchronize the current active account credentials with the system keyring.
 /// If `current_account_id` is provided, it writes that account's token details to the keyring.
 /// If it is `None`, it attempts to delete the credentials from the keyring.
-pub fn synchronize_keyring(current_account_id: Option<&str>) -> Result<(), String> {
-    let _ = current_account_id;
+pub fn synchronize_keyring(_current_account_id: Option<&str>) -> Result<(), String> {
     #[cfg(not(test))]
     {
-        if let Some(id) = current_account_id {
-            if let Ok(account) = load_account(id) {
-                crate::modules::integration::write_to_system_keyring(&account)?;
+        if let Some(id) = _current_account_id {
+            match load_account(id) {
+                Ok(account) => {
+                    crate::modules::integration::write_to_system_keyring(&account)?;
+                }
+                Err(e) => {
+                    crate::modules::logger::log_warn(&format!(
+                        "[Keyring] Failed to load account {} for keyring sync: {}",
+                        id, e
+                    ));
+                }
             }
         } else {
             // Remove token from keyring
@@ -1576,7 +1598,12 @@ pub fn set_current_account_id_with_target(
     save_account_index(&index)?;
 
     // Automatically synchronize system keyring
-    let _ = synchronize_keyring(Some(account_id));
+    if let Err(e) = synchronize_keyring(Some(account_id)) {
+        crate::modules::logger::log_warn(&format!(
+            "[Keyring] Failed to synchronize keyring on account switch: {}",
+            e
+        ));
+    }
     Ok(())
 }
 

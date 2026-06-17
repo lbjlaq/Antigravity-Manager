@@ -35,8 +35,6 @@ impl SystemIntegration for DesktopIntegration {
         ));
 
         if target_ide == Some("agy") {
-            write_to_system_keyring(account)?;
-
             if let Ok(storage_path) = device::get_storage_path(target_ide) {
                 if let Some(ref profile) = account.device_profile {
                     let _ = device::write_profile(&storage_path, profile);
@@ -103,9 +101,6 @@ impl SystemIntegration for DesktopIntegration {
 
         if use_keyring {
             // ================== 最新版 Antigravity 原生应用逻辑 (>= 2.0.0) ==================
-            // 2.1 写入系统 Keychain/Keyring
-            write_to_system_keyring(account)?;
-
             // 2.2 原生应用可能没有 storage.json，但如果有的话，我们也可以尝试安全地写入设备 Profile，以兼容指纹信息
             if let Ok(storage_path) = device::get_storage_path(target_ide) {
                 if let Some(ref profile) = account.device_profile {
