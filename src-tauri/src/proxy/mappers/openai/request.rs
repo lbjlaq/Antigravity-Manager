@@ -1268,8 +1268,8 @@ mod tests {
 
         assert!(has_functions, "Should contain functionDeclarations");
         assert!(
-            has_google_search,
-            "Should contain googleSearch (Gemini 2.0+ supports mixed tools)"
+            !has_google_search,
+            "function tools present: networking disabled, googleSearch must not be injected"
         );
     }
 }
