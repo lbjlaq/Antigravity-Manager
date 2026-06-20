@@ -204,6 +204,34 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
             // 0. [NEW] 合并 allOf
             merge_all_of(map);
 
+            // 0.1 [FIX] Normalize JSON Schema `const` (unsupported by Gemini's Schema
+            // proto). Otherwise a standalone node like `{ "const": false }` (common as a
+            // Zod literal in anyOf branches) is mistaken for a shorthand object further
+            // down and rewritten to `properties: { const: false }`, emitting an invalid
+            // boolean property value -> upstream 400. For a leaf node, infer the type and
+            // turn a string const into a single-value enum; `const` itself is dropped by
+            // the whitelist filter later.
+            if map.contains_key("const") {
+                let is_leaf = !map.contains_key("properties") && !map.contains_key("items");
+                if is_leaf {
+                    let c = map.get("const").cloned().unwrap_or(Value::Null);
+                    if !map.contains_key("type") {
+                        let inferred = match &c {
+                            Value::String(_) => Some("string"),
+                            Value::Bool(_) => Some("boolean"),
+                            Value::Number(n) => Some(if n.is_f64() { "number" } else { "integer" }),
+                            _ => None,
+                        };
+                        if let Some(t) = inferred {
+                            map.insert("type".to_string(), Value::String(t.to_string()));
+                        }
+                    }
+                    if let Value::String(s) = &c {
+                        map.entry("enum".to_string()).or_insert_with(|| json!([s]));
+                    }
+                }
+            }
+
             // 0.5 [NEW] 结构归一化 (Normalization)
             // 针对某些 MCP 工具（如 pencil）误用 items 定义对象属性的情况进行修复。
             // 如果 type=object 或包含 properties，但又定义了 items，Gemini 会因为 items 只能出现在 array 中而报错。
@@ -884,6 +912,57 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(req.iter().all(|r| r.as_str() != Some("forbidden")));
+    }
+    #[test]
+    fn test_const_in_anyof_does_not_emit_boolean_property() {
+        // Mirrors pi's `subagent` tool: a Zod literal `{ "const": false }` appearing as
+        // an anyOf branch. It must not be rewritten into `properties: { const: false }`.
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "acceptance": {
+                                "anyOf": [
+                                    { "type": "string" },
+                                    { "const": false },
+                                    { "type": "object", "properties": { "review": { "anyOf": [ { "const": false }, { "type": "string" } ] } } }
+                                ]
+                            }
+                        }
+                    }
+                },
+                "mode": { "const": "auto" }
+            }
+        });
+        clean_json_schema(&mut schema);
+        let s = serde_json::to_string(&schema).unwrap();
+        assert!(!s.contains("\"const\""), "const keyword must be removed: {s}");
+
+        fn has_bool_prop_value(v: &serde_json::Value) -> bool {
+            match v {
+                serde_json::Value::Object(m) => {
+                    if let Some(serde_json::Value::Object(props)) = m.get("properties") {
+                        if props.values().any(|pv| pv.is_boolean()) {
+                            return true;
+                        }
+                    }
+                    m.values().any(has_bool_prop_value)
+                }
+                serde_json::Value::Array(a) => a.iter().any(has_bool_prop_value),
+                _ => false,
+            }
+        }
+        assert!(
+            !has_bool_prop_value(&schema),
+            "no boolean property values allowed: {s}"
+        );
+
+        // string const -> single-value enum
+        assert_eq!(schema["properties"]["mode"]["enum"], json!(["auto"]));
     }
     #[test]
     fn test_clean_json_schema_draft_2020_12() {
