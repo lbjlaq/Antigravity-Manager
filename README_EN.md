@@ -290,6 +290,139 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
+### How to use with Kilo Code?
+1.  **Protocol Selection**: We recommend using the **Gemini protocol**.
+2.  **Base URL**: Set it to `http://127.0.0.1:8045`.
+3.  **Note**: 
+    - **OpenAI Protocol Limitation**: When using OpenAI mode, Kilo Code's request path will append `/v1/chat/completions/responses`, a non-standard path that will return 404 from Antigravity. Make sure to enter the Base URL and select Gemini mode.
+    - **Model Mapping**: Model names in Kilo Code may differ from Antigravity's defaults. If you encounter connection issues, set up custom mappings on the "Model Mapping" page and check the **log files** for debugging.
+
+### How to use Image Generation (Imagen 3)?
+
+#### Method 1: OpenAI Images API (Recommended)
+```python
+import openai
+
+client = openai.OpenAI(
+    api_key="***",
+    base_url="http://127.0.0.1:8045/v1"
+)
+
+# Generate image
+response = client.images.generate(
+    model="gemini-3-pro-image",
+    prompt="A futuristic cyberpunk city with neon lights",
+    size="1920x1080",      # Supports any WIDTHxHEIGHT format, auto-calculates aspect ratio
+    quality="hd",          # "standard" | "hd" | "medium"
+    n=1,
+    response_format="b64_json"
+)
+
+# Save image
+import base64
+image_data = base64.b64decode(response.data[0].b64_json)
+with open("output.png", "wb") as f:
+    f.write(image_data)
+```
+
+**Supported parameters**：
+- **`size`**: Any `WIDTHxHEIGHT` format (e.g. `1280x720`, `1024x1024`, `1920x1080`), auto-calculates and maps to standard aspect ratios (21:9, 16:9, 9:16, 4:3, 3:4, 1:1)
+- **`quality`**: 
+  - `"hd"` → 4K resolution (high quality)
+  - `"medium"` → 2K resolution (medium quality)
+  - `"standard"` → Default resolution (standard quality)
+- **`n`**: Number of images to generate (1-10)
+- **`response_format`**: `"b64_json"` or `"url"` (Data URI)
+
+#### Method 2: Chat API + Parameters (✨ New)
+
+**All protocols** (OpenAI, Claude) Chat APIs now support direct `size` and `quality` parameters:
+
+```python
+# OpenAI Chat API
+response = client.chat.completions.create(
+    model="gemini-3-pro-image",
+    size="1920x1080",      # ✅ Supports any WIDTHxHEIGHT format
+    quality="hd",          # ✅ "standard" | "hd" | "medium"
+    messages=[{"role": "user", "content": "A futuristic city"}]
+)
+```
+
+```bash
+# Claude Messages API
+curl -X POST http://127.0.0.1:8045/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: ***" \
+  -d '{
+    "model": "gemini-3-pro-image",
+    "size": "1280x720",
+    "quality": "hd",
+    "messages": [{"role": "user", "content": "A cute cat"}]
+  }'
+```
+
+**Parameter priority**: `imageSize` parameter > `quality` parameter > model suffix
+
+**✨ New `imageSize` parameter support**:
+
+In addition to the `quality` parameter, you can now also use Gemini's native `imageSize` parameter:
+
+```python
+# Using imageSize parameter (highest priority)
+response = client.chat.completions.create(
+    model="gemini-3-pro-image",
+    size="16:9",           # Aspect ratio
+    imageSize="4K",        # ✨ Direct resolution: "1K" | "2K" | "4K"
+    messages=[{"role": "user", "content": "A futuristic city"}]
+)
+```
+
+```bash
+# Claude Messages API also supports imageSize
+curl -X POST http://127.0.0.1:8045/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: ***" \
+  -d '{
+    "model": "gemini-3-pro-image",
+    "size": "1280x720",
+    "imageSize": "4K",
+    "messages": [{"role": "user", "content": "A cute cat"}]
+  }'
+```
+
+**Parameter descriptions**:
+- **`imageSize`**: Direct resolution specification (`"1K"` / `"2K"` / `"4K"`)
+- **`quality`**: Infers resolution from quality level (`"standard"` → 1K, `"medium"` → 2K, `"hd"` → 4K)
+- **Priority**: If both `imageSize` and `quality` are specified, the system prioritizes `imageSize`
+
+#### Method 3: Chat API + Model Suffix
+```python
+response = client.chat.completions.create(
+    model="gemini-3-pro-image-16-9-4k",  # Format: gemini-3-pro-image-[ratio]-[quality]
+    messages=[{"role": "user", "content": "A futuristic city"}]
+)
+```
+
+**Model suffix explanation**：
+- **Aspect ratio**: `-16-9`, `-9-16`, `-4-3`, `-3-4`, `-21-9`, `-1-1`
+- **Quality**: `-4k` (4K), `-2k` (2K), no suffix (standard)
+- **Example**: `gemini-3-pro-image-16-9-4k` → 16:9 ratio + 4K resolution
+
+#### Method 4: Cherry Studio & Other Client Settings
+In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure image generation parameters via the **Model Settings** page:
+
+1. **Enter Model Settings**: Select the `gemini-3-pro-image` model
+2. **Configure Parameters**:
+   - **Size**: Enter any `WIDTHxHEIGHT` format (e.g. `1920x1080`, `1024x1024`)
+   - **Quality**: Choose `standard` / `hd` / `medium`
+   - **Number**: Set the number of images (1-10)
+3. **Send Request**: Simply type your image description in the chat dialog
+
+**Parameter mapping rules**：
+- `size: "1920x1080"` → Auto-calculated as `16:9` aspect ratio
+- `quality: "hd"` → Mapped to `4K` resolution
+- `quality: "medium"` → Mapped to `2K` resolution
+
 ## 📝 Developer & Community
 
 *   **Changelog**:
@@ -381,6 +514,9 @@ print(response.choices[0].message.content)
         -   **[Proxy Fix] Resolve 400 Errors with Gemini v1internal Protocol (PR #2356)**:
             -   **Conflict Avoidance**: Resolved the limitation where the `v1internal` protocol did not support simultaneous use of `googleSearch` and `functionDeclarations`.
             -   **Intelligent Injection**: The proxy now automatically skips Google Search tool injection when the request contains function definitions, ensuring request success.
+        -   **[Proxy Fix] Standardize Gemini SSE Error Format, Prevent IDE Crashes (Issue #2371)**:
+            -   **Format Standardization**: Wrapped Gemini handler streaming error output into standard OpenAI `choices` format, completely resolving IDE parser `TypeError`-induced UI freezing.
+            -   **Connection Self-healing**: Added standard `data: [DONE]` terminator to SSE streams and optimized error-state storage path detection logic.
     *   **v4.1.30 (2026-03-15)**:
         -   **[Core Optimization] Implementation of multi-level fallback mechanism for fetchAvailableModels (PR #2329)**:
             -   **Endpoint Fallback Strategy**: Introduced an automatic Sandbox -> Daily -> Prod endpoint fallback mechanism for the `fetchAvailableModels` API. When requests encounter `429 (Too Many Requests)` or `5xx` server errors, the system automatically and smoothly switches to alternative endpoints, significantly improving the stability of quota refreshes and model list retrieval.
@@ -2347,6 +2483,13 @@ print(response.choices[0].message.content)
 <a href="https://github.com/Jint8888"><img src="https://github.com/Jint8888.png" width="50px" style="border-radius: 50%;" alt="Jint8888"/></a>
 <a href="https://github.com/0-don"><img src="https://github.com/0-don.png" width="50px" style="border-radius: 50%;" alt="0-don"/></a>
 <a href="https://github.com/dlukt"><img src="https://github.com/dlukt.png" width="50px" style="border-radius: 50%;" alt="dlukt"/></a>
+<a href="https://github.com/Silviovespoli"><img src="https://github.com/Silviovespoli.png" width="50px" style="border-radius: 50%;" alt="Silviovespoli"/></a>
+<a href="https://github.com/i-smile"><img src="https://github.com/i-smile.png" width="50px" style="border-radius: 50%;" alt="i-smile"/></a>
+<a href="https://github.com/jalen0x"><img src="https://github.com/jalen0x.png" width="50px" style="border-radius: 50%;" alt="jalen0x"/></a>
+<a href="https://linux.do/u/wendavid"><img src="https://linux.do/user_avatar/linux.do/wendavid/48/122218_2.png" width="50px" style="border-radius: 50%;" alt="wendavid"/></a>
+<a href="https://github.com/byte-sunlight"><img src="https://github.com/byte-sunlight.png" width="50px" style="border-radius: 50%;" alt="byte-sunlight"/></a>
+<a href="https://github.com/jlcodes99"><img src="https://github.com/jlcodes99.png" width="50px" style="border-radius: 50%;" alt="jlcodes99"/></a>
+<a href="https://github.com/Vucius"><img src="https://github.com/Vucius.png" width="50px" style="border-radius: 50%;" alt="Vucius"/></a>
 <a href="https://github.com/Koshikai"><img src="https://github.com/Koshikai.png" width="50px" style="border-radius: 50%;" alt="Koshikai"/></a>
 <a href="https://github.com/hakanyalitekin"><img src="https://github.com/hakanyalitekin.png" width="50px" style="border-radius: 50%;" alt="hakanyalitekin"/></a>
 <a href="https://github.com/Gok-tug"><img src="https://github.com/Gok-tug.png" width="50px" style="border-radius: 50%;" alt="Gok-tug"/></a>
@@ -2363,6 +2506,7 @@ This project has referenced or learned from the ideas or code of the following e
 *   [antigravity-claude-proxy](https://github.com/badrisnarayanan/antigravity-claude-proxy)
 *   [aistudio-gemini-proxy](https://github.com/zhongruichen/aistudio-gemini-proxy)
 *   [gcli2api](https://github.com/su-kaka/gcli2api)
+*   [agent-vibes](https://github.com/funny-vibes/agent-vibes)
 
 *   **License**: **CC BY-NC-SA 4.0**. Strictly for non-commercial use.
 *   **Security**: All account data is encrypted and stored locally in a SQLite database. Data never leaves your device unless sync is enabled.
@@ -2371,5 +2515,5 @@ This project has referenced or learned from the ideas or code of the following e
 
 <div align="center">
   <p>If you find this tool helpful, please give it a ⭐️ on GitHub!</p>
-  <p>Copyright © 2025 Antigravity Team.</p>
+  <p>Copyright © 2024-2026 Antigravity Team.</p>
 </div>
