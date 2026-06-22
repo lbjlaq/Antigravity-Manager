@@ -119,6 +119,10 @@
         }
     },
     "accounts": {
+        "quota": {
+            "weekly_abbr": "W:",
+            "five_hour_abbr": "5H:"
+        },
         "account": "Account",
         "search_placeholder": "Search email...",
         "all": "All",

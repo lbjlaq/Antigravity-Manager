@@ -1,6 +1,7 @@
-import { CheckCircle, Mail, Diamond, Gem, Circle, Tag, Lock } from 'lucide-react';
+import { CheckCircle, Mail, Diamond, Gem, Circle, Tag, Lock, Activity } from 'lucide-react';
 import { Account } from '../../types/account';
 import { formatTimeRemaining } from '../../utils/format';
+import { getQuotaSummary } from '../../utils/quota';
 
 interface CurrentAccountProps {
     account: Account | null;
@@ -84,6 +85,33 @@ function CurrentAccount({ account, onSwitch }: CurrentAccountProps) {
                                 </span>
                             );
                         }
+                    })()}
+                    {/* Quota summary badge */}
+                    {(() => {
+                        const summary = getQuotaSummary(account.quota);
+                        if (!summary) return null;
+                        const { weeklyPct, fiveHourPct } = summary;
+
+                        return (
+                            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-sm border font-mono bg-blue-50/50 dark:bg-blue-900/10 border-blue-100/50 dark:border-blue-900/20 text-blue-700 dark:text-blue-300 shrink-0">
+                                <Activity className="w-2.5 h-2.5" />
+                                {weeklyPct !== null && (
+                                    <span className={
+                                        weeklyPct < 20 ? "text-rose-500 dark:text-rose-400 font-extrabold" : weeklyPct < 50 ? "text-amber-500 dark:text-amber-400" : "text-emerald-500 dark:text-emerald-400"
+                                    }>
+                                        {t('accounts.quota.weekly_abbr', 'W:')}{weeklyPct}%
+                                    </span>
+                                )}
+                                {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
+                                {fiveHourPct !== null && (
+                                    <span className={
+                                        fiveHourPct < 20 ? "text-rose-500 dark:text-rose-400 font-extrabold" : fiveHourPct < 50 ? "text-amber-500 dark:text-amber-400" : "text-emerald-500 dark:text-emerald-400"
+                                    }>
+                                        {t('accounts.quota.five_hour_abbr', '5H:')}{fiveHourPct}%
+                                    </span>
+                                )}
+                            </span>
+                        );
                     })()}
                     {/* 自定义标签 */}
                     {account.custom_label && (

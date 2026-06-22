@@ -1,8 +1,9 @@
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Fingerprint } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Fingerprint, Activity } from 'lucide-react';
 import { Account } from '../../types/account';
 import { getQuotaColor, formatTimeRemaining, getTimeRemainingColor } from '../../utils/format';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
+import { getQuotaSummary } from '../../utils/quota';
 
 interface AccountRowProps {
     account: Account;
@@ -153,6 +154,41 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                                     </span>
                                 );
                             }
+                        })()}
+
+                        {(() => {
+                            const summary = getQuotaSummary(account.quota);
+                            if (!summary) return null;
+                            const { weeklyPct, fiveHourPct } = summary;
+
+                            return (
+                                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-sm border font-mono bg-blue-50/50 dark:bg-blue-900/10 border-blue-100/50 dark:border-blue-900/20 text-blue-700 dark:text-blue-300">
+                                    <Activity className="w-2.5 h-2.5" />
+                                    {weeklyPct !== null && (
+                                        <span className={
+                                            weeklyPct < 20
+                                                ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                : weeklyPct < 50
+                                                    ? "text-amber-500 dark:text-amber-400"
+                                                    : "text-emerald-500 dark:text-emerald-400"
+                                        }>
+                                            {t('accounts.quota.weekly_abbr', 'W:')}{weeklyPct}%
+                                        </span>
+                                    )}
+                                    {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
+                                    {fiveHourPct !== null && (
+                                        <span className={
+                                            fiveHourPct < 20
+                                                ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                : fiveHourPct < 50
+                                                    ? "text-amber-500 dark:text-amber-400"
+                                                    : "text-emerald-500 dark:text-emerald-400"
+                                        }>
+                                            {t('accounts.quota.five_hour_abbr', '5H:')}{fiveHourPct}%
+                                        </span>
+                                    )}
+                                </span>
+                            );
                         })()}
                     </div>
                 </div>
@@ -319,13 +355,13 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                         title={t('common.details')}
                     >
                         <Info className="w-3.5 h-3.5" />
-                        <button
-                            className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-all"
-                            onClick={(e) => { e.stopPropagation(); onViewDevice(); }}
-                            title={t('accounts.device_fingerprint')}
-                        >
-                            <Fingerprint className="w-3.5 h-3.5" />
-                        </button>
+                    </button>
+                    <button
+                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-all"
+                        onClick={(e) => { e.stopPropagation(); onViewDevice(); }}
+                        title={t('accounts.device_fingerprint')}
+                    >
+                        <Fingerprint className="w-3.5 h-3.5" />
                     </button>
                     <button
                         className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}

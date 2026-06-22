@@ -1,6 +1,6 @@
 /**
- * 账号表格组件
- * 支持拖拽排序功能，用户可以通过拖拽行来调整账号顺序
+ * Компонент таблицы аккаунтов
+ * Поддерживает функцию drag-and-drop сортировки, пользователи могут изменять порядок аккаунтов перетаскиванием строк
  */
 import { useMemo, useState } from 'react';
 import {
@@ -45,6 +45,7 @@ import {
     Bot,
     Repeat2,
     Terminal,
+    Activity,
 } from 'lucide-react';
 import { Account } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -54,9 +55,10 @@ import { useConfigStore } from '../../stores/useConfigStore';
 import { QuotaItem } from './QuotaItem';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
+import { getQuotaSummary } from '../../utils/quota';
 
 // ============================================================================
-// 类型定义
+// Определение типов
 // ============================================================================
 
 interface AccountTableProps {
@@ -76,7 +78,7 @@ interface AccountTableProps {
     onToggleProxy: (accountId: string) => void;
     onWarmup?: (accountId: string) => void;
     onUpdateLabel?: (accountId: string, label: string) => void;
-    /** 拖拽排序回调，当用户完成拖拽时触发 */
+    /** Коллбек сортировки перетаскиванием, срабатывает при завершении перетаскивания пользователем */
     onReorder?: (accountIds: string[]) => void;
     onViewError: (accountId: string) => void;
 }
@@ -120,13 +122,13 @@ interface AccountRowContentProps {
 }
 
 // ============================================================================
-// 辅助函数
+// Вспомогательные функции
 // ============================================================================
 
 
 
 // ============================================================================
-// 模型分组配置
+// Конфигурация группировки моделей
 // ============================================================================
 
 const MODEL_GROUPS = {
@@ -189,17 +191,17 @@ function isModelProtected(protectedModels: string[] | undefined, modelName: stri
         return isGroupProtected(MODEL_GROUPS.GEMINI_FLASH);
     }
 
-    // 兜底直接检查 (Strict check for exact match or normalized ID)
+    // Прямая проверка по умолчанию (Strict check for exact match or normalized ID)
     return protectedModels.includes(lowerName);
 }
 
 // ============================================================================
-// 子组件
+// Дочерние компоненты
 // ============================================================================
 
 /**
- * 可拖拽的表格行组件
- * 使用 @dnd-kit/sortable 实现拖拽功能
+ * Компонент перетаскиваемой строки таблицы
+ * Использует @dnd-kit/sortable для реализации функции перетаскивания
  */
 function SortableAccountRow({
     account,
@@ -248,7 +250,7 @@ function SortableAccountRow({
                 !isDragging && "hover:bg-gray-50 dark:hover:bg-base-200"
             )}
         >
-            {/* 拖拽手柄 */}
+            {/* Ручка перетаскивания */}
             <td className="pl-2 py-1 w-8 align-middle">
                 <div
                     {...attributes}
@@ -259,7 +261,7 @@ function SortableAccountRow({
                     <GripVertical className="w-4 h-4" />
                 </div>
             </td>
-            {/* 复选框 */}
+            {/* Чекбокс */}
             <td className="px-2 py-1 w-10 align-middle">
                 <input
                     type="checkbox"
@@ -291,8 +293,8 @@ function SortableAccountRow({
 }
 
 /**
- * 账号行内容组件
- * 渲染邮箱、配额、最后使用时间和操作按钮等列
+ * Компонент содержимого строки аккаунта
+ * Рендерит колонки email, квот, времени последнего использования и кнопок действий
  */
 function AccountRowContent({
     account,
@@ -371,7 +373,7 @@ function AccountRowContent({
                 };
             }).filter(Boolean) as any[]
         ).filter(m => {
-            // 过滤特定的 Claude/Gemini 思考变体 (在列表页隐藏)
+            // Фильтрация специфических вариантов рассуждений Claude/Gemini (скрыты на странице списка)
             const isHiddenThinking = m.id.includes('thinking');
 
             if (isHiddenThinking) return false;
@@ -470,6 +472,41 @@ function AccountRowContent({
                                     </span>
                                 );
                             }
+                        })()}
+
+                        {(() => {
+                            const summary = getQuotaSummary(account.quota);
+                            if (!summary) return null;
+                            const { weeklyPct, fiveHourPct } = summary;
+
+                            return (
+                                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-bold shadow-sm border font-mono bg-blue-50/50 dark:bg-blue-900/10 border-blue-100/50 dark:border-blue-900/20 text-blue-700 dark:text-blue-300">
+                                    <Activity className="w-2.5 h-2.5" />
+                                    {weeklyPct !== null && (
+                                        <span className={
+                                            weeklyPct < 20
+                                                ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                : weeklyPct < 50
+                                                    ? "text-amber-500 dark:text-amber-400"
+                                                    : "text-emerald-500 dark:text-emerald-400"
+                                        }>
+                                            {t('accounts.quota.weekly_abbr', 'W:')}{weeklyPct}%
+                                        </span>
+                                    )}
+                                    {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
+                                    {fiveHourPct !== null && (
+                                        <span className={
+                                            fiveHourPct < 20
+                                                ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                : fiveHourPct < 50
+                                                    ? "text-amber-500 dark:text-amber-400"
+                                                    : "text-emerald-500 dark:text-emerald-400"
+                                        }>
+                                            {t('accounts.quota.five_hour_abbr', '5H:')}{fiveHourPct}%
+                                        </span>
+                                    )}
+                                </span>
+                            );
                         })()}
                         {/* 自定义标签 */}
                         {account.custom_label && !isEditingLabel && (

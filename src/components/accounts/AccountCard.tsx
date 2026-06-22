@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot, Repeat2, Terminal } from 'lucide-react';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot, Repeat2, Terminal, Activity } from 'lucide-react';
 import { Account } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -7,6 +7,7 @@ import { useConfigStore } from '../../stores/useConfigStore';
 import { QuotaItem } from './QuotaItem';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
+import { getQuotaSummary } from '../../utils/quota';
 
 interface AccountCardProps {
     account: Account;
@@ -74,8 +75,8 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
 
         // Get all models from account (source of truth)
         const accountModels = account.quota?.models?.map(m => {
-            // 注意：DEFAULT_MODELS 现在应该包含 shortLabel，我们需要确保它被正确映射
-            // 但 DEFAULT_MODELS 是从 MODEL_CONFIG 生成的，我们需要确保它包含 shortLabel
+            // 注意：DEFAULT_MODELS 现在应该包含 shortLabel，我们需要确保 it 被正确映射
+            // 但 DEFAULT_MODELS 是从 MODEL_CONFIG 生成的，我们需要确保 it 包含 shortLabel
             // 这里为了安全，直接从 MODEL_CONFIG 获取
             const fullConfig = MODEL_CONFIG[m.name.toLowerCase()];
             return {
@@ -197,6 +198,41 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                                         </span>
                                     );
                                 }
+                            })()}
+                            {/* Quota summary badge */}
+                            {(() => {
+                                const summary = getQuotaSummary(account.quota);
+                                if (!summary) return null;
+                                const { weeklyPct, fiveHourPct } = summary;
+
+                                return (
+                                    <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-bold shadow-sm border font-mono bg-blue-50/50 dark:bg-blue-900/10 border-blue-100/50 dark:border-blue-900/20 text-blue-700 dark:text-blue-300">
+                                        <Activity className="w-2 h-2 shrink-0" />
+                                        {weeklyPct !== null && (
+                                            <span className={
+                                                weeklyPct < 20
+                                                    ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                    : weeklyPct < 50
+                                                        ? "text-amber-500 dark:text-amber-400"
+                                                        : "text-emerald-500 dark:text-emerald-400"
+                                            }>
+                                                {t('accounts.quota.weekly_abbr', 'W:')}{weeklyPct}%
+                                            </span>
+                                        )}
+                                        {weeklyPct !== null && fiveHourPct !== null && <span className="opacity-40">|</span>}
+                                        {fiveHourPct !== null && (
+                                            <span className={
+                                                fiveHourPct < 20
+                                                    ? "text-rose-500 dark:text-rose-400 font-extrabold"
+                                                    : fiveHourPct < 50
+                                                        ? "text-amber-500 dark:text-amber-400"
+                                                        : "text-emerald-500 dark:text-emerald-400"
+                                            }>
+                                                {t('accounts.quota.five_hour_abbr', '5H:')}{fiveHourPct}%
+                                            </span>
+                                        )}
+                                    </span>
+                                );
                             })()}
                             {/* 自定义标签 */}
                             {account.custom_label && (
