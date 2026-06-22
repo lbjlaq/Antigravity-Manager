@@ -1049,7 +1049,7 @@
         "error_invalid_key": "密碼或 API Key 錯誤，請重試",
         "error_network": "網路連線失敗，請檢查服務是否正常運行",
         "note": "注意：如果設置了獨立的管理密碼，請輸入管理密碼；否則請輸入 API_KEY。",
-        "lookup_hint": "如果您忘記了，請運行 docker logs antigravity-manager 尋找 Current API Key 或 Web UI Password",
+        "lookup_hint": "請查看 gui_config.json 或檢查環境變數以取得它們。",
         "config_hint": "或執行 grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json 查看。"
     },
     "token_stats": {

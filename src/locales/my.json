@@ -1012,7 +1012,7 @@
         "placeholder": "Masukkan kata laluan pengurusan atau Kunci API",
         "btn_login": "Sahkan dan Masuk",
         "note": "Nota: Jika kata laluan pengurusan berasingan ditetapkan, sila masukkan; jika tidak, masukkan API_KEY.",
-        "lookup_hint": "Jika terlupa, jalankan docker logs antigravity-manager untuk mencari Current API Key atau Web UI Password",
+        "lookup_hint": "View gui_config.json or check environment variables to find them.",
         "config_hint": "Atau jalankan grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json untuk melihat."
     },
     "token_stats": {

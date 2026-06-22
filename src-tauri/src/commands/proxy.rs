@@ -412,13 +412,15 @@ pub async fn get_proxy_logs_count() -> Result<u64, String> {
 /// 导出所有日志到指定文件
 #[tauri::command]
 pub async fn export_proxy_logs(file_path: String) -> Result<usize, String> {
+    let validated_path = super::validate_user_json_path(&file_path, false)?;
+
     let logs = crate::modules::proxy_db::get_all_logs_for_export()?;
     let count = logs.len();
 
     let json = serde_json::to_string_pretty(&logs)
         .map_err(|e| format!("Failed to serialize logs: {}", e))?;
 
-    std::fs::write(&file_path, json).map_err(|e| format!("Failed to write file: {}", e))?;
+    std::fs::write(&validated_path, json).map_err(|e| format!("Failed to write file: {}", e))?;
 
     Ok(count)
 }
@@ -426,6 +428,8 @@ pub async fn export_proxy_logs(file_path: String) -> Result<usize, String> {
 /// 导出指定的日志JSON到文件
 #[tauri::command]
 pub async fn export_proxy_logs_json(file_path: String, json_data: String) -> Result<usize, String> {
+    let validated_path = super::validate_user_json_path(&file_path, false)?;
+
     // Parse to count items
     let logs: Vec<serde_json::Value> =
         serde_json::from_str(&json_data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
@@ -435,7 +439,8 @@ pub async fn export_proxy_logs_json(file_path: String, json_data: String) -> Res
     let pretty_json =
         serde_json::to_string_pretty(&logs).map_err(|e| format!("Failed to serialize: {}", e))?;
 
-    std::fs::write(&file_path, pretty_json).map_err(|e| format!("Failed to write file: {}", e))?;
+    std::fs::write(&validated_path, pretty_json)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
 
     Ok(count)
 }

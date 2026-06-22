@@ -1016,7 +1016,7 @@
         "placeholder": "Введите пароль администратора или ключ API",
         "btn_login": "Проверить и войти",
         "note": "Примечание: если установлен отдельный пароль управления, введите его; в противном случае введите API_KEY.",
-        "lookup_hint": "Если вы забыли, запустите docker logs antigravity-manager, чтобы найти текущий ключ API или пароль Web UI.",
+        "lookup_hint": "View gui_config.json or check environment variables to find them.",
         "config_hint": "Или выполните grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json для просмотра."
     },
     "token_stats": {

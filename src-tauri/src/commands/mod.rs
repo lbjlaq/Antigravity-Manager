@@ -654,7 +654,7 @@ fn is_sensitive_path(path: &Path) -> bool {
         .any(|prefix| lower == *prefix || lower.starts_with(prefix))
 }
 
-fn validate_user_json_path(path: &str, must_exist: bool) -> Result<PathBuf, String> {
+pub(crate) fn validate_user_json_path(path: &str, must_exist: bool) -> Result<PathBuf, String> {
     let requested = PathBuf::from(path);
     if requested.as_os_str().is_empty() {
         return Err("invalid_path: empty path".to_string());

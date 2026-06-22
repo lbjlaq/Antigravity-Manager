@@ -990,7 +990,7 @@
         "placeholder": "Yönetici parolasını veya API Anahtarını girin",
         "btn_login": "Doğrula ve Gir",
         "note": "Not: Ayarlanmış ayrı bir yönetici parolası varsa, lütfen onu girin; aksi takdirde API_KEY girin.",
-        "lookup_hint": "Unuttuysanız, Mevcut API Anahtarını veya Web Kullanıcı Arayüzü Parolasını bulmak için docker logs antigravity-manager komutunu çalıştırın.",
+        "lookup_hint": "View gui_config.json or check environment variables to find them.",
         "config_hint": "Veya görüntülemek için grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json komutunu çalıştırın."
     },
     "token_stats": {

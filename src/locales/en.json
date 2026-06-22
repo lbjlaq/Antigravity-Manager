@@ -1224,7 +1224,7 @@
         "error_invalid_key": "Invalid password or API Key, please try again",
         "error_network": "Network connection failed, please check if the service is running",
         "note": "Note: If a separate management password is set, please enter it; otherwise, enter API_KEY.",
-        "lookup_hint": "If forgotten, run docker logs antigravity-manager to find Current API Key or Web UI Password",
+        "lookup_hint": "View gui_config.json or check environment variables to find them.",
         "config_hint": "Or run grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json to view."
     },
     "token_stats": {
