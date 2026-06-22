@@ -307,6 +307,7 @@ fn reorder_gemini_parts(parts: &mut Vec<Value>) {
     }
 
     let mut thinking_parts = Vec::new();
+    let mut function_response_parts = Vec::new();
     let mut text_parts = Vec::new();
     let mut tool_parts = Vec::new();
     let mut other_parts = Vec::new();
@@ -314,6 +315,8 @@ fn reorder_gemini_parts(parts: &mut Vec<Value>) {
     for part in parts.drain(..) {
         if part.get("thought").and_then(|t| t.as_bool()) == Some(true) {
             thinking_parts.push(part);
+        } else if part.get("functionResponse").is_some() {
+            function_response_parts.push(part);
         } else if part.get("functionCall").is_some() {
             tool_parts.push(part);
         } else if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
@@ -327,9 +330,37 @@ fn reorder_gemini_parts(parts: &mut Vec<Value>) {
     }
 
     parts.extend(thinking_parts);
+    parts.extend(function_response_parts);
     parts.extend(text_parts);
     parts.extend(other_parts);
     parts.extend(tool_parts);
+}
+
+/// Keep tool responses contiguous at the start of a user turn.
+///
+/// Anthropic/Gemini tool protocols both require the user message following
+/// parallel tool calls to begin with all corresponding tool results. Images
+/// extracted from tool_result content are appended afterwards as normal input
+/// parts; interleaving them between functionResponse parts makes the upstream
+/// validator treat only the first tool result as present.
+fn reorder_user_tool_response_parts(parts: &mut Vec<Value>) {
+    if parts.len() <= 1 || !parts.iter().any(|p| p.get("functionResponse").is_some()) {
+        return;
+    }
+
+    let mut function_response_parts = Vec::new();
+    let mut other_parts = Vec::new();
+
+    for part in parts.drain(..) {
+        if part.get("functionResponse").is_some() {
+            function_response_parts.push(part);
+        } else {
+            other_parts.push(part);
+        }
+    }
+
+    parts.extend(function_response_parts);
+    parts.extend(other_parts);
 }
 
 pub fn transform_claude_request_in(
@@ -1403,8 +1434,7 @@ fn build_contents(
 
         if !missing_ids.is_empty() {
             tracing::warn!("[Elastic-Recovery] Injecting {} missing tool results into User message (IDs: {:?})", missing_ids.len(), missing_ids);
-            for id in missing_ids.iter().rev() {
-                // Insert in reverse order to maintain order at index 0? No, just insert at 0.
+            for id in &missing_ids {
                 let name = tool_id_to_name.get(id).cloned().unwrap_or(id.clone());
                 let synthetic_part = json!({
                     "functionResponse": {
@@ -1415,12 +1445,15 @@ fn build_contents(
                         "id": id
                     }
                 });
-                // Prepend to ensure they are present before any text
-                parts.insert(0, synthetic_part);
+                parts.push(synthetic_part);
             }
         }
         // All pending IDs are now handled (either present or injected)
         pending_tool_use_ids.clear();
+    }
+
+    if !is_assistant {
+        reorder_user_tool_response_parts(&mut parts);
     }
 
     // Fix for "Thinking enabled, assistant message must start with thinking block" 400 error
@@ -2279,6 +2312,109 @@ mod tests {
         assert!(resp_text.contains("file1.txt"));
         assert!(resp_text.contains("file2.txt"));
         assert!(resp_text.contains("\n"));
+    }
+
+    #[test]
+    fn test_parallel_tool_results_with_images_stay_contiguous() {
+        let tool_use = |id: &str| ContentBlock::ToolUse {
+            id: id.to_string(),
+            name: "read".to_string(),
+            input: json!({"path": format!("/tmp/{}.png", id)}),
+            signature: None,
+            cache_control: None,
+        };
+
+        let tool_result = |id: &str| ContentBlock::ToolResult {
+            tool_use_id: id.to_string(),
+            content: json!([
+                {"type": "text", "text": format!("{} text result", id)},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": format!("{}_base64", id)
+                    }
+                }
+            ]),
+            is_error: Some(false),
+        };
+
+        let req = ClaudeRequest {
+            model: "claude-opus-4-6-thinking".to_string(),
+            messages: vec![
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::String("Read all screenshots".to_string()),
+                },
+                Message {
+                    role: "assistant".to_string(),
+                    content: MessageContent::Array(vec![
+                        ContentBlock::Text {
+                            text: "Reading images.".to_string(),
+                        },
+                        tool_use("call_a"),
+                        tool_use("call_b"),
+                        tool_use("call_c"),
+                    ]),
+                },
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Array(vec![
+                        tool_result("call_a"),
+                        tool_result("call_b"),
+                        tool_result("call_c"),
+                    ]),
+                },
+            ],
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+            output_config: None,
+            size: None,
+            quality: None,
+        };
+
+        let body =
+            transform_claude_request_in(&req, "test-project", false, None, "test_session", None)
+                .expect("parallel tool results with images should transform");
+        let contents = body["request"]["contents"].as_array().unwrap();
+        let tool_result_msg = contents
+            .iter()
+            .find(|msg| {
+                msg["role"] == "user"
+                    && msg["parts"]
+                        .as_array()
+                        .map(|parts| parts.iter().any(|p| p.get("functionResponse").is_some()))
+                        .unwrap_or(false)
+            })
+            .expect("tool result user message should exist");
+        let parts = tool_result_msg["parts"].as_array().unwrap();
+
+        let response_ids: Vec<&str> = parts
+            .iter()
+            .filter_map(|p| p["functionResponse"]["id"].as_str())
+            .collect();
+        assert_eq!(response_ids, vec!["call_a", "call_b", "call_c"]);
+
+        for (idx, expected_id) in ["call_a", "call_b", "call_c"].iter().enumerate() {
+            assert!(
+                parts[idx].get("functionResponse").is_some(),
+                "functionResponse parts must be contiguous before images"
+            );
+            assert_eq!(parts[idx]["functionResponse"]["id"], *expected_id);
+        }
+
+        assert!(
+            parts[3..].iter().all(|p| p.get("inlineData").is_some()),
+            "tool_result images should be appended after all function responses"
+        );
     }
 
     #[test]
