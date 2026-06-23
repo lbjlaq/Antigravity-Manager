@@ -319,7 +319,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
 
                 // 防抖:每 500ms 批量更新一次
                 if (updateTimeout) clearTimeout(updateTimeout);
-                updateTimeout = setTimeout(async () => {
+                updateTimeout = window.setTimeout(async () => {
                     if (!isMountedRef.current) return;
 
                     const currentPending = pendingLogsRef.current;
