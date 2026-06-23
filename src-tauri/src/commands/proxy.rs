@@ -23,6 +23,7 @@ pub struct ProxyServiceState {
     pub monitor: Arc<RwLock<Option<Arc<ProxyMonitor>>>>,
     pub admin_server: Arc<RwLock<Option<AdminServerInstance>>>, // [NEW] 常驻管理服务器
     pub starting: Arc<AtomicBool>, // [NEW] 标识是否正在启动中，防止死锁
+    pub codex: Arc<crate::proxy::CodexRuntimeManager>,
 }
 
 pub struct AdminServerInstance {
@@ -47,6 +48,7 @@ impl ProxyServiceState {
             monitor: Arc::new(RwLock::new(None)),
             admin_server: Arc::new(RwLock::new(None)),
             starting: Arc::new(AtomicBool::new(false)),
+            codex: Arc::new(crate::proxy::CodexRuntimeManager::new()),
         }
     }
 }
@@ -121,6 +123,7 @@ pub async fn internal_start_proxy_service(
     }
 
     let _monitor = state.monitor.read().await.as_ref().unwrap().clone();
+    state.codex.apply_config(config.codex.clone()).await?;
 
     // 檢查並啟動管理服務器（如果尚未運行）
     ensure_admin_server(
@@ -239,6 +242,7 @@ pub async fn ensure_admin_server(
     let token_manager = Arc::new(TokenManager::new(app_data_dir));
     // [NEW] 加载账号数据，否则管理界面统计为 0
     let _ = token_manager.load_accounts().await;
+    state.codex.apply_config(config.codex.clone()).await?;
 
     let (axum_server, server_handle) = match crate::proxy::AxumServer::start(
         config.get_bind_address().to_string(),
@@ -250,6 +254,7 @@ pub async fn ensure_admin_server(
         config.user_agent_override.clone(),
         crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
         config.zai.clone(),
+        state.codex.clone(),
         monitor,
         config.experimental.clone(),
         config.debug_logging.clone(),
@@ -629,6 +634,49 @@ pub async fn fetch_zai_models(
     models.sort();
     models.dedup();
     Ok(models)
+}
+
+#[tauri::command]
+pub async fn get_codex_provider_status(
+    state: State<'_, ProxyServiceState>,
+) -> Result<crate::proxy::CodexProviderStatus, String> {
+    state.codex.refresh_status().await
+}
+
+#[tauri::command]
+pub async fn refresh_codex_models(
+    state: State<'_, ProxyServiceState>,
+) -> Result<Vec<String>, String> {
+    state.codex.refresh_models().await
+}
+
+#[tauri::command]
+pub async fn start_codex_provider(
+    state: State<'_, ProxyServiceState>,
+) -> Result<crate::proxy::CodexProviderStatus, String> {
+    let config = crate::modules::config::load_app_config()
+        .map_err(|e| format!("加载配置失败: {}", e))?;
+    state.codex.apply_config(config.proxy.codex.clone()).await?;
+    state.codex.refresh_status().await
+}
+
+#[tauri::command]
+pub async fn stop_codex_provider(
+    state: State<'_, ProxyServiceState>,
+) -> Result<crate::proxy::CodexProviderStatus, String> {
+    state.codex.shutdown().await;
+    state.codex.refresh_status().await
+}
+
+#[tauri::command]
+pub async fn restart_codex_provider(
+    state: State<'_, ProxyServiceState>,
+) -> Result<crate::proxy::CodexProviderStatus, String> {
+    state.codex.shutdown().await;
+    let config = crate::modules::config::load_app_config()
+        .map_err(|e| format!("加载配置失败: {}", e))?;
+    state.codex.apply_config(config.proxy.codex.clone()).await?;
+    state.codex.refresh_status().await
 }
 
 /// 获取当前调度配置

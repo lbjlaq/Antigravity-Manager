@@ -1,0 +1,22 @@
+{
+  "task": "Continue the standalone context-orchestrator while the user tests the restored Antigravity app.",
+  "edits": [
+    "context-orchestrator/src/schema.ts",
+    "context-orchestrator/src/storage/sqlite.ts",
+    "context-orchestrator/src/storage/cache.ts",
+    "context-orchestrator/src/storage/index.ts",
+    "context-orchestrator/src/services/qdrant.ts",
+    "context-orchestrator/src/services/index-service.ts",
+    "context-orchestrator/src/gateway/server.ts"
+  ],
+  "commands": [
+    "npm run build (context-orchestrator)",
+    "node dist/main.js (context-orchestrator startup smoke check)"
+  ],
+  "verification": {
+    "build": "passed",
+    "startup": "passed; stdio MCP server connected and Qdrant health reported ok=true before timeout",
+    "notes": "OpenAI remained unconfigured in this shell, so semantic ingestion stayed in fallback mode at startup"
+  },
+  "outcome": "Added operator-facing MCP tools for orchestrator health/status and explicit corpus reindexing, plus supporting collection/artifact counting in storage and Qdrant service layers."
+}

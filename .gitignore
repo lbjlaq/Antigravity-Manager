@@ -51,3 +51,12 @@ scripts/dump_full.py
 scripts/probe_weekly.py
 scripts/probe_quota_summary.pyDOCKER_DEPLOYMENT.md
 pnpm-lock.yaml
+
+# Copilot Orchestrator temporary files
+.orchestrator/
+.worktrees/
+
+
+# Added by cargo
+
+/target

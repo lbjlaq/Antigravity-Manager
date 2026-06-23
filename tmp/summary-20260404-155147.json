@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-04-04T15:51:47.9718951+03:00",
+  "task": "Diagnosed remaining Codex CLI warnings and Copilot custom-model visibility after Kilo success",
+  "findings": [
+    "Kilo now works after stopping Codex CLI sync recursion and resetting Codex config.",
+    "Remaining Codex logs are mostly startup noise: invalid_grant auth refresh on one worker and Windows symlink stat failures for skills.",
+    "VS Code/Copilot visibility depends on model visibility, BYOK availability for the plan, and tool-calling support for agent mode."
+  ],
+  "commands": [
+    "codex.exe --version",
+    "codex.exe login status",
+    "where.exe codex.exe"
+  ],
+  "verification": [
+    "Confirmed codex.exe 0.118.0",
+    "Confirmed codex.exe login status reports Logged in using ChatGPT",
+    "Verified .codex config previously routed Codex to http://127.0.0.1:8045/v1 via CLI sync"
+  ],
+  "outcome": "No code changes in this step; provided product/runtime diagnosis and next-step guidance."
+}

@@ -1,0 +1,17 @@
+{
+  "task": "Diagnose Codex-on-Antigravity issues on Windows: repeated console windows and 403 Invalid token on /v1/responses.",
+  "edits": [
+    "src-tauri/src/proxy/providers/codex_cli.rs",
+    "src/pages/ApiProxy.tsx"
+  ],
+  "commands": [
+    "cargo check --manifest-path .\\src-tauri\\Cargo.toml",
+    "npm run build"
+  ],
+  "verification": {
+    "cargo_check": "passed",
+    "frontend_build": "passed",
+    "config_inspection": "Current gui_config.json shows proxy.auth_mode=auto and allow_lan_access=true, which means AI routes require the Antigravity proxy API key."
+  },
+  "outcome": "Codex subprocesses now use hidden/background launch behavior on Windows and the UI only polls Codex status on an interval when Codex is enabled. The remaining 403 issue is consistent with proxy auth rejecting the wrong credential on /v1/responses."
+}
