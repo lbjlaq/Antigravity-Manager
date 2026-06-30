@@ -547,6 +547,9 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
         -   **[Proxy Fix] Resolve 400 Errors with Gemini v1internal Protocol (PR #2356)**:
             -   **Conflict Avoidance**: Resolved the limitation where the `v1internal` protocol did not support simultaneous use of `googleSearch` and `functionDeclarations`.
             -   **Intelligent Injection**: The proxy now automatically skips Google Search tool injection when the request contains function definitions, ensuring request success.
+        -   **[Proxy Fix] Standardize Gemini SSE Error Format, Prevent IDE Crashes (Issue #2371)**:
+            -   **Format Standardization**: Wrapped Gemini handler streaming error output into standard OpenAI `choices` format, completely resolving IDE parser `TypeError`-induced UI freezing.
+            -   **Connection Self-healing**: Added standard `data: [DONE]` terminator to SSE streams and optimized error-state storage path detection logic.
     *   **v4.1.30 (2026-03-15)**:
         -   **[Core Optimization] Implementation of multi-level fallback mechanism for fetchAvailableModels (PR #2329)**:
             -   **Endpoint Fallback Strategy**: Introduced an automatic Sandbox -> Daily -> Prod endpoint fallback mechanism for the `fetchAvailableModels` API. When requests encounter `429 (Too Many Requests)` or `5xx` server errors, the system automatically and smoothly switches to alternative endpoints, significantly improving the stability of quota refreshes and model list retrieval.
