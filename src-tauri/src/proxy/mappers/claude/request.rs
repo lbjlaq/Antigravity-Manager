@@ -1732,13 +1732,6 @@ fn build_tools(
 
         let mut tool_list = Vec::new();
 
-        // [优化] Gemini 2.0+ 及 3.0 系列模型通常支持混合工具调用 (Function Calling + Google Search)
-        // 只有针对老旧模型或特定受限环境才需要互斥。
-        let model_lower = mapped_model.to_lowercase();
-        let supports_mixed_tools = model_lower.contains("gemini-2.0")
-            || model_lower.contains("gemini-2.5")
-            || model_lower.contains("gemini-3");
-
         if !function_declarations.is_empty() {
             let mut func_obj = serde_json::Map::new();
             func_obj.insert(
@@ -1748,21 +1741,13 @@ fn build_tools(
             tool_list.push(json!(func_obj));
 
             if has_google_search {
-                if supports_mixed_tools {
-                    tracing::info!(
-                        "[Claude-Request] Enabling MIXED tool calling for {}: Function Calling + Google Search.",
-                        mapped_model
-                    );
-                    let mut search_obj = serde_json::Map::new();
-                    search_obj.insert("googleSearch".to_string(), json!({}));
-                    tool_list.push(json!(search_obj));
-                } else {
-                    tracing::info!(
-                        "[Claude-Request] Skipping googleSearch injection for {} due to existing function declarations. \
-                         Older Gemini models may not support mixed tool types.",
-                        mapped_model
-                    );
-                }
+                // [FIX] cloudcode-pa (v1internal) rejects googleSearch combined with
+                // functionDeclarations and ignores tool_config.includeServerSideToolInvocations
+                // (verified upstream 400). Never mix: drop googleSearch when function tools exist.
+                tracing::info!(
+                    "[Claude-Request] Skipping googleSearch injection for {}: function declarations present (v1internal cannot mix built-in + function tools).",
+                    mapped_model
+                );
             }
         } else if has_google_search {
             let mut search_obj = serde_json::Map::new();
@@ -3015,9 +3000,9 @@ mod tests {
     }
 
     #[test]
-    fn test_mixed_tools_injection_for_gemini_2_0() {
-        // [场景] 使用 Gemini 2.0 模型，同时提供自定义工具和启用全网搜索
-        // 期望: 转换后的请求应同时包含 googleSearch 和 functionDeclarations
+    fn test_no_mixed_tools_for_gemini_2_0() {
+        // [场景] Gemini 2.0 模型, 同时提供自定义工具和 web search
+        // 期望: v1internal 无法混合, googleSearch 被丢弃, 仅保留 functionDeclarations
         let req = ClaudeRequest {
             model: "claude-sonnet-4-6".to_string(), // 映射到 gemini-2.0-flash-exp
             messages: vec![Message {
@@ -3064,13 +3049,10 @@ mod tests {
             .any(|t| t.get("functionDeclarations").is_some());
 
         assert!(
-            has_google_search,
-            "Gemini 2.0 should support mixed Google Search"
+            !has_google_search,
+            "v1internal cannot mix googleSearch with functionDeclarations; googleSearch must be dropped"
         );
-        assert!(
-            has_functions,
-            "Gemini 2.0 should support mixed function declarations"
-        );
+        assert!(has_functions, "function declarations must be preserved");
     }
 
     #[test]

@@ -88,7 +88,7 @@ pub fn resolve_request_config(
     // 检测是否有联网工具定义 (内置功能调用)
     let has_networking_tool = detects_networking_tool(tools);
     // 检测是否包含非联网工具 (如 MCP 本地工具)
-    let _has_non_networking = contains_non_networking_tool(tools);
+    let has_non_networking = contains_non_networking_tool(tools);
 
     // Strip -online suffix from original model if present (to detect networking intent)
     let is_online_suffix = original_model.ends_with("-online");
@@ -110,7 +110,11 @@ pub fn resolve_request_config(
     // Determine if we should enable networking
     // [FIX] 禁用基于模型的自动联网逻辑，防止图像请求被联网搜索结果覆盖。
     // 仅在用户显式请求联网时启用：1) -online 后缀 2) 携带联网工具定义
-    let enable_networking = is_online_suffix || has_networking_tool;
+    // [FIX] cloudcode-pa (v1internal) rejects googleSearch mixed with functionDeclarations
+    // and does NOT honor tool_config.includeServerSideToolInvocations (verified: upstream
+    // returns HTTP 400 even with the flag set). So when real (non-networking) function tools
+    // are present, stay in agent mode rather than entering web-search mode and 400-ing.
+    let enable_networking = (is_online_suffix || has_networking_tool) && !has_non_networking;
 
     // The final model to send upstream should be the MAPPED model,
     // but if searching, we MUST ensure the model name is one the backend associates with search.
@@ -612,6 +616,30 @@ mod tests {
         );
         assert_eq!(config.request_type, "agent");
         assert!(!config.inject_google_search);
+    }
+
+    #[test]
+    fn test_networking_disabled_when_function_tools_present() {
+        // A coding/function tool present alongside a web_search tool: v1internal cannot mix,
+        // so networking must stay off (agent mode) instead of injecting googleSearch.
+        let tools = Some(vec![
+            json!({ "name": "get_weather" }),
+            json!({ "name": "web_search" }),
+        ]);
+        let config =
+            resolve_request_config("gemini-3-flash", "gemini-3-flash", &tools, None, None, None, None);
+        assert_eq!(config.request_type, "agent");
+        assert!(!config.inject_google_search);
+    }
+
+    #[test]
+    fn test_networking_enabled_for_pure_web_search() {
+        // Only a web_search tool (no other function tools): networking should be enabled.
+        let tools = Some(vec![json!({ "name": "web_search" })]);
+        let config =
+            resolve_request_config("gemini-3-flash", "gemini-3-flash", &tools, None, None, None, None);
+        assert!(config.inject_google_search);
+        assert_eq!(config.request_type, "web_search");
     }
 
     #[test]
