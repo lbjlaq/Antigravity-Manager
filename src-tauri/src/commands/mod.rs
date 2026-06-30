@@ -23,24 +23,20 @@ pub async fn list_accounts(
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
 ) -> Result<Vec<Account>, String> {
     let mut accounts = modules::list_accounts()?;
-
+    
     // [FIX] Blend in-memory TokenManager rate limit status into the UI quota display
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
         for account in &mut accounts {
-            if let Some(reset_secs) = instance
-                .token_manager
-                .get_rate_limit_reset_seconds(&account.id)
-            {
+            if let Some(reset_secs) = instance.token_manager.get_rate_limit_reset_seconds(&account.id) {
                 if reset_secs > 0 {
                     if let Some(ref mut quota_data) = account.quota {
                         for model in &mut quota_data.models {
                             model.percentage = 0;
-                            model.reset_time =
-                                (chrono::Utc::now().timestamp() + reset_secs as i64).to_string();
+                            model.reset_time = (chrono::Utc::now().timestamp() + reset_secs as i64).to_string();
                         }
                         // Optionally, add a UI flag if we want it to look completely blocked
-                        // quota_data.is_forbidden = true;
+                        // quota_data.is_forbidden = true; 
                         // quota_data.forbidden_reason = Some(format!("Quota exhausted or rate limited (resets in {}s)", reset_secs));
                     }
                 }
@@ -239,17 +235,13 @@ pub async fn fetch_account_quota(
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
         let _ = instance.token_manager.reload_account(&account_id).await;
-
+        
         // [FIX] Blend TokenManager lockout state
-        if let Some(reset_secs) = instance
-            .token_manager
-            .get_rate_limit_reset_seconds(&account_id)
-        {
+        if let Some(reset_secs) = instance.token_manager.get_rate_limit_reset_seconds(&account_id) {
             if reset_secs > 0 {
                 for model in &mut quota.models {
                     model.percentage = 0;
-                    model.reset_time =
-                        (chrono::Utc::now().timestamp() + reset_secs as i64).to_string();
+                    model.reset_time = (chrono::Utc::now().timestamp() + reset_secs as i64).to_string();
                 }
             }
         }

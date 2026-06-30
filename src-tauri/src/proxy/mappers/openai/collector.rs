@@ -188,10 +188,13 @@ where
                     ToolCall {
                         id,
                         r#type: tc_type,
-                        function: ToolFunction {
+                        function: Some(ToolFunction {
                             name,
                             arguments: args_parts.join(""),
-                        },
+                        }),
+                        status: None,
+                        call_id: None,
+                        operation: None,
                     },
                 )
             })
@@ -207,6 +210,7 @@ where
         tool_calls: final_tool_calls,
         tool_call_id: None,
         name: None,
+        refusal: None,
     };
 
     response.choices.push(Choice {

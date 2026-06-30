@@ -12,6 +12,7 @@ pub mod audio; // 音频处理模块
 pub mod cli_sync; // CLI 配置同步 (v3.3.35)
 pub mod common; // 公共工具
 pub mod debug_logger;
+pub mod http_session_store; // HTTP多轮对话会话历史存储
 pub mod droid_sync; // Droid (Factory CLI) 配置同步
 pub mod handlers; // API 端点处理器
 pub mod mappers; // 协议转换器
@@ -44,3 +45,6 @@ pub use token_manager::TokenManager;
 
 #[cfg(test)]
 pub mod tests;
+
+
+pub mod adapters;

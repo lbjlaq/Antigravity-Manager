@@ -439,13 +439,6 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
-    *   **v4.2.9 (2026-06-27)**:
-        -   **[核心修复] 解决 Codex 客户端（如 Trae / Gemini CLI）在代理下无法使用 Agent 与多轮对话中断的 Bug (Codex Agent Flow Fix)**:
-            -   **SSE 协议事件还原**: 修复了在 `/v1/responses` 接口中，当 Gemini 上游返回包含工具调用（`functionCall`）的响应时，流式转换（`create_codex_sse_stream`）只在内存中做了去重过滤而静默丢弃了所有事件输出的严重 Bug。修复后，代理能正确且完整地向客户端发出 Codex 所需的 `response.output_item.added` (类型为 `function_call`)、`response.function_call_arguments.delta`、`response.function_call_arguments.done` 和 `response.output_item.done` 这一系列标准 SSE 事件。
-            -   **首尾流式机制对齐**: 在流式结束事件 `response.completed` 的 `output` 列表中增加了全部工具调用结果详情（而不仅是文本消息），指引 Codex 自动解析并执行本地 shell、google_search 等工具；同时，将原来流启动前强制推送 `message` 事件的做法改为懒加载（在首次接收到文本 delta 时再触发发送），完美兼容无文本纯工具调用的响应场景。
-            -   *相关 Issue*: 详见 [Issue #3207](https://github.com/lbjlaq/Antigravity-Manager/issues/3207)
-        -   **[体验优化] 优化菜单显示设置中的自定义导航项 (Menu Settings Customization)**:
-            -   补全了菜单显示设置中部分导航项的控制开关。
     *   **v4.2.8 (2026-06-27)**:
         -   **[核心修复] 修复 Gemini 原生图像生成模型在部分账号下的代理故障与轮换逻辑 (Gemini Image Generation & Account Rotation)**:
             -   **原生通道分流**: 优化了图像模型重定向逻辑，仅分流 `dall-e` 和 `midjourney` 等第三方模型；原生的 Gemini 图像模型（如 `gemini-3-pro-image`）改走正常的核心代理管道，支持 `size` 参数动态转换，修复前代垫片因丢弃 `size` 并发出不兼容上游包体导致生成失败的问题。

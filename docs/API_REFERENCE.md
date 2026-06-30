@@ -1,4 +1,4 @@
-# API Reference (v4.2.9)
+# API Reference (v4.2.8)
 
 本文档详细介绍了 **Antigravity Tools** 暴露的 HTTP API 接口。
 

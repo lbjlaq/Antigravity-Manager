@@ -427,13 +427,6 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 ## 📝 Developer & Community
 
 *   **Changelog**:
-    *   **v4.2.9 (2026-06-27)**:
-        -   **[Core Fix] Resolve Codex Agent and Multi-Turn Disconnection Issues under Proxy (Codex Agent Flow Fix)**:
-            -   **SSE Event Reconstruction**: Fixed a critical bug in `/v1/responses` where the proxy stream converter (`create_codex_sse_stream`) silently discarded all tool execution events when the upstream Gemini API returned a `functionCall` part. The proxy now properly serializes and emits the full suite of standard Codex SSE events: `response.output_item.added` (of type `function_call`), `response.function_call_arguments.delta`, `response.function_call_arguments.done`, and `response.output_item.done`.
-            -   **Stream Lifetime Synchronization**: Added all active function call items into the `response.completed` event's `output` array to guide Codex clients in executing local shell/google_search actions; also deferred the initial `response.output_item.added` (type `message`) event until the first non-thought text delta arrives, ensuring clean execution for purely tool-based completions.
-            -   *Related Issue*: See [Issue #3207](https://github.com/lbjlaq/Antigravity-Manager/issues/3207)
-        -   **[UX Enhancement] Enhanced menu visibility settings for custom navigation items (Menu Settings Customization)**:
-            -   Added toggle controls for remaining navigation items in menu settings.
     *   **v4.2.8 (2026-06-27)**:
         -   **[Core Fix] Fixed Gemini Native Image Generation Proxy Anomalies & Account Rotation (Gemini Image Gen & Rotation)**:
             -   **Native Bypass / Decoupling**: Refactored the image model redirection logic to only divert non-native image models (e.g., `dall-e`, `midjourney`). Native Gemini image models (e.g., `gemini-3-pro-image`) now flow directly through the main proxy pipeline, retaining the `size` parameters and preventing upstream API failures caused by the legacy shim's incompatible requests.

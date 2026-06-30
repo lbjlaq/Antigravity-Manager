@@ -884,3 +884,29 @@ mod tests {
         assert_eq!(config_3["aspectRatio"], "16:9");
     }
 }
+
+pub fn sanitize_system_prompt_for_tokens(text: &str) -> String {
+    use regex::Regex;
+    // Compress massive XML tags injected by thick clients to save tokens
+    let mut cleaned = text.to_string();
+
+    let tags_to_compress = [
+        "skills_instructions",
+        "skills",
+        "plugins",
+        "subagents",
+        "customizations",
+        "conversation_transcript",
+        "guidelines",
+    ];
+
+    for tag in tags_to_compress.iter() {
+        let pattern = format!(r"(?s)<{}>.*?</{}>", tag, tag);
+        if let Ok(re) = Regex::new(&pattern) {
+            let replacement = format!("<{}>\n[Omitted by Antigravity Proxy to save tokens. Tool definitions remain available.]\n</{}>", tag, tag);
+            cleaned = re.replace_all(&cleaned, replacement).into_owned();
+        }
+    }
+
+    cleaned
+}

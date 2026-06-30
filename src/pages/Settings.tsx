@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound } from 'lucide-react';
+import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send } from 'lucide-react';
 import { request as invoke } from '../utils/request';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -590,7 +590,6 @@ function Settings() {
                                             { path: '/', label: t('nav.dashboard'), icon: LayoutDashboard },
                                             { path: '/accounts', label: t('nav.accounts'), icon: Users },
                                             { path: '/api-proxy', label: t('nav.proxy'), icon: Network },
-                                            { path: '/apikey-fun', label: t('nav.apikey_fun', '中转站'), icon: KeyRound },
                                             { path: '/monitor', label: t('nav.call_records'), icon: Activity },
                                             { path: '/token-stats', label: t('nav.token_stats'), icon: BarChart3 },
                                             { path: '/user-token', label: t('nav.user_token', 'User Tokens'), icon: Users },
@@ -1308,7 +1307,7 @@ function Settings() {
                                     <div>
                                         <h3 className="text-3xl font-black text-gray-900 dark:text-base-content tracking-tight mb-2">{t('common.app_name', 'Antigravity Tools')}</h3>
                                         <div className="flex items-center justify-center gap-2 text-sm">
-                                            v4.2.9
+                                            v4.2.8
                                             <span className="text-gray-400 dark:text-gray-600">•</span>
                                             <span className="text-gray-500 dark:text-gray-400">{t('settings.branding.subtitle')}</span>
                                         </div>

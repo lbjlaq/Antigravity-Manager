@@ -125,6 +125,7 @@ pub async fn handle_chat_completions(
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
+                refusal: None,
             });
     }
 
@@ -137,7 +138,7 @@ pub async fn handle_chat_completions(
         openai_req.stream
     );
     let debug_cfg = state.debug_logging.read().await.clone();
-
+    
     let mut force_rotate = false;
 
     if debug_logger::is_enabled(&debug_cfg) {
@@ -482,6 +483,27 @@ pub async fn handle_chat_completions(
                 };
 
                 if client_wants_stream {
+                // [MULTI-TURN] 保存本次对话的 messages 到 session store（/v1/chat/completions）
+                {
+                    let save_msgs = openai_req.messages.iter().map(|m| {
+                        let content_str = match &m.content {
+                            Some(crate::proxy::mappers::openai::OpenAIContent::String(s)) => s.clone(),
+                            _ => String::new(),
+                        };
+                        json!({"role": m.role, "content": content_str})
+                    }).collect::<Vec<_>>();
+                    let chat_response_id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
+                    let entry = crate::proxy::http_session_store::HttpSessionEntry {
+                        input_items: save_msgs,
+                        instructions: String::new(),
+                        model: openai_req.model.clone(),
+                        last_accessed: std::time::Instant::now(),
+                    };
+                    let rid = chat_response_id.clone();
+                    tokio::spawn(async move {
+                        crate::proxy::http_session_store::save_session(rid, entry).await;
+                    });
+                }
                     // 客户端请求流式，返回 SSE
                     let body = Body::from_stream(combined_stream);
                     return Ok(Response::builder()
@@ -803,9 +825,109 @@ pub async fn handle_chat_completions(
     }
 }
 
+// --- Codex GUIDANCE PROMPTS ---
+
+const APPLY_PATCH_CHAT_PATH_SYSTEM_GUIDANCE_ZH: &str = concat!(
+    "[apply_patch chat-path 指引 — 由 codex-app-transfer adapter 注入,因为上游 lark 语法约束在 chat function-call provider 上不可用]\n",
+    "\n",
+    "**务必使用 `apply_patch` tool 写文件内容** —— 新建文件、单行编辑、整文件重写都一样。**绝不使用 shell `cat <<EOF > file` / `printf '<content>' > file` / `echo '<content>' > file` / 任何 `>` 重定向来写实际文件内容** —— 这样做会绕过 Codex diff UI 和审计 trail。**同样,绝不使用 `sed -i` / `perl -i` / `ed`、或 shell 按行号删除(如 `sed -i 'N,Md' file`)来编辑或删除已有文件内容** —— 就地 shell 编辑器绕过 diff UI,且对多次编辑间的行号漂移很脆弱(按过期行号删会切错、损坏文件)。(新建或空文件用 `*** Add File: <path>` —— 不要用 shell 重定向。)**优先外科式针对性编辑**:要改/替换已有内容时,只发改动那几行的 `-`(旧)和 `+`(新),保持每个 hunk 最小;且**不要**把增删空行作为编辑的一部分,除非空行本身就是改动(空行 `+`/`-` 位置歧义、可能静默 apply 失败)。**删除内容 —— 即便是跨很多行的大段连续块 —— 也用 apply_patch hunk 里的 `-` 行表达,或用 `*** Delete File: <path>` 删整个文件;不要因为块大就改用 `sed`/`python` 按行范围删除。** 对同一文件的多处不相邻编辑可以放进**一次** apply_patch 调用、分成多个 hunk。**不要**整段重新生成再追加,**不要**因为改了一部分就整文件重写。整文件替换(同一 patch 内 `*** Delete File: <path>` + `*** Add File: <path>`、每行前缀 `+`)**仅限**真正需要时:新建全新内容,或几乎每行都不同。\n",
+    "\n",
+    "调用 `apply_patch` tool 时,遵循以下基于非 OpenAI chat provider 实战观察总结的规则:\n",
+    "\n",
+    "1. 推荐的 Update File 形式是**最简形态**:仅 `-line`(要删的行,byte-exact)和 `+line`(新行)直接跟在 `*** Update File: <path>` 之后 —— 无 `@@`、无 context 行。",
+    "凡是 `-` 行在文件里**唯一**时(简单单行编辑、配置改动、function 签名等绝大多数场景皆是)就用这个形态。例:\n",
+    "  *** Update File: src/config.py\n",
+    "  -DEBUG = False\n",
+    "  +DEBUG = True\n",
+    "若 `-` 行单独**有歧义**(同一行文本在文件多处出现),在上方/下方加空格前缀的 context 行(` line`)钉住它。",
+    "若 context 行也不足以消歧,再在独立行上加**单端** `@@ <header>` 标记(`@@ class Foo`、`@@ def bar():`、`@@ fn main() {`)。",
+    "**绝不加尾随 `@@`**(`@@ <header> @@` 是错的)—— Codex Desktop 的 V4A applier 会把尾随 `@@` 当字面文本,报 `Failed to find context '... @@'`。",
+    "深层嵌套消歧时用**多个** `@@` 行各占一行(例如 `@@ class Outer\\n@@ def inner():`),每条都是单端。\n",
+    "\n",
+    "2. Add File **不用** `@@` 标记、**不用** hunk。`*** Add File: <path>` 之后,新文件**每一行内容**(包括空行,写成单个 `+` 占一行)都前缀 `+`。没 `+` 前缀的原始源码(例如直接写 `def main():`)会触发 `'def main():' is not a valid hunk header` 错误。",
+    "但结构标记 `*** Begin Patch` / `*** Add File:` / `*** End Patch` **不是内容,不加前缀**。尤其**绝不给终止符加前缀**(`+*** End Patch` 是错的):带 `+` 的终止符会被当成内容行,在新建文件末尾留下一行字面 `*** End Patch`。\n",
+    "\n",
+    "3. 每个 `-` 行和空格前缀的 context 行**必须**跟文件 byte-for-byte 一致(同样的前导 whitespace,不能 trim 尾随空格,字符完全相同)。不确定时先用 shell 跑 `cat <path>` 或 `sed -n '1,80p' <path>` 查一下,再用真实字节组 patch。靠猜会触发 `Failed to find context '<your guess>'` 错误。\n",
+    "\n",
+    "3a. 行前缀是**单字符**,前缀和内容之间**没有空格**:写 `-DEBUG = False`(不是 `- DEBUG = False`)、`+DEBUG = True`(不是 `+ DEBUG = True`),context 行 ` keepme`(单个前导空格)。Codex Desktop V4A applier 可能容忍多余空格,但其它 apply_patch 实现严格 —— 前缀写紧凑。\n",
+    "\n",
+    "4. **不要**在同一 patch 内对同一路径同时用 `*** Add File: <path>` 和 `*** Update File: <path>`。Update 步骤会在 Add 步骤落盘前读文件,看到空文件后失败。要么 (a) 让 `*** Add File:` 一次性写最终内容,要么 (b) 拆成两个独立的 `apply_patch` 调用。\n",
+    "\n",
+    "5. 新建或空文件用 `*** Add File: <path>`、每行前缀 `+`(不要用 `*** Update File:`,也不要用 shell 重定向)。\n",
+    "\n",
+    "6. 多行文件里,**没有**对应 `-` 行的孤立 `+` 行会**追加**在上文 context 之下 —— **不会**替换任何已有行。要修改已有行,**必须**同时包含 `-` 行(删旧内容)和 `+` 行(加新内容)。",
+    "空格前缀的 context 行是拿来**跟文件匹配**的、绝不新增 —— 它必须已存在于文件中。要引入全新行,前缀 `+`;把文件里还没有的行写成 context(或不加前缀)会得到一个无实际改动、apply 失败或 `Failed to find context` 的 hunk。\n",
+    "\n",
+    "7. Update 报 `Failed to find context` 时,说明 `-`/context 行跟文件 byte 对不上 —— 重新 `cat <path>` / `sed -n` 读文件、把这些行改成完全一致,再重试**同一个**针对性 Update。**不要**升级成整文件重写/重新追加,把编辑保持在改动的那几行。",
+    "在**一次**回合里对**同一文件**做多处编辑时,每个已应用的 hunk 都会改变文件内容 —— 把相关编辑放进**一个** patch 的多个 hunk,或在多次独立调用之间重新读文件。某个 `-` 行不再匹配,可能是它**已经被删掉**(被前一个 hunk、或本回合更早的编辑)—— 重发同一删除前先确认它还在,别盲目重试。\n",
+    "\n",
+    "8. `*** Begin Patch` **必须**是 `input` 字符串的字面第一行 —— 不能有前导空格,前面不能有其它内容,绝不能直接写 `*** Add File:` 或任何操作 header。漏了会触发 `invalid patch: The first line of the patch must be '*** Begin Patch'`。\n",
+    "\n",
+    "9. `*** Update File: <old>` + `*** Move to: <new>` **要求**至少一个 hunk(带 `-`/`+` 行或 `*** End of File` 标记)。空的 Update+Move 块会报 `Update file hunk for path '<old>' is empty`。**纯重命名不改内容**时,在同一 patch 内用 `*** Delete File: <old>` + `*** Add File: <new>`(把原内容每行前缀 `+` 复制过去)。**重命名同时改内容**时,保留 Update+Move 并写真实的 `-`/`+` hunk。\n",
+    "\n",
+    "10. 编辑 memory 文件(如 `~/.codex/memories/MEMORY.md`)要格外小心:并发进程可能在你上次读它、到你的 patch 落地之间重写该文件。打 patch **前立即** `cat` 该文件,让每个 `-`/context 行都是**当前**文件里存在的行,并用最小唯一锚点(如单个 `@@ <section header>` + 只写你实际改的那几行)。过期的 `-` 行 —— 内容已被并发固化(consolidation)改掉 —— 会报 `Failed to find context`;失败时重新读、按当前字节重建,而不是重试过期 patch。\n",
+    "\n",
+    "遵循这些规则可以避免 retry 风暴,提升首次尝试的成功率。"
+);
+
+const WEB_TOOLS_SYSTEM_GUIDANCE_ZH: &str = "联网获取信息时(实时事实 / 价格 / 文档 / 新闻 / 版本号 / 任何你不确定或可能已过时的内容),**优先用 `web_search` 和 `web_fetch` 工具,不要用 shell 的 curl / wget / python 去抓 URL 或搜索引擎**。本机对外网访问受限,shell 直连通常被防火墙 / 反爬拦截(返回空或 403),会白费多轮尝试、最后只能靠可能过时的记忆作答;而这两个工具经代理(浏览器 TLS 指纹 + headless 渲染)能真正抓到。用法:先 `web_search(query)` 找信息源,再用 `web_fetch(url)` 读该页**完整正文**(返回全文、自己读)。之前抓过的某 URL 若在对话历史里被折叠 / 压缩、需要回看完整原文, 用 `read_url_local(url)` 从本地缓存取回, 不必重新联网。";
+
+const CHINESE_LANGUAGE_DIRECTIVE: &str = "**请始终使用简体中文回复用户**(代码、命令、标识符、文件路径等技术内容保持原文,不要翻译)。";
+
+fn tools_register_apply_patch(body: &Value) -> bool {
+    let Some(tools) = body.get("tools").and_then(Value::as_array) else {
+        return false;
+    };
+    tools.iter().any(|t| {
+        t.get("name").and_then(Value::as_str) == Some("apply_patch")
+            && (t.get("type").and_then(Value::as_str) == Some("custom") || t.get("type").and_then(Value::as_str) == Some("function"))
+    })
+}
+
+fn tools_register_web_fetch(body: &Value) -> bool {
+    fn entry_is_web_tool(t: &Value) -> bool {
+        matches!(
+            t.get("name").and_then(Value::as_str),
+            Some("web_fetch") | Some("web_search")
+        )
+    }
+    body.get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools.iter().any(|t| {
+                if t.get("type").and_then(Value::as_str) == Some("namespace") {
+                    t.get("tools")
+                        .and_then(Value::as_array)
+                        .is_some_and(|inner| inner.iter().any(entry_is_web_tool))
+                } else {
+                    entry_is_web_tool(t)
+                }
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn apply_patch_chat_guidance_message() -> Value {
+    let content = format!("{CHINESE_LANGUAGE_DIRECTIVE}\n\n{APPLY_PATCH_CHAT_PATH_SYSTEM_GUIDANCE_ZH}");
+    serde_json::json!({
+        "role": "system",
+        "content": content,
+    })
+}
+
+fn web_tools_guidance_message() -> Value {
+    serde_json::json!({
+        "role": "system",
+        "content": WEB_TOOLS_SYSTEM_GUIDANCE_ZH,
+    })
+}
+
+// --- END Codex GUIDANCE PROMPTS ---
+
 /// 处理 Legacy Completions API (/v1/completions)
 /// 将 Prompt 转换为 Chat Message 格式，复用 handle_chat_completions
 pub async fn handle_completions(
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     State(state): State<AppState>,
     Json(mut body): Json<Value>,
 ) -> Response {
@@ -813,6 +935,38 @@ pub async fn handle_completions(
         "Received /v1/completions or /v1/responses payload: {:?}",
         body
     );
+
+    // [MULTI-TURN] 支持 previous_response_id 链式历史恢复
+    // 当客户端通过 HTTP POST /v1/responses 传入 previous_response_id 时，
+    // 从服务器端 session store 取出上一轮的历史，合并到本轮的 input 中
+    let previous_response_id = body.get("previous_response_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let response_id_for_save = format!("resp-{}", uuid::Uuid::new_v4());
+    let http_tool_call_cache: std::collections::HashMap<String, serde_json::Value> = std::collections::HashMap::new();
+    if let Some(ref prev_id) = previous_response_id {
+        if let Some(session) = crate::proxy::http_session_store::get_session(prev_id).await {
+            // 把历史 input items 合并进来
+            let existing_input = body.get("input").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let merged = crate::proxy::http_session_store::merge_history_with_new_input(
+                session.input_items,
+                &[],
+                &existing_input,
+                &http_tool_call_cache,
+            );
+                let merged_len = merged.len();
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("input".to_string(), json!(merged));
+                // 从历史 session 继承 instructions（如果本轮没带）
+                if !obj.contains_key("instructions") && !session.instructions.is_empty() {
+                    obj.insert("instructions".to_string(), json!(session.instructions));
+                }
+                // 继承 model（如果本轮没带）
+                if !obj.contains_key("model") && !session.model.is_empty() {
+                    obj.insert("model".to_string(), json!(session.model));
+                }
+            }
+            tracing::debug!("[MultiTurn] Restored session from prev_id={}, {} items in history", prev_id, merged_len);
+        }
+    }
 
     let is_codex_style = body.get("input").is_some() || body.get("instructions").is_some();
 
@@ -1103,12 +1257,55 @@ pub async fn handle_completions(
                 let is_message_array = arr
                     .first()
                     .and_then(|v| v.as_object())
-                    .map(|obj| obj.contains_key("role"))
+                    .map(|obj| obj.contains_key("role") || obj.contains_key("type"))
                     .unwrap_or(false);
 
                 if is_message_array {
-                    // 深度识别：像处理 messages 一样处理 input 数组
+                    // 深度识别：像处理 messages 一样处理 input 数组，并自动映射 Responses API 的工具流
                     for item in arr {
+                        if let Some(obj) = item.as_object() {
+                            if let Some(item_type) = obj.get("type").and_then(|v| v.as_str()) {
+                                match item_type {
+                                    "message" => {
+                                        let role = obj.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+                                        let content = obj.get("content").cloned().unwrap_or(json!(""));
+                                        messages.push(json!({ "role": role, "content": content }));
+                                    }
+                                    "function_call" | "custom_tool_call" => {
+                                        let call_id = obj.get("call_id").or_else(|| obj.get("id")).and_then(|v| v.as_str()).unwrap_or("");
+                                        let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                        let arguments = obj.get("arguments").and_then(|v| v.as_str()).unwrap_or("");
+                                        messages.push(json!({
+                                            "role": "assistant",
+                                            "content": "",
+                                            "tool_calls": [{
+                                                "id": if call_id.is_empty() { "call_unknown" } else { call_id },
+                                                "type": "function",
+                                                "function": { "name": name, "arguments": arguments },
+                                            }],
+                                        }));
+                                    }
+                                    "function_call_output" | "custom_tool_call_output" => {
+                                        let call_id = obj.get("call_id").or_else(|| obj.get("tool_call_id")).or_else(|| obj.get("id")).and_then(|v| v.as_str()).unwrap_or("");
+                                        let output_value = obj.get("output").cloned().unwrap_or(json!(""));
+                                        let output_str = if let Some(s) = output_value.as_str() {
+                                            s.to_string()
+                                        } else {
+                                            output_value.to_string()
+                                        };
+                                        messages.push(json!({
+                                            "role": "tool",
+                                            "tool_call_id": call_id,
+                                            "content": output_str,
+                                        }));
+                                    }
+                                    _ => {
+                                        messages.push(item.clone());
+                                    }
+                                }
+                                continue;
+                            }
+                        }
                         messages.push(item.clone());
                     }
                 } else {
@@ -1158,6 +1355,19 @@ pub async fn handle_completions(
         );
     }
 
+    // [FIX] 在 openai_req 反序列化之前，从 body 中捕获原始 input 和 instructions
+    // 用于后续 session 保存时，保留完整的工具调用历史（而非从 openai_req.messages 重建丢失信息）
+    let session_save_input: Vec<serde_json::Value> = body
+        .get("input")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let session_save_instructions: String = body
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let mut openai_req: OpenAIRequest = match serde_json::from_value(body.clone()) {
         Ok(req) => req,
         Err(e) => {
@@ -1178,6 +1388,7 @@ pub async fn handle_completions(
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
+                refusal: None,
             });
     }
 
@@ -1394,6 +1605,24 @@ pub async fn handle_completions(
                     })
                     .chain(openai_stream);
 
+                    // [MULTI-TURN][FIX] 保存本次完整 input_items 到 session store
+                    // 使用从 body 中提取的原始 input（含文本/工具调用/工具结果全量历史），
+                    // 而非从 openai_req.messages 重建（会丢失 tool_calls/tool 角色等信息）
+                    {
+                        let save_input = session_save_input.clone();
+                        let save_instructions = session_save_instructions.clone();
+                        let save_model = openai_req.model.clone();
+                        let entry = crate::proxy::http_session_store::HttpSessionEntry {
+                            input_items: save_input,
+                            instructions: save_instructions,
+                            model: save_model,
+                            last_accessed: std::time::Instant::now(),
+                        };
+                        let rid = response_id_for_save.clone();
+                        tokio::spawn(async move {
+                            crate::proxy::http_session_store::save_session(rid, entry).await;
+                        });
+                    }
                     return Response::builder()
                         .header("Content-Type", "text/event-stream")
                         .header("Cache-Control", "no-cache")
@@ -1474,13 +1703,65 @@ pub async fn handle_completions(
                     use crate::proxy::mappers::openai::collector::collect_stream_to_json;
                     match collect_stream_to_json(Box::pin(combined_stream)).await {
                         Ok(chat_resp) => {
-                            // NOW: Convert Chat Response -> Legacy Response (Same logic as below)
-                            let choices = chat_resp.choices.iter().map(|c| {
-                                json!({
-                                    "text": match &c.message.content {
+                            let is_responses_api = uri.path() == "/v1/responses";
+                            
+                            if is_responses_api {
+                                let mut output = Vec::new();
+                                for c in chat_resp.choices.iter() {
+                                    let text = match &c.message.content {
                                         Some(crate::proxy::mappers::openai::OpenAIContent::String(s)) => s.clone(),
                                         _ => "".to_string()
-                                    },
+                                    };
+                                    
+                                    let has_content = !text.is_empty();
+                                    let has_tools = c.message.tool_calls.is_some() && !c.message.tool_calls.as_ref().unwrap().is_empty();
+                                    
+                                    if has_content || has_tools {
+                                        let mut msg_obj = serde_json::Map::new();
+                                        msg_obj.insert("type".to_string(), json!("message"));
+                                        msg_obj.insert("role".to_string(), json!("assistant"));
+                                        
+                                        if has_content {
+                                            msg_obj.insert("content".to_string(), json!(text));
+                                        }
+                                        if let Some(tool_calls) = &c.message.tool_calls {
+                                            msg_obj.insert("tool_calls".to_string(), json!(tool_calls));
+                                        }
+                                        output.push(serde_json::Value::Object(msg_obj));
+                                    }
+                                }
+                                
+                                let resp = json!({
+                                    "type": "response",
+                                    "id": format!("resp_{}", uuid::Uuid::new_v4().simple()),
+                                    "status": "completed",
+                                    "output": output
+                                });
+                                
+                                return (
+                                    StatusCode::OK,
+                                    [
+                                        ("X-Account-Email", email.as_str()),
+                                        ("X-Mapped-Model", mapped_model.as_str()),
+                                    ],
+                                    Json(resp),
+                                )
+                                    .into_response();
+                            }
+
+                            // NOW: Convert Chat Response -> Legacy Response (Same logic as below)
+                            let choices = chat_resp.choices.iter().map(|c| {
+                                let mut text = match &c.message.content {
+                                    Some(crate::proxy::mappers::openai::OpenAIContent::String(s)) => s.clone(),
+                                    _ => "".to_string()
+                                };
+                                if let Some(ref reasoning) = c.message.reasoning_content {
+                                    if !reasoning.is_empty() {
+                                        text = format!("{}\n\n{}", reasoning, text);
+                                    }
+                                }
+                                json!({
+                                    "text": text,
                                     "index": c.index,
                                     "logprobs": null,
                                     "finish_reason": c.finish_reason
@@ -1530,6 +1811,52 @@ pub async fn handle_completions(
             };
 
             let chat_resp = transform_openai_response(&gemini_resp, Some("session-123"), 1);
+
+            let is_responses_api = uri.path() == "/v1/responses";
+            
+            if is_responses_api {
+                let mut output = Vec::new();
+                for c in chat_resp.choices.iter() {
+                    let text = match &c.message.content {
+                        Some(crate::proxy::mappers::openai::OpenAIContent::String(s)) => s.clone(),
+                        _ => "".to_string()
+                    };
+                    
+                    let has_content = !text.is_empty();
+                    let has_tools = c.message.tool_calls.is_some() && !c.message.tool_calls.as_ref().unwrap().is_empty();
+                    
+                    if has_content || has_tools {
+                        let mut msg_obj = serde_json::Map::new();
+                        msg_obj.insert("type".to_string(), json!("message"));
+                        msg_obj.insert("role".to_string(), json!("assistant"));
+                        
+                        if has_content {
+                            msg_obj.insert("content".to_string(), json!(text));
+                        }
+                        if let Some(tool_calls) = &c.message.tool_calls {
+                            msg_obj.insert("tool_calls".to_string(), json!(tool_calls));
+                        }
+                        output.push(serde_json::Value::Object(msg_obj));
+                    }
+                }
+                
+                let resp = json!({
+                    "type": "response",
+                    "id": format!("resp_{}", uuid::Uuid::new_v4().simple()),
+                    "status": "completed",
+                    "output": output
+                });
+                
+                return (
+                    StatusCode::OK,
+                    [
+                        ("X-Account-Email", email.as_str()),
+                        ("X-Mapped-Model", mapped_model.as_str()),
+                    ],
+                    Json(resp),
+                )
+                    .into_response();
+            }
 
             // Map Chat Response -> Legacy Completions Response
             let choices = chat_resp.choices.iter().map(|c| {
@@ -1973,7 +2300,6 @@ pub async fn handle_images_generations_internal(
                             { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
                             { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
                             { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
                         ]
                     }
                 });
@@ -2351,7 +2677,7 @@ pub async fn handle_images_edits(
             let mut last_error = String::new();
 
             let mut force_rotate = false;
-
+            
             for attempt in 0..max_attempts {
                 // 4.1 获取 Token
                 let (access_token, project_id, email, account_id, _wait_ms) = match token_manager
@@ -2395,7 +2721,6 @@ pub async fn handle_images_edits(
                             { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
                             { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
                             { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-                            { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
                         ]
                     }
                 });
@@ -2554,3 +2879,1060 @@ pub async fn handle_images_edits(
     )
         .into_response())
 }
+
+
+// ==========================================
+// CODE INTEGRATION: Codex WebSocket Handler
+// ==========================================
+
+use axum::extract::ws::{WebSocketUpgrade, WebSocket, Message};
+use futures::{StreamExt, SinkExt};
+use uuid::Uuid;
+
+// ==========================================
+
+// CODE INTEGRATION: Global Tool Call Cache
+
+// ==========================================
+
+use std::sync::OnceLock;
+
+use tokio::sync::RwLock as TokioRwLock;
+
+use std::collections::HashMap;
+
+
+
+static WEBSOCKET_TOOL_CALL_CACHE: OnceLock<TokioRwLock<HashMap<String, Value>>> = OnceLock::new();
+
+
+
+pub fn get_cached_tool_call(call_id: &str) -> Option<Value> {
+
+    if let Some(cache) = WEBSOCKET_TOOL_CALL_CACHE.get() {
+
+        if let Ok(guard) = cache.try_read() {
+
+            return guard.get(call_id).cloned();
+
+        }
+
+    }
+
+    None
+
+}
+
+
+
+pub fn insert_cached_tool_call(call_id: String, item: Value) {
+
+    if call_id.is_empty() {
+
+        return;
+
+    }
+
+    let cache = WEBSOCKET_TOOL_CALL_CACHE.get_or_init(|| TokioRwLock::new(HashMap::new()));
+
+    if let Ok(mut guard) = cache.try_write() {
+
+        guard.insert(call_id, item);
+
+    }
+
+}
+
+
+
+#[derive(Debug, Clone)]
+
+struct WebsocketSessionState {
+    last_request: Option<Value>,
+    last_response_output: Value,
+    last_response_id: String,
+    last_response_pending_tool_call_ids: Vec<String>,
+    tool_call_cache: std::collections::HashMap<String, Value>,
+}
+
+pub async fn handle_responses_websocket(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Response {
+    ws.on_upgrade(move |socket| handle_websocket_session(socket, headers, state))
+}
+
+async fn handle_websocket_session(
+    mut socket: WebSocket,
+    headers: HeaderMap,
+    state: AppState,
+) {
+    tracing::info!("Codex responses websocket: client connected");
+    let mut session_state = WebsocketSessionState {
+        last_request: None,
+        last_response_output: json!([]),
+        last_response_id: String::new(),
+        last_response_pending_tool_call_ids: Vec::new(),
+        tool_call_cache: std::collections::HashMap::new(),
+    };
+
+    while let Some(msg_result) = socket.recv().await {
+        let msg = match msg_result {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("responses websocket: read message failed: {:?}", e);
+                break;
+            }
+        };
+
+        let text = match msg {
+            Message::Text(t) => t,
+            Message::Binary(b) => {
+                match String::from_utf8(b) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                }
+            }
+            Message::Close(_) => {
+                tracing::info!("responses websocket: client disconnected");
+                break;
+            }
+            _ => continue,
+        };
+
+        let payload: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                let error_ev = json!({
+                    "type": "error",
+                    "error": {
+                        "message": format!("Invalid JSON: {}", e),
+                        "type": "invalid_request_error"
+                    }
+                });
+                let _ = socket.send(Message::Text(error_ev.to_string())).await;
+                continue;
+            }
+        };
+
+        if should_handle_prewarm_locally(&payload, &session_state) {
+            let (created, completed) = handle_prewarm_locally(&payload, &mut session_state);
+            let _ = socket.send(Message::Text(created.to_string())).await;
+            let _ = socket.send(Message::Text(completed.to_string())).await;
+            continue;
+        }
+
+        let normalized = match normalize_responses_websocket_request(&payload, &mut session_state) {
+            Ok(n) => n,
+            Err(e) => {
+                let error_ev = json!({
+                    "type": "error",
+                    "error": {
+                        "message": e,
+                        "type": "invalid_request_error"
+                    }
+                });
+                let _ = socket.send(Message::Text(error_ev.to_string())).await;
+                continue;
+            }
+        };
+
+        let openai_body = convert_codex_to_openai_request(normalized);
+        let response_result = handle_chat_completions(State(state.clone()), headers.clone(), Json(openai_body)).await;
+        
+        let response = match response_result {
+            Ok(res) => res.into_response(),
+            Err((status, err_msg)) => {
+                let error_ev = json!({
+                    "type": "error",
+                    "error": {
+                        "message": err_msg,
+                        "type": "server_error",
+                        "code": status.as_u16().to_string()
+                    }
+                });
+                let _ = socket.send(Message::Text(error_ev.to_string())).await;
+                continue;
+            }
+        };
+
+        if !response.status().is_success() {
+            let error_ev = json!({
+                "type": "error",
+                "error": {
+                    "message": format!("Upstream returned status {}", response.status()),
+                    "type": "server_error"
+                }
+            });
+            let _ = socket.send(Message::Text(error_ev.to_string())).await;
+            continue;
+        }
+
+        let body = response.into_body();
+        let mut stream = body.into_data_stream();
+
+        let mut translation_state = TranslationState {
+            response_id: format!("resp-{}", &Uuid::new_v4().to_string()[..24]),
+            item_id: format!("item-{}", &Uuid::new_v4().to_string()[..16]),
+            message_item_added: false,
+            content_part_added: false,
+            accumulated_text: String::new(),
+            tool_calls: std::collections::HashMap::new(),
+            tool_calls_added: std::collections::HashSet::new(),
+        };
+
+        let created_ev = json!({
+            "type": "response.created",
+            "response": {
+                "id": &translation_state.response_id,
+                "object": "response",
+                "status": "in_progress",
+                "output": []
+            }
+        });
+        let _ = socket.send(Message::Text(created_ev.to_string())).await;
+
+        let mut buffer = bytes::BytesMut::new();
+        while let Some(chunk_res) = stream.next().await {
+            let chunk = match chunk_res {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!("Stream chunk error: {:?}", e);
+                    break;
+                }
+            };
+            buffer.extend_from_slice(&chunk);
+            while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
+                let line_raw = buffer.split_to(pos + 1);
+                if let Ok(line_str) = std::str::from_utf8(&line_raw) {
+                    let line = line_str.trim();
+                    if line.is_empty() || !line.starts_with("data: ") {
+                        continue;
+                    }
+                    let json_part = line.trim_start_matches("data: ").trim();
+                    if json_part == "[DONE]" {
+                        break;
+                    }
+                    if let Ok(chunk_json) = serde_json::from_str::<Value>(json_part) {
+                        translate_openai_chunk_to_ws(&chunk_json, &mut translation_state, &mut socket).await;
+                    }
+                }
+            }
+        }
+
+        if !buffer.is_empty() {
+            if let Ok(line_str) = std::str::from_utf8(&buffer) {
+                let line = line_str.trim();
+                if line.starts_with("data: ") {
+                    let json_part = line.trim_start_matches("data: ").trim();
+                    if json_part != "[DONE]" {
+                        if let Ok(chunk_json) = serde_json::from_str::<Value>(json_part) {
+                            translate_openai_chunk_to_ws(&chunk_json, &mut translation_state, &mut socket).await;
+                        }
+                    }
+                }
+            }
+        }
+
+        let completed_output = finalize_ws_events(&mut translation_state, &mut socket, &mut session_state).await;
+        
+        session_state.last_response_output = completed_output;
+        session_state.last_response_id = translation_state.response_id.clone();
+        session_state.last_response_pending_tool_call_ids = translation_state.tool_calls.values()
+            .map(|(_, call_id, _, _)| call_id.clone()).collect();
+    }
+}
+
+fn should_handle_prewarm_locally(payload: &Value, state: &WebsocketSessionState) -> bool {
+    if state.last_request.is_some() {
+        return false;
+    }
+    let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if event_type != "response.create" {
+        return false;
+    }
+    if let Some(generate) = payload.get("generate").and_then(|v| v.as_bool()) {
+        if !generate {
+            return true;
+        }
+    }
+    false
+}
+
+fn handle_prewarm_locally(
+    payload: &Value,
+    state: &mut WebsocketSessionState,
+) -> (Value, Value) {
+    let response_id = format!("resp_prewarm_{}", Uuid::new_v4());
+    let created_at = chrono::Utc::now().timestamp();
+    let model = payload.get("model").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+    let created_ev = json!({
+        "type": "response.created",
+        "sequence_number": 0,
+        "response": {
+            "id": &response_id,
+            "object": "response",
+            "created_at": created_at,
+            "status": "in_progress",
+            "background": false,
+            "error": null,
+            "output": [],
+            "model": model,
+        }
+    });
+
+    let completed_ev = json!({
+        "type": "response.completed",
+        "sequence_number": 1,
+        "response": {
+            "id": &response_id,
+            "object": "response",
+            "created_at": created_at,
+            "status": "completed",
+            "background": false,
+            "error": null,
+            "output": [],
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0
+            },
+            "model": model,
+        }
+    });
+
+    let mut normalized = payload.clone();
+    if let Some(obj) = normalized.as_object_mut() {
+        obj.remove("type");
+        obj.remove("generate");
+    }
+    state.last_request = Some(normalized);
+    state.last_response_output = json!([]);
+    state.last_response_id = response_id;
+    state.last_response_pending_tool_call_ids = Vec::new();
+
+    (created_ev, completed_ev)
+}
+
+fn normalize_responses_websocket_request(
+    payload: &Value,
+    state: &mut WebsocketSessionState,
+) -> Result<Value, String> {
+    let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    match event_type {
+        "response.create" => {
+            if state.last_request.is_none() {
+                let mut normalized = payload.clone();
+                if let Some(obj) = normalized.as_object_mut() {
+                    obj.remove("type");
+                    obj.insert("stream".to_string(), Value::Bool(true));
+                    if !obj.contains_key("input") {
+                        obj.insert("input".to_string(), json!([]));
+                    }
+                }
+                let model_name = normalized.get("model").and_then(|v| v.as_str()).unwrap_or("");
+                if model_name.is_empty() {
+                    return Err("missing model in response.create request".to_string());
+                }
+                state.last_request = Some(normalized.clone());
+                Ok(normalized)
+            } else {
+                normalize_response_subsequent_request(payload, state)
+            }
+        }
+        "response.append" => {
+            normalize_response_subsequent_request(payload, state)
+        }
+        _ => Err(format!("unsupported websocket request type: {}", event_type)),
+    }
+}
+
+fn normalize_response_subsequent_request(
+    payload: &Value,
+    state: &mut WebsocketSessionState,
+) -> Result<Value, String> {
+    if state.last_request.is_none() {
+        return Err("websocket request received before response.create".to_string());
+    }
+
+    // [FIX] 拦截 compaction 和完整历史替换事件
+    if should_replace_websocket_transcript(payload) {
+        let mut normalized = payload.clone();
+        if let Some(obj) = normalized.as_object_mut() {
+            obj.remove("type");
+            obj.remove("previous_response_id");
+            obj.insert("stream".to_string(), Value::Bool(true));
+        }
+        state.last_request = Some(normalized.clone());
+        return Ok(normalized);
+    }
+
+    // [FIX] 始终走完整的 merge 逻辑，废弃 transcript replacement 分支
+    // 旧逻辑在检测到 function_call/assistant 时直接替换整个历史，导致多轮对话历史丢失
+    // 正确做法：last_request.input + last_response_output + new payload.input 全部合并
+    let mut merged_input = Vec::new();
+
+    // 1. 上一轮请求的 input（已含此前所有历史）
+    if let Some(last_req) = &state.last_request {
+        if let Some(arr) = last_req.get("input").and_then(|v| v.as_array()) {
+            merged_input.extend(arr.clone());
+        }
+    }
+
+    // 2. 上一轮 response 的 output items（assistant 回复、工具调用等）
+    if let Some(arr) = state.last_response_output.as_array() {
+        merged_input.extend(arr.clone());
+    }
+
+    // 3. 本轮新的 input items（用户消息、工具调用结果等）
+    if let Some(arr) = payload.get("input").and_then(|v| v.as_array()) {
+        for item in arr {
+            let t = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if t == "compaction" || t == "compaction_summary" {
+                continue;
+            }
+            if t == "function_call_output" || t == "custom_tool_call_output" {
+                if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
+                    state.last_response_pending_tool_call_ids.retain(|x| x != call_id);
+                }
+            }
+            merged_input.push(item.clone());
+        }
+    }
+
+    repair_tool_calls(&mut merged_input, &state.tool_call_cache);
+
+    let deduped = dedupe_function_calls_by_call_id(dedupe_input_items_by_id(merged_input));
+
+    let mut normalized = payload.clone();
+    if let Some(obj) = normalized.as_object_mut() {
+        obj.remove("type");
+        obj.remove("previous_response_id");
+        obj.insert("input".to_string(), json!(deduped));
+        if !obj.contains_key("model") {
+            if let Some(last_req) = &state.last_request {
+                if let Some(model) = last_req.get("model") {
+                    obj.insert("model".to_string(), model.clone());
+                }
+            }
+        }
+        if !obj.contains_key("instructions") {
+            if let Some(last_req) = &state.last_request {
+                if let Some(instructions) = last_req.get("instructions") {
+                    obj.insert("instructions".to_string(), instructions.clone());
+                }
+            }
+        }
+        if !obj.contains_key("tools") {
+            if let Some(last_req) = &state.last_request {
+                if let Some(tools) = last_req.get("tools") {
+                    obj.insert("tools".to_string(), tools.clone());
+                }
+            }
+        }
+        if !obj.contains_key("tool_choice") {
+            if let Some(last_req) = &state.last_request {
+                if let Some(tool_choice) = last_req.get("tool_choice") {
+                    obj.insert("tool_choice".to_string(), tool_choice.clone());
+                }
+            }
+        }
+        obj.insert("stream".to_string(), Value::Bool(true));
+    }
+    state.last_request = Some(normalized.clone());
+    Ok(normalized)
+}
+#[allow(dead_code)]
+fn should_replace_websocket_transcript(payload: &Value) -> bool {
+    let previous_response_id = payload.get("previous_response_id").and_then(|v| v.as_str()).unwrap_or("");
+    if !previous_response_id.is_empty() {
+        return false;
+    }
+    if let Some(input_array) = payload.get("input").and_then(|v| v.as_array()) {
+        for item in input_array {
+            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if item_type == "function_call" || item_type == "custom_tool_call" {
+                return true;
+            }
+            if item_type == "message" {
+                let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("");
+                if role == "assistant" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+#[allow(dead_code)]
+fn normalize_response_transcript_replacement(payload: &Value, last_request: &Value) -> Value {
+    let mut normalized = payload.clone();
+    if let Some(obj) = normalized.as_object_mut() {
+        obj.remove("type");
+        obj.remove("previous_response_id");
+        obj.insert("stream".to_string(), Value::Bool(true));
+        if !obj.contains_key("model") {
+            if let Some(model) = last_request.get("model") {
+                obj.insert("model".to_string(), model.clone());
+            }
+        }
+        if !obj.contains_key("instructions") {
+            if let Some(instructions) = last_request.get("instructions") {
+                obj.insert("instructions".to_string(), instructions.clone());
+            }
+        }
+    }
+    normalized
+}
+
+fn dedupe_input_items_by_id(items: Vec<Value>) -> Vec<Value> {
+    use std::collections::{HashSet, HashMap};
+    let mut referenced_call_ids = HashSet::new();
+    for item in &items {
+        let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if item_type == "function_call_output" || item_type == "custom_tool_call_output" {
+            if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
+                if !call_id.is_empty() {
+                    referenced_call_ids.insert(call_id.to_string());
+                }
+            }
+        }
+    }
+
+    let mut keep_map: HashMap<String, (usize, bool)> = HashMap::new();
+    for (idx, item) in items.iter().enumerate() {
+        let item_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if item_id.is_empty() {
+            continue;
+        }
+        let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+        let is_referenced = !call_id.is_empty() && referenced_call_ids.contains(call_id);
+        if let Some(&(existing_idx, existing_referenced)) = keep_map.get(item_id) {
+            if is_referenced || !existing_referenced {
+                keep_map.insert(item_id.to_string(), (idx, is_referenced));
+            }
+        } else {
+            keep_map.insert(item_id.to_string(), (idx, is_referenced));
+        }
+    }
+
+    let mut keep_indices = HashSet::new();
+    for (_, (idx, _)) in keep_map {
+        keep_indices.insert(idx);
+    }
+
+    let mut filtered = Vec::new();
+    for (idx, item) in items.into_iter().enumerate() {
+        let item_id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if !item_id.is_empty() {
+            if !keep_indices.contains(&idx) {
+                continue;
+            }
+        }
+        filtered.push(item);
+    }
+    filtered
+}
+
+fn dedupe_function_calls_by_call_id(items: Vec<Value>) -> Vec<Value> {
+    use std::collections::HashSet;
+    let mut seen_call_ids = HashSet::new();
+    let mut filtered = Vec::new();
+    for item in items {
+        let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if item_type == "function_call" || item_type == "custom_tool_call" {
+            if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
+                if !call_id.is_empty() {
+                    if seen_call_ids.contains(call_id) {
+                        continue;
+                    }
+                    seen_call_ids.insert(call_id.to_string());
+                }
+            }
+        }
+        filtered.push(item);
+    }
+    filtered
+}
+
+fn repair_tool_calls(
+    input_items: &mut Vec<Value>,
+    tool_call_cache: &std::collections::HashMap<String, Value>,
+) {
+    let mut call_present = std::collections::HashSet::new();
+    for item in input_items.iter() {
+        let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if item_type == "function_call" || item_type == "custom_tool_call" {
+            if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
+                call_present.insert(call_id.to_string());
+            }
+        }
+    }
+
+    let mut new_items = Vec::new();
+    let mut inserted = std::collections::HashSet::new();
+    for item in input_items.drain(..) {
+        let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if item_type == "function_call_output" || item_type == "custom_tool_call_output" {
+            if let Some(call_id) = item.get("call_id").and_then(|v| v.as_str()) {
+                if !call_id.is_empty() && !call_present.contains(call_id) && !inserted.contains(call_id) {
+                    if let Some(cached_call) = tool_call_cache.get(call_id) {
+                        new_items.push(cached_call.clone());
+                        inserted.insert(call_id.to_string());
+                    }
+                }
+            }
+        }
+        new_items.push(item);
+    }
+    *input_items = new_items;
+}
+
+fn convert_codex_to_openai_request(mut body: Value) -> Value {
+    let instructions = body.get("instructions").and_then(|v| v.as_str()).unwrap_or_default();
+    let input_items = body.get("input").and_then(|v| v.as_array());
+
+    let mut messages = Vec::new();
+    if !instructions.is_empty() {
+        messages.push(json!({ "role": "system", "content": instructions }));
+    }
+
+    let mut call_id_to_name = std::collections::HashMap::new();
+
+    if let Some(items) = input_items {
+        for item in items {
+            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            match item_type {
+                "function_call" | "local_shell_call" | "web_search_call" => {
+                    let call_id = item.get("call_id").and_then(|v| v.as_str())
+                        .or_else(|| item.get("id").and_then(|v| v.as_str())).unwrap_or("unknown");
+                    let mut name = item.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    if item_type == "local_shell_call" || name == "local_shell_call" {
+                        name = "shell".to_string();
+                    } else if item_type == "web_search_call" || name == "web_search_call" {
+                        name = "google_search".to_string();
+                    }
+                    call_id_to_name.insert(call_id.to_string(), name);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(items) = input_items {
+        for item in items {
+            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            match item_type {
+                "message" => {
+                    let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+                    let content = item.get("content").and_then(|v| v.as_array());
+                    let mut text_parts = Vec::new();
+                    let mut image_parts = Vec::new();
+
+                    if let Some(parts) = content {
+                        for part in parts {
+                            if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                                text_parts.push(text.to_string());
+                            } else if part.get("type").and_then(|v| v.as_str()) == Some("input_image") {
+                                if let Some(image_url) = part.get("image_url").and_then(|v| v.as_str()) {
+                                    image_parts.push(json!({ "type": "image_url", "image_url": { "url": image_url } }));
+                                }
+                            } else if part.get("type").and_then(|v| v.as_str()) == Some("image_url") {
+                                if let Some(url_obj) = part.get("image_url") {
+                                    image_parts.push(json!({ "type": "image_url", "image_url": url_obj.clone() }));
+                                }
+                            }
+                        }
+                    }
+
+                    if image_parts.is_empty() {
+                        messages.push(json!({ "role": role, "content": text_parts.join("
+") }));
+                    } else {
+                        let mut content_blocks = Vec::new();
+                        if !text_parts.is_empty() {
+                            content_blocks.push(json!({ "type": "text", "text": text_parts.join("
+") }));
+                        }
+                        content_blocks.extend(image_parts);
+                        messages.push(json!({ "role": role, "content": content_blocks }));
+                    }
+                }
+                "function_call" | "local_shell_call" | "web_search_call" => {
+                    let mut name = item.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let mut args_str = item.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}").to_string();
+                    let call_id = item.get("call_id").and_then(|v| v.as_str())
+                        .or_else(|| item.get("id").and_then(|v| v.as_str())).unwrap_or("unknown");
+
+                    if item_type == "local_shell_call" || name == "local_shell_call" {
+                        name = "shell";
+                        if let Some(action) = item.get("action") {
+                            if let Some(exec) = action.get("exec") {
+                                let mut args_obj = serde_json::Map::new();
+                                if let Some(cmd) = exec.get("command") {
+                                    let cmd_val = if cmd.is_string() { json!([cmd]) } else { cmd.clone() };
+                                    args_obj.insert("command".to_string(), cmd_val);
+                                }
+                                if let Some(wd) = exec.get("working_directory").or(exec.get("workdir")) {
+                                    args_obj.insert("workdir".to_string(), wd.clone());
+                                }
+                                args_str = serde_json::to_string(&args_obj).unwrap_or_else(|_| "{}".to_string());
+                            }
+                        }
+                    } else if item_type == "web_search_call" || name == "web_search_call" {
+                        name = "google_search";
+                        if let Some(action) = item.get("action") {
+                            let mut args_obj = serde_json::Map::new();
+                            if let Some(q) = action.get("query") {
+                                args_obj.insert("query".to_string(), q.clone());
+                            }
+                            args_str = serde_json::to_string(&args_obj).unwrap_or_else(|_| "{}".to_string());
+                        }
+                    }
+
+                    messages.push(json!({
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": call_id,
+                            "type": "function",
+                            "function": { "name": name, "arguments": args_str }
+                        }]
+                    }));
+                }
+                "function_call_output" | "custom_tool_call_output" => {
+                    let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let output = item.get("output");
+                    let output_str = if let Some(o) = output {
+                        if o.is_string() { o.as_str().unwrap().to_string() }
+                        else if let Some(content) = o.get("content").and_then(|v| v.as_str()) { content.to_string() }
+                        else { o.to_string() }
+                    } else { "".to_string() };
+
+                    let name = call_id_to_name.get(call_id).cloned()
+                        .or_else(|| get_cached_tool_call(call_id).and_then(|v| v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string())))
+                        .unwrap_or_else(|| "shell".to_string());
+
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "name": name,
+                        "content": output_str
+                    }));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("messages".to_string(), json!(messages));
+    }
+    body
+}
+
+struct TranslationState {
+    response_id: String,
+    item_id: String,
+    message_item_added: bool,
+    content_part_added: bool,
+    accumulated_text: String,
+    tool_calls: std::collections::HashMap<u32, (String, String, String, String)>,
+    tool_calls_added: std::collections::HashSet<u32>,
+}
+
+async fn translate_openai_chunk_to_ws(
+    chunk: &Value,
+    state: &mut TranslationState,
+    socket: &mut WebSocket,
+) {
+    if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
+        for choice in choices {
+            if let Some(delta) = choice.get("delta") {
+                if let Some(reasoning) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
+                    if !reasoning.is_empty() {
+                        let reasoning_ev = json!({
+                            "type": "response.reasoning_summary_text.delta",
+                            "sequence_number": 0,
+                            "item_id": &state.item_id,
+                            "output_index": 0,
+                            "summary_index": 0,
+                            "delta": reasoning
+                        });
+                        let _ = socket.send(Message::Text(reasoning_ev.to_string())).await;
+
+                        if !state.message_item_added {
+                            let item_added = json!({
+                                "type": "response.output_item.added",
+                                "output_index": 0,
+                                "item": {
+                                    "id": &state.item_id,
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "status": "in_progress",
+                                    "content": []
+                                }
+                            });
+                            let _ = socket.send(Message::Text(item_added.to_string())).await;
+
+                            let part_added = json!({
+                                "type": "response.content_part.added",
+                                "item_id": &state.item_id,
+                                "output_index": 0,
+                                "content_index": 0,
+                                "part": {
+                                    "type": "output_text",
+                                    "text": ""
+                                }
+                            });
+                            let _ = socket.send(Message::Text(part_added.to_string())).await;
+                            state.message_item_added = true;
+                            state.content_part_added = true;
+                        }
+
+                        let delta_ev = json!({
+                            "type": "response.output_text.delta",
+                            "item_id": &state.item_id,
+                            "output_index": 0,
+                            "content_index": 0,
+                            "delta": reasoning
+                        });
+                        let _ = socket.send(Message::Text(delta_ev.to_string())).await;
+                        state.accumulated_text.push_str(reasoning);
+                    }
+                }
+
+                if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
+                    if !content.is_empty() {
+                        if !state.message_item_added {
+                            let item_added = json!({
+                                "type": "response.output_item.added",
+                                "output_index": 0,
+                                "item": {
+                                    "id": &state.item_id,
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "status": "in_progress",
+                                    "content": []
+                                }
+                            });
+                            let _ = socket.send(Message::Text(item_added.to_string())).await;
+
+                            let part_added = json!({
+                                "type": "response.content_part.added",
+                                "item_id": &state.item_id,
+                                "output_index": 0,
+                                "content_index": 0,
+                                "part": {
+                                    "type": "output_text",
+                                    "text": ""
+                                }
+                            });
+                            let _ = socket.send(Message::Text(part_added.to_string())).await;
+                            state.message_item_added = true;
+                            state.content_part_added = true;
+                        }
+
+                        let delta_ev = json!({
+                            "type": "response.output_text.delta",
+                            "item_id": &state.item_id,
+                            "output_index": 0,
+                            "content_index": 0,
+                            "delta": content
+                        });
+                        let _ = socket.send(Message::Text(delta_ev.to_string())).await;
+                        state.accumulated_text.push_str(content);
+                    }
+                }
+
+                if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                    for tc in tool_calls {
+                        let tc_idx = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                        let tc_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let tc_name = tc.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+                        let tc_args = tc.get("function").and_then(|f| f.get("arguments")).and_then(|v| v.as_str()).unwrap_or("");
+
+                        if !tc_id.is_empty() || !tc_name.is_empty() {
+                            let tool_item_id = format!("item-{}", &Uuid::new_v4().to_string()[..16]);
+                            let call_id = if tc_id.is_empty() {
+                                format!("call_{}", &Uuid::new_v4().to_string()[..16])
+                            } else {
+                                tc_id.to_string()
+                            };
+                            state.tool_calls.insert(tc_idx, (tool_item_id, call_id.clone(), tc_name.to_string(), String::new()));
+                            if !tc_name.is_empty() {
+                                // 临时插入一个包含 name 的 Value，最终会被 finalize_ws_events 里的完整 Value 覆盖
+                                insert_cached_tool_call(call_id, json!({ "name": tc_name }));
+                            }
+                        }
+
+                        if let Some((tool_item_id, call_id, name, args)) = state.tool_calls.get_mut(&tc_idx) {
+                            args.push_str(tc_args);
+
+                            if !state.tool_calls_added.contains(&tc_idx) {
+                                let (actual_name, namespace) = split_namespace_tool_name(name);
+                                let mut item_obj = serde_json::json!({
+                                    "id": tool_item_id,
+                                    "type": "function_call",
+                                    "status": "in_progress",
+                                    "name": actual_name,
+                                    "call_id": call_id,
+                                    "arguments": ""
+                                });
+                                if let Some(ns) = namespace {
+                                    item_obj["namespace"] = json!(ns);
+                                }
+                                let tool_added = json!({
+                                    "type": "response.output_item.added",
+                                    "output_index": 0,
+                                    "item": item_obj
+                                });
+                                let _ = socket.send(Message::Text(tool_added.to_string())).await;
+                                state.tool_calls_added.insert(tc_idx);
+                            }
+
+                            if !tc_args.is_empty() {
+                                let args_delta = json!({
+                                    "type": "response.function_call_arguments.delta",
+                                    "item_id": tool_item_id,
+                                    "output_index": 0,
+                                    "delta": tc_args
+                                });
+                                let _ = socket.send(Message::Text(args_delta.to_string())).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn finalize_ws_events(
+    state: &mut TranslationState,
+    socket: &mut WebSocket,
+    session_state: &mut WebsocketSessionState,
+) -> Value {
+    let mut output_items = Vec::new();
+    let mut tool_keys: Vec<u32> = state.tool_calls.keys().cloned().collect();
+    tool_keys.sort();
+
+    for tc_idx in tool_keys {
+        if let Some((tool_item_id, call_id, name, args)) = state.tool_calls.get(&tc_idx) {
+            let args_done = json!({
+                "type": "response.function_call_arguments.done",
+                "item_id": tool_item_id,
+                "output_index": 0,
+                "arguments": args
+            });
+            let _ = socket.send(Message::Text(args_done.to_string())).await;
+
+            let (actual_name, namespace) = split_namespace_tool_name(name);
+            let mut item_obj = serde_json::json!({
+                "id": tool_item_id,
+                "type": "function_call",
+                "status": "completed",
+                "name": actual_name,
+                "call_id": call_id,
+                "arguments": args
+            });
+            if let Some(ns) = namespace {
+                item_obj["namespace"] = json!(ns);
+            }
+
+            let tool_done = json!({
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": item_obj
+            });
+            let _ = socket.send(Message::Text(tool_done.to_string())).await;
+
+            let tc_val = item_obj.clone();
+            
+            session_state.tool_call_cache.insert(call_id.clone(), tc_val.clone());
+            insert_cached_tool_call(call_id.clone(), tc_val.clone());
+            output_items.push(tc_val);
+        }
+    }
+
+    if state.message_item_added {
+        let text_done = json!({
+            "type": "response.output_text.done",
+            "item_id": &state.item_id,
+            "output_index": 0,
+            "content_index": 0,
+            "text": &state.accumulated_text
+        });
+        let _ = socket.send(Message::Text(text_done.to_string())).await;
+
+        let part_done = json!({
+            "type": "response.content_part.done",
+            "item_id": &state.item_id,
+            "output_index": 0,
+            "content_index": 0,
+            "part": {
+                "type": "output_text",
+                "text": &state.accumulated_text
+            }
+        });
+        let _ = socket.send(Message::Text(part_done.to_string())).await;
+
+        let message_done = json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "item": {
+                "id": &state.item_id,
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{
+                    "type": "output_text",
+                    "text": &state.accumulated_text
+                }]
+            }
+        });
+        let _ = socket.send(Message::Text(message_done.to_string())).await;
+
+        output_items.push(json!({
+            "id": &state.item_id,
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{
+                "type": "output_text",
+                "text": &state.accumulated_text
+            }]
+        }));
+    }
+
+    let completed_ev = json!({
+        "type": "response.completed",
+        "response": {
+            "id": &state.response_id,
+            "object": "response",
+            "status": "completed",
+            "output": output_items
+        }
+    });
+    let _ = socket.send(Message::Text(completed_ev.to_string())).await;
+
+    json!(output_items)
+}
+
+fn split_namespace_tool_name(qualified_name: &str) -> (String, Option<String>) {
+    let name = qualified_name.trim();
+    if name.starts_with("mcp__") {
+        return (name.to_string(), None);
+    }
+    if let Some(pos) = name.find("__") {
+        if pos > 0 {
+            let namespace = name[..pos].to_string();
+            let actual_name = name[pos + 2..].to_string();
+            return (actual_name, Some(namespace));
+        }
+    }
+    (name.to_string(), None)
+}
+

@@ -638,7 +638,7 @@ pub async fn handle_generate(
             } else {
                 force_rotate = true;
             }
-
+            
             continue;
         }
 

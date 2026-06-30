@@ -19,6 +19,11 @@ pub struct OpenAIRequest {
     pub temperature: Option<f64>,
     #[serde(rename = "top_p")]
     pub top_p: Option<f64>,
+    #[serde(rename = "presence_penalty")]
+    pub presence_penalty: Option<f64>,
+    #[serde(rename = "frequency_penalty")]
+    pub frequency_penalty: Option<f64>,
+    pub seed: Option<i64>,
     pub stop: Option<Value>,
     pub response_format: Option<ResponseFormat>,
     #[serde(default)]
@@ -95,6 +100,8 @@ pub struct AudioUrlContent {
 pub struct OpenAIMessage {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<OpenAIContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
@@ -110,7 +117,24 @@ pub struct OpenAIMessage {
 pub struct ToolCall {
     pub id: String,
     pub r#type: String,
-    pub function: ToolFunction,
+    
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function: Option<ToolFunction>,
+    
+    // [NEW] Fields for apply_patch_call
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<ApplyPatchOperation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyPatchOperation {
+    pub r#type: String,
+    pub diff: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

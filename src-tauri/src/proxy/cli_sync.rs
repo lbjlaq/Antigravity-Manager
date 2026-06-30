@@ -565,18 +565,9 @@ pub fn sync_config(
                         );
                         if !api_key.is_empty() {
                             if proxy_url.contains("apikey.fun") {
-                                env_obj.insert(
-                                    "ANTHROPIC_AUTH_TOKEN".to_string(),
-                                    Value::String(api_key.to_string()),
-                                );
-                                env_obj.insert(
-                                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(),
-                                    Value::String("1".to_string()),
-                                );
-                                env_obj.insert(
-                                    "CLAUDE_CODE_ATTRIBUTION_HEADER".to_string(),
-                                    Value::String("0".to_string()),
-                                );
+                                env_obj.insert("ANTHROPIC_AUTH_TOKEN".to_string(), Value::String(api_key.to_string()));
+                                env_obj.insert("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(), Value::String("1".to_string()));
+                                env_obj.insert("CLAUDE_CODE_ATTRIBUTION_HEADER".to_string(), Value::String("0".to_string()));
                                 env_obj.remove("ANTHROPIC_API_KEY");
                             } else {
                                 env_obj.insert(
@@ -636,15 +627,11 @@ pub fn sync_config(
 
                     // 必须使用 custom 提供商，Codex 不支持原生的 codex provider
                     let provider_key = "custom";
-                    let display_name = if proxy_url.contains("apikey.fun") {
-                        "APIKEY.FUN"
-                    } else {
-                        "Custom Node"
-                    };
+                    let display_name = if proxy_url.contains("apikey.fun") { "APIKEY.FUN" } else { "Custom Node" };
 
                     // 优先设置 Root Keys 确保位于顶部
                     doc.insert("model_provider", value(provider_key));
-
+                    
                     if proxy_url.contains("apikey.fun") {
                         doc.insert("model", value("gpt-5.5"));
                         doc.insert("review_model", value("gpt-5.5"));
@@ -683,7 +670,7 @@ pub fn sync_config(
                             }
                         }
                     }
-
+                    
                     if proxy_url.contains("apikey.fun") {
                         let features = doc
                             .entry("features")

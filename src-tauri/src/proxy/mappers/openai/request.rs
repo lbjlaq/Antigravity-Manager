@@ -5,6 +5,62 @@ use crate::proxy::token_manager::ProxyToken;
 
 use serde_json::{json, Value};
 
+
+fn qualify_namespace_tool_name(namespace_name: &str, child_name: &str) -> String {
+    let child = child_name.trim();
+    let ns = namespace_name.trim();
+    if child.is_empty() || ns.is_empty() || child.starts_with("mcp__") {
+        return child.to_string();
+    }
+    if child.starts_with(ns) {
+        return child.to_string();
+    }
+    if ns.ends_with("__") {
+        return format!("{}{}", ns, child);
+    }
+    format!("{}__{}", ns, child)
+}
+
+fn flatten_tools(tools: &[Value]) -> Vec<Value> {
+    let mut flat = Vec::new();
+    for tool in tools {
+        let t = tool.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if t == "namespace" {
+            let namespace_name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if let Some(sub_tools) = tool.get("tools").and_then(|v| v.as_array()) {
+                let sub_flat = flatten_tools(sub_tools);
+                for mut sub_tool in sub_flat {
+                    if let Some(obj) = sub_tool.as_object_mut() {
+                        let mut name = String::new();
+                        if let Some(n) = obj.get("name").and_then(|v| v.as_str()) {
+                            name = n.to_string();
+                        } else if let Some(func) = obj.get("function") {
+                            if let Some(n) = func.get("name").and_then(|v| v.as_str()) {
+                                name = n.to_string();
+                            }
+                        }
+                        if !name.is_empty() {
+                            let qualified = qualify_namespace_tool_name(namespace_name, &name);
+                            if obj.contains_key("name") {
+                                obj.insert("name".to_string(), json!(qualified));
+                            }
+                            if let Some(func) = obj.get_mut("function") {
+                                if let Some(func_obj) = func.as_object_mut() {
+                                    func_obj.insert("name".to_string(), json!(qualified));
+                                }
+                            }
+                        }
+                    }
+                    flat.push(sub_tool);
+                }
+            }
+        } else {
+            flat.push(tool.clone());
+        }
+    }
+    flat
+}
+
 pub fn transform_openai_request(
     request: &OpenAIRequest,
     project_id: &str,
@@ -139,11 +195,17 @@ pub fn transform_openai_request(
     for msg in &request.messages {
         if let Some(tool_calls) = &msg.tool_calls {
             for call in tool_calls {
-                let name = &call.function.name;
+                let name = if let Some(func) = &call.function {
+                    func.name.clone()
+                } else if call.operation.is_some() || call.r#type == "apply_patch_call" {
+                    "apply_patch".to_string()
+                } else {
+                    continue;
+                };
                 let final_name = if name == "local_shell_call" {
                     "shell"
                 } else {
-                    name
+                    &name
                 };
                 tool_id_to_name.insert(call.id.clone(), final_name.to_string());
             }
@@ -163,30 +225,38 @@ pub fn transform_openai_request(
     // [New] 预先构建工具名称到原始 Schema 的映射，用于后续参数类型修正
     let mut tool_name_to_schema = std::collections::HashMap::new();
     if let Some(tools) = &request.tools {
-        for tool in tools {
-            if let (Some(name), Some(params)) = (
-                tool.get("function")
-                    .and_then(|f| f.get("name"))
-                    .and_then(|v| v.as_str()),
-                tool.get("function").and_then(|f| f.get("parameters")),
-            ) {
-                tool_name_to_schema.insert(name.to_string(), params.clone());
-            } else if let (Some(name), Some(params)) = (
-                tool.get("name").and_then(|v| v.as_str()),
-                tool.get("parameters"),
-            ) {
-                // 处理某些客户端可能透传的精简格式
-                tool_name_to_schema.insert(name.to_string(), params.clone());
+        let flat_tools = flatten_tools(tools);
+        for tool in &flat_tools {
+            let name_opt = tool.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    tool.get("name").and_then(|v| v.as_str()).map(|s| s.to_string())
+                })
+                .or_else(|| {
+                    tool.get("type").and_then(|v| v.as_str()).map(|s| s.to_string())
+                });
+            
+            let params_opt = tool.get("function")
+                .and_then(|f| f.get("parameters"))
+                .or_else(|| tool.get("parameters"));
+
+            if let (Some(name), Some(params)) = (name_opt, params_opt) {
+                tool_name_to_schema.insert(name, params.clone());
             }
         }
     }
 
     // 2. 构建 Gemini contents (过滤掉 system/developer 指令)
+    let total_messages = request.messages.len();
     let contents: Vec<Value> = request
         .messages
         .iter()
-        .filter(|msg| msg.role != "system" && msg.role != "developer")
-        .map(|msg| {
+        .enumerate()
+        .filter(|(_, msg)| msg.role != "system" && msg.role != "developer")
+        .map(|(msg_index, msg)| {
+            let is_latest = msg_index >= total_messages.saturating_sub(4);
             let role = match msg.role.as_str() {
                 "assistant" => "model",
                 "tool" | "function" => "user",
@@ -321,17 +391,32 @@ pub fn transform_openai_request(
                     }
                     */
 
+                    let mut args_str = String::new();
+                    let mut func_name = String::new();
+                    
+                    if let Some(func) = &tc.function {
+                        args_str = func.arguments.clone();
+                        func_name = func.name.clone();
+                    } else if let Some(op) = &tc.operation {
+                        func_name = "apply_patch".to_string();
+                        args_str = serde_json::to_string(op).unwrap_or_else(|_| "{}".to_string());
+                    } else {
+                        continue;
+                    }
 
-                    let mut args = serde_json::from_str::<Value>(&tc.function.arguments).unwrap_or(json!({}));
+                    if !is_latest && args_str.len() > 1000 {
+                        args_str = "{\"_truncated\": \"Arguments truncated to save context window.\"}".to_string();
+                    }
+                    let mut args = serde_json::from_str::<Value>(&args_str).unwrap_or(json!({}));
 
                     // [New] 利用通用引擎修正参数类型 (替代以前硬编码的 shell 工具修复逻辑)
-                    if let Some(original_schema) = tool_name_to_schema.get(&tc.function.name) {
+                    if let Some(original_schema) = tool_name_to_schema.get(&func_name) {
                         crate::proxy::common::json_schema::fix_tool_call_args(&mut args, original_schema);
                     }
 
                     let mut func_call_part = json!({
                         "functionCall": {
-                            "name": if tc.function.name == "local_shell_call" { "shell" } else { &tc.function.name },
+                            "name": if func_name == "local_shell_call" { "shell" } else { func_name.as_str() },
                             "args": args,
                             "id": &tc.id,
                         }
@@ -366,7 +451,13 @@ pub fn transform_openai_request(
                 let mut extra_parts = Vec::new();
 
                 let content_val = match &msg.content {
-                    Some(OpenAIContent::String(s)) => s.clone(),
+                    Some(OpenAIContent::String(s)) => {
+                        if !is_latest && s.len() > 1000 {
+                            format!("[Tool output truncated to save context. Original length: {}]", s.len())
+                        } else {
+                            s.clone()
+                        }
+                    },
                     Some(OpenAIContent::Array(blocks)) => {
                         let mut texts = Vec::new();
                         for block in blocks {
@@ -461,6 +552,16 @@ pub fn transform_openai_request(
     // [NEW] 支持多候选结果数量 (n -> candidateCount)
     if let Some(n) = request.n {
         gen_config["candidateCount"] = json!(n);
+    }
+
+    if let Some(presence_penalty) = request.presence_penalty {
+        gen_config["presencePenalty"] = json!(presence_penalty);
+    }
+    if let Some(frequency_penalty) = request.frequency_penalty {
+        gen_config["frequencyPenalty"] = json!(frequency_penalty);
+    }
+    if let Some(seed) = request.seed {
+        gen_config["seed"] = json!(seed);
     }
 
     // 为 thinking 模型注入 thinkingConfig (使用 thinkingBudget 而非 thinkingLevel)
@@ -573,7 +674,6 @@ pub fn transform_openai_request(
             { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF" },
             { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF" },
             { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF" },
-            { "category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "OFF" },
         ]
     });
 
@@ -581,13 +681,29 @@ pub fn transform_openai_request(
     crate::proxy::mappers::common_utils::deep_clean_undefined(&mut inner_request, 0);
 
     // 4. Handle Tools (Merged Cleaning)
-    if let Some(tools) = &request.tools {
-        let mut function_declarations: Vec<Value> = Vec::new();
+    let is_codex_style = request.model.contains("codex")
+        || request.model.contains("realtime")
+        || request.instructions.is_some()
+        || request.input.is_some();
+
+    let mut function_declarations: Vec<Value> = Vec::new();
+
+    if let Some(original_tools) = &request.tools {
+        let tools = flatten_tools(original_tools);
         for tool in tools.iter() {
             let mut gemini_func = if let Some(func) = tool.get("function") {
                 func.clone()
             } else {
                 let mut func = tool.clone();
+                // [FIX] 剔除 "type" 前如果不存在 "name"，则提取 "type" 兜底作为名字
+                if func.get("name").is_none() {
+                    let tool_type_opt = func.get("type").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    if let Some(tool_type) = tool_type_opt {
+                        if let Some(obj) = func.as_object_mut() {
+                            obj.insert("name".to_string(), json!(tool_type));
+                        }
+                    }
+                }
                 if let Some(obj) = func.as_object_mut() {
                     obj.remove("type");
                     obj.remove("strict");
@@ -625,14 +741,19 @@ pub fn transform_openai_request(
                 continue;
             }
 
-            // [NEW CRITICAL FIX] 清除函数定义根层级的非法字段 (解决报错持久化)
+            // [NEW CRITICAL FIX] 保留函数定义根层级的合法字段，移除所有非法字段 (如 type, execution, format 等)
             if let Some(obj) = gemini_func.as_object_mut() {
-                obj.remove("format");
-                obj.remove("strict");
-                obj.remove("additionalProperties");
-                obj.remove("type"); // [NEW] Gemini 不支持在 FunctionDeclaration 根层级出现 type: "function"
-                obj.remove("external_web_access"); // [FIX #1278] Remove invalid field injected by OpenAI Codex
-                obj.remove("tools"); // [FIX] 删除 "tools" 字段，解决Codex中400 Unknown name "tools" 错误
+                let mut clean_obj = serde_json::Map::new();
+                if let Some(name) = obj.get("name") {
+                    clean_obj.insert("name".to_string(), name.clone());
+                }
+                if let Some(desc) = obj.get("description") {
+                    clean_obj.insert("description".to_string(), desc.clone());
+                }
+                if let Some(params) = obj.get("parameters") {
+                    clean_obj.insert("parameters".to_string(), params.clone());
+                }
+                *obj = clean_obj;
             }
 
             if let Some(params) = gemini_func.get_mut("parameters") {
@@ -651,40 +772,65 @@ pub fn transform_openai_request(
                 // 递归转换 type 为大写 (符合 Protobuf 定义)
                 enforce_uppercase_types(params);
             } else {
-                // [FIX] 针对自定义工具 (如 apply_patch) 补全缺失的参数模式
-                // 解决 Vertex AI (Claude) 报错: tools.5.custom.input_schema: Field required
-                tracing::debug!(
-                    "[OpenAI-Request] Injecting default schema for custom tool: {}",
-                    gemini_func
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown")
-                );
-
-                gemini_func.as_object_mut().unwrap().insert(
-                    "parameters".to_string(),
-                    json!({
-                        "type": "OBJECT",
-                        "properties": {
-                            "content": {
-                                "type": "STRING",
-                                "description": "The raw content or patch to be applied"
-                            }
-                        },
-                        "required": ["content"]
-                    }),
-                );
+                if gemini_func.get("name").and_then(|v| v.as_str()) == Some("apply_patch") {
+                    gemini_func.as_object_mut().unwrap().insert(
+                        "parameters".to_string(),
+                        json!({
+                            "type": "OBJECT",
+                            "properties": {
+                                "command": {
+                                    "type": "ARRAY",
+                                    "items": {
+                                        "type": "STRING"
+                                    },
+                                    "description": "The command array. First element MUST be 'apply_patch', second element MUST be the exact freeform patch string starting with *** Begin Patch"
+                                }
+                            },
+                            "required": ["command"]
+                        }),
+                    );
+                } else {
+                    gemini_func.as_object_mut().unwrap().insert(
+                        "parameters".to_string(),
+                        json!({
+                            "type": "OBJECT",
+                            "properties": {
+                                "content": {
+                                    "type": "STRING",
+                                    "description": "The raw content or patch to be applied"
+                                }
+                            },
+                            "required": ["content"]
+                        }),
+                    );
+                }
             }
             function_declarations.push(gemini_func);
         }
+    }
 
-        if !function_declarations.is_empty() {
-            inner_request["tools"] = json!([{ "functionDeclarations": function_declarations }]);
-            // [ADDED v4.1.24] toolConfig VALIDATED - aligns with native behavior
-            inner_request["toolConfig"] = json!({
-                "functionCallingConfig": { "mode": "VALIDATED" }
-            });
+    // Removed auto-inject since we handle it above now if Codex passes it.
+
+    if !function_declarations.is_empty() {
+        inner_request["tools"] = json!([{ "functionDeclarations": function_declarations }]);
+        
+        let mut mode = "VALIDATED";
+        if let Some(tool_choice) = &request.tool_choice {
+            if let Some(s) = tool_choice.as_str() {
+                match s {
+                    "none" => mode = "NONE",
+                    "auto" => mode = "AUTO",
+                    "required" => mode = "ANY",
+                    _ => mode = "ANY",
+                }
+            } else {
+                mode = "ANY";
+            }
         }
+
+        inner_request["toolConfig"] = json!({
+            "functionCallingConfig": { "mode": mode }
+        });
     }
 
     // [NEW] Antigravity 身份指令 (原始简化版)
@@ -1108,10 +1254,13 @@ mod tests {
                 tool_calls: Some(vec![ToolCall {
                     id: "call_123".to_string(),
                     r#type: "function".to_string(),
-                    function: ToolFunction {
+                    function: Some(ToolFunction {
                         name: "test_tool".to_string(),
                         arguments: "{}".to_string(),
-                    },
+                    }),
+                    status: None,
+                    call_id: None,
+                    operation: None,
                 }]),
                 tool_call_id: None,
                 name: None,
@@ -1155,10 +1304,13 @@ mod tests {
                     tool_calls: Some(vec![ToolCall {
                         id: "call_flash_test".to_string(),
                         r#type: "function".to_string(),
-                        function: ToolFunction {
+                        function: Some(ToolFunction {
                             name: "get_weather".to_string(),
                             arguments: "{\"location\":\"Beijing\"}".to_string(),
-                        },
+                        }),
+                        status: None,
+                        call_id: None,
+                        operation: None,
                     }]),
                     tool_call_id: None,
                     name: None,
@@ -1276,3 +1428,4 @@ mod tests {
         );
     }
 }
+
