@@ -636,11 +636,12 @@ pub fn wrap_request(
 
     let mut final_request_obj = json!({
         "project": project_id,
-        "requestId": official_request_id,
         "request": inner_request,
         "model": config.final_model,
         "userAgent": official_user_agent,
-        "requestType": if is_agent_request { "agent" } else { "image_gen" }
+        "requestType": if is_agent_request { "agent" } else { "image_gen" },
+        // [CACHE] requestId 移到末尾避免动态值破坏前缀字节一致性
+        "requestId": official_request_id,
     });
 
     if is_agent_request {

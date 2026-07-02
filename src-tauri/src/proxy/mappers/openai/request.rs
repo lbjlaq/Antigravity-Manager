@@ -12,6 +12,8 @@ use serde_json::{json, Value};
 /// - 时间戳（Current time/date: ..., Today is: ...）
 /// - UUID (8-4-4-4-12 格式)
 /// - 随机 request/session/trace ID (req_xxx, sid_xxx, trace_xxx)
+/// - [CACHE] environment_context XML 标签 (<current_date>, <timezone>, <cwd>, <shell>)
+/// - [CACHE] skill/plugin 路径中的动态版本号 (如 /26.609.41114/)
 /// - 多行空行合并为最多两个连续空行
 fn sanitize_system_instruction_for_cache(text: &str) -> String {
     let mut cleaned = text.to_string();
@@ -27,6 +29,26 @@ fn sanitize_system_instruction_for_cache(text: &str) -> String {
         if let Ok(re) = regex::Regex::new(pat) {
             cleaned = re.replace_all(&cleaned, "").into_owned();
         }
+    }
+
+    // [CACHE] 清洗 environment_context XML 标签中的动态值
+    // Codex 在每个请求的 user/system 消息中注入这些标签，其值随环境变化
+    let env_xml_patterns: &[(&str, &str)] = &[
+        (r"<current_date>[^<]*</current_date>", "<current_date>[DATE_FROZEN]</current_date>"),
+        (r"<timezone>[^<]*</timezone>", "<timezone>[TZ_FROZEN]</timezone>"),
+        (r"<cwd>[^<]*</cwd>", "<cwd>[WORKSPACE_FROZEN]</cwd>"),
+        (r"<shell>[^<]*</shell>", "<shell>[SHELL_FROZEN]</shell>"),
+    ];
+    for (pat, replacement) in env_xml_patterns {
+        if let Ok(re) = regex::Regex::new(pat) {
+            cleaned = re.replace_all(&cleaned, *replacement).into_owned();
+        }
+    }
+
+    // [CACHE] 清洗 skill/plugin 路径中的动态版本号 (如 /26.609.41114/ )
+    // 这些版本号在 Codex/plugin 更新时会变化，但语义相同
+    if let Ok(re) = regex::Regex::new(r"/\d{2}\.\d{3}\.\d{5}/") {
+        cleaned = re.replace_all(&cleaned, "/[VERSION_FROZEN]/").into_owned();
     }
 
     // 剥离 UUID (标准 8-4-4-4-12 格式)
@@ -957,13 +979,13 @@ pub fn transform_openai_request(
 
     let mut final_body = json!({
         "project": project_id,
-        // [CHANGED v4.1.24] Structured requestId: agent/<session>/<turn> to match official format
-        "requestId": format!("agent/antigravity/{}/{}", &session_id[..session_id.len().min(8)], message_count),
         "request": inner_request,
         "model": config.final_model,
         "userAgent": "antigravity",
         // [CHANGED v4.1.24] Use "agent" for all non-image requests (matches official client)
-        "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" }
+        "requestType": if config.request_type == "image_gen" { "image_gen" } else { "agent" },
+        // [CACHE] requestId 移到末尾避免动态 message_count 破坏前缀字节一致性
+        "requestId": format!("agent/antigravity/{}/{}", &session_id[..session_id.len().min(8)], message_count),
     });
 
     // [CACHE] 计算并记录稳定前缀的 hash，用于缓存命中追踪
