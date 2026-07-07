@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Protocol Proxy System (v4.3.4)
+> Professional AI Account Management & Protocol Proxy System (v4.3.5)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.3.4-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.3.5-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -134,7 +134,7 @@ Automatically detects your OS, architecture, and package manager — one command
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.3.4/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.3.5/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -144,7 +144,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.3.4`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.3.5`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
@@ -427,6 +427,10 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 ## 📝 Developer & Community
 
 *   **Changelog**:
+    *   **v4.3.5 (2026-07-07)**:
+        -   **[Core Fix] Resolve OpenAI Format Proxy SSE Streaming Reasoning Content Duplication**:
+            -   **Clean Reasoning Stream**: Fixed an issue where the proxy streamed reasoning/thinking process chunks to both `reasoning_content` and `content` fields when proxying Gemini 3.5 Flash series or Gemini 3.1 Pro Low under the OpenAI chat completions protocol (`/v1/chat/completions`). The thinking process now strictly streams to `reasoning_content`, resolving duplicate message bubble rendering in clients.
+            -   *Related Issue*: See [Issue #3227](https://github.com/lbjlaq/Antigravity-Manager/issues/3227).
     *   **v4.3.4 (2026-07-06)**:
         -   **[Community Contribution] Merge PR #3225: apply_patch Call Failure Fix & Multi-Layer Cache Optimization**:
             -   **apply_patch Format Normalization (Tier A Optimization)**: Added a deep pre-processing step (`optimize_patch`) before forwarding patches to Codex, which automatically corrects malformed `@@` hunk headers, missing `+/-` prefix lines, and stray unified diff headers. This significantly reduces `apply_patch` tool call failure rates caused by Gemini output format discrepancies.

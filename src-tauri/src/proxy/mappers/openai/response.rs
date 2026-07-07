@@ -518,7 +518,7 @@ mod tests {
             "responseId": "resp_123"
         });
 
-        let result = transform_openai_response(&gemini_resp, Some("session-123"), 1);
+        let result = transform_openai_response(&gemini_resp, Some("session-123"), 1, None);
         let usage = result.usage.unwrap();
 
         assert_eq!(usage.prompt_tokens, 7);

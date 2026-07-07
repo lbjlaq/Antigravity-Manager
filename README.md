@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.3.4)
+> 专业级 AI 账号管理与协议代理系统 (v4.3.5)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.3.4-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.3.5-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -143,7 +143,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **支持的格式**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.3.4`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
+> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.3.5`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 如果您已安装 [Homebrew](https://brew.sh/)，也可以通过以下命令安装：
@@ -439,6 +439,10 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.3.5 (2026-07-07)**:
+        -   **[核心修复] 解决 OpenAI 格式代理流式响应下思维链内容重复输出的 Bug (OpenAI SSE Streaming Reasoning Duplicate Output Fix)**:
+            -   **规整思维链块输出**: 修复了在 OpenAI 兼容模式下（使用 `/v1/chat/completions`）调用 Gemini 3.5 Flash 系列或 Gemini 3.1 Pro Low 等思维模型时，代理层在流式输出中将思考片段同时推送到 `reasoning_content` 和 `content` 的问题。现在，思考过程只输出到 `reasoning_content` 字段中，有效杜绝了客户端 UI 渲染重复的问题。
+            -   *相关 Issue*: 详见 [Issue #3227](https://github.com/lbjlaq/Antigravity-Manager/issues/3227)。
     *   **v4.3.4 (2026-07-06)**:
         -   **[社区贡献] 合并 PR #3225：apply_patch 调用失败修复与多层缓存优化 (Apply Patch Fix & Multi-Layer Cache Optimization)**：
             -   **apply_patch 格式规整增强 (Tier A Optimization)**: 在将 patch 发送给 Codex 前，新增对 unified diff 格式的深度预处理逻辑 (`optimize_patch`)，自动修正 `@@` 行头、缺失 `+/-` 前缀及 header 清洗等常见格式问题，显著降低 `apply_patch` 调用失败率。

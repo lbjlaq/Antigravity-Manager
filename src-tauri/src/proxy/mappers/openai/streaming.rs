@@ -162,11 +162,8 @@ where
                                                             if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
                                                                 let clean_text = text.replace("<think>\n", "").replace("<think>", "").replace("\n</think>", "").replace("</think>", "");
                                                                 if is_thought_part {
-                                                                    // thought 内容写入 thought_out（给支持 reasoning_content 的客户端）
-                                                                    // 同时单独写入 content_out（作 fallback，给不支持 reasoning_content 的客户端）
-                                                                    // 两者是独立 chunk，不会在同一 chunk 里混入正文
+                                                                    // thought 内容只写入 thought_out（给支持 reasoning_content 的客户端），防止客户端重复显示思维过程
                                                                     thought_out.push_str(&clean_text);
-                                                                    content_out.push_str(&clean_text);
                                                                 }
                                                                 else { content_out.push_str(&clean_text); }
                                                             }
@@ -1068,5 +1065,79 @@ mod tests {
         }
         assert!(found_usage, "Usage should be found in the last chunk");
         assert!(found_finish, "Finish reason should be strictly 'stop'");
+    }
+
+    #[tokio::test]
+    async fn test_openai_streaming_reasoning_content() {
+        // Chunk with thought part
+        let chunk_json = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "text": "Thinking...", "thought": true },
+                        { "text": "Hello world" }
+                    ]
+                }
+            }]
+        });
+
+        let items: Vec<Result<Bytes, reqwest::Error>> = vec![
+            Ok(Bytes::from(format!("data: {}\n\n", chunk_json))),
+        ];
+
+        let gemini_stream = Box::pin(stream::iter(items));
+
+        let mut openai_stream = create_openai_sse_stream(
+            gemini_stream,
+            "gemini-1.5-flash".to_string(),
+            "test-session".to_string(),
+            0,
+            None,
+        );
+
+        let mut chunks = Vec::new();
+        while let Some(result) = openai_stream.next().await {
+            if let Ok(bytes) = result {
+                let s = String::from_utf8_lossy(&bytes).to_string();
+                for line in s.lines() {
+                    if line.starts_with("data: ") && !line.contains("[DONE]") {
+                        chunks.push(line.to_string());
+                    }
+                }
+            }
+        }
+
+        let mut has_reasoning = false;
+        let mut has_content = false;
+
+        for chunk_str in &chunks {
+            let json_str = chunk_str.trim_start_matches("data: ").trim();
+            let json: Value = serde_json::from_str(json_str).unwrap();
+
+            if let Some(choices) = json.get("choices") {
+                if let Some(choice) = choices.get(0) {
+                    if let Some(delta) = choice.get("delta") {
+                        if let Some(rc) = delta.get("reasoning_content") {
+                            assert_eq!(rc.as_str().unwrap(), "Thinking...");
+                            has_reasoning = true;
+                            // content should be null or not match thinking process
+                            if let Some(content) = delta.get("content") {
+                                assert!(content.is_null());
+                            }
+                        }
+                        if let Some(c) = delta.get("content") {
+                            if c.is_string() {
+                                assert_eq!(c.as_str().unwrap(), "Hello world");
+                                has_content = true;
+                                assert!(delta.get("reasoning_content").is_none());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(has_reasoning, "Should stream reasoning_content");
+        assert!(has_content, "Should stream content");
     }
 }
