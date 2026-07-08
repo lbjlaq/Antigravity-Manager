@@ -1079,7 +1079,7 @@ pub fn transform_openai_request(
         } else {
             None
         };
-    let structured_system_instruction =
+    let mut structured_system_instruction =
         super::context_blocks::build_official_style_system_instruction(
             &system_instructions,
             Some(fallback_identity),
@@ -1088,6 +1088,9 @@ pub fn transform_openai_request(
             mapped_model,
             &session_id,
         );
+
+    // [FIX] Inject explicit tool mapping instructions for Gemini to read SKILL.md
+    structured_system_instruction = crate::proxy::mappers::common_utils::enhance_gemini_skills_prompt(&structured_system_instruction);
 
     inner_request["systemInstruction"] = json!({
         "role": "system",

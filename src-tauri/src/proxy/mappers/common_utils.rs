@@ -993,3 +993,17 @@ pub fn parse_markdown_images_to_parts(text: &str) -> Vec<Value> {
     parts
 }
 
+/// [FIX] Inject explicit tool mapping instructions for Gemini to read SKILL.md
+pub fn enhance_gemini_skills_prompt(text: &str) -> String {
+    let mut enhanced = text.to_string();
+    let warning_note = "\n\n**[CRITICAL INSTRUCTION FOR GEMINI - HOW TO READ SKILL.md]**\nYou do NOT have a direct `view_file` or `read_file` tool.\nTo \"open and read its SKILL.md completely\" as instructed above, you MUST use the `shell_command` tool.\nFor example, run the following command in PowerShell:\n`Get-Content -Raw -Path \"C:\\Users\\...\\SKILL.md\"`\nDo NOT guess other non-existent reading tools. You must use `shell_command`!\n\n";
+
+    // Inject before </skills_instructions> or </skills>
+    if enhanced.contains("</skills_instructions>") {
+        enhanced = enhanced.replace("</skills_instructions>", &format!("{}</skills_instructions>", warning_note));
+    } else if enhanced.contains("</skills>") {
+        enhanced = enhanced.replace("</skills>", &format!("{}</skills>", warning_note));
+    }
+
+    enhanced
+}
