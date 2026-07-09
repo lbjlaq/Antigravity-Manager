@@ -3849,6 +3849,9 @@ async fn handle_websocket_session(mut socket: WebSocket, headers: HeaderMap, sta
         let mut translation_state = TranslationState {
             response_id: format!("resp-{}", &Uuid::new_v4().to_string()[..24]),
             item_id: format!("item-{}", &Uuid::new_v4().to_string()[..16]),
+            message_output_index: None,
+            next_output_index: 0,
+            tool_output_indices: std::collections::HashMap::new(),
             message_item_added: false,
             content_part_added: false,
             accumulated_text: String::new(),
@@ -4573,6 +4576,9 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
 struct TranslationState {
     response_id: String,
     item_id: String,
+    message_output_index: Option<u32>,
+    next_output_index: u32,
+    tool_output_indices: std::collections::HashMap<u32, u32>,
     message_item_added: bool,
     content_part_added: bool,
     accumulated_text: String,
@@ -4596,11 +4602,20 @@ async fn translate_openai_chunk_to_ws(
             if let Some(delta) = choice.get("delta") {
                 if let Some(reasoning) = delta.get("reasoning_content").and_then(|v| v.as_str()) {
                     if !reasoning.is_empty() {
+                        let message_output_index = match state.message_output_index {
+                            Some(idx) => idx,
+                            None => {
+                                let idx = state.next_output_index;
+                                state.next_output_index += 1;
+                                state.message_output_index = Some(idx);
+                                idx
+                            }
+                        };
                         let reasoning_ev = json!({
                             "type": "response.reasoning_summary_text.delta",
                             "sequence_number": 0,
                             "item_id": &state.item_id,
-                            "output_index": 0,
+                            "output_index": message_output_index,
                             "summary_index": 0,
                             "delta": reasoning
                         });
@@ -4609,11 +4624,12 @@ async fn translate_openai_chunk_to_ws(
                         if !state.message_item_added {
                             let item_added = json!({
                                 "type": "response.output_item.added",
-                                "output_index": 0,
+                                "output_index": message_output_index,
                                 "item": {
                                     "id": &state.item_id,
                                     "type": "message",
                                     "role": "assistant",
+                                    "phase": "commentary",
                                     "status": "in_progress",
                                     "content": []
                                 }
@@ -4623,7 +4639,7 @@ async fn translate_openai_chunk_to_ws(
                             let part_added = json!({
                                 "type": "response.content_part.added",
                                 "item_id": &state.item_id,
-                                "output_index": 0,
+                                "output_index": message_output_index,
                                 "content_index": 0,
                                 "part": {
                                     "type": "output_text",
@@ -4638,7 +4654,7 @@ async fn translate_openai_chunk_to_ws(
                         let delta_ev = json!({
                             "type": "response.output_text.delta",
                             "item_id": &state.item_id,
-                            "output_index": 0,
+                            "output_index": message_output_index,
                             "content_index": 0,
                             "delta": reasoning
                         });
@@ -4649,14 +4665,24 @@ async fn translate_openai_chunk_to_ws(
 
                 if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
                     if !content.is_empty() {
+                        let message_output_index = match state.message_output_index {
+                            Some(idx) => idx,
+                            None => {
+                                let idx = state.next_output_index;
+                                state.next_output_index += 1;
+                                state.message_output_index = Some(idx);
+                                idx
+                            }
+                        };
                         if !state.message_item_added {
                             let item_added = json!({
                                 "type": "response.output_item.added",
-                                "output_index": 0,
+                                "output_index": message_output_index,
                                 "item": {
                                     "id": &state.item_id,
                                     "type": "message",
                                     "role": "assistant",
+                                    "phase": "commentary",
                                     "status": "in_progress",
                                     "content": []
                                 }
@@ -4666,7 +4692,7 @@ async fn translate_openai_chunk_to_ws(
                             let part_added = json!({
                                 "type": "response.content_part.added",
                                 "item_id": &state.item_id,
-                                "output_index": 0,
+                                "output_index": message_output_index,
                                 "content_index": 0,
                                 "part": {
                                     "type": "output_text",
@@ -4681,7 +4707,7 @@ async fn translate_openai_chunk_to_ws(
                         let delta_ev = json!({
                             "type": "response.output_text.delta",
                             "item_id": &state.item_id,
-                            "output_index": 0,
+                            "output_index": message_output_index,
                             "content_index": 0,
                             "delta": content
                         });
@@ -4732,6 +4758,15 @@ async fn translate_openai_chunk_to_ws(
                             state.tool_calls.get_mut(&tc_idx)
                         {
                             args.push_str(tc_args);
+                            let tool_output_index = match state.tool_output_indices.get(&tc_idx) {
+                                Some(idx) => *idx,
+                                None => {
+                                    let idx = state.next_output_index;
+                                    state.next_output_index += 1;
+                                    state.tool_output_indices.insert(tc_idx, idx);
+                                    idx
+                                }
+                            };
 
                             if !state.tool_calls_added.contains(&tc_idx) {
                                 let (actual_name, namespace) = split_namespace_tool_name(name);
@@ -4748,7 +4783,7 @@ async fn translate_openai_chunk_to_ws(
                                 }
                                 let tool_added = json!({
                                     "type": "response.output_item.added",
-                                    "output_index": 0,
+                                    "output_index": tool_output_index,
                                     "item": item_obj
                                 });
                                 send_ws_event(socket, ws_events, &tool_added).await;
@@ -4759,7 +4794,7 @@ async fn translate_openai_chunk_to_ws(
                                 let args_delta = json!({
                                     "type": "response.function_call_arguments.delta",
                                     "item_id": tool_item_id,
-                                    "output_index": 0,
+                                    "output_index": tool_output_index,
                                     "delta": tc_args
                                 });
                                 send_ws_event(socket, ws_events, &args_delta).await;
@@ -4784,10 +4819,19 @@ async fn finalize_ws_events(
 
     for tc_idx in tool_keys {
         if let Some((tool_item_id, call_id, name, args)) = state.tool_calls.get(&tc_idx) {
+            let tool_output_index = match state.tool_output_indices.get(&tc_idx) {
+                Some(idx) => *idx,
+                None => {
+                    let idx = state.next_output_index;
+                    state.next_output_index += 1;
+                    state.tool_output_indices.insert(tc_idx, idx);
+                    idx
+                }
+            };
             let args_done = json!({
                 "type": "response.function_call_arguments.done",
                 "item_id": tool_item_id,
-                "output_index": 0,
+                "output_index": tool_output_index,
                 "arguments": args
             });
             send_ws_event(socket, ws_events, &args_done).await;
@@ -4807,7 +4851,7 @@ async fn finalize_ws_events(
 
             let tool_done = json!({
                 "type": "response.output_item.done",
-                "output_index": 0,
+                "output_index": tool_output_index,
                 "item": item_obj
             });
             send_ws_event(socket, ws_events, &tool_done).await;
@@ -4823,10 +4867,11 @@ async fn finalize_ws_events(
     }
 
     if state.message_item_added {
+        let message_output_index = state.message_output_index.unwrap_or(0);
         let text_done = json!({
             "type": "response.output_text.done",
             "item_id": &state.item_id,
-            "output_index": 0,
+            "output_index": message_output_index,
             "content_index": 0,
             "text": &state.accumulated_text
         });
@@ -4835,7 +4880,7 @@ async fn finalize_ws_events(
         let part_done = json!({
             "type": "response.content_part.done",
             "item_id": &state.item_id,
-            "output_index": 0,
+            "output_index": message_output_index,
             "content_index": 0,
             "part": {
                 "type": "output_text",
@@ -4846,11 +4891,12 @@ async fn finalize_ws_events(
 
         let message_done = json!({
             "type": "response.output_item.done",
-            "output_index": 0,
+            "output_index": message_output_index,
             "item": {
                 "id": &state.item_id,
                 "type": "message",
                 "role": "assistant",
+                "phase": "final_answer",
                 "status": "completed",
                 "content": [{
                     "type": "output_text",
@@ -4864,6 +4910,7 @@ async fn finalize_ws_events(
             "id": &state.item_id,
             "type": "message",
             "role": "assistant",
+            "phase": "final_answer",
             "status": "completed",
             "content": [{
                 "type": "output_text",
