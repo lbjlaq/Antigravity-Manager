@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.3.8)
+> 专业级 AI 账号管理与协议代理系统 (v4.3.9)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.3.8-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.3.9-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -133,7 +133,7 @@ graph TD
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.3.2/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.3.9/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -143,7 +143,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **支持的格式**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.3.7`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
+> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.3.9`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 如果您已安装 [Homebrew](https://brew.sh/)，也可以通过以下命令安装：
@@ -439,6 +439,13 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.3.9 (2026-07-10)**:
+        -   **[核心功能/修复] 修复 Gemini 思考注入与支持 Codex 思考流式原生显示 (Gemini Thinking Injection & Codex Native Reasoning Display)**:
+            -   **支持 Gemini 思考程度配置**: 针对 `gemini-pro` 和 `*-pro-agent` / `*-flash-agent` 模型，增加了对其注入思维程度设置与 `includeThoughts: true` 的支持，开启原生思维链返回。
+            -   **规范流式 SSE 帧与生命周期**: 重新设计流式 SSE 输出逻辑，为事件添加 `sequence_number` 序列号；强制对齐 SSE `event` 字段与 JSON 负载 `type` 字段，确保 Codex Desktop 不会误判匿名消息并正确渲染生命周期。
+            -   **原生思考区流式转换**: 完美兼容并将 Gemini 原生思考数据流向 Codex 的 `phase: "commentary"` 消息，在下一阶段的普通文本或工具调用开始前，平滑闭合当前思考段，保障生命周期的逻辑一致。
+            -   **过滤本地私有思考记录**: 在多轮对话历史映射中增加 `is_codex_transcript_only_assistant_message` 过滤，避免将 Codex 本地流渲染产生的私有思考记录（如 `msg_thought_*`）当做历史发送给模型，彻底解决 Token 爆涨与上下文污染问题。
+            -   *相关 PR*: 详见 [PR #3239](https://github.com/lbjlaq/Antigravity-Manager/pull/3239)。
     *   **v4.3.8 (2026-07-10)**:
         -   **[核心修复] 解决 Gemini 接口 Token 统计虚高与双倍计算问题 (Gemini Token Usage Double-Counting Fix)**:
             -   **精确格式区分**: 针对 Gemini 官方 API (AI Studio 平台) 的 `candidatesTokenCount` (已包含思维 Token) 与新版 Interactions API (Vertex AI 等) 的 `total_output_tokens` (不包含思维 Token) 两个不同格式进行了精准区分。

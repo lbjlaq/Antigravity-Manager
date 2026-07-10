@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Protocol Proxy System (v4.3.8)
+> Professional AI Account Management & Protocol Proxy System (v4.3.9)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.3.8-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.3.9-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -134,7 +134,7 @@ Automatically detects your OS, architecture, and package manager — one command
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.3.8/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.3.9/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -144,7 +144,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **Supported formats**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.3.8`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
+> **Advanced usage**: Install a specific version `curl -fsSL ... | bash -s -- --version 4.3.9`，dry-run mode `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 If you have [Homebrew](https://brew.sh/) installed, you can also install via:
@@ -427,6 +427,13 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 ## 📝 Developer & Community
 
 *   **Changelog**:
+    *   **v4.3.9 (2026-07-10)**:
+        -   **[Core Feature & Fix] Gemini Thinking Injection & Native Codex Reasoning Display**:
+            -   **Gemini Thinking Configuration**: Enabled thinking effort configurations and `includeThoughts: true` for `gemini-pro` and `*-pro-agent` / `*-flash-agent` models to allow native thoughts retrieval.
+            -   **Standardized SSE Framing & Lifecycle**: Redesigned the streaming SSE output flow to support sequential numbering (`sequence_number`) and aligned the SSE `event` field with JSON payload `type`s so Codex Desktop resolves lifecycles properly.
+            -   **Reasoning Stream Integration**: Integrated Gemini's thought blocks with Codex's `phase: "commentary"` messages. Safely completes active reasoning blocks before ordinary text or tool executions.
+            -   **Filter Local Thought Entries**: Added `is_codex_transcript_only_assistant_message` to filter out Codex's local thought blocks (`msg_thought_*`) during conversation history mapping, resolving token inflation and prompt context contamination.
+            -   *Related PR*: See [PR #3239](https://github.com/lbjlaq/Antigravity-Manager/pull/3239).
     *   **v4.3.8 (2026-07-10)**:
         -   **[Core Fix] Resolve Gemini Token Usage Double-Counting & Inflation**:
             -   **Precise Format Differentiation**: Accurately differentiated between direct Gemini API (`candidatesTokenCount` which already includes thinking/reasoning tokens) and new Interactions API (`total_output_tokens` which excludes thinking tokens).
