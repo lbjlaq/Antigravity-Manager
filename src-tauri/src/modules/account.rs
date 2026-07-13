@@ -1498,35 +1498,35 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
             if let Some(ref q) = account.quota {
                 let threshold = config.quota_protection.threshold_percentage as i32;
 
-                let mut group_min_percentage: HashMap<String, i32> = HashMap::new();
+                let mut group_max_percentage: HashMap<String, i32> = HashMap::new();
 
                 for model in &q.models {
                     if let Some(std_id) =
                         crate::proxy::common::model_mapping::normalize_to_standard_id(&model.name)
                     {
-                        let entry = group_min_percentage.entry(std_id).or_insert(100);
-                        if model.percentage < *entry {
+                        let entry = group_max_percentage.entry(std_id).or_insert(-1);
+                        if model.percentage > *entry {
                             *entry = model.percentage;
                         }
                     }
                 }
 
                 for std_id in &config.quota_protection.monitored_models {
-                    let min_pct = group_min_percentage.get(std_id).cloned().unwrap_or(100);
+                    let max_pct = group_max_percentage.get(std_id).cloned().unwrap_or(100);
 
-                    if min_pct <= threshold {
+                    if max_pct < threshold {
                         if !account.protected_models.contains(std_id) {
                             crate::modules::logger::log_info(&format!(
-                                "[Quota] Triggering model protection: {} (Group: {} Min: {}% <= Thres: {}%)",
-                                account.email, std_id, min_pct, threshold
+                                "[Quota] Triggering model protection: {} (Group: {} Max: {}% < Thres: {}%)",
+                                account.email, std_id, max_pct, threshold
                             ));
                             account.protected_models.insert(std_id.clone());
                         }
                     } else {
                         if account.protected_models.contains(std_id) {
                             crate::modules::logger::log_info(&format!(
-                                "[Quota] Model protection recovered: {} (Group: {} Min: {}% > Thres: {}%)",
-                                account.email, std_id, min_pct, threshold
+                                "[Quota] Model protection recovered: {} (Group: {} Max: {}% >= Thres: {}%)",
+                                account.email, std_id, max_pct, threshold
                             ));
                             account.protected_models.remove(std_id);
                         }

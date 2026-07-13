@@ -634,7 +634,7 @@ impl TokenManager {
 
         // 5. [重构] 聚合判定逻辑：按 Standard ID 对账号所有型号进行分组
         // 解决如 Pro-Low (0%) 和 Pro-High (100%) 在同一账号内导致状态冲突的问题
-        let mut group_min_percentage: HashMap<String, i32> = HashMap::new();
+        let mut group_max_percentage: HashMap<String, i32> = HashMap::new();
 
         for model in models {
             let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -646,14 +646,14 @@ impl TokenManager {
             if let Some(std_id) =
                 crate::proxy::common::model_mapping::normalize_to_standard_id(name)
             {
-                let entry = group_min_percentage.entry(std_id).or_insert(100);
-                if percentage < *entry {
+                let entry = group_max_percentage.entry(std_id).or_insert(-1);
+                if percentage > *entry {
                     *entry = percentage;
                 }
             }
         }
 
-        // 6. 遍历受监控的 Standard ID，根据组内“最差状态”执行锁定或恢复
+        // 6. 遍历受监控的 Standard ID，根据组内“最好状态”执行锁定或恢复
         let threshold = config.threshold_percentage as i32;
         let account_id = account_json
             .get("id")
@@ -663,17 +663,17 @@ impl TokenManager {
         let mut changed = false;
 
         for std_id in &config.monitored_models {
-            // 获取该组的最低百分比，如果账号没该组型号则视为 100%
-            let min_pct = group_min_percentage.get(std_id).cloned().unwrap_or(100);
+            // 获取该组的最高百分比，如果账号没该组型号则视为 100%
+            let max_pct = group_max_percentage.get(std_id).cloned().unwrap_or(100);
 
-            if min_pct <= threshold {
-                // 只要组内有一个不行，触发全组保护
+            if max_pct < threshold {
+                // 只有组内所有模型都不行，才触发全组保护
                 if self
                     .trigger_quota_protection(
                         account_json,
                         &account_id,
                         account_path,
-                        min_pct,
+                        max_pct,
                         threshold,
                         std_id,
                     )
@@ -927,7 +927,7 @@ impl TokenManager {
             protected_models.push(serde_json::Value::String(model_name.to_string()));
 
             tracing::info!(
-                "账号 {} 的模型 {} 因配额受限（{}% <= {}%）已被加入保护列表",
+                "账号 {} 的模型 {} 因配额受限（{}% < {}%）已被加入保护列表",
                 account_id,
                 model_name,
                 current_val,
@@ -976,18 +976,27 @@ impl TokenManager {
         let mut protected_list = Vec::new();
 
         if let Some(models) = quota.get("models").and_then(|m| m.as_array()) {
+            let mut group_max_percentage: HashMap<String, i32> = HashMap::new();
+
             for model in models {
                 let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                if !config.monitored_models.iter().any(|m| m == name) {
-                    continue;
-                }
-
                 let percentage = model
                     .get("percentage")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i32;
-                if percentage <= threshold {
-                    protected_list.push(serde_json::Value::String(name.to_string()));
+                
+                if let Some(std_id) = crate::proxy::common::model_mapping::normalize_to_standard_id(name) {
+                    let entry = group_max_percentage.entry(std_id).or_insert(-1);
+                    if percentage > *entry {
+                        *entry = percentage;
+                    }
+                }
+            }
+
+            for std_id in &config.monitored_models {
+                let max_pct = group_max_percentage.get(std_id).cloned().unwrap_or(100);
+                if max_pct < threshold {
+                    protected_list.push(serde_json::Value::String(std_id.clone()));
                 }
             }
         }
