@@ -298,6 +298,37 @@ function Settings() {
         }
     };
 
+    const renderPatchButton = (fieldValue: string | undefined) => {
+        return (
+            <div className={`mt-3 flex items-center gap-4 p-3 rounded-lg border ${fieldValue ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
+                <div className="flex-1">
+                    <h4 className={`text-sm font-semibold ${fieldValue ? 'text-blue-900 dark:text-blue-200' : 'text-gray-500 dark:text-gray-400'}`}>
+                        {t('settings.advanced.patch_eligibility_title', '账号准入限制解除')}
+                    </h4>
+                    <p className={`text-xs mt-0.5 ${fieldValue ? 'text-blue-700 dark:text-blue-300/80' : 'text-gray-400 dark:text-gray-500'}`}>
+                        {t('settings.advanced.patch_eligibility_desc', '新版 agy 二进制强制拦截未授权账号，此操作一键跳过本地准入拦截检查。')}
+                        {!fieldValue && " (需先在上方设置或探测路径)"}
+                    </p>
+                </div>
+                <button
+                    className={`px-4 py-2 rounded-lg transition-colors font-medium text-sm shadow-sm ${fieldValue ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'}`}
+                    disabled={!fieldValue}
+                    onClick={async () => {
+                        if (!fieldValue) return;
+                        try {
+                            const res = await invoke<string>('patch_agy_binary', { filePath: fieldValue });
+                            showToast(res, 'success');
+                        } catch (err) {
+                            showToast(String(err), 'error');
+                        }
+                    }}
+                >
+                    {t('settings.advanced.patch_btn', '一键解除')}
+                </button>
+            </div>
+        );
+    };
+
     const handleCheckUpdate = async () => {
         setIsCheckingUpdate(true);
         setUpdateInfo(null);
@@ -961,6 +992,7 @@ function Settings() {
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                                         {t('settings.advanced.antigravity_path_desc')}
                                     </p>
+                                    {renderPatchButton(formData.antigravity_executable)}
                                 </div>
 
                                 {/* Antigravity CLI (agy) 程序路径 */}
@@ -1008,32 +1040,7 @@ function Settings() {
                                     </p>
                                     
                                     {/* 新增：解密/修补准入限制一键修补按钮 */}
-                                    <div className={`mt-3 flex items-center gap-4 p-3 rounded-lg border ${formData.antigravity_cli_executable ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
-                                        <div className="flex-1">
-                                            <h4 className={`text-sm font-semibold ${formData.antigravity_cli_executable ? 'text-blue-900 dark:text-blue-200' : 'text-gray-500 dark:text-gray-400'}`}>
-                                                {t('settings.advanced.patch_eligibility_title', '账号准入限制解除')}
-                                            </h4>
-                                            <p className={`text-xs mt-0.5 ${formData.antigravity_cli_executable ? 'text-blue-700 dark:text-blue-300/80' : 'text-gray-400 dark:text-gray-500'}`}>
-                                                {t('settings.advanced.patch_eligibility_desc', '新版 agy 二进制强制拦截未授权账号，此操作一键跳过本地准入拦截检查。')}
-                                                {!formData.antigravity_cli_executable && " (需先在上方设置或探测路径)"}
-                                            </p>
-                                        </div>
-                                        <button
-                                            className={`px-4 py-2 rounded-lg transition-colors font-medium text-sm shadow-sm ${formData.antigravity_cli_executable ? 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'}`}
-                                            disabled={!formData.antigravity_cli_executable}
-                                            onClick={async () => {
-                                                if (!formData.antigravity_cli_executable) return;
-                                                try {
-                                                    const res = await invoke<string>('patch_agy_binary', { filePath: formData.antigravity_cli_executable });
-                                                    showToast(res, 'success');
-                                                } catch (err) {
-                                                    showToast(String(err), 'error');
-                                                }
-                                            }}
-                                        >
-                                            {t('settings.advanced.patch_btn', '一键解除')}
-                                        </button>
-                                    </div>
+                                    {renderPatchButton(formData.antigravity_cli_executable)}
                                 </div>
 
                                 {/* Antigravity IDE 程序路径 */}
@@ -1073,6 +1080,7 @@ function Settings() {
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                                         {t('settings.advanced.antigravity_ide_path_desc', 'Specify the executable path for Antigravity IDE (code editor). Once set, account switching will strictly protect processes at this path from being terminated.')}
                                     </p>
+                                    {renderPatchButton(formData.antigravity_ide_executable)}
                                 </div>
 
                                 {/* 反重力程序启动参数 */}
