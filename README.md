@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.4.3)
+> 专业级 AI 账号管理与协议代理系统 (v4.4.4)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.4.3-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.4.4-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -133,7 +133,7 @@ graph TD
 
 **Linux / macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.4.3/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/v4.4.4/install.sh | bash
 ```
 
 **Windows (PowerShell):**
@@ -143,7 +143,7 @@ irm https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/install.ps
 
 > **支持的格式**: Linux (`.deb` / `.rpm` / `.AppImage`) | macOS (`.dmg`) | Windows (NSIS `.exe`)
 >
-> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.4.3`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
+> **高级用法**: 安装指定版本 `curl -fsSL ... | bash -s -- --version 4.4.4`，预览模式 `curl -fsSL ... | bash -s -- --dry-run`
 
 #### macOS - Homebrew
 如果您已安装 [Homebrew](https://brew.sh/)，也可以通过以下命令安装：
@@ -439,6 +439,11 @@ response = client.chat.completions.create(
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v4.4.4 (2026-07-15)**:
+        -   **[核心特性] 独立 Antigravity CLI 路径配置与拓展系统支持 (Standalone CLI Configuration & Extended OS Support)**:
+            -   **CLI 独立配置与探测**: 在设置界面新增了针对底层命令行工具 `agy` 的独立执行路径配置，避免了与主程序发生混淆，同时提供自动探测（检测环境变量及默认安装位置）与手动选择功能。
+            -   **增强的一键拦截解封**: 账号准入限制跳过补丁 (Patch) 现已拓展支持 x86_64 PE (Windows/Linux) 格式的二进制文件。通过特征码扫描定位跳转指令并重写，跨平台实现本地封锁解除。
+            -   *相关 PR*: 详见 [PR #3252](https://github.com/lbjlaq/Antigravity-Manager/pull/3252)。
     *   **v4.4.3 (2026-07-15)**:
         -   **[核心特性] 账号准入限制解除 (Bypass Account Eligibility Check)**:
             -   **一键解封拦截**: 针对新版客户端强制拦截未授权账号的问题，新增一键本地跳过功能。通过动态修改底层 `agy` 程序的 ARM64 机器指令流（重写 `cbz` 校验判断分支），并配合 macOS `codesign` 自动签发，直接突破本地账号准入验证。

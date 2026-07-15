@@ -7,45 +7,15 @@ pub async fn patch_agy_binary(file_path: String) -> Result<String, String> {
     let mut actual_path = file_path.clone();
     if actual_path.ends_with(".app") || actual_path.ends_with(".app/") {
         let app_path = Path::new(&actual_path);
-        let macos_dir = app_path.join("Contents/MacOS");
-        
-        let mut inner = macos_dir.join("agy");
-        
-        if !inner.exists() {
-            if let Some(file_name) = app_path.file_name() {
-                if let Some(name_str) = file_name.to_str() {
-                    let base_name = name_str.trim_end_matches(".app").trim_end_matches(".app/");
-                    inner = macos_dir.join(base_name);
-                }
-            }
-        }
-        
-        if !inner.exists() {
-            if let Ok(entries) = std::fs::read_dir(&macos_dir) {
-                for entry in entries.flatten() {
-                    if let Ok(file_type) = entry.file_type() {
-                        if file_type.is_file() {
-                            inner = entry.path();
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if inner.exists() && inner.is_file() {
+        let inner = app_path.join("Contents/MacOS/agy");
+        if inner.exists() {
             actual_path = inner.to_string_lossy().to_string();
-        } else {
-            return Err("Could not find a valid executable inside the .app bundle".into());
         }
     }
 
     let path = Path::new(&actual_path);
     if !path.exists() {
         return Err("File not found".into());
-    }
-    if path.is_dir() {
-        return Err("Target is a directory, not an executable file".into());
     }
 
     let data = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
