@@ -835,11 +835,22 @@ pub fn add_account(
     });
 
     // If first account, set as current
+    let mut current_changed = false;
     if index.current_account_id.is_none() {
-        index.current_account_id = Some(account_id);
+        index.current_account_id = Some(account_id.clone());
+        current_changed = true;
     }
 
     save_account_index(&index)?;
+
+    if current_changed {
+        if let Err(e) = synchronize_keyring(Some(&account_id)) {
+            crate::modules::logger::log_warn(&format!(
+                "[Keyring] Failed to synchronize keyring on account add: {}",
+                e
+            ));
+        }
+    }
 
     Ok(account)
 }
@@ -937,11 +948,24 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
     }
 
     // Clear current account if it's being deleted
+    let mut current_id_changed = false;
+    let mut new_current_id = None;
     if index.current_account_id.as_deref() == Some(account_id) {
-        index.current_account_id = index.accounts.first().map(|s| s.id.clone());
+        new_current_id = index.accounts.first().map(|s| s.id.clone());
+        index.current_account_id = new_current_id.clone();
+        current_id_changed = true;
     }
 
     save_account_index(&index)?;
+
+    if current_id_changed {
+        if let Err(e) = synchronize_keyring(new_current_id.as_deref()) {
+            crate::modules::logger::log_warn(&format!(
+                "[Keyring] Failed to synchronize keyring on account delete: {}",
+                e
+            ));
+        }
+    }
 
     // Delete account file
     let accounts_dir = get_accounts_dir()?;
@@ -966,6 +990,7 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
     let mut index = load_account_index()?;
 
     let accounts_dir = get_accounts_dir()?;
+    let mut current_id_changed = false;
 
     for account_id in account_ids {
         // Remove from index
@@ -974,6 +999,7 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
         // Clear current account if it's being deleted
         if index.current_account_id.as_deref() == Some(account_id) {
             index.current_account_id = None;
+            current_id_changed = true;
         }
 
         // Delete account file
@@ -988,10 +1014,25 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
 
     // If current account is empty, use first one as default
     if index.current_account_id.is_none() {
-        index.current_account_id = index.accounts.first().map(|s| s.id.clone());
+        let default_current = index.accounts.first().map(|s| s.id.clone());
+        if default_current.is_some() {
+            index.current_account_id = default_current;
+            current_id_changed = true;
+        }
     }
 
-    save_account_index(&index)
+    save_account_index(&index)?;
+
+    if current_id_changed {
+        if let Err(e) = synchronize_keyring(index.current_account_id.as_deref()) {
+            crate::modules::logger::log_warn(&format!(
+                "[Keyring] Failed to synchronize keyring on batch account delete: {}",
+                e
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Reorder account list
@@ -1094,11 +1135,19 @@ pub async fn switch_account(
         )?;
     }
 
+    let resolved_target = match target_ide {
+        Some(t) => Some(t.to_string()),
+        None => index.current_target_ide.clone(),
+    };
+    let resolved_ref = resolved_target.as_deref();
+
     // 3. Execute platform-specific system integration (Close proc, Inject DB, Start proc, etc.)
-    integration.on_account_switch(&account, target_ide).await?;
+    integration
+        .on_account_switch(&account, resolved_ref)
+        .await?;
 
     // 4. Update tool internal state
-    set_current_account_id_with_target(account_id, target_ide)?;
+    set_current_account_id_with_target(account_id, resolved_ref)?;
 
     account.update_last_used();
     save_account(&account)?;
@@ -1473,6 +1522,67 @@ pub fn set_current_account_id(account_id: &str) -> Result<(), String> {
     set_current_account_id_with_target(account_id, None)
 }
 
+/// Helper to synchronize the current active account credentials with the system keyring.
+/// If `current_account_id` is provided, it writes that account's token details to the keyring.
+/// If it is `None`, it attempts to delete the credentials from the keyring.
+pub fn synchronize_keyring(_current_account_id: Option<&str>) -> Result<(), String> {
+    #[cfg(not(test))]
+    {
+        if let Some(id) = _current_account_id {
+            match load_account(id) {
+                Ok(account) => {
+                    crate::modules::integration::write_to_system_keyring(&account)?;
+                }
+                Err(e) => {
+                    crate::modules::logger::log_warn(&format!(
+                        "[Keyring] Failed to load account {} for keyring sync: {}",
+                        id, e
+                    ));
+                }
+            }
+        } else {
+            // Remove token from keyring
+            // On macOS:
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("security")
+                    .args([
+                        "delete-generic-password",
+                        "-s",
+                        "gemini",
+                        "-a",
+                        "antigravity",
+                    ])
+                    .output();
+            }
+            // On Windows:
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::ffi::OsStrExt;
+                let target = "gemini:antigravity";
+                let target_wide: Vec<u16> = std::ffi::OsStr::new(target)
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect();
+                #[link(name = "advapi32")]
+                extern "system" {
+                    fn CredDeleteW(target_name: *const u16, type_: u32, flags: u32) -> i32;
+                }
+                unsafe {
+                    let _ = CredDeleteW(target_wide.as_ptr(), 1, 0);
+                }
+            }
+            // On Linux:
+            #[cfg(target_os = "linux")]
+            {
+                let _ = std::process::Command::new("secret-tool")
+                    .args(["clear", "service", "gemini", "username", "antigravity"])
+                    .output();
+            }
+        }
+    }
+    Ok(())
+}
 /// Set current active account ID and target IDE
 pub fn set_current_account_id_with_target(
     account_id: &str,
@@ -1484,7 +1594,16 @@ pub fn set_current_account_id_with_target(
     let mut index = load_account_index()?;
     index.current_account_id = Some(account_id.to_string());
     index.current_target_ide = target_ide.map(|s| s.to_string());
-    save_account_index(&index)
+    save_account_index(&index)?;
+
+    // Automatically synchronize system keyring
+    if let Err(e) = synchronize_keyring(Some(account_id)) {
+        crate::modules::logger::log_warn(&format!(
+            "[Keyring] Failed to synchronize keyring on account switch: {}",
+            e
+        ));
+    }
+    Ok(())
 }
 
 /// Update account quota
