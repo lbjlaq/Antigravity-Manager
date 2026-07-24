@@ -593,15 +593,17 @@ pub fn validate_token(token_str: &str, ip: &str) -> Result<(bool, Option<String>
 
     if let Some(token) = token_opt {
         // 1. 检查过期时间
-        if let Some(expires_at) = token.expires_at {
-            if expires_at < Utc::now().timestamp() {
-                return Ok((
-                    false,
-                    Some(
-                        "Your token has expired. Please contact the administrator to renew it."
-                            .to_string(),
-                    ),
-                ));
+        if token.expires_type != "never" {
+            if let Some(expires_at) = token.expires_at {
+                if expires_at < Utc::now().timestamp() {
+                    return Ok((
+                        false,
+                        Some(
+                            "Your token has expired. Please contact the administrator to renew it."
+                                .to_string(),
+                        ),
+                    ));
+                }
             }
         }
 
@@ -716,5 +718,29 @@ mod tests {
         let fetched = get_token_by_id(&token.id);
         assert!(fetched.is_ok());
         assert_eq!(fetched.unwrap().unwrap().username, username);
+    }
+
+    #[test]
+    fn test_never_expire_token_validation() {
+        let _ = init_db();
+        let username = format!("NeverExpireUser_{}", Uuid::new_v4());
+        let token_res = create_token(
+            username.clone(),
+            "never".to_string(),
+            Some("Never expire test token".to_string()),
+            0,
+            None,
+            None,
+            None,
+        );
+        assert!(token_res.is_ok());
+        let token = token_res.unwrap();
+        let (valid, reason) =
+            validate_token(&token.token, "127.0.0.1").expect("validation must succeed");
+        assert!(
+            valid,
+            "Token with expires_type never must be valid, reason: {:?}",
+            reason
+        );
     }
 }

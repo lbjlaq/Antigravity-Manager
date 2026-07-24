@@ -1241,7 +1241,11 @@ pub fn get_antigravity_cli_executable_path() -> Option<std::path::PathBuf> {
     }
 
     // 3. 在系统环境变量 PATH 中查找
-    let cmd = if cfg!(target_os = "windows") { "agy.exe" } else { "agy" };
+    let cmd = if cfg!(target_os = "windows") {
+        "agy.exe"
+    } else {
+        "agy"
+    };
     if let Ok(path_var) = std::env::var("PATH") {
         for p in std::env::split_paths(&path_var) {
             let p_cmd = p.join(cmd);
@@ -1253,4 +1257,3 @@ pub fn get_antigravity_cli_executable_path() -> Option<std::path::PathBuf> {
 
     None
 }
-

@@ -436,16 +436,18 @@ pub async fn handle_chat_completions(
     // Replace the client's model/thinking/max_tokens with verified real values so the
     // forwarded request matches the expected upstream format. OpenCode encodes the variant as
     // thinking.budget_tokens; we infer the tier from its magnitude.
-    let client_budget = openai_req
-        .thinking
-        .as_ref()
-        .and_then(|t| t.budget_tokens);
+    let client_budget = openai_req.thinking.as_ref().and_then(|t| t.budget_tokens);
     if let Some(spec) =
         crate::proxy::common::variant_mapping::resolve(&openai_req.model, client_budget)
     {
         tracing::info!(
             "[{}] [Variant] canonical='{}' budget_hint={:?} -> real_model='{}' budget={} maxOut={}",
-            trace_id, openai_req.model, client_budget, spec.id, spec.thinking_budget, spec.max_output_tokens
+            trace_id,
+            openai_req.model,
+            client_budget,
+            spec.id,
+            spec.thinking_budget,
+            spec.max_output_tokens
         );
         openai_req.model = spec.id.to_string();
         if spec.thinking_budget == 0 {

@@ -1126,8 +1126,7 @@ pub struct ModelInput {
 fn series_defaults_for(model_id: &str) -> Option<Value> {
     let id = model_id.to_lowercase();
     // Gemini 3.x / 3.5 / 3.1 family: 1M context, 64k output, multimodal in, text out.
-    if id.starts_with("gemini-3") || id.starts_with("gemini-3.1") || id.starts_with("gemini-3.5")
-    {
+    if id.starts_with("gemini-3") || id.starts_with("gemini-3.1") || id.starts_with("gemini-3.5") {
         return Some(serde_json::json!({
             "limit": { "context": 1_048_576, "output": 65_536 },
             "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
@@ -1569,7 +1568,9 @@ pub fn restore_opencode_config() -> Result<(), String> {
     for (file_name, suffix) in &config_candidates {
         let backup_path = config_path.with_file_name(format!("{}{}", file_name, suffix));
         if backup_path.exists() {
-            let target = dir.map(|d| d.join(file_name)).unwrap_or_else(|| config_path.clone());
+            let target = dir
+                .map(|d| d.join(file_name))
+                .unwrap_or_else(|| config_path.clone());
             restore_backup_to_target(&backup_path, &target, "config")?;
             restored = true;
             break;
@@ -1765,8 +1766,7 @@ mod tests {
         });
 
         let updated = apply_sync_to_config(config, "http://localhost:8045", "key", Some(&[]));
-        let canonical = updated["provider"][ANTIGRAVITY_PROVIDER_ID]["models"]
-            ["gemini-3.1-pro"]
+        let canonical = updated["provider"][ANTIGRAVITY_PROVIDER_ID]["models"]["gemini-3.1-pro"]
             .as_object()
             .expect("canonical model");
 
@@ -1979,7 +1979,10 @@ mod tests {
                     assert!(matches!(model.variant_type, Some(VariantType::Gemini3Pro)));
                 }
                 "gemini-3.5-flash" => {
-                    assert!(matches!(model.variant_type, Some(VariantType::Gemini3Flash)));
+                    assert!(matches!(
+                        model.variant_type,
+                        Some(VariantType::Gemini3Flash)
+                    ));
                 }
                 _ => panic!("unexpected Gemini family: {}", family.canonical_id),
             }
@@ -2012,10 +2015,7 @@ mod tests {
         let variants = build_variants_object(Some(VariantType::Gemini3Pro))
             .expect("Gemini 3.1 Pro variants must be configured");
 
-        for (name, expected_id) in [
-            ("low", "gemini-3.1-pro-low"),
-            ("high", "gemini-pro-agent"),
-        ] {
+        for (name, expected_id) in [("low", "gemini-3.1-pro-low"), ("high", "gemini-pro-agent")] {
             let variant = &variants[name];
             let effort = variant["effort"]
                 .as_str()
@@ -2030,7 +2030,13 @@ mod tests {
             );
         }
 
-        assert_eq!(variants.as_object().expect("variants must be an object").len(), 2);
+        assert_eq!(
+            variants
+                .as_object()
+                .expect("variants must be an object")
+                .len(),
+            2
+        );
 
         // Verify the JSON shape contains only `effort` — no budget fields
         let low = &variants["low"];
@@ -2063,7 +2069,13 @@ mod tests {
             );
         }
 
-        assert_eq!(variants.as_object().expect("variants must be an object").len(), 3);
+        assert_eq!(
+            variants
+                .as_object()
+                .expect("variants must be an object")
+                .len(),
+            3
+        );
 
         // Verify the JSON shape contains only `effort` — no budget fields
         let low = &variants["low"];
@@ -2598,10 +2610,8 @@ mod tests {
     /// config shows the same name the user saw (e.g. "Gemini 3.5 Flash (High)").
     #[test]
     fn test_build_fallback_model_json_uses_display_name() {
-        let entry = build_fallback_model_json(
-            "gemini-3.5-flash-high",
-            Some("Gemini 3.5 Flash (High)"),
-        );
+        let entry =
+            build_fallback_model_json("gemini-3.5-flash-high", Some("Gemini 3.5 Flash (High)"));
         assert_eq!(entry.get("name").unwrap(), "Gemini 3.5 Flash (High)");
     }
 
@@ -2671,10 +2681,7 @@ mod tests {
             serde_json::from_str(&stripped).expect("stripped jsonc must be valid JSON");
         assert_eq!(parsed.get("key").unwrap(), "value");
         // The URL's // must be preserved (it is inside a string).
-        assert_eq!(
-            parsed.get("url").unwrap(),
-            "https://example.com/path"
-        );
+        assert_eq!(parsed.get("url").unwrap(), "https://example.com/path");
     }
 
     #[test]
@@ -2695,8 +2702,7 @@ mod tests {
     fn test_strip_jsonc_trailing_commas() {
         let input = "{\n  \"a\": 1,\n  \"b\": 2,\n}"; // trailing comma before }
         let stripped = strip_jsonc_trailing_commas(input);
-        let parsed: Value =
-            serde_json::from_str(&stripped).expect("stripped must be valid JSON");
+        let parsed: Value = serde_json::from_str(&stripped).expect("stripped must be valid JSON");
         assert_eq!(parsed.get("a").unwrap(), 1);
         assert_eq!(parsed.get("b").unwrap(), 2);
     }
@@ -2706,13 +2712,9 @@ mod tests {
         // trailing comma before ] and before }, with whitespace/newlines in between.
         let input = "{\n  \"arr\": [1, 2, 3,],\n  \"obj\": { \"k\": \"v\", },\n}";
         let stripped = strip_jsonc_trailing_commas(input);
-        let parsed: Value =
-            serde_json::from_str(&stripped).expect("stripped must be valid JSON");
+        let parsed: Value = serde_json::from_str(&stripped).expect("stripped must be valid JSON");
         assert_eq!(parsed.get("arr").unwrap().as_array().unwrap().len(), 3);
-        assert_eq!(
-            parsed.get("obj").unwrap().get("k").unwrap(),
-            "v"
-        );
+        assert_eq!(parsed.get("obj").unwrap().get("k").unwrap(), "v");
     }
 
     #[test]
@@ -2720,8 +2722,7 @@ mod tests {
         // A comma inside a string must NOT be removed even if followed by }.
         let input = "{\"msg\": \"hello, }\",}";
         let stripped = strip_jsonc_trailing_commas(input);
-        let parsed: Value =
-            serde_json::from_str(&stripped).expect("stripped must be valid JSON");
+        let parsed: Value = serde_json::from_str(&stripped).expect("stripped must be valid JSON");
         assert_eq!(parsed.get("msg").unwrap(), "hello, }");
     }
 

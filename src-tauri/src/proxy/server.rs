@@ -587,10 +587,7 @@ impl AxumServer {
                 "/proxy/opencode/config",
                 post(admin_get_opencode_config_content),
             )
-            .route(
-                "/proxy/opencode/families",
-                get(admin_get_opencode_families),
-            )
+            .route("/proxy/opencode/families", get(admin_get_opencode_families))
             .route("/proxy/droid/status", post(admin_get_droid_sync_status))
             .route("/proxy/droid/sync", post(admin_execute_droid_sync))
             .route("/proxy/droid/restore", post(admin_execute_droid_restore))

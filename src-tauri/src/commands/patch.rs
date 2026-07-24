@@ -32,17 +32,17 @@ pub async fn patch_agy_binary(file_path: String) -> Result<String, String> {
     let pe_pattern = [0x41, 0x80, 0x3c, 0x24, 0x00, 0x0f, 0x85];
     let mut i = 0;
     while i < n - 25 {
-        if data[i..i+7] == pe_pattern {
+        if data[i..i + 7] == pe_pattern {
             // Validate the rest of the pattern
             // leaq opcode starts after jne (which is 6 bytes: 0f 85 XX XX XX XX)
             let leaq_idx = i + 5 + 6;
-            if data[leaq_idx..leaq_idx+3] == [0x48, 0x8d, 0x05] {
+            if data[leaq_idx..leaq_idx + 3] == [0x48, 0x8d, 0x05] {
                 // mov $0x18, %ebx starts after leaq (which is 7 bytes: 48 8d 05 XX XX XX XX)
                 let mov_idx = leaq_idx + 7;
-                if data[mov_idx..mov_idx+2] == [0xbb, 0x18] {
+                if data[mov_idx..mov_idx + 2] == [0xbb, 0x18] {
                     // Found the gate!
                     patch_offset = Some(i + 5); // Points to the jne instruction: 0f 85 ...
-                    // Rewrite jne to 6 NOP bytes (0x90) so it falls through unconditionally
+                                                // Rewrite jne to 6 NOP bytes (0x90) so it falls through unconditionally
                     new_inst_bytes = Some(vec![0x90; 6]);
                     is_pe_x64 = true;
                     break;
@@ -55,10 +55,10 @@ pub async fn patch_agy_binary(file_path: String) -> Result<String, String> {
     // 2. Scan for ARM64 eligibility gate pattern if not PE x86_64
     if patch_offset.is_none() {
         for j in (0..n - 20).step_by(4) {
-            let inst1 = u32::from_le_bytes(data[j..j+4].try_into().unwrap());
-            let inst2 = u32::from_le_bytes(data[j+4..j+8].try_into().unwrap());
-            let inst4 = u32::from_le_bytes(data[j+12..j+16].try_into().unwrap());
-            let inst5 = u32::from_le_bytes(data[j+16..j+20].try_into().unwrap());
+            let inst1 = u32::from_le_bytes(data[j..j + 4].try_into().unwrap());
+            let inst2 = u32::from_le_bytes(data[j + 4..j + 8].try_into().unwrap());
+            let inst4 = u32::from_le_bytes(data[j + 12..j + 16].try_into().unwrap());
+            let inst5 = u32::from_le_bytes(data[j + 16..j + 20].try_into().unwrap());
 
             // 1. ldrb wA, [xB, #0x58]
             if (inst1 & 0xfffffc00) != 0x39416000 {
@@ -103,12 +103,12 @@ pub async fn patch_agy_binary(file_path: String) -> Result<String, String> {
         // Check if already patched for x86_64 PE
         let mut check_idx = 0;
         while check_idx < n - 25 {
-            if data[check_idx..check_idx+7] == pe_pattern {
+            if data[check_idx..check_idx + 7] == pe_pattern {
                 let leaq_idx = check_idx + 5 + 6;
-                if data[leaq_idx..leaq_idx+3] == [0x48, 0x8d, 0x05] {
+                if data[leaq_idx..leaq_idx + 3] == [0x48, 0x8d, 0x05] {
                     let mov_idx = leaq_idx + 7;
-                    if data[mov_idx..mov_idx+2] == [0xbb, 0x18] {
-                        if data[check_idx+5..check_idx+11] == [0x90; 6] {
+                    if data[mov_idx..mov_idx + 2] == [0xbb, 0x18] {
+                        if data[check_idx + 5..check_idx + 11] == [0x90; 6] {
                             return Ok("Binary is already patched.".into());
                         }
                     }
@@ -119,10 +119,10 @@ pub async fn patch_agy_binary(file_path: String) -> Result<String, String> {
 
         // Check if already patched for ARM64
         for j in (0..n - 20).step_by(4) {
-            let inst1 = u32::from_le_bytes(data[j..j+4].try_into().unwrap());
-            let inst2 = u32::from_le_bytes(data[j+4..j+8].try_into().unwrap());
-            let inst4 = u32::from_le_bytes(data[j+12..j+16].try_into().unwrap());
-            let inst5 = u32::from_le_bytes(data[j+16..j+20].try_into().unwrap());
+            let inst1 = u32::from_le_bytes(data[j..j + 4].try_into().unwrap());
+            let inst2 = u32::from_le_bytes(data[j + 4..j + 8].try_into().unwrap());
+            let inst4 = u32::from_le_bytes(data[j + 12..j + 16].try_into().unwrap());
+            let inst5 = u32::from_le_bytes(data[j + 16..j + 20].try_into().unwrap());
 
             if (inst1 & 0xfffffc00) == 0x39416000 {
                 let b_reg = (inst1 >> 5) & 0x1f;
@@ -171,12 +171,20 @@ pub async fn patch_agy_binary(file_path: String) -> Result<String, String> {
                 .args(&["--sign", "-", &actual_path])
                 .output();
             match output {
-                Ok(out) if out.status.success() => {},
+                Ok(out) if out.status.success() => {}
                 Ok(out) => {
                     let err_msg = String::from_utf8_lossy(&out.stderr);
-                    return Err(format!("Patch applied, but codesigning failed: {}", err_msg));
-                },
-                Err(e) => return Err(format!("Patch applied, but codesigning execution failed: {}", e)),
+                    return Err(format!(
+                        "Patch applied, but codesigning failed: {}",
+                        err_msg
+                    ));
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "Patch applied, but codesigning execution failed: {}",
+                        e
+                    ))
+                }
             }
         }
     }
