@@ -130,7 +130,10 @@ pub fn resolve_non_variant_model(model: &str) -> Option<RealModelSpec> {
     // gemini-3.1-flash-lite: checkpoint-only model, no thinking.
     if matches!(
         key.as_str(),
-        "gemini-3.1-flash-lite" | "gemini-2.5-flash-lite" | "gemini-2.5-flash" | "gemini-2.5-flash-thinking"
+        "gemini-3.1-flash-lite"
+            | "gemini-2.5-flash-lite"
+            | "gemini-2.5-flash"
+            | "gemini-2.5-flash-thinking"
     ) {
         return Some(SPEC_31_FLASH_LITE);
     }
@@ -253,10 +256,7 @@ pub static GEMINI_FAMILIES: &[CanonicalFamily] = &[
                 "gemini-3.5-flash-medium",
                 AliasPolicy::Fixed(VariantTier::Medium),
             ),
-            (
-                "gemini-3.5-flash-low",
-                AliasPolicy::Fixed(VariantTier::Low),
-            ),
+            ("gemini-3.5-flash-low", AliasPolicy::Fixed(VariantTier::Low)),
             ("gemini-3-flash", AliasPolicy::HonorTier),
         ],
     },
@@ -276,10 +276,7 @@ pub static GEMINI_FAMILIES: &[CanonicalFamily] = &[
         aliases: &[
             ("gemini-3.1-pro-high", AliasPolicy::HonorTier),
             ("gemini-pro", AliasPolicy::HonorTier),
-            (
-                "gemini-3.1-pro-low",
-                AliasPolicy::Fixed(VariantTier::Low),
-            ),
+            ("gemini-3.1-pro-low", AliasPolicy::Fixed(VariantTier::Low)),
         ],
     },
 ];
@@ -401,8 +398,20 @@ mod tests {
 
     #[test]
     fn gemini_3_flash_alias_follows_tier() {
-        check("gemini-3-flash", Some(0), "gemini-3.5-flash-extra-low", 1000, 65536);
-        check("gemini-3-flash", Some(4000), "gemini-3.5-flash-low", 4000, 65536);
+        check(
+            "gemini-3-flash",
+            Some(0),
+            "gemini-3.5-flash-extra-low",
+            1000,
+            65536,
+        );
+        check(
+            "gemini-3-flash",
+            Some(4000),
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
         check("gemini-3-flash", None, "gemini-3-flash-agent", 10000, 65536);
     }
 
@@ -450,43 +459,146 @@ mod tests {
 
     /// Helper: call `resolve(canonical, budget)` and assert id / tb / mot.
     fn check(canonical: &str, budget: Option<u32>, id: &str, tb: u32, mot: u32) {
-        let s = resolve(canonical, budget)
-            .unwrap_or_else(|| panic!("resolve({canonical:?}, {budget:?}) unexpectedly returned None"));
+        let s = resolve(canonical, budget).unwrap_or_else(|| {
+            panic!("resolve({canonical:?}, {budget:?}) unexpectedly returned None")
+        });
         assert_eq!(s.id, id, "resolve({canonical:?}, {budget:?}).id");
-        assert_eq!(s.thinking_budget, tb, "resolve({canonical:?}, {budget:?}).thinking_budget");
-        assert_eq!(s.max_output_tokens, mot, "resolve({canonical:?}, {budget:?}).max_output_tokens");
+        assert_eq!(
+            s.thinking_budget, tb,
+            "resolve({canonical:?}, {budget:?}).thinking_budget"
+        );
+        assert_eq!(
+            s.max_output_tokens, mot,
+            "resolve({canonical:?}, {budget:?}).max_output_tokens"
+        );
     }
 
     #[test]
     fn baseline_resolve_35_flash_variants() {
         // ── gemini-3.5-flash (canonical) ───────────────────────────────
         // None → High → gemini-3-flash-agent
-        check("gemini-3.5-flash", None, "gemini-3-flash-agent", 10000, 65536);
+        check(
+            "gemini-3.5-flash",
+            None,
+            "gemini-3-flash-agent",
+            10000,
+            65536,
+        );
         // Some(0) → Low → gemini-3.5-flash-extra-low
-        check("gemini-3.5-flash", Some(0), "gemini-3.5-flash-extra-low", 1000, 65536);
+        check(
+            "gemini-3.5-flash",
+            Some(0),
+            "gemini-3.5-flash-extra-low",
+            1000,
+            65536,
+        );
         // Some(4000) → Medium → gemini-3.5-flash-low
-        check("gemini-3.5-flash", Some(4000), "gemini-3.5-flash-low", 4000, 65536);
+        check(
+            "gemini-3.5-flash",
+            Some(4000),
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
         // Some(7000) → High → gemini-3-flash-agent
-        check("gemini-3.5-flash", Some(7000), "gemini-3-flash-agent", 10000, 65536);
+        check(
+            "gemini-3.5-flash",
+            Some(7000),
+            "gemini-3-flash-agent",
+            10000,
+            65536,
+        );
 
         // ── gemini-3.5-flash-high ──────────────────────────────────────
         // Same canonical arm as gemini-3.5-flash (both match the first arm)
-        check("gemini-3.5-flash-high", None, "gemini-3-flash-agent", 10000, 65536);
-        check("gemini-3.5-flash-high", Some(0), "gemini-3.5-flash-extra-low", 1000, 65536);
-        check("gemini-3.5-flash-high", Some(4000), "gemini-3.5-flash-low", 4000, 65536);
-        check("gemini-3.5-flash-high", Some(7000), "gemini-3-flash-agent", 10000, 65536);
+        check(
+            "gemini-3.5-flash-high",
+            None,
+            "gemini-3-flash-agent",
+            10000,
+            65536,
+        );
+        check(
+            "gemini-3.5-flash-high",
+            Some(0),
+            "gemini-3.5-flash-extra-low",
+            1000,
+            65536,
+        );
+        check(
+            "gemini-3.5-flash-high",
+            Some(4000),
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
+        check(
+            "gemini-3.5-flash-high",
+            Some(7000),
+            "gemini-3-flash-agent",
+            10000,
+            65536,
+        );
 
         // ── gemini-3.5-flash-medium (fixed → SPEC_35_FLASH_LOW) ────────
-        check("gemini-3.5-flash-medium", None, "gemini-3.5-flash-low", 4000, 65536);
-        check("gemini-3.5-flash-medium", Some(0), "gemini-3.5-flash-low", 4000, 65536);
-        check("gemini-3.5-flash-medium", Some(4000), "gemini-3.5-flash-low", 4000, 65536);
-        check("gemini-3.5-flash-medium", Some(7000), "gemini-3.5-flash-low", 4000, 65536);
+        check(
+            "gemini-3.5-flash-medium",
+            None,
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
+        check(
+            "gemini-3.5-flash-medium",
+            Some(0),
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
+        check(
+            "gemini-3.5-flash-medium",
+            Some(4000),
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
+        check(
+            "gemini-3.5-flash-medium",
+            Some(7000),
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
 
         // ── gemini-3.5-flash-low (fixed → SPEC_35_FLASH_EXTRA_LOW) ─────
-        check("gemini-3.5-flash-low", None, "gemini-3.5-flash-extra-low", 1000, 65536);
-        check("gemini-3.5-flash-low", Some(0), "gemini-3.5-flash-extra-low", 1000, 65536);
-        check("gemini-3.5-flash-low", Some(4000), "gemini-3.5-flash-extra-low", 1000, 65536);
-        check("gemini-3.5-flash-low", Some(7000), "gemini-3.5-flash-extra-low", 1000, 65536);
+        check(
+            "gemini-3.5-flash-low",
+            None,
+            "gemini-3.5-flash-extra-low",
+            1000,
+            65536,
+        );
+        check(
+            "gemini-3.5-flash-low",
+            Some(0),
+            "gemini-3.5-flash-extra-low",
+            1000,
+            65536,
+        );
+        check(
+            "gemini-3.5-flash-low",
+            Some(4000),
+            "gemini-3.5-flash-extra-low",
+            1000,
+            65536,
+        );
+        check(
+            "gemini-3.5-flash-low",
+            Some(7000),
+            "gemini-3.5-flash-extra-low",
+            1000,
+            65536,
+        );
     }
 
     #[test]
@@ -497,15 +609,51 @@ mod tests {
         // Some(0) → Low → gemini-3.1-pro-low
         check("gemini-3.1-pro", Some(0), "gemini-3.1-pro-low", 1001, 65535);
         // Some(4000) → Medium → High fallback → gemini-pro-agent
-        check("gemini-3.1-pro", Some(4000), "gemini-pro-agent", 10001, 65535);
+        check(
+            "gemini-3.1-pro",
+            Some(4000),
+            "gemini-pro-agent",
+            10001,
+            65535,
+        );
         // Some(7000) → High → gemini-pro-agent
-        check("gemini-3.1-pro", Some(7000), "gemini-pro-agent", 10001, 65535);
+        check(
+            "gemini-3.1-pro",
+            Some(7000),
+            "gemini-pro-agent",
+            10001,
+            65535,
+        );
 
         // ── gemini-3.1-pro-high (same canonical arm) ───────────────────
-        check("gemini-3.1-pro-high", None, "gemini-pro-agent", 10001, 65535);
-        check("gemini-3.1-pro-high", Some(0), "gemini-3.1-pro-low", 1001, 65535);
-        check("gemini-3.1-pro-high", Some(4000), "gemini-pro-agent", 10001, 65535);
-        check("gemini-3.1-pro-high", Some(7000), "gemini-pro-agent", 10001, 65535);
+        check(
+            "gemini-3.1-pro-high",
+            None,
+            "gemini-pro-agent",
+            10001,
+            65535,
+        );
+        check(
+            "gemini-3.1-pro-high",
+            Some(0),
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
+        check(
+            "gemini-3.1-pro-high",
+            Some(4000),
+            "gemini-pro-agent",
+            10001,
+            65535,
+        );
+        check(
+            "gemini-3.1-pro-high",
+            Some(7000),
+            "gemini-pro-agent",
+            10001,
+            65535,
+        );
 
         // ── gemini-pro (same canonical arm) ────────────────────────────
         check("gemini-pro", None, "gemini-pro-agent", 10001, 65535);
@@ -514,10 +662,34 @@ mod tests {
         check("gemini-pro", Some(7000), "gemini-pro-agent", 10001, 65535);
 
         // ── gemini-3.1-pro-low (fixed → SPEC_31_PRO_LOW) ──────────────
-        check("gemini-3.1-pro-low", None, "gemini-3.1-pro-low", 1001, 65535);
-        check("gemini-3.1-pro-low", Some(0), "gemini-3.1-pro-low", 1001, 65535);
-        check("gemini-3.1-pro-low", Some(4000), "gemini-3.1-pro-low", 1001, 65535);
-        check("gemini-3.1-pro-low", Some(7000), "gemini-3.1-pro-low", 1001, 65535);
+        check(
+            "gemini-3.1-pro-low",
+            None,
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
+        check(
+            "gemini-3.1-pro-low",
+            Some(0),
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
+        check(
+            "gemini-3.1-pro-low",
+            Some(4000),
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
+        check(
+            "gemini-3.1-pro-low",
+            Some(7000),
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
     }
 
     #[test]
@@ -537,11 +709,29 @@ mod tests {
         // ── Claude family ──────────────────────────────────────────────
         check("claude-sonnet-4-6", None, "claude-sonnet-4-6", 1024, 64000);
         // claude-opus-4-6-thinking and claude-opus-4-6 → same spec
-        check("claude-opus-4-6-thinking", None, "claude-opus-4-6-thinking", 1024, 64000);
-        check("claude-opus-4-6", None, "claude-opus-4-6-thinking", 1024, 64000);
+        check(
+            "claude-opus-4-6-thinking",
+            None,
+            "claude-opus-4-6-thinking",
+            1024,
+            64000,
+        );
+        check(
+            "claude-opus-4-6",
+            None,
+            "claude-opus-4-6-thinking",
+            1024,
+            64000,
+        );
 
         // ── GPT OSS ────────────────────────────────────────────────────
-        check("gpt-oss-120b-medium", None, "gpt-oss-120b-medium", 8192, 32768);
+        check(
+            "gpt-oss-120b-medium",
+            None,
+            "gpt-oss-120b-medium",
+            8192,
+            32768,
+        );
     }
 
     #[test]
@@ -554,12 +744,30 @@ mod tests {
     #[test]
     fn baseline_case_insensitive() {
         // Canonical variant split model
-        check("GEMINI-3.5-FLASH", None, "gemini-3-flash-agent", 10000, 65536);
-        check("Gemini-3.5-Flash", None, "gemini-3-flash-agent", 10000, 65536);
+        check(
+            "GEMINI-3.5-FLASH",
+            None,
+            "gemini-3-flash-agent",
+            10000,
+            65536,
+        );
+        check(
+            "Gemini-3.5-Flash",
+            None,
+            "gemini-3-flash-agent",
+            10000,
+            65536,
+        );
         check("GEMINI-3.1-PRO", None, "gemini-pro-agent", 10001, 65535);
         // Non-variant model
         check("CLAUDE-SONNET-4-6", None, "claude-sonnet-4-6", 1024, 64000);
-        check("GPT-OSS-120B-MEDIUM", None, "gpt-oss-120b-medium", 8192, 32768);
+        check(
+            "GPT-OSS-120B-MEDIUM",
+            None,
+            "gpt-oss-120b-medium",
+            8192,
+            32768,
+        );
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -571,19 +779,67 @@ mod tests {
     fn old_catalog_alias_fallback() {
         // ── gemini-3.1-pro-high (HonorTier → same as gemini-3.1-pro) ────
         // None → High → gemini-pro-agent
-        check("gemini-3.1-pro-high", None, "gemini-pro-agent", 10001, 65535);
+        check(
+            "gemini-3.1-pro-high",
+            None,
+            "gemini-pro-agent",
+            10001,
+            65535,
+        );
         // Some(0) → Low → gemini-3.1-pro-low
-        check("gemini-3.1-pro-high", Some(0), "gemini-3.1-pro-low", 1001, 65535);
+        check(
+            "gemini-3.1-pro-high",
+            Some(0),
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
         // Some(4000) → Medium → High fallback → gemini-pro-agent
-        check("gemini-3.1-pro-high", Some(4000), "gemini-pro-agent", 10001, 65535);
+        check(
+            "gemini-3.1-pro-high",
+            Some(4000),
+            "gemini-pro-agent",
+            10001,
+            65535,
+        );
         // Some(7000) → High → gemini-pro-agent
-        check("gemini-3.1-pro-high", Some(7000), "gemini-pro-agent", 10001, 65535);
+        check(
+            "gemini-3.1-pro-high",
+            Some(7000),
+            "gemini-pro-agent",
+            10001,
+            65535,
+        );
 
         // ── gemini-3.1-pro-low (Fixed(Low) → always gemini-3.1-pro-low)
-        check("gemini-3.1-pro-low", None, "gemini-3.1-pro-low", 1001, 65535);
-        check("gemini-3.1-pro-low", Some(0), "gemini-3.1-pro-low", 1001, 65535);
-        check("gemini-3.1-pro-low", Some(4000), "gemini-3.1-pro-low", 1001, 65535);
-        check("gemini-3.1-pro-low", Some(7000), "gemini-3.1-pro-low", 1001, 65535);
+        check(
+            "gemini-3.1-pro-low",
+            None,
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
+        check(
+            "gemini-3.1-pro-low",
+            Some(0),
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
+        check(
+            "gemini-3.1-pro-low",
+            Some(4000),
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
+        check(
+            "gemini-3.1-pro-low",
+            Some(7000),
+            "gemini-3.1-pro-low",
+            1001,
+            65535,
+        );
 
         // ── gemini-pro (HonorTier → same as gemini-3.1-pro) ────────────
         check("gemini-pro", None, "gemini-pro-agent", 10001, 65535);
@@ -593,8 +849,26 @@ mod tests {
 
         // ── gemini-3-flash (HonorTier → same as gemini-3.5-flash) ──────
         check("gemini-3-flash", None, "gemini-3-flash-agent", 10000, 65536);
-        check("gemini-3-flash", Some(0), "gemini-3.5-flash-extra-low", 1000, 65536);
-        check("gemini-3-flash", Some(4000), "gemini-3.5-flash-low", 4000, 65536);
-        check("gemini-3-flash", Some(7000), "gemini-3-flash-agent", 10000, 65536);
+        check(
+            "gemini-3-flash",
+            Some(0),
+            "gemini-3.5-flash-extra-low",
+            1000,
+            65536,
+        );
+        check(
+            "gemini-3-flash",
+            Some(4000),
+            "gemini-3.5-flash-low",
+            4000,
+            65536,
+        );
+        check(
+            "gemini-3-flash",
+            Some(7000),
+            "gemini-3-flash-agent",
+            10000,
+            65536,
+        );
     }
 }

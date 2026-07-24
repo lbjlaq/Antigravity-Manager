@@ -267,8 +267,7 @@ mod variant_tests {
                 .and_then(|config| config.effort.as_deref()),
         );
 
-        apply_variant(&mut request, effort, Some(10_000))
-            .expect("Gemini 3.5 Flash must resolve");
+        apply_variant(&mut request, effort, Some(10_000)).expect("Gemini 3.5 Flash must resolve");
 
         assert_eq!(request.model, "gemini-3.5-flash-extra-low");
         assert!(request.output_config.is_none());
@@ -288,8 +287,7 @@ mod variant_tests {
                 .and_then(|config| config.effort.as_deref()),
         );
 
-        apply_variant(&mut request, effort, Some(1_000))
-            .expect("Gemini 3.1 Pro must resolve");
+        apply_variant(&mut request, effort, Some(1_000)).expect("Gemini 3.1 Pro must resolve");
 
         assert_eq!(request.model, "gemini-pro-agent");
     }
@@ -339,7 +337,10 @@ mod variant_tests {
         );
 
         let result = apply_variant(&mut request, effort, Some(10_000));
-        assert!(result.is_none(), "unregistered Claude model must return None");
+        assert!(
+            result.is_none(),
+            "unregistered Claude model must return None"
+        );
 
         // Model and output_config must remain untouched.
         assert_eq!(request.model, "claude-sonnet-4-5");

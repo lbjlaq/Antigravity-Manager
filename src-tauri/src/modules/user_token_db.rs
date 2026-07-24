@@ -595,7 +595,7 @@ pub fn validate_token(token_str: &str, ip: &str) -> Result<(bool, Option<String>
         // 1. 检查过期时间
         if token.expires_type != "never" {
             if let Some(expires_at) = token.expires_at {
-                if expires_at > 0 && expires_at < Utc::now().timestamp() {
+                if expires_at < Utc::now().timestamp() {
                     return Ok((
                         false,
                         Some(
@@ -735,7 +735,12 @@ mod tests {
         );
         assert!(token_res.is_ok());
         let token = token_res.unwrap();
-        let (valid, reason) = validate_token(&token.token, "127.0.0.1").expect("validation must succeed");
-        assert!(valid, "Token with expires_type never must be valid, reason: {:?}", reason);
+        let (valid, reason) =
+            validate_token(&token.token, "127.0.0.1").expect("validation must succeed");
+        assert!(
+            valid,
+            "Token with expires_type never must be valid, reason: {:?}",
+            reason
+        );
     }
 }
