@@ -58,8 +58,6 @@ pub fn parse_duration_ms(duration_str: &str) -> Option<u64> {
 
 /// 从 429 错误中提取 retry delay (深度递归解析)
 pub fn parse_retry_delay(error_text: &str) -> Option<u64> {
-    use serde_json::Value;
-
     // 1. 尝试正则提取 (针对非 JSON 文本或嵌套不深的文本)
     for re in RE_QUOTA_PATTERNS.iter() {
         if let Some(cap) = re.captures(error_text) {
@@ -186,6 +184,6 @@ mod tests {
             }
         }"#;
 
-        assert_eq!(parse_retry_delay(error_json), Some(1204));
+        assert_eq!(parse_retry_delay(error_json), Some(2704)); // 1204 + 1500ms grace window
     }
 }

@@ -245,18 +245,25 @@ pub async fn fetch_account_quota(
     // 5. 同步到运行中的反代服务（如果已启动）
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
+        // Safe check: If quota has recovered (> 0%), clear in-memory rate limit lock
+        let has_available_quota = quota.models.iter().any(|m| m.percentage > 0);
+        if has_available_quota {
+            instance.token_manager.clear_rate_limit(&account_id);
+        }
+
         let _ = instance.token_manager.reload_account(&account_id).await;
 
-        // [FIX] Blend TokenManager lockout state
+        // Blend TokenManager lockout state only for models that are still 0%
         if let Some(reset_secs) = instance
             .token_manager
             .get_rate_limit_reset_seconds(&account_id)
         {
             if reset_secs > 0 {
                 for model in &mut quota.models {
-                    model.percentage = 0;
-                    model.reset_time =
-                        (chrono::Utc::now().timestamp() + reset_secs as i64).to_string();
+                    if model.percentage == 0 {
+                        model.reset_time =
+                            (chrono::Utc::now().timestamp() + reset_secs as i64).to_string();
+                    }
                 }
             }
         }

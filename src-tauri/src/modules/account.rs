@@ -1553,6 +1553,19 @@ pub fn update_account_quota(account_id: &str, quota: QuotaData) -> Result<(), St
     }
     // --- Quota protection logic end ---
 
+    // Clean up stale live_limited_models entries for models that have recovered quota (> 0%)
+    if let Some(ref q) = account.quota {
+        account.live_limited_models.retain(|model_key, _| {
+            let recovered = q.models.iter().any(|m| {
+                let is_matching = m.name == *model_key || 
+                    crate::proxy::common::model_mapping::normalize_to_standard_id(&m.name)
+                        .map_or(false, |std| std == *model_key);
+                is_matching && m.percentage > 0
+            });
+            !recovered
+        });
+    }
+
     // Save account first
     save_account(&account)?;
 
