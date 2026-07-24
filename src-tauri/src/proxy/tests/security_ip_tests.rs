@@ -11,10 +11,10 @@
 #[cfg(test)]
 mod security_db_tests {
     use crate::modules::security_db::{
-        self, add_to_blacklist, add_to_whitelist, cleanup_old_ip_logs, clear_ip_access_logs,
+        add_to_blacklist, add_to_whitelist, cleanup_old_ip_logs, clear_ip_access_logs,
         get_blacklist, get_blacklist_entry_for_ip, get_ip_access_logs, get_ip_stats, get_whitelist,
         init_db, is_ip_in_blacklist, is_ip_in_whitelist, remove_from_blacklist,
-        remove_from_whitelist, save_ip_access_log, IpAccessLog, IpBlacklistEntry, IpWhitelistEntry,
+        remove_from_whitelist, save_ip_access_log, IpAccessLog,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -712,9 +712,8 @@ mod ip_filter_middleware_tests {
 
 #[cfg(test)]
 mod performance_benchmarks {
-    use super::security_db_tests::*;
     use crate::modules::security_db::{
-        add_to_blacklist, clear_ip_access_logs, get_blacklist, init_db, is_ip_in_blacklist,
+        add_to_blacklist, get_blacklist, init_db, is_ip_in_blacklist,
     };
     use std::time::Instant;
 
