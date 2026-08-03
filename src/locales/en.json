@@ -704,6 +704,19 @@
           "auto": "Auto (Recommended)"
         }
       },
+      "minimax": {
+        "title": "MiniMax Provider",
+        "region": "Region",
+        "regions": {
+          "global_en": "Global",
+          "cn_zh": "China"
+        },
+        "api_key": "API Key",
+        "api_key_placeholder": "Enter the MiniMax API key",
+        "openai_base_url": "OpenAI-compatible base URL",
+        "anthropic_base_url": "Anthropic-compatible base URL",
+        "context_window": "Context window"
+      },
       "zai": {
         "title": "z.ai (GLM) Provider",
         "title_tooltip": "Optional Anthropic-compatible upstream for Claude protocol. Only affects Anthropic endpoints; Google account routing remains unchanged.",

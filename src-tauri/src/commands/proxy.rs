@@ -169,7 +169,8 @@ pub async fn internal_start_proxy_service(
     if active_accounts == 0 {
         let zai_enabled = config.zai.enabled
             && !matches!(config.zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
-        if !zai_enabled {
+        let minimax_enabled = config.minimax.enabled;
+        if !zai_enabled && !minimax_enabled {
             tracing::warn!("沒有可用賬號，反代邏輯將暫停，請通過管理界面添加。");
             return Ok(ProxyStatus {
                 running: false,
@@ -250,6 +251,7 @@ pub async fn ensure_admin_server(
         config.user_agent_override.clone(),
         crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
         config.zai.clone(),
+        config.minimax.clone(),
         monitor,
         config.experimental.clone(),
         config.debug_logging.clone(),

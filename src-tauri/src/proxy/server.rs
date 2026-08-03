@@ -98,6 +98,7 @@ pub struct AppState {
     pub upstream_proxy: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
     pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     pub zai: Arc<RwLock<crate::proxy::ZaiConfig>>,
+    pub minimax: Arc<RwLock<crate::proxy::MiniMaxConfig>>,
     pub provider_rr: Arc<AtomicUsize>,
     pub zai_vision_mcp: Arc<crate::proxy::zai_vision_mcp::ZaiVisionMcpState>,
     pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
@@ -264,6 +265,7 @@ pub struct AxumServer {
     upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     security_state: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,
     zai_state: Arc<RwLock<crate::proxy::ZaiConfig>>,
+    minimax_state: Arc<RwLock<crate::proxy::MiniMaxConfig>>,
     experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
     debug_logging: Arc<RwLock<crate::proxy::config::DebugLoggingConfig>>,
     #[allow(dead_code)] // 预留给 cloudflared 运行状态查询与后续控制
@@ -321,6 +323,12 @@ impl AxumServer {
         tracing::info!("z.ai 配置已热更新");
     }
 
+    pub async fn update_minimax(&self, config: &crate::proxy::config::ProxyConfig) {
+        let mut minimax = self.minimax_state.write().await;
+        *minimax = config.minimax.clone();
+        tracing::info!("MiniMax configuration hot-reloaded");
+    }
+
     pub async fn update_experimental(&self, config: &crate::proxy::config::ProxyConfig) {
         let mut exp = self.experimental.write().await;
         *exp = config.experimental.clone();
@@ -357,6 +365,7 @@ impl AxumServer {
         user_agent_override: Option<String>,
         security_config: crate::proxy::ProxySecurityConfig,
         zai_config: crate::proxy::ZaiConfig,
+        minimax_config: crate::proxy::MiniMaxConfig,
         monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
         experimental_config: crate::proxy::config::ExperimentalConfig,
         debug_logging: crate::proxy::config::DebugLoggingConfig,
@@ -375,6 +384,7 @@ impl AxumServer {
         proxy_pool_manager.clone().start_health_check_loop();
         let security_state = Arc::new(RwLock::new(security_config));
         let zai_state = Arc::new(RwLock::new(zai_config));
+        let minimax_state = Arc::new(RwLock::new(minimax_config));
         let provider_rr = Arc::new(AtomicUsize::new(0));
         let zai_vision_mcp_state = Arc::new(crate::proxy::zai_vision_mcp::ZaiVisionMcpState::new());
         let experimental_state = Arc::new(RwLock::new(experimental_config));
@@ -401,6 +411,7 @@ impl AxumServer {
                 u
             },
             zai: zai_state.clone(),
+            minimax: minimax_state.clone(),
             provider_rr: provider_rr.clone(),
             zai_vision_mcp: zai_vision_mcp_state,
             monitor: monitor.clone(),
@@ -822,6 +833,7 @@ impl AxumServer {
             upstream: state.upstream.clone(),
             security_state,
             zai_state,
+            minimax_state,
             experimental: experimental_state.clone(),
             debug_logging: debug_logging_state.clone(),
             cloudflared_state,
@@ -1455,6 +1467,12 @@ async fn admin_save_config(
     {
         let mut zai = state.zai.write().await;
         *zai = new_config.clone().proxy.zai;
+    }
+
+    // Update MiniMax configuration.
+    {
+        let mut minimax = state.minimax.write().await;
+        *minimax = new_config.clone().proxy.minimax;
     }
 
     // 更新实验性配置

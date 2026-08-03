@@ -418,6 +418,8 @@ pub async fn save_config(
         instance.axum_server.update_security(&config.proxy).await;
         // 更新 z.ai 配置
         instance.axum_server.update_zai(&config.proxy).await;
+        // Update MiniMax configuration.
+        instance.axum_server.update_minimax(&config.proxy).await;
         // 更新实验性配置
         instance
             .axum_server

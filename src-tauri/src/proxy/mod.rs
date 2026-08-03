@@ -37,6 +37,8 @@ pub use config::update_thinking_budget_config;
 pub use config::ProxyAuthMode;
 pub use config::ProxyConfig;
 pub use config::ProxyPoolConfig;
+pub use config::MiniMaxConfig;
+pub use config::MiniMaxRegion;
 pub use config::ZaiConfig;
 pub use config::ZaiDispatchMode;
 pub use security::ProxySecurityConfig;
