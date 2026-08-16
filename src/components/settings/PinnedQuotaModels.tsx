@@ -9,6 +9,17 @@ interface PinnedQuotaModelsProps {
     onChange: (config: PinnedQuotaModelsConfig) => void;
 }
 
+const getBaseThinkingModelId = (modelId: string): string | null => {
+    const id = modelId.toLowerCase();
+    const suffix = '-thinking';
+    return id.endsWith(suffix) ? id.slice(0, -suffix.length) : null;
+};
+
+const hasBaseThinkingVariant = (modelId: string, modelIds: Set<string>): boolean => {
+    const baseId = getBaseThinkingModelId(modelId);
+    return baseId ? modelIds.has(baseId) : false;
+};
+
 const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
     const { t } = useTranslation();
 
@@ -29,6 +40,14 @@ const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
 
     const { accounts } = useAccountStore();
     const uniqueIds = new Set<string>();
+    const knownModelIds = new Set<string>(
+        Object.keys(MODEL_CONFIG).map(id => id.toLowerCase())
+    );
+    const quotaModels = accounts.flatMap(a => a.quota?.models || []);
+    const availableModelIds = new Set<string>([
+        ...knownModelIds,
+        ...quotaModels.map(m => m.name.toLowerCase()),
+    ]);
 
     // 先收集所有已知模型的 id 和 protectedKey，防止他们作为未知的 "动态抽出模型" 出现
     Object.entries(MODEL_CONFIG).forEach(([id, cfg]) => {
@@ -44,7 +63,7 @@ const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
     const baseModels = Object.entries(MODEL_CONFIG)
         .filter(([id, cfg]) => {
             // 隐藏思考变体
-            if (id.includes('thinking')) return false;
+            if (hasBaseThinkingVariant(id, knownModelIds)) return false;
 
             const labelKey = (cfg.shortLabel || cfg.label).toLowerCase();
             // 在这一层，如果展示用的 labelKey 已经被加过了，就不要重复加到外派的选项里了
@@ -59,10 +78,10 @@ const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
         }));
 
     // 提取所有账号的历史动态模型
-    const dynamicModels = accounts.flatMap(a => a.quota?.models || [])
+    const dynamicModels = quotaModels
         .filter(m => {
             const id = m.name.toLowerCase();
-            if (id.includes('thinking')) return false;
+            if (hasBaseThinkingVariant(id, availableModelIds)) return false;
             // 查重：避免内置里已经包含的模型或同名 id 重复
             if (uniqueIds.has(id)) return false;
             uniqueIds.add(id);
@@ -81,7 +100,7 @@ const PinnedQuotaModels = ({ config, onChange }: PinnedQuotaModelsProps) => {
     currentChecked.forEach(modelId => {
         if (!modelOptions.some(m => m.id === modelId)) {
             // 尝试在历史配额中找到它的真实名字 (为了应对如 thinking 模型被隐藏但在关注列表里等情况)
-            const quotaModel = accounts.flatMap(a => a.quota?.models || []).find(m => m.name.toLowerCase() === modelId.toLowerCase());
+            const quotaModel = quotaModels.find(m => m.name.toLowerCase() === modelId.toLowerCase());
             const cfg = MODEL_CONFIG[modelId.toLowerCase()];
 
             modelOptions.push({
