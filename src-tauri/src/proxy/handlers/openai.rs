@@ -692,12 +692,25 @@ pub async fn handle_chat_completions(
     headers: HeaderMap, // [CHANGED] Extract headers
     Json(mut body): Json<Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    // [NEW] Check for Image Model Redirection
-    let model_name = body
+    let incoming_model = body
         .get("model")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_lowercase();
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let minimax = state.minimax.read().await.clone();
+    if crate::proxy::providers::minimax::should_route(&minimax, &incoming_model) {
+        return Ok(crate::proxy::providers::minimax::forward_openai_json(
+            &state,
+            axum::http::Method::POST,
+            "/v1/chat/completions",
+            &headers,
+            body,
+        )
+        .await);
+    }
+
+    // [NEW] Check for Image Model Redirection
+    let model_name = incoming_model.to_lowercase();
     // [FIX] Only redirect non-native image aliases (dall-e / midjourney) to the
     // images-generations shim. Native Gemini image models (gemini-3-pro-image*) must
     // flow through the normal pipeline (transform_openai_request -> resolve_request_config),
@@ -1751,8 +1764,26 @@ fn web_tools_guidance_message() -> Value {
 pub async fn handle_completions(
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(mut body): Json<Value>,
 ) -> Response {
+    let incoming_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let minimax = state.minimax.read().await.clone();
+    if crate::proxy::providers::minimax::should_route(&minimax, &incoming_model) {
+        return crate::proxy::providers::minimax::forward_openai_json(
+            &state,
+            axum::http::Method::POST,
+            uri.path(),
+            &headers,
+            body,
+        )
+        .await;
+    }
+
     debug!(
         "Received /v1/completions or /v1/responses payload: {:?}",
         body
@@ -3248,7 +3279,7 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
     let model_ids =
         get_all_dynamic_models(&state.custom_mapping, Some(&state.token_manager), only_raw).await;
 
-    let data: Vec<_> = model_ids
+    let mut data: Vec<_> = model_ids
         .into_iter()
         .map(|id| {
             json!({
@@ -3259,6 +3290,8 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
             })
         })
         .collect();
+    let minimax = state.minimax.read().await.clone();
+    data.extend(crate::proxy::providers::minimax::model_entries(&minimax));
 
     Json(json!({
         "object": "list",

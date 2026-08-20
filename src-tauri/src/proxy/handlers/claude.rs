@@ -390,6 +390,23 @@ pub async fn handle_messages(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
+    let incoming_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let minimax = state.minimax.read().await.clone();
+    if crate::proxy::providers::minimax::should_route(&minimax, &incoming_model) {
+        return crate::proxy::providers::minimax::forward_anthropic_json(
+            &state,
+            axum::http::Method::POST,
+            "/v1/messages",
+            &headers,
+            body,
+        )
+        .await;
+    }
+
     // [FIX] 保存原始请求体的完整副本，用于日志记录
     // 这确保了即使结构体定义遗漏字段，日志也能完整记录所有参数
     let original_body = body.clone();
@@ -1917,7 +1934,7 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
     let model_ids =
         get_all_dynamic_models(&state.custom_mapping, Some(&state.token_manager), only_raw).await;
 
-    let data: Vec<_> = model_ids
+    let mut data: Vec<_> = model_ids
         .into_iter()
         .map(|id| {
             json!({
@@ -1928,6 +1945,8 @@ pub async fn handle_list_models(State(state): State<AppState>) -> impl IntoRespo
             })
         })
         .collect();
+    let minimax = state.minimax.read().await.clone();
+    data.extend(crate::proxy::providers::minimax::model_entries(&minimax));
 
     Json(json!({
         "object": "list",
@@ -1941,6 +1960,22 @@ pub async fn handle_count_tokens(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
+    let minimax = state.minimax.read().await.clone();
+    let incoming_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if crate::proxy::providers::minimax::should_route(&minimax, incoming_model) {
+        return crate::proxy::providers::minimax::forward_anthropic_json(
+            &state,
+            axum::http::Method::POST,
+            "/v1/messages/count_tokens",
+            &headers,
+            body,
+        )
+        .await;
+    }
+
     let zai = state.zai.read().await.clone();
     let zai_enabled =
         zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
