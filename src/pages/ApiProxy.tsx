@@ -168,6 +168,10 @@ export default function ApiProxy() {
     const [, setZaiModelsError] = useState<string | null>(null);
     const [zaiNewMappingFrom, setZaiNewMappingFrom] = useState('');
     const [zaiNewMappingTo, setZaiNewMappingTo] = useState('');
+    const [orcarouterAvailableModels, setOrcaRouterAvailableModels] = useState<string[]>([]);
+    const [orcarouterModelsLoading, setOrcaRouterModelsLoading] = useState(false);
+    const [orcarouterNewMappingFrom, setOrcaRouterNewMappingFrom] = useState('');
+    const [orcarouterNewMappingTo, setOrcaRouterNewMappingTo] = useState('');
     const [customMappingValue, setCustomMappingValue] = useState(''); // 自定义映射表单的选中值
     const [editingKey, setEditingKey] = useState<string | null>(null);
     const [editingValue, setEditingValue] = useState<string>('');
@@ -215,6 +219,15 @@ export default function ApiProxy() {
     const zaiModelMapping = useMemo(() => {
         return appConfig?.proxy.zai?.model_mapping || {};
     }, [appConfig?.proxy.zai?.model_mapping]);
+
+    const orcarouterModelOptions = useMemo(() => {
+        const unique = new Set(orcarouterAvailableModels);
+        return Array.from(unique).sort();
+    }, [orcarouterAvailableModels]);
+
+    const orcarouterModelMapping = useMemo(() => {
+        return appConfig?.proxy.orcarouter?.model_mapping || {};
+    }, [appConfig?.proxy.orcarouter?.model_mapping]);
 
 
     // 生成自定义映射表单的选项 (从 models 动态生成)
@@ -851,6 +864,90 @@ export default function ApiProxy() {
                 ...appConfig.proxy,
                 zai: {
                     ...appConfig.proxy.zai,
+                    ...updates
+                }
+            }
+        };
+        saveConfig(newConfig);
+    };
+
+    const refreshOrcaRouterModels = async () => {
+        if (!appConfig?.proxy.orcarouter) return;
+        setOrcaRouterModelsLoading(true);
+        try {
+            const models = await invoke<string[]>('fetch_orcarouter_models', {
+                orcarouter: appConfig.proxy.orcarouter,
+                upstreamProxy: appConfig.proxy.upstream_proxy,
+                requestTimeout: appConfig.proxy.request_timeout,
+            });
+            setOrcaRouterAvailableModels(models);
+        } catch (error: any) {
+            console.error('Failed to fetch OrcaRouter models:', error);
+        } finally {
+            setOrcaRouterModelsLoading(false);
+        }
+    };
+
+    const updateOrcaRouterDefaultModels = (updates: Partial<NonNullable<ProxyConfig['orcarouter']>['models']>) => {
+        if (!appConfig?.proxy.orcarouter) return;
+        const newConfig = {
+            ...appConfig,
+            proxy: {
+                ...appConfig.proxy,
+                orcarouter: {
+                    ...appConfig.proxy.orcarouter,
+                    models: { ...appConfig.proxy.orcarouter.models, ...updates }
+                }
+            }
+        };
+        saveConfig(newConfig);
+    };
+
+    const upsertOrcaRouterModelMapping = (from: string, to: string) => {
+        if (!appConfig?.proxy.orcarouter) return;
+        const currentMapping = appConfig.proxy.orcarouter.model_mapping || {};
+        const newMapping = { ...currentMapping, [from]: to };
+
+        const newConfig = {
+            ...appConfig,
+            proxy: {
+                ...appConfig.proxy,
+                orcarouter: {
+                    ...appConfig.proxy.orcarouter,
+                    model_mapping: newMapping
+                }
+            }
+        };
+        saveConfig(newConfig);
+    };
+
+    const removeOrcaRouterModelMapping = (from: string) => {
+        if (!appConfig?.proxy.orcarouter) return;
+        const currentMapping = appConfig.proxy.orcarouter.model_mapping || {};
+        const newMapping = { ...currentMapping };
+        delete newMapping[from];
+
+        const newConfig = {
+            ...appConfig,
+            proxy: {
+                ...appConfig.proxy,
+                orcarouter: {
+                    ...appConfig.proxy.orcarouter,
+                    model_mapping: newMapping
+                }
+            }
+        };
+        saveConfig(newConfig);
+    };
+
+    const updateOrcaRouterGeneralConfig = (updates: Partial<NonNullable<ProxyConfig['orcarouter']>>) => {
+        if (!appConfig?.proxy.orcarouter) return;
+        const newConfig = {
+            ...appConfig,
+            proxy: {
+                ...appConfig.proxy,
+                orcarouter: {
+                    ...appConfig.proxy.orcarouter,
                     ...updates
                 }
             }
@@ -1531,6 +1628,168 @@ print(response.choices[0].message.content)`;
                                     proxyUrl={status.running ? status.base_url : `http://127.0.0.1:${appConfig.proxy.port || 8045}`}
                                     apiKey={appConfig.proxy.api_key}
                                 />
+                            </CollapsibleCard>
+
+                            {/* OrcaRouter (Anthropic-compatible gateway) Dispatcher */}
+                            <CollapsibleCard
+                                title={t('proxy.config.orcarouter.title')}
+                                icon={<Zap size={18} className="text-sky-500" />}
+                                enabled={!!appConfig.proxy.orcarouter?.enabled}
+                                onToggle={(checked) => updateOrcaRouterGeneralConfig({ enabled: checked })}
+                            >
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                {t('proxy.config.orcarouter.base_url')}
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={appConfig.proxy.orcarouter?.base_url || 'https://api.orcarouter.ai'}
+                                                onChange={(e) => updateOrcaRouterGeneralConfig({ base_url: e.target.value })}
+                                                className="input input-sm input-bordered w-full font-mono text-xs"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                {t('proxy.config.orcarouter.dispatch_mode')}
+                                            </label>
+                                            <select
+                                                className="select select-sm select-bordered w-full text-xs"
+                                                value={appConfig.proxy.orcarouter?.dispatch_mode || 'off'}
+                                                onChange={(e) => updateOrcaRouterGeneralConfig({ dispatch_mode: e.target.value as any })}
+                                            >
+                                                <option value="off">{t('proxy.config.orcarouter.modes.off')}</option>
+                                                <option value="exclusive">{t('proxy.config.orcarouter.modes.exclusive')}</option>
+                                                <option value="pooled">{t('proxy.config.orcarouter.modes.pooled')}</option>
+                                                <option value="fallback">{t('proxy.config.orcarouter.modes.fallback')}</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400 flex items-center justify-between">
+                                            <span>{t('proxy.config.orcarouter.api_key')}</span>
+                                            {!(appConfig.proxy.orcarouter?.api_key) && (
+                                                <span className="text-amber-500 text-[10px] flex items-center gap-1">
+                                                    <HelpTooltip text={t('proxy.config.orcarouter.warning')} />
+                                                    {t('common.required')}
+                                                </span>
+                                            )}
+                                        </label>
+                                        <input
+                                            type="password"
+                                            value={appConfig.proxy.orcarouter?.api_key || ''}
+                                            onChange={(e) => updateOrcaRouterGeneralConfig({ api_key: e.target.value })}
+                                            placeholder="sk-orca-..."
+                                            className="input input-sm input-bordered w-full font-mono text-xs"
+                                        />
+                                    </div>
+
+                                    {/* Model Mapping Section */}
+                                    <div className="pt-4 border-t border-gray-100 dark:border-base-200">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
+                                                {t('proxy.config.orcarouter.models.title')}
+                                            </h4>
+                                            <button
+                                                onClick={refreshOrcaRouterModels}
+                                                disabled={orcarouterModelsLoading || !appConfig.proxy.orcarouter?.api_key}
+                                                className="btn btn-ghost btn-xs gap-1"
+                                            >
+                                                <RefreshCw size={12} className={orcarouterModelsLoading ? 'animate-spin' : ''} />
+                                                {t('proxy.config.orcarouter.models.refresh')}
+                                            </button>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                            {['opus', 'sonnet', 'haiku'].map((family) => (
+                                                <div key={family} className="space-y-1">
+                                                    <label className="text-[10px] text-gray-500 capitalize">{family}</label>
+                                                    <div className="flex gap-1">
+                                                        {orcarouterModelOptions.length > 0 && (
+                                                            <select
+                                                                className="select select-xs select-bordered max-w-[80px]"
+                                                                value=""
+                                                                onChange={(e) => e.target.value && updateOrcaRouterDefaultModels({ [family]: e.target.value })}
+                                                            >
+                                                                <option value="">{t('proxy.config.orcarouter.models.select_placeholder')}</option>
+                                                                {orcarouterModelOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                                                            </select>
+                                                        )}
+                                                        <input
+                                                            type="text"
+                                                            className="input input-xs input-bordered w-full font-mono"
+                                                            value={appConfig.proxy.orcarouter?.models?.[family as keyof typeof appConfig.proxy.orcarouter.models] || ''}
+                                                            onChange={(e) => updateOrcaRouterDefaultModels({ [family]: e.target.value })}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <details className="mt-3 group">
+                                            <summary className="cursor-pointer text-[10px] text-gray-500 hover:text-blue-500 transition-colors inline-flex items-center gap-1 select-none">
+                                                <Settings size={12} />
+                                                {t('proxy.config.orcarouter.models.advanced_title')}
+                                            </summary>
+                                            <div className="mt-2 space-y-2 p-2 bg-gray-50 dark:bg-base-200/50 rounded-lg">
+                                                {Object.entries(orcarouterModelMapping).map(([from, to]) => (
+                                                    <div key={from} className="flex items-center gap-2">
+                                                        <div className="flex-1 bg-white dark:bg-base-100 px-2 py-1 rounded border border-gray-200 dark:border-base-300 text-[10px] font-mono truncate" title={from}>{from}</div>
+                                                        <ArrowRight size={10} className="text-gray-400" />
+                                                        <div className="flex-[1.5] flex gap-1">
+                                                            {orcarouterModelOptions.length > 0 && (
+                                                                <select
+                                                                    className="select select-xs select-ghost h-6 min-h-0 px-1"
+                                                                    value=""
+                                                                    onChange={(e) => e.target.value && upsertOrcaRouterModelMapping(from, e.target.value)}
+                                                                >
+                                                                    <option value="">▼</option>
+                                                                    {orcarouterModelOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                                                                </select>
+                                                            )}
+                                                            <input
+                                                                type="text"
+                                                                className="input input-xs input-bordered w-full font-mono h-6"
+                                                                value={to}
+                                                                onChange={(e) => upsertOrcaRouterModelMapping(from, e.target.value)}
+                                                            />
+                                                        </div>
+                                                        <button onClick={() => removeOrcaRouterModelMapping(from)} className="text-gray-400 hover:text-red-500"><Trash2 size={12} /></button>
+                                                    </div>
+                                                ))}
+
+                                                <div className="flex items-center gap-2 pt-2 border-t border-gray-200/50">
+                                                    <input
+                                                        className="input input-xs input-bordered flex-1 font-mono"
+                                                        placeholder={t('proxy.config.orcarouter.models.from_placeholder') || "From (e.g. claude-3-opus)"}
+                                                        value={orcarouterNewMappingFrom}
+                                                        onChange={e => setOrcaRouterNewMappingFrom(e.target.value)}
+                                                    />
+                                                    <input
+                                                        className="input input-xs input-bordered flex-1 font-mono"
+                                                        placeholder={t('proxy.config.orcarouter.models.to_placeholder') || "To (e.g. anthropic/claude-sonnet-5)"}
+                                                        value={orcarouterNewMappingTo}
+                                                        onChange={e => setOrcaRouterNewMappingTo(e.target.value)}
+                                                    />
+                                                    <button
+                                                        className="btn btn-xs btn-primary"
+                                                        onClick={() => {
+                                                            if (orcarouterNewMappingFrom && orcarouterNewMappingTo) {
+                                                                upsertOrcaRouterModelMapping(orcarouterNewMappingFrom, orcarouterNewMappingTo);
+                                                                setOrcaRouterNewMappingFrom('');
+                                                                setOrcaRouterNewMappingTo('');
+                                                            }
+                                                        }}
+                                                    >
+                                                        <Plus size={12} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </details>
+                                    </div>
+                                </div>
                             </CollapsibleCard>
 
                             {/* z.ai (GLM) Dispatcher */}

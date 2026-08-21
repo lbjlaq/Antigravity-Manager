@@ -602,6 +602,7 @@ pub fn run() {
             commands::proxy::check_proxy_health,
             commands::proxy::get_proxy_pool_config,
             commands::proxy::fetch_zai_models,
+            commands::proxy::fetch_orcarouter_models,
             commands::proxy::get_proxy_scheduling_config,
             commands::proxy::update_proxy_scheduling_config,
             commands::proxy::clear_proxy_session_bindings,

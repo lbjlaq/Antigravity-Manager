@@ -355,6 +355,87 @@ impl Default for ZaiConfig {
     }
 }
 
+/// Dispatch mode for the OrcaRouter provider (Anthropic-compatible gateway).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrcaRouterDispatchMode {
+    /// Never use OrcaRouter.
+    Off,
+    /// Use OrcaRouter for all Anthropic protocol requests.
+    Exclusive,
+    /// Treat OrcaRouter as one additional slot in the shared pool.
+    Pooled,
+    /// Use OrcaRouter only when the Google pool is unavailable.
+    Fallback,
+}
+
+impl Default for OrcaRouterDispatchMode {
+    fn default() -> Self {
+        Self::Off
+    }
+}
+
+/// Default model mapping used when the incoming Anthropic request uses `claude-*` model ids.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrcaRouterModelDefaults {
+    /// Default model for "opus" family.
+    #[serde(default = "default_orcarouter_opus_model")]
+    pub opus: String,
+    /// Default model for "sonnet" family.
+    #[serde(default = "default_orcarouter_sonnet_model")]
+    pub sonnet: String,
+    /// Default model for "haiku" family.
+    #[serde(default = "default_orcarouter_haiku_model")]
+    pub haiku: String,
+}
+
+impl Default for OrcaRouterModelDefaults {
+    fn default() -> Self {
+        Self {
+            opus: default_orcarouter_opus_model(),
+            sonnet: default_orcarouter_sonnet_model(),
+            haiku: default_orcarouter_haiku_model(),
+        }
+    }
+}
+
+/// OrcaRouter provider configuration (Anthropic-compatible gateway).
+///
+/// OrcaRouter (https://www.orcarouter.ai) is an OpenAI/Anthropic-compatible
+/// gateway. It also runs gateway-level, zero-trust security for AI agents on the
+/// same endpoint — screening every prompt/response and governing every tool call
+/// on a default-deny basis, with no application code changes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrcaRouterConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_orcarouter_base_url")]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub dispatch_mode: OrcaRouterDispatchMode,
+    /// Optional per-model mapping overrides for Anthropic/Claude model ids.
+    /// Key: incoming `model` string, Value: upstream OrcaRouter model id (e.g. `anthropic/claude-sonnet-5`).
+    #[serde(default)]
+    pub model_mapping: HashMap<String, String>,
+    #[serde(default)]
+    pub models: OrcaRouterModelDefaults,
+}
+
+impl Default for OrcaRouterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_orcarouter_base_url(),
+            api_key: String::new(),
+            dispatch_mode: OrcaRouterDispatchMode::Off,
+            model_mapping: HashMap::new(),
+            models: OrcaRouterModelDefaults::default(),
+        }
+    }
+}
+
 /// 实验性功能配置 (Feature Flags)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperimentalConfig {
@@ -623,6 +704,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub zai: ZaiConfig,
 
+    /// OrcaRouter provider configuration (Anthropic-compatible gateway).
+    #[serde(default)]
+    pub orcarouter: OrcaRouterConfig,
+
     /// 自定义 User-Agent 请求头 (可选覆盖)
     #[serde(default)]
     pub user_agent_override: Option<String>,
@@ -696,6 +781,7 @@ impl Default for ProxyConfig {
             upstream_proxy: UpstreamProxyConfig::default(),
             only_raw_quota_models: false,
             zai: ZaiConfig::default(),
+            orcarouter: OrcaRouterConfig::default(),
             scheduling: crate::proxy::sticky_config::StickySessionConfig::default(),
             experimental: ExperimentalConfig::default(),
             security_monitor: SecurityMonitorConfig::default(),
@@ -716,6 +802,22 @@ fn default_request_timeout() -> u64 {
 
 fn default_zai_base_url() -> String {
     "https://api.z.ai/api/anthropic".to_string()
+}
+
+fn default_orcarouter_base_url() -> String {
+    "https://api.orcarouter.ai".to_string()
+}
+
+fn default_orcarouter_opus_model() -> String {
+    "anthropic/claude-opus-4.8".to_string()
+}
+
+fn default_orcarouter_sonnet_model() -> String {
+    "anthropic/claude-sonnet-5".to_string()
+}
+
+fn default_orcarouter_haiku_model() -> String {
+    "anthropic/claude-haiku-4.5".to_string()
 }
 
 fn default_zai_opus_model() -> String {
