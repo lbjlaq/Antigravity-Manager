@@ -538,11 +538,36 @@ pub fn transform_openai_request(
                                         }
                                     }
                                 }
-                                OpenAIContentBlock::AudioUrl { audio_url: _ } => {
-                                    // 暂时跳过 audio_url 处理
-                                    // 完整实现需要下载音频文件并转换为 Gemini inlineData 格式
-                                    // 这会与 v3.3.16 的 thinkingConfig 逻辑冲突，留待后续版本实现
-                                    tracing::debug!("[OpenAI-Request] Skipping audio_url (not yet implemented in v3.3.16)");
+                                OpenAIContentBlock::AudioUrl { audio_url } => {
+                                    // [NEW] audio_url -> Gemini inlineData / fileData
+                                    match crate::proxy::audio::audio_part_from_source(
+                                        &audio_url.url,
+                                        audio_url.mime_type.as_deref(),
+                                    ) {
+                                        Some(part) => {
+                                            tracing::debug!("[OpenAI-Request] Mapped audio_url to Gemini part");
+                                            parts.push(part);
+                                        }
+                                        None => {
+                                            tracing::warn!("[OpenAI-Request] Dropped unreadable audio_url part");
+                                        }
+                                    }
+                                }
+                                OpenAIContentBlock::InputAudio { input_audio } => {
+                                    // [NEW] OpenAI 官方 input_audio (base64 + format) -> Gemini inlineData
+                                    let mime = input_audio.mime_type();
+                                    match crate::proxy::audio::audio_part_from_source(
+                                        &input_audio.data,
+                                        Some(&mime),
+                                    ) {
+                                        Some(part) => {
+                                            tracing::debug!("[OpenAI-Request] Mapped input_audio ({}) to Gemini part", mime);
+                                            parts.push(part);
+                                        }
+                                        None => {
+                                            tracing::warn!("[OpenAI-Request] Dropped empty input_audio part");
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -650,6 +675,25 @@ pub fn transform_openai_request(
                                         }
                                     } else {
                                         texts.push("[image link]".to_string());
+                                    }
+                                }
+                                OpenAIContentBlock::AudioUrl { audio_url } => {
+                                    match crate::proxy::audio::audio_part_from_source(
+                                        &audio_url.url,
+                                        audio_url.mime_type.as_deref(),
+                                    ) {
+                                        Some(part) => extra_parts.push(part),
+                                        None => texts.push("[audio]".to_string()),
+                                    }
+                                }
+                                OpenAIContentBlock::InputAudio { input_audio } => {
+                                    let mime = input_audio.mime_type();
+                                    match crate::proxy::audio::audio_part_from_source(
+                                        &input_audio.data,
+                                        Some(&mime),
+                                    ) {
+                                        Some(part) => extra_parts.push(part),
+                                        None => texts.push("[audio]".to_string()),
                                     }
                                 }
                                 _ => {}

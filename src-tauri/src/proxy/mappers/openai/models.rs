@@ -82,6 +82,9 @@ pub enum OpenAIContentBlock {
     ImageUrl { image_url: OpenAIImageUrl },
     #[serde(rename = "audio_url")]
     AudioUrl { audio_url: AudioUrlContent },
+    // [NEW] OpenAI 官方多模态音频入参: {"type":"input_audio","input_audio":{"data":"<base64>","format":"wav"}}
+    #[serde(rename = "input_audio", alias = "audio")]
+    InputAudio { input_audio: OpenAIInputAudio },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -94,6 +97,32 @@ pub struct OpenAIImageUrl {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AudioUrlContent {
     pub url: String,
+    /// 可选的显式 MIME/格式 (如 "audio/wav" 或 "wav")，缺省时从 data URL / 扩展名推断
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "mimeType",
+        alias = "mime_type",
+        alias = "format"
+    )]
+    pub mime_type: Option<String>,
+}
+
+/// OpenAI `input_audio` 内容块: base64 音频 + 格式标识
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenAIInputAudio {
+    /// base64 编码的音频数据 (也兼容传入 data: URL)
+    pub data: String,
+    /// "wav" | "mp3" | "m4a" | "ogg" | "flac" | "aiff" ... 亦接受完整 MIME
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "mimeType", alias = "mime_type")]
+    pub format: Option<String>,
+}
+
+impl OpenAIInputAudio {
+    /// 归一化后的 Gemini MIME 类型
+    pub fn mime_type(&self) -> String {
+        crate::proxy::audio::normalize_audio_mime(self.format.as_deref().unwrap_or("mp3"))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

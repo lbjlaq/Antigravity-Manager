@@ -80,6 +80,24 @@ fn responses_message_parts(item: &Value) -> (Vec<String>, Vec<Value>) {
                             "image_url": image_url.clone()
                         }));
                     }
+                } else if matches!(
+                    part.get("type").and_then(Value::as_str),
+                    Some("input_audio") | Some("audio")
+                ) {
+                    // [NEW] Responses API 音频入参透传给 chat/completions 映射层
+                    if let Some(input_audio) = part.get("input_audio") {
+                        image_parts.push(json!({
+                            "type": "input_audio",
+                            "input_audio": input_audio.clone()
+                        }));
+                    }
+                } else if part.get("type").and_then(Value::as_str) == Some("audio_url") {
+                    if let Some(audio_url) = part.get("audio_url") {
+                        image_parts.push(json!({
+                            "type": "audio_url",
+                            "audio_url": audio_url.clone()
+                        }));
+                    }
                 }
             }
         }

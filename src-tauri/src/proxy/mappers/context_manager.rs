@@ -841,6 +841,13 @@ impl ContextManager {
                                     // Audio is tokenized at ~32 tokens per second (~25 bytes/token from base64)
                                     total += estimate_media_tokens_from_url(&audio_url.url);
                                 }
+                                crate::proxy::mappers::openai::models::OpenAIContentBlock::InputAudio { input_audio } => {
+                                    // input_audio 携带裸 base64，直接按 inlineData 估算
+                                    total += estimate_inline_data_tokens(
+                                        &input_audio.mime_type(),
+                                        input_audio.data.len(),
+                                    );
+                                }
                             }
                         }
                     }
