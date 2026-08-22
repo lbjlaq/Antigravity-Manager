@@ -17,6 +17,7 @@ export interface ProxyConfig {
     debug_logging?: DebugLoggingConfig;
     upstream_proxy: UpstreamProxyConfig;
     zai?: ZaiConfig;
+    orcarouter?: OrcaRouterConfig;
     scheduling?: StickySessionConfig;
     experimental?: ExperimentalConfig;
     user_agent_override?: string;
@@ -95,6 +96,23 @@ export interface ZaiConfig {
     model_mapping?: Record<string, string>;
     models: ZaiModelDefaults;
     mcp: ZaiMcpConfig;
+}
+
+export type OrcaRouterDispatchMode = 'off' | 'exclusive' | 'pooled' | 'fallback';
+
+export interface OrcaRouterModelDefaults {
+    opus: string;
+    sonnet: string;
+    haiku: string;
+}
+
+export interface OrcaRouterConfig {
+    enabled: boolean;
+    base_url: string;
+    api_key: string;
+    dispatch_mode: OrcaRouterDispatchMode;
+    model_mapping?: Record<string, string>;
+    models: OrcaRouterModelDefaults;
 }
 
 export interface ScheduledWarmupConfig {
