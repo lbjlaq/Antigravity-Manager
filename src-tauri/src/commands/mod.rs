@@ -37,17 +37,8 @@ pub async fn list_accounts(
                 .token_manager
                 .get_rate_limit_reset_seconds(&account.id)
             {
-                if reset_secs > 0 {
-                    if let Some(ref mut quota_data) = account.quota {
-                        for model in &mut quota_data.models {
-                            model.percentage = 0;
-                            model.reset_time =
-                                (chrono::Utc::now().timestamp() + reset_secs as i64).to_string();
-                        }
-                        // Optionally, add a UI flag if we want it to look completely blocked
-                        // quota_data.is_forbidden = true;
-                        // quota_data.forbidden_reason = Some(format!("Quota exhausted or rate limited (resets in {}s)", reset_secs));
-                    }
+                if let Some(ref mut quota_data) = account.quota {
+                    modules::apply_active_rate_limit_to_quota(quota_data, reset_secs);
                 }
             }
         }
@@ -245,27 +236,15 @@ pub async fn fetch_account_quota(
     // 5. 同步到运行中的反代服务（如果已启动）
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
-        // Safe check: If quota has recovered (> 0%), clear in-memory rate limit lock
-        let has_available_quota = quota.models.iter().any(|m| m.percentage > 0);
-        if has_available_quota {
-            instance.token_manager.clear_rate_limit(&account_id);
-        }
-
+        // 只同步 token；官方 remainingFraction 几乎总是 1.0，不能据此清锁。
+        // 磁盘已写入官方快照；仅对返回值叠限流锁，避免 UI 满额。
         let _ = instance.token_manager.reload_account(&account_id).await;
 
-        // Blend TokenManager lockout state only for models that are still 0%
         if let Some(reset_secs) = instance
             .token_manager
             .get_rate_limit_reset_seconds(&account_id)
         {
-            if reset_secs > 0 {
-                for model in &mut quota.models {
-                    if model.percentage == 0 {
-                        model.reset_time =
-                            (chrono::Utc::now().timestamp() + reset_secs as i64).to_string();
-                    }
-                }
-            }
+            modules::apply_active_rate_limit_to_quota(&mut quota, reset_secs);
         }
     }
 

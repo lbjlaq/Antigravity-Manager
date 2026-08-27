@@ -243,6 +243,18 @@ async fn fetch_project_id(
     (None, None)
 }
 
+/// 账号仍处于 TokenManager 限流锁时，把额度快照叠成 0%，避免官方 remainingFraction=1.0 误导 UI。
+pub fn apply_active_rate_limit_to_quota(quota: &mut QuotaData, reset_secs: u64) {
+    if reset_secs == 0 {
+        return;
+    }
+    let reset_time = (chrono::Utc::now().timestamp() + reset_secs as i64).to_string();
+    for model in &mut quota.models {
+        model.percentage = 0;
+        model.reset_time = reset_time.clone();
+    }
+}
+
 /// Unified entry point for fetching account quota
 pub async fn fetch_quota(
     access_token: &str,
@@ -282,152 +294,147 @@ pub async fn fetch_quota_with_cache(
     for (ep_idx, ep_url) in QUOTA_API_ENDPOINTS.iter().enumerate() {
         let has_next = ep_idx + 1 < QUOTA_API_ENDPOINTS.len();
 
-        let mut current_payload = payload.clone();
-        let mut retry_without_project = false;
+        match client
+            .post(*ep_url)
+            .bearer_auth(access_token)
+            .header(
+                rquest::header::USER_AGENT,
+                crate::constants::NATIVE_OAUTH_USER_AGENT.as_str(),
+            )
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                // Convert HTTP error status to AppError
+                if let Err(_) = response.error_for_status_ref() {
+                    let status = response.status();
 
-        loop {
-            match client
-                .post(*ep_url)
-                .bearer_auth(access_token)
-                .header(
-                    rquest::header::USER_AGENT,
-                    crate::constants::NATIVE_OAUTH_USER_AGENT.as_str(),
-                )
-                .json(&current_payload)
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    // Convert HTTP error status to AppError
-                    if let Err(_) = response.error_for_status_ref() {
-                        let status = response.status();
-
-                        // [FIX] 403 Forbidden 处理：如果是带有 project_id 的请求，尝试剥离后重试
-                        if status == rquest::StatusCode::FORBIDDEN {
-                            if current_payload.get("project").is_some() && !retry_without_project {
-                                crate::modules::logger::log_warn(&format!(
-                                    "Quota fetch got 403 with project ID, retrying without project ID..."
-                                ));
-                                current_payload = json!({});
-                                retry_without_project = true;
-                                continue;
-                            }
-
+                    // 带 project 的 403 不再空 payload 重试同一端点：
+                    // 官方缺 project 时已耗尽账号也会返回 remainingFraction=1.0。
+                    // 有 project 时换下一个端点继续带原 payload；全部 403 才标 forbidden。
+                    if status == rquest::StatusCode::FORBIDDEN {
+                        if payload.get("project").is_some() && has_next {
                             crate::modules::logger::log_warn(&format!(
-                                "Account unauthorized (403 Forbidden), marking as forbidden"
+                                "Quota fetch got 403 with project ID at {}, trying next endpoint",
+                                ep_url
                             ));
-                            let mut q = QuotaData::new();
-                            q.is_forbidden = true;
-                            q.subscription_tier = subscription_tier.clone();
-                            return Ok((q, project_id.clone()));
+                            continue;
                         }
 
-                        let text = response.text().await.unwrap_or_default();
-
-                        // 429/5xx: fallback to next endpoint
-                        if has_next
-                            && (status == rquest::StatusCode::TOO_MANY_REQUESTS
-                                || status.is_server_error())
-                        {
-                            crate::modules::logger::log_warn(&format!(
-                                "Quota API {} returned {}, falling back to next endpoint",
-                                ep_url, status
-                            ));
-                            last_error =
-                                Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                            break; // Break the inner retry loop, continue to next endpoint
-                        }
-
-                        return Err(AppError::Unknown(format!(
-                            "API Error: {} - {}",
-                            status, text
-                        )));
-                    }
-
-                    if ep_idx > 0 {
-                        crate::modules::logger::log_info(&format!(
-                            "Quota API fallback succeeded at endpoint #{}",
-                            ep_idx + 1
+                        crate::modules::logger::log_warn(&format!(
+                            "Account unauthorized (403 Forbidden), marking as forbidden"
                         ));
+                        let mut q = QuotaData::new();
+                        q.is_forbidden = true;
+                        q.subscription_tier = subscription_tier.clone();
+                        return Ok((q, project_id.clone()));
                     }
 
-                    let quota_response: QuotaResponse =
-                        response.json().await.map_err(AppError::from)?;
+                    let text = response.text().await.unwrap_or_default();
 
-                    let mut quota_data = QuotaData::new();
-
-                    // Use debug level for detailed info to avoid console noise
-                    tracing::debug!("Quota API returned {} models", quota_response.models.len());
-
-                    for (name, info) in quota_response.models {
-                        if let Some(quota_info) = info.quota_info {
-                            let percentage = quota_info
-                                .remaining_fraction
-                                .map(|f| (f * 100.0) as i32)
-                                .unwrap_or(0);
-
-                            let reset_time = quota_info.reset_time.clone().unwrap_or_default();
-
-                            // Only keep models we care about (exclude internal chat models)
-                            if name.starts_with("gemini")
-                                || name.starts_with("claude")
-                                || name.starts_with("gpt")
-                                || name.starts_with("image")
-                                || name.starts_with("imagen")
-                            {
-                                let model_quota = crate::models::quota::ModelQuota {
-                                    name,
-                                    percentage,
-                                    reset_time,
-                                    display_name: info.display_name,
-                                    supports_images: info.supports_images,
-                                    supports_thinking: info.supports_thinking,
-                                    thinking_budget: info.thinking_budget,
-                                    recommended: info.recommended,
-                                    max_tokens: info.max_tokens,
-                                    max_output_tokens: info.max_output_tokens,
-                                    supported_mime_types: info.supported_mime_types,
-                                };
-                                quota_data.add_model(model_quota);
-                            }
-                        }
-                    }
-
-                    // Parse deprecated model routing rules
-                    if let Some(deprecated) = quota_response.deprecated_model_ids {
-                        for (old_id, info) in deprecated {
-                            // Register forwarding rules (including those mapping to gemini-pro-agent)
-                            quota_data
-                                .model_forwarding_rules
-                                .insert(old_id, info.new_model_id);
-                        }
-                    }
-
-                    // Set subscription tier
-                    quota_data.subscription_tier = subscription_tier.clone();
-
-                    // Best-effort: fetch grouped quota summary (weekly + 5h windows).
-                    // Failure here must not block the primary quota result.
-                    quota_data.quota_groups =
-                        fetch_quota_summary(access_token, email, project_id.as_deref(), account_id)
-                            .await;
-
-                    return Ok((quota_data, project_id.clone()));
-                }
-                Err(e) => {
-                    crate::modules::logger::log_warn(&format!(
-                        "Quota API request failed at {}: {}",
-                        ep_url, e
-                    ));
-                    last_error = Some(AppError::from(e));
-                    if has_next {
+                    // 429/5xx: fallback to next endpoint
+                    if has_next
+                        && (status == rquest::StatusCode::TOO_MANY_REQUESTS
+                            || status.is_server_error())
+                    {
+                        crate::modules::logger::log_warn(&format!(
+                            "Quota API {} returned {}, falling back to next endpoint",
+                            ep_url, status
+                        ));
+                        last_error =
+                            Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue;
                     }
-                    break; // Break the inner retry loop on network error, continue to next endpoint
+
+                    return Err(AppError::Unknown(format!(
+                        "API Error: {} - {}",
+                        status, text
+                    )));
+                }
+
+                if ep_idx > 0 {
+                    crate::modules::logger::log_info(&format!(
+                        "Quota API fallback succeeded at endpoint #{}",
+                        ep_idx + 1
+                    ));
+                }
+
+                let quota_response: QuotaResponse =
+                    response.json().await.map_err(AppError::from)?;
+
+                let mut quota_data = QuotaData::new();
+
+                // Use debug level for detailed info to avoid console noise
+                tracing::debug!("Quota API returned {} models", quota_response.models.len());
+
+                for (name, info) in quota_response.models {
+                    if let Some(quota_info) = info.quota_info {
+                        let percentage = quota_info
+                            .remaining_fraction
+                            .map(|f| (f * 100.0) as i32)
+                            .unwrap_or(0);
+
+                        let reset_time = quota_info.reset_time.clone().unwrap_or_default();
+
+                        // Only keep models we care about (exclude internal chat models)
+                        if name.starts_with("gemini")
+                            || name.starts_with("claude")
+                            || name.starts_with("gpt")
+                            || name.starts_with("image")
+                            || name.starts_with("imagen")
+                        {
+                            let model_quota = crate::models::quota::ModelQuota {
+                                name,
+                                percentage,
+                                reset_time,
+                                display_name: info.display_name,
+                                supports_images: info.supports_images,
+                                supports_thinking: info.supports_thinking,
+                                thinking_budget: info.thinking_budget,
+                                recommended: info.recommended,
+                                max_tokens: info.max_tokens,
+                                max_output_tokens: info.max_output_tokens,
+                                supported_mime_types: info.supported_mime_types,
+                            };
+                            quota_data.add_model(model_quota);
+                        }
+                    }
+                }
+
+                // Parse deprecated model routing rules
+                if let Some(deprecated) = quota_response.deprecated_model_ids {
+                    for (old_id, info) in deprecated {
+                        // Register forwarding rules (including those mapping to gemini-pro-agent)
+                        quota_data
+                            .model_forwarding_rules
+                            .insert(old_id, info.new_model_id);
+                    }
+                }
+
+                // Set subscription tier
+                quota_data.subscription_tier = subscription_tier.clone();
+
+                // Best-effort: fetch grouped quota summary (weekly + 5h windows).
+                // Failure here must not block the primary quota result.
+                quota_data.quota_groups =
+                    fetch_quota_summary(access_token, email, project_id.as_deref(), account_id)
+                        .await;
+
+                return Ok((quota_data, project_id.clone()));
+            }
+            Err(e) => {
+                crate::modules::logger::log_warn(&format!(
+                    "Quota API request failed at {}: {}",
+                    ep_url, e
+                ));
+                last_error = Some(AppError::from(e));
+                if has_next {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
             }
-        } // End of inner loop
+        }
     }
 
     Err(last_error.unwrap_or_else(|| {
@@ -472,8 +479,14 @@ async fn fetch_quota_summary(
                         "QuotaSummary API {} returned {}, trying next endpoint",
                         ep_url, status
                     ));
-                    // 4xx (非 429) 通常所有端点行为一致,直接退出避免无谓重试
-                    if status.is_client_error() && status != rquest::StatusCode::TOO_MANY_REQUESTS {
+                    // 401 认证失败换端点无意义；403/429/5xx 继续下一个
+                    if status == rquest::StatusCode::UNAUTHORIZED {
+                        return None;
+                    }
+                    if status.is_client_error()
+                        && status != rquest::StatusCode::TOO_MANY_REQUESTS
+                        && status != rquest::StatusCode::FORBIDDEN
+                    {
                         return None;
                     }
                     continue;
@@ -918,4 +931,57 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
         "Successfully triggered warmup for {} model series",
         warmed_count
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::quota::ModelQuota;
+
+    fn sample_model(name: &str, percentage: i32, reset_time: &str) -> ModelQuota {
+        ModelQuota {
+            name: name.to_string(),
+            percentage,
+            reset_time: reset_time.to_string(),
+            display_name: None,
+            supports_images: None,
+            supports_thinking: None,
+            thinking_budget: None,
+            recommended: None,
+            max_tokens: None,
+            max_output_tokens: None,
+            supported_mime_types: None,
+        }
+    }
+
+    #[test]
+    fn test_apply_active_rate_limit_to_quota_zero_is_noop() {
+        let mut quota = QuotaData::new();
+        quota.add_model(sample_model("claude-sonnet", 100, ""));
+        quota.add_model(sample_model("gemini-flash", 80, "old"));
+
+        apply_active_rate_limit_to_quota(&mut quota, 0);
+
+        assert_eq!(quota.models[0].percentage, 100);
+        assert_eq!(quota.models[0].reset_time, "");
+        assert_eq!(quota.models[1].percentage, 80);
+        assert_eq!(quota.models[1].reset_time, "old");
+    }
+
+    #[test]
+    fn test_apply_active_rate_limit_to_quota_blends_all_models_to_zero() {
+        let mut quota = QuotaData::new();
+        quota.add_model(sample_model("claude-sonnet", 100, ""));
+        quota.add_model(sample_model("gemini-flash", 80, "old"));
+
+        apply_active_rate_limit_to_quota(&mut quota, 90);
+
+        assert!(quota.models.iter().all(|m| m.percentage == 0));
+        assert!(quota.models.iter().all(|m| !m.reset_time.is_empty()));
+        let expected = chrono::Utc::now().timestamp() + 90;
+        for model in &quota.models {
+            let ts: i64 = model.reset_time.parse().expect("unix seconds");
+            assert!((ts - expected).abs() <= 2);
+        }
+    }
 }

@@ -177,6 +177,9 @@ impl TokenManager {
     }
 
     /// 重新加载指定账号（用于配额更新后的实时同步）
+    ///
+    /// 成功加载后不再乐观清锁；真实恢复靠成功请求（`mark_account_success`）或锁过期。
+    /// 账号变为 disabled / proxy_disabled 等不可用状态时，`remove_account` 仍会清锁。
     pub async fn reload_account(&self, account_id: &str) -> Result<(), String> {
         let path = self
             .data_dir
@@ -189,8 +192,6 @@ impl TokenManager {
         match self.load_single_account(&path).await {
             Ok(Some(token)) => {
                 self.tokens.insert(account_id.to_string(), token);
-                // [NEW] 重新加载账号时自动清除该账号的限流记录
-                self.clear_rate_limit(account_id);
                 Ok(())
             }
             Ok(None) => {
@@ -205,11 +206,10 @@ impl TokenManager {
     }
 
     /// 重新加载所有账号
+    ///
+    /// 额度刷新不再乐观清锁；真实恢复靠成功请求 / 锁过期。
     pub async fn reload_all_accounts(&self) -> Result<usize, String> {
-        let count = self.load_accounts().await?;
-        // [NEW] 重新加载所有账号时自动清除所有限流记录
-        self.clear_all_rate_limits();
-        Ok(count)
+        self.load_accounts().await
     }
 
     /// 从内存中彻底移除指定账号及其关联数据 (Issue #1477)
@@ -3303,6 +3303,67 @@ mod tests {
         assert!(manager.tokens.get(account_id).is_none());
         assert!(manager.session_accounts.get("sid1").is_none());
         assert!(manager.preferred_account_id.read().await.is_none());
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_reload_account_preserves_rate_limit_when_account_still_available() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "antigravity-token-manager-test-preserve-rl-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let account_id = "acc1";
+        let email = "a@test.com";
+        let now = chrono::Utc::now().timestamp();
+        let account_path = accounts_dir.join(format!("{}.json", account_id));
+
+        let account_json = serde_json::json!({
+            "id": account_id,
+            "email": email,
+            "token": {
+                "access_token": "atk",
+                "refresh_token": "rtk",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "disabled": false,
+            "proxy_disabled": false,
+            "created_at": now,
+            "last_used": now
+        });
+        std::fs::write(
+            &account_path,
+            serde_json::to_string_pretty(&account_json).unwrap(),
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        manager.load_accounts().await.unwrap();
+        assert!(manager.tokens.get(account_id).is_some());
+
+        manager
+            .mark_rate_limited(email, 429, Some("120"), "Individual quota")
+            .await;
+        assert!(
+            manager
+                .get_rate_limit_reset_seconds(account_id)
+                .unwrap_or(0)
+                > 0
+        );
+
+        manager.reload_account(account_id).await.unwrap();
+
+        assert!(manager.tokens.get(account_id).is_some());
+        assert!(
+            manager
+                .get_rate_limit_reset_seconds(account_id)
+                .unwrap_or(0)
+                > 0
+        );
 
         let _ = std::fs::remove_dir_all(&tmp_root);
     }
