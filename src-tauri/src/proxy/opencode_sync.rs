@@ -95,8 +95,28 @@ fn build_model_catalog() -> Vec<ModelDef> {
             variant_type: Some(VariantType::ClaudeThinking),
         },
         ModelDef {
+            id: "claude-opus-4-5",
+            name: "Claude Opus 4.5",
+            context_limit: 200_000,
+            output_limit: 64_000,
+            input_modalities: &["text", "image", "pdf"],
+            output_modalities: &["text"],
+            reasoning: true,
+            variant_type: Some(VariantType::ClaudeThinking),
+        },
+        ModelDef {
             id: "claude-opus-4-5-thinking",
             name: "Claude Opus 4.5 Thinking",
+            context_limit: 200_000,
+            output_limit: 64_000,
+            input_modalities: &["text", "image", "pdf"],
+            output_modalities: &["text"],
+            reasoning: true,
+            variant_type: Some(VariantType::ClaudeThinking),
+        },
+        ModelDef {
+            id: "claude-opus-4-6",
+            name: "Claude Opus 4.6",
             context_limit: 200_000,
             output_limit: 64_000,
             input_modalities: &["text", "image", "pdf"],
@@ -1060,11 +1080,11 @@ fn build_variants_object(variant_type: Option<VariantType>) -> Option<Value> {
                 "low".to_string(),
                 build_gemini3_effort_variant(VariantTier::Low),
             );
+            variants.insert("medium".to_string(), serde_json::json!({ "disabled": true }));
             variants.insert(
                 "high".to_string(),
                 build_gemini3_effort_variant(VariantTier::High),
             );
-            variants.insert("medium".to_string(), serde_json::json!({ "disabled": true }));
             variants.insert("max".to_string(), serde_json::json!({ "disabled": true }));
             Some(Value::Object(variants))
         }
