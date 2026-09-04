@@ -17,6 +17,7 @@ export interface ProxyConfig {
     debug_logging?: DebugLoggingConfig;
     upstream_proxy: UpstreamProxyConfig;
     zai?: ZaiConfig;
+    minimax?: MiniMaxConfig;
     scheduling?: StickySessionConfig;
     experimental?: ExperimentalConfig;
     user_agent_override?: string;
@@ -95,6 +96,39 @@ export interface ZaiConfig {
     model_mapping?: Record<string, string>;
     models: ZaiModelDefaults;
     mcp: ZaiMcpConfig;
+}
+
+export type MiniMaxRegion = 'global_en' | 'cn_zh';
+
+export interface MiniMaxRegionalEndpoints {
+    global_openai_base_url: string;
+    global_anthropic_base_url: string;
+    cn_openai_base_url: string;
+    cn_anthropic_base_url: string;
+}
+
+export interface MiniMaxPricing {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number | null;
+}
+
+export interface MiniMaxModelConfig {
+    model_id: string;
+    context_window: number;
+    pricing_usd_per_million_tokens: MiniMaxPricing;
+    input_modalities: string[];
+    thinking: string[];
+}
+
+export interface MiniMaxConfig {
+    enabled: boolean;
+    api_key: string;
+    region: MiniMaxRegion;
+    endpoints: MiniMaxRegionalEndpoints;
+    model_mapping?: Record<string, string>;
+    models: MiniMaxModelConfig[];
 }
 
 export interface ScheduledWarmupConfig {

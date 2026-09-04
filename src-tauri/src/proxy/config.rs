@@ -355,6 +355,88 @@ impl Default for ZaiConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MiniMaxRegion {
+    GlobalEn,
+    CnZh,
+}
+
+impl Default for MiniMaxRegion {
+    fn default() -> Self {
+        Self::GlobalEn
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MiniMaxRegionalEndpoints {
+    #[serde(default = "default_minimax_global_openai_base_url")]
+    pub global_openai_base_url: String,
+    #[serde(default = "default_minimax_global_anthropic_base_url")]
+    pub global_anthropic_base_url: String,
+    #[serde(default = "default_minimax_cn_openai_base_url")]
+    pub cn_openai_base_url: String,
+    #[serde(default = "default_minimax_cn_anthropic_base_url")]
+    pub cn_anthropic_base_url: String,
+}
+
+impl Default for MiniMaxRegionalEndpoints {
+    fn default() -> Self {
+        Self {
+            global_openai_base_url: default_minimax_global_openai_base_url(),
+            global_anthropic_base_url: default_minimax_global_anthropic_base_url(),
+            cn_openai_base_url: default_minimax_cn_openai_base_url(),
+            cn_anthropic_base_url: default_minimax_cn_anthropic_base_url(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MiniMaxPricing {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MiniMaxModelConfig {
+    pub model_id: String,
+    pub context_window: u64,
+    pub pricing_usd_per_million_tokens: MiniMaxPricing,
+    pub input_modalities: Vec<String>,
+    pub thinking: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MiniMaxConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub region: MiniMaxRegion,
+    #[serde(default)]
+    pub endpoints: MiniMaxRegionalEndpoints,
+    #[serde(default)]
+    pub model_mapping: HashMap<String, String>,
+    #[serde(default = "default_minimax_models")]
+    pub models: Vec<MiniMaxModelConfig>,
+}
+
+impl Default for MiniMaxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key: String::new(),
+            region: MiniMaxRegion::GlobalEn,
+            endpoints: MiniMaxRegionalEndpoints::default(),
+            model_mapping: HashMap::new(),
+            models: default_minimax_models(),
+        }
+    }
+}
+
 /// 实验性功能配置 (Feature Flags)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExperimentalConfig {
@@ -642,6 +724,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub zai: ZaiConfig,
 
+    /// MiniMax provider configuration.
+    #[serde(default)]
+    pub minimax: MiniMaxConfig,
+
     /// 自定义 User-Agent 请求头 (可选覆盖)
     #[serde(default)]
     pub user_agent_override: Option<String>,
@@ -719,6 +805,7 @@ impl Default for ProxyConfig {
             upstream_proxy: UpstreamProxyConfig::default(),
             only_raw_quota_models: false,
             zai: ZaiConfig::default(),
+            minimax: MiniMaxConfig::default(),
             scheduling: crate::proxy::sticky_config::StickySessionConfig::default(),
             experimental: ExperimentalConfig::default(),
             security_monitor: SecurityMonitorConfig::default(),
@@ -740,6 +827,51 @@ fn default_request_timeout() -> u64 {
 
 fn default_zai_base_url() -> String {
     "https://api.z.ai/api/anthropic".to_string()
+}
+
+fn default_minimax_global_openai_base_url() -> String {
+    "https://api.minimax.io/v1".to_string()
+}
+
+fn default_minimax_global_anthropic_base_url() -> String {
+    "https://api.minimax.io/anthropic".to_string()
+}
+
+fn default_minimax_cn_openai_base_url() -> String {
+    "https://api.minimaxi.com/v1".to_string()
+}
+
+fn default_minimax_cn_anthropic_base_url() -> String {
+    "https://api.minimaxi.com/anthropic".to_string()
+}
+
+fn default_minimax_models() -> Vec<MiniMaxModelConfig> {
+    vec![
+        MiniMaxModelConfig {
+            model_id: "MiniMax-M3".to_string(),
+            context_window: 1_000_000,
+            pricing_usd_per_million_tokens: MiniMaxPricing {
+                input: 0.6,
+                output: 2.4,
+                cache_read: 0.12,
+                cache_write: None,
+            },
+            input_modalities: vec!["text".to_string(), "image".to_string(), "video".to_string()],
+            thinking: vec!["adaptive".to_string(), "disabled".to_string()],
+        },
+        MiniMaxModelConfig {
+            model_id: "MiniMax-M2.7".to_string(),
+            context_window: 204_800,
+            pricing_usd_per_million_tokens: MiniMaxPricing {
+                input: 0.3,
+                output: 1.2,
+                cache_read: 0.06,
+                cache_write: Some(0.375),
+            },
+            input_modalities: vec!["text".to_string()],
+            thinking: vec!["always_on".to_string()],
+        },
+    ]
 }
 
 fn default_zai_opus_model() -> String {

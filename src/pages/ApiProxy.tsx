@@ -858,6 +858,31 @@ export default function ApiProxy() {
         saveConfig(newConfig);
     };
 
+    const updateMiniMaxConfig = (updates: Partial<NonNullable<ProxyConfig['minimax']>>) => {
+        if (!appConfig?.proxy.minimax) return;
+        const newConfig = {
+            ...appConfig,
+            proxy: {
+                ...appConfig.proxy,
+                minimax: {
+                    ...appConfig.proxy.minimax,
+                    ...updates
+                }
+            }
+        };
+        saveConfig(newConfig);
+    };
+
+    const updateMiniMaxEndpoints = (updates: Partial<NonNullable<ProxyConfig['minimax']>['endpoints']>) => {
+        if (!appConfig?.proxy.minimax) return;
+        updateMiniMaxConfig({
+            endpoints: {
+                ...appConfig.proxy.minimax.endpoints,
+                ...updates
+            }
+        });
+    };
+
     const handleToggle = async () => {
         if (!appConfig) return;
         setLoading(true);
@@ -1532,6 +1557,113 @@ print(response.choices[0].message.content)`;
                                     apiKey={appConfig.proxy.api_key}
                                 />
                             </CollapsibleCard>
+
+                            {appConfig.proxy.minimax && (
+                                <CollapsibleCard
+                                    title={t('proxy.config.minimax.title')}
+                                    icon={<BrainCircuit size={18} className="text-violet-500" />}
+                                    enabled={appConfig.proxy.minimax.enabled}
+                                    onToggle={(checked) => updateMiniMaxConfig({ enabled: checked })}
+                                >
+                                    <div className="space-y-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                    {t('proxy.config.minimax.region')}
+                                                </label>
+                                                <select
+                                                    className="select select-sm select-bordered w-full text-xs"
+                                                    value={appConfig.proxy.minimax.region}
+                                                    onChange={(event) => updateMiniMaxConfig({ region: event.target.value as NonNullable<ProxyConfig['minimax']>['region'] })}
+                                                >
+                                                    <option value="global_en">{t('proxy.config.minimax.regions.global_en')}</option>
+                                                    <option value="cn_zh">{t('proxy.config.minimax.regions.cn_zh')}</option>
+                                                </select>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                                    {t('proxy.config.minimax.api_key')}
+                                                </label>
+                                                <input
+                                                    type="password"
+                                                    value={appConfig.proxy.minimax.api_key}
+                                                    onChange={(event) => updateMiniMaxConfig({ api_key: event.target.value })}
+                                                    placeholder={t('proxy.config.minimax.api_key_placeholder')}
+                                                    className="input input-sm input-bordered w-full font-mono text-xs"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                            <div className="space-y-3 rounded-lg border border-gray-100 dark:border-base-200 p-3">
+                                                <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
+                                                    {t('proxy.config.minimax.regions.global_en')}
+                                                </h4>
+                                                <label className="block space-y-1">
+                                                    <span className="text-[10px] text-gray-500">{t('proxy.config.minimax.openai_base_url')}</span>
+                                                    <input
+                                                        type="url"
+                                                        className="input input-xs input-bordered w-full font-mono"
+                                                        value={appConfig.proxy.minimax.endpoints.global_openai_base_url}
+                                                        onChange={(event) => updateMiniMaxEndpoints({ global_openai_base_url: event.target.value })}
+                                                    />
+                                                </label>
+                                                <label className="block space-y-1">
+                                                    <span className="text-[10px] text-gray-500">{t('proxy.config.minimax.anthropic_base_url')}</span>
+                                                    <input
+                                                        type="url"
+                                                        className="input input-xs input-bordered w-full font-mono"
+                                                        value={appConfig.proxy.minimax.endpoints.global_anthropic_base_url}
+                                                        onChange={(event) => updateMiniMaxEndpoints({ global_anthropic_base_url: event.target.value })}
+                                                    />
+                                                </label>
+                                            </div>
+                                            <div className="space-y-3 rounded-lg border border-gray-100 dark:border-base-200 p-3">
+                                                <h4 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest">
+                                                    {t('proxy.config.minimax.regions.cn_zh')}
+                                                </h4>
+                                                <label className="block space-y-1">
+                                                    <span className="text-[10px] text-gray-500">{t('proxy.config.minimax.openai_base_url')}</span>
+                                                    <input
+                                                        type="url"
+                                                        className="input input-xs input-bordered w-full font-mono"
+                                                        value={appConfig.proxy.minimax.endpoints.cn_openai_base_url}
+                                                        onChange={(event) => updateMiniMaxEndpoints({ cn_openai_base_url: event.target.value })}
+                                                    />
+                                                </label>
+                                                <label className="block space-y-1">
+                                                    <span className="text-[10px] text-gray-500">{t('proxy.config.minimax.anthropic_base_url')}</span>
+                                                    <input
+                                                        type="url"
+                                                        className="input input-xs input-bordered w-full font-mono"
+                                                        value={appConfig.proxy.minimax.endpoints.cn_anthropic_base_url}
+                                                        onChange={(event) => updateMiniMaxEndpoints({ cn_anthropic_base_url: event.target.value })}
+                                                    />
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                                            {appConfig.proxy.minimax.models.map((model) => (
+                                                <div key={model.model_id} className="rounded-lg bg-gray-50 dark:bg-base-200/50 p-3 text-xs space-y-2">
+                                                    <div className="font-semibold text-gray-800 dark:text-gray-100">{model.model_id}</div>
+                                                    <div className="text-gray-500">
+                                                        {t('proxy.config.minimax.context_window')}: {model.context_window.toLocaleString()}
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {model.input_modalities.map((modality) => (
+                                                            <span key={modality} className="badge badge-sm badge-ghost">{modality}</span>
+                                                        ))}
+                                                        {model.thinking.map((mode) => (
+                                                            <span key={mode} className="badge badge-sm badge-secondary">{mode}</span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </CollapsibleCard>
+                            )}
 
                             {/* z.ai (GLM) Dispatcher */}
                             <CollapsibleCard
