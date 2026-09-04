@@ -425,6 +425,15 @@ pub async fn handle_messages(
     let zai = state.zai.read().await.clone();
     let zai_enabled =
         zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
+
+    // OrcaRouter (Anthropic-compatible gateway) optional upstream, mirrors the z.ai dispatch.
+    let orcarouter = state.orcarouter.read().await.clone();
+    let orcarouter_enabled = orcarouter.enabled
+        && !matches!(
+            orcarouter.dispatch_mode,
+            crate::proxy::OrcaRouterDispatchMode::Off
+        );
+
     let google_accounts = state.token_manager.len();
 
     // [CRITICAL REFACTOR] 优先解析请求以获取模型信息(用于智能兜底判断)
@@ -535,6 +544,43 @@ pub async fn handle_messages(
         }
     };
 
+    let use_orcarouter = if !orcarouter_enabled {
+        false
+    } else {
+        match orcarouter.dispatch_mode {
+            crate::proxy::OrcaRouterDispatchMode::Off => false,
+            crate::proxy::OrcaRouterDispatchMode::Exclusive => true,
+            crate::proxy::OrcaRouterDispatchMode::Fallback => {
+                if google_accounts == 0 {
+                    // 没有 Google 账号,使用兜底
+                    tracing::info!(
+                        "[{}] No Google accounts available, using OrcaRouter fallback",
+                        trace_id
+                    );
+                    true
+                } else {
+                    let has_available = state
+                        .token_manager
+                        .has_available_account("claude", &normalized_model)
+                        .await;
+                    if !has_available {
+                        tracing::info!(
+                            "[{}] All Google accounts unavailable, using OrcaRouter fallback",
+                            trace_id
+                        );
+                    }
+                    !has_available
+                }
+            }
+            crate::proxy::OrcaRouterDispatchMode::Pooled => {
+                // Treat OrcaRouter as exactly one extra slot in the pool.
+                let total = google_accounts.saturating_add(1).max(1);
+                let slot = state.provider_rr.fetch_add(1, Ordering::Relaxed) % total;
+                slot == 0
+            }
+        }
+    };
+
     // [CRITICAL FIX] 预先清理所有消息中的 cache_control 字段 (Issue #744)
     // 必须在序列化之前处理，以确保 z.ai 和 Google Flow 都不受历史消息缓存标记干扰
     clean_cache_control_from_messages(&mut request.messages);
@@ -544,7 +590,7 @@ pub async fn handle_messages(
     merge_consecutive_messages(&mut request.messages);
 
     // Get model family for signature validation
-    let target_family = if use_zai {
+    let target_family = if use_zai || use_orcarouter {
         Some("claude")
     } else {
         let mapped_model =
@@ -627,6 +673,30 @@ pub async fn handle_messages(
             trace_id
         );
         return create_warmup_response(&request, request.stream);
+    }
+
+    if use_orcarouter {
+        // 重新序列化修复后的请求体
+        let mut new_body = match serde_json::to_value(&request) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("Failed to serialize fixed request for OrcaRouter: {}", e);
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        };
+
+        // Inject cache_control into the XML summary message if it is a Forked session
+        inject_cache_control_to_forked_summary(&mut new_body);
+
+        return crate::proxy::providers::orcarouter::forward_anthropic_json(
+            &state,
+            axum::http::Method::POST,
+            "/v1/messages",
+            &headers,
+            new_body,
+            request.messages.len(), // [NEW v4.0.0] Pass message count
+        )
+        .await;
     }
 
     if use_zai {
@@ -1958,6 +2028,25 @@ pub async fn handle_count_tokens(
     let zai = state.zai.read().await.clone();
     let zai_enabled =
         zai.enabled && !matches!(zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
+
+    let orcarouter = state.orcarouter.read().await.clone();
+    let orcarouter_enabled = orcarouter.enabled
+        && !matches!(
+            orcarouter.dispatch_mode,
+            crate::proxy::OrcaRouterDispatchMode::Off
+        );
+
+    if orcarouter_enabled {
+        return crate::proxy::providers::orcarouter::forward_anthropic_json(
+            &state,
+            axum::http::Method::POST,
+            "/v1/messages/count_tokens",
+            &headers,
+            body,
+            0, // [NEW v4.0.0] Tokens count doesn't need rewind detection
+        )
+        .await;
+    }
 
     if zai_enabled {
         return crate::proxy::providers::zai_anthropic::forward_anthropic_json(

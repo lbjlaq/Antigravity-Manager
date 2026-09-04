@@ -95,6 +95,7 @@ pub struct AppState {
     pub upstream_proxy: Arc<tokio::sync::RwLock<crate::proxy::config::UpstreamProxyConfig>>,
     pub upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     pub zai: Arc<RwLock<crate::proxy::ZaiConfig>>,
+    pub orcarouter: Arc<RwLock<crate::proxy::OrcaRouterConfig>>,
     pub provider_rr: Arc<AtomicUsize>,
     pub zai_vision_mcp: Arc<crate::proxy::zai_vision_mcp::ZaiVisionMcpState>,
     pub monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
@@ -413,6 +414,7 @@ pub struct AxumServer {
     upstream: Arc<crate::proxy::upstream::client::UpstreamClient>,
     security_state: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,
     zai_state: Arc<RwLock<crate::proxy::ZaiConfig>>,
+    orcarouter_state: Arc<RwLock<crate::proxy::OrcaRouterConfig>>,
     experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
     debug_logging: Arc<RwLock<crate::proxy::config::DebugLoggingConfig>>,
     #[allow(dead_code)] // 预留给 cloudflared 运行状态查询与后续控制
@@ -477,6 +479,12 @@ impl AxumServer {
         tracing::info!("z.ai 配置已热更新");
     }
 
+    pub async fn update_orcarouter(&self, config: &crate::proxy::config::ProxyConfig) {
+        let mut orcarouter = self.orcarouter_state.write().await;
+        *orcarouter = config.orcarouter.clone();
+        tracing::info!("OrcaRouter 配置已热更新");
+    }
+
     pub async fn update_experimental(&self, config: &crate::proxy::config::ProxyConfig) {
         let mut exp = self.experimental.write().await;
         *exp = config.experimental.clone();
@@ -513,6 +521,7 @@ impl AxumServer {
         user_agent_override: Option<String>,
         security_config: crate::proxy::ProxySecurityConfig,
         zai_config: crate::proxy::ZaiConfig,
+        orcarouter_config: crate::proxy::OrcaRouterConfig,
         monitor: Arc<crate::proxy::monitor::ProxyMonitor>,
         experimental_config: crate::proxy::config::ExperimentalConfig,
         debug_logging: crate::proxy::config::DebugLoggingConfig,
@@ -533,6 +542,7 @@ impl AxumServer {
         proxy_pool_manager.clone().start_health_check_loop();
         let security_state = Arc::new(RwLock::new(security_config));
         let zai_state = Arc::new(RwLock::new(zai_config));
+        let orcarouter_state = Arc::new(RwLock::new(orcarouter_config));
         let provider_rr = Arc::new(AtomicUsize::new(0));
         let zai_vision_mcp_state = Arc::new(crate::proxy::zai_vision_mcp::ZaiVisionMcpState::new());
         let experimental_state = Arc::new(RwLock::new(experimental_config));
@@ -574,6 +584,7 @@ impl AxumServer {
                 u
             },
             zai: zai_state.clone(),
+            orcarouter: orcarouter_state.clone(),
             provider_rr: provider_rr.clone(),
             zai_vision_mcp: zai_vision_mcp_state,
             monitor: monitor.clone(),
@@ -808,6 +819,10 @@ impl AxumServer {
                 get(admin_get_active_oauth_client).post(admin_set_active_oauth_client),
             )
             .route("/zai/models/fetch", post(admin_fetch_zai_models))
+            .route(
+                "/orcarouter/models/fetch",
+                post(admin_fetch_orcarouter_models),
+            )
             .route(
                 "/proxy/monitor/toggle",
                 post(admin_set_proxy_monitor_enabled),
@@ -1633,6 +1648,12 @@ async fn admin_save_config(
         *zai = new_config.clone().proxy.zai;
     }
 
+    // 更新 OrcaRouter 配置
+    {
+        let mut orcarouter = state.orcarouter.write().await;
+        *orcarouter = new_config.clone().proxy.orcarouter;
+    }
+
     // 更新实验性配置
     {
         let mut exp = state.experimental.write().await;
@@ -1900,6 +1921,71 @@ async fn admin_fetch_zai_models(
         .unwrap_or("https://api.z.ai");
 
     // 尝试从 z.ai 获取模型
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/v1/models", base_url))
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    let data: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+
+    // 提取模型 ID 列表
+    let models = data
+        .get("data")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| {
+                    m.get("id")
+                        .and_then(|id| id.as_str().map(|s| s.to_string()))
+                })
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+
+    Ok(Json(models))
+}
+
+async fn admin_fetch_orcarouter_models(
+    Path(_id): Path<String>,
+    Json(payload): Json<serde_json::Value>, // 复用前端传来的参数
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    // 镜像 z.ai 的模型抓取，用于 OrcaRouter provider 的模型下拉。
+    let orcarouter_config = payload.get("orcarouter").ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Missing orcarouter config".to_string(),
+            }),
+        )
+    })?;
+
+    let api_key = orcarouter_config
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let base_url = orcarouter_config
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://api.orcarouter.ai");
+
+    // 尝试从 OrcaRouter 获取模型
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{}/v1/models", base_url))
