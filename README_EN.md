@@ -239,6 +239,17 @@ Due to macOS security gatekeeper, non-App Store apps might show this. Run this i
 sudo xattr -rd com.apple.quarantine "/Applications/Antigravity Tools.app"
 ```
 
+#### Linux window is black or empty?
+On niri, Hyprland, Sway, and similar compositors, older builds forced `GDK_BACKEND=x11` whenever `DISPLAY` was set, and WebKit then drew a black window. Update to a build that includes this fix, or launch once with:
+
+```bash
+env WEBKIT_DISABLE_DMABUF_RENDERER=1 ANTIGRAVITY_FORCE_WAYLAND=1 antigravity-tools
+```
+
+- `ANTIGRAVITY_FORCE_WAYLAND=1`: keep native Wayland (do not force X11)
+- `ANTIGRAVITY_FORCE_X11=1`: force X11 if you still need it
+- `WEBKIT_DISABLE_DMABUF_RENDERER=1`: disable the WebKit DMA-BUF renderer
+
 ## 🔌 Quick Integration Examples
 
 ### 🔐 OAuth Authorization Flow (Add Account)

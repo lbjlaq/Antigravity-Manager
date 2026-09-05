@@ -3,6 +3,10 @@
 > Complete version history for Antigravity Tools. Return to project home at [README_EN.md](README_EN.md).
 
 *   **Version History**:
+    *   **Unreleased**:
+        -   **[Linux] Black window on niri / Hyprland (Issue #3388)**:
+            -   **Do not force `GDK_BACKEND=x11` just because `DISPLAY` is set**: niri / Hyprland / sway / river / labwc / wayfire always expose Xwayland, and forcing X11 makes the WebKitGTK UI go black. Those compositors keep native Wayland; the historical GNOME / KDE X11 fallback is unchanged.
+            -   **Disable WebKit DMA-BUF only when needed**: on Wayland, if the compositor is in that set or a proprietary NVIDIA driver is loaded, and the user has not set it, set `WEBKIT_DISABLE_DMABUF_RENDERER=1`. GNOME + AMD/Intel keep the fast path. Existing env vars are never overridden.
     *   **v4.6.7 (2026-09-04)**:
         -   **[Core Fix] Fix Multi-Turn Agent Context Explosion & Session History Duplication BUG (Issue #3382)**:
             -   **Unblock Thinking Compression on Historical Assistant Messages with Tool Calls**: Fixed an issue where the strict `!has_tool_calls` check prevented compressing historical assistant `reasoning_content` in agent environments (e.g. OpenClaw) where almost every assistant turn contains tool calls. Allows pruning long thoughts down to placeholder `...` while fully preserving tool calls and their valid `thoughtSignature` tokens, eliminating token bloat and preventing upstream Google API 400 signature errors.

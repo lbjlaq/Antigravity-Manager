@@ -1,6 +1,7 @@
 mod commands;
 pub mod constants;
 pub mod error;
+mod linux_graphics;
 mod models;
 mod modules;
 mod proxy; // Proxy service module
@@ -82,23 +83,57 @@ fn credential_state(value: &str) -> &'static str {
 }
 
 #[cfg(target_os = "linux")]
-fn configure_linux_gdk_backend() {
-    if std::env::var("GDK_BACKEND").is_ok() {
-        return;
-    }
+fn nvidia_proprietary_loaded() -> bool {
+    std::path::Path::new("/dev/nvidia0").exists()
+        || std::path::Path::new("/proc/driver/nvidia/version").exists()
+}
+
+#[cfg(target_os = "linux")]
+fn configure_linux_graphics() {
+    use linux_graphics::{
+        desktop_is_wlroots_family, should_disable_webkit_dmabuf, should_force_x11_backend,
+    };
 
     let is_wayland = is_wayland_session();
     let has_x11_display = std::env::var("DISPLAY")
         .map(|v| !v.trim().is_empty())
         .unwrap_or(false);
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_else(|_| std::env::var("XDG_SESSION_DESKTOP").unwrap_or_default());
     let force_wayland = env_flag_enabled("ANTIGRAVITY_FORCE_WAYLAND");
     let force_x11 = env_flag_enabled("ANTIGRAVITY_FORCE_X11");
+    let gdk_already_set = std::env::var("GDK_BACKEND").is_ok();
 
-    if force_x11 || (is_wayland && has_x11_display && !force_wayland) {
-        // Force X11 backend under Wayland sessions to avoid a GTK Wayland shm crash.
+    if should_force_x11_backend(
+        gdk_already_set,
+        force_x11,
+        force_wayland,
+        is_wayland,
+        has_x11_display,
+        &desktop,
+    ) {
+        // Force X11 backend under GNOME/KDE Wayland to avoid a GTK shm crash.
         std::env::set_var("GDK_BACKEND", "x11");
         warn!(
             "Forcing GDK_BACKEND=x11 for stability on Wayland. Set ANTIGRAVITY_FORCE_WAYLAND=1 to keep Wayland backend."
+        );
+    } else if is_wayland && !gdk_already_set && desktop_is_wlroots_family(&desktop) {
+        info!(
+            "Keeping native Wayland GDK backend on {} (Xwayland DISPLAY is not a reason to force X11).",
+            desktop
+        );
+    }
+
+    let webkit_already_set = std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_ok();
+    if should_disable_webkit_dmabuf(
+        webkit_already_set,
+        is_wayland,
+        nvidia_proprietary_loaded(),
+        &desktop,
+    ) {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        info!(
+            "WEBKIT_DISABLE_DMABUF_RENDERER=1 (WebKit DMA-BUF workaround on this Wayland setup). Set it yourself to override."
         );
     }
 }
@@ -211,7 +246,7 @@ pub fn run() {
     logger::init_logger();
 
     #[cfg(target_os = "linux")]
-    configure_linux_gdk_backend();
+    configure_linux_graphics();
 
     // Initialize token stats database
     if let Err(e) = modules::token_stats::init_db() {

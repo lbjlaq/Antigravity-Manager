@@ -250,6 +250,17 @@ Copyright © 2024-2026 [lbjlaq](https://github.com/lbjlaq)
 2.  **Homebrew 安装优势**:
     现在通过 Homebrew (`brew install --cask antigravity-tools`) 安装时，系统会在安装末尾自动执行清理属性的操作，**真正实现开箱即用**。
 
+#### Linux 窗口全黑 / 透明框？
+在 niri、Hyprland、Sway 等合成器上，旧版本会因为会话里总有 `DISPLAY` 而强制走 X11，WebKit 主界面可能全黑。请更新到包含该修复的版本；或临时：
+
+```bash
+env WEBKIT_DISABLE_DMABUF_RENDERER=1 ANTIGRAVITY_FORCE_WAYLAND=1 antigravity-tools
+```
+
+- `ANTIGRAVITY_FORCE_WAYLAND=1`：保持原生 Wayland（不要强制 `GDK_BACKEND=x11`）
+- `ANTIGRAVITY_FORCE_X11=1`：仍要 X11 时使用
+- `WEBKIT_DISABLE_DMABUF_RENDERER=1`：关掉 WebKit DMA-BUF 渲染器
+
 ## 🔌 快速接入示例
 
 ### 🔐 OAuth 授权流程（添加账号）

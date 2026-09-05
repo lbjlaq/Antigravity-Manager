@@ -3,6 +3,10 @@
 > 完整版本历史记录。返回项目主页请查看 [README.md](README.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **Unreleased**:
+        -   **[Linux 修复] niri / Hyprland 等合成器上窗口全黑 (Issue #3388)**:
+            -   **不再仅因存在 DISPLAY 就强制 GDK_BACKEND=x11**: niri / Hyprland / sway / river / labwc / wayfire 常年挂着 Xwayland，被强制进 X11 后 WebKitGTK 主界面全黑。这些合成器改为保持原生 Wayland；GNOME / KDE 的历史 X11 回退不变。
+            -   **按需关闭 WebKit DMA-BUF**: 在 Wayland 且（上述合成器或本机加载了 NVIDIA 专有驱动）时，若用户未自行设置，则自动 `WEBKIT_DISABLE_DMABUF_RENDERER=1`。GNOME + AMD/Intel 仍走快路径。已有环境变量一律不覆盖。
     *   **v4.6.7 (2026-09-04)**:
         -   **[核心修复] 彻底修复多轮 Agent 对话上下文异常膨胀与 Session 历史重复追加 BUG (Issue #3382)**:
             -   **解除工具调用历史消息的思考链压缩阻断**: 修复此前因 `!has_tool_calls` 守卫过于严格，导致 OpenClaw 等工具调用密集的 Agent 场景下历史 Assistant 消息的长思考文本（`reasoning_content`）完全无法被压缩的问题。允许在保留合法工具调用及其 `thoughtSignature` 前提下，将历史长思考精简为占位符 `...`，彻底释放数十万 Token 的冗余负担并确保 Google API 签名验证正常通过。
