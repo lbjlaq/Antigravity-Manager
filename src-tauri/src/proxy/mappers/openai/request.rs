@@ -254,7 +254,18 @@ pub fn transform_openai_request(
             || mapped_model_lower.contains("-flash-")
             || mapped_model_lower.contains("-flash-agent"))
         && !mapped_model_lower.contains("claude");
-    let is_claude_thinking = mapped_model_lower.ends_with("-thinking");
+    // [FIX #3400] Claude Sonnet 4.6 / Opus 等新版 Claude 模型不带 "-thinking" 后缀，
+    // 但 Variant 层 (handlers/openai.rs) 会为它们注入 thinking enabled，上游同样强制 thinking。
+    // 仅凭后缀判定会让下方的历史兼容防御对这些模型完全失效，导致多轮对话 400
+    // "messages.N.content.0.thinking.signature: Field required"。
+    let claude_thinking_requested = mapped_model_lower.contains("claude")
+        && request
+            .thinking
+            .as_ref()
+            .map(|t| t.thinking_type.as_deref() == Some("enabled"))
+            .unwrap_or(false);
+    let is_claude_thinking =
+        mapped_model_lower.ends_with("-thinking") || claude_thinking_requested;
     let is_thinking_model = is_gemini_3_thinking || is_claude_thinking || is_gemini_flash_thinking;
 
     // [NEW] 检查用户是否在请求中显式启用 thinking
@@ -282,15 +293,19 @@ pub fn transform_openai_request(
     // [NEW] 决定是否开启 Thinking 功能:
     // 1. 模型名包含 -thinking 时自动开启
     // 2. 用户在请求中显式设置 thinking.type = "enabled" 时开启
-    // 如果是 Claude 思考模型且历史不兼容且没有可用签名来占位, 则禁用 Thinking 以防 400
     let mut actual_include_thinking = is_thinking_model || user_enabled_thinking;
 
     // [REFACTORED] 使用 SignatureCache 获取 Session 级别的签名
     let session_thought_sig =
         crate::proxy::SignatureCache::global().get_session_signature(&session_id);
 
-    if is_claude_thinking && has_incompatible_assistant_history && session_thought_sig.is_none() {
-        tracing::warn!("[OpenAI-Thinking] Incompatible assistant history detected for Claude thinking model without session signature. Disabling thinking for this request to avoid 400 error. (sid: {})", session_id);
+    // 如果是 Claude 思考模型且历史不兼容, 则禁用 Thinking 以防 400
+    // [FIX #3400] 移除 session_thought_sig.is_none() 条件: 会话签名只用于 functionCall part
+    // (Gemini 格式), 不会附加到为兼容历史而注入的占位 thinking 块上; 而 Claude 上游
+    // (Anthropic/Vertex) 没有 Gemini 的 sentinel 机制, 占位块缺 signature 必然 400。
+    // 缓存命中时跳过防御反而会让首轮成功后的所有多轮请求持续 400。
+    if is_claude_thinking && has_incompatible_assistant_history {
+        tracing::warn!("[OpenAI-Thinking] Incompatible assistant history detected for Claude thinking model. Disabling thinking for this request to avoid 400 error. (sid: {})", session_id);
         actual_include_thinking = false;
     }
 
@@ -1813,6 +1828,75 @@ mod tests {
         assert_eq!(
             tool_part["thoughtSignature"].as_str(),
             Some("skip_thought_signature_validator")
+        );
+    }
+
+    #[test]
+    fn test_issue_3400_claude_sonnet_incompatible_history_disables_thinking() {
+        // [FIX #3400] claude-sonnet-4-6 不带 "-thinking" 后缀，但 Variant 层会为它注入
+        // thinking enabled，上游同样强制 thinking。当 assistant 历史缺失 reasoning_content
+        // 时（如 AstrBot / SillyTavern 只回传文本），必须禁用 thinking，否则占位 thought part
+        // 缺 signature 会导致上游 400 "messages.N.content.0.thinking.signature: Field required"。
+        let req = OpenAIRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            // 模拟 Variant 层注入的 thinking (handlers/openai.rs)
+            thinking: Some(ThinkingConfig {
+                thinking_type: Some("enabled".to_string()),
+                budget_tokens: Some(1024),
+                effort: None,
+            }),
+            messages: vec![
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    refusal: None,
+                    content: Some(OpenAIContent::String("hi".to_string())),
+                    reasoning_content: None,
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    refusal: None,
+                    content: Some(OpenAIContent::String("hello".to_string())),
+                    reasoning_content: None, // 历史不带思考内容 → 不兼容
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    refusal: None,
+                    content: Some(OpenAIContent::String("reply ok".to_string())),
+                    reasoning_content: None,
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (result, _sid, _msg_count, _) =
+            transform_openai_request(&req, "test-proj", "claude-sonnet-4-6", None);
+
+        // 1. thinking 必须被禁用: 不得下发 thinkingConfig
+        let gen_config = &result["request"]["generationConfig"];
+        assert!(
+            gen_config.get("thinkingConfig").is_none(),
+            "thinking must be disabled for claude-sonnet-4-6 with incompatible assistant history, got: {gen_config}"
+        );
+
+        // 2. model 角色历史消息不得包含占位 thought part
+        let contents = result["request"]["contents"].as_array().expect("contents");
+        let model_msg = contents
+            .iter()
+            .find(|c| c["role"] == "model")
+            .expect("model message");
+        let parts = model_msg["parts"].as_array().expect("parts");
+        assert!(
+            parts.iter().all(|p| p.get("thought") != Some(&json!(true))),
+            "model history must not contain injected thought placeholders, got: {parts:?}"
         );
     }
 

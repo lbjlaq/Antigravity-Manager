@@ -2632,6 +2632,13 @@ pub async fn handle_chat_completions(
                 email
             );
 
+            // [FIX #3400] 真正禁用 thinking 重试: 此前的处理只是追加修复提示词,
+            // 请求仍携带 thinking + 缺失签名的 assistant 历史, 重试必然再次 400
+            // (例如 "messages.N.content.0.thinking.signature: Field required")。
+            // transform_openai_request 在每次重试时都会重新调用, 清掉 thinking
+            // 即可让 mapper 不再注入 thinkingConfig / 占位 thinking 块。
+            openai_req.thinking = None;
+
             // 追加修复提示词到最后一条用户消息
             if let Some(last_msg) = openai_req.messages.last_mut() {
                 if last_msg.role == "user" {
