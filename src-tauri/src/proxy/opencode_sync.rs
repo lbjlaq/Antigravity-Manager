@@ -1084,6 +1084,7 @@ fn build_variants_object(variant_type: Option<VariantType>) -> Option<Value> {
                 "low".to_string(),
                 build_gemini3_effort_variant(VariantTier::Low),
             );
+            variants.insert("medium".to_string(), serde_json::json!({ "disabled": true }));
             variants.insert(
                 "medium".to_string(),
                 serde_json::json!({ "disabled": true }),
