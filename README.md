@@ -85,6 +85,7 @@
     *   **OpenAI 格式**: 提供 `/v1/chat/completions` 端点，兼容 99% 的现有 AI 应用。
     *   **Anthropic 格式**: 提供原生 `/v1/messages` 接口，支持 **Claude Code CLI** 的全功能（如思思维链、系统提示词）。
     *   **Gemini 格式**: 支持 Google 官方 SDK 直接调用。
+*   **可选命名上游**: 支持 [OrcaRouter](https://www.orcarouter.ai) 作为 **Anthropic 兼容网关** 上游（`proxy.orcarouter.*`），可独立调度 `/v1/messages` 流量（`exclusive` / `pooled` / `fallback`），无需 Google 账号池。OrcaRouter 同样在端点层面运行零信任 AI 安全防护——默认拒绝地审查每个 prompt/response 并管控每次工具调用，无需改动应用代码。
 *   **智能状态自愈**: 当请求遇到 `429 (Too Many Requests)` 或 `401 (Expire)` 时，后端会毫秒级触发 **自动重试与静默轮换**，确保业务不中断。
 
 ### 4. 🔀 模型路由中心 (Model Router)

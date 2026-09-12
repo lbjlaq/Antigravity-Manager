@@ -83,6 +83,7 @@ If you like this project, you might also be interested in:
     *   **OpenAI Format**: Provides `/v1/chat/completions` endpoint, compatible with 99% of existing AI apps.
     *   **Anthropic Format**: Provides native `/v1/messages` interface, supporting all features of **Claude Code CLI** (e.g., chain-of-thought, system prompts).
     *   **Gemini Format**: Supports direct calls from official Google AI SDKs.
+*   **Optional named upstream**: Supports [OrcaRouter](https://www.orcarouter.ai) as an **Anthropic-compatible gateway** upstream (`proxy.orcarouter.*`), with independent dispatch of `/v1/messages` traffic (`exclusive` / `pooled` / `fallback`) without the Google account pool. OrcaRouter also runs gateway-level, zero-trust security for AI agents on the same endpoint — screening every prompt/response and governing every tool call on a default-deny basis, with no application code changes.
 *   **Smart Self-healing**: When a request encounters `429 (Too Many Requests)` or `401 (Expired)`, the backend triggers **millisecond-level automatic retry and silent rotation**, ensuring business continuity.
 
 ### 4. 🔀 Model Router Center

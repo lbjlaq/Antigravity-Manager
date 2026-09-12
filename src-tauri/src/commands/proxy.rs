@@ -167,7 +167,12 @@ pub async fn internal_start_proxy_service(
     if active_accounts == 0 {
         let zai_enabled = config.zai.enabled
             && !matches!(config.zai.dispatch_mode, crate::proxy::ZaiDispatchMode::Off);
-        if !zai_enabled {
+        let orcarouter_enabled = config.orcarouter.enabled
+            && !matches!(
+                config.orcarouter.dispatch_mode,
+                crate::proxy::OrcaRouterDispatchMode::Off
+            );
+        if !zai_enabled && !orcarouter_enabled {
             tracing::warn!("沒有可用賬號，反代邏輯將暫停，請通過管理界面添加。");
             return Ok(ProxyStatus {
                 running: false,
@@ -252,6 +257,7 @@ pub async fn ensure_admin_server(
         config.user_agent_override.clone(),
         crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
         config.zai.clone(),
+        config.orcarouter.clone(),
         monitor,
         config.experimental.clone(),
         config.debug_logging.clone(),
@@ -610,6 +616,67 @@ pub async fn fetch_zai_models(
         .get(&url)
         .header("Authorization", format!("Bearer {}", zai.api_key))
         .header("x-api-key", zai.api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Upstream request failed: {}", e))?;
+
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    if !status.is_success() {
+        let preview = if text.len() > 4000 {
+            &text[..4000]
+        } else {
+            &text
+        };
+        return Err(format!("Upstream returned {}: {}", status, preview));
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("Invalid JSON response: {}", e))?;
+    let mut models = extract_model_ids(&json);
+    models.retain(|s| !s.trim().is_empty());
+    models.sort();
+    models.dedup();
+    Ok(models)
+}
+
+/// Fetch available models from the configured OrcaRouter Anthropic-compatible API (`/v1/models`).
+#[tauri::command]
+pub async fn fetch_orcarouter_models(
+    orcarouter: crate::proxy::OrcaRouterConfig,
+    upstream_proxy: crate::proxy::config::UpstreamProxyConfig,
+    request_timeout: u64,
+) -> Result<Vec<String>, String> {
+    if orcarouter.base_url.trim().is_empty() {
+        return Err("OrcaRouter base_url is empty".to_string());
+    }
+    if orcarouter.api_key.trim().is_empty() {
+        return Err("OrcaRouter api_key is not set".to_string());
+    }
+
+    let url = join_base_url(&orcarouter.base_url, "/v1/models");
+
+    let mut builder =
+        reqwest::Client::builder().timeout(Duration::from_secs(request_timeout.max(5)));
+    if upstream_proxy.enabled && !upstream_proxy.url.is_empty() {
+        let proxy = reqwest::Proxy::all(&upstream_proxy.url)
+            .map_err(|e| format!("Invalid upstream proxy url: {}", e))?;
+        builder = builder.proxy(proxy);
+    }
+    let client = builder
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", orcarouter.api_key))
+        .header("x-api-key", orcarouter.api_key)
         .header("anthropic-version", "2023-06-01")
         .header("accept", "application/json")
         .send()
