@@ -578,6 +578,7 @@ pub fn run() {
             commands::reorder_accounts,
             commands::switch_account,
             commands::export_accounts,
+            commands::get_active_ide_account,
             // Device fingerprint
             commands::get_device_profiles,
             commands::bind_device_profile,

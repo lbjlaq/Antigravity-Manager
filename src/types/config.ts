@@ -110,6 +110,18 @@ export interface ZaiConfig {
     mcp: ZaiMcpConfig;
 }
 
+export interface PhaseSchedulerConfig {
+    enabled: boolean;
+    mode: 'steady' | 'burst';
+    work_start_time: string;
+    work_duration_hours: number;
+    burst_duration_hours: number;
+    burst_mode_type?: 'scheduled' | 'immediate';
+    burst_start_time?: string;
+    auto_dark_wake: boolean;
+    monitored_models: string[];
+}
+
 export interface ScheduledWarmupConfig {
     enabled: boolean;
     monitored_models: string[];
@@ -156,6 +168,7 @@ export interface AppConfig {
     update_check_interval?: number; // 更新检查间隔（小时）
     accounts_page_size?: number; // 账号列表每页显示数量,默认 0 表示自动计算
     hidden_menu_items?: string[]; // 隐藏的菜单项路径列表
+    phase_scheduler?: PhaseSchedulerConfig; // 多账号相控阵智能调度配置
     scheduled_warmup: ScheduledWarmupConfig;
     quota_protection: QuotaProtectionConfig; // [NEW] 配额保护配置
     pinned_quota_models: PinnedQuotaModelsConfig; // [NEW] 配额关注列表

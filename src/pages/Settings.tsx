@@ -8,6 +8,7 @@ import ModalDialog from '../components/common/ModalDialog';
 import { showToast } from '../components/common/ToastContainer';
 import QuotaProtection from '../components/settings/QuotaProtection';
 import SmartWarmup from '../components/settings/SmartWarmup';
+import PhaseScheduler from '../components/settings/PhaseScheduler';
 import PinnedQuotaModels from '../components/settings/PinnedQuotaModels';
 import { useDebugConsole } from '../stores/useDebugConsole';
 
@@ -55,6 +56,15 @@ function Settings() {
                 strategy: 'priority',
                 account_bindings: {}
             }
+        },
+        phase_scheduler: {
+            enabled: false,
+            mode: 'steady',
+            work_start_time: '09:00',
+            work_duration_hours: 12,
+            burst_duration_hours: 3,
+            auto_dark_wake: true,
+            monitored_models: ['gemini-3-flash', 'claude', 'gemini-3-pro-high']
         },
         scheduled_warmup: {
             enabled: false,
@@ -798,6 +808,26 @@ function Settings() {
                                         />
                                     </div>
                                 )}
+                            </div>
+
+                            {/* 多账号相控阵智能错峰调度中心 (Phase Scheduler) */}
+                            <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-blue-200 transition-all duration-300 shadow-sm">
+                                <PhaseScheduler
+                                    config={formData.phase_scheduler}
+                                    onChange={async (newConfig) => {
+                                        const newFormData = {
+                                            ...formData,
+                                            phase_scheduler: newConfig
+                                        };
+                                        setFormData(newFormData);
+                                        // Hot Save
+                                        try {
+                                            await saveConfig(newFormData);
+                                        } catch (error) {
+                                            showToast(`${t('common.error')}: ${error}`, 'error');
+                                        }
+                                    }}
+                                />
                             </div>
 
                             {/* 7天周配额智能预热 (Smart Warmup) */}

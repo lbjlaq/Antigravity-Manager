@@ -59,6 +59,14 @@ pub async fn list_accounts(
     Ok(accounts)
 }
 
+/// 获取当前活跃的反重力IDE独占账号
+#[tauri::command]
+pub async fn get_active_ide_account() -> Result<Option<Account>, String> {
+    Ok(tokio::task::spawn_blocking(modules::detect_and_get_active_ide_account)
+        .await
+        .unwrap_or_default())
+}
+
 /// 添加账号
 #[tauri::command]
 pub async fn add_account(

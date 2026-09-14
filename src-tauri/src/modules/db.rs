@@ -83,14 +83,23 @@ pub fn get_all_candidate_db_paths(target_ide: Option<&str>) -> Vec<PathBuf> {
     paths
 }
 
-/// Get Antigravity database path (cross-platform)
+/// Get Antigravity database path (cross-platform, prioritizing the most recently modified database)
 pub fn get_db_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
     let candidates = get_all_candidate_db_paths(target_ide);
+    let mut existing_paths = Vec::new();
     for path in &candidates {
         if path.exists() {
-            return Ok(path.clone());
+            let mtime = path.metadata().and_then(|m| m.modified()).ok();
+            existing_paths.push((path.clone(), mtime));
         }
     }
+
+    if !existing_paths.is_empty() {
+        // Sort by modified time descending (most recently modified first)
+        existing_paths.sort_by(|a, b| b.1.cmp(&a.1));
+        return Ok(existing_paths[0].0.clone());
+    }
+
     candidates
         .into_iter()
         .next()
@@ -276,4 +285,39 @@ pub fn write_service_machine_id(
     ));
 
     Ok(())
+}
+
+/// 从活跃数据库中提取当前登录账号的 Refresh Token 或特征片段
+pub fn extract_active_refresh_token(db_path: &std::path::Path) -> Option<String> {
+    use base64::{engine::general_purpose, Engine as _};
+    use rusqlite::OptionalExtension;
+
+    let conn = Connection::open(db_path).ok()?;
+    let current_topic: Option<String> = conn
+        .query_row(
+            "SELECT value FROM ItemTable WHERE key = ?",
+            ["antigravityUnifiedStateSync.oauthToken"],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()?;
+
+    let raw_b64 = current_topic?;
+    let decoded = general_purpose::STANDARD.decode(raw_b64).ok()?;
+
+    // Refresh token standard Google OAuth format typically starts with "1//"
+    let raw_bytes = &decoded;
+    if let Some(pos) = raw_bytes.windows(3).position(|w| w == b"1//") {
+        let candidate = &raw_bytes[pos..];
+        // Read until non-printable or end of token
+        let token_len = candidate
+            .iter()
+            .take_while(|&&b| b >= 0x20 && b <= 0x7e && b != b'"' && b != b'\'' && b != b'\\')
+            .count();
+        if token_len >= 15 {
+            return String::from_utf8(candidate[..token_len].to_vec()).ok();
+        }
+    }
+
+    None
 }
