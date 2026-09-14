@@ -400,13 +400,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     };
 
     const handleImportDb = () => {
-        handleAction(t('accounts.add.import.btn_db'), async () => {
-            const accounts = await importFromDb();
-            if (Array.isArray(accounts) && accounts.length > 0) {
-                setMessage(t('accounts.add.token.batch_success', { count: accounts.length }));
-            }
-            return accounts;
-        });
+        handleAction(t('accounts.add.tabs.import'), importFromDb);
     };
 
     const handleImportV1 = () => {

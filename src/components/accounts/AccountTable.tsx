@@ -45,18 +45,14 @@ import {
     Bot,
     Repeat2,
     Terminal,
-    ArrowUpDown,
-    ArrowUp,
-    ArrowDown,
 } from 'lucide-react';
-import type { Account, ModelQuota } from '../../types/account';
+import { Account } from '../../types/account';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 
 import { useConfigStore } from '../../stores/useConfigStore';
 import { QuotaItem } from './QuotaItem';
-import { MODEL_CONFIG, sortModels, resolveQuotaModels, ensurePinnedImageSelector } from '../../config/modelConfig';
-import { categorizeModel, getModelProtectionKey } from '../../utils/modelCategory';
+import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 
@@ -84,7 +80,6 @@ interface AccountTableProps {
     /** 拖拽排序回调，当用户完成拖拽时触发 */
     onReorder?: (accountIds: string[]) => void;
     onViewError: (accountId: string) => void;
-    quotaWindow?: '5h' | 'weekly';
 }
 
 interface SortableRowProps {
@@ -105,8 +100,6 @@ interface SortableRowProps {
     onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
-    quotaWindow?: '5h' | 'weekly';
-    isDragDisabled?: boolean;
 }
 
 interface AccountRowContentProps {
@@ -125,7 +118,6 @@ interface AccountRowContentProps {
     onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
-    quotaWindow?: '5h' | 'weekly';
 }
 
 // ============================================================================
@@ -134,64 +126,72 @@ interface AccountRowContentProps {
 
 
 
+// ============================================================================
+// 模型分组配置
+// ============================================================================
+
+const MODEL_GROUPS = {
+    CLAUDE: [
+        'claude-opus-4-6-thinking',
+        'claude'
+    ],
+    GEMINI_PRO: [
+        'gemini-3.1-pro-high',
+        'gemini-3.1-pro-low',
+        'gemini-3.1-pro-preview',
+        'gemini-3-pro-high',
+        'gemini-3-pro-low',
+        'gemini-3-pro-preview'
+    ],
+    GEMINI_FLASH: [
+        'gemini-3-flash'
+    ]
+};
+
+const MODEL_ID_ALIASES: Record<string, string[]> = {
+    'gemini-3-pro-high': ['gemini-3-pro-high', 'gemini-3.1-pro-high'],
+    'gemini-3-pro-low': ['gemini-3-pro-low', 'gemini-3.1-pro-low'],
+    'gemini-3-pro-preview': ['gemini-3-pro-preview', 'gemini-3.1-pro-preview'],
+    'gemini-3.1-pro-high': ['gemini-3.1-pro-high', 'gemini-3-pro-high'],
+    'gemini-3.1-pro-low': ['gemini-3.1-pro-low', 'gemini-3-pro-low'],
+    'gemini-3.1-pro-preview': ['gemini-3.1-pro-preview', 'gemini-3-pro-preview'],
+};
+
+function getModelAliases(modelId: string): string[] {
+    return MODEL_ID_ALIASES[modelId] || [modelId];
+}
+
 function isModelProtected(protectedModels: string[] | undefined, modelName: string): boolean {
     if (!protectedModels || protectedModels.length === 0) return false;
     const lowerName = modelName.toLowerCase();
 
-    if (lowerName === 'gemini-pro') {
-        return protectedModels.some((model) =>
-            categorizeModel(model) === 'gemini-pro' && getModelProtectionKey(model) === 'gemini-3-pro-high',
-        );
-    }
-    if (lowerName === 'gemini-flash') {
-        return protectedModels.some((model) =>
-            categorizeModel(model) === 'gemini-flash' && getModelProtectionKey(model) === 'gemini-3-flash',
-        );
-    }
-    if (lowerName === 'claude-sonnet') {
-        return protectedModels.some((model) =>
-            categorizeModel(model) === 'claude' && getModelProtectionKey(model) === 'claude',
-        );
-    }
+    // Helper to check if any model in the group is protected
+    const isGroupProtected = (group: string[]) => {
+        return group.some(m => protectedModels.includes(m));
+    };
 
-    const protectionKey = getModelProtectionKey(lowerName);
-    return protectionKey ? protectedModels.includes(protectionKey) : false;
-}
+    // UI Column Keys Mapping (for backward compatibility with hardcoded UI calls)
+    if (lowerName === 'gemini-pro') return isGroupProtected(MODEL_GROUPS.GEMINI_PRO);
+    if (lowerName === 'gemini-flash') return isGroupProtected(MODEL_GROUPS.GEMINI_FLASH);
+    if (lowerName === 'claude-sonnet') return isGroupProtected(MODEL_GROUPS.CLAUDE);
 
-/**
- * 提取账号的最快配额重置时间（毫秒时间戳）
- * 用于表格排序
- */
-function extractAccountResetTime(account: Account, quotaWindow?: '5h' | 'weekly'): number | null {
-    let earliestTime: number | null = null;
-
-    if (quotaWindow === 'weekly') {
-        const groups = account.quota?.quota_groups || [];
-        for (const group of groups) {
-            for (const bucket of group.buckets || []) {
-                const isWeekly = bucket.window.toLowerCase().includes('week') || bucket.bucket_id.toLowerCase().includes('week');
-                if (isWeekly && bucket.reset_time) {
-                    const t = new Date(bucket.reset_time).getTime();
-                    if (!isNaN(t) && (earliestTime === null || t < earliestTime)) {
-                        earliestTime = t;
-                    }
-                }
-            }
-        }
-    } else {
-        // 5h 或常规视图下，从 models 中获取最近的 reset_time
-        const models = account.quota?.models || [];
-        for (const model of models) {
-            if (model.reset_time) {
-                const t = new Date(model.reset_time).getTime();
-                if (!isNaN(t) && (earliestTime === null || t < earliestTime)) {
-                    earliestTime = t;
-                }
-            }
-        }
+    // 1. Gemini Pro Group
+    if (MODEL_GROUPS.GEMINI_PRO.some(m => lowerName === m)) {
+        return isGroupProtected(MODEL_GROUPS.GEMINI_PRO);
     }
 
-    return earliestTime;
+    // 2. Claude Group
+    if (MODEL_GROUPS.CLAUDE.some(m => lowerName === m)) {
+        return isGroupProtected(MODEL_GROUPS.CLAUDE);
+    }
+
+    // 3. Gemini Flash Group
+    if (MODEL_GROUPS.GEMINI_FLASH.some(m => lowerName === m)) {
+        return isGroupProtected(MODEL_GROUPS.GEMINI_FLASH);
+    }
+
+    // 兜底直接检查 (Strict check for exact match or normalized ID)
+    return protectedModels.includes(lowerName);
 }
 
 // ============================================================================
@@ -220,8 +220,6 @@ function SortableAccountRow({
     onWarmup,
     onUpdateLabel,
     onViewError,
-    quotaWindow,
-    isDragDisabled = false,
 }: SortableRowProps) {
     const { t } = useTranslation();
     const {
@@ -231,7 +229,7 @@ function SortableAccountRow({
         transform,
         transition,
         isDragging: isSortableDragging,
-    } = useSortable({ id: account.id, disabled: isDragDisabled });
+    } = useSortable({ id: account.id });
 
     const style = {
         transform: CSS.Transform.toString(transform),
@@ -254,15 +252,10 @@ function SortableAccountRow({
             {/* 拖拽手柄 */}
             <td className="pl-2 py-1 w-8 align-middle">
                 <div
-                    {...(!isDragDisabled ? attributes : {})}
-                    {...(!isDragDisabled ? listeners : {})}
-                    className={cn(
-                        "flex items-center justify-center w-6 h-6 rounded transition-colors",
-                        isDragDisabled
-                            ? "text-gray-200 dark:text-gray-700 cursor-not-allowed opacity-40"
-                            : "cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-                    )}
-                    title={isDragDisabled ? t('accounts.drag_disabled_during_sort', '已激活列排序，拖拽排序已暂停') : t('accounts.drag_to_reorder')}
+                    {...attributes}
+                    {...listeners}
+                    className="flex items-center justify-center w-6 h-6 cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+                    title={t('accounts.drag_to_reorder')}
                 >
                     <GripVertical className="w-4 h-4" />
                 </div>
@@ -271,10 +264,10 @@ function SortableAccountRow({
             <td className="px-2 py-1 w-10 align-middle">
                 <input
                     type="checkbox"
-                    className="checkbox checkbox-sm rounded border-2 border-gray-400 dark:border-gray-500 checked:border-blue-600 checked:bg-blue-600 [--chkbg:theme(colors.blue.600)] [--chkfg:white]"
+                    className="checkbox checkbox-xs rounded border-2 border-gray-400 dark:border-gray-500 checked:border-blue-600 checked:bg-blue-600 [--chkbg:theme(colors.blue.600)] [--chkfg:white]"
                     checked={selected}
                     onChange={onSelect}
-                    disabled={isRefreshing}
+                    onClick={(e) => e.stopPropagation()}
                 />
             </td>
             <AccountRowContent
@@ -293,7 +286,6 @@ function SortableAccountRow({
                 onWarmup={onWarmup}
                 onUpdateLabel={onUpdateLabel}
                 onViewError={onViewError}
-                quotaWindow={quotaWindow}
             />
         </tr>
     );
@@ -319,7 +311,6 @@ function AccountRowContent({
     onWarmup,
     onUpdateLabel,
     onViewError,
-    quotaWindow,
 }: AccountRowContentProps) {
     const { t } = useTranslation();
     const { config, showAllQuotas } = useConfigStore();
@@ -349,64 +340,58 @@ function AccountRowContent({
         }
     };
 
-    // 解析周配额项 (当处于 weekly 视图时)
-    const weeklyItems = useMemo(() => {
-        if (quotaWindow !== 'weekly') return [];
-        return (account.quota?.quota_groups || []).flatMap(group => {
-            return group.buckets
-                .filter(b => b.window.toLowerCase().includes('week') || b.bucket_id.toLowerCase().includes('week'))
-                .map(b => {
-                    const shortGroupName = group.display_name
-                        .replace(/ models?$/i, '')
-                        .replace(/Claude and GPT/i, 'Claude/GPT');
-                    return {
-                        id: `${group.display_name}-${b.bucket_id}`,
-                        label: b.display_name ? `${shortGroupName} (${b.display_name})` : `${shortGroupName} (周)`,
-                        percentage: Math.round((b.remaining_fraction || 0) * 100),
-                        resetTime: b.reset_time,
-                        Icon: shortGroupName.toLowerCase().includes('claude') ? Sparkles : Bot,
-                    };
-                });
-        });
-    }, [quotaWindow, account.quota?.quota_groups]);
+    // 使用统一的模型配置
 
     // 获取要显示的模型列表
-    const pinnedModels = ensurePinnedImageSelector(
-        config?.pinned_quota_models?.models || Object.keys(MODEL_CONFIG),
-    );
+    const pinnedModels = config?.pinned_quota_models?.models || Object.keys(MODEL_CONFIG);
 
     // 根据 show_all 状态决定显示哪些模型
     const uniqueLabels = new Set<string>();
+
+    // Construct baseline account models list
+    const accountModels = (account.quota?.models || []).map(m => {
+        const config = MODEL_CONFIG[m.name.toLowerCase()];
+        const label = m.display_name || (config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || m.name));
+        return {
+            id: m.name.toLowerCase(),
+            label: label,
+            protectedKey: config?.protectedKey || m.name.toLowerCase(),
+            data: m
+        };
+    });
+
+    // Inject virtual quota group buckets if present
+    if (account.quota?.quota_groups) {
+        account.quota.quota_groups.forEach(group => {
+            group.buckets.forEach(bucket => {
+                const id = bucket.bucket_id.toLowerCase();
+                const config = MODEL_CONFIG[id];
+                if (config) {
+                    accountModels.push({
+                        id: bucket.bucket_id.toLowerCase(),
+                        label: config.shortLabel || config.label,
+                        protectedKey: config.protectedKey || bucket.bucket_id.toLowerCase(),
+                        data: {
+                            name: bucket.bucket_id,
+                            percentage: Math.round(bucket.remaining_fraction * 100),
+                            reset_time: bucket.reset_time
+                        } as any
+                    });
+                }
+            });
+        });
+    }
+
     const displayModels = sortModels(
         (showAllQuotas
-            ? (account.quota?.models || []).map(m => {
-                const config = MODEL_CONFIG[m.name.toLowerCase()];
-                const label = m.display_name || (config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || m.name));
-                return {
-                    id: m.name.toLowerCase(),
-                    label: label,
-                    protectedKey: config?.protectedKey || m.name.toLowerCase(),
-                    data: m
-                };
-            })
-            : resolveQuotaModels(account.quota?.models, pinnedModels).map(sel => {
-                const selectorConfig = MODEL_CONFIG[sel.selectorId.toLowerCase()];
-                const resolvedConfig = sel.model ? MODEL_CONFIG[sel.model.name.toLowerCase()] : undefined;
-                if (!selectorConfig && !sel.model) return null;
-                const label = sel.model?.display_name
-                    || (resolvedConfig?.shortLabel || resolvedConfig?.label)
-                    || (selectorConfig?.shortLabel || selectorConfig?.label)
-                    || (resolvedConfig?.i18nKey ? t(resolvedConfig.i18nKey) : undefined)
-                    || (selectorConfig?.i18nKey ? t(selectorConfig.i18nKey) : undefined)
-                    || sel.selectorId;
-                return {
-                    id: sel.model?.name.toLowerCase() ?? sel.selectorId.toLowerCase(),
-                    label,
-                    protectedKey: getModelProtectionKey(sel.model?.name ?? sel.selectorId) ?? resolvedConfig?.protectedKey ?? selectorConfig?.protectedKey ?? sel.selectorId,
-                    data: sel.model,
-                };
-            }).filter((item): item is { id: string; label: string; protectedKey: string; data: ModelQuota | undefined } => item !== null)
-    ).filter(m => {
+            ? accountModels
+            : pinnedModels.map(modelId => {
+                const targetId = modelId.toLowerCase();
+                const m = accountModels.find(am => am.id === targetId || getModelAliases(modelId).includes(am.id));
+                if (!m) return null;
+                return m;
+            }).filter(Boolean) as any[]
+        ).filter(m => {
             // 过滤特定的 Claude/Gemini 思考变体 (在列表页隐藏)
             const isHiddenThinking = m.id.includes('thinking');
 
@@ -580,37 +565,23 @@ function AccountRowContent({
                 ) : (
                     <div className={cn(
                         "grid gap-x-2 gap-y-1 py-0",
-                        (quotaWindow === 'weekly' && weeklyItems.length > 0)
-                            ? (weeklyItems.length === 1 ? "grid-cols-1" : "grid-cols-2")
-                            : (displayModels.length === 1 ? "grid-cols-1" : "grid-cols-2")
+                        displayModels.length === 1 ? "grid-cols-1" : "grid-cols-2"
                     )}>
-                        {quotaWindow === 'weekly' && weeklyItems.length > 0 ? (
-                            weeklyItems.map((item) => (
-                                <QuotaItem
-                                    key={item.id}
-                                    label={item.label}
-                                    percentage={item.percentage}
-                                    resetTime={item.resetTime}
-                                    Icon={item.Icon}
-                                />
-                            ))
-                        ) : (
-                            displayModels.map((model) => {
-                                const modelData = model.data;
+                        {displayModels.map((model) => {
+                            const modelData = model.data;
 
-                                return (
-                                    <QuotaItem
-                                        key={model.id}
-                                        label={model.label}
-                                        percentage={modelData?.percentage || 0}
-                                        resetTime={modelData?.reset_time}
-                                        isProtected={Boolean(config?.quota_protection?.enabled && isModelProtected(account.protected_models, model.protectedKey))}
-                                        liveLimit={getLiveLimitForModel(account, model.id, model.protectedKey)}
-                                        Icon={MODEL_CONFIG[model.id]?.Icon || Bot}
-                                    />
-                                );
-                            })
-                        )}
+                            return (
+                                <QuotaItem
+                                    key={model.id}
+                                    label={model.label}
+                                    percentage={modelData?.percentage || 0}
+                                    resetTime={modelData?.reset_time}
+                                    isProtected={isModelProtected(account.protected_models, model.protectedKey)}
+                                    liveLimit={getLiveLimitForModel(account, model.id, model.protectedKey)}
+                                    Icon={MODEL_CONFIG[model.id]?.Icon || Bot}
+                                />
+                            );
+                        })}
                     </div>
                 )}
             </td>
@@ -632,11 +603,11 @@ function AccountRowContent({
                 "px-1 py-1 sticky right-0 z-10 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center align-middle",
                 // 动态背景色处理
                 isCurrent
-                    ? "bg-[#f1f6ff] dark:bg-[#1e2330]" // 接近 blue-50/50 的实色
-                    : "bg-white dark:bg-base-100",
-                !isCurrent && "group-hover:bg-gray-50 dark:group-hover:bg-base-200"
+                    ? "bg-[#f1f6ff]/80 dark:bg-[rgba(30,41,59,0.85)]"
+                    : "bg-white/40 dark:bg-[rgba(26,31,46,0.85)]",
+                !isCurrent && "group-hover:bg-gray-50/40 dark:group-hover:bg-base-200/30"
             )}>
-                <div className="flex flex-wrap items-center justify-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity max-w-[220px] mx-auto">
+                <div className="flex flex-wrap items-center justify-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity max-w-[220px] mx-auto">
                     <button
                         className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/30 rounded-lg transition-all"
                         onClick={(e) => { e.stopPropagation(); onViewDetails(); }}
@@ -771,61 +742,11 @@ function AccountTable({
     onWarmup,
     onUpdateLabel,
     onViewError,
-    quotaWindow,
 }: AccountTableProps) {
     const { t } = useTranslation();
 
     const [activeId, setActiveId] = useState<string | null>(null);
-    // 排序状态配置: 支持按配额重置时间 (reset_time) 或最后使用时间 (last_used) 排序
-    const [sortConfig, setSortConfig] = useState<{
-        key: 'reset_time' | 'last_used' | null;
-        direction: 'asc' | 'desc' | null;
-    }>({
-        key: null,
-        direction: null,
-    });
-
-    const isSortingActive = sortConfig.key !== null && sortConfig.direction !== null;
-
-    const handleSortToggle = (key: 'reset_time' | 'last_used') => {
-        setSortConfig(prev => {
-            if (prev.key !== key) {
-                return { key, direction: 'asc' };
-            }
-            if (prev.direction === 'asc') {
-                return { key, direction: 'desc' };
-            }
-            return { key: null, direction: null };
-        });
-    };
-
-    // 根据排序状态对 accounts 进行拦截排序
-    const sortedAccounts = useMemo(() => {
-        if (!isSortingActive) return accounts;
-
-        return [...accounts].sort((a, b) => {
-            if (sortConfig.key === 'reset_time') {
-                const timeA = extractAccountResetTime(a, quotaWindow);
-                const timeB = extractAccountResetTime(b, quotaWindow);
-
-                // 没有 reset_time 的排到后面
-                if (timeA === null && timeB === null) return 0;
-                if (timeA === null) return 1;
-                if (timeB === null) return -1;
-
-                return sortConfig.direction === 'asc' ? timeA - timeB : timeB - timeA;
-            }
-
-            if (sortConfig.key === 'last_used') {
-                const timeA = a.last_used || 0;
-                const timeB = b.last_used || 0;
-
-                return sortConfig.direction === 'asc' ? timeA - timeB : timeB - timeA;
-            }
-
-            return 0;
-        });
-    }, [accounts, sortConfig, quotaWindow, isSortingActive]);
+    // showAllQuotas 已经在 useConfigStore 中解构获取
 
     // 配置拖拽传感器
     const sensors = useSensors(
@@ -837,19 +758,16 @@ function AccountTable({
         })
     );
 
-    const accountIds = useMemo(() => sortedAccounts.map(a => a.id), [sortedAccounts]);
-    const activeAccount = useMemo(() => sortedAccounts.find(a => a.id === activeId), [sortedAccounts, activeId]);
+    const accountIds = useMemo(() => accounts.map(a => a.id), [accounts]);
+    const activeAccount = useMemo(() => accounts.find(a => a.id === activeId), [accounts, activeId]);
 
     const handleDragStart = (event: DragStartEvent) => {
-        if (isSortingActive) return;
         setActiveId(event.active.id as string);
     };
 
     const handleDragEnd = (event: DragEndEvent) => {
         const { active, over } = event;
         setActiveId(null);
-
-        if (isSortingActive) return;
 
         if (over && active.id !== over.id) {
             const oldIndex = accountIds.indexOf(active.id as string);
@@ -894,47 +812,15 @@ function AccountTable({
                             </th>
                             <th className="px-2 py-1 text-left rtl:text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider w-[300px] whitespace-nowrap">{t('accounts.table.email')}</th>
                             <th className="px-2 py-1 text-left rtl:text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider min-w-[340px] whitespace-nowrap">
-                                <button
-                                    type="button"
-                                    onClick={() => handleSortToggle('reset_time')}
-                                    className={cn(
-                                        "inline-flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition-colors uppercase font-medium",
-                                        sortConfig.key === 'reset_time' && "text-blue-600 dark:text-blue-400 font-semibold"
-                                    )}
-                                    title={t('accounts.table.sort_by_reset_time', '点击按配额重置时间排序')}
-                                >
-                                    <span>{quotaWindow === 'weekly' ? t('accounts.table.weekly_quota', '周配额') : t('accounts.table.quota')}</span>
-                                    {sortConfig.key === 'reset_time' ? (
-                                        sortConfig.direction === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" /> : <ArrowDown className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                                    ) : (
-                                        <ArrowUpDown className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 opacity-60 hover:opacity-100" />
-                                    )}
-                                </button>
+                                {t('accounts.table.quota')}
                             </th>
-                            <th className="px-2 py-1 text-left rtl:text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider w-[90px] whitespace-nowrap">
-                                <button
-                                    type="button"
-                                    onClick={() => handleSortToggle('last_used')}
-                                    className={cn(
-                                        "inline-flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition-colors uppercase font-medium",
-                                        sortConfig.key === 'last_used' && "text-blue-600 dark:text-blue-400 font-semibold"
-                                    )}
-                                    title={t('accounts.table.sort_by_last_used', '点击按最后使用时间排序')}
-                                >
-                                    <span>{t('accounts.table.last_used')}</span>
-                                    {sortConfig.key === 'last_used' ? (
-                                        sortConfig.direction === 'asc' ? <ArrowUp className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" /> : <ArrowDown className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                                    ) : (
-                                        <ArrowUpDown className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 opacity-60 hover:opacity-100" />
-                                    )}
-                                </button>
-                            </th>
+                            <th className="px-2 py-1 text-left rtl:text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider w-[90px] whitespace-nowrap">{t('accounts.table.last_used')}</th>
                             <th className="px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap sticky right-0 w-[220px] bg-gray-50 dark:bg-base-200 z-20 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center">{t('accounts.table.actions')}</th>
                         </tr >
                     </thead >
                     <SortableContext items={accountIds} strategy={verticalListSortingStrategy}>
                         <tbody className="divide-y divide-gray-100 dark:divide-base-200">
-                            {sortedAccounts.map((account) => (
+                            {accounts.map((account) => (
                                 <SortableAccountRow
                                     key={account.id}
                                     account={account}
@@ -954,8 +840,6 @@ function AccountTable({
                                     onWarmup={onWarmup ? () => onWarmup(account.id) : undefined}
                                     onUpdateLabel={onUpdateLabel ? (label: string) => onUpdateLabel(account.id, label) : undefined}
                                     onViewError={() => onViewError(account.id)}
-                                    quotaWindow={quotaWindow}
-                                    isDragDisabled={isSortingActive}
                                 />
                             ))}
                         </tbody>
@@ -997,7 +881,6 @@ function AccountTable({
                                         onToggleProxy={() => { }}
                                         isDisabled={Boolean(activeAccount.disabled)}
                                         onViewError={() => { }}
-                                        quotaWindow={quotaWindow}
                                     />
                                 </tr>
                             </tbody>

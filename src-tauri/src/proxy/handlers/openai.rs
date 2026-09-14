@@ -6604,46 +6604,6 @@ async fn translate_openai_chunk_to_ws(
                             "delta": reasoning
                         });
                         send_ws_event(socket, ws_events, &reasoning_ev).await;
-
-                        if !state.message_item_added {
-                            let item_added = json!({
-                                "type": "response.output_item.added",
-                                "output_index": message_output_index,
-                                "item": {
-                                    "id": &state.item_id,
-                                    "type": "message",
-                                    "role": "assistant",
-                                    "phase": "commentary",
-                                    "status": "in_progress",
-                                    "content": []
-                                }
-                            });
-                            send_ws_event(socket, ws_events, &item_added).await;
-
-                            let part_added = json!({
-                                "type": "response.content_part.added",
-                                "item_id": &state.item_id,
-                                "output_index": message_output_index,
-                                "content_index": 0,
-                                "part": {
-                                    "type": "output_text",
-                                    "text": ""
-                                }
-                            });
-                            send_ws_event(socket, ws_events, &part_added).await;
-                            state.message_item_added = true;
-                            state.content_part_added = true;
-                        }
-
-                        let delta_ev = json!({
-                            "type": "response.output_text.delta",
-                            "item_id": &state.item_id,
-                            "output_index": message_output_index,
-                            "content_index": 0,
-                            "delta": reasoning
-                        });
-                        send_ws_event(socket, ws_events, &delta_ev).await;
-                        state.accumulated_text.push_str(reasoning);
                     }
                 }
 

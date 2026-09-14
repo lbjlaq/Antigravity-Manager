@@ -123,9 +123,25 @@ pub struct ScheduledWarmupConfig {
     /// Whether smart warmup is enabled
     pub enabled: bool,
 
+    /// Warmup mode: "smart" (hybrid), "timer" (scheduled timer), "quota_full" (100% quota recovery)
+    #[serde(default = "default_warmup_mode")]
+    pub mode: String,
+
+    /// Warmup interval in minutes for timer/smart mode
+    #[serde(default = "default_warmup_interval")]
+    pub interval_minutes: u64,
+
     /// List of models to warmup
     #[serde(default = "default_warmup_models")]
     pub monitored_models: Vec<String>,
+}
+
+fn default_warmup_mode() -> String {
+    "smart".to_string()
+}
+
+fn default_warmup_interval() -> u64 {
+    120
 }
 
 fn default_warmup_models() -> Vec<String> {
@@ -141,6 +157,8 @@ impl ScheduledWarmupConfig {
     pub fn new() -> Self {
         Self {
             enabled: false,
+            mode: default_warmup_mode(),
+            interval_minutes: default_warmup_interval(),
             monitored_models: default_warmup_models(),
         }
     }

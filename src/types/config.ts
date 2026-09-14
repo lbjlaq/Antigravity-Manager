@@ -35,12 +35,6 @@ export interface LogRetentionConfig {
     max_rows: number;
 }
 
-export interface LogRetentionConfig {
-    max_body_age_hours: number;
-    max_age_days: number;
-    max_rows: number;
-}
-
 // ============================================================================
 // Thinking Budget 配置 (控制 AI 深度思考时的 Token 预算)
 // ============================================================================
@@ -124,6 +118,8 @@ export interface PhaseSchedulerConfig {
 
 export interface ScheduledWarmupConfig {
     enabled: boolean;
+    mode?: 'smart' | 'timer' | 'quota_full';
+    interval_minutes?: number;
     monitored_models: string[];
 }
 

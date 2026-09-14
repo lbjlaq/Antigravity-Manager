@@ -1225,6 +1225,11 @@ pub async fn get_token_stats_account_trend_daily(
 }
 
 #[tauri::command]
+pub async fn get_today_usage_summary() -> Result<crate::modules::token_stats::TodayUsageSummary, String> {
+    crate::modules::token_stats::get_today_usage_summary()
+}
+
+#[tauri::command]
 pub async fn query_transit_info(url: String, key: String) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))

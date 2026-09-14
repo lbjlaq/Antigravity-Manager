@@ -257,6 +257,42 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         group: 'Other',
         tags: ['openai'],
     },
+    'gemini-5h': {
+        label: 'Gemini 5h Limit',
+        shortLabel: 'Gemini 5h',
+        protectedKey: 'gemini-5h',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.gemini_5h',
+        i18nDescKey: 'proxy.model.gemini_5h',
+        group: 'Quota Groups',
+    },
+    'gemini-weekly': {
+        label: 'Gemini Weekly Limit',
+        shortLabel: 'Gemini 周额度',
+        protectedKey: 'gemini-weekly',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.gemini_weekly',
+        i18nDescKey: 'proxy.model.gemini_weekly',
+        group: 'Quota Groups',
+    },
+    '3p-5h': {
+        label: 'Claude/GPT 5h Limit',
+        shortLabel: 'Claude/GPT 5h',
+        protectedKey: '3p-5h',
+        Icon: Claude.Color,
+        i18nKey: 'proxy.model.3p_5h',
+        i18nDescKey: 'proxy.model.3p_5h',
+        group: 'Quota Groups',
+    },
+    '3p-weekly': {
+        label: 'Claude/GPT Weekly Limit',
+        shortLabel: 'Claude/GPT 周额度',
+        protectedKey: '3p-weekly',
+        Icon: Claude.Color,
+        i18nKey: 'proxy.model.3p_weekly',
+        i18nDescKey: 'proxy.model.3p_weekly',
+        group: 'Quota Groups',
+    },
 };
 
 /**
@@ -316,6 +352,10 @@ function getModelSortWeight(modelId: string): number {
         weight += MODEL_SORT_WEIGHTS.series['gemini-2'] * 1000;
     } else if (id.startsWith('claude')) {
         weight += MODEL_SORT_WEIGHTS.series['claude'] * 1000;
+    } else if (id.startsWith('gemini-5h') || id.startsWith('gemini-weekly')) {
+        weight += 50 * 1000; // Sort right before gemini-3
+    } else if (id.startsWith('3p-5h') || id.startsWith('3p-weekly')) {
+        weight += 350 * 1000; // Sort right before claude
     }
 
     // 2. 性能级别权重 (x100)
