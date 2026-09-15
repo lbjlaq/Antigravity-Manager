@@ -705,6 +705,9 @@ pub struct LogRetentionConfig {
     pub max_age_days: u64,
     #[serde(default = "default_max_rows")]
     pub max_rows: u64,
+    /// Application disk budget in MiB, including the database and WAL.
+    #[serde(default = "default_max_disk_mb")]
+    pub max_disk_mb: u64,
 }
 
 fn default_max_body_age_hours() -> u64 {
@@ -716,6 +719,9 @@ fn default_max_age_days() -> u64 {
 fn default_max_rows() -> u64 {
     100_000
 }
+fn default_max_disk_mb() -> u64 {
+    1024
+}
 
 impl Default for LogRetentionConfig {
     fn default() -> Self {
@@ -723,6 +729,7 @@ impl Default for LogRetentionConfig {
             max_body_age_hours: 24,
             max_age_days: 30,
             max_rows: 100_000,
+            max_disk_mb: default_max_disk_mb(),
         }
     }
 }

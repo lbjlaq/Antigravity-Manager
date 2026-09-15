@@ -2,6 +2,9 @@ use crate::proxy::config::LogRetentionConfig;
 use crate::proxy::monitor::ProxyRequestLog;
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
+use std::sync::Mutex;
+
+static LOG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn get_proxy_db_path() -> Result<PathBuf, String> {
     let data_dir = crate::modules::account::get_data_dir()?;
@@ -11,6 +14,10 @@ pub fn get_proxy_db_path() -> Result<PathBuf, String> {
 fn connect_db() -> Result<Connection, String> {
     let db_path = get_proxy_db_path()?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Must precede WAL for new databases. Existing databases are not fully VACUUMed.
+    conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")
+        .map_err(|e| e.to_string())?;
 
     // Enable WAL mode for better concurrency
     conn.pragma_update(None, "journal_mode", "WAL")
@@ -84,6 +91,7 @@ pub fn init_db() -> Result<(), String> {
 }
 
 pub fn apply_retention(policy: &LogRetentionConfig) -> Result<(usize, usize), String> {
+    let _guard = LOG_WRITE_LOCK.lock().map_err(|e| e.to_string())?;
     let conn = connect_db()?;
     apply_retention_with_connection(&conn, policy)
 }
@@ -111,31 +119,165 @@ fn apply_retention_with_connection(
             [policy.max_rows],
         ).map_err(|e| e.to_string())?;
     }
-    let auto_vacuum: i64 = conn
-        .pragma_query_value(None, "auto_vacuum", |row| row.get(0))
-        .map_err(|e| e.to_string())?;
-    if auto_vacuum == 0 {
-        let db_size = get_proxy_db_path()
-            .ok()
-            .and_then(|path| std::fs::metadata(path).ok())
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
-        if db_size < 1024 * 1024 * 1024 {
-            conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")
-                .map_err(|e| e.to_string())?;
-        } else {
-            tracing::warn!(
-                "Skipping auto_vacuum migration for proxy logs database larger than 1 GiB"
-            );
-        }
-    }
-    conn.execute_batch("PRAGMA incremental_vacuum;")
-        .map_err(|e| e.to_string())?;
+    reclaim_space(conn)?;
     Ok((bodies_cleared, rows_deleted))
 }
 
-pub fn save_log(log: &ProxyRequestLog) -> Result<(), String> {
+fn reclaim_space(conn: &Connection) -> Result<(), String> {
+    let checkpoint = || -> Result<(), String> {
+        let busy: i64 = conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        if busy != 0 {
+            return Err("proxy log checkpoint busy".to_string());
+        }
+        Ok(())
+    };
+    checkpoint()?;
+    // This pragma yields a row per reclaimed page; drain it to perform all 256 steps.
+    let mut vacuum = conn
+        .prepare("PRAGMA incremental_vacuum(256)")
+        .map_err(|e| e.to_string())?;
+    let mut pages = vacuum.query([]).map_err(|e| e.to_string())?;
+    while pages.next().map_err(|e| e.to_string())?.is_some() {}
+    drop(pages);
+    checkpoint()
+}
+
+fn disk_bytes(conn: &Connection) -> Result<u64, String> {
+    let path = conn.path().ok_or("proxy log database has no file path")?;
+    [PathBuf::from(path), PathBuf::from(format!("{path}-wal"))]
+        .iter()
+        .try_fold(0u64, |total, path| match std::fs::metadata(path) {
+            Ok(metadata) => Ok(total.saturating_add(metadata.len())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(total),
+            Err(e) => Err(e.to_string()),
+        })
+}
+
+fn projected_bytes(conn: &Connection, log_bytes: u64) -> Result<u64, String> {
+    let free: u64 = conn
+        .pragma_query_value(None, "freelist_count", |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let page_size: u64 = conn
+        .pragma_query_value(None, "page_size", |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    // Free pages avoid database growth, but still need WAL frames during the transaction.
+    Ok(disk_bytes(conn)?
+        .saturating_add(log_bytes.saturating_mul(2))
+        .saturating_add(log_bytes.saturating_sub(free.saturating_mul(page_size)))
+        .saturating_add(64 * 1024))
+}
+
+fn make_room(conn: &Connection, budget: u64, log_bytes: u64) -> Result<(), String> {
+    if projected_bytes(conn, log_bytes)? <= budget {
+        return Ok(());
+    }
+    reclaim_space(conn)?;
+    if projected_bytes(conn, log_bytes)? <= budget {
+        return Ok(());
+    }
+    let auto_vacuum: i64 = conn
+        .pragma_query_value(None, "auto_vacuum", |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    // Legacy files cannot shrink: even reusing all free pages still needs WAL headroom.
+    if auto_vacuum == 0
+        && disk_bytes(conn)?
+            .saturating_add(log_bytes.saturating_mul(2))
+            .saturating_add(64 * 1024)
+            > budget
+    {
+        return Err("legacy proxy log database cannot shrink within budget".to_string());
+    }
+    let target = budget / 5 * 4;
+    // Bounded work per write, oldest bodies first, then oldest summaries. No full-body reads.
+    for _ in 0..8 {
+        let before = projected_bytes(conn, log_bytes)?;
+        let free: u64 = conn
+            .pragma_query_value(None, "freelist_count", |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        // Reclaim already freed pages before discarding more history.
+        if auto_vacuum == 0 || free == 0 {
+            let cleared = conn.execute(
+            "UPDATE request_logs SET request_body = NULL, response_body = NULL WHERE id IN
+             (SELECT id FROM request_logs WHERE request_body IS NOT NULL OR response_body IS NOT NULL ORDER BY timestamp ASC LIMIT 32)", []
+        ).map_err(|e| e.to_string())?;
+            if cleared == 0 {
+                conn.execute("DELETE FROM request_logs WHERE id IN (SELECT id FROM request_logs ORDER BY timestamp ASC LIMIT 32)", [])
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        reclaim_space(conn)?;
+        let after = projected_bytes(conn, log_bytes)?;
+        if after <= target {
+            return Ok(());
+        }
+        if after >= before {
+            break;
+        }
+    }
+    if projected_bytes(conn, log_bytes)? <= budget {
+        Ok(())
+    } else {
+        Err("proxy log disk budget exhausted".to_string())
+    }
+}
+
+pub fn save_log(log: ProxyRequestLog) -> Result<(), String> {
+    let _guard = LOG_WRITE_LOCK.lock().map_err(|e| e.to_string())?;
+    // Read the file for every admitted write, including after a runtime budget change.
+    let policy = crate::modules::config::load_app_config()?
+        .proxy
+        .log_retention;
     let conn = connect_db()?;
+    save_log_with_connection(&conn, log, &policy)
+}
+
+fn save_log_with_connection(
+    conn: &Connection,
+    mut log: ProxyRequestLog,
+    policy: &LogRetentionConfig,
+) -> Result<(), String> {
+    conn.busy_timeout(std::time::Duration::from_millis(250))
+        .map_err(|e| e.to_string())?;
+    log.error = log
+        .error
+        .as_ref()
+        .map(|error| error.chars().take(1024).collect());
+    let budget = policy.max_disk_mb.saturating_mul(1024 * 1024);
+    let summary_bytes = [&log.id, &log.method, &log.url]
+        .iter()
+        .map(|s| s.len() as u64)
+        .sum::<u64>()
+        + [
+            &log.model,
+            &log.mapped_model,
+            &log.account_email,
+            &log.client_ip,
+            &log.error,
+            &log.protocol,
+            &log.username,
+        ]
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .map(|s| s.len() as u64)
+        .sum::<u64>()
+        + 1024;
+    let body_bytes = [&log.request_body, &log.response_body]
+        .iter()
+        .filter_map(|s| s.as_ref())
+        .map(|s| s.len() as u64)
+        .sum::<u64>();
+    let mut log_bytes = summary_bytes.saturating_add(body_bytes);
+    if log_bytes.saturating_mul(3).saturating_add(64 * 1024) > budget / 5 * 4 {
+        log.request_body = None;
+        log.response_body = None;
+        log_bytes = summary_bytes;
+    }
+    if log_bytes.saturating_mul(3).saturating_add(64 * 1024) > budget {
+        return Err("proxy log summary exceeds disk budget".to_string());
+    }
+    make_room(conn, budget, log_bytes)?;
 
     conn.execute(
         "INSERT INTO request_logs (id, timestamp, method, url, status, duration, model, error, request_body, response_body, input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username)
@@ -171,7 +313,7 @@ pub fn get_logs_summary(limit: usize, offset: usize) -> Result<Vec<ProxyRequestL
 
     let mut stmt = conn
         .prepare(
-            "SELECT id, timestamp, method, url, status, duration, model, error,
+            "SELECT id, timestamp, method, url, status, duration, model, substr(error, 1, 1024),
                 NULL as request_body, NULL as response_body,
                 input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username
          FROM request_logs 
@@ -287,6 +429,120 @@ mod retention_tests {
     use rusqlite::Connection;
 
     #[test]
+    fn prompt_log_disk_budget_cleanup_and_live_config_reload() {
+        use super::*;
+        use crate::proxy::monitor::prompt_log_tests::{sample_log, TestDataDir};
+        let _dir = TestDataDir::new();
+        init_db().unwrap();
+        let mut config = crate::modules::config::load_app_config().unwrap();
+        assert_eq!(
+            serde_json::from_str::<LogRetentionConfig>("{}")
+                .unwrap()
+                .max_disk_mb,
+            1024
+        );
+        config.proxy.log_retention.max_disk_mb = 8;
+        crate::modules::config::save_app_config(&config).unwrap();
+        save_log(sample_log("old", 300_000)).unwrap();
+        let conn = connect_db().unwrap();
+        reclaim_space(&conn).unwrap();
+        assert!(disk_bytes(&conn).unwrap() > 1024 * 1024);
+        config.proxy.log_retention.max_disk_mb = 1;
+        crate::modules::config::save_app_config(&config).unwrap();
+        save_log(sample_log("new", 4096)).unwrap();
+        assert!(get_log_detail("old").unwrap().response_body.is_none());
+        assert_eq!(
+            get_log_detail("new").unwrap().response_body,
+            Some("错".repeat(4096))
+        );
+        assert!(disk_bytes(&conn).unwrap() <= 1024 * 1024);
+        save_log(sample_log("oversize", 400_000)).unwrap();
+        assert!(get_log_detail("oversize").unwrap().response_body.is_none());
+        config.proxy.log_retention.max_disk_mb = 0;
+        crate::modules::config::save_app_config(&config).unwrap();
+        assert!(save_log(sample_log("no-room", 100)).is_err());
+        assert!(get_log_detail("no-room").is_err());
+    }
+
+    #[test]
+    fn prompt_log_legacy_headroom_rejection_preserves_history_on_retries() {
+        use super::*;
+        use crate::proxy::monitor::prompt_log_tests::TestDataDir;
+        let _dir = TestDataDir::new();
+        let conn = Connection::open(get_proxy_db_path().unwrap()).unwrap();
+        conn.execute_batch("CREATE TABLE request_logs (id TEXT PRIMARY KEY, timestamp INTEGER, method TEXT, url TEXT, status INTEGER, duration INTEGER, model TEXT, error TEXT)").unwrap();
+        init_db().unwrap();
+        assert_eq!(
+            conn.pragma_query_value::<i64, _>(None, "auto_vacuum", |r| r.get(0))
+                .unwrap(),
+            0
+        );
+        conn.execute_batch(
+            "WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM n WHERE i < 128)
+             INSERT INTO request_logs (id, timestamp, response_body)
+             SELECT CAST(i AS TEXT), i, zeroblob(8192) FROM n;",
+        )
+        .unwrap();
+        reclaim_space(&conn).unwrap();
+        let before = disk_bytes(&conn).unwrap();
+        let budget = 2 * 1024 * 1024;
+        let log_bytes = 500_000;
+        assert!(before < budget);
+        assert!(before + 2 * log_bytes + 64 * 1024 > budget);
+        assert!(3 * log_bytes + 64 * 1024 <= budget / 5 * 4);
+
+        for _ in 0..6 {
+            assert!(make_room(&conn, budget, log_bytes).is_err());
+            let counts: (i64, i64) = conn
+                .query_row(
+                    "SELECT COUNT(*), COUNT(response_body) FROM request_logs",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(counts, (128, 128));
+            assert_eq!(disk_bytes(&conn).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn prompt_log_reclaims_free_pages_before_deleting_summaries() {
+        use super::*;
+        use crate::proxy::monitor::prompt_log_tests::{sample_log, TestDataDir};
+        let _dir = TestDataDir::new();
+        init_db().unwrap();
+        let conn = connect_db().unwrap();
+        conn.execute_batch(
+            "INSERT INTO request_logs (id, timestamp, response_body) VALUES
+             ('old-1', 1, zeroblob(2097152)), ('old-2', 2, zeroblob(2097152)),
+             ('old-3', 3, zeroblob(2097152));",
+        )
+        .unwrap();
+        reclaim_space(&conn).unwrap();
+        assert!(disk_bytes(&conn).unwrap() > 6 * 1024 * 1024);
+        let policy = LogRetentionConfig {
+            max_disk_mb: 1,
+            ..LogRetentionConfig::default()
+        };
+
+        save_log_with_connection(&conn, sample_log("new", 100), &policy).unwrap();
+
+        let counts: (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), COUNT(response_body) FROM request_logs WHERE id != 'new'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (3, 0));
+        assert_eq!(
+            get_log_detail("new").unwrap().response_body,
+            Some("错".repeat(100))
+        );
+        assert!(disk_bytes(&conn).unwrap() <= 1024 * 1024);
+    }
+
+    #[test]
     fn clears_old_bodies_and_limits_rows() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE request_logs (id TEXT PRIMARY KEY, timestamp INTEGER, request_body TEXT, response_body TEXT)").unwrap();
@@ -315,6 +571,7 @@ mod retention_tests {
             max_body_age_hours: 24,
             max_age_days: 30,
             max_rows: 2,
+            ..LogRetentionConfig::default()
         };
         let (cleared, deleted) = apply_retention_with_connection(&conn, &policy).unwrap();
         assert_eq!(cleared, 1);
@@ -443,7 +700,7 @@ pub fn get_logs_filtered(
     let filter_pattern = format!("%{}%", filter);
 
     let sql = if errors_only {
-        "SELECT id, timestamp, method, url, status, duration, model, error,
+        "SELECT id, timestamp, method, url, status, duration, model, substr(error, 1, 1024),
                 NULL as request_body, NULL as response_body,
                 input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username
          FROM request_logs
@@ -451,14 +708,14 @@ pub fn get_logs_filtered(
          ORDER BY timestamp DESC
          LIMIT ?1 OFFSET ?2"
     } else if filter.is_empty() {
-        "SELECT id, timestamp, method, url, status, duration, model, error,
+        "SELECT id, timestamp, method, url, status, duration, model, substr(error, 1, 1024),
                 NULL as request_body, NULL as response_body,
                 input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username
          FROM request_logs
          ORDER BY timestamp DESC
          LIMIT ?1 OFFSET ?2"
     } else {
-        "SELECT id, timestamp, method, url, status, duration, model, error,
+        "SELECT id, timestamp, method, url, status, duration, model, substr(error, 1, 1024),
                 NULL as request_body, NULL as response_body,
                 input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username
          FROM request_logs

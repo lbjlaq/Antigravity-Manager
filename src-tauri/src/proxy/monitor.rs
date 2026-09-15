@@ -1,8 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::Emitter;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
+
+// Admission happens before spawn_blocking, so queued tasks cannot retain unlimited bodies.
+static LOG_WRITERS: Semaphore = Semaphore::const_new(4);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyRequestLog {
@@ -26,6 +30,104 @@ pub struct ProxyRequestLog {
     pub username: Option<String>, // User token username
 }
 
+#[cfg(test)]
+pub(crate) mod prompt_log_tests {
+    use super::*;
+
+    pub(crate) fn sample_log(id: &str, bytes: usize) -> ProxyRequestLog {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "timestamp": chrono::Utc::now().timestamp_millis(),
+            "method": "POST", "url": "/v1/chat/completions", "status": 500, "duration": 10,
+            "request_body": "q".repeat(bytes), "response_body": "错".repeat(bytes),
+            "error": "错".repeat(2048)
+        }))
+        .unwrap()
+    }
+
+    // Tests using ABV_DATA_DIR run serially and restore the previous process setting.
+    pub(crate) struct TestDataDir {
+        _dir: tempfile::TempDir,
+        previous: Option<std::ffi::OsString>,
+    }
+    impl TestDataDir {
+        pub(crate) fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let previous = std::env::var_os("ABV_DATA_DIR");
+            std::env::set_var("ABV_DATA_DIR", dir.path());
+            Self {
+                _dir: dir,
+                previous,
+            }
+        }
+    }
+    impl Drop for TestDataDir {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var("ABV_DATA_DIR", previous);
+            } else {
+                std::env::remove_var("ABV_DATA_DIR");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn prompt_log_memory_summary_and_database_detail() {
+        let _dir = TestDataDir::new();
+        crate::modules::proxy_db::init_db().unwrap();
+        let monitor = ProxyMonitor {
+            logs: RwLock::new(VecDeque::new()),
+            stats: RwLock::new(ProxyStats::default()),
+            max_logs: 2,
+            enabled: Arc::new(AtomicBool::new(true)),
+            app_handle: None,
+        };
+        let log = sample_log("detail", 4096);
+        let response = log.response_body.clone();
+        monitor.log_request(log).await;
+        let _finished = LOG_WRITERS.acquire_many(4).await.unwrap();
+        let logs = monitor.logs.read().await;
+        assert!(logs[0].request_body.is_none() && logs[0].response_body.is_none());
+        assert_eq!(logs[0].error.as_ref().unwrap().chars().count(), 1024);
+        let detail = crate::modules::proxy_db::get_log_detail("detail").unwrap();
+        assert_eq!(detail.response_body, response);
+        assert_eq!(
+            detail.request_body.as_deref(),
+            Some("q".repeat(4096).as_str())
+        );
+        monitor.set_enabled(false);
+        monitor.log_request(sample_log("disabled", 4096)).await;
+        assert!(crate::modules::proxy_db::get_log_detail("disabled").is_err());
+    }
+}
+
+impl ProxyRequestLog {
+    pub(crate) fn summary(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            timestamp: self.timestamp,
+            method: self.method.clone(),
+            url: self.url.clone(),
+            status: self.status,
+            duration: self.duration,
+            model: self.model.clone(),
+            mapped_model: self.mapped_model.clone(),
+            account_email: self.account_email.clone(),
+            client_ip: self.client_ip.clone(),
+            error: self
+                .error
+                .as_ref()
+                .map(|error| error.chars().take(1024).collect()),
+            request_body: None,
+            response_body: None,
+            input_tokens: self.input_tokens,
+            output_tokens: self.output_tokens,
+            cached_tokens: self.cached_tokens,
+            protocol: self.protocol.clone(),
+            username: self.username.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProxyStats {
     pub total_requests: u64,
@@ -37,7 +139,7 @@ pub struct ProxyMonitor {
     pub logs: RwLock<VecDeque<ProxyRequestLog>>,
     pub stats: RwLock<ProxyStats>,
     pub max_logs: usize,
-    pub enabled: AtomicBool,
+    pub enabled: Arc<AtomicBool>,
     app_handle: Option<tauri::AppHandle>,
 }
 
@@ -98,7 +200,7 @@ impl ProxyMonitor {
             logs: RwLock::new(VecDeque::with_capacity(max_logs)),
             stats: RwLock::new(ProxyStats::default()),
             max_logs,
-            enabled: AtomicBool::new(false), // Default to disabled
+            enabled: Arc::new(AtomicBool::new(false)), // Default to disabled
             app_handle,
         }
     }
@@ -142,37 +244,50 @@ impl ProxyMonitor {
             }
         }
 
-        // Add log to memory
+        let summary = log.summary();
+        // Add only the same summary used by the frontend to memory.
         {
             let mut logs = self.logs.write().await;
             if logs.len() >= self.max_logs {
                 logs.pop_back();
             }
-            logs.push_front(log.clone());
+            logs.push_front(summary.clone());
         }
 
+        if let Some(app) = &self.app_handle {
+            let _ = app.emit("proxy://request", &summary);
+        }
+
+        let Ok(permit) = LOG_WRITERS.try_acquire() else {
+            tracing::debug!("Skipping proxy log persistence: writers busy");
+            return;
+        };
         // Save to DB
-        let log_to_save = log.clone();
+        let enabled = Arc::clone(&self.enabled);
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = crate::modules::proxy_db::save_log(&log_to_save) {
+            let _permit = permit;
+            if !enabled.load(Ordering::Relaxed) {
+                return;
+            }
+            if let Err(e) = crate::modules::proxy_db::save_log(log) {
                 tracing::error!("Failed to save proxy log to DB: {}", e);
             }
 
             // Sync to Security DB (IpAccessLogs) so it appears in Security Monitor
-            if let Some(ip) = &log_to_save.client_ip {
+            if let Some(ip) = &summary.client_ip {
                 let security_log = crate::modules::security_db::IpAccessLog {
                     id: uuid::Uuid::new_v4().to_string(),
                     client_ip: ip.clone(),
-                    timestamp: log_to_save.timestamp / 1000, // ms to s
-                    method: Some(log_to_save.method.clone()),
-                    path: Some(log_to_save.url.clone()),
+                    timestamp: summary.timestamp / 1000, // ms to s
+                    method: Some(summary.method.clone()),
+                    path: Some(summary.url.clone()),
                     user_agent: None, // We don't have UA in ProxyRequestLog easily accessible here without plumbing
-                    status: Some(log_to_save.status as i32),
-                    duration: Some(log_to_save.duration as i64),
+                    status: Some(summary.status as i32),
+                    duration: Some(summary.duration as i64),
                     api_key_hash: None,
                     blocked: false, // This comes from monitor, so it wasn't blocked by IP filter
                     block_reason: None,
-                    username: log_to_save.username.clone(),
+                    username: summary.username.clone(),
                 };
 
                 if let Err(e) = crate::modules::security_db::save_ip_access_log(&security_log) {
@@ -180,31 +295,6 @@ impl ProxyMonitor {
                 }
             }
         });
-
-        // Emit event (send summary only, without body to reduce memory)
-        if let Some(app) = &self.app_handle {
-            let log_summary = ProxyRequestLog {
-                id: log.id.clone(),
-                timestamp: log.timestamp,
-                method: log.method.clone(),
-                url: log.url.clone(),
-                status: log.status,
-                duration: log.duration,
-                model: log.model.clone(),
-                mapped_model: log.mapped_model.clone(),
-                account_email: log.account_email.clone(),
-                client_ip: log.client_ip.clone(),
-                error: log.error.clone(),
-                request_body: None,  // Don't send body in event
-                response_body: None, // Don't send body in event
-                input_tokens: log.input_tokens,
-                output_tokens: log.output_tokens,
-                cached_tokens: log.cached_tokens,
-                protocol: log.protocol.clone(),
-                username: log.username.clone(),
-            };
-            let _ = app.emit("proxy://request", &log_summary);
-        }
     }
 
     pub async fn get_logs(&self, limit: usize) -> Vec<ProxyRequestLog> {
