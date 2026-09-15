@@ -393,6 +393,10 @@ pub fn transform_openai_request_with_session(
     system_instructions = system_instructions
         .into_iter()
         .map(|s| {
+            let s = s.replace(
+                "You are Codex, an agent based on GPT-5.",
+                "You are Codex, an agent.",
+            );
             let raw_key = crate::proxy::cache_manager::CacheManager::compute_si_key(&s);
             if let Some(cached) = cm.lookup_si(&raw_key) {
                 si_layer_stats.0 += 1;
@@ -1524,6 +1528,30 @@ mod tests {
     use super::*;
     use crate::proxy::mappers::openai::models::*;
 
+    #[test]
+    fn prompt_log_identity_cleanup_only_changes_system_instructions() {
+        let old = "You are Codex, an agent based on GPT-5.";
+        let req: OpenAIRequest = serde_json::from_value(json!({
+            "model": "gemini-3.7-flash-high",
+            "instructions": format!("Top-level: {old}"),
+            "messages": [
+                {"role": "system", "content": format!("System: {old}")},
+                {"role": "developer", "content": format!("<model_switch>{old}</model_switch>")},
+                {"role": "user", "content": old},
+                {"role": "assistant", "tool_calls": [{"id": "call_identity", "type": "function", "function": {"name": "identity", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "call_identity", "content": old}
+            ]
+        }))
+        .unwrap();
+        let (body, _, _, _) = transform_openai_request(&req, "test-project", &req.model, None);
+        let system = body["request"]["systemInstruction"].to_string();
+        assert!(!system.contains(old));
+        assert!(system.contains("Top-level: You are Codex, an agent."));
+        assert!(system.contains("System: You are Codex, an agent."));
+        assert!(system.contains("<model_switch>You are Codex, an agent.</model_switch>"));
+        let contents = body["request"]["contents"].to_string();
+        assert_eq!(contents.matches(old).count(), 2);
+    }
     fn tiered_request_body(model: &str, effort: Option<&str>) -> Value {
         let mut raw = json!({
             "model": model,
@@ -2424,4 +2452,3 @@ mod tests {
         assert!(res_val.get("requestType").is_none(), "Plain text request should not have requestType: 'agent'");
     }
 }
-
