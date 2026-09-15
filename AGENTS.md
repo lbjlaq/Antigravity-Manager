@@ -58,3 +58,17 @@
 
 - **就地感知与发现即修**：在阅读、修改或验证代码时，若发现既有行内注释、接口定义或文档（如 [README.md](README.md)、[docs/](docs/) 下的相关技术手册）与最新实现存在偏差，顺手就地同步更新。
 - **零破坏原则**：修改模型映射、路由调度或构建脚本时，保持既有平台兼容性，严禁破坏CI流水线（`.github/workflows/release.yml`）与既有打包逻辑。
+
+---
+
+## 6. 自研定制资产绝对保留与上游安全同步准则 (Custom Asset Preservation Mandate)
+
+- **核心原则**：除非官方发布底层断代式重大重构且事先获得明确确认，否则在任何日常维护、功能扩展或上游同步中，**绝对禁止覆盖或回退用户的任何历史自研修改**。
+- **神圣保留的自研核心清单**：
+  1. **前端监控与统计看板**：[src/pages/Dashboard.tsx](src/pages/Dashboard.tsx)（倒计时、今日使用汇总）与 [src/pages/TokenStats.tsx](src/pages/TokenStats.tsx)（多维度趋势图表）；
+  2. **配额关注系统**：[src/config/modelConfig.ts](src/config/modelConfig.ts) 中的虚拟配额组（`gemini-5h`、`gemini-weekly`、`3p-5h`、`3p-weekly`）及 [src/components/accounts/AccountCard.tsx](src/components/accounts/AccountCard.tsx) 中的动态注入提取逻辑，严禁引入强制劫持显示单一模型的代码；
+  3. **纯净导航体验**：[src/components/navbar/Navbar.tsx](src/components/navbar/Navbar.tsx) 严禁强塞商业推广路由（如 `/apikey-fun` 中转站）；
+  4. **自研错峰与保护调度**：相控阵错峰调度系统（[PhaseScheduler.tsx](src/components/settings/PhaseScheduler.tsx)）及反重力IDE活跃主号智能探测与API保底避让机制；
+  5. **模型映射与协议修复**：`src-tauri/src/proxy/common/model_mapping.rs` 中全套自研的Gemini 3.8/3.7/3.6 Flash细粒度映射与流式终端状态修复。
+- **增量合入规范**：同步上游主线时，必须始终以当前自研分支为主干基准，采取防御性单点补丁与三方合并方式合入后端底层修复，严禁使用 `git reset --hard` 或全量覆写前端目录。
+
