@@ -872,21 +872,11 @@ pub async fn get_data_dir_path() -> Result<String, String> {
 pub async fn set_data_dir(
     path: String,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
-    cf_state: tauri::State<'_, crate::commands::cloudflared::CloudflaredState>,
 ) -> Result<String, String> {
     {
         let instance = proxy_state.instance.read().await;
         if instance.is_some() {
             return Err("请先停止 API 反代服务，再迁移数据目录".to_string());
-        }
-    }
-    {
-        let lock = cf_state.manager.read().await;
-        if let Some(manager) = lock.as_ref() {
-            let status = manager.get_status().await;
-            if status.running {
-                return Err("请先停止 Cloudflared 隧道，再迁移数据目录".to_string());
-            }
         }
     }
 
@@ -895,11 +885,6 @@ pub async fn set_data_dir(
     })
     .await
     .map_err(|e| format!("迁移任务失败: {}", e))??;
-
-    {
-        let mut lock = cf_state.manager.write().await;
-        *lock = None;
-    }
 
     Ok(modules::account::format_data_dir_path(&new_path))
 }

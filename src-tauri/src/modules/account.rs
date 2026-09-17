@@ -630,7 +630,65 @@ fn location_pointer_path() -> Result<PathBuf, String> {
     Ok(home.join(LOCATION_POINTER_FILE))
 }
 
+/// 获取便携模式数据目录（优先存放在 exe 所在目录下的 data 文件夹中）
+pub fn get_portable_data_dir() -> Option<PathBuf> {
+    let exe_path = std::env::current_exe().ok()?;
+    let exe_dir = exe_path.parent()?;
+
+    // 排除系统受限目录（防止无管理员权限写入 Program Files 等导致崩溃）
+    #[cfg(windows)]
+    {
+        let exe_str = exe_dir.to_string_lossy().to_lowercase();
+        let is_system_dir = exe_str.contains("program files")
+            || exe_str.contains("system32")
+            || exe_str.contains(r"windows\system");
+        let has_explicit_portable = exe_dir.join("data").is_dir()
+            || exe_dir.join(".portable").exists()
+            || exe_dir.join("gui_config.json").exists();
+        if is_system_dir && !has_explicit_portable {
+            return None;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let exe_str = exe_dir.to_string_lossy();
+        let is_app_bundle = exe_str.contains(".app/Contents");
+        let has_explicit_portable = exe_dir.join("data").is_dir()
+            || exe_dir.join(".portable").exists()
+            || exe_dir.join("gui_config.json").exists();
+        if is_app_bundle && !has_explicit_portable {
+            return None;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let exe_str = exe_dir.to_string_lossy();
+        let is_system_dir = exe_str.starts_with("/usr")
+            || exe_str.starts_with("/bin")
+            || exe_str.starts_with("/opt");
+        let has_explicit_portable = exe_dir.join("data").is_dir()
+            || exe_dir.join(".portable").exists()
+            || exe_dir.join("gui_config.json").exists();
+        if is_system_dir && !has_explicit_portable {
+            return None;
+        }
+    }
+
+    // 若 exe 同级目录已直接存在配置文件，则直接使用 exe 所在目录
+    if exe_dir.join("gui_config.json").exists() && !exe_dir.join("data").is_dir() {
+        return Some(normalize_data_dir_path(exe_dir));
+    }
+
+    let portable_data = exe_dir.join("data");
+    Some(normalize_data_dir_path(portable_data))
+}
+
 fn default_data_dir() -> Result<PathBuf, String> {
+    if let Some(portable_dir) = get_portable_data_dir() {
+        return Ok(portable_dir);
+    }
     let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
     Ok(home.join(DATA_DIR))
 }
@@ -823,7 +881,29 @@ pub fn get_data_dir() -> Result<PathBuf, String> {
         }
     }
 
-    // 3. Pointer file outside the data dir so deleting the old folder still finds the new path
+    // 3. 便携模式：优先使用 exe 所在目录下的 data 目录
+    if let Some(portable_dir) = get_portable_data_dir() {
+        // 如果便携目录尚不存在，但旧用户主目录存在数据，自动无缝导入旧配置与账号
+        if !portable_dir.exists() {
+            if let Some(home) = dirs::home_dir() {
+                let old_home_dir = home.join(DATA_DIR);
+                if old_home_dir.exists()
+                    && (old_home_dir.join("gui_config.json").exists()
+                        || old_home_dir.join("accounts.json").exists())
+                {
+                    tracing::info!(
+                        "[Portable] 检测到旧数据目录，正在自动导入至便携目录: {:?}",
+                        portable_dir
+                    );
+                    let _ = copy_dir_recursive(&old_home_dir, &portable_dir);
+                }
+            }
+        }
+        ensure_dir(&portable_dir)?;
+        return Ok(portable_dir);
+    }
+
+    // 4. Pointer file outside the data dir so deleting the old folder still finds the new path
     if let Some(path) = read_location_pointer() {
         ensure_dir(&path)?;
         if let Ok(mut guard) = data_dir_override_slot().write() {
@@ -832,7 +912,7 @@ pub fn get_data_dir() -> Result<PathBuf, String> {
         return Ok(path);
     }
 
-    // 4. Default ~/.antigravity_tools
+    // 5. Default ~/.antigravity_tools
     let data_dir = default_data_dir()?;
     ensure_dir(&data_dir)?;
     Ok(data_dir)

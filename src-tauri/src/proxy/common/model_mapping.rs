@@ -37,12 +37,18 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-opus-4-5-thinking", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4-5-20251101", "claude-opus-4-6-thinking");
 
-    // Claude Opus 4.6
+    // Claude Opus 4.6 / 5.x
     m.insert("claude-opus-4-6-thinking", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4-6", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4.6-thinking", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4.6", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4-6-20260201", "claude-opus-4-6-thinking");
+    m.insert("claude-opus-5", "claude-opus-4-6-thinking");
+    m.insert("claude-opus-5-thinking", "claude-opus-4-6-thinking");
+    m.insert("claude-opus-5-20260201", "claude-opus-4-6-thinking");
+    m.insert("claude-5-opus", "claude-opus-4-6-thinking");
+    m.insert("claude-3-opus", "claude-opus-4-6-thinking");
+    m.insert("claude-3-opus-20240229", "claude-opus-4-6-thinking");
 
     m.insert("claude-haiku-4", "claude-sonnet-4-6");
     m.insert("claude-3-haiku-20240307", "claude-sonnet-4-6");
@@ -137,9 +143,24 @@ pub fn map_claude_model_to_gemini(input: &str) -> String {
         return input.to_string();
     }
 
-    // 3. [ENHANCED] 直接透传未知模型 ID,而不是强制 fallback
-    // 这允许用户通过自定义映射体验未发布的模型 (如 claude-opus-4-6)
-    // Google API 会自动处理无效模型并返回错误,用户可以根据错误调整映射
+    let lower = input.to_lowercase();
+
+    // 3. Opus 系列智能兜底映射到当前最高可用的 Opus 思考模型
+    if lower.contains("opus") {
+        return "claude-opus-4-6-thinking".to_string();
+    }
+
+    // 4. Sonnet 系列智能兜底映射到当前最高可用的 Sonnet 模型
+    if lower.contains("sonnet") {
+        return "claude-sonnet-4-6".to_string();
+    }
+
+    // 5. Haiku 系列智能兜底映射
+    if lower.contains("haiku") {
+        return "claude-sonnet-4-6".to_string();
+    }
+
+    // 6. 直接透传未知模型 ID (允许用户体验未发布的特殊模型)
     input.to_string()
 }
 
@@ -388,6 +409,10 @@ mod tests {
         );
         assert_eq!(
             map_claude_model_to_gemini("claude-opus-4"),
+            "claude-opus-4-6-thinking"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("claude-opus-5"),
             "claude-opus-4-6-thinking"
         );
         // Test gemini pass-through (should not be caught by "mini" rule)

@@ -94,10 +94,6 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                         tracing::info!("[Tray] 退出网关触发，开始全面清理服务与端口...");
 
                         let state = app_handle.state::<crate::commands::proxy::ProxyServiceState>();
-                        let cf_state = app_handle.state::<crate::commands::cloudflared::CloudflaredState>();
-
-                        // 1. 终止 cloudflared 隧道子进程
-                        let _ = tokio::time::timeout(std::time::Duration::from_millis(500), cf_state.stop()).await;
 
                         // 2. 停止 Admin Server（关闭 TCP 监听器和所有活动连接）
                         if let Ok(mut lock) = tokio::time::timeout(std::time::Duration::from_millis(1000), state.admin_server.write()).await {
