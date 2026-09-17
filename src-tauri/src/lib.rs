@@ -229,15 +229,13 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Disable Windows background throttling/EcoQoS
     #[cfg(target_os = "windows")]
     windows_api::disable_efficiency_mode();
 
-    // Check for headless mode
-    let args: Vec<String> = std::env::args().collect();
-    let is_headless = args.iter().any(|arg| arg == "--headless");
+    // 默认作为独立 Web 服务端 (Headless 模式) 运行
+    let is_headless = true;
 
     // Increase file descriptor limit (macOS only)
     #[cfg(target_os = "macos")]
@@ -285,7 +283,6 @@ pub fn run() {
             // Let's check `modules::logger`.
 
             let proxy_state = commands::proxy::ProxyServiceState::new();
-            let cf_state = Arc::new(commands::cloudflared::CloudflaredState::new());
 
             // Load config
             match modules::config::load_app_config() {
@@ -366,14 +363,13 @@ pub fn run() {
                     info!("--------------------------------------------------");
                     info!("🚀 Headless mode proxy service starting...");
                     info!("📍 Port: {}", config.proxy.port);
-                    info!("🔑 Current API Key: {}", credential_state(&config.proxy.api_key));
+                    info!("🔑 Current API Key: {}", config.proxy.api_key);
                     if let Some(ref pwd) = config.proxy.admin_password {
-                        info!("🔐 Web UI Password: {}", credential_state(pwd));
+                        info!("🔐 Web UI Password: {}", pwd);
                     } else {
-                        info!("🔐 Web UI Password: (Same as API Key)");
+                        info!("🔐 Web UI Password: {}", config.proxy.api_key);
                     }
                     info!("💡 Tips: You can use these keys to login to Web UI and access AI APIs.");
-                    info!("💡 Search docker logs or grep gui_config.json to find them.");
                     info!("--------------------------------------------------");
 
                     // [FIX #1460] Persist environment overrides to ensure they are visible in Web UI/load_config
@@ -390,7 +386,6 @@ pub fn run() {
                         config.proxy,
                         &proxy_state,
                         crate::modules::integration::SystemManager::Headless,
-                        cf_state.clone(),
                     ).await {
                         error!("Failed to start proxy service in headless mode: {}", e);
                         std::process::exit(1);
@@ -421,10 +416,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--minimized"]),
-        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(
@@ -445,7 +436,6 @@ pub fn run() {
             });
         }))
         .manage(commands::proxy::ProxyServiceState::new())
-        .manage(commands::cloudflared::CloudflaredState::new())
         .manage(AppRuntimeFlags { tray_enabled })
         .setup(|app| {
             info!("Setup starting...");
@@ -491,7 +481,6 @@ pub fn run() {
                 // Load config
                 if let Ok(config) = modules::config::load_app_config() {
                     let state = handle.state::<commands::proxy::ProxyServiceState>();
-                    let cf_state = handle.state::<commands::cloudflared::CloudflaredState>();
                     let integration =
                         crate::modules::integration::SystemManager::Desktop(handle.clone());
 
@@ -500,7 +489,6 @@ pub fn run() {
                         config.proxy.clone(),
                         &state,
                         integration.clone(),
-                        Arc::new(cf_state.inner().clone()),
                     )
                     .await
                     {
@@ -518,7 +506,6 @@ pub fn run() {
                             config.proxy,
                             &state,
                             integration,
-                            Arc::new(cf_state.inner().clone()),
                         )
                         .await
                         {
@@ -664,9 +651,6 @@ pub fn run() {
             commands::proxy_pool::unbind_account_proxy,
             commands::proxy_pool::get_account_proxy_binding,
             commands::proxy_pool::get_all_account_bindings,
-            // Autostart commands
-            commands::autostart::toggle_auto_launch,
-            commands::autostart::is_auto_launch_enabled,
             // Warmup commands
             commands::warm_up_all_accounts,
             commands::warm_up_account,
@@ -692,7 +676,6 @@ pub fn run() {
             proxy::opencode_sync::get_opencode_sync_status,
             proxy::opencode_sync::get_canonical_families,
             proxy::opencode_sync::execute_opencode_sync,
-            proxy::opencode_sync::execute_opencode_openai_sync,
             proxy::opencode_sync::execute_opencode_restore,
             proxy::opencode_sync::get_opencode_config_content,
             proxy::opencode_sync::execute_opencode_clear,
@@ -717,12 +700,6 @@ pub fn run() {
             commands::security::check_ip_in_whitelist,
             commands::security::get_security_config,
             commands::security::update_security_config,
-            // Cloudflared commands
-            commands::cloudflared::cloudflared_check,
-            commands::cloudflared::cloudflared_install,
-            commands::cloudflared::cloudflared_start,
-            commands::cloudflared::cloudflared_stop,
-            commands::cloudflared::cloudflared_get_status,
             // Debug console commands
             modules::log_bridge::enable_debug_console,
             modules::log_bridge::disable_debug_console,

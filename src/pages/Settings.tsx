@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send } from 'lucide-react';
 import { request as invoke } from '../utils/request';
-import { open } from '@tauri-apps/plugin-dialog';
 import { useConfigStore } from '../stores/useConfigStore';
 import { AppConfig } from '../types/config';
 import ModalDialog from '../components/common/ModalDialog';
@@ -12,9 +11,6 @@ import PinnedQuotaModels from '../components/settings/PinnedQuotaModels';
 import { useDebugConsole } from '../stores/useDebugConsole';
 
 import { useTranslation } from 'react-i18next';
-import { isTauri } from '../utils/env';
-import { relaunch } from '@tauri-apps/plugin-process';
-
 import DebugConsole from '../components/debug/DebugConsole';
 import ProxyPoolSettings from '../components/settings/ProxyPoolSettings';
 
@@ -24,7 +20,7 @@ function Settings() {
     const { config, loadConfig, saveConfig, updateLanguage, updateTheme } = useConfigStore();
     const { enable, disable, isEnabled } = useDebugConsole();
     const [activeTab, setActiveTab] = useState<'general' | 'account' | 'proxy' | 'advanced' | 'debug' | 'about'>('general');
-    const [appVersion, setAppVersion] = useState<string>('4.7.1');
+    const [appVersion] = useState<string>('4.7.1');
     const [formData, setFormData] = useState<AppConfig>({
         language: 'zh',
         theme: 'system',
@@ -68,12 +64,6 @@ function Settings() {
         pinned_quota_models: {
             models: ['gemini-pro-agent', 'gemini-3-flash-agent', 'gemini-3.1-flash-image', 'claude-opus-4-6-thinking']
         },
-        cloudflared: {
-            enabled: false,
-            mode: 'quick',
-            port: 7860,
-            use_http2: true
-        },
         circuit_breaker: {
             enabled: false,
             backoff_steps: [30, 60, 120, 300, 600]
@@ -104,7 +94,7 @@ function Settings() {
     } | null>(null);
 
     // Homebrew Cask state
-    const [isBrewInstalled, setIsBrewInstalled] = useState(false);
+    const [isBrewInstalled] = useState(false);
     const [isBrewUpgrading, setIsBrewUpgrading] = useState(false);
     const [isBrewConfirmOpen, setIsBrewConfirmOpen] = useState(false);
     const [isBrewSuccessOpen, setIsBrewSuccessOpen] = useState(false);
@@ -117,39 +107,6 @@ function Settings() {
         invoke<string>('get_data_dir_path')
             .then(path => setDataDirPath(path))
             .catch(err => console.error('Failed to get data dir:', err));
-
-        // 加载更新设置
-        invoke<{ auto_check: boolean; last_check_time: number; check_interval_hours: number }>('get_update_settings')
-            .then(settings => {
-                setFormData(prev => ({
-                    ...prev,
-                    auto_check_update: settings.auto_check,
-                    update_check_interval: settings.check_interval_hours
-                }));
-            })
-            .catch(err => console.error('Failed to load update settings:', err));
-
-        // 获取真实的开机自启状态
-        invoke<boolean>('is_auto_launch_enabled')
-            .then(enabled => {
-                setFormData(prev => ({ ...prev, auto_launch: enabled }));
-            })
-            .catch(err => console.error('Failed to get auto launch status:', err));
-
-        // 获取应用真实版本号
-        if (isTauri()) {
-            import('@tauri-apps/api/app').then(({ getVersion }) => {
-                getVersion().then(v => setAppVersion(v)).catch(() => {});
-            });
-        }
-
-        // 检测是否通过 Homebrew Cask 安装 (仅 Tauri 环境)
-        if (isTauri()) {
-            invoke<boolean>('check_homebrew_installation')
-                .then(installed => setIsBrewInstalled(installed))
-                .catch(err => console.error('Failed to check Homebrew installation:', err));
-        }
-
     }, [loadConfig]);
 
     useEffect(() => {
@@ -200,97 +157,11 @@ function Settings() {
         }
     };
 
-    const handleSelectExportPath = async () => {
-        try {
-            // @ts-ignore
-            const selected = await open({
-                directory: true,
-                multiple: false,
-                title: t('settings.advanced.export_path'),
-            });
-            if (selected && typeof selected === 'string') {
-                setFormData({ ...formData, default_export_path: selected });
-            }
-        } catch (error) {
-            showToast(`${t('common.error')}: ${error}`, 'error');
-        }
-    };
-
-    const handleSelectAntigravityPath = async () => {
-        try {
-            const selected = await open({
-                directory: false,
-                multiple: false,
-                title: t('settings.advanced.antigravity_path_select'),
-            });
-            if (selected && typeof selected === 'string') {
-                setFormData({ ...formData, antigravity_executable: selected });
-            }
-        } catch (error) {
-            showToast(`${t('common.error')}: ${error}`, 'error');
-        }
-    };
-
-    const handleSelectAntigravityIdePath = async () => {
-        try {
-            const selected = await open({
-                directory: false,
-                multiple: false,
-                title: t('settings.advanced.antigravity_ide_path_select', 'Select Antigravity IDE Executable'),
-            });
-            if (selected && typeof selected === 'string') {
-                setFormData({ ...formData, antigravity_ide_executable: selected });
-            }
-        } catch (error) {
-            showToast(`${t('common.error')}: ${error}`, 'error');
-        }
-    };
-
-    const handleSelectDebugLogDir = async () => {
-        try {
-            const selected = await open({
-                directory: true,
-                multiple: false,
-                title: t('settings.advanced.debug_log_dir_select'),
-            });
-            if (selected && typeof selected === 'string') {
-                setFormData({
-                    ...formData,
-                    proxy: {
-                        ...formData.proxy,
-                        debug_logging: {
-                            enabled: formData.proxy?.debug_logging?.enabled ?? false,
-                            output_dir: selected,
-                        },
-                    },
-                });
-            }
-        } catch (error) {
-            showToast(`${t('common.error')}: ${error}`, 'error');
-        }
-    };
-
     const handleDetectAntigravityPath = async () => {
         try {
-            const command = isTauri() ? 'get_antigravity_path' : 'get_antigravity_path'; // 后端已统一
-            const path = await invoke<string>(command, { bypassConfig: true });
+            const path = await invoke<string>('get_antigravity_path', { bypassConfig: true });
             setFormData({ ...formData, antigravity_executable: path });
             showToast(t('settings.advanced.antigravity_path_detected'), 'success');
-        } catch (error) {
-            showToast(`${t('common.error')}: ${error}`, 'error');
-        }
-    };
-
-    const handleSelectAntigravityCliPath = async () => {
-        try {
-            const selected = await open({
-                directory: false,
-                multiple: false,
-                title: t('settings.advanced.antigravity_cli_path_select', 'Select Antigravity CLI (agy) Executable'),
-            });
-            if (selected && typeof selected === 'string') {
-                setFormData({ ...formData, antigravity_cli_executable: selected });
-            }
         } catch (error) {
             showToast(`${t('common.error')}: ${error}`, 'error');
         }
@@ -518,101 +389,7 @@ function Settings() {
                                 </select>
                             </div>
 
-                            {/* 开机自动启动 */}
-                            <div>
-                                <div className="flex justify-between items-center mb-2">
-                                    <label className="block text-sm font-medium text-gray-900 dark:text-base-content">{t('settings.general.auto_launch')}</label>
-                                    {!isTauri() && (
-                                        <span className="text-xs text-orange-500 dark:text-orange-400">
-                                            {t('settings.web_mode_limitation', '(Web 模式不支持)')}
-                                        </span>
-                                    )}
-                                </div>
-                                <select
-                                    className="w-full px-4 py-4 border border-gray-200 dark:border-base-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-base-content bg-gray-50 dark:bg-base-200"
-                                    value={formData.auto_launch ? 'enabled' : 'disabled'}
-                                    onChange={async (e) => {
-                                        const enabled = e.target.value === 'enabled';
-                                        try {
-                                            await invoke('toggle_auto_launch', { enable: enabled });
-                                            setFormData({ ...formData, auto_launch: enabled });
-                                            showToast(enabled ? t('settings.general.auto_launch_enabled') : t('settings.general.auto_launch_disabled'), 'success');
-                                        } catch (error) {
-                                            showToast(`${t('common.error')}: ${error}`, 'error');
-                                        }
-                                    }}
-                                >
-                                    <option value="disabled">{t('settings.general.auto_launch_disabled')}</option>
-                                    <option value="enabled" disabled={!isTauri()}>{t('settings.general.auto_launch_enabled')}</option>
-
-                                </select>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.general.auto_launch_desc')}</p>
-                            </div>
-
-                            {/* 自动检查更新 */}
-                            <>
-                                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300">
-                                    <div>
-                                        <div className="font-medium text-gray-900 dark:text-base-content">{t('settings.general.auto_check_update')}</div>
-                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{t('settings.general.auto_check_update_desc')}</p>
-                                    </div>
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            className="sr-only peer"
-                                            checked={formData.auto_check_update ?? true}
-                                            onChange={async (e) => {
-                                                const enabled = e.target.checked;
-                                                try {
-                                                    await invoke('save_update_settings', {
-                                                        settings: {
-                                                            auto_check: enabled,
-                                                            last_check_time: 0,
-                                                            check_interval_hours: formData.update_check_interval ?? 24
-                                                        }
-                                                    });
-                                                    setFormData({ ...formData, auto_check_update: enabled });
-                                                    showToast(enabled ? t('settings.general.auto_check_update_enabled') : t('settings.general.auto_check_update_disabled'), 'success');
-                                                } catch (error) {
-                                                    showToast(`${t('common.error')}: ${error}`, 'error');
-                                                }
-                                            }}
-                                        />
-                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
-                                    </label>
-                                </div>
-
-                                {/* 检查间隔 */}
-                                {formData.auto_check_update && (
-                                    <div className="ml-4">
-                                        <label className="block text-sm font-medium text-gray-900 dark:text-base-content mb-2">{t('settings.general.update_check_interval')}</label>
-                                        <input
-                                            type="number"
-                                            className="w-32 px-4 py-4 border border-gray-200 dark:border-base-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-base-content bg-gray-50 dark:bg-base-200"
-                                            min="1"
-                                            max="168"
-                                            value={formData.update_check_interval ?? 24}
-                                            onChange={(e) => setFormData({ ...formData, update_check_interval: parseInt(e.target.value) })}
-                                            onBlur={async () => {
-                                                try {
-                                                    await invoke('save_update_settings', {
-                                                        settings: {
-                                                            auto_check: formData.auto_check_update ?? true,
-                                                            last_check_time: 0,
-                                                            check_interval_hours: formData.update_check_interval ?? 24
-                                                        }
-                                                    });
-                                                    showToast(t('settings.general.update_check_interval_saved'), 'success');
-                                                } catch (error) {
-                                                    showToast(`${t('common.error')}: ${error}`, 'error');
-                                                }
-                                            }}
-                                        />
-                                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.general.update_check_interval_desc')}</p>
-                                    </div>
-                                )}
-
-                                {/* 菜单显示设置 */}
+                            {/* 菜单显示设置 */}
                                 <div className="border-t border-gray-200 dark:border-base-200 pt-6 mt-6">
                                     <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.menu.title')}</h3>
                                     <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
@@ -702,11 +479,10 @@ function Settings() {
                                         })}
                                     </div>
                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-4 flex items-center gap-1.5">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-gray-400"></div>
+                                        <span className="w-1.5 h-1.5 rounded-full bg-gray-400 inline-block"></span>
                                         {t('settings.menu.selected_items_note')}
                                     </p>
                                 </div>
-                            </>
                         </div>
                     )}
 
@@ -884,18 +660,9 @@ function Settings() {
                                                 {t('common.clear')}
                                             </button>
                                         )}
-                                        {isTauri() ? (
-                                            <button
-                                                className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 hover:text-gray-900 dark:hover:text-base-content transition-colors"
-                                                onClick={handleSelectExportPath}
-                                            >
-                                                {t('settings.advanced.select_btn')}
-                                            </button>
-                                        ) : (
-                                            <span className="self-center text-xs text-gray-400 dark:text-gray-500 italic px-2">
-                                                {t('settings.web_mode_limitation', '(Web 模式不支持)')}
-                                            </span>
-                                        )}
+                                        <span className="self-center text-xs text-gray-400 dark:text-gray-500 italic px-2">
+                                            {t('settings.web_mode_limitation', '(Web 模式不支持)')}
+                                        </span>
                                     </div>
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.advanced.default_export_path_desc')}</p>
                                 </div>
@@ -910,18 +677,12 @@ function Settings() {
                                             value={dataDirPath}
                                             readOnly
                                         />
-                                        {isTauri() ? (
-                                            <button
-                                                className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 hover:text-gray-900 dark:hover:text-base-content transition-colors"
-                                                onClick={handleOpenDataDir}
-                                            >
-                                                {t('settings.advanced.open_btn')}
-                                            </button>
-                                        ) : (
-                                            <span className="self-center text-xs text-gray-400 dark:text-gray-500 italic px-2">
-                                                {t('settings.web_mode_limitation', '(Web 模式不支持)')}
-                                            </span>
-                                        )}
+                                        <button
+                                            className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 hover:text-gray-900 dark:hover:text-base-content transition-colors"
+                                            onClick={handleOpenDataDir}
+                                        >
+                                            {t('settings.advanced.open_btn')}
+                                        </button>
                                     </div>
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.advanced.data_dir_desc')}</p>
                                 </div>
@@ -953,18 +714,6 @@ function Settings() {
                                         >
                                             {t('settings.advanced.detect_btn')}
                                         </button>
-                                        {isTauri() ? (
-                                            <button
-                                                className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 transition-colors"
-                                                onClick={handleSelectAntigravityPath}
-                                            >
-                                                {t('settings.advanced.select_btn')}
-                                            </button>
-                                        ) : (
-                                            <span className="self-center text-xs text-gray-400 dark:text-gray-500 italic px-2">
-                                                {t('settings.web_mode_limitation', '(Web 模式不支持)')}
-                                            </span>
-                                        )}
                                     </div>
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                                         {t('settings.advanced.antigravity_path_desc')}
@@ -998,23 +747,11 @@ function Settings() {
                                         >
                                             {t('settings.advanced.detect_btn')}
                                         </button>
-                                        {isTauri() ? (
-                                            <button
-                                                className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 transition-colors"
-                                                onClick={handleSelectAntigravityCliPath}
-                                            >
-                                                {t('settings.advanced.select_btn')}
-                                            </button>
-                                        ) : (
-                                            <span className="self-center text-xs text-gray-400 dark:text-gray-500 italic px-2">
-                                                {t('settings.web_mode_limitation', '(Web 模式不支持)')}
-                                            </span>
-                                        )}
                                     </div>
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                                         {t('settings.advanced.antigravity_cli_path_desc', '设置您的命令行客户端 (agy) 的可执行文件路径，用于一键解除账号限制。')}
                                     </p>
-                                    
+
                                     {/* 新增：解密/修补准入限制一键修补按钮 */}
                                     <div className={`mt-3 flex items-center gap-4 p-3 rounded-lg border ${formData.antigravity_cli_executable ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700'}`}>
                                         <div className="flex-1">
@@ -1064,18 +801,6 @@ function Settings() {
                                             >
                                                 {t('common.clear')}
                                             </button>
-                                        )}
-                                        {isTauri() ? (
-                                            <button
-                                                className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 transition-colors"
-                                                onClick={handleSelectAntigravityIdePath}
-                                            >
-                                                {t('settings.advanced.select_btn')}
-                                            </button>
-                                        ) : (
-                                            <span className="self-center text-xs text-gray-400 dark:text-gray-500 italic px-2">
-                                                {t('settings.web_mode_limitation', '(Web 模式不支持)')}
-                                            </span>
                                         )}
                                     </div>
                                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
@@ -1214,14 +939,6 @@ function Settings() {
                                                                 },
                                                             })}
                                                         />
-                                                        {isTauri() && (
-                                                            <button
-                                                                className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 transition-colors"
-                                                                onClick={handleSelectDebugLogDir}
-                                                            >
-                                                                {t('settings.advanced.select_btn')}
-                                                            </button>
-                                                        )}
                                                     </div>
                                                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
                                                         {t('settings.advanced.debug_log_dir_hint', { path: dataDirPath.replace(/\/$/, '') })}
@@ -1673,15 +1390,8 @@ function Settings() {
                     isOpen={isBrewSuccessOpen}
                     title={t('settings.about.brew_success_title')}
                     type="success"
-                    confirmText={t('settings.about.brew_restart_btn')}
-                    onConfirm={async () => {
-                        try {
-                            await relaunch();
-                        } catch {
-                            setIsBrewSuccessOpen(false);
-                            showToast(t('settings.about.brew_restart_failed'), 'error');
-                        }
-                    }}
+                    confirmText={t('common.close') || 'Close'}
+                    onConfirm={() => setIsBrewSuccessOpen(false)}
                 >
                     <p className="text-sm text-gray-600 dark:text-gray-400">
                         {t('settings.about.brew_upgrade_success')}
@@ -1690,7 +1400,6 @@ function Settings() {
 
                 {/* Support Modal */}
                 <div className={`modal ${isSupportModalOpen ? 'modal-open' : ''} z-[100]`}>
-                    <div data-tauri-drag-region className="fixed top-0 left-0 right-0 h-8 z-[110]" />
                     <div className="modal-box relative max-w-2xl bg-white dark:bg-base-100 shadow-2xl rounded-3xl p-0 overflow-hidden transform transition-all animate-in fade-in zoom-in-95 duration-300">
                         <div className="flex flex-col items-center p-8">
                             <div className="w-16 h-16 bg-pink-50 dark:bg-pink-900/20 rounded-2xl flex items-center justify-center mb-6 shadow-sm">

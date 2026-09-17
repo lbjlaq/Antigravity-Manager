@@ -571,28 +571,12 @@ pub fn sync_config(
                             Value::String(proxy_url.to_string()),
                         );
                         if !api_key.is_empty() {
-                            if proxy_url.contains("apikey.fun") {
-                                env_obj.insert(
-                                    "ANTHROPIC_AUTH_TOKEN".to_string(),
-                                    Value::String(api_key.to_string()),
-                                );
-                                env_obj.insert(
-                                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(),
-                                    Value::String("1".to_string()),
-                                );
-                                env_obj.insert(
-                                    "CLAUDE_CODE_ATTRIBUTION_HEADER".to_string(),
-                                    Value::String("0".to_string()),
-                                );
-                                env_obj.remove("ANTHROPIC_API_KEY");
-                            } else {
-                                env_obj.insert(
-                                    "ANTHROPIC_API_KEY".to_string(),
-                                    Value::String(api_key.to_string()),
-                                );
-                                // [FIX] 避免冲突：如果存在则移除 ANTHROPIC_AUTH_TOKEN
-                                env_obj.remove("ANTHROPIC_AUTH_TOKEN");
-                            }
+                            env_obj.insert(
+                                "ANTHROPIC_API_KEY".to_string(),
+                                Value::String(api_key.to_string()),
+                            );
+                            // [FIX] 避免冲突：如果存在则移除 ANTHROPIC_AUTH_TOKEN
+                            env_obj.remove("ANTHROPIC_AUTH_TOKEN");
 
                             // [FIX] 清理可能来自其他 Provider 的模型覆盖设置
                             env_obj.remove("ANTHROPIC_MODEL");
@@ -624,15 +608,11 @@ pub fn sync_config(
                             "OPENAI_API_KEY".to_string(),
                             Value::String(api_key.to_string()),
                         );
-                        if proxy_url.contains("apikey.fun") {
-                            obj.remove("OPENAI_BASE_URL");
-                        } else {
-                            // Codex 的 auth.json 似乎也支持 OPENAI_BASE_URL，但 ccs 没写，我们也同步写一下
-                            obj.insert(
-                                "OPENAI_BASE_URL".to_string(),
-                                Value::String(proxy_url.to_string()),
-                            );
-                        }
+                        // Codex 的 auth.json 似乎也支持 OPENAI_BASE_URL，但 ccs 没写，我们也同步写一下
+                        obj.insert(
+                            "OPENAI_BASE_URL".to_string(),
+                            Value::String(proxy_url.to_string()),
+                        );
                     }
                     content = serde_json::to_string_pretty(&json).unwrap();
                 } else if file.name == "config.toml" {
@@ -643,29 +623,13 @@ pub fn sync_config(
 
                     // 必须使用 custom 提供商，Codex 不支持原生的 codex provider
                     let provider_key = "custom";
-                    let display_name = if proxy_url.contains("apikey.fun") {
-                        "APIKEY.FUN"
-                    } else {
-                        "Custom Node"
-                    };
+                    let display_name = "Custom Node";
 
                     // 优先设置 Root Keys 确保位于顶部
                     doc.insert("model_provider", value(provider_key));
 
-                    if proxy_url.contains("apikey.fun") {
-                        doc.insert("model", value("gpt-5.5"));
-                        doc.insert("review_model", value("gpt-5.5"));
-                        doc.insert("model_reasoning_effort", value("high"));
-                        doc.insert("disable_response_storage", value(true));
-                        doc.insert("network_access", value("enabled"));
-                        doc.insert("windows_wsl_setup_acknowledged", value(true));
-                        doc.insert("model_context_window", value(270000));
-                        doc.insert("model_auto_compact_token_limit", value(270000));
-                        doc.insert("effective_context_window_percent", value(95));
-                    } else {
-                        if let Some(m) = model {
-                            doc.insert("model", value(m));
-                        }
+                    if let Some(m) = model {
+                        doc.insert("model", value(m));
                     }
 
                     // 移除可能的根级别旧配置
@@ -691,14 +655,6 @@ pub fn sync_config(
                         }
                     }
 
-                    if proxy_url.contains("apikey.fun") {
-                        let features = doc
-                            .entry("features")
-                            .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
-                        if let Some(f_table) = features.as_table_mut() {
-                            f_table.insert("goals", value(true));
-                        }
-                    }
                     content = doc.to_string();
                 }
             }

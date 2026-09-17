@@ -62,9 +62,6 @@ export default function ModalDialog({
 
     return createPortal(
         <div className="modal modal-open z-[100]">
-            {/* Draggable Top Region */}
-            <div data-tauri-drag-region className="fixed top-0 left-0 right-0 h-8 z-[110]" />
-
             <div className="modal-box relative max-w-sm bg-white dark:bg-base-100 shadow-2xl rounded-2xl p-0 overflow-hidden transform transition-all animate-in fade-in zoom-in-95 duration-200">
                 <div className="flex flex-col items-center text-center p-6 pt-8">
                     <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-4 shadow-sm ${getIconBg()}`}>

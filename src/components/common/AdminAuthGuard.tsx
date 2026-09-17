@@ -189,16 +189,6 @@ export const AdminAuthGuard: React.FC<{ children: React.ReactNode }> = ({ childr
                             )}
                         </button>
                     </form>
-
-                    <div className="mt-8 pt-6 border-t border-slate-50 dark:border-white/5 text-center">
-                        <p className="text-[10px] text-slate-400 leading-relaxed">
-                            {t('login.note')}
-                            <br />
-                            {t('login.lookup_hint')}
-                            <br />
-                            {t('login.config_hint')}
-                        </p>
-                    </div>
                 </div>
             </div>
         </div>

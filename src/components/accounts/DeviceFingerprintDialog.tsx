@@ -4,7 +4,6 @@ import { Wand2, RotateCcw, FolderOpen, Trash2, X } from 'lucide-react';
 import { Account, DeviceProfile, DeviceProfileVersion } from '../../types/account';
 import * as accountService from '../../services/accountService';
 import { useTranslation } from 'react-i18next';
-import { isTauri } from '../../utils/env';
 
 interface DeviceFingerprintDialogProps {
     account: Account | null;
@@ -154,7 +153,6 @@ export default function DeviceFingerprintDialog({ account, onClose }: DeviceFing
 
     return createPortal(
         <div className="modal modal-open z-[120]">
-            <div data-tauri-drag-region className="fixed top-0 left-0 right-0 h-8 z-[130]" />
             <div className="modal-box relative max-w-3xl bg-white dark:bg-base-100 shadow-2xl rounded-2xl p-0 overflow-hidden">
                 <div className="px-6 py-5 border-b border-gray-100 dark:border-base-200 bg-gray-50/50 dark:bg-base-200/50 flex justify-between items-center">
                     <div className="flex items-center gap-3">
@@ -181,11 +179,9 @@ export default function DeviceFingerprintDialog({ account, onClose }: DeviceFing
                             <button className="btn btn-xs btn-outline btn-error" disabled={loadingDevice || actionLoading === 'restore'} onClick={handleRestoreOriginalConfirm}>
                                 <RotateCcw size={14} className="mr-1" />{t('accounts.device_fingerprint_dialog.restore_original')}
                             </button>
-                            {isTauri() && (
-                                <button className="btn btn-xs btn-outline" disabled={actionLoading === 'open-folder'} onClick={handleOpenFolder}>
-                                    <FolderOpen size={14} className="mr-1" />{t('accounts.device_fingerprint_dialog.open_storage_directory')}
-                                </button>
-                            )}
+                            <button className="btn btn-xs btn-outline" disabled={actionLoading === 'open-folder'} onClick={handleOpenFolder}>
+                                <FolderOpen size={14} className="mr-1" />{t('accounts.device_fingerprint_dialog.open_storage_directory')}
+                            </button>
                         </div>
                     </div>
                     {actionMessage && <div className="text-xs text-blue-600 dark:text-blue-300">{actionMessage}</div>}

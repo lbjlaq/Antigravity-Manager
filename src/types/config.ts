@@ -161,29 +161,7 @@ export interface AppConfig {
     pinned_quota_models: PinnedQuotaModelsConfig; // [NEW] 配额关注列表
     circuit_breaker: CircuitBreakerConfig; // [NEW] 熔断器配置
     proxy: ProxyConfig;
-    cloudflared: CloudflaredConfig; // [NEW] Cloudflared 配置
-}
-
-// ============================================================================
-// Cloudflared (CF隧道) 类型定义
-// ============================================================================
-
-export type TunnelMode = 'quick' | 'auth';
-
-export interface CloudflaredConfig {
-    enabled: boolean;
-    mode: TunnelMode;
-    port: number;
-    token?: string;
-    use_http2: boolean;
-}
-
-export interface CloudflaredStatus {
-    installed: boolean;
-    version?: string;
-    running: boolean;
-    url?: string;
-    error?: string;
+    cloudflared?: any;
 }
 
 // ============================================================================

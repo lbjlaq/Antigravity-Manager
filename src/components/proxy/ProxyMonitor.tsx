@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { listen } from '@tauri-apps/api/event';
 import ModalDialog from '../common/ModalDialog';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../../utils/request';
@@ -8,7 +7,6 @@ import { Trash2, Search, X, Copy, CheckCircle, ChevronLeft, ChevronRight, Refres
 import { AppConfig } from '../../types/config';
 import { formatCompactNumber } from '../../utils/format';
 import { useAccountStore } from '../../stores/useAccountStore';
-import { isTauri } from '../../utils/env';
 import { copyToClipboard } from '../../utils/clipboard';
 
 
@@ -276,7 +274,6 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     };
 
     const pendingLogsRef = useRef<ProxyRequestLog[]>([]);
-    const listenerSetupRef = useRef(false);
     const isMountedRef = useRef(true);
 
     useEffect(() => {
@@ -284,96 +281,15 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         loadData();
         fetchAccounts();
 
-        let unlistenFn: (() => void) | null = null;
-        let updateTimeout: number | null = null;
-
-        const setupListener = async () => {
-            if (!isTauri()) return;
-            // Prevent duplicate listener registration (React 18 StrictMode)
-            if (listenerSetupRef.current) {
-                console.debug('[ProxyMonitor] Listener already set up, skipping...');
-                return;
+        const pollInterval = window.setInterval(() => {
+            if (isMountedRef.current && !loading) {
+                loadData(currentPageRef.current, filterRef.current, accountFilterRef.current);
             }
-            listenerSetupRef.current = true;
-
-            console.debug('[ProxyMonitor] Setting up event listener for proxy://request');
-            unlistenFn = await listen<ProxyRequestLog>('proxy://request', (event) => {
-                if (!isMountedRef.current) return;
-
-                const newLog = event.payload;
-
-                // 移除 body 以减少内存占用
-                const logSummary = {
-                    ...newLog,
-                    request_body: undefined,
-                    response_body: undefined
-                };
-
-                // Check if this log already exists (deduplicate at event level)
-                const alreadyExists = pendingLogsRef.current.some(log => log.id === newLog.id);
-                if (alreadyExists) {
-                    console.debug('[ProxyMonitor] Duplicate event ignored:', newLog.id);
-                    return;
-                }
-
-                pendingLogsRef.current.push(logSummary);
-
-                // 防抖:每 500ms 批量更新一次
-                if (updateTimeout) clearTimeout(updateTimeout);
-                updateTimeout = window.setTimeout(async () => {
-                    if (!isMountedRef.current) return;
-
-                    const currentPending = pendingLogsRef.current;
-                    if (currentPending.length > 0) {
-                        setLogs(prev => {
-                            // Deduplicate by id
-                            const existingIds = new Set(prev.map(log => log.id));
-                            const uniqueNewLogs = currentPending.filter(log => !existingIds.has(log.id));
-                            // Merge and sort by timestamp descending (newest first)
-                            const merged = [...uniqueNewLogs, ...prev];
-                            merged.sort((a, b) => b.timestamp - a.timestamp);
-                            return merged.slice(0, 100);
-                        });
-
-                        // Fetch stats and total count from backend instead of local calculation
-                        try {
-                            const [currentStats, count] = await Promise.all([
-                                invoke<ProxyStats>('get_proxy_stats'),
-                                invoke<number>('get_proxy_logs_count_filtered', { filter: '', errorsOnly: false })
-                            ]);
-                            if (isMountedRef.current) {
-                                if (currentStats) setStats(currentStats);
-                                setTotalCount(count);
-                            }
-                        } catch (e) {
-                            console.error('Failed to fetch stats:', e);
-                        }
-
-                        pendingLogsRef.current = [];
-                    }
-                }, 500);
-            });
-        };
-        setupListener();
-
-        // Web 模式補強：如果不是 Tauri 環境，則啟用定時輪詢
-        let pollInterval: number | null = null;
-        if (!isTauri()) {
-            console.debug('[ProxyMonitor] Web mode detected, starting auto-poll (10s)');
-            pollInterval = window.setInterval(() => {
-                if (isMountedRef.current && !loading) {
-                    // [FIX] 使用 ref.current 获取最新的筛选条件
-                    loadData(currentPageRef.current, filterRef.current, accountFilterRef.current);
-                }
-            }, 10000);
-        }
+        }, 10000);
 
         return () => {
             isMountedRef.current = false;
-            listenerSetupRef.current = false;
-            if (unlistenFn) unlistenFn();
-            if (updateTimeout) clearTimeout(updateTimeout);
-            if (pollInterval) clearInterval(pollInterval);
+            clearInterval(pollInterval);
         };
     }, []);
 

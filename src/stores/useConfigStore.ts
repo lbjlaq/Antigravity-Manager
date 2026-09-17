@@ -39,12 +39,6 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
         try {
             await configService.saveConfig(config);
             set({ config, loading: false });
-            const { isTauri } = await import('../utils/env');
-            if (isTauri()) {
-                const { invoke } = await import('@tauri-apps/api/core');
-                await invoke('set_window_theme', { theme: config.theme }).catch(() => {
-                });
-            }
         } catch (error) {
             set({ error: String(error), loading: false });
             throw error;

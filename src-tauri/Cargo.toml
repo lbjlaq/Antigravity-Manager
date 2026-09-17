@@ -33,11 +33,11 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 base64 = "0.22"
 sysinfo = "0.31"
 sys-locale = "0.3.2"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal", "fs", "process"] }
 url = "2.5.7"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-fs = "2.4.5"
-image = { version = "0.25.9", default-features = false, features = ["png", "webp"] }
+image = { version = "0.25.9", default-features = false, features = ["png"] }
 thiserror = "2.0.17"
 
 # 反代服务依赖
@@ -62,7 +62,6 @@ tauri-plugin-single-instance = { version = "2.3.6", features = ["deep-link"] }
 libc = "0.2"
 tracing-appender = "0.2.4"
 tracing-log = "0.2.0"
-tauri-plugin-autostart = "2.5.1"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 sha2 = "0.10"
@@ -86,3 +85,10 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
 tempfile = "3.10"
+
+[profile.release]
+opt-level = "z"       # 针对代码体积极限优化（比 s 更激进）
+lto = "fat"           # 开启最激进的全局胖 LTO (Full Link-Time Optimization)，跨所有 crate 最大限度剔除未引用的死代码
+codegen-units = 1     # 单代码生成单元，确保全局内联与极致死代码优化
+panic = "abort"       # 遇到 panic 直接退出，移除整个庞大的栈回溯与展开表 (Stack Unwinding)
+strip = true          # 自动剥离所有调试符号和符号表

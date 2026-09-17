@@ -104,7 +104,6 @@ pub struct AppState {
     pub integration: crate::modules::integration::SystemManager, // [NEW] 系统集成层实现
     pub account_service: Arc<crate::modules::account_service::AccountService>, // [NEW] 账号管理服务层
     pub security: Arc<RwLock<crate::proxy::ProxySecurityConfig>>,              // [NEW] 安全配置状态
-    pub cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>, // [NEW] Cloudflared 插件状态
     pub is_running: Arc<RwLock<bool>>, // [NEW] 运行状态标识
     pub port: u16,                     // [NEW] 本地监听端口 (v4.0.8 修复)
     pub proxy_pool_state: Arc<tokio::sync::RwLock<crate::proxy::config::ProxyPoolConfig>>, // [FIX Web Mode]
@@ -415,8 +414,6 @@ pub struct AxumServer {
     zai_state: Arc<RwLock<crate::proxy::ZaiConfig>>,
     experimental: Arc<RwLock<crate::proxy::config::ExperimentalConfig>>,
     debug_logging: Arc<RwLock<crate::proxy::config::DebugLoggingConfig>>,
-    #[allow(dead_code)] // 预留给 cloudflared 运行状态查询与后续控制
-    pub cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
     pub is_running: Arc<RwLock<bool>>,
     pub token_manager: Arc<TokenManager>, // [NEW] 暴露出 TokenManager 供反代服务复用
     pub proxy_pool_state: Arc<tokio::sync::RwLock<crate::proxy::config::ProxyPoolConfig>>, // [NEW] 代理池配置状态
@@ -518,7 +515,6 @@ impl AxumServer {
         debug_logging: crate::proxy::config::DebugLoggingConfig,
 
         integration: crate::modules::integration::SystemManager,
-        cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
         proxy_pool_config: crate::proxy::config::ProxyPoolConfig, // [NEW]
         only_raw_quota_models: bool,
         image_scheduler_config: crate::proxy::config::ImageSchedulerConfig,
@@ -585,7 +581,6 @@ impl AxumServer {
                 integration.clone(),
             )),
             security: security_state.clone(),
-            cloudflared_state: cloudflared_state.clone(),
             is_running: is_running_state.clone(),
             port,
             proxy_pool_state: proxy_pool_state.clone(),
@@ -754,10 +749,6 @@ impl AxumServer {
             )
             .route("/proxy/opencode/sync", post(admin_execute_opencode_sync))
             .route(
-                "/proxy/opencode/openai-sync",
-                post(admin_execute_opencode_openai_sync),
-            )
-            .route(
                 "/proxy/opencode/restore",
                 post(admin_execute_opencode_restore),
             )
@@ -816,16 +807,6 @@ impl AxumServer {
                 "/proxy/monitor/toggle",
                 post(admin_set_proxy_monitor_enabled),
             )
-            .route(
-                "/proxy/cloudflared/status",
-                get(admin_cloudflared_get_status),
-            )
-            .route(
-                "/proxy/cloudflared/install",
-                post(admin_cloudflared_install),
-            )
-            .route("/proxy/cloudflared/start", post(admin_cloudflared_start))
-            .route("/proxy/cloudflared/stop", post(admin_cloudflared_stop))
             .route("/system/open-folder", post(admin_open_folder))
             .route("/proxy/stats", get(admin_get_proxy_stats))
             .route("/logs", get(admin_get_proxy_logs_filtered))
@@ -883,11 +864,6 @@ impl AxumServer {
             .route("/system/updates/check", post(admin_check_for_updates))
             .route("/system/updates/touch", post(admin_update_last_check_time))
             .route("/system/updates/save", post(admin_save_update_settings))
-            .route(
-                "/system/autostart/status",
-                get(admin_is_auto_launch_enabled),
-            )
-            .route("/system/autostart/toggle", post(admin_toggle_auto_launch))
             .route(
                 "/system/http-api/settings",
                 get(admin_get_http_api_settings).post(admin_save_http_api_settings),
@@ -972,8 +948,25 @@ impl AxumServer {
             .layer(DefaultBodyLimit::max(max_body_size)) // 放宽 body 大小限制
             .with_state(state.clone());
 
-        // 静态文件托管 (用于 Headless/Docker 模式)
-        let dist_path = std::env::var("ABV_DIST_PATH").unwrap_or_else(|_| "dist".to_string());
+        // 静态文件托管 (用于 Web 服务端模式)
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+        let dist_path = std::env::var("ABV_DIST_PATH").unwrap_or_else(|_| {
+            if std::path::Path::new("dist").exists() {
+                "dist".to_string()
+            } else if let Some(ref dir) = exe_dir {
+                if dir.join("dist").exists() {
+                    dir.join("dist").to_string_lossy().to_string()
+                } else if dir.join("../../dist").exists() {
+                    dir.join("../../dist").to_string_lossy().to_string()
+                } else {
+                    "dist".to_string()
+                }
+            } else {
+                "dist".to_string()
+            }
+        });
         let app = if std::path::Path::new(&dist_path).exists() {
             tracing::info!("正在托管静态资源: {}", dist_path);
             app.fallback_service(tower_http::services::ServeDir::new(&dist_path).fallback(
@@ -1003,7 +996,6 @@ impl AxumServer {
             zai_state,
             experimental: experimental_state.clone(),
             debug_logging: debug_logging_state.clone(),
-            cloudflared_state,
             is_running: is_running_state,
             token_manager: token_manager.clone(),
             proxy_pool_state,
@@ -2533,17 +2525,6 @@ async fn admin_save_update_settings(Json(settings): Json<serde_json::Value>) -> 
     }
 }
 
-async fn admin_is_auto_launch_enabled() -> impl IntoResponse {
-    // Note: Autostart requires tauri::AppHandle, which is not available in Axum State easily.
-    // For now, return false in Web mode.
-    Json(false)
-}
-
-async fn admin_toggle_auto_launch(Json(_payload): Json<serde_json::Value>) -> impl IntoResponse {
-    // Note: Autostart requires tauri::AppHandle.
-    StatusCode::NOT_IMPLEMENTED
-}
-
 async fn admin_get_http_api_settings() -> impl IntoResponse {
     Json(serde_json::json!({ "enabled": true, "port": 8045 }))
 }
@@ -2692,145 +2673,6 @@ async fn admin_save_http_api_settings(
         )
     })?;
     Ok(StatusCode::OK)
-}
-
-// Cloudflared Handlers
-async fn admin_cloudflared_get_status(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .cloudflared_state
-        .ensure_manager()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-
-    let lock = state.cloudflared_state.manager.read().await;
-    if let Some(manager) = lock.as_ref() {
-        let (installed, version) = manager.check_installed().await;
-        let mut status = manager.get_status().await;
-        status.installed = installed;
-        status.version = version;
-        if !installed {
-            status.running = false;
-            status.url = None;
-        }
-        Ok(Json(status))
-    } else {
-        Ok(Json(
-            crate::modules::cloudflared::CloudflaredStatus::default(),
-        ))
-    }
-}
-
-async fn admin_cloudflared_install(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .cloudflared_state
-        .ensure_manager()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-
-    let lock = state.cloudflared_state.manager.read().await;
-    if let Some(manager) = lock.as_ref() {
-        let status = manager.install().await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-        Ok(Json(status))
-    } else {
-        Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Manager not initialized".to_string(),
-            }),
-        ))
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CloudflaredStartRequest {
-    config: crate::modules::cloudflared::CloudflaredConfig,
-}
-
-async fn admin_cloudflared_start(
-    State(state): State<AppState>,
-    Json(payload): Json<CloudflaredStartRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .cloudflared_state
-        .ensure_manager()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-
-    let lock = state.cloudflared_state.manager.read().await;
-    if let Some(manager) = lock.as_ref() {
-        let status = manager.start(payload.config).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-        Ok(Json(status))
-    } else {
-        Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Manager not initialized".to_string(),
-            }),
-        ))
-    }
-}
-
-async fn admin_cloudflared_stop(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state
-        .cloudflared_state
-        .ensure_manager()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-
-    let lock = state.cloudflared_state.manager.read().await;
-    if let Some(manager) = lock.as_ref() {
-        let status = manager.stop().await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-        Ok(Json(status))
-    } else {
-        Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse {
-                error: "Manager not initialized".to_string(),
-            }),
-        ))
-    }
 }
 
 // --- Supplementary Account Handlers ---
@@ -3895,38 +3737,6 @@ async fn admin_execute_opencode_sync(
         payload.proxy_url,
         payload.api_key,
         Some(payload.sync_accounts),
-        payload.models,
-    )
-    .await
-    .map(|_| StatusCode::OK)
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
-    })
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OpencodeOpenaiSyncRequest {
-    proxy_url: String,
-    api_key: String,
-    #[serde(default)]
-    provider_id: Option<String>,
-    #[serde(default)]
-    provider_name: Option<String>,
-    models: Option<Vec<crate::proxy::opencode_sync::ModelInput>>,
-}
-
-async fn admin_execute_opencode_openai_sync(
-    Json(payload): Json<OpencodeOpenaiSyncRequest>,
-) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::proxy::opencode_sync::execute_opencode_openai_sync(
-        payload.proxy_url,
-        payload.api_key,
-        payload.provider_id,
-        payload.provider_name,
         payload.models,
     )
     .await

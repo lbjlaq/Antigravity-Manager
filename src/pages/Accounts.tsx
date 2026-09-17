@@ -29,8 +29,6 @@ import { useAccountStore } from "../stores/useAccountStore";
 import { useConfigStore } from "../stores/useConfigStore";
 import { Account } from "../types/account";
 import { cn } from "../utils/cn";
-import { isTauri } from "../utils/env";
-import { request as invoke } from "../utils/request";
 import { useTranslation } from "react-i18next";
 
 type FilterType = "all" | "pro" | "ultra" | "free";
@@ -561,49 +559,20 @@ function Accounts() {
       const content = JSON.stringify(exportData, null, 2);
       const fileName = `antigravity_accounts_${new Date().toISOString().split("T")[0]}.json`;
 
-      // 2. Determine Path & Export
-      if (isTauri()) {
-        let path: string | null = null;
-        const { join } = await import("@tauri-apps/api/path");
-
-        if (config?.default_export_path) {
-          // Use default path
-          path = await join(config.default_export_path, fileName);
-        } else {
-          // Use Native Dialog
-          const { save } = await import("@tauri-apps/plugin-dialog");
-          path = await save({
-            filters: [
-              {
-                name: "JSON",
-                extensions: ["json"],
-              },
-            ],
-            defaultPath: fileName,
-          });
-        }
-
-        if (!path) return; // Cancelled
-
-        // 3. Write File
-        await invoke("save_text_file", { path, content });
-        showToast(`${t("common.success")} ${path}`, "success");
-      } else {
-        // Web 模式：使用浏览器下载
-        const blob = new Blob([content], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        showToast(
-          t("dashboard.toast.export_success", { path: fileName }),
-          "success",
-        );
-      }
+      // Web 模式：使用浏览器下载
+      const blob = new Blob([content], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(
+        t("dashboard.toast.export_success", { path: fileName }),
+        "success",
+      );
     } catch (error: any) {
       console.error("Export failed:", error);
       showToast(`${t("common.error")}: ${error}`, "error");
@@ -688,33 +657,9 @@ function Accounts() {
     }
   };
 
-  const handleImportJson = async () => {
-    if (isTauri()) {
-      try {
-        const { open } = await import("@tauri-apps/plugin-dialog");
-        const selected = await open({
-          multiple: false,
-          filters: [
-            {
-              name: "JSON",
-              extensions: ["json"],
-            },
-          ],
-        });
-        if (!selected || typeof selected !== "string") return;
-
-        const content: string = await invoke("read_text_file", {
-          path: selected,
-        });
-        await processImportData(content);
-      } catch (error) {
-        console.error("Import failed:", error);
-        showToast(t("accounts.import_fail", { error: String(error) }), "error");
-      }
-    } else {
-      // Web 模式: 触发隐藏的 file input
-      fileInputRef.current?.click();
-    }
+  const handleImportJson = () => {
+    // 触发隐藏的 file input 进行浏览器原生文件选择
+    fileInputRef.current?.click();
   };
 
   const handleFileChange = async (

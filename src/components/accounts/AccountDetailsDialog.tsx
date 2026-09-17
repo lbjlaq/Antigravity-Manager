@@ -18,9 +18,6 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
 
     return createPortal(
         <div className="modal modal-open z-[100]">
-            {/* Draggable Top Region */}
-            <div data-tauri-drag-region className="fixed top-0 left-0 right-0 h-8 z-[110]" />
-
             <div className="modal-box relative max-w-3xl bg-white dark:bg-base-100 shadow-2xl rounded-2xl p-0 overflow-hidden">
                 {/* Header */}
                 <div className="px-6 py-5 border-b border-gray-100 dark:border-base-200 bg-gray-50/50 dark:bg-base-200/50 flex justify-between items-center">

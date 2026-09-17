@@ -1,6 +1,3 @@
-// 探测环境
-const isTauri = typeof window !== 'undefined' && (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__);
-
 // 命令到 API 的映射
 const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'DELETE' | 'PATCH' }> = {
   // Accounts
@@ -70,7 +67,6 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   // OpenCode Sync
   'get_opencode_sync_status': { url: '/api/proxy/opencode/status', method: 'POST' },
   'execute_opencode_sync': { url: '/api/proxy/opencode/sync', method: 'POST' },
-  'execute_opencode_openai_sync': { url: '/api/proxy/opencode/openai-sync', method: 'POST' },
   'execute_opencode_restore': { url: '/api/proxy/opencode/restore', method: 'POST' },
   'execute_opencode_clear': { url: '/api/proxy/opencode/clear', method: 'POST' },
   'get_opencode_config_content': { url: '/api/proxy/opencode/config', method: 'POST' },
@@ -93,18 +89,10 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'get_data_dir_path': { url: '/api/system/data-dir', method: 'GET' },
   'get_update_settings': { url: '/api/system/updates/settings', method: 'GET' },
   'save_update_settings': { url: '/api/system/updates/save', method: 'POST' },
-  'is_auto_launch_enabled': { url: '/api/system/autostart/status', method: 'GET' },
-  'toggle_auto_launch': { url: '/api/system/autostart/toggle', method: 'POST' },
   'get_http_api_settings': { url: '/api/system/http-api/settings', method: 'GET' },
   'save_http_api_settings': { url: '/api/system/http-api/settings', method: 'POST' },
   'get_antigravity_path': { url: '/api/system/antigravity/path', method: 'GET' },
   'get_antigravity_args': { url: '/api/system/antigravity/args', method: 'GET' },
-
-  // Cloudflared
-  'cloudflared_install': { url: '/api/proxy/cloudflared/install', method: 'POST' },
-  'cloudflared_start': { url: '/api/proxy/cloudflared/start', method: 'POST' },
-  'cloudflared_stop': { url: '/api/proxy/cloudflared/stop', method: 'POST' },
-  'cloudflared_get_status': { url: '/api/proxy/cloudflared/status', method: 'GET' },
 
   // Updates
   'should_check_updates': { url: '/api/system/updates/check-status', method: 'GET' },
@@ -167,18 +155,6 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
 };
 
 export async function request<T>(cmd: string, args?: any): Promise<T> {
-  // 1. Tauri 环境：直接使用 invoke ...
-  if (isTauri) {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      return await invoke<T>(cmd, args);
-    } catch (error) {
-      console.error(`Tauri Invoke Error [${cmd}]:`, error);
-      throw error;
-    }
-  }
-
-  // 2. Web 环境：映射到 HTTP API
   const mapping = COMMAND_MAPPING[cmd];
   if (!mapping) {
     console.error(`Command [${cmd}] is not yet mapped for Web mode. Failing.`);
@@ -236,7 +212,7 @@ export async function request<T>(cmd: string, args?: any): Promise<T> {
   try {
     const response = await fetch(url, options);
     if (!response.ok) {
-      if (!isTauri && response.status === 401) {
+      if (response.status === 401) {
         // [FIX #1163] 增加防抖锁，避免重复事件导致 UI 抖动
         const now = Date.now();
         const lastAuthError = (window as any)._lastAuthErrorTime || 0;

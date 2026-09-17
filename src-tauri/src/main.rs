@@ -1,12 +1,8 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 fn main() {
-    #[cfg(target_os = "linux")]
-    {
-        // Fix for transparent window on some Linux systems
-        // See: https://github.com/spacedriveapp/spacedrive/issues/1512#issuecomment-1758550164
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    // 强制默认以 Headless 独立 Web 服务端模式运行
+    let mut args: Vec<String> = std::env::args().collect();
+    if !args.iter().any(|arg| arg == "--headless") {
+        args.push("--headless".to_string());
     }
 
     antigravity_tools_lib::run()

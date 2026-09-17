@@ -10,15 +10,11 @@ import TokenStats from './pages/TokenStats';
 import Security from './pages/Security';
 import ThemeManager from './components/common/ThemeManager';
 import UserToken from './pages/UserToken';
-import { ApiKeyFun } from './pages/ApiKeyFun';
 import { UpdateNotification } from './components/UpdateNotification';
 import DebugConsole from './components/debug/DebugConsole';
 import { useEffect, useState } from 'react';
 import { useConfigStore } from './stores/useConfigStore';
-import { useAccountStore } from './stores/useAccountStore';
 import { useTranslation } from 'react-i18next';
-import { listen } from '@tauri-apps/api/event';
-import { isTauri } from './utils/env';
 import { request as invoke } from './utils/request';
 import { AdminAuthGuard } from './components/common/AdminAuthGuard';
 
@@ -52,10 +48,6 @@ const router = createBrowserRouter([
         element: <UserToken />,
       },
       {
-        path: 'apikey-fun',
-        element: <ApiKeyFun />,
-      },
-      {
         path: 'security',
         element: <Security />,
       },
@@ -69,7 +61,6 @@ const router = createBrowserRouter([
 
 function App() {
   const { config, loadConfig } = useConfigStore();
-  const { fetchCurrentAccount, fetchAccounts } = useAccountStore();
   const { i18n } = useTranslation();
 
   useEffect(() => {
@@ -88,46 +79,6 @@ function App() {
       }
     }
   }, [config?.language, i18n]);
-
-  // Listen for tray events
-  useEffect(() => {
-    if (!isTauri()) return;
-    const unlistenPromises: Promise<() => void>[] = [];
-
-    // 监听托盘切换账号事件
-    unlistenPromises.push(
-      listen('tray://account-switched', () => {
-        console.log('[App] Tray account switched, refreshing...');
-        fetchCurrentAccount();
-        fetchAccounts();
-      })
-    );
-
-    // 监听托盘刷新事件
-    unlistenPromises.push(
-      listen('tray://refresh-current', () => {
-        console.log('[App] Tray refresh triggered, refreshing...');
-        fetchCurrentAccount();
-        fetchAccounts();
-      })
-    );
-
-    // 监听后端全量刷新事件 (Command / Scheduler)
-    unlistenPromises.push(
-      listen('accounts://refreshed', () => {
-        console.log('[App] Backend triggered quota refresh, syncing UI...');
-        fetchCurrentAccount();
-        fetchAccounts();
-      })
-    );
-
-    // Cleanup
-    return () => {
-      Promise.all(unlistenPromises).then(unlisteners => {
-        unlisteners.forEach(unlisten => unlisten());
-      });
-    };
-  }, [fetchCurrentAccount, fetchAccounts]);
 
   // Update notification state
   const [showUpdateNotification, setShowUpdateNotification] = useState(false);

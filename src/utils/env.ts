@@ -1,14 +1,12 @@
 /**
  * Detect if the app is running in a Tauri environment
  */
-export const isTauri = () => {
-    return typeof window !== 'undefined' &&
-        (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__);
-};
+export const isTauri = () => false;
 
 /**
  * Detect if running on Linux
  */
 export const isLinux = () => {
-    return navigator.userAgent.toLowerCase().includes('linux');
+    return typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('linux');
 };
+
