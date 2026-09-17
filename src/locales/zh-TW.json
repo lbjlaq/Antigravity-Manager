@@ -1028,6 +1028,7 @@
     "details": {
       "title": "請求詳情",
       "request_payload": "請求封包 (Request)",
+      "upstream_request_payload": "轉出封包 (Forwarded)",
       "response_payload": "回應封包 (Response)",
       "duration": "耗時",
       "tokens": "Token 消耗 (輸入/輸出)",
@@ -1037,7 +1038,29 @@
       "protocol": "協定類型",
       "mapped_model": "路由後模型",
       "account_used": "使用帳號",
-      "payload_empty": "無封包資料"
+      "payload_empty": "無封包資料",
+      "concise_mode": "簡要模式",
+      "full_mode": "完整模式",
+      "concise_desc": "已為您精簡工具參數與冗餘欄位，突出思考塊、用量與對話主體",
+      "search_placeholder": "搜尋此封包...",
+      "no_upstream_payload": "無轉出封包 (直接轉發或未記錄)"
+    },
+    "timing": {
+      "title": "耗時分類診斷",
+      "clean": "初始會話清洗",
+      "clean_desc": "清理快取控制 / 合併同角色 / 破損思考過濾 / 提純去噪",
+      "norm": "中轉歸一",
+      "norm_desc": "模型路由 / 帳號調度 / 協議轉Gemini格式",
+      "thinking": "Thinking塊、簽名填充",
+      "thinking_desc": "ThinkingStore回填 / 補全思維塊與哨兵簽名",
+      "ttft": "等待首包（思考首ssetoken或者工具ssetoken或正文ssetoken）",
+      "ttft_desc": "網關發出請求至接收到上游首個有效資料塊",
+      "stream": "首包到這個包響應完的時間",
+      "stream_desc": "首個資料塊到達至整條響應流結束",
+      "total": "總耗時",
+      "copy_timing": "複製耗時分類",
+      "copied_timing": "已複製耗時",
+      "legacy_hint": "歷史記錄未採集微觀階段耗時"
     },
     "dialog": {
       "clear_title": "清除監控紀錄",

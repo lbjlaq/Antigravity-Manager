@@ -322,11 +322,18 @@ impl UpstreamClient {
         &self,
         method: &str,
         access_token: &str,
-        body: Value,
+        mut body: Value,
         query_string: Option<&str>,
         extra_headers: std::collections::HashMap<String, String>,
         account_id: Option<&str>, // [NEW] Account ID
     ) -> Result<UpstreamCallResult, String> {
+        // [DEFENSE] 全局终极防御拦截：净化所有发往上游报文中的损坏/空 inlineData
+        if let Some(inner) = body.get_mut("request") {
+            crate::proxy::mappers::common_utils::sanitize_gemini_payload_inline_data(inner);
+        } else {
+            crate::proxy::mappers::common_utils::sanitize_gemini_payload_inline_data(&mut body);
+        }
+
         // [NEW] Get client based on account (cached in proxy pool manager)
         let client = self.get_client(account_id).await;
 
@@ -402,6 +409,14 @@ impl UpstreamClient {
 
         // [DEBUG] Log headers for verification
         tracing::debug!(?headers, "Final Upstream Request Headers");
+
+        let _ = crate::proxy::monitor::CURRENT_UPSTREAM_CAPTURE.try_with(|holder| {
+            let pairs: Vec<(&str, &str)> = headers
+                .iter()
+                .filter_map(|(k, v)| v.to_str().ok().map(|s| (k.as_str(), s)))
+                .collect();
+            holder.set_headers_json(crate::proxy::payload_audit::header_pairs_to_redacted_json(pairs));
+        });
 
         let mut has_triggered_downgrade = false;
 

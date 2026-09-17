@@ -121,6 +121,16 @@ pub fn init_db() -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_account_timestamp ON token_usage (account_email, timestamp DESC)",
+        [],
+    );
+
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_model ON token_usage (model)",
+        [],
+    );
+
     // Create hourly aggregation table for fast queries
     conn.execute(
         "CREATE TABLE IF NOT EXISTS token_stats_hourly (
@@ -136,6 +146,11 @@ pub fn init_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
+
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hourly_account ON token_stats_hourly (account_email, hour_bucket)",
+        [],
+    );
 
     add_column_if_missing(
         &conn,

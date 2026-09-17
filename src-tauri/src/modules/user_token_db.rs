@@ -158,6 +158,7 @@ pub fn init_db() -> Result<(), String> {
         [],
     );
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_token_usage_logs_request_time ON token_usage_logs(request_time)", []);
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_token_usage_logs_token_time ON token_usage_logs(token_id, request_time DESC)", []);
 
     // [FIX Issue #1719] 数据清洗：修复旧版本升级导致的 NULL 字段
     // 这些字段在旧版本中可能不存在，ALTER TABLE 添加后默认为 NULL，导致反序列化失败

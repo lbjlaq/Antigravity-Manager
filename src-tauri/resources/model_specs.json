@@ -7,8 +7,8 @@
         },
         "gemini-2.5-flash": {
             "max_output_tokens": 65535,
-            "thinking_budget": 32768,
-            "is_thinking": true
+            "thinking_budget": 24576,
+            "is_thinking": false
         },
         "gemini-3-flash": {
             "max_output_tokens": 65536,

@@ -79,6 +79,19 @@ pub fn load_app_config() -> Result<AppConfig, String> {
             modified = true;
         }
 
+        // Migrate log retention max_disk_mb: if 0, smoothly recover to 1024 MiB default
+        if let Some(log_retention) = proxy
+            .get_mut("log_retention")
+            .and_then(|m| m.as_object_mut())
+        {
+            if let Some(max_disk_mb) = log_retention.get("max_disk_mb").and_then(|v| v.as_u64()) {
+                if max_disk_mb == 0 {
+                    log_retention.insert("max_disk_mb".to_string(), serde_json::Value::from(1024));
+                    modified = true;
+                }
+            }
+        }
+
         if modified {
             proxy.as_object_mut().unwrap().insert(
                 "custom_mapping".to_string(),

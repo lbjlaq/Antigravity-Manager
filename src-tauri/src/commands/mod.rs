@@ -406,6 +406,26 @@ pub async fn save_config(
     // 通知托盘配置已更新
     let _ = app.emit("config://updated", ());
 
+    // 同步全局内存配置（无论反代服务当前是否处于运行状态）
+    crate::proxy::update_thinking_budget_config(config.proxy.thinking_budget.clone());
+    crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
+    crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
+    crate::proxy::config::update_global_compression_level(
+        config.proxy.experimental.compression_level.clone(),
+        config.proxy.experimental.enable_usage_scaling,
+    );
+    crate::proxy::config::update_global_thresholds(
+        config.proxy.experimental.context_compression_threshold_l1,
+        config.proxy.experimental.context_compression_threshold_l2,
+        config.proxy.experimental.context_compression_threshold_l3,
+    );
+    crate::proxy::config::update_global_audit_config(
+        config.proxy.experimental.payload_storage_mode.clone(),
+        config.proxy.experimental.log_retention_days,
+        config.proxy.experimental.thinking_store_enabled,
+        config.proxy.experimental.thinking_retention_days,
+    );
+
     // 热更新正在运行的服务
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {
@@ -447,6 +467,12 @@ pub async fn save_config(
         crate::proxy::config::update_global_compression_level(
             config.proxy.experimental.compression_level.clone(),
             config.proxy.experimental.enable_usage_scaling,
+        );
+        crate::proxy::config::update_global_audit_config(
+            config.proxy.experimental.payload_storage_mode.clone(),
+            config.proxy.experimental.log_retention_days,
+            config.proxy.experimental.thinking_store_enabled,
+            config.proxy.experimental.thinking_retention_days,
         );
         crate::proxy::config::update_global_thresholds(
             config.proxy.experimental.context_compression_threshold_l1,
@@ -838,7 +864,124 @@ pub async fn open_data_folder() -> Result<(), String> {
 #[tauri::command]
 pub async fn get_data_dir_path() -> Result<String, String> {
     let path = modules::account::get_data_dir()?;
-    Ok(path.to_string_lossy().to_string())
+    Ok(modules::account::format_data_dir_path(&path))
+}
+
+/// 选择并迁移数据目录（指针写在家目录，删除旧目录后下次启动仍能找到）
+#[tauri::command]
+pub async fn set_data_dir(
+    path: String,
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+    cf_state: tauri::State<'_, crate::commands::cloudflared::CloudflaredState>,
+) -> Result<String, String> {
+    {
+        let instance = proxy_state.instance.read().await;
+        if instance.is_some() {
+            return Err("请先停止 API 反代服务，再迁移数据目录".to_string());
+        }
+    }
+    {
+        let lock = cf_state.manager.read().await;
+        if let Some(manager) = lock.as_ref() {
+            let status = manager.get_status().await;
+            if status.running {
+                return Err("请先停止 Cloudflared 隧道，再迁移数据目录".to_string());
+            }
+        }
+    }
+
+    let new_path = tokio::task::spawn_blocking(move || {
+        modules::account::migrate_data_dir(PathBuf::from(path))
+    })
+    .await
+    .map_err(|e| format!("迁移任务失败: {}", e))??;
+
+    {
+        let mut lock = cf_state.manager.write().await;
+        *lock = None;
+    }
+
+    Ok(modules::account::format_data_dir_path(&new_path))
+}
+
+/// 递归复制目录内容
+fn copy_dir_all_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all_recursive(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(entry.path(), dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// 迁移全量数据目录到新路径
+#[tauri::command]
+pub async fn migrate_data_dir(
+    new_path: String,
+    clean_source: bool,
+) -> Result<(), String> {
+    let source_dir = modules::account::get_data_dir()?;
+    let target_dir = std::path::PathBuf::from(new_path.trim());
+
+    if target_dir.as_os_str().is_empty() {
+        return Err("目标目录路径不能为空".to_string());
+    }
+
+    // 规范化路径以防比较失误
+    let canonical_source = std::fs::canonicalize(&source_dir).unwrap_or_else(|_| source_dir.clone());
+    let canonical_target = if target_dir.exists() {
+        std::fs::canonicalize(&target_dir).unwrap_or_else(|_| target_dir.clone())
+    } else {
+        target_dir.clone()
+    };
+
+    if canonical_source == canonical_target {
+        return Err("目标目录不能与当前数据目录相同".to_string());
+    }
+
+    // 检查是否将源目录嵌套复制到自身子目录
+    if canonical_target.starts_with(&canonical_source) {
+        return Err("目标目录不能位于当前数据目录内部".to_string());
+    }
+
+    // 确保目标目录存在
+    std::fs::create_dir_all(&target_dir)
+        .map_err(|e| format!("创建目标目录失败: {}", e))?;
+
+    // 执行递归全量复制
+    copy_dir_all_recursive(&source_dir, &target_dir)
+        .map_err(|e| format!("复制数据到新目录失败: {}", e))?;
+
+    // 写入持久化自举指针文件
+    if let Some(pointer_file) = modules::account::get_data_dir_pointer_file() {
+        if let Some(parent) = pointer_file.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&pointer_file, target_dir.to_string_lossy().trim())
+            .map_err(|e| format!("保存数据目录配置失败: {}", e))?;
+    } else {
+        return Err("无法获取系统配置目录以保存数据指针".to_string());
+    }
+
+    // 若用户选择清理原目录，且原目录不是根目录/系统关键目录
+    if clean_source && source_dir.exists() {
+        // 安全检查：确保 source_dir 的文件名是 .antigravity_tools 或存在 accounts.json
+        let has_accounts = source_dir.join("accounts.json").exists();
+        let is_default_name = source_dir.file_name().and_then(|n| n.to_str()) == Some(".antigravity_tools");
+        if has_accounts || is_default_name {
+            if let Err(e) = std::fs::remove_dir_all(&source_dir) {
+                tracing::warn!("迁移后清理原数据目录失败 (可能部分文件被占用): {}", e);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// 显示主窗口

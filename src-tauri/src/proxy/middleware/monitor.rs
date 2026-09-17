@@ -1,5 +1,5 @@
 use crate::proxy::middleware::auth::UserTokenIdentity;
-use crate::proxy::monitor::ProxyRequestLog;
+use crate::proxy::monitor::{ProxyRequestLog, UpstreamRequestBodyHolder};
 use crate::proxy::server::AppState;
 use axum::{
     body::Body,
@@ -303,13 +303,27 @@ fn value_as_u32(value: Option<&Value>) -> Option<u32> {
 }
 
 fn extract_input_tokens(usage: &Value) -> Option<u32> {
-    value_as_u32(
+    let raw_input = value_as_u32(
         usage
             .get("prompt_tokens")
             .or_else(|| usage.get("input_tokens"))
             .or_else(|| usage.get("total_input_tokens"))
             .or_else(|| usage.get("promptTokenCount")),
-    )
+    );
+
+    // In Anthropic Claude protocol, `input_tokens` represents only the UNCACHED portion of prompt tokens.
+    // `cache_read_input_tokens` (and optional `cache_creation_input_tokens`) are reported separately.
+    // Therefore, Anthropic total prompt tokens = input_tokens + cache_read_input_tokens + cache_creation_input_tokens.
+    // In contrast, OpenAI Chat (`prompt_tokens`), OpenAI Responses (`input_tokens` + `input_tokens_details.cached_tokens`),
+    // and Gemini (`promptTokenCount`) already include cached tokens in their prompt/input token count.
+    if let Some(cache_read) = value_as_u32(usage.get("cache_read_input_tokens")) {
+        let cache_creation = value_as_u32(usage.get("cache_creation_input_tokens")).unwrap_or(0);
+        if let Some(inp) = raw_input {
+            return Some(inp + cache_read + cache_creation);
+        }
+    }
+
+    raw_input
 }
 
 fn extract_reasoning_tokens(usage: &Value) -> Option<u32> {
@@ -410,6 +424,9 @@ pub async fn monitor_middleware(
         None
     };
 
+    let request_headers_json =
+        crate::proxy::payload_audit::headers_to_redacted_json(request.headers());
+
     let request_body_str;
 
     // [FIX] 从请求 extensions 提取 UserTokenIdentity (由 Auth 中间件注入)
@@ -458,7 +475,17 @@ pub async fn monitor_middleware(
         request
     };
 
-    let response = next.run(request).await;
+    let upstream_holder = UpstreamRequestBodyHolder::new();
+    let mut request = request;
+    request.extensions_mut().insert(upstream_holder.clone());
+
+    let response = crate::proxy::monitor::CURRENT_UPSTREAM_CAPTURE
+        .scope(upstream_holder.clone(), next.run(request))
+        .await;
+    let upstream_request_body = upstream_holder.take();
+    let upstream_request_headers = upstream_holder.take_headers();
+    let response_headers_json =
+        crate::proxy::payload_audit::headers_to_redacted_json(response.headers());
 
     // user_token_identity 已在上面从请求 extensions 中提取
 
@@ -519,7 +546,11 @@ pub async fn monitor_middleware(
         client_ip,
         error: None,
         request_body: request_body_str,
+        upstream_request_body,
         response_body: None,
+        request_headers: Some(request_headers_json),
+        upstream_request_headers,
+        response_headers: Some(response_headers_json),
         input_tokens: None,
         output_tokens: None,
         cached_tokens: None,
@@ -531,8 +562,10 @@ pub async fn monitor_middleware(
         let (parts, body) = response.into_parts();
         let mut stream = body.into_data_stream();
         let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let start_instant = start;
 
         tokio::spawn(async move {
+            let stream_start = std::time::Instant::now();
             let mut all_stream_data = Vec::new();
             let mut last_few_bytes = Vec::new();
 
@@ -558,6 +591,26 @@ pub async fn monitor_middleware(
                 }
             }
             drop(stream);
+
+            let stream_ms = stream_start.elapsed().as_micros() as f64 / 1000.0;
+            let total_ms = start_instant.elapsed().as_micros() as f64 / 1000.0;
+            log.duration = total_ms.round() as u64;
+
+            let mut headers_map: serde_json::Map<String, Value> = log
+                .response_headers
+                .as_ref()
+                .and_then(|h| serde_json::from_str(h).ok())
+                .unwrap_or_default();
+
+            headers_map.insert(
+                "x-timing-stream-ms".to_string(),
+                serde_json::json!(format!("{:.3}", stream_ms)),
+            );
+            headers_map.insert(
+                "x-timing-total-ms".to_string(),
+                serde_json::json!(format!("{:.3}", total_ms)),
+            );
+            log.response_headers = serde_json::to_string(&Value::Object(headers_map.clone())).ok();
 
             // Parse and consolidate stream data into readable format
             if let Ok(full_response) = std::str::from_utf8(&all_stream_data) {
@@ -587,6 +640,14 @@ pub async fn monitor_middleware(
                                         delta.get("reasoning_content").and_then(|v| v.as_str())
                                     {
                                         thinking_content.push_str(thinking);
+                                    }
+                                    // Thinking signature in OpenAI delta
+                                    if let Some(sig) = delta
+                                        .get("signature")
+                                        .or_else(|| delta.get("thought_signature"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        thinking_signature = sig.to_string();
                                     }
                                     // Main response content
                                     if let Some(content) =
@@ -646,6 +707,42 @@ pub async fn monitor_middleware(
                             }
                         }
 
+                        // Gemini format: candidates[0].content.parts
+                        if let Some(candidates) = json.get("candidates").and_then(|c| c.as_array()) {
+                            for cand in candidates {
+                                if let Some(content) = cand.get("content") {
+                                    if let Some(parts) = content.get("parts").and_then(|p| p.as_array()) {
+                                        for part in parts {
+                                            if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                                if part.get("thought").and_then(|t| t.as_bool()).unwrap_or(false) {
+                                                    thinking_content.push_str(text);
+                                                } else {
+                                                    response_content.push_str(text);
+                                                }
+                                            }
+                                            if let Some(sig) = part
+                                                .get("thought_signature")
+                                                .or_else(|| part.get("signature"))
+                                                .and_then(|s| s.as_str())
+                                            {
+                                                thinking_signature = sig.to_string();
+                                            }
+                                            if let Some(fc) = part.get("functionCall") {
+                                                if let Some(name) = fc.get("name").and_then(|n| n.as_str()) {
+                                                    let args = fc.get("args").map(|a| a.to_string()).unwrap_or_default();
+                                                    tool_calls.push(serde_json::json!({
+                                                        "id": "",
+                                                        "type": "function",
+                                                        "function": { "name": name, "arguments": args }
+                                                    }));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Claude/Anthropic format: content_block_start, content_block_delta, etc.
                         let msg_type = json.get("type").and_then(|t| t.as_str());
                         match msg_type {
@@ -672,6 +769,16 @@ pub async fn monitor_middleware(
                                             "type": "function",
                                             "function": { "name": name, "arguments": "" }
                                         });
+                                    }
+                                    if let Some(thinking) = block.get("thinking").and_then(|v| v.as_str()) {
+                                        thinking_content.push_str(thinking);
+                                    }
+                                    if let Some(sig) = block
+                                        .get("signature")
+                                        .or_else(|| block.get("thought_signature"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        thinking_signature = sig.to_string();
                                     }
                                 }
                             }
@@ -702,6 +809,14 @@ pub async fn monitor_middleware(
                                         delta.get("thinking").and_then(|v| v.as_str())
                                     {
                                         thinking_content.push_str(thinking);
+                                    }
+                                    // Thinking signature in delta (Claude signature_delta or direct signature)
+                                    if let Some(sig) = delta
+                                        .get("signature")
+                                        .or_else(|| delta.get("thought_signature"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        thinking_signature = sig.to_string();
                                     }
                                     // Text content
                                     if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
@@ -834,6 +949,32 @@ pub async fn monitor_middleware(
                             .insert("tool_calls".to_string(), Value::Array(clean_tool_calls));
                     }
                 }
+
+                // [Timing Diagnostics] 注入耗时诊断元数据 (秒)
+                let mut timing_obj = serde_json::Map::new();
+                if let Some(clean) = headers_map.get("x-timing-clean-ms").and_then(|v| v.as_str()) {
+                    if let Ok(n) = clean.parse::<f64>() {
+                        timing_obj.insert("clean_s".to_string(), serde_json::json!(n / 1000.0));
+                    }
+                }
+                if let Some(norm) = headers_map.get("x-timing-norm-ms").and_then(|v| v.as_str()) {
+                    if let Ok(n) = norm.parse::<f64>() {
+                        timing_obj.insert("norm_s".to_string(), serde_json::json!(n / 1000.0));
+                    }
+                }
+                if let Some(th) = headers_map.get("x-timing-thinking-ms").and_then(|v| v.as_str()) {
+                    if let Ok(n) = th.parse::<f64>() {
+                        timing_obj.insert("thinking_s".to_string(), serde_json::json!(n / 1000.0));
+                    }
+                }
+                if let Some(ttft) = headers_map.get("x-timing-ttft-ms").and_then(|v| v.as_str()) {
+                    if let Ok(n) = ttft.parse::<f64>() {
+                        timing_obj.insert("ttft_s".to_string(), serde_json::json!(n / 1000.0));
+                    }
+                }
+                timing_obj.insert("stream_s".to_string(), serde_json::json!(stream_ms / 1000.0));
+                timing_obj.insert("total_s".to_string(), serde_json::json!(total_ms / 1000.0));
+                consolidated.insert("_timing".to_string(), Value::Object(timing_obj));
                 if has_actual_content {
                     let mut usage_obj = serde_json::Map::new();
                     let input_toks = log.input_tokens.unwrap_or(0);
@@ -942,13 +1083,18 @@ pub async fn monitor_middleware(
                 log.error = Some("Stream Error or Failed".to_string());
             }
 
-            // [FIX #3325] Fallback input token estimation for stream responses
+            // Fallback input token estimation prefers the transit (upstream) body
             if log.input_tokens.is_none() {
-                if let Some(ref req_body) = log.request_body {
-                    let estimated = crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(req_body);
-                    if estimated > 0 {
-                        log.input_tokens = Some(estimated);
-                    }
+                let estimated = log
+                    .upstream_request_body
+                    .as_ref()
+                    .or(log.request_body.as_ref())
+                    .map(|body| {
+                        crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(body)
+                    })
+                    .unwrap_or(0);
+                if estimated > 0 {
+                    log.input_tokens = Some(estimated);
                 }
             }
 
@@ -963,6 +1109,21 @@ pub async fn monitor_middleware(
             Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)),
         )
     } else if content_type.contains("application/json") || content_type.contains("text/") {
+        let total_ms = start.elapsed().as_micros() as f64 / 1000.0;
+        log.duration = total_ms.round() as u64;
+
+        let mut headers_map: serde_json::Map<String, Value> = log
+            .response_headers
+            .as_ref()
+            .and_then(|h| serde_json::from_str(h).ok())
+            .unwrap_or_default();
+
+        headers_map.insert(
+            "x-timing-total-ms".to_string(),
+            serde_json::json!(format!("{:.3}", total_ms)),
+        );
+        log.response_headers = serde_json::to_string(&Value::Object(headers_map)).ok();
+
         let (parts, body) = response.into_parts();
         match axum::body::to_bytes(body, MAX_RESPONSE_LOG_SIZE).await {
             Ok(bytes) => {
@@ -1005,13 +1166,18 @@ pub async fn monitor_middleware(
                     log.error = log.response_body.clone();
                 }
 
-                // [FIX #3325] Fallback input token estimation if upstream returned an error (no usage metadata)
+                // Fallback input token estimation prefers the transit (upstream) body
                 if log.input_tokens.is_none() {
-                    if let Some(ref req_body) = log.request_body {
-                        let estimated = crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(req_body);
-                        if estimated > 0 {
-                            log.input_tokens = Some(estimated);
-                        }
+                    let estimated = log
+                        .upstream_request_body
+                        .as_ref()
+                        .or(log.request_body.as_ref())
+                        .map(|body| {
+                            crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(body)
+                        })
+                        .unwrap_or(0);
+                    if estimated > 0 {
+                        log.input_tokens = Some(estimated);
                     }
                 }
 
@@ -1089,5 +1255,65 @@ mod tests {
             .expect("forwarder did not stop after receiver closed")
             .expect("forwarder task panicked");
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_extract_tokens_anthropic() {
+        use serde_json::json;
+        let usage = json!({
+            "input_tokens": 1200,
+            "cache_read_input_tokens": 8800,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 150
+        });
+        assert_eq!(super::extract_input_tokens(&usage), Some(10000));
+        assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
+        assert_eq!(super::extract_output_tokens(&usage), Some(150));
+    }
+
+    #[test]
+    fn test_extract_tokens_openai_chat() {
+        use serde_json::json;
+        let usage = json!({
+            "prompt_tokens": 10000,
+            "completion_tokens": 150,
+            "total_tokens": 10150,
+            "prompt_tokens_details": {
+                "cached_tokens": 8800
+            }
+        });
+        assert_eq!(super::extract_input_tokens(&usage), Some(10000));
+        assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
+        assert_eq!(super::extract_output_tokens(&usage), Some(150));
+    }
+
+    #[test]
+    fn test_extract_tokens_openai_responses() {
+        use serde_json::json;
+        let usage = json!({
+            "input_tokens": 10000,
+            "output_tokens": 150,
+            "total_tokens": 10150,
+            "input_tokens_details": {
+                "cached_tokens": 8800
+            }
+        });
+        assert_eq!(super::extract_input_tokens(&usage), Some(10000));
+        assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
+        assert_eq!(super::extract_output_tokens(&usage), Some(150));
+    }
+
+    #[test]
+    fn test_extract_tokens_gemini_raw() {
+        use serde_json::json;
+        let usage = json!({
+            "promptTokenCount": 10000,
+            "candidatesTokenCount": 150,
+            "totalTokenCount": 10150,
+            "cachedContentTokenCount": 8800
+        });
+        assert_eq!(super::extract_input_tokens(&usage), Some(10000));
+        assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
+        assert_eq!(super::extract_output_tokens(&usage), Some(150));
     }
 }

@@ -34,6 +34,31 @@ export default function AdvancedThinking({
                 </div>
 
                 <div className="space-y-4 divide-y divide-gray-100 dark:divide-gray-800">
+                    {/* 0. 服务端思考回填开关 */}
+                    <div className="pt-0 flex items-center justify-between gap-4">
+                        <div className="space-y-1">
+                            <h4 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                                {t("settings.advanced_thinking.store_enabled", { defaultValue: "服务端思考块回填" })}
+                            </h4>
+                            <p className="text-[11px] text-gray-500 dark:text-gray-400 max-w-lg">
+                                {t("settings.advanced_thinking.store_enabled_desc", { defaultValue: "默认开启。自动捕获/回填思考过程与签名；商业 Agent 未带回思考时由服务端补齐。自定义 Agent 可通过 DELETE /v1/thinking/sessions/:id 清理。" })}
+                            </p>
+                        </div>
+                        <input
+                            type="checkbox"
+                            className="toggle toggle-sm toggle-primary"
+                            checked={config.experimental?.thinking_store_enabled !== false}
+                            onChange={(e) => onChange({
+                                ...config,
+                                experimental: {
+                                    enable_usage_scaling: config.experimental?.enable_usage_scaling ?? false,
+                                    ...config.experimental,
+                                    thinking_store_enabled: e.target.checked,
+                                },
+                            })}
+                        />
+                    </div>
+
                     {/* 1. 思考预算 (Thinking Budget) */}
                     <div className="pt-0">
                         <ThinkingBudget

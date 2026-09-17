@@ -87,6 +87,10 @@ impl SignatureCache {
             return;
         }
 
+        // 1. 持久化到 SQLite L2 数据库 (支持代理重启后秒级恢复)
+        let _ = crate::modules::proxy_db::save_tool_signature(tool_use_id, &signature);
+
+        // 2. 写入内存 L1 缓存
         if let Ok(mut cache) = self.tool_signatures.lock() {
             tracing::debug!(
                 "[SignatureCache] Caching tool signature for id: {}",
@@ -112,6 +116,7 @@ impl SignatureCache {
 
     /// Retrieve a signature for a tool_use_id
     pub fn get_tool_signature(&self, tool_use_id: &str) -> Option<String> {
+        // 1. 先查内存 L1 缓存
         if let Ok(cache) = self.tool_signatures.lock() {
             if let Some(entry) = cache.get(tool_use_id) {
                 if !entry.is_expired() {
@@ -123,6 +128,20 @@ impl SignatureCache {
                 }
             }
         }
+
+        // 2. 内存未命中（如代理重启过），从 SQLite L2 数据库恢复
+        if let Ok(Some(sig)) = crate::modules::proxy_db::load_tool_signature(tool_use_id) {
+            let sig: String = sig;
+            if let Ok(mut cache) = self.tool_signatures.lock() {
+                cache.insert(tool_use_id.to_string(), CacheEntry::new(sig.clone()));
+            }
+            tracing::info!(
+                "[SignatureCache] Restored tool signature from SQLite for id: {}",
+                tool_use_id
+            );
+            return Some(sig);
+        }
+
         None
     }
 
@@ -495,5 +514,28 @@ mod tests {
         assert!(cache.get_tool_signature("tool_1").is_none());
         assert!(cache.get_signature_family(&sig).is_none());
         assert!(cache.get_session_signature("sid-1").is_none());
+    }
+
+    #[test]
+    fn test_tool_signature_sqlite_recovery() {
+        let tool_id = "call_sig_sqlite_recovery_unique";
+        let sig = "s".repeat(60);
+
+        // 1. Direct save to SQLite
+        let db_res = crate::modules::proxy_db::save_tool_signature(tool_id, &sig);
+        if let Err(e) = db_res {
+            eprintln!("Skipping DB test if DB not initialized: {}", e);
+            return;
+        }
+
+        // 2. New in-memory cache (simulating proxy restart)
+        let cache = SignatureCache::new();
+
+        // 3. get_tool_signature should fall back to SQLite and populate L1 cache
+        let recovered = cache.get_tool_signature(tool_id);
+        assert_eq!(recovered, Some(sig.clone()));
+
+        // 4. Second lookup should hit L1
+        assert_eq!(cache.get_tool_signature(tool_id), Some(sig));
     }
 }

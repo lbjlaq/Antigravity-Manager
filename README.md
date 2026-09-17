@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.7.1)
+> 专业级 AI 账号管理与协议代理系统 (v4.7.3)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.7.1-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.7.3-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -45,7 +45,7 @@
 | 赞助商 (Sponsor) | 简介 (Description) |
 | :---: | :--- |
 | <img src="docs/images/packycode_logo.png" width="200" alt="PackyCode Logo"> | 感谢 **PackyCode** 对本项目的赞助！PackyCode 是一家可靠高效的 API 中转服务商，提供 Claude Code、Codex、Gemini 等多种服务的中转。PackyCode 为本项目的用户提供了特别优惠：使用[此链接](https://www.packyapi.com/register?aff=Ctrler)注册，并在充值时输入 **“Ctrler”** 优惠码即可享受 **九折优惠**。 |
-| <img src="docs/images/APIKEYFUN.png" width="200" alt="APIKEYFUN Logo"> | 感谢 APIKEY.FUN 赞助本项目！APIKEY.FUN 是一家专业的企业级 AI 中转站，致力于为企业和个人开发者提供稳定、高效、低成本的 AI 模型 API 接入服务。平台支持 Claude、OpenAI、Gemini 等主流热门模型，价格低至官方原价的 7%。通过本项目[专属链接](https://apikey.fun/register?aff=Ctrler)注册，还可享受最高 **充值永久 95 折** 专属优惠。 |
+| <img src="docs/images/APIKEYFUN.png" width="200" alt="APIKEYFUN Logo"> | 感谢 APIKEY.FUN 赞助本项目！APIKEY.FUN 是一家专业的企业级 AI 中转站，致力于为企业和个人开发者提供稳定、高效、低成本的 AI 模型 API 接入服务。平台支持 Claude、OpenAI、Gemini 等主流热门模型，价格低至官方原价的 7%。通过本项目[专属链接](https://apikey.fan/register?aff=Ctrler)注册，还可享受最高 **充值永久 95 折** 专属优惠。 |
 | <img src="docs/images/claudeapilogo.png" width="200" alt="Claude API Logo"> | 感谢 **Claude API** 对本项目的支持！claudeapi.com 是一家走**官方与 AWS 渠道**接入的 **Claude API** 中转站，专注 Claude，主打高稳定、低延迟，完整支持 Claude Code。为本项目用户提供专属福利：通过[专属链接](https://console.claudeapi.com/register?source=antigravity)注册即送**免费测试额度，零门槛跑通**；充值再享 **95 折**专属优惠(联系客服）。 |
 | <img src="docs/images/AICodeMirror.jpg" width="200" alt="AICodeMirror Logo"> | 感谢 AICodeMirror 赞助了本项目！AICodeMirror 提供 Claude Code / Codex / Gemini CLI 官方高稳定中转服务，支持企业级高并发、极速开票、7×24 专属技术支持。 Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更有折上折！AICodeMirror 为 Antigravity-Manager 的用户提供了特别福利，通过[此链接](https://aicodemirror.ai/register?invitecode=MV5XUM)注册的用户，可享受首充8折，企业客户最高可享 7.5 折！ |
 
@@ -457,7 +457,7 @@ response = client.chat.completions.create(
 
 ## 📝 更新日志
 
-> 最新版本 **v4.7.1**（2026-09-12）：原生语言服务逆向对齐与动态 Agent requestType 按需切换、细粒度 429 熔断分类防误锁、MALFORMED_FUNCTION_CALL 规范化与空白响应自愈、支持一键将 APIKEY.FUN 凭据与模型同步至 OpenCode、核心账号与配置物理刷盘原子写入防损坏、修复 reset_time NaN 倒计时与单模型零配额隔离熔断、代理日志自动保留与增量空间回收、代理密码解密失败安全告警与 URL 凭据优雅降级、Claude 签名日志降噪与 Docker 日志轮转、暗黑模式开关高亮。
+> 最新版本 **v4.7.3**（2026-09-16）：从0到1自研 Thinking Store 服务端思考链引擎（L1 内存+L2 SQLite 缓存与 AGZ1 极速压缩），根治第三方 CLI/Agent 思考签名丢失导致的模型降级与提前摆烂；四大协议流水线严格归一化为 Gemini Contents 与原生工具链调度；深度适配 DeepSeek Harness (DSH) 与 WorkBuddy 工具调用规范；全链路微观毫秒计时与横向三栏报文审计视窗；流量日志内存精简与磁盘配额防护。
 
 👉 **[查看完整更新日志 CHANGELOG.md →](CHANGELOG.md)**
 

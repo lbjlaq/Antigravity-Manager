@@ -96,7 +96,7 @@ checksum = "34fde25430d87a9388dadbe6e34d7f72a462c8b43ac8d309b42b0a8505d7e2a5"
 
 [[package]]
 name = "antigravity-tools"
-version = "4.7.1"
+version = "4.7.3"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -108,6 +108,7 @@ dependencies = [
  "dashmap",
  "dirs 5.0.1",
  "eventsource-stream",
+ "flate2",
  "futures",
  "gtk",
  "hyper",
@@ -128,6 +129,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "socket2 0.5.10",
  "sys-locale",
  "sysinfo",
  "tauri",

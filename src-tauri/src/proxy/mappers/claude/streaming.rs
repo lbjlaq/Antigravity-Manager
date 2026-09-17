@@ -236,6 +236,7 @@ pub struct StreamingState {
     pub registered_tool_names: Vec<String>,
     // [FIX #3379] Track whether any text_delta was emitted this turn (guard G7)
     pub text_delta_emitted_this_turn: bool,
+    pub thinking_acc: crate::proxy::thinking_store::TurnAccumulator,
 }
 
 impl StreamingState {
@@ -266,6 +267,7 @@ impl StreamingState {
             client_adapter: None,
             registered_tool_names: Vec::new(),
             text_delta_emitted_this_turn: false,
+            thinking_acc: crate::proxy::thinking_store::TurnAccumulator::new(),
         }
     }
 
@@ -372,10 +374,18 @@ impl StreamingState {
 
         let mut chunks = Vec::new();
 
-        // Thinking 块结束时发送暂存的签名
-        if self.block_type == BlockType::Thinking && self.signatures.has_pending() {
-            if let Some(signature) = self.signatures.consume() {
-                chunks.push(self.emit_delta("signature_delta", json!({ "signature": signature })));
+        // Thinking 块结束时发送暂存的签名 (若上游未下发签名则回退到会话签名或哨兵签名)
+        if self.block_type == BlockType::Thinking {
+            let signature = if self.signatures.has_pending() {
+                self.signatures.consume()
+            } else {
+                self.session_id.as_deref().and_then(|sid| {
+                    crate::proxy::SignatureCache::global().get_session_signature(sid)
+                }).or_else(|| Some("skip_thought_signature_validator".to_string()))
+            };
+
+            if let Some(sig) = signature {
+                chunks.push(self.emit_delta("signature_delta", json!({ "signature": sig })));
             }
         }
 
@@ -1240,6 +1250,9 @@ impl<'a> PartProcessor<'a> {
                 }
             }
         }
+
+        // Record real tool_id into TurnAccumulator for precise session/fingerprint recovery
+        self.state.thinking_acc.record_tool_id(&tool_name, &tool_id);
 
         // 1. 发送 content_block_start (input 为空对象)
         let mut tool_use = json!({

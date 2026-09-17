@@ -143,20 +143,28 @@ pub enum ContentBlock {
     },
 }
 
+fn default_base64_type() -> String {
+    "base64".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageSource {
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_base64_type")]
     pub source_type: String,
-    pub media_type: String,
-    pub data: String,
+    #[serde(default)]
+    pub media_type: Option<String>,
+    #[serde(default)]
+    pub data: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentSource {
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_base64_type")]
     pub source_type: String, // "base64"
-    pub media_type: String, // e.g. "application/pdf"
-    pub data: String,       // base64 data
+    #[serde(default)]
+    pub media_type: Option<String>, // e.g. "application/pdf"
+    #[serde(default)]
+    pub data: Option<String>,       // base64 data
 }
 
 /// Tool - supports both client tools (with input_schema) and server tools (like web_search)

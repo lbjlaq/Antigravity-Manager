@@ -82,11 +82,28 @@ docker run -d \
 docker compose up -d
 ```
 
-### 3. 手動構建鏡像 (開發者)
+### 3. 手動構建鏡像 (開發者 / 二改版)
 如果您需要修改代碼或自定義構建，請在項目根目錄下執行：
+
+**Windows PowerShell（推薦）**
+```powershell
+# 一鍵構建二改版鏡像（標籤 antigravity-manager:local + 版本-fix）
+.\docker\build.ps1
+
+# 国内網絡加速
+.\docker\build.ps1 -UseMirror
+
+# 構建並推送到你自己的倉庫
+.\docker\build.ps1 -UseMirror -Push -Registry "yourname/antigravity-manager"
+```
+
+**手動 docker build**
 ```bash
 # 默認構建最新標籤
-docker build -t antigravity-manager:latest -f docker/Dockerfile .
+docker build -t antigravity-manager:local -f docker/Dockerfile .
+
+# 二改版 Compose 啟動（Windows 可用端口映射，不用 host 網絡）
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.fork.yml up -d --build
 ```
 
 #### 💡 構建參數

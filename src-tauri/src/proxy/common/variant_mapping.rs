@@ -72,6 +72,8 @@ impl RealModelSpec {
 /// is present we default to High (the most capable tier).
 pub fn infer_tier(budget_tokens: Option<u32>) -> VariantTier {
     match budget_tokens {
+        // 1024 是 Anthropic Claude SDK 规范的最小默认值，绝不能误判为 Low 导致思考截断！
+        Some(1024) => VariantTier::High,
         Some(b) if b < 2000 => VariantTier::Low,
         Some(b) if b < 7000 => VariantTier::Medium,
         _ => VariantTier::High,
@@ -95,14 +97,33 @@ pub fn tier_from_effort(effort: Option<&str>) -> Option<VariantTier> {
 pub fn resolve_real_model(canonical: &str, tier: VariantTier) -> Option<RealModelSpec> {
     // Normalize: lowercase, trim a trailing variant-like suffix the client may have appended.
     let key = canonical.to_lowercase();
+    // 强制防御：凡是以 -high / -medium / -low 结尾的模型名，档位具有绝对优先级，绝不接受任何降级
+    let forced_tier = if key.ends_with("-high") {
+        Some(VariantTier::High)
+    } else if key.ends_with("-medium") {
+        Some(VariantTier::Medium)
+    } else if key.ends_with("-low") || key.ends_with("-extra-low") {
+        Some(VariantTier::Low)
+    } else {
+        None
+    };
+
     for family in GEMINI_FAMILIES {
-        let resolved_tier = if family.canonical_id == key.as_str() {
-            tier
-        } else if let Some((_, policy)) = family
+        let is_canonical = family.canonical_id == key.as_str();
+        let alias_match = family
             .aliases
             .iter()
-            .find(|(alias, _)| *alias == key.as_str())
-        {
+            .find(|(alias, _)| *alias == key.as_str());
+
+        if !is_canonical && alias_match.is_none() {
+            continue;
+        }
+
+        let resolved_tier = if let Some(ft) = forced_tier {
+            ft
+        } else if is_canonical {
+            tier
+        } else if let Some((_, policy)) = alias_match {
             match *policy {
                 AliasPolicy::HonorTier => tier,
                 AliasPolicy::Fixed(fixed_tier) => fixed_tier,
@@ -157,8 +178,94 @@ pub fn resolve_with_tier(
     explicit_tier: Option<VariantTier>,
     budget_tokens: Option<u32>,
 ) -> Option<RealModelSpec> {
-    let tier = explicit_tier.unwrap_or_else(|| infer_tier(budget_tokens));
-    resolve_real_model(canonical, tier).or_else(|| resolve_non_variant_model(canonical))
+    // 1. 无变体划分的独立模型优先匹配（如 gpt-oss-120b-medium, claude-sonnet-4-6 等）
+    if let Some(spec) = resolve_non_variant_model(canonical) {
+        return Some(spec);
+    }
+
+    let lower = canonical.to_lowercase();
+    let name_tier = if lower.ends_with("-high") {
+        Some(VariantTier::High)
+    } else if lower.ends_with("-medium") {
+        Some(VariantTier::Medium)
+    } else if lower.ends_with("-low") || lower.ends_with("-extra-low") {
+        Some(VariantTier::Low)
+    } else {
+        None
+    };
+
+    let is_v3 = crate::proxy::model_specs::is_gemini_v3_or_above(canonical);
+
+    // 显式模型名档位（-high, -medium, -low）具有绝对最高优先级，绝不接受任何 budget 降级；
+    // 其次遵从显式传递的 effort 档位；无显式档位时若有 budget 则推断档位，无 budget 则一律默认 High
+    let tier = if let Some(nt) = name_tier {
+        nt
+    } else if let Some(et) = explicit_tier {
+        et
+    } else if let Some(bt) = budget_tokens {
+        infer_tier(Some(bt))
+    } else {
+        VariantTier::High
+    };
+
+    // 2. 尝试从已知家族注册表中匹配
+    if let Some(spec) = resolve_real_model(canonical, tier) {
+        return Some(spec);
+    }
+
+    // 3. 通用动态解析 (治本):
+    // 针对任何 >= 3.0 的 Gemini 衍生模型（如 gemini-3.8-flash, gemini-3.9-flash, gemini-4.0-flash 等），
+    // 即使未在 GEMINI_FAMILIES 中硬编码，也能自动根据档位生成完整规范的 RealModelSpec，
+    // 确保思考模式无缝开启，预算自动校准，绝不降级。
+    let is_gemini_3_family = is_v3 && (lower.contains("flash") || lower.contains("pro") || lower.contains("agent"));
+    if is_gemini_3_family {
+        let dynamic_tier = if let Some(nt) = name_tier {
+            nt
+        } else if let Some(et) = explicit_tier {
+            et
+        } else if lower.contains("high") || lower.contains("agent") || lower.contains("pro") {
+            VariantTier::High
+        } else if lower.contains("low") {
+            VariantTier::Low
+        } else {
+            // medium 或者不带档位后缀，统一赋予 4000 (Medium 内置逆向规范)
+            VariantTier::Medium
+        };
+        let budget = match dynamic_tier {
+            VariantTier::High => {
+                if lower.contains("pro") {
+                    10001
+                } else {
+                    10000
+                }
+            }
+            VariantTier::Medium => {
+                if lower.contains("pro") {
+                    10001
+                } else {
+                    4000
+                }
+            }
+            VariantTier::Low => {
+                if lower.contains("pro") {
+                    1001
+                } else {
+                    1000
+                }
+            }
+        };
+        let max_output_tokens = if lower.contains("pro") { 65535 } else { 65536 };
+        let id: &'static str = Box::leak(canonical.to_string().into_boxed_str());
+        return Some(RealModelSpec {
+            id,
+            thinking_budget: budget,
+            max_output_tokens,
+            include_thoughts: true,
+            preserve_client_budget: false,
+        });
+    }
+
+    None
 }
 
 /// Top-level compatibility resolver using the client thinking budget.
@@ -167,29 +274,6 @@ pub fn resolve(canonical: &str, budget_tokens: Option<u32>) -> Option<RealModelS
 }
 
 // ── verified real model specs (from upstream spec) ──
-// gemini-3.7-flash family (maxOutputTokens = 65536)
-const SPEC_37_FLASH_LOW: RealModelSpec = RealModelSpec {
-    id: "gemini-3.7-flash-low",
-    thinking_budget: 1000,
-    max_output_tokens: 65536,
-    include_thoughts: true,
-    preserve_client_budget: false,
-};
-const SPEC_37_FLASH_MEDIUM: RealModelSpec = RealModelSpec {
-    id: "gemini-3.7-flash-medium",
-    thinking_budget: 4000,
-    max_output_tokens: 65536,
-    include_thoughts: true,
-    preserve_client_budget: false,
-};
-const SPEC_37_FLASH_HIGH: RealModelSpec = RealModelSpec {
-    id: "gemini-3.7-flash-high",
-    thinking_budget: 10000,
-    max_output_tokens: 65536,
-    include_thoughts: true,
-    preserve_client_budget: false,
-};
-
 // gemini-3.5-flash family (maxOutputTokens = 65536)
 const SPEC_35_FLASH_EXTRA_LOW: RealModelSpec = RealModelSpec {
     id: "gemini-3.5-flash-extra-low",
@@ -261,31 +345,6 @@ const SPEC_GPT_OSS_120B: RealModelSpec = RealModelSpec {
 
 pub static GEMINI_FAMILIES: &[CanonicalFamily] = &[
     CanonicalFamily {
-        canonical_id: "gemini-3.7-flash",
-        display_name: "Gemini 3.7 Flash",
-        context_limit: 1_000_000,
-        output_limit: 65_536,
-        input_modalities: &["text", "image", "audio", "video", "pdf"],
-        output_modalities: &["text"],
-        reasoning: true,
-        tiers: &[
-            (VariantTier::Low, SPEC_37_FLASH_LOW),
-            (VariantTier::Medium, SPEC_37_FLASH_MEDIUM),
-            (VariantTier::High, SPEC_37_FLASH_HIGH),
-        ],
-        aliases: &[
-            ("gemini-3.7-flash-high", AliasPolicy::HonorTier),
-            ("gemini-3.7-flash-medium", AliasPolicy::Fixed(VariantTier::Medium)),
-            ("gemini-3.7-flash-low", AliasPolicy::Fixed(VariantTier::Low)),
-            ("gemini-3.7-flash-tiered", AliasPolicy::HonorTier),
-            ("gemini-3.6-flash-high", AliasPolicy::HonorTier),
-            ("gemini-3.6-flash-medium", AliasPolicy::Fixed(VariantTier::Medium)),
-            ("gemini-3.6-flash-low", AliasPolicy::Fixed(VariantTier::Low)),
-            ("gemini-3.6-flash", AliasPolicy::HonorTier),
-            ("gemini-3.6-flash-tiered", AliasPolicy::HonorTier),
-        ],
-    },
-    CanonicalFamily {
         canonical_id: "gemini-3.5-flash",
         display_name: "Gemini 3.5 Flash",
         context_limit: 1_000_000,
@@ -299,7 +358,7 @@ pub static GEMINI_FAMILIES: &[CanonicalFamily] = &[
             (VariantTier::High, SPEC_3_FLASH_AGENT),
         ],
         aliases: &[
-            ("gemini-3.5-flash-high", AliasPolicy::HonorTier),
+            ("gemini-3.5-flash-high", AliasPolicy::Fixed(VariantTier::High)),
             (
                 "gemini-3.5-flash-medium",
                 AliasPolicy::Fixed(VariantTier::Medium),
@@ -322,7 +381,7 @@ pub static GEMINI_FAMILIES: &[CanonicalFamily] = &[
             (VariantTier::High, SPEC_PRO_AGENT),
         ],
         aliases: &[
-            ("gemini-3.1-pro-high", AliasPolicy::HonorTier),
+            ("gemini-3.1-pro-high", AliasPolicy::Fixed(VariantTier::High)),
             ("gemini-pro", AliasPolicy::HonorTier),
             ("gemini-3.1-pro-low", AliasPolicy::Fixed(VariantTier::Low)),
         ],
@@ -391,25 +450,97 @@ mod tests {
 
     #[test]
     fn test_resolve_37_flash_variants() {
-        // High (default)
+        // 未带档位后缀的 Flash 模型默认赋予 medium (4000)
         let s = resolve("gemini-3.7-flash", None).unwrap();
-        assert_eq!(s.id, "gemini-3.7-flash-high");
-        assert_eq!(s.thinking_budget, 10000);
+        assert_eq!(s.id, "gemini-3.7-flash");
+        assert_eq!(s.thinking_budget, 4000);
         assert_eq!(s.max_output_tokens, 65536);
 
+        // High
+        let s_high = resolve("gemini-3.7-flash-high", None).unwrap();
+        assert_eq!(s_high.id, "gemini-3.7-flash-high");
+        assert_eq!(s_high.thinking_budget, 10000);
+
         // Medium
-        let s = resolve("gemini-3.7-flash-medium", None).unwrap();
-        assert_eq!(s.id, "gemini-3.7-flash-medium");
-        assert_eq!(s.thinking_budget, 4000);
+        let s_med = resolve("gemini-3.7-flash-medium", None).unwrap();
+        assert_eq!(s_med.id, "gemini-3.7-flash-medium");
+        assert_eq!(s_med.thinking_budget, 4000);
 
         // Low
-        let s = resolve("gemini-3.7-flash-low", None).unwrap();
-        assert_eq!(s.id, "gemini-3.7-flash-low");
-        assert_eq!(s.thinking_budget, 1000);
+        let s_low = resolve("gemini-3.7-flash-low", None).unwrap();
+        assert_eq!(s_low.id, "gemini-3.7-flash-low");
+        assert_eq!(s_low.thinking_budget, 1000);
+    }
 
-        // Tiered alias with budget
-        let s = resolve("gemini-3.7-flash-tiered", Some(1000)).unwrap();
-        assert_eq!(s.id, "gemini-3.7-flash-low");
+    #[test]
+    fn test_resolve_37_flash_high_never_downgraded_by_budget() {
+        for budget in [None, Some(0), Some(1000), Some(1024), Some(4000)] {
+            let s = resolve("gemini-3.7-flash-high", budget).unwrap();
+            assert_eq!(s.id, "gemini-3.7-flash-high");
+            assert_eq!(s.thinking_budget, 10000);
+        }
+    }
+
+    #[test]
+    fn test_resolve_38_flash_variants() {
+        // 未带档位后缀的 Flash 模型默认赋予 medium (4000)
+        let s = resolve("gemini-3.8-flash", None).unwrap();
+        assert_eq!(s.id, "gemini-3.8-flash");
+        assert_eq!(s.thinking_budget, 4000);
+        assert_eq!(s.max_output_tokens, 65536);
+
+        // High
+        let s_high = resolve("gemini-3.8-flash-high", None).unwrap();
+        assert_eq!(s_high.id, "gemini-3.8-flash-high");
+        assert_eq!(s_high.thinking_budget, 10000);
+
+        // Medium
+        let s_med = resolve("gemini-3.8-flash-medium", None).unwrap();
+        assert_eq!(s_med.id, "gemini-3.8-flash-medium");
+        assert_eq!(s_med.thinking_budget, 4000);
+
+        // Low
+        let s_low = resolve("gemini-3.8-flash-low", None).unwrap();
+        assert_eq!(s_low.id, "gemini-3.8-flash-low");
+        assert_eq!(s_low.thinking_budget, 1000);
+
+        // High never downgraded
+        for budget in [None, Some(0), Some(1000), Some(1024)] {
+            let s = resolve("gemini-3.8-flash-high", budget).unwrap();
+            assert_eq!(s.id, "gemini-3.8-flash-high");
+            assert_eq!(s.thinking_budget, 10000);
+        }
+    }
+
+    #[test]
+    fn test_dynamic_unregistered_gemini_3_family() {
+        // Any unregistered Gemini >= 3 model resolves dynamically without hardcoded registry
+        // 未带档位后缀的 Flash 模型默认赋予 medium (4000)
+        let s = resolve("gemini-3.9-flash", None).unwrap();
+        assert_eq!(s.id, "gemini-3.9-flash");
+        assert_eq!(s.thinking_budget, 4000);
+        assert_eq!(s.max_output_tokens, 65536);
+
+        // Explicit tier in name
+        let s_med = resolve("gemini-3.9-flash-medium", None).unwrap();
+        assert_eq!(s_med.id, "gemini-3.9-flash-medium");
+        assert_eq!(s_med.thinking_budget, 4000);
+
+        let s_low = resolve("gemini-3.9-flash-low", None).unwrap();
+        assert_eq!(s_low.id, "gemini-3.9-flash-low");
+        assert_eq!(s_low.thinking_budget, 1000);
+
+        // Budget never downgrades unregistered -high model
+        for budget in [None, Some(0), Some(1000), Some(1024)] {
+            let s = resolve("gemini-3.9-flash-high", budget).unwrap();
+            assert_eq!(s.id, "gemini-3.9-flash-high");
+            assert_eq!(s.thinking_budget, 10000);
+        }
+
+        // Pro model defaults to 10001
+        let s = resolve("gemini-3.9-pro", None).unwrap();
+        assert_eq!(s.id, "gemini-3.9-pro");
+        assert_eq!(s.thinking_budget, 10001);
     }
 
     #[test]
@@ -581,7 +712,7 @@ mod tests {
         );
 
         // ── gemini-3.5-flash-high ──────────────────────────────────────
-        // Same canonical arm as gemini-3.5-flash (both match the first arm)
+        // 显式 -high 锁定最高档位，绝不接受 budget 降级
         check(
             "gemini-3.5-flash-high",
             None,
@@ -592,15 +723,15 @@ mod tests {
         check(
             "gemini-3.5-flash-high",
             Some(0),
-            "gemini-3.5-flash-extra-low",
-            1000,
+            "gemini-3-flash-agent",
+            10000,
             65536,
         );
         check(
             "gemini-3.5-flash-high",
             Some(4000),
-            "gemini-3.5-flash-low",
-            4000,
+            "gemini-3-flash-agent",
+            10000,
             65536,
         );
         check(
@@ -707,8 +838,8 @@ mod tests {
         check(
             "gemini-3.1-pro-high",
             Some(0),
-            "gemini-3.1-pro-low",
-            1001,
+            "gemini-pro-agent",
+            10001,
             65535,
         );
         check(
@@ -848,7 +979,7 @@ mod tests {
 
     #[test]
     fn old_catalog_alias_fallback() {
-        // ── gemini-3.1-pro-high (HonorTier → same as gemini-3.1-pro) ────
+        // ── gemini-3.1-pro-high (Fixed(High) → always gemini-pro-agent, never downgraded) ────
         // None → High → gemini-pro-agent
         check(
             "gemini-3.1-pro-high",
@@ -857,15 +988,15 @@ mod tests {
             10001,
             65535,
         );
-        // Some(0) → Low → gemini-3.1-pro-low
+        // Some(0) → High (Fixed, no downgrade) → gemini-pro-agent
         check(
             "gemini-3.1-pro-high",
             Some(0),
-            "gemini-3.1-pro-low",
-            1001,
+            "gemini-pro-agent",
+            10001,
             65535,
         );
-        // Some(4000) → Medium → High fallback → gemini-pro-agent
+        // Some(4000) → High (Fixed, no downgrade) → gemini-pro-agent
         check(
             "gemini-3.1-pro-high",
             Some(4000),

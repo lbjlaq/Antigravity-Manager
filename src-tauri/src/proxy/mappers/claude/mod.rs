@@ -14,6 +14,7 @@ pub use collector::collect_stream_to_json;
 pub use models::*;
 pub use request::{
     clean_cache_control_from_messages, merge_consecutive_messages, transform_claude_request_in,
+    transform_claude_request_in_timed, TransformTiming,
 };
 pub use response::transform_response;
 pub use streaming::{PartProcessor, StreamingState};
@@ -229,6 +230,11 @@ where
             yield Ok(state.emit("message_delta", delta));
         }
 
+        if let Some(sid) = state.session_id.clone() {
+            let acc = std::mem::take(&mut state.thinking_acc);
+            acc.commit(&sid);
+        }
+
         // Ensure termination events are sent
         for chunk in emit_force_stop(&mut state) {
             yield Ok(chunk);
@@ -311,6 +317,7 @@ fn process_sse_line(
         .and_then(|p| p.as_array())
     {
         for part_value in parts {
+            state.thinking_acc.ingest_part(part_value);
             if let Ok(part) = serde_json::from_value::<GeminiPart>(part_value.clone()) {
                 let mut processor = PartProcessor::new(state);
                 chunks.extend(processor.process(&part));

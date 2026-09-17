@@ -51,6 +51,9 @@ pub struct OpenAIRequest {
     // [NEW] Direct imageSize support (for Gemini native parameter)
     #[serde(default, rename = "imageSize")]
     pub image_size: Option<String>,
+    /// Client/session id used to store and restore full thinking blocks.
+    #[serde(default, rename = "session_id")]
+    pub session_id: Option<String>,
 }
 
 /// Thinking 配置 (兼容 Anthropic 和 OpenAI 扩展协议)

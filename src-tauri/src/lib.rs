@@ -603,6 +603,8 @@ pub fn run() {
             commands::get_antigravity_cache_paths,
             commands::open_data_folder,
             commands::get_data_dir_path,
+            commands::set_data_dir,
+            commands::migrate_data_dir,
             commands::show_main_window,
             commands::set_window_theme,
             commands::get_antigravity_path,
@@ -645,7 +647,6 @@ pub fn run() {
             commands::proxy::get_preferred_account,
             commands::proxy::clear_proxy_rate_limit,
             commands::proxy::clear_all_proxy_rate_limits,
-            commands::proxy::check_proxy_health,
             // Proxy Pool Binding commands
             commands::proxy_pool::bind_account_proxy,
             commands::proxy_pool::unbind_account_proxy,
@@ -722,33 +723,29 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             match event {
-                // Handle app exit - cleanup background tasks
+                // Handle app exit - cleanup background tasks and release ports
                 tauri::RunEvent::Exit => {
-                    tracing::info!("Application exiting, cleaning up background tasks...");
+                    tracing::info!("Application exiting, cleaning up background tasks and releasing ports...");
                     if let Some(state) =
                         app_handle.try_state::<crate::commands::proxy::ProxyServiceState>()
                     {
                         tauri::async_runtime::block_on(async {
-                            // Use timeout-based read() instead of try_read() to handle lock contention
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(3),
-                                state.instance.read(),
-                            )
-                            .await
-                            {
-                                Ok(guard) => {
-                                    if let Some(instance) = guard.as_ref() {
-                                        // Use graceful_shutdown with 2s timeout for task cleanup
-                                        instance
-                                            .token_manager
-                                            .graceful_shutdown(std::time::Duration::from_secs(2))
-                                            .await;
-                                    }
+                            // 1. 停止 Admin Server（释放 TCP 监听器和 Socket）
+                            if let Ok(mut lock) = tokio::time::timeout(std::time::Duration::from_millis(1000), state.admin_server.write()).await {
+                                if let Some(admin) = lock.take() {
+                                    admin.stop().await;
                                 }
-                                Err(_) => {
-                                    tracing::warn!(
-                                        "Lock acquisition timed out after 3s, forcing exit"
-                                    );
+                            }
+
+                            // 3. 停止业务代理实例及后台任务
+                            if let Ok(mut lock) = tokio::time::timeout(std::time::Duration::from_millis(1000), state.instance.write()).await {
+                                if let Some(instance) = lock.take() {
+                                    let _ = tokio::time::timeout(
+                                        std::time::Duration::from_millis(500),
+                                        instance.token_manager.graceful_shutdown(std::time::Duration::from_millis(400)),
+                                    ).await;
+                                    instance.axum_server.set_running(false).await;
+                                    instance.axum_server.stop();
                                 }
                             }
                         });

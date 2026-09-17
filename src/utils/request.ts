@@ -87,6 +87,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
 
   // System
   'get_data_dir_path': { url: '/api/system/data-dir', method: 'GET' },
+  'set_data_dir': { url: '/api/system/data-dir', method: 'POST' },
   'get_update_settings': { url: '/api/system/updates/settings', method: 'GET' },
   'save_update_settings': { url: '/api/system/updates/save', method: 'POST' },
   'get_http_api_settings': { url: '/api/system/http-api/settings', method: 'GET' },

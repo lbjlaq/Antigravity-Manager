@@ -225,6 +225,20 @@ pub fn wrap_request_v2(
         }
     }
 
+    let lower_model = final_model_name.to_lowercase();
+    let is_under_v3 = crate::proxy::model_specs::is_gemini_under_v3(final_model_name)
+        || crate::proxy::model_specs::is_gemini_under_v3(original_model);
+    let force_server_thinking = !is_under_v3
+        && crate::proxy::thinking_store::any_model_forces_server_thinking(&[
+            final_model_name,
+            original_model,
+        ]);
+    let is_preview = lower_model.contains("preview");
+    let should_inject = !is_under_v3
+        && (force_server_thinking
+            || lower_model.contains("thinking")
+            || (crate::proxy::model_specs::is_gemini_v3_or_above(final_model_name) && !is_preview));
+
     if let Some(contents) = inner_request
         .get_mut("contents")
         .and_then(|c| c.as_array_mut())
@@ -280,103 +294,104 @@ pub fn wrap_request_v2(
                                 if obj.get("thoughtSignature").is_none() {
                                     obj.insert("thoughtSignature".to_string(), sig.clone());
                                 }
-                                if obj.get("thought_signature").is_none() {
-                                    obj.insert("thought_signature".to_string(), sig);
-                                }
-                            } else if let Some(s_id) = session_id {
-                                if let Some(sig) = crate::proxy::SignatureCache::global()
-                                    .get_session_signature(s_id)
-                                {
+                            } else {
+                                // 优先按 call_id 查询本工具专属签名 (精确到轮次，杜绝错位)
+                                let call_id = obj
+                                    .get("functionCall")
+                                    .and_then(|f| f.get("id"))
+                                    .and_then(|id| id.as_str())
+                                    .map(str::to_string);
+                                let tool_sig = call_id.as_deref().and_then(|id| {
+                                    crate::proxy::SignatureCache::global().get_tool_signature(id)
+                                });
+
+                                if let Some(sig) = tool_sig {
                                     obj.insert("thoughtSignature".to_string(), json!(sig));
-                                    obj.insert("thought_signature".to_string(), json!(sig));
-                                    tracing::debug!("[Gemini-Wrap] Injected signature (len: {}) for session: {}", sig.len(), s_id);
-                                } else {
-                                    // Session cache empty: Gemini 3.x Flash (including 3.5/3.6/3.7)
-                                    // rejects functionCall without thought_signature.
-                                    let model_lc = final_model_name.to_lowercase();
-                                    let is_flash = model_lc.contains("gemini")
-                                        && (model_lc.contains("flash")
-                                            || model_lc.contains("-flash-"));
-                                    if is_flash {
+                                    tracing::debug!("[Gemini-Wrap] Injected tool signature (len: {}) for call_id: {:?}", sig.len(), call_id);
+                                } else if let Some(s_id) = session_id {
+                                    if let Some(sig) = crate::proxy::SignatureCache::global()
+                                        .get_session_signature(s_id)
+                                    {
+                                        obj.insert("thoughtSignature".to_string(), json!(sig));
+                                        tracing::debug!("[Gemini-Wrap] Injected signature (len: {}) for session: {}", sig.len(), s_id);
+                                    } else if crate::proxy::thinking_store::model_forces_server_thinking(&final_model_name) || should_inject {
                                         obj.insert(
                                             "thoughtSignature".to_string(),
                                             json!("skip_thought_signature_validator"),
                                         );
-                                        obj.insert(
-                                            "thought_signature".to_string(),
-                                            json!("skip_thought_signature_validator"),
-                                        );
-                                        tracing::info!("[Gemini-Wrap] Injected sentinel signature for flash model {} (no session cache)", final_model_name);
+                                        tracing::info!("[Gemini-Wrap] Injected sentinel signature for thinking model {} (no session cache)", final_model_name);
                                     }
-                                }
-                            } else {
-                                // No session id either: still inject sentinel for Flash.
-                                let model_lc = final_model_name.to_lowercase();
-                                let is_flash = model_lc.contains("gemini")
-                                    && (model_lc.contains("flash") || model_lc.contains("-flash-"));
-                                if is_flash {
+                                } else if crate::proxy::thinking_store::model_forces_server_thinking(&final_model_name) || should_inject {
                                     obj.insert(
                                         "thoughtSignature".to_string(),
                                         json!("skip_thought_signature_validator"),
                                     );
-                                    obj.insert(
-                                        "thought_signature".to_string(),
-                                        json!("skip_thought_signature_validator"),
-                                    );
-                                    tracing::info!("[Gemini-Wrap] Injected sentinel signature for flash model {} (no session id)", final_model_name);
+                                    tracing::info!("[Gemini-Wrap] Injected sentinel signature for thinking model {} (no session id)", final_model_name);
                                 }
                             }
+                            obj.remove("thought_signature");
                         }
                     }
                 }
             }
         }
+        if let Some(s_id) = session_id {
+            if should_inject {
+                crate::proxy::thinking_store::hydrate_gemini_contents(s_id, contents);
+            }
+        }
+        crate::proxy::thinking_store::finalize_gemini_contents_thinking(
+            contents,
+            should_inject,
+        );
     }
 
     // [FIX Issue #1355] Gemini Flash thinking budget capping
     // [CONFIGURABLE] 现在改为遵循全局 Thinking Budget 配置
     // [FIX #1557] Also apply to Pro/Thinking models to ensure budget processing
     // [FIX #1557] Auto-inject thinkingConfig if missing for these models
-    let lower_model = final_model_name.to_lowercase();
-    if lower_model.contains("flash")
+    if force_server_thinking
+        || lower_model.contains("flash")
         || lower_model.contains("pro")
         || lower_model.contains("thinking")
+        || lower_model.contains("agent")
+        || lower_model.contains("gemini")
     {
         // [NEW] Extract OpenAI-style max_tokens before mutably borrowing gen_config
         let req_max_tokens = inner_request.get("max_tokens").and_then(|v| v.as_u64());
 
         // Determine model family and capability beforehand to avoid borrow checker conflicts
         let is_claude = lower_model.contains("claude");
-        let is_preview = lower_model.contains("preview");
-        let should_inject = lower_model.contains("thinking")
-            || (lower_model.contains("gemini-2.0-pro") && !is_preview)
-            || (lower_model.contains("gemini-3-pro") && !is_preview)
-            || (lower_model.contains("gemini-3.1-pro") && !is_preview);
 
         if should_inject {
             // Scope for borrowing inner_request/gen_config
-            let mut has_thinking = false;
-            if is_claude {
-                has_thinking = inner_request.get("thinking").is_some();
+            let has_thinking = if is_claude {
+                inner_request.get("thinking").is_some()
             } else {
-                if let Some(gc) = inner_request
+                inner_request
                     .get("generationConfig")
                     .and_then(|v| v.as_object())
-                {
-                    has_thinking = gc.get("thinkingConfig").is_some();
-                }
-            }
+                    .map_or(false, |gc| gc.get("thinkingConfig").is_some())
+            };
 
-            if !has_thinking {
+            let default_budget =
+                crate::proxy::model_specs::get_thinking_budget(final_model_name, token);
+
+            let is_v3_or_above = crate::proxy::model_specs::is_gemini_v3_or_above(final_model_name);
+            let is_explicit_tier = lower_model.ends_with("-high")
+                || lower_model.ends_with("-medium")
+                || lower_model.ends_with("-low")
+                || lower_model.ends_with("-extra-low");
+
+            // [ANTI-POLLUTION] 对齐 Anthropic 与 OpenAI：对于 Gemini >= 3 或显式档位模型，彻底忽略客户端思考与预算参数，直接权威锁定满血规格预算 default_budget
+            let should_override_budget = !has_thinking || is_v3_or_above || is_explicit_tier;
+
+            if should_override_budget {
                 tracing::debug!(
-                    "[Gemini-Wrap] Auto-injecting default thinking for {}",
+                    "[Gemini-Wrap] Enforcing authoritative thinking budget {} for {}",
+                    default_budget,
                     final_model_name
                 );
-
-                // [FIX] 统一注入到 generationConfig.thinkingConfig
-                // 使用动态规格提供的默认预算
-                let default_budget =
-                    crate::proxy::model_specs::get_thinking_budget(final_model_name, token);
 
                 let gen_config = inner_request
                     .as_object_mut()
@@ -405,12 +420,36 @@ pub fn wrap_request_v2(
             .as_object_mut()
             .unwrap();
 
+        if is_under_v3 {
+            gen_config.remove("thinkingConfig");
+        }
+
         // [ADDED v4.1.24] Inject topK=40 and topP=1.0 if not present to match official client
         if !gen_config.contains_key("topK") {
             gen_config.insert("topK".to_string(), json!(40));
         }
         if !gen_config.contains_key("topP") {
             gen_config.insert("topP".to_string(), json!(1.0));
+        }
+
+        if force_server_thinking {
+            let default_budget =
+                crate::proxy::model_specs::get_thinking_budget(final_model_name, token);
+            let thinking_config = gen_config
+                .entry("thinkingConfig".to_string())
+                .or_insert(json!({}))
+                .as_object_mut()
+                .unwrap();
+            thinking_config.insert("includeThoughts".to_string(), json!(true));
+            if !thinking_config.contains_key("thinkingBudget")
+                && !thinking_config.contains_key("thinkingLevel")
+            {
+                thinking_config.insert("thinkingBudget".to_string(), json!(default_budget));
+            }
+            tracing::debug!(
+                "[Gemini-Wrap] Forced includeThoughts=true for keyword model {}",
+                final_model_name
+            );
         }
 
         // [FIX] Convert v1beta thinkingLevel (string) to v1internal thinkingBudget (number).
@@ -444,47 +483,24 @@ pub fn wrap_request_v2(
         }
 
         if let Some(thinking_config) = gen_config.get_mut("thinkingConfig") {
-            if let Some(budget_val) = thinking_config.get("thinkingBudget") {
-                if let Some(budget_i64) = budget_val.as_i64() {
-                    // [NEW] -1 indicates native dynamic mode, skip capping
-                    if budget_i64 != -1 {
-                        let budget = budget_i64 as u64;
-                        let thinking_budget_cap =
-                            crate::proxy::model_specs::get_thinking_budget(final_model_name, token);
-                        let tb_config = crate::proxy::config::get_thinking_budget_config();
-                        let final_budget = match tb_config.mode {
-                            crate::proxy::config::ThinkingBudgetMode::Passthrough => budget,
-                            crate::proxy::config::ThinkingBudgetMode::Custom => {
-                                let val = tb_config.custom_value as u64;
-                                let is_limited = (final_model_name.contains("gemini")
-                                    || final_model_name.contains("thinking"))
-                                    && !final_model_name.contains("-image");
-
-                                if is_limited && val > thinking_budget_cap {
-                                    thinking_budget_cap
-                                } else {
-                                    val
-                                }
-                            }
-                            crate::proxy::config::ThinkingBudgetMode::Auto => {
-                                let is_limited = (final_model_name.contains("gemini")
-                                    || final_model_name.contains("thinking"))
-                                    && !final_model_name.contains("-image");
-
-                                if is_limited && budget > thinking_budget_cap {
-                                    thinking_budget_cap
-                                } else {
-                                    budget
-                                }
-                            }
-                            crate::proxy::config::ThinkingBudgetMode::Adaptive => budget,
-                        };
-
-                        if final_budget != budget {
-                            thinking_config["thinkingBudget"] = json!(final_budget);
-                        }
+            // [USER RULE] 完全忽略客户端思考预算，统一使用根据模型规范与档位字典自动选取的预算
+            let default_budget =
+                crate::proxy::model_specs::get_thinking_budget(final_model_name, token) as i64;
+            let tb_config = crate::proxy::config::get_thinking_budget_config();
+            let final_budget = match tb_config.mode {
+                crate::proxy::config::ThinkingBudgetMode::Custom => {
+                    let custom_val = tb_config.custom_value as i64;
+                    if custom_val > default_budget {
+                        default_budget
+                    } else {
+                        custom_val
                     }
                 }
+                _ => default_budget,
+            };
+            thinking_config["thinkingBudget"] = json!(final_budget);
+            if let Some(tc) = thinking_config.as_object_mut() {
+                tc.remove("thinkingLevel");
             }
         }
 
@@ -553,6 +569,9 @@ pub fn wrap_request_v2(
                 );
                 gen_config.insert("maxOutputTokens".to_string(), serde_json::json!(final_cap));
             }
+        }
+        if is_under_v3 {
+            gen_config.remove("thinkingConfig");
         }
     }
 
@@ -632,22 +651,36 @@ pub fn wrap_request_v2(
         config.request_type
     );
 
-    // Inject googleSearch tool if needed
+    // Inject googleSearch tool if needed (stacking alongside existing tools)
     if config.inject_google_search {
-        // [NEW] 阶段 7.3: 如果是 WebSearch 类型，注入官方特定属性 (maxResultCount: 5)
         if config.request_type == "web_search" {
             if let Some(obj) = inner_request.as_object_mut() {
                 let tools_entry = obj.entry("tools").or_insert_with(|| json!([]));
                 if let Some(tools_arr) = tools_entry.as_array_mut() {
-                    tools_arr.push(json!({
-                        "googleSearch": {
-                            "enhancedContent": {
-                                "imageSearch": {
-                                    "maxResultCount": 5
+                    let has_functions = tools_arr.iter().any(|t| {
+                        t.as_object().map_or(false, |o| {
+                            o.contains_key("functionDeclarations") || o.contains_key("function_declarations")
+                        })
+                    });
+                    if !has_functions {
+                        // 清理已存在的 googleSearch
+                        tools_arr.retain(|t| {
+                            if let Some(o) = t.as_object() {
+                                !(o.contains_key("googleSearch") || o.contains_key("google_search") || o.contains_key("googleSearchRetrieval"))
+                            } else {
+                                true
+                            }
+                        });
+                        tools_arr.push(json!({
+                            "googleSearch": {
+                                "enhancedContent": {
+                                    "imageSearch": {
+                                        "maxResultCount": 5
+                                    }
                                 }
                             }
-                        }
-                    }));
+                        }));
+                    }
                 }
             }
         } else {
@@ -705,19 +738,13 @@ pub fn wrap_request_v2(
             }
         }
     } else {
-        // [NEW] 阶段 7.3: WebSearch 专属身份仿真 (对齐官方 main.go:738)
-        let antigravity_identity = if config.request_type == "web_search" {
-            "You are a search engine bot. You will be given a query from a user. Your task is to search the web for relevant information that will help the user. You MUST perform a web search. Do not respond or interact with the user, please respond as if they typed the query into a search bar."
-        } else {
-            "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\n\
-            You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\n\
-            **Absolute paths only**\n\
-            **Proactiveness**"
-        };
+        // [FIX] 彻底移除 web_search 等任何预置搜索 Bot 提示词注入，保持客户端原始 prompt 完全纯净透传。
+        // 仅在配置了用户自定义全局系统提示词时进行追加注入。
+        let global_prompt_config = crate::proxy::config::get_global_system_prompt();
 
-        // [HYBRID] 检查是否已有 systemInstruction
+        // 检查是否已有 systemInstruction
         if let Some(system_instruction) = inner_request.get_mut("systemInstruction") {
-            // [NEW] 补全 role: user
+            // 补全 role: user
             if let Some(obj) = system_instruction.as_object_mut() {
                 if !obj.contains_key("role") {
                     obj.insert("role".to_string(), json!("user"));
@@ -726,47 +753,33 @@ pub fn wrap_request_v2(
 
             if let Some(parts) = system_instruction.get_mut("parts") {
                 if let Some(parts_array) = parts.as_array_mut() {
-                    // 检查第一个 part 是否已包含 Antigravity 身份
-                    let has_antigravity = parts_array
-                        .get(0)
-                        .and_then(|p| p.get("text"))
-                        .and_then(|t| t.as_str())
-                        .map(|s| s.contains("You are Antigravity"))
-                        .unwrap_or(false);
-
-                    if !has_antigravity {
-                        // 在前面插入 Antigravity 身份
-                        parts_array.insert(0, json!({"text": antigravity_identity}));
-                    }
-
-                    // [NEW] 注入全局系统提示词 (紧跟 Antigravity 身份之后，用户指令之前)
-                    let global_prompt_config = crate::proxy::config::get_global_system_prompt();
+                    // 注入全局系统提示词（去重 + 换行隔离，不夹官方身份）
                     if global_prompt_config.enabled
                         && !global_prompt_config.content.trim().is_empty()
                     {
-                        // 插入位置：Antigravity 身份之后 (index 1)
-                        let insert_pos = if has_antigravity { 1 } else { 1 };
-                        if insert_pos <= parts_array.len() {
-                            parts_array
-                                .insert(insert_pos, json!({"text": global_prompt_config.content}));
-                        } else {
-                            parts_array.push(json!({"text": global_prompt_config.content}));
+                        let prompt_content = global_prompt_config.content.trim();
+                        let already_has_global = parts_array.iter().any(|p| {
+                            p.get("text")
+                                .and_then(|t| t.as_str())
+                                .map(|s| s.contains(prompt_content))
+                                .unwrap_or(false)
+                        });
+
+                        if !already_has_global {
+                            let formatted = format!("{}\n\n", prompt_content);
+                            parts_array.push(json!({"text": formatted}));
                         }
                     }
                 }
             }
         } else {
-            // 没有 systemInstruction,创建一个新的
-            let mut parts = vec![json!({"text": antigravity_identity})];
-            // [NEW] 注入全局系统提示词
-            let global_prompt_config = crate::proxy::config::get_global_system_prompt();
+            // 没有 systemInstruction，仅在启用全局提示词时创建
             if global_prompt_config.enabled && !global_prompt_config.content.trim().is_empty() {
-                parts.push(json!({"text": global_prompt_config.content}));
+                inner_request["systemInstruction"] = json!({
+                    "role": "user",
+                    "parts": [{"text": format!("{}\n\n", global_prompt_config.content.trim())}]
+                });
             }
-            inner_request["systemInstruction"] = json!({
-                "role": "user",
-                "parts": parts
-            });
         }
     }
 
@@ -878,9 +891,12 @@ pub fn wrap_request_v2(
     if let Some(tools) = inner_request.get("tools") {
         reordered_inner["tools"] = tools.clone();
     }
-    // 3. toolConfig (稳定，与 tools 共生)
+    // 3. toolConfig & tool_config (稳定，与 tools 共生)
     if let Some(tc) = inner_request.get("toolConfig") {
         reordered_inner["toolConfig"] = tc.clone();
+    }
+    if let Some(tc_snake) = inner_request.get("tool_config") {
+        reordered_inner["tool_config"] = tc_snake.clone();
     }
     // 4. generationConfig (稳定)
     if let Some(gc) = inner_request.get("generationConfig") {
@@ -986,9 +1002,9 @@ mod test_fixes {
             part["thoughtSignature"].as_str(),
             Some("client-sent-signature-value-12345")
         );
-        assert_eq!(
-            part["thought_signature"].as_str(),
-            Some("client-sent-signature-value-12345")
+        assert!(
+            part.get("thought_signature").is_none(),
+            "Snake case 'thought_signature' must be stripped when sending to Google"
         );
     }
 }
@@ -1311,12 +1327,8 @@ mod tests {
 
         let result = wrap_request(&body, "test-proj", "gemini-pro", None, None, None);
 
-        // 验证 systemInstruction
-        let sys = result
-            .get("request")
-            .unwrap()
-            .get("systemInstruction")
-            .unwrap();
+        // 验证没有多余注入的 systemInstruction
+        assert!(result.get("request").unwrap().get("systemInstruction").is_none());
     }
 
     #[test]
@@ -1381,8 +1393,8 @@ mod tests {
             ["thinkingBudget"]
             .as_u64()
             .unwrap();
-        // [FIX #1592] Pro models now also capped to 24576 in wrap_request logic
-        assert_eq!(budget_pro, 24576);
+        // Pro models now use model_specs budget (49152) in wrap_request logic
+        assert_eq!(budget_pro, 49152);
     }
 
     #[test]
@@ -1435,16 +1447,10 @@ mod tests {
             .unwrap();
         let parts = sys.get("parts").unwrap().as_array().unwrap();
 
-        // Should have 2 parts: Antigravity + User
-        assert_eq!(parts.len(), 2);
-        assert!(parts[0]
-            .get("text")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .contains("You are Antigravity"));
+        // User custom prompt is preserved without injecting unwanted Antigravity identity
+        assert_eq!(parts.len(), 1);
         assert_eq!(
-            parts[1].get("text").unwrap().as_str().unwrap(),
+            parts[0].get("text").unwrap().as_str().unwrap(),
             "User custom prompt"
         );
     }
@@ -1502,18 +1508,25 @@ mod tests {
 
     #[test]
     fn test_gemini_pro_thinking_budget_processing() {
-        let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _test_lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Update global config to Custom mode to verify logic execution
         use crate::proxy::config::{
             update_thinking_budget_config, ThinkingBudgetConfig, ThinkingBudgetMode,
         };
 
-        // Save old config (optional, but good practice if tests ran in parallel, but here it's fine)
         update_thinking_budget_config(ThinkingBudgetConfig {
             mode: ThinkingBudgetMode::Custom,
             custom_value: 1024, // Distinct value
             effort: None,
         });
+        struct GeminiCustomResetGuard;
+        impl Drop for GeminiCustomResetGuard {
+            fn drop(&mut self) {
+                update_thinking_budget_config(ThinkingBudgetConfig::default());
+            }
+        }
+        let _guard = GeminiCustomResetGuard;
 
         let body = json!({
             "model": "gemini-3-pro-preview",
@@ -1540,9 +1553,6 @@ mod tests {
             budget, 1024,
             "Budget should be overridden to 1024 by custom config, proving logic execution"
         );
-
-        // Restore default (Auto 24576)
-        update_thinking_budget_config(ThinkingBudgetConfig::default());
     }
 
     #[cfg(test)]
@@ -1552,7 +1562,8 @@ mod tests {
 
         #[test]
         fn test_claude_no_root_thinking_injection() {
-            let _lock = super::TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            let _test_lock = super::TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             // 验证 Claude 模型不会在根目录注入 thinking，而是注入到 generationConfig.thinkingConfig
             // 并且 budget 默认为 16000
 
@@ -1606,7 +1617,8 @@ mod tests {
 
         #[test]
         fn test_gemini_thinking_injection_default() {
-            let _lock = super::TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            let _test_lock = super::TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             crate::proxy::config::update_thinking_budget_config(
                 crate::proxy::config::ThinkingBudgetConfig::default(),
             );
@@ -1638,6 +1650,8 @@ mod tests {
 
     #[test]
     fn test_gemini_pro_auto_inject_thinking() {
+        let _test_lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _config_lock = crate::proxy::config::TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Reset thinking budget to auto mode at the start to avoid interference from parallel tests
         crate::proxy::config::update_thinking_budget_config(
             crate::proxy::config::ThinkingBudgetConfig {
@@ -1758,7 +1772,7 @@ mod tests {
         assert!(has_functions, "Should contain functionDeclarations");
         assert!(
             !has_google_search,
-            "Should NOT contain googleSearch due to functionDeclarations presence (v1internal limit)"
+            "Should NOT contain googleSearch due to functionDeclarations presence (preventing client tool dispatch conflicts)"
         );
     }
 

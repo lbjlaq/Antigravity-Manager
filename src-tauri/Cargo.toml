@@ -1,6 +1,6 @@
 [package]
 name = "antigravity-tools"
-version = "4.7.1"
+version = "4.7.3"
 description = "Antigravity Tools"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"
@@ -13,7 +13,7 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "antigravity_tools_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "^2.2.5", features = [] }
@@ -30,6 +30,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 base64 = "0.22"
 sysinfo = "0.31"
 sys-locale = "0.3.2"
@@ -43,6 +44,7 @@ thiserror = "2.0.17"
 # 反代服务依赖
 axum = { version = "0.7", features = ["multipart", "ws"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
+socket2 = { version = "0.5", features = ["all"] }
 
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }

@@ -239,12 +239,16 @@ pub async fn handle_warmup(
                     "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
                     req.model
                 )),
+                upstream_request_body: None,
                 response_body: None,
                 input_tokens: Some(0),
                 output_tokens: Some(0),
                 cached_tokens: None,
                 protocol: Some("warmup".to_string()),
                 username: None,
+                request_headers: None,
+                upstream_request_headers: None,
+                response_headers: None,
             };
             state.monitor.log_request(log).await;
 
@@ -337,12 +341,16 @@ pub async fn handle_warmup(
                     "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
                     req.model
                 )),
+                upstream_request_body: None,
                 response_body: Some(e.clone()),
                 input_tokens: None,
                 output_tokens: None,
                 cached_tokens: None,
                 protocol: Some("warmup".to_string()),
                 username: None,
+                request_headers: None,
+                upstream_request_headers: None,
+                response_headers: None,
             };
             state.monitor.log_request(log).await;
 

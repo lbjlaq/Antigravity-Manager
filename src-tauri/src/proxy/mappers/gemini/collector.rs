@@ -123,6 +123,8 @@ where
         }
     }
 
+    crate::proxy::thinking_store::capture_gemini_parts(session_id, &content_parts);
+
     // Construct final response
     collected_response["candidates"][0]["content"]["parts"] = json!(content_parts);
     if let Some(fr) = finish_reason {
