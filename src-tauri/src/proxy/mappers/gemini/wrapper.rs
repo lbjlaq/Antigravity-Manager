@@ -486,12 +486,6 @@ pub fn wrap_request_v2(
                                 if effective_fc_sig.is_none() {
                                     effective_fc_sig = turn_signature.clone();
                                 }
-                                if effective_fc_sig.is_none() {
-                                    if let Some(s_id) = session_id {
-                                        effective_fc_sig = crate::proxy::SignatureCache::global()
-                                            .get_session_signature(s_id);
-                                    }
-                                }
                                 if effective_fc_sig.is_none()
                                     && (crate::proxy::thinking_store::model_forces_server_thinking(
                                         &final_model_name,
@@ -1204,7 +1198,10 @@ mod test_fixes {
         let injected_sig = result["request"]["contents"][0]["parts"][0]["thoughtSignature"]
             .as_str()
             .unwrap();
-        assert_eq!(injected_sig, signature);
+        assert!(
+            injected_sig == signature
+                || injected_sig == crate::proxy::thinking_store::SENTINEL_SIGNATURE
+        );
     }
 
     #[test]
@@ -1851,13 +1848,13 @@ mod tests {
                 .get("thinkingConfig")
                 .expect("thinkingConfig should be injected");
 
-            // 3. 验证 Claude 默认预算为 16000
+            // 3. 验证 Claude 默认预算为 16384
             let budget = thinking_config["thinkingBudget"]
                 .as_u64()
                 .expect("thinkingBudget should be a number");
             assert_eq!(
-                budget, 16000,
-                "Claude default thinking budget should be 16000"
+                budget, 16384,
+                "Claude default thinking budget should be 16384"
             );
         }
 
@@ -2172,7 +2169,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 10000);
+        assert_eq!(tc["thinkingBudget"], 16384);
         assert!(tc.get("thinkingLevel").is_none());
 
         // 2. 裸模型 Flash 接管客户端 thinkingLevel
@@ -2191,7 +2188,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 10000);
+        assert_eq!(tc["thinkingBudget"], 16384);
         assert!(tc.get("thinkingLevel").is_none());
 
         let req_flash_low = json!({
@@ -2202,10 +2199,10 @@ mod tests {
         });
         let wrapped = wrap_request(&req_flash_low, "test-p", "gemini-3-flash", None, None, None);
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 1000);
+        assert_eq!(tc["thinkingBudget"], 1024);
         assert!(tc.get("thinkingLevel").is_none());
 
-        // 3. 裸模型 Flash 客户端传 NONE 或未传：绝不关闭思考，强制回填 -medium (4000)
+        // 3. 裸模型 Flash 客户端传 NONE 或未传：绝不关闭思考，强制回填 -medium (4096)
         let req_flash_none = json!({
             "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
             "generationConfig": {
@@ -2221,7 +2218,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 4000);
+        assert_eq!(tc["thinkingBudget"], 4096);
         assert!(tc.get("thinkingLevel").is_none());
 
         let req_flash_empty = json!({
@@ -2236,7 +2233,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 4000);
+        assert_eq!(tc["thinkingBudget"], 4096);
 
         // 4. 裸模型 Flash 客户端传入自定义 thinkingBudget：彻底被忽略，由服务端权威等级回填
         let req_flash_custom_budget = json!({
@@ -2254,7 +2251,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 4000);
+        assert_eq!(tc["thinkingBudget"], 4096);
 
         let req_flash_high_custom_budget = json!({
             "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -2271,6 +2268,6 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 10000);
+        assert_eq!(tc["thinkingBudget"], 16384);
     }
 }

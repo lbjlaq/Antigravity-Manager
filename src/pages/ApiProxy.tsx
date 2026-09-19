@@ -1590,6 +1590,14 @@ print(response.choices[0].message.content)`;
                                     onThinkingStoreChange={(enabled) =>
                                         updateExperimentalConfig({ thinking_store_enabled: enabled })
                                     }
+                                    thinkingMaxMemoryTurns={appConfig.proxy.experimental?.thinking_max_memory_turns ?? 600}
+                                    onThinkingMaxMemoryTurnsChange={(turns: number) =>
+                                        updateExperimentalConfig({ thinking_max_memory_turns: turns })
+                                    }
+                                    thinkingRetentionDays={appConfig.proxy.experimental?.thinking_retention_days ?? 15}
+                                    onThinkingRetentionDaysChange={(days: number) =>
+                                        updateExperimentalConfig({ thinking_retention_days: days })
+                                    }
                                 />
                             </CollapsibleCard>
 

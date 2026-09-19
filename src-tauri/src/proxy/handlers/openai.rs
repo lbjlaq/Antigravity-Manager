@@ -916,11 +916,9 @@ fn convert_chat_response_to_responses(chat_response: &OpenAIResponse) -> Value {
     })
 }
 
-/// Visible Codex commentary is part of the local transcript, not Gemini
-/// conversation history. Codex omits output item IDs when it replays a task, so
-/// `phase=commentary` is the durable discriminator. The text-prefix fallback
-/// heals tasks written by builds that accidentally finalized a thought blob as
-/// a normal answer.
+/// 仅识别客户端本地私有展示项（如本地渲染的思考块），绝不误杀伴随工具调用的真实过程进度说明。
+/// 只有明确以 `msg_thought_` 为 ID 前缀或历史遗留以 `**Thinking**` 开头的消息才被视为 transcript-only。
+/// 真实的 `phase="commentary"` 消息包含正文说明，必须作为上下文历史保留以保证模型少样本进度输出范式。
 fn is_codex_transcript_only_assistant_message(item: &Value, text: &str) -> bool {
     if responses_input_item_type(item) != "message"
         || item.get("role").and_then(Value::as_str) != Some("assistant")
@@ -928,11 +926,9 @@ fn is_codex_transcript_only_assistant_message(item: &Value, text: &str) -> bool 
         return false;
     }
 
-    item.get("phase").and_then(Value::as_str) == Some("commentary")
-        || item
-            .get("id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| id.starts_with(CODEX_VISIBLE_THOUGHT_MESSAGE_PREFIX))
+    item.get("id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| id.starts_with(CODEX_VISIBLE_THOUGHT_MESSAGE_PREFIX))
         || text.trim_start().starts_with("**Thinking**")
 }
 
@@ -1125,7 +1121,7 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
                     "call_id": "call_image",
                     "output": [
                         {"type": "input_text", "text": "image generated"},
-                        {"type": "input_image", "image_url": "data:image/png;base64,AQ=="}
+                        {"type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="}
                     ]
                 }
             ]
@@ -1157,7 +1153,7 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
         );
         assert!(!function_response.to_string().contains("data:image/"));
         assert_eq!(inline_data["inlineData"]["mimeType"], "image/png");
-        assert_eq!(inline_data["inlineData"]["data"], "AQ==");
+        assert_eq!(inline_data["inlineData"]["data"], "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
     }
 
     #[test]
@@ -1466,7 +1462,7 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
         assert!(is_codex_transcript_only_assistant_message(
             &thought, "thinking"
         ));
-        assert!(is_codex_transcript_only_assistant_message(
+        assert!(!is_codex_transcript_only_assistant_message(
             &normal_commentary,
             "progress"
         ));
@@ -1478,6 +1474,66 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
             &clean_final,
             "done"
         ));
+    }
+
+    #[test]
+    fn test_codex_process_commentary_is_retained_in_request_messages() {
+        let input = json!({
+            "model": "gemini-2.5-pro",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "检查系统故障"}]
+                },
+                {
+                    "type": "message",
+                    "id": "msg_thought_123",
+                    "role": "assistant",
+                    "phase": "commentary",
+                    "content": [{"type": "output_text", "text": "private thought"}]
+                },
+                {
+                    "type": "message",
+                    "id": "msg_comm_123",
+                    "role": "assistant",
+                    "phase": "commentary",
+                    "content": [{"type": "output_text", "text": "概览显示 HTTP 502，接下来检查网关连接。"}]
+                },
+                {
+                    "type": "function_call",
+                    "id": "call_inspect",
+                    "name": "inspect_case",
+                    "arguments": "{\"case\":\"case_1\"}"
+                }
+            ]
+        });
+
+        let converted = convert_codex_to_openai_request(input);
+        let messages = converted["messages"].as_array().expect("messages array");
+
+        // 验证：user 消息存在
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "检查系统故障");
+
+        // 验证：私有思考 msg_thought_123 被成功过滤，未进入 messages
+        assert!(messages
+            .iter()
+            .all(|m| m.get("content").and_then(Value::as_str) != Some("private thought")));
+
+        // 验证：普通进度 commentary 消息被成功保留
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(
+            messages[1]["content"],
+            "概览显示 HTTP 502，接下来检查网关连接。"
+        );
+
+        // 验证：工具调用正常跟随
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(
+            messages[2]["tool_calls"][0]["function"]["name"],
+            "inspect_case"
+        );
     }
 
     #[test]
@@ -2133,6 +2189,7 @@ pub async fn handle_chat_completions(
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
             &mut gemini_body,
         );
+        crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(&mut gemini_body);
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&gemini_body);
         }
@@ -2193,6 +2250,7 @@ pub async fn handle_chat_completions(
 
         // [FIX #1522] Inject Anthropic Beta Headers for Claude models (OpenAI path)
         let mut extra_headers = std::collections::HashMap::new();
+        extra_headers.insert("x-session-id".to_string(), client_session_id.clone());
         if mapped_model.to_lowercase().contains("claude") {
             extra_headers.insert(
                 "anthropic-beta".to_string(),
@@ -3044,11 +3102,19 @@ pub async fn handle_completions(
         .get("previous_response_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let explicit_session_id = body
-        .get("session_id")
-        .and_then(Value::as_str)
+    let explicit_session_id = headers
+        .get("x-session-id")
+        .or_else(|| headers.get("session-id"))
+        .or_else(|| headers.get("x-claude-code-session-id"))
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.trim().to_string())
         .filter(|id| !id.is_empty())
-        .map(str::to_string);
+        .or_else(|| {
+            body.get("session_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string)
+        });
     let response_id_for_save = format!("resp-{}", uuid::Uuid::new_v4());
     let http_tool_call_cache: std::collections::HashMap<String, serde_json::Value> =
         std::collections::HashMap::new();
@@ -3225,14 +3291,9 @@ pub async fn handle_completions(
                             .and_then(Value::as_str)
                             .unwrap_or("user")
                             .to_string();
-                        let transcript_only_metadata =
-                            is_codex_transcript_only_assistant_message(&item, "");
                         let (text_parts, image_parts) = responses_message_parts(&mut item);
-
                         let joined_text = text_parts.join("\n");
-                        if transcript_only_metadata
-                            || joined_text.trim_start().starts_with("**Thinking**")
-                        {
+                        if is_codex_transcript_only_assistant_message(&item, &joined_text) {
                             continue;
                         }
 
@@ -3247,6 +3308,16 @@ pub async fn handle_completions(
                             .or_else(|| item.get("signature"))
                             .and_then(Value::as_str)
                             .map(str::to_string);
+
+                        // 若为 assistant 角色且没有任何实际正文、图像或思考元数据，属于纯空占位消息，予以过滤
+                        if role == "assistant"
+                            && joined_text.trim().is_empty()
+                            && image_parts.is_empty()
+                            && reasoning_content.is_none()
+                            && signature.is_none()
+                        {
+                            continue;
+                        }
 
                         // 构造消息内容：如果有图像则使用数组格式
                         let mut message = if image_parts.is_empty() {
@@ -3725,7 +3796,11 @@ pub async fn handle_completions(
 
     // [NEW v4.2.0] Context Management & Reasoning Replay
     let fallback_sid = if is_responses_api {
-        routing_session_id.clone()
+        if explicit_session_id.is_some() || previous_response_id.is_some() {
+            routing_session_id.clone()
+        } else {
+            SessionManager::extract_openai_session_id(&openai_req)
+        }
     } else {
         SessionManager::extract_openai_session_id(&openai_req)
     };
@@ -3736,6 +3811,7 @@ pub async fn handle_completions(
     );
     openai_req.session_id = Some(session_scope.store_key.clone());
     let session_id_str = session_scope.store_key.clone();
+    let client_session_id = session_scope.client_id.clone();
     let signature_session_id_str = if is_responses_api {
         previous_response_id
             .clone()
@@ -4058,7 +4134,7 @@ pub async fn handle_completions(
                 &project_id,
                 &mapped_model,
                 proxy_token.as_ref(),
-                &routing_session_id,
+                &session_id_str,
                 signature_read_key.as_deref(),
                 true, // is_responses_api
             )
@@ -4082,6 +4158,7 @@ pub async fn handle_completions(
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
             &mut gemini_body,
         );
+        crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(&mut gemini_body);
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&gemini_body);
         }
@@ -4156,13 +4233,17 @@ pub async fn handle_completions(
         };
         let query_string = if list_response { Some("alt=sse") } else { None };
 
+        let mut extra_headers = std::collections::HashMap::new();
+        extra_headers.insert("x-session-id".to_string(), client_session_id.clone());
+
         let upstream_req_start = std::time::Instant::now();
         let call_result = match upstream
-            .call_v1_internal(
+            .call_v1_internal_with_headers(
                 method,
                 &access_token,
                 gemini_body,
                 query_string,
+                extra_headers,
                 Some(account_id.as_str()),
             )
             .await
@@ -6690,14 +6771,24 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
                         .unwrap_or("user")
                         .to_string();
                     let (text_parts, image_parts) = responses_message_parts(&mut item);
+                    let joined_text = text_parts.join("\n");
+                    if is_codex_transcript_only_assistant_message(&item, &joined_text) {
+                        continue;
+                    }
+
+                    if role == "assistant"
+                        && joined_text.trim().is_empty()
+                        && image_parts.is_empty()
+                    {
+                        continue;
+                    }
 
                     if image_parts.is_empty() {
-                        let content = prefix_with_step_marker(step_marker, text_parts.join("\n"));
+                        let content = prefix_with_step_marker(step_marker, joined_text);
                         messages.push(json!({ "role": role, "content": content }));
                     } else {
                         let mut content_blocks = Vec::new();
-                        let marker_text =
-                            prefix_with_step_marker(step_marker, text_parts.join("\n"));
+                        let marker_text = prefix_with_step_marker(step_marker, joined_text);
                         if !marker_text.is_empty() {
                             content_blocks.push(json!({ "type": "text", "text": marker_text }));
                         }

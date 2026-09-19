@@ -47,7 +47,24 @@
     "back": "戻る",
     "reason": "Reason",
     "show_raw": "Show Raw",
-    "show_parsed": "Show Parsed"
+    "show_parsed": "Show Parsed",
+    "settings": "設定",
+    "saving": "保存中...",
+    "required": "必須",
+    "copy_failed": "コピーに失敗しました",
+    "create": "作成",
+    "deselect_all": "すべての選択を解除",
+    "select_all": "すべて選択",
+    "optional": "任意",
+    "actions": "操作",
+    "none": "なし",
+    "disable": "無効化",
+    "enable": "有効化",
+    "deleted": "削除済み",
+    "selected": "選択済み",
+    "claude_series": "Claude シリーズ",
+    "maximize": "最大化",
+    "app_name": "Antigravity Tools"
   },
   "nav": {
     "dashboard": "ダッシュボード",
@@ -84,7 +101,9 @@
     "switch_to_malay_short": "MY",
     "user_token": "ユーザートークン",
     "apikey_fun": "Transit Station",
-    "logout": "ログアウト"
+    "logout": "ログアウト",
+    "more": "その他",
+    "mini_view": "ミニビュー"
   },
   "dashboard": {
     "hello": "こんにちは 👋",
@@ -344,7 +363,9 @@
       "batch_warmup_msg": "選択した{{count}}個のアカウントに対して、直ちにウォームアップを開始してもよろしいですか？"
     },
     "switch_to_agy": "Switch to Antigravity CLI (agy)",
-    "drag_disabled_during_sort": "列ソートが有効なため、ドラッグ並び替えは一時停止中です"
+    "drag_disabled_during_sort": "列ソートが有効なため、ドラッグ並び替えは一時停止中です",
+    "go_to_appeal": "異議申し立てへ移動",
+    "copy_appeal_url": "異議申し立てURLをコピー"
   },
   "settings": {
     "save": "設定を保存",
@@ -458,7 +479,8 @@
         "checking": "確認中",
         "healthy": "正常",
         "timeout": "タイムアウト"
-      }
+      },
+      "interval_tooltip": "ヘルスチェック間隔 (秒)"
     },
     "advanced": {
       "title": "詳細設定",
@@ -525,7 +547,22 @@
       "http_api_port_placeholder": "デフォルトポート 19527",
       "http_api_port_invalid": "無効なポート番号です（範囲: 1024-65535）",
       "http_api_settings_saved": "HTTP API設定を保存しました。適用するには再起動が必要です",
-      "http_api_restart_required": "⚠️ 適用するには再起動が必要です"
+      "http_api_restart_required": "⚠️ 適用するには再起動が必要です",
+      "migrate_btn": "変更して移行",
+      "data_dir_select": "データディレクトリを選択",
+      "data_dir_migrate_title": "データディレクトリの移行",
+      "data_dir_migrate_msg": "すべてのデータを次の場所に移行します：{{path}}",
+      "data_dir_migrated": "データディレクトリを移行しました",
+      "data_dir_restart_hint": "アプリを再起動することをお勧めします",
+      "migrate_title": "データディレクトリの移行",
+      "migrate_desc": "現在のデータディレクトリを新しい場所に移行します。",
+      "migrate_source": "移行元ディレクトリ",
+      "migrate_target": "移行先ディレクトリ",
+      "migrate_clean_source": "移行完了後に元ディレクトリのデータをクリーンアップ",
+      "migrate_restart_notice": "移行完了後、アプリは自動的に再起動します。",
+      "migrate_confirm_btn": "移行を開始して再起動",
+      "migrating_text": "データを移行中...",
+      "migrate_success": "移行が成功しました。アプリを再起動しています..."
     },
     "debug": {
       "title": "デバッグコンソール",
@@ -584,7 +621,12 @@
       "support_desc": "このプロジェクトがお役に立てば、コーヒーを一杯ご馳走してください！皆様のサポートが、プロジェクトを継続する最大の動機です。",
       "support_alipay": "Alipay",
       "support_wechat": "WeChat Pay",
-      "support_buymeacoffee": "コーヒーを奢る"
+      "support_buymeacoffee": "コーヒーを奢る",
+      "upgrade_now_btn": "今すぐダウンロードして自動更新",
+      "update_dialog_title": "新しいバージョンが利用可能です",
+      "update_confirm_desc": "新しいバージョンが検出されました。今すぐアップデートをダウンロードしますか？ダウンロード完了後、アプリは自動的に再起動します。",
+      "current_version": "現在のバージョン",
+      "latest_version_label": "最新バージョン"
     },
     "advanced_thinking": {
       "title": "推論とグローバル設定",
@@ -648,7 +690,7 @@
   "proxy": {
     "title": "APIプロキシサービス",
     "error": {
-      "load_failed": "設定の読み込みに失敗しました"
+      "load_failed": "読み込み失敗"
     },
     "status": {
       "running": "サービス稼働中",
@@ -807,7 +849,13 @@
         "clear_bindings": "セッションバインディングをクリア",
         "clear_bindings_tooltip": "すべてのセッションとアカウントの紐付けを強制リセットし、次のリクエストでアカウントを再割り当てします。",
         "clear_rate_limits": "レート制限の記録をクリア",
-        "clear_rate_limits_tooltip": "すべてのアカウントのローカルレート制限記録を即座にクリアし、次のリクエストで直接アップストリームを試行するように強制します。"
+        "clear_rate_limits_tooltip": "すべてのアカウントのローカルレート制限記録を即座にクリアし、次のリクエストで直接アップストリームを試行するように強制します。",
+        "round_robin_set": "ラウンドロビンモードが有効になりました",
+        "fixed_account_set": "固定アカウントモードが有効になりました",
+        "fixed_account": "固定アカウントモード",
+        "fixed_account_tooltip": "有効にすると、すべてのアカウント間でローテーションするのではなく、選択したアカウントのみを使用してAPIリクエストを処理します。",
+        "start_proxy_first": "固定アカウントモードを設定するにはプロキシサービスを開始してください。",
+        "account_changed": "{{email}} に切り替えました"
       },
       "circuit_breaker": {
         "title": "アダプティブ・サーキットブレーカー",
@@ -816,7 +864,9 @@
         "input_placeholder": "バックオフ期間を秒単位でカンマ区切りで入力してください",
         "level": "Lv {{level}}",
         "invalid_format": "形式が正しくありません。カンマ区切りの数値（例: 60, 300）を使用してください",
-        "clear_records": "すべてのレート制限記録を消去"
+        "clear_records": "すべてのレート制限記録を消去",
+        "lock_on_zero_quota": "クォータ枯渇時のサーキットブレーカー (5時間/週間)",
+        "lock_on_zero_quota_desc": "アカウントの5時間ローリングウィンドウまたは週間クォータが0%になった場合、即座にリセット時間までロックします。"
       },
       "experimental": {
         "title": "実験設定 (Experimental)",
@@ -835,7 +885,15 @@
         "context_compression_threshold_l2": "L2 圧縮しきい値 (思考プロセスの圧縮)",
         "context_compression_threshold_l2_tooltip": "署名を保持したまま、初期の思考ブロックを圧縮します。推奨値: 0.55 (55%)",
         "context_compression_threshold_l3": "L3 圧縮しきい値 (要約によるリセット)",
-        "context_compression_threshold_l3_tooltip": "XML状態要約を生成してセッションをリセットします。最もトークン効率が良い手段です。推奨値: 0.7 (70%)"
+        "context_compression_threshold_l3_tooltip": "XML状態要約を生成してセッションをリセットします。最もトークン効率が良い手段です。推奨値: 0.7 (70%)",
+        "payload_storage_mode_label": "ペイロード保存モード",
+        "payload_storage_mode_tooltip": "要約モードでは思考ブロック、トークン量、セッション識別子、要約対話のみをSQLiteに保存します。",
+        "payload_storage_mode_desc": "デフォルト要約保存でログ肥大化を防ぎます。",
+        "payload_mode_simple": "要約 (デフォルト)",
+        "payload_mode_full": "完全原文",
+        "log_retention_days_label": "リクエストログ保持日数",
+        "thinking_retention_days_label": "思考ブロック保持日数（スライドウィンドウ）",
+        "thinking_retention_days_desc": "デフォルト15日間のスライディングウィンドウ。"
       },
       "opencode_sync": {
         "card_title": "OpenCode",
@@ -930,14 +988,70 @@
         "store_enabled": "サーバー側思考ブロック・署名の復元",
         "store_enabled_desc": "思考プロセスと暗号署名を自動キャプチャして永続化します。クライアント（Cline、Roo、Claude Code など）がマルチターン会話で思考を返さない場合、ゲートウェイが自動補完して上流の 400 エラーや文脈損失を防ぎます。",
         "default_on_tag": "デフォルト有効",
-        "claude_thinking_note": "💡 Claude モデルについて：Anthropic 公式モデル一覧では `-thinking` 付きモデル（例: claude-3-7-sonnet-thinking）と通常モデルのみを区別します。このカスタム予算は thinking モデル専用であり、通常モデルの呼び出しでは思考プロセスは生成されません。"
+        "claude_thinking_note": "💡 Claude モデルについて：Anthropic 公式モデル一覧では `-thinking` 付きモデル（例: claude-3-7-sonnet-thinking）と通常モデルのみを区別します。このカスタム予算は thinking モデル専用であり、通常モデルの呼び出しでは思考プロセスは生成されません。",
+        "max_memory_turns_label": "セッションあたりのメモリ保持Thinking最大ターン数",
+        "default_600_tag": "デフォルト 600",
+        "max_memory_turns_desc": "セッションごとにメモリ(RAM)上に常駐保持する過去の思考ブロックターン数を制限します。1ターンあたりの推定メモリ消費は約1.5KB〜2.5KBです（600ターンで約1.2MB/セッション）。",
+        "turns_unit": "ターン",
+        "window_guide_title": "スライディングウィンドウ退避機構と推奨スペック設計ガイド",
+        "window_guide_desc": "設定ターン数を超えた場合、FIFOスライディングウィンドウにより最古の思考ブロックを自動退避します。退避された思考ブロックはローカルSQLiteのインデックスによりナノ秒で正確に復元され、プロンプトキャッシュを完全に保持しながらOOMを防ぎます。",
+        "tooltip_32768": "32,768 Tokens：複雑なコーディングと高度なアーキテクチャ設計に最適",
+        "tooltip_16384": "1.6万レベル (16,384 Tokens)：複雑なAgentワークフローに最適",
+        "tooltip_8192": "8,192 Tokens：中規模のマルチステップ推論とコードデバッグに最適",
+        "tooltip_4096": "4,096 Tokens：思考品質と応答速度を両立する標準バランス設定",
+        "tooltip_2048": "2,048 Tokens：日常的な軽量推論設定",
+        "tooltip_1024": "1,024 Tokens：超高速かつ極小のトークン消費",
+        "tooltip_65536": "65,536 Tokens：極限の長文・超深度推論チェーン設定",
+        "tooltip_1001": "1,001 Tokens：Google公式3.1 Pro Low推論基準値",
+        "tooltip_10001": "10,001 Tokens：Google公式3.1 Pro High主力深層推論設定",
+        "tooltip_adaptive": "アダプティブ (-1)：モデルが質問の難易度に応じて自動決定",
+        "preset_adaptive": "アダプティブ (-1)",
+        "window_settings_title": "Thinking2層スライディングウィンドウと容量設定 (RAM + SQLite)",
+        "dual_layer_tag": "2層インデックス浸透",
+        "days_unit": "日",
+        "claude_budget_title": "Claude思考モデル予算 (Tokens)",
+        "claude_budget_desc": "claude-3-7-sonnet-thinking等の思考モデル呼び出し時のコアToken予算 (-1で公式適応)",
+        "claude_budget_current": "推奨デフォルト値: 16,384 Tokens (深さと応答速度を両立)",
+        "claude_hide_advanced": "クライアントEffortマッピングを折りたたむ",
+        "claude_show_advanced": "詳細設定：クライアントEffortマッピング (low / medium / high)",
+        "claude_effort_mapping_desc": "ClineやRooなどのクライアントがreasoning_effortを送信した場合、以下の予算にマッピングされます：",
+        "save_hint": "思考予算の変更は保存すると即座に有効化され、実行中のプロキシサービスにホットリロードされます。",
+        "save_btn": "思考設定を保存してホットリロード",
+        "max_memory_turns_subdesc": "1ターンあたり約2KB。600ターンで約1.2MB/セッション。",
+        "default_15_days_tag": "デフォルト 15日",
+        "retention_days_subdesc": "アクティブなセッションはリクエストごとに自動延長され、無通信時のみ失効します。",
+        "guide_preset_1g_title": "1GB メモリ軽量サーバー:",
+        "guide_preset_1g_desc": "推奨設定: <1>100 〜 200 ターン</1>。数百の同時セッションでも約50MBのメモリしか消費せず、OOMに極めて強い耐性を持ちます。",
+        "guide_preset_team_title": "個人 〜 10人規模のチーム:",
+        "guide_preset_team_desc": "推奨設定: <1>600 〜 1000 ターン</1>。数千ターンの会話履歴が物理RAMに常駐し、0msで瞬時に応答します。",
+        "guide_preset_enterprise_title": "100人規模のエンタープライズ同時実行 (2G-4G):",
+        "guide_preset_enterprise_desc": "推奨設定: <1>300 〜 600 ターン</1>。95%以上のリクエストがRAMにヒットし、圧倒的なパフォーマンスと絶対的な安定性を両立します。",
+        "guide_preset_relay_title": "1K+ ユーザー公共中継ステーション (4G-8G):",
+        "guide_preset_relay_desc": "推奨設定: <1>150 〜 300 ターン</1>。メモリを常時接続プールに優先配分し、長期会話のコールド履歴はSQLiteに委任します。",
+        "guide_preset_cluster_title": "1万 〜 10万+ 大規模並行クラスター:",
+        "guide_preset_cluster_desc": "推奨設定: <1>50 〜 100 ターン</1>。数万の同時セッションを単一マシンで軽快に処理し、WAL高速インデックスによりロックフリーで高速応答します。",
+        "clear_btn": "思考ブロックをクリア",
+        "clear_btn_tooltip": "すべての思考ブロックキャッシュとDBを消去（リクエストログは保持）",
+        "clear_tip": "キャッシュヒット異常、バージョン更新、または開発者の要求時のみ削除してください",
+        "clear_modal_title": "思考ブロックストレージをクリアしますか？",
+        "clear_modal_desc": "この操作により、常駐メモリ（RAM）およびローカルSQLiteデータベース内のすべての思考チェーン履歴とツール署名が完全に消去されます。\n\n⚠️ 注意：この操作は思考ブロックデータのみをクリアし、プロキシリクエストログは一切削除されません。",
+        "clear_modal_warning": "キャッシュヒットの異常、バージョン更新後、または開発者から明示的な指示があった場合のみ実行することを推奨します。クリア後の新規リクエストによりクリーンなプレフィックスインデックスが再構築されます。",
+        "clear_confirm_btn": "クリアを確認",
+        "clear_success": "思考ブロックストレージを正常にクリアしました（計 {{count}} 件の履歴を削除）",
+        "clear_error": "思考ブロックのクリアに失敗しました: {{error}}"
       },
       "thinking_settings": {
         "title": "思考設定 (Thinking Settings)"
       },
       "prompt_multimodal": {
         "title": "グローバルプロンプト＆マルチモーダル設定"
-      }
+      },
+      "log_retention_title": "リクエストログ保持",
+      "log_retention_body_hours": "ボディ保持時間 (時間)",
+      "log_retention_storage_gb": "ログ容量上限 (GB)",
+      "log_retention_storage_gb_desc": "上限に達すると自動的にスライディングウィンドウが作動し古いログを削除します。",
+      "log_retention_current_usage": "現在のDB使用量",
+      "log_retention_rows": "最大ログ行数"
     },
     "cloudflared": {
       "title": "外部公開 (Cloudflared)",
@@ -1241,7 +1355,19 @@
       "protocol": "プロトコル",
       "account_used": "使用アカウント",
       "id": "リクエストID",
-      "payload_empty": "ペイロードなし"
+      "payload_empty": "ペイロードなし",
+      "upstream_request_payload": "転送ペイロード (Forwarded)",
+      "concise_mode": "要約モード",
+      "full_mode": "完全モード",
+      "concise_desc": "ツールパラメータや冗長フィールドを省略し、思考ブロック、トークン消費量、対話内容を強調表示します",
+      "search_placeholder": "ペイロードを検索...",
+      "search_placeholder_with_shortcut": "ペイロードを検索... (Enter 次へ, Shift+Enter 前へ)",
+      "case_sensitive": "大文字と小文字を区別",
+      "wrap_lines": "自動折り返し",
+      "no_wrap": "折り返さない",
+      "no_matches": "一致なし",
+      "no_upstream_payload": "転送ペイロードなし (直接転送または未記録)",
+      "headers": "ヘッダー (Headers)"
     },
     "dialog": {
       "clear_title": "プロキシログをクリア",
@@ -1282,10 +1408,30 @@
       "subtitle": "リクエストログ保持期間、思考ブロックスライディングウィンドウ、ディスク領域解放を一元管理",
       "retention_title": "リクエストログ保持ポリシー",
       "payload_thinking_title": "ペイロード保存と思考ブロック期間",
-      "maintenance_title": "ログメンテナンスと領域解放"
+      "maintenance_title": "ログメンテナンスと領域解放",
+      "save_retention": "保持ポリシーを保存",
+      "save_thinking": "思考・ペイロード設定を保存"
     },
     "actions": {
       "clear_all_requests": "すべての履歴リクエストをクリア"
+    },
+    "cached": "Cache",
+    "timing": {
+      "title": "処理時間診断",
+      "clean": "初期セッションクレンジング",
+      "clean_desc": "キャッシュ制御削除 / 同一ロール統合 / 破損思考フィルタ / ノイズ除去",
+      "norm": "正規化・ルーティング",
+      "norm_desc": "モデルルーティング / アカウントスケジューリング / Gemini形式変換",
+      "thinking": "思考ブロック・署名補完",
+      "thinking_desc": "ThinkingStore復元 / 思考チェーン補完とセンチネル署名注入",
+      "ttft": "最初のトークン待機時間 (TTFT)",
+      "ttft_desc": "ゲートウェイ送信から最初のエクスポートデータブロック受信まで",
+      "stream": "ストリーム転送時間",
+      "stream_desc": "最初のチャンク到着からストリーム完了まで",
+      "total": "合計所要時間",
+      "copy_timing": "時間診断をコピー",
+      "copied_timing": "コピー完了",
+      "legacy_hint": "過去のログには詳細な段階別処理時間は記録されていません"
     }
   },
   "update_notification": {
@@ -1295,9 +1441,9 @@
     "downloading": "更新をダウンロード中...",
     "restarting": "アプリを再起動中...",
     "auto_update": "自動更新",
-    "restart_prompt": "Update downloaded and ready to install. Restart now?",
-    "btn_restart": "Restart",
-    "btn_later": "Later",
+    "restart_prompt": "アップデートの準備が完了しました。アプリを再起動して変更を適用してください。",
+    "btn_restart": "今すぐ再起動",
+    "btn_later": "後で",
     "toast": {
       "not_ready": "自動更新パッケージの準備ができていません。ダウンロードページにリダイレクトします...",
       "failed": "自動更新に失敗しました。ダウンロードページにリダイレクトします..."
@@ -1416,7 +1562,10 @@
       "expires_placeholder": "空欄で無期限",
       "cancel": "キャンセル",
       "confirm": "追加",
-      "add_btn": "追加"
+      "add_btn": "追加",
+      "error_duplicate": "このIPは既にブロックリストに存在します",
+      "error_invalid_ip": "無効なIP形式です。IPアドレスまたはCIDR表記を使用してください",
+      "error_add_failed": "追加に失敗しました"
     },
     "whitelist": {
       "add_ip": "信頼IPを追加",
@@ -1480,7 +1629,11 @@
     "placeholder_desc": "備考 (任意)",
     "placeholder_max_ips": "0 = 無制限",
     "hint_max_ips": "0 は制限なしを意味します",
-    "hint_curfew": "空欄で無効。サーバー時間に基づきます。"
+    "hint_curfew": "空欄で無効。サーバー時間に基づきます。",
+    "custom_expires_required": "カスタム有効期限を選択してください",
+    "expires_custom": "カスタム時間",
+    "custom_expires_at": "カスタム有効期限",
+    "hint_custom_expires": "Tokenの正確な有効期限日時を設定"
   },
   "apiKeyFun": {
     "title": "APIKEY.FUN ハブ",

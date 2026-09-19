@@ -483,6 +483,14 @@ pub async fn monitor_middleware(
         .map(|identity| identity.username.clone());
     let is_image_route = uri.contains("/v1/images/");
 
+    // Extract session ID from response headers (e.g. X-Session-Id or X-Antigravity-Session-Id)
+    let session_id = response
+        .headers()
+        .get("X-Session-Id")
+        .or_else(|| response.headers().get("X-Antigravity-Session-Id"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     let monitor = state.monitor.clone();
     let mut log = ProxyRequestLog {
         id: uuid::Uuid::new_v4().to_string(),
@@ -507,6 +515,7 @@ pub async fn monitor_middleware(
         cached_tokens: None,
         protocol,
         username,
+        session_id,
     };
 
     if content_type.contains("text/event-stream") {

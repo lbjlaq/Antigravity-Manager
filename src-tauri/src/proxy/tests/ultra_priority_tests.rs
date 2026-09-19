@@ -94,9 +94,8 @@ fn test_is_ultra_required_model() {
 /// 模拟 token_manager.rs 中的排序逻辑 (更新后：始终 Tier 优先)
 fn compare_tokens_for_model(a: &ProxyToken, b: &ProxyToken, _target_model: &str) -> Ordering {
     // 复用生产实现，保证测试验证的就是真实排序规则
-    let tier_priority = |tier: &Option<String>| {
-        crate::models::quota::tier_priority(tier.as_deref())
-    };
+    let tier_priority =
+        |tier: &Option<String>| crate::models::quota::tier_priority(tier.as_deref());
 
     // Priority 0: 始终优先订阅等级 (Ultra > Pro > Free)
     let tier_cmp = tier_priority(&a.subscription_tier).cmp(&tier_priority(&b.subscription_tier));

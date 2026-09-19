@@ -322,10 +322,10 @@ impl TokenManager {
 
         match self.load_single_account(&path).await {
             Ok(Some(token)) => {
-                // 如果账号配额恢复（存在 >0% 的配额），自动清除此前的限流与熔断记录
+                // 如果账号配额恢复（存在 >0% 的配额），自动清除此前的账号级全局限流
                 if let Some(quota) = token.remaining_quota {
                     if quota > 0 {
-                        self.rate_limit_tracker.clear(account_id);
+                        self.rate_limit_tracker.clear_account_only(account_id);
                     }
                 }
                 self.tokens.insert(account_id.to_string(), token);
@@ -1984,8 +1984,10 @@ impl TokenManager {
                                 && bound_token.protected_models.contains(&normalized_target))
                         {
                             // 3. 账号可用且未被标记为尝试失败，优先复用
-                            tracing::debug!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
+                            tracing::info!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
                             target_token = Some(bound_token.clone());
+                            need_update_last_used =
+                                Some((bound_token.account_id.clone(), std::time::Instant::now()));
                         } else if quota_protection_enabled
                             && bound_token.protected_models.contains(&normalized_target)
                         {
@@ -2014,43 +2016,50 @@ impl TokenManager {
                 && quota_group != "image_gen"
                 && scheduling.mode != SchedulingMode::PerformanceFirst
             {
-                // 【优化】使用预先获取的快照，不再在循环内加锁
-                if let Some((account_id, last_time)) = &last_used_account_id {
-                    // [FIX #3] 60s 锁定逻辑应检查 `attempted` 集合，避免重复尝试失败的账号
-                    if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
-                        if let Some(found) =
-                            tokens_snapshot.iter().find(|t| &t.account_id == account_id)
-                        {
-                            // 【修复】检查限流状态和配额保护，避免复用已被锁定的账号
-                            if !self
-                                .is_rate_limited(&found.account_id, Some(&normalized_target))
-                                .await
-                                && !(quota_protection_enabled
-                                    && found.protected_models.contains(&normalized_target))
+                // 仅针对无 session_id 的无状态请求，使用 60s 全局锁定保底避免轮换
+                if session_id.is_none() {
+                    if let Some((account_id, last_time)) = &last_used_account_id {
+                        // [FIX #3] 60s 锁定逻辑应检查 `attempted` 集合，避免重复尝试失败的账号
+                        if last_time.elapsed().as_secs() < 60 && !attempted.contains(account_id) {
+                            if let Some(found) =
+                                tokens_snapshot.iter().find(|t| &t.account_id == account_id)
                             {
-                                tracing::debug!(
-                                    "60s Window: Force reusing last account: {}",
-                                    found.email
-                                );
-                                target_token = Some(found.clone());
-                            } else {
-                                if self
+                                // 【修复】检查限流状态和配额保护，避免复用已被锁定的账号
+                                if !self
                                     .is_rate_limited(&found.account_id, Some(&normalized_target))
                                     .await
+                                    && !(quota_protection_enabled
+                                        && found.protected_models.contains(&normalized_target))
                                 {
                                     tracing::debug!(
-                                        "60s Window: Last account {} is rate-limited, skipping",
+                                        "60s Window: Force reusing last account: {}",
                                         found.email
                                     );
+                                    target_token = Some(found.clone());
+                                    need_update_last_used =
+                                        Some((found.account_id.clone(), std::time::Instant::now()));
                                 } else {
-                                    tracing::debug!("60s Window: Last account {} is quota-protected for model {} [{}], skipping", found.email, normalized_target, target_model);
+                                    if self
+                                        .is_rate_limited(
+                                            &found.account_id,
+                                            Some(&normalized_target),
+                                        )
+                                        .await
+                                    {
+                                        tracing::debug!(
+                                            "60s Window: Last account {} is rate-limited, skipping",
+                                            found.email
+                                        );
+                                    } else {
+                                        tracing::debug!("60s Window: Last account {} is quota-protected for model {} [{}], skipping", found.email, normalized_target, target_model);
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                // 若无锁定，则使用 P2C 选择账号 (避免热点问题)
+                // 若无锁定或带有 session_id（会话首次分配），使用 P2C 均衡选择账号
                 if target_token.is_none() {
                     // 先过滤出未限流的账号
                     let mut non_limited: Vec<ProxyToken> = Vec::new();
@@ -2072,19 +2081,6 @@ impl TokenManager {
                         target_token = Some(selected.clone());
                         need_update_last_used =
                             Some((selected.account_id.clone(), std::time::Instant::now()));
-
-                        // 如果是会话首次分配且需要粘性，在此建立绑定
-                        if let Some(sid) = session_id {
-                            if scheduling.mode != SchedulingMode::PerformanceFirst {
-                                self.session_accounts
-                                    .insert(sid.to_string(), selected.account_id.clone());
-                                tracing::debug!(
-                                    "Sticky Session: Bound new account {} to session {}",
-                                    selected.email,
-                                    sid
-                                );
-                            }
-                        }
                     }
                 }
             } else if target_token.is_none() {
@@ -2113,6 +2109,21 @@ impl TokenManager {
 
                     if rotate {
                         tracing::debug!("Force Rotation: Switched to account: {}", selected.email);
+                    }
+                }
+            }
+
+            // 【核心固化】凡解析出可用账号且当前为粘性会话调度，确保立即固化绑定，防止轮换或会话漂移
+            if let Some(ref selected) = target_token {
+                if let Some(sid) = session_id {
+                    if scheduling.mode != SchedulingMode::PerformanceFirst && !rotate {
+                        self.session_accounts
+                            .insert(sid.to_string(), selected.account_id.clone());
+                        tracing::info!(
+                            "Sticky Session: Ensured binding account {} to session {}",
+                            selected.email,
+                            sid
+                        );
                     }
                 }
             }
@@ -3759,30 +3770,29 @@ impl TokenManager {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("unknown");
 
-                            // 精确划分模型组 Key，避免连坐同一个账号下额度充沛的其它模型
-                            let target_model = if is_claude_group || bucket_id.contains("3p") {
-                                Some("claude".to_string())
+                            let target_models = if is_claude_group || bucket_id.contains("3p") {
+                                vec!["claude".to_string(), "claude-sonnet-4-6".to_string()]
                             } else if is_gemini_group || bucket_id.contains("gemini") {
-                                Some("gemini-3-flash".to_string())
+                                vec![
+                                    "gemini-3-flash".to_string(),
+                                    "gemini-3.1-pro-high".to_string(),
+                                    "gemini-3.1-flash-image".to_string(),
+                                    "gemini-3.8-flash-tiered".to_string(),
+                                    "gemini-3.8-flash-high".to_string(),
+                                ]
                             } else {
-                                None
+                                vec![]
                             };
 
-                            tracing::warn!(
-                                "[CircuitBreaker] 账号 {} 的配额桶 {} 已耗尽 (0%), 针对模型 {:?} 持续锁定至 {}",
-                                account_id,
-                                bucket_id,
-                                target_model,
-                                reset_time
-                            );
-
-                            self.rate_limit_tracker.set_lockout_until_iso_with_cap(
-                                account_id,
-                                reset_time,
-                                crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
-                                target_model,
-                                false, // 不截断为 300s，持续锁定到真实 reset_time
-                            );
+                            for tm in &target_models {
+                                self.rate_limit_tracker.set_lockout_until_iso_with_cap(
+                                    account_id,
+                                    reset_time,
+                                    crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+                                    Some(tm.clone()),
+                                    false,
+                                );
+                            }
                         }
                     }
                 }

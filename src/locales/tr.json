@@ -40,7 +40,30 @@
     "create_success": "Başarıyla oluşturuldu",
     "update_success": "Başarıyla güncellendi",
     "delete_success": "Başarıyla silindi",
-    "copied": "Panoya kopyalandı"
+    "copied": "Panoya kopyalandı",
+    "load_more": "Load More",
+    "clearing": "Clearing...",
+    "reason": "Reason",
+    "show_raw": "Show Raw",
+    "show_parsed": "Show Parsed",
+    "settings": "Settings",
+    "saving": "Saving...",
+    "required": "Required",
+    "copy_failed": "Copy failed",
+    "create": "Create",
+    "back": "Back",
+    "deselect_all": "Deselect All",
+    "select_all": "Select All",
+    "optional": "Optional",
+    "actions": "Actions",
+    "none": "None",
+    "disable": "Disable",
+    "enable": "Enable",
+    "deleted": "Deleted",
+    "selected": "Selected",
+    "claude_series": "Claude Series",
+    "maximize": "Maximize",
+    "app_name": "Antigravity Tools"
   },
   "nav": {
     "dashboard": "Kontrol Paneli",
@@ -74,7 +97,12 @@
     "switch_to_spanish_short": "ES",
     "switch_to_malay": "Malayca'ya Geç",
     "switch_to_malay_short": "MY",
-    "user_token": "Kullanıcı Tokenları"
+    "user_token": "Kullanıcı Tokenları",
+    "security_logs": "IP Logs",
+    "apikey_fun": "Transit Station",
+    "logout": "Logout",
+    "more": "More",
+    "mini_view": "Mini View"
   },
   "dashboard": {
     "hello": "Merhaba, Kullanıcı 👋",
@@ -145,7 +173,11 @@
     "status": {
       "forbidden": "403 Yasaklandı",
       "disabled": "Hesap Devre Dışı",
-      "proxy_disabled": "Proxy Devre Dışı"
+      "proxy_disabled": "Proxy Devre Dışı",
+      "validation_required": "Verification Required",
+      "risk_controlled": "Risk / Rate Limited",
+      "oauth_reauth_required": "OAuth Re-auth Required",
+      "violation_blocked": "Blocked due to Violation"
     },
     "error_details": "Hata Detayları",
     "error_status": "Hata Durumu",
@@ -293,10 +325,47 @@
       "disable_proxy_title": "Proxy'yi Devre Dışı Bırak",
       "disable_proxy_msg": "Bu hesap için proxy'yi devre dışı bırakmak istediğinizden emin misiniz? Hesap uygulamada kullanılabilir durumda kalacaktır.",
       "enable_proxy_title": "Proxy'yi Etkinleştir",
-      "enable_proxy_msg": "Bu hesap için proxy'yi yeniden etkinleştirmek istediğinizden emin misiniz?"
+      "enable_proxy_msg": "Bu hesap için proxy'yi yeniden etkinleştirmek istediğinizden emin misiniz?",
+      "warmup_all_title": "Full Manual Warmup",
+      "warmup_all_msg": "Are you sure you want to trigger warmup tasks for all eligible accounts immediately? This will send minimal traffic to Google services to reset quota cycles.",
+      "batch_warmup_title": "Batch Manual Warmup",
+      "batch_warmup_msg": "Are you sure you want to trigger warmup for the selected {{count}} accounts immediately?"
     },
     "switch_to_agy": "Switch to Antigravity CLI (agy)",
-    "drag_disabled_during_sort": "Sütun sıralaması etkin; sürükleyerek sıralama duraklatıldı"
+    "drag_disabled_during_sort": "Sütun sıralaması etkin; sürükleyerek sıralama duraklatıldı",
+    "import_json": "Import",
+    "import_success": "Successfully imported {{count}} accounts",
+    "import_partial": "Import completed: {{success}} succeeded, {{fail}} failed",
+    "import_fail": "Import failed: {{error}}",
+    "import_invalid_format": "Invalid JSON format, please ensure the file contains email and refresh_token fields",
+    "copy_validation_url": "Copy Verification Link",
+    "validation_url_copied": "Verification link copied to clipboard",
+    "go_to_appeal": "Go to Appeal",
+    "copy_appeal_url": "Copy Appeal URL",
+    "fix_guide": {
+      "title": "Terminal Quick Fix (Resolves internal 403s)",
+      "step1_title": "🚀 Quickest Solution",
+      "step1_desc": "Open your Terminal and run the following command to tell Google \"it's me\", which resolves most 403 blocks:",
+      "step1_li1": "Press Enter, input <1>Y</1> when prompted to continue.",
+      "step1_li2": "Your browser will open automatically, select your account and click \"Allow\".",
+      "step1_li3": "Once you see <1>You are now authenticated</1>, you're all set!",
+      "step2_title": "🧹 If that fails (Clear Cache)",
+      "step2_li1_prefix": "Run this to clear your old credentials:",
+      "step2_li2_prefix": "Then log in again:",
+      "tips_title": "💡 Common Tips",
+      "tip1": "If you still get 403, try running <1>unset GOOGLE_APPLICATION_CREDENTIALS</1> in terminal first.",
+      "tip2": "For production environments, using a <1>Service Account</1> JSON key is highly recommended for stability and headless operation.",
+      "tip3": "If it still fails, check the Generative Language API in <1>Google Cloud Console</1> to see if permissions are frozen. If so, your account is under risk control. Please let the account cool down for 72 hours before trying again.",
+      "tip4": "You can also try <1>npm install -g @google/gemini-cli</1>. If it doesn't throw errors, simply deleting and re-authorizing the account in the app will likely fix it."
+    },
+    "warmup_all": "One-click Warmup",
+    "warmup_selected": "Warmup ({{count}})",
+    "warmup_this": "Warmup this account",
+    "warmup_now": "Warmup Now",
+    "warmup_batch_triggered": "Warmup tasks triggered for {{count}} accounts",
+    "quota_window_5h": "5-Hour Rolling Quota",
+    "quota_window_weekly": "7-Day Weekly Quota",
+    "quota_window_weekly_short": "Weekly"
   },
   "settings": {
     "save": "Ayarları Kaydet",
@@ -318,7 +387,14 @@
       "auto_launch": "Başlangıçta Çalıştır",
       "auto_launch_enabled": "Etkin",
       "auto_launch_disabled": "Devre Dışı",
-      "auto_launch_desc": "Sistem başladığında Antigravity Tools'u otomatik olarak başlat"
+      "auto_launch_desc": "Sistem başladığında Antigravity Tools'u otomatik olarak başlat",
+      "auto_check_update": "Auto Check for Updates",
+      "auto_check_update_desc": "Automatically check for new versions on startup",
+      "auto_check_update_enabled": "Auto check enabled",
+      "auto_check_update_disabled": "Auto check disabled",
+      "update_check_interval": "Check Interval (hours)",
+      "update_check_interval_desc": "Set auto-check interval (1-168 hours)",
+      "update_check_interval_saved": "Check interval settings saved"
     },
     "account": {
       "title": "Hesap Ayarları",
@@ -327,7 +403,8 @@
       "refresh_interval": "Yenileme Aralığı (dakika)",
       "auto_sync": "Mevcut Hesabı Otomatik Senkronize Et",
       "auto_sync_desc": "Mevcut aktif hesap bilgilerini periyodik olarak otomatik senkronize et",
-      "sync_interval": "Senkronizasyon Aralığı (saniye)"
+      "sync_interval": "Senkronizasyon Aralığı (saniye)",
+      "always_on": "Always On"
     },
     "pinned_quota_models": {
       "title": "Sabitlenmiş Kota Modelleri",
@@ -387,7 +464,8 @@
         "checking": "Checking",
         "healthy": "Healthy",
         "timeout": "Timeout"
-      }
+      },
+      "interval_tooltip": "Health check interval (seconds)"
     },
     "advanced": {
       "title": "Gelişmiş Ayarlar",
@@ -446,7 +524,30 @@
       "http_api_port_placeholder": "Varsayılan port 19527",
       "http_api_port_invalid": "Geçersiz port numarası (aralık: 1024-65535)",
       "http_api_settings_saved": "HTTP API ayarları kaydedildi, uygulamak için yeniden başlatma gerekli",
-      "http_api_restart_required": "⚠️ Uygulamak için yeniden başlatma gerekli"
+      "http_api_restart_required": "⚠️ Uygulamak için yeniden başlatma gerekli",
+      "migrate_btn": "Change & Migrate",
+      "data_dir_select": "Select data directory",
+      "data_dir_migrate_title": "Migrate data directory",
+      "data_dir_migrate_msg": "All data will be moved to: {{path}}\nThe old folder will be deleted (or renamed if they share a parent). Stop the API proxy and tunnel first.",
+      "data_dir_migrated": "Data directory migrated",
+      "data_dir_restart_hint": "Restart the app so log files that were in use fully switch to the new folder",
+      "migrate_title": "Migrate Data Directory",
+      "migrate_desc": "Migrate all current data (including accounts, configs, request logs, and databases) to a new location.",
+      "migrate_source": "Source Directory",
+      "migrate_target": "Target Directory",
+      "migrate_clean_source": "Clean source directory after migration (Free up disk space)",
+      "migrate_restart_notice": "The app will automatically restart after migration to load the new data directory.",
+      "migrate_confirm_btn": "Start Migration & Restart",
+      "migrating_text": "Migrating data and preparing restart...",
+      "migrate_success": "Data migrated successfully, restarting app...",
+      "patch_eligibility_title": "Bypass Account Eligibility Check",
+      "patch_eligibility_desc": "Newer agy client versions enforce account checks. This operation dynamically patches it to skip checks.",
+      "patch_btn": "Bypass Check",
+      "antigravity_cli_path": "Antigravity CLI (agy) Path",
+      "antigravity_cli_path_placeholder": "Not set (Will use auto-detection)",
+      "antigravity_cli_path_desc": "Set the executable path for the command line client (agy) to bypass account restrictions.",
+      "antigravity_cli_path_select": "Select Antigravity CLI (agy) Executable",
+      "antigravity_cli_path_detected": "Detected CLI path updated"
     },
     "menu": {
       "title": "Menü Görünüm Ayarları",
@@ -474,7 +575,29 @@
       "support_desc": "Bu projeyi yararlı buluyorsanız, yazara bir kahve ısmarlayabilirsiniz! Desteğiniz, bu projeyi sürdürmek için en büyük motivasyon kaynağımdır.",
       "support_alipay": "Alipay",
       "support_wechat": "WeChat Pay",
-      "support_buymeacoffee": "Buy Me a Coffee"
+      "support_buymeacoffee": "Buy Me a Coffee",
+      "telegram": "Telegram Channel",
+      "brew_upgrade": "Update via Homebrew",
+      "brew_upgrading": "Upgrading...",
+      "brew_confirm_title": "Update via Homebrew",
+      "brew_confirm_desc": "The following command will be executed to update the app. A restart is required after the upgrade.",
+      "brew_quarantine_hint": "If you see an \"App is damaged\" error after update, run in terminal:",
+      "brew_confirm_btn": "Start Update",
+      "brew_success_title": "Upgrade Complete",
+      "brew_upgrade_success": "Homebrew upgrade succeeded. Please restart the app to load the new version.",
+      "brew_restart_btn": "Restart Now",
+      "brew_restart_failed": "Auto restart failed. Please close and reopen the app manually",
+      "brew_upgrade_failed": "Homebrew upgrade failed. Try running manually: brew upgrade --cask antigravity-tools",
+      "brew_error_brew_not_found": "Homebrew not found. Please ensure brew is installed",
+      "brew_error_brew_exec_failed": "Failed to execute brew command. Try running manually in terminal",
+      "brew_error_brew_timeout": "Homebrew upgrade timed out (3min). Try running manually: brew upgrade --cask antigravity-tools",
+      "brew_error_brew_already_latest": "Already up to date, no upgrade needed",
+      "brew_error_brew_not_supported": "Homebrew update is not supported on this platform",
+      "upgrade_now_btn": "Download & Auto Update",
+      "update_dialog_title": "New Version Available",
+      "update_confirm_desc": "A new version is available. Would you like to download and update now? The app will automatically restart once downloaded.",
+      "current_version": "Current Version",
+      "latest_version_label": "Latest Version"
     },
     "advanced_thinking": {
       "title": "Gelişmiş Düşünme ve Küresel Yapılandırma",
@@ -487,12 +610,20 @@
       "mode": {
         "auto": "Otomatik Sınır",
         "passthrough": "Doğrudan Geçiş",
-        "custom": "Özel"
+        "custom": "Özel",
+        "adaptive": "Adaptive"
       },
       "auto_hint": "Otomatik Mod: API hatalarını önlemek için Flash modelleri, -thinking ekine sahip modeller ve web arama istekleri için bütçeyi otomatik olarak 24576 ile sınırlar.",
       "passthrough_warning": "Doğrudan Geçiş: Çağıranın orijinal değerini doğrudan kullanır. Yüksek değerlerin desteklenmemesi hatalara neden olabilir.",
       "custom_value_hint": "Önerilen: 24576 (Flash) veya 51200 (Genişletilmiş)",
-      "tokens": "tokens"
+      "tokens": "tokens",
+      "effort_label": "Thinking Effort",
+      "effort": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
+      },
+      "adaptive_hint": "Adaptive mode: The model automatically adjusts thinking budget based on task complexity. Recommended for Claude 4.6+."
     },
     "image_thinking_mode": {
       "title": "Görüntü Düşünme Modu (Image Thinking Mode)",
@@ -510,6 +641,35 @@
       "placeholder": "Küresel sistem talimatlarını buraya girin...\nÖrn: Sen React ve Rust konusunda uzman, deneyimli bir full-stack geliştiricisin. Türkçe cevap ver.",
       "char_count": "{{count}} karakter",
       "long_prompt_warning": "Talimatlar çok uzun (2000 karakterden fazla) ve çok fazla bağlam alanı tüketebilir."
+    },
+    "warmup": {
+      "title": "7-Day Weekly Reset Warmup",
+      "desc": "Automatically sends a minimal ping once when the 7-day weekly quota resets, starting the countdown with zero extra token waste."
+    },
+    "quota_protection": {
+      "title": "Quota Protection",
+      "enable": "Enable Quota Protection",
+      "enable_desc": "Automatically disable proxy when account quota falls below threshold, and auto-restore when quota resets",
+      "threshold_label": "Reserved Quota Percentage",
+      "monitored_models_label": "Monitored Models (Trigger Conditions)",
+      "monitored_models_desc": "Select at least one. Protection triggers if ANY selected model falls below threshold",
+      "range": "Range",
+      "example": "Example: At {{percentage}}%, an account with {{total}} quota will be disabled when remaining ≤ {{threshold}}",
+      "auto_restore_info": "Account will be automatically re-enabled when quota resets"
+    },
+    "debug": {
+      "title": "Debug Console",
+      "desc": "View real-time application logs for debugging",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "disabled_hint": "Debug Console is Off",
+      "disabled_desc": "Enable to start recording application logs",
+      "console_title": "Debug Console",
+      "console_desc": "View real-time application logs to troubleshoot issues.",
+      "enable_desc": "Enable to capture and display backend logs.",
+      "open_btn": "Open Console",
+      "debug_logging": "Debug Logging",
+      "debug_logging_desc": "When enabled, records the complete request and response chain. Recommended to enable only when troubleshooting issues."
     }
   },
   "tray": {
@@ -683,11 +843,11 @@
         "max_wait_tooltip": "Yalnızca 'Önbellek Öncelikli' modunda kullanılır: oran limiti sıfırlama zamanı bu değerin altındaysa geçiş yapmak yerine bekle.",
         "clear_bindings": "Oturum Bağlantılarını Temizle",
         "clear_bindings_tooltip": "Tüm oturum ve hesap bağlantılarını hemen kesin, bir sonraki istekte hesapları yeniden atanmaya zorlayın.",
-        "fixed_account": "Sabit Hesap Modu",
-        "fixed_account_tooltip": "Etkinleştirildiğinde, tüm API istekleri hesaplar arasında geçiş yapmak yerine yalnızca seçilen hesabı kullanacaktır.",
-        "round_robin_set": "Round-robin modu etkinleştirildi",
-        "fixed_account_set": "Sabit hesap modu etkinleştirildi",
-        "account_changed": "Hesap şuna değiştirildi: {{email}}",
+        "fixed_account": "Fixed Account Mode",
+        "fixed_account_tooltip": "When enabled, all API requests will use only the selected account instead of rotating between accounts.",
+        "round_robin_set": "Round-robin mode enabled",
+        "fixed_account_set": "Fixed account mode enabled",
+        "account_changed": "Switched to {{email}}",
         "circuit_breaker": {
           "title": "Uyarlanabilir Devre Kesici",
           "tooltip": "Kota tükenmesi nedeniyle art arda başarısız olan hesaplar için kilitleme süresini otomatik olarak artırır. Bu, geçici hataların hızla düzelmesine izin verirken, ölü hesaplarda API çağrılarının boşa harcanmasını önler.",
@@ -696,7 +856,10 @@
           "input_placeholder": "60, 300, 1800, 7200",
           "invalid_format": "Geçersiz format. Virgülle ayrılmış sayılar kullanın (örn. 60, 300)",
           "clear_records": "Tüm Hız Sınırı Kayıtlarını Temizle"
-        }
+        },
+        "clear_rate_limits": "Clear Rate Limit Records",
+        "clear_rate_limits_tooltip": "Immediately clear local rate limit records for all accounts, forcing next requests to try upstream directly.",
+        "start_proxy_first": "Start the proxy service to configure fixed account mode."
       },
       "experimental": {
         "title": "Deneysel Ayarlar",
@@ -708,7 +871,22 @@
         "context_compression_threshold_l2": "L2 Sıkıştırma Eşiği (Düşünce Sıkıştırma)",
         "context_compression_threshold_l2_tooltip": "İmzaları korurken erken düşünce bloklarını sıkıştırır. Önerilen: 0.55 (55%)",
         "context_compression_threshold_l3": "L3 Sıkıştırma Eşiği (Özet Pivotu)",
-        "context_compression_threshold_l3_tooltip": "XML durum özeti oluşturur ve taze bir oturuma geçer. Önerilen: 0.7 (70%)"
+        "context_compression_threshold_l3_tooltip": "XML durum özeti oluşturur ve taze bir oturuma geçer. Önerilen: 0.7 (70%)",
+        "compression_level_label": "Context Compression Level",
+        "compression_level_tooltip": "Choose the context compression level you want to enable. Log cleaning and language purification are always active without any 30k token limits.",
+        "compression_level_desc": "Low: only trims/deduplicates terminal output logs; Medium: adds Caveman style natural language purification; High: additionally activates progressive L1-L3 threshold resets for very large context.",
+        "level_disabled": "Disabled",
+        "level_low": "Low (Log Dedup)",
+        "level_medium": "Medium (Log + Language)",
+        "level_high": "High (Dynamic Resets)",
+        "payload_storage_mode_label": "Monitor payload storage",
+        "payload_storage_mode_tooltip": "Simple mode stores thinking, usage, session ids and slim conversation only. Full mode stores original bodies. API keys in request headers are always redacted; thinking session ids are kept for ops comparison.",
+        "payload_storage_mode_desc": "Default is simple storage to keep the SQLite log small.",
+        "payload_mode_simple": "Simple (default)",
+        "payload_mode_full": "Full original",
+        "log_retention_days_label": "Request log retention (days)",
+        "thinking_retention_days_label": "Thinking-store retention (sliding window, days)",
+        "thinking_retention_days_desc": "Default is a 15-day sliding window. While the client session ID stays active, each request refreshes expiry; records are cleaned only after the window lapses with no requests."
       },
       "cloudflared": {
         "title": "Genel Erişim (Cloudflared)",
@@ -796,13 +974,132 @@
         "store_enabled": "Sunucu Tarafı Düşünce Bloğu ve İmza Geri Yükleme",
         "store_enabled_desc": "Düşünce süreçlerini ve şifrelenmiş imzaları otomatik yakalar ve kalıcı kılar. Ticari ajanlar (Cline, Roo, Claude Code vb.) çok turlu konuşmalarda düşünceyi geri getirmediğinde, ağ geçidi 400 hatalarını veya bağlam kaybını önlemek için bunları otomatik tamamlar.",
         "default_on_tag": "Varsayılan Açık",
-        "claude_thinking_note": "💡 Claude Modelleri Notu: Anthropic resmi modelleri yalnızca `-thinking` ekli olanlar (örn. claude-3-7-sonnet-thinking) ile standart olanlar arasında ayrım yapar. Bu bütçe düşünme modellerini kontrol eder; standart modeller düşünce süreci üretmez."
+        "claude_thinking_note": "💡 Claude Modelleri Notu: Anthropic resmi modelleri yalnızca `-thinking` ekli olanlar (örn. claude-3-7-sonnet-thinking) ile standart olanlar arasında ayrım yapar. Bu bütçe düşünme modellerini kontrol eder; standart modeller düşünce süreci üretmez.",
+        "max_memory_turns_label": "Max Memory Thinking Turns per Session",
+        "default_600_tag": "Varsayılan: 600",
+        "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
+        "turns_unit": "turns",
+        "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
+        "window_guide_desc": "When session length exceeds this limit, FIFO sliding window automatically evicts oldest thinking blocks from memory. Evicted blocks are rehydrated in nanoseconds via indexed SQLite (primary_tool_id), maintaining strict byte-level Prompt Cache alignment without OOM.",
+        "tooltip_32768": "32,768 Tokens: Ideal for complex coding and deep architecture design",
+        "tooltip_16384": "16K tier (16,384 Tokens): Best for complex agentic workflows",
+        "tooltip_8192": "8,192 Tokens: Balanced for multi-step reasoning and debugging",
+        "tooltip_4096": "4,096 Tokens: Standard balance between reasoning quality and speed",
+        "tooltip_2048": "2,048 Tokens: Lightweight daily reasoning tier",
+        "tooltip_1024": "1,024 Tokens: Ultra-fast lightweight thinking with minimal token usage",
+        "tooltip_65536": "65,536 Tokens: Extreme maximum depth reasoning chain tier",
+        "tooltip_1001": "1,001 Tokens: Google official 3.1 Pro Low thinking baseline",
+        "tooltip_10001": "10,001 Tokens: Google official 3.1 Pro High deep reasoning primary tier",
+        "tooltip_adaptive": "Adaptive (-1): Dynamic budget allocated automatically by upstream model",
+        "preset_adaptive": "Adaptive (-1)",
+        "window_settings_title": "Dual-Layer Thinking Sliding Window & Storage Limits (RAM + SQLite)",
+        "dual_layer_tag": "Dual-layer Index",
+        "days_unit": "days",
+        "claude_budget_title": "Claude Thinking Model Budget (Tokens)",
+        "claude_budget_desc": "Core token budget when client calls thinking models like claude-3-7-sonnet-thinking (-1 for upstream default)",
+        "claude_budget_current": "Recommended default: 16,384 Tokens (balanced depth and latency)",
+        "claude_hide_advanced": "Collapse Client Effort Mapping",
+        "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
+        "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
+        "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "Tur başına ~2 KB; 600 tur ≈ 1.2 MB / oturum.",
+        "default_15_days_tag": "Varsayılan: 15 gün",
+        "retention_days_subdesc": "Etkin oturumlar her istekte otomatik uzatılır; yalnızca boşta kaldığında süresi dolar.",
+        "guide_preset_1g_title": "1GB RAM Hafif Sunucu:",
+        "guide_preset_1g_desc": "Önerilen: <1>100 ~ 200 tur</1>. Yüzlerce eşzamanlı oturum yalnızca ~50MB RAM tüketir, OOM hatalarına karşı son derece dirençlidir.",
+        "guide_preset_team_title": "Bireysel ve Küçük Ekipler (1-10 Kullanıcı):",
+        "guide_preset_team_desc": "Önerilen: <1>600 ~ 1000 tur</1>. Binlerce tur geçmişi fiziksel bellekte kalır ve 0ms yıldırım hızında yanıt verir.",
+        "guide_preset_enterprise_title": "100 Kişilik Kurumsal Eşzamanlılık (2G-4G):",
+        "guide_preset_enterprise_desc": "Önerilen: <1>300 ~ 600 tur</1>. İsteklerin %95+'i RAM'e isabet eder, üstün performans ve mutlak kararlılık sunar.",
+        "guide_preset_relay_title": "1K+ Kullanıcılı Genel Aktarım İstasyonu (4G-8G):",
+        "guide_preset_relay_desc": "Önerilen: <1>150 ~ 300 tur</1>. Bellek bağlantı havuzlarına önceliklendirilir, uzun geçmişler SQLite'a devredilir.",
+        "guide_preset_cluster_title": "10K ~ 100K+ Yoğun Eşzamanlı Küme:",
+        "guide_preset_cluster_desc": "Önerilen: <1>50 ~ 100 tur</1>. On binlerce eşzamanlı oturumu rahatça barındırır; WAL hızlı dizini kilitsiz anlık yanıt sağlar.",
+        "clear_btn": "Düşünce Bloklarını Temizle",
+        "clear_btn_tooltip": "Tüm düşünce bloğu önbelleklerini ve veritabanını temizle (istek günlükleri korunur)",
+        "clear_tip": "Yalnızca önbellek isabet anormalliklerinde, sürüm güncellemelerinde veya geliştiriciler istediğinde silin",
+        "clear_modal_title": "Düşünce Bloğu Deposu Temizlensin mi?",
+        "clear_modal_desc": "Bu işlem, bellekteki (RAM) ve yerel SQLite veritabanındaki tüm düşünce zincirlerini ve araç imzalarını tamamen temizler.\n\n⚠️ Not: Bu yalnızca düşünce verilerini temizler, proxy istek günlüklerini ASLA silmez.",
+        "clear_modal_warning": "Yalnızca önbellek anormalliklerinde, sürüm güncellemelerinden sonra veya geliştiriciler istediğinde önerilir. Yeni istekler temiz önek dizinlerini yeniden oluşturacaktır.",
+        "clear_confirm_btn": "Temizlemeyi Onayla",
+        "clear_success": "Düşünce deposu başarıyla temizlendi ({{count}} kayıt temizlendi)",
+        "clear_error": "Düşünce blokları temizlenemedi: {{error}}"
       },
       "thinking_settings": {
         "title": "Düşünme Ayarları (Thinking Settings)"
       },
       "prompt_multimodal": {
         "title": "Genel İstem ve Çok Modlu Ayarlar"
+      },
+      "log_retention_title": "Request log retention",
+      "log_retention_body_hours": "Request body age (hours)",
+      "log_retention_storage_gb": "Log storage limit (GB)",
+      "log_retention_storage_gb_desc": "When reaching limit, sliding window evicts oldest 30% logs to accommodate new entries",
+      "log_retention_current_usage": "Current database disk usage",
+      "log_retention_rows": "Maximum log rows",
+      "circuit_breaker": {
+        "title": "Adaptive Circuit Breaker",
+        "tooltip": "Automatically increases lockout duration for accounts that repeatedly fail with quota exhaustion. This prevents wasting API calls on dead accounts while allowing transient errors to recover quickly.",
+        "lock_on_zero_quota": "Lock on Zero Quota (5h / Weekly)",
+        "lock_on_zero_quota_desc": "Automatically locks the account until its exact quota reset time whenever 5-hour rolling or weekly quota hits 0%, skipping short backoffs. Note: Quota state discovery and automatic recovery depend on 'Auto Refresh Quotas' in General Settings.",
+        "backoff_levels": "Backoff Levels (Seconds)",
+        "input_placeholder": "Enter backoff durations in seconds, separated by commas",
+        "level": "Lv {{level}}",
+        "invalid_format": "Invalid format. Use comma separated numbers (e.g. 60, 300)",
+        "clear_records": "Clear All Rate Limit Records"
+      },
+      "opencode_sync": {
+        "card_title": "OpenCode",
+        "status": {
+          "detecting": "Detecting...",
+          "installed": "Installed ({{version}})",
+          "not_installed": "Not Installed",
+          "synced": "Synced",
+          "not_synced": "Not Synced",
+          "current_base_url": "Current Base URL"
+        },
+        "sync_accounts": "Sync accounts to antigravity-accounts.json",
+        "btn_sync": "Sync Config",
+        "btn_view": "View Config",
+        "btn_restore": "Restore",
+        "btn_restore_backup": "Restore Backup",
+        "btn_clear": "Clear Config",
+        "clear_confirm_title": "Confirm Clear Config",
+        "clear_confirm_message": "Are you sure you want to clear OpenCode configuration? This will remove the config file.",
+        "toast": {
+          "config_missing": "Please generate API Key and start service first",
+          "sync_success": "OpenCode config synced successfully",
+          "sync_error": "OpenCode sync failed: {{error}}",
+          "clear_success": "OpenCode config cleared successfully",
+          "clear_error": "Failed to clear OpenCode config: {{error}}"
+        },
+        "modal": {
+          "view_title": "OpenCode Config Viewer",
+          "copy_success": "Config copied"
+        },
+        "sync_confirm_title": "Confirm Sync",
+        "sync_confirm_message": "OpenCode config will be overwritten based on current proxy settings. Continue?",
+        "restore_confirm": "Are you sure you want to restore OpenCode to default settings?",
+        "restore_backup_confirm": "Are you sure you want to restore OpenCode config from backup?",
+        "modal_title": "Select OpenCode Models",
+        "select_models": "Select models to sync",
+        "auth_plugin_warning": "Detected opencode-antigravity-auth plugin. Sync only creates provider antigravity-manager and will not overwrite the google provider/plugin.",
+        "btn_confirm_sync": "Confirm Sync",
+        "custom_base_url_label": "Custom Manager BaseURL",
+        "custom_base_url_desc": "For Docker Compose networking",
+        "custom_base_url_reset": "Reset"
+      },
+      "droid_sync": {
+        "modal_title": "Add models to Droid",
+        "modal_desc": "Selected models will be added as customModels to settings.json",
+        "selected": "selected",
+        "btn_confirm_sync": "Add selected models",
+        "toast": {
+          "no_models_selected": "Please select at least one model",
+          "sync_success_count": "Added {{count}} model(s) to Droid",
+          "sync_error": "Sync failed: {{error}}"
+        }
       }
     },
     "example": {
@@ -825,7 +1122,9 @@
       "regenerate_key_title": "API Anahtarını Yeniden Oluştur",
       "regenerate_key_msg": "API Anahtarını yeniden oluşturmak istediğinizden emin misiniz? Eski anahtar hemen geçersiz kılınacak.",
       "clear_bindings_title": "Oturum Bağlantılarını Temizle",
-      "clear_bindings_msg": "Tüm oturum-hesap bağlantılarını temizlemek istediğinizden emin misiniz?"
+      "clear_bindings_msg": "Tüm oturum-hesap bağlantılarını temizlemek istediğinizden emin misiniz?",
+      "clear_rate_limits_title": "Clear Rate Limit Records",
+      "clear_rate_limits_confirm": "Are you sure you want to clear all local rate limit records?"
     },
     "model": {
       "flash": "Hızlı Yanıt",
@@ -843,7 +1142,10 @@
       "pro_image_1_1": "Görsel Oluşturma (1:1)",
       "claude_sonnet": "Kod Akıl Yürütme",
       "claude_sonnet_thinking": "Düşünce Zinciri",
-      "claude_opus_thinking": "En Güçlü Düşünme"
+      "claude_opus_thinking": "En Güçlü Düşünme",
+      "gemini_2_5_flash": "Flash Model (2.5 Flash)",
+      "gemini_2_5_pro": "High Performance (2.5 Pro)",
+      "claude_4_6": "Latest Reasoning (4.6)"
     },
     "mapping": {
       "title": "Claude Code Model Eşleme",
@@ -912,7 +1214,38 @@
       "original_id": "Orijinal Kimlik",
       "route_to": "Şuna Yönlendir",
       "select_target_model": "Hedef Model Seç",
-      "original_placeholder": "Orijinal (örn: gpt-4 veya gpt-4*)"
+      "original_placeholder": "Orijinal (örn: gpt-4 veya gpt-4*)",
+      "only_raw_quota_models": "Only Expose Quota Models",
+      "only_raw_quota_models_tooltip": "When enabled, /v1/models only lists active quota models fetched from connected accounts, hiding built-in alias models (like gpt-4o) and image ratio variants.",
+      "preset_default": "Default Preset",
+      "preset_default_desc": "GPT-4 → Gemini Pro, Claude → Opus",
+      "preset_performance": "Performance First",
+      "preset_performance_desc": "Use high-performance models for all",
+      "preset_cost": "Cost Optimized",
+      "preset_cost_desc": "Prioritize cost-effective models",
+      "preset_balanced": "Balanced Mode",
+      "preset_balanced_desc": "Balance performance and cost",
+      "built_in_presets": "Built-in Presets",
+      "custom_presets": "Custom Presets",
+      "apply_selected": "Apply Selected",
+      "add_preset": "Save Current Mapping",
+      "delete_preset": "Delete Current Preset",
+      "cannot_delete_builtin": "Cannot delete built-in presets",
+      "no_mapping_to_save": "No mapping configuration to save",
+      "preset_name_required": "Preset name is required",
+      "preset_saved": "Preset saved successfully",
+      "manage_presets_title": "Manage Custom Presets",
+      "save_current_as_preset": "Save Current Configuration",
+      "preset_name_placeholder": "Enter preset name...",
+      "save_hint": "Saves the currently active model mappings as a reusable preset.",
+      "your_presets": "Your Presets",
+      "no_custom_presets": "No custom presets yet",
+      "mappings_count": "mappings",
+      "custom_preset_desc": "User defined preset",
+      "gemini3_group_label": "Gemini 3 (Recommended)",
+      "gemini3_option_high": "gemini-3.1-pro-high (High Quality)",
+      "gemini3_option_low": "gemini-3.1-pro-low (Balanced)",
+      "gemini3_option_flash": "gemini-3-flash (Fast)"
     },
     "multi_protocol": {
       "title": "Çoklu Protokol Desteği",
@@ -956,7 +1289,8 @@
         "config_missing": "Lütfen önce bir API anahtarı oluşturun ve hizmeti başlatın",
         "sync_success": "Başarılı! {{name}} kullanıma hazır.",
         "sync_error": "{{name}} senkronizasyon hatası: {{error}}"
-      }
+      },
+      "model_select": "Select Model"
     },
     "supported_models": {
       "title": "Desteklenen Modeller ve Entegrasyon",
@@ -964,6 +1298,62 @@
       "model_id": "Model Kimliği",
       "description": "Açıklama",
       "action": "İşlem"
+    },
+    "cloudflared": {
+      "title": "Public Access (Cloudflared)",
+      "subtitle": "Expose your local service to the internet via Cloudflare Tunnel",
+      "not_installed": "Cloudflared not installed",
+      "install_hint": "Cloudflared is a free tunnel tool from Cloudflare. It exposes your local proxy to the internet without a public IP or port forwarding. Click the button below to install.",
+      "install": "Install Now",
+      "installing": "Installing...",
+      "install_success": "Cloudflared installed successfully",
+      "install_failed": "Installation failed: {{error}}",
+      "installed": "Installed",
+      "version": "Version",
+      "mode_label": "Tunnel Mode",
+      "mode_quick": "Quick Tunnel",
+      "mode_quick_desc": "Auto-generated temporary URL (*.trycloudflare.com), no account needed, URL changes on restart",
+      "mode_auth": "Named Tunnel",
+      "mode_auth_desc": "Use Cloudflare account token, supports custom domain, persistent URL",
+      "token": "Tunnel Token",
+      "token_placeholder": "Paste your Cloudflare Tunnel Token here",
+      "token_hint": "Get from Cloudflare Zero Trust dashboard",
+      "token_required": "Token is required for Named Tunnel mode",
+      "use_http2": "Use HTTP/2",
+      "use_http2_desc": "More compatible, recommended for China mainland",
+      "status_label": "Tunnel Status",
+      "status_stopped": "Stopped",
+      "status_starting": "Starting...",
+      "status_running": "Running",
+      "status_stopping": "Stopping...",
+      "status_error": "Error",
+      "public_url": "Public URL",
+      "public_url_placeholder": "Public URL will appear here after tunnel starts",
+      "copy_url": "Copy URL",
+      "url_copied": "URL copied",
+      "start_tunnel": "Start Tunnel",
+      "stop_tunnel": "Stop Tunnel",
+      "running": "Tunnel Running",
+      "started": "Tunnel started",
+      "stopped": "Tunnel stopped",
+      "start_failed": "Start failed: {{error}}",
+      "stop_failed": "Stop failed: {{error}}",
+      "require_proxy_running": "Please start the local proxy service first",
+      "connection_info": "Connection Info",
+      "local_port": "Local Port",
+      "tunnel_protocol": "Tunnel Protocol"
+    },
+    "models": {
+      "flash": "Ultra-fast",
+      "flash_thinking": "Thinking Capability",
+      "pro_high": "Best Reasoning",
+      "pro_low": "Low Quota",
+      "sonnet": "Code Reasoning",
+      "sonnet_thinking": "Chain of Thought",
+      "opus_thinking": "Strongest Thinking"
+    },
+    "error": {
+      "load_failed": "Failed to load"
     }
   },
   "monitor": {
@@ -1020,7 +1410,19 @@
       "protocol": "Protokol",
       "mapped_model": "Eşlenen Model",
       "account_used": "Kullanılan Hesap",
-      "payload_empty": "Yük Yok"
+      "payload_empty": "Yük Yok",
+      "upstream_request_payload": "Forwarded Request Payload",
+      "concise_mode": "Concise Mode",
+      "full_mode": "Full Mode",
+      "concise_desc": "Tool arguments and verbose metadata are omitted, highlighting thinking, tokens, and messages",
+      "search_placeholder": "Search payload...",
+      "search_placeholder_with_shortcut": "Search payload... (Enter next, Shift+Enter prev)",
+      "case_sensitive": "Match Case",
+      "wrap_lines": "Wrap Lines",
+      "no_wrap": "Single Line",
+      "no_matches": "No matches",
+      "no_upstream_payload": "No forwarded payload (direct forwarding or unrecorded)",
+      "headers": "Headers"
     },
     "dialog": {
       "clear_title": "Proxy Loglarını Temizle",
@@ -1033,10 +1435,30 @@
       "subtitle": "İstek günlüğü saklama günleri, düşünme bloğu kayan penceresi ve disk alanı temizliğini merkezi yönetin",
       "retention_title": "İstek Günlüğü Saklama Politikası",
       "payload_thinking_title": "Paket Depolama ve Düşünme Döngüsü",
-      "maintenance_title": "Günlük Bakımı ve Alan Temizleme"
+      "maintenance_title": "Günlük Bakımı ve Alan Temizleme",
+      "save_retention": "Save Retention Policy",
+      "save_thinking": "Save Thinking & Payload Settings"
     },
     "actions": {
       "clear_all_requests": "Tüm İstek Geçmişini Temizle"
+    },
+    "cached": "Cache",
+    "timing": {
+      "title": "Stage Timing Diagnostics",
+      "clean": "Initial Session Clean",
+      "clean_desc": "Cache control stripping / message deduplication / purification",
+      "norm": "Normalization & Transit",
+      "norm_desc": "Model routing / account scheduling / Gemini format conversion",
+      "thinking": "Thinking & Signature Fill",
+      "thinking_desc": "ThinkingStore hydration / sentinel signature injection",
+      "ttft": "Time To First Token (TTFT)",
+      "ttft_desc": "Gateway dispatch to first thinking/tool/content SSE chunk",
+      "stream": "Stream Transfer Duration",
+      "stream_desc": "First chunk arrival to stream completion",
+      "total": "Total Duration",
+      "copy_timing": "Copy Timing",
+      "copied_timing": "Copied",
+      "legacy_hint": "Micro-stage timing not recorded for historical logs"
     }
   },
   "update_notification": {
@@ -1049,7 +1471,10 @@
     "toast": {
       "not_ready": "Otomatik güncelleme paketi hazır değil, indirme sayfasına yönlendiriliyorsunuz...",
       "failed": "Otomatik güncelleme başarısız oldu, indirme sayfasına yönlendiriliyorsunuz..."
-    }
+    },
+    "restart_prompt": "Update is ready. Restart the app to apply changes.",
+    "btn_restart": "Restart Now",
+    "btn_later": "Later"
   },
   "login": {
     "title": "Güvenli Erişim Kontrolü",
@@ -1058,7 +1483,10 @@
     "btn_login": "Doğrula ve Gir",
     "note": "Not: Ayarlanmış ayrı bir yönetici parolası varsa, lütfen onu girin; aksi takdirde API_KEY girin.",
     "lookup_hint": "Unuttuysanız, Mevcut API Anahtarını veya Web Kullanıcı Arayüzü Parolasını bulmak için docker logs antigravity-manager komutunu çalıştırın.",
-    "config_hint": "Veya görüntülemek için grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json komutunu çalıştırın."
+    "config_hint": "Veya görüntülemek için grep -E '\"api_key\"|\"admin_password\"' ~/.antigravity_tools/gui_config.json komutunu çalıştırın.",
+    "btn_verifying": "Verifying...",
+    "error_invalid_key": "Invalid password or API Key, please try again",
+    "error_network": "Network connection failed, please check if the service is running"
   },
   "token_stats": {
     "title": "Token İstatistikleri",
@@ -1134,7 +1562,8 @@
       "prev_page": "Önceki",
       "next_page": "Sonraki",
       "page_num": "Sayfa {{page}}",
-      "per_page_suffix": "/sayfa"
+      "per_page_suffix": "/sayfa",
+      "username": "User"
     },
     "blacklist": {
       "add_ip": "IP Ekle",
@@ -1151,7 +1580,10 @@
       "expires_placeholder": "Kalıcı olması için boş bırakın",
       "cancel": "İptal",
       "confirm": "Ekle",
-      "add_btn": "Ekle"
+      "add_btn": "Ekle",
+      "error_duplicate": "This IP already exists in the blocklist",
+      "error_invalid_ip": "Invalid IP format. Please use an IP address or CIDR notation (e.g. 192.168.1.0/24)",
+      "error_add_failed": "Failed to add"
     },
     "whitelist": {
       "add_ip": "Güvenilir IP Ekle",
@@ -1215,7 +1647,11 @@
     "placeholder_desc": "İsteğe bağlı notlar",
     "placeholder_max_ips": "0 = Sınırsız",
     "hint_max_ips": "0 sınırsız demektir",
-    "hint_curfew": "Devre dışı bırakmak için boş bırakın. Sunucu saatine göredir."
+    "hint_curfew": "Devre dışı bırakmak için boş bırakın. Sunucu saatine göredir.",
+    "custom_expires_required": "Please select custom expiration time",
+    "expires_custom": "Custom Time",
+    "custom_expires_at": "Custom Expiration At",
+    "hint_custom_expires": "Set precise expiration timestamp for this token"
   },
   "apiKeyFun": {
     "title": "APIKEY.FUN Hub",
@@ -1258,6 +1694,15 @@
       "parseFormat": "Parse format error: {{err}}",
       "fetchFailed": "Fetch failed: {{err}}",
       "queryFailed": "Failed to get valid quota or models. Please check if the API Key and Base URL are correct."
+    }
+  },
+  "errors": {
+    "stream": {
+      "timeout_error": "Request timeout, please check your network connection",
+      "connection_error": "Connection failed, please check your network or proxy settings",
+      "decode_error": "Network unstable, data transmission interrupted. Try: 1) Check network 2) Switch proxy 3) Retry",
+      "stream_error": "Stream transmission error, please retry later",
+      "unknown_error": "Unknown error occurred, please retry later"
     }
   }
 }

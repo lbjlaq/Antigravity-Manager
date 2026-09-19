@@ -73,7 +73,7 @@ const LogTable: React.FC<LogTableProps> = ({
                         <th style={{ width: '80px' }} className="py-2.5 px-3">{t('monitor.table.protocol')}</th>
                         <th style={{ width: '150px' }} className="py-2.5 px-3">{t('monitor.table.account')}</th>
                         <th style={{ width: '180px' }} className="py-2.5 px-3">{t('monitor.table.path')}</th>
-                        <th className="text-right py-2.5 px-3" style={{ width: '100px' }}>{t('monitor.table.usage')}</th>
+                        <th className="text-right py-2.5 px-3 whitespace-nowrap" style={{ width: '115px', minWidth: '115px' }}>{t('monitor.table.usage')}</th>
                         <th className="text-right py-2.5 px-3" style={{ width: '85px' }}>{t('monitor.table.duration')}</th>
                         <th className="text-right py-2.5 px-3" style={{ width: '85px' }}>{t('monitor.table.time')}</th>
                     </tr>
@@ -118,17 +118,26 @@ const LogTable: React.FC<LogTableProps> = ({
                                 {log.account_email ? log.account_email.replace(/(.{3}).*(@.*)/, '$1***$2') : '-'}
                             </td>
                             <td className="text-gray-700 dark:text-gray-300 truncate text-xs py-2 px-3" style={{ width: '180px', maxWidth: '180px' }}>{log.url}</td>
-                            <td className="text-right text-xs py-2 px-3" style={{ width: '100px' }}>
+                            <td className="text-right text-xs py-2 px-3 whitespace-nowrap" style={{ width: '115px', minWidth: '115px' }}>
                                 {log.input_tokens != null && (() => {
                                     const totalIn = (log.cached_tokens && log.cached_tokens > log.input_tokens)
                                         ? log.input_tokens + log.cached_tokens
                                         : log.input_tokens;
+                                    const hitRate = (log.cached_tokens && totalIn > 0)
+                                        ? Math.min(100, Math.max(0, (log.cached_tokens / totalIn) * 100))
+                                        : 0;
+                                    const hitRateText = totalIn > 0 && log.cached_tokens
+                                        ? (hitRate >= 100 ? '100%' : (hitRate % 1 === 0 ? `${hitRate.toFixed(0)}%` : `${hitRate.toFixed(1)}%`))
+                                        : '';
                                     return (
                                         <div>
                                             <div className="text-gray-700 dark:text-gray-200">{t('monitor.input')}: <span className="font-semibold">{formatCompactNumber(totalIn)}</span></div>
                                             {log.cached_tokens ? (
-                                                <div className="text-emerald-600 dark:text-emerald-400 font-semibold text-[10px]">
-                                                    ({t('monitor.cached', '缓')}: {formatCompactNumber(log.cached_tokens)})
+                                                <div
+                                                    className="text-emerald-600 dark:text-emerald-400 font-semibold text-[11px] leading-tight"
+                                                    title={`${t('token_stats.cached', 'Cache')}: ${log.cached_tokens.toLocaleString()}${hitRateText ? ` (${hitRateText})` : ''}`}
+                                                >
+                                                    ({t('monitor.cached', 'Cache')}: {formatCompactNumber(log.cached_tokens)}{hitRateText ? ` ${hitRateText}` : ''})
                                                 </div>
                                             ) : null}
                                         </div>
@@ -758,7 +767,7 @@ interface TimingDiagnosticsCardProps {
 
 const TimingDiagnosticsCard: React.FC<TimingDiagnosticsCardProps> = ({ timing, onCopyText }) => {
     const { t } = useTranslation();
-    const [isExpanded, setIsExpanded] = useState(true);
+    const [isExpanded, setIsExpanded] = useState(false);
     const [isCopied, setIsCopied] = useState(false);
 
     const totalSec = timing.totalSec || 0;
@@ -842,15 +851,25 @@ const TimingDiagnosticsCard: React.FC<TimingDiagnosticsCardProps> = ({ timing, o
     return (
         <div className="mb-3 rounded-xl overflow-hidden border border-emerald-500/30 dark:border-emerald-500/25 bg-emerald-50/25 dark:bg-base-100 shadow-sm">
             {/* Card Header */}
-            <div className="px-3 py-2 bg-emerald-500/10 dark:bg-emerald-950/30 border-b border-emerald-500/20 flex items-center justify-between gap-2 select-none">
+            <div
+                className={`px-3 py-2 bg-emerald-500/10 dark:bg-emerald-950/30 flex items-center justify-between gap-2 select-none cursor-pointer hover:bg-emerald-500/15 transition-colors ${
+                    isExpanded ? 'border-b border-emerald-500/20' : ''
+                }`}
+                onClick={() => setIsExpanded((prev) => !prev)}
+            >
                 <div className="flex items-center gap-2 min-w-0">
                     <Clock size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
                     <span className="text-xs font-bold tracking-wider text-emerald-950 dark:text-emerald-100 shrink-0 whitespace-nowrap">
                         {t('monitor.timing.title', '耗时诊断')}
                     </span>
+                    {!isExpanded && totalSec > 0 && (
+                        <span className="px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60">
+                            {t('monitor.timing.total', '总耗时')}: {formatSeconds(timing.totalSec)}
+                        </span>
+                    )}
                 </div>
 
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <button
                         type="button"
                         onClick={handleCopy}
@@ -1051,6 +1070,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const timingNode = timingInfo ? (
         <div className="p-2.5">
             <TimingDiagnosticsCard
+                key={selectedLog?.id}
                 timing={timingInfo}
                 onCopyText={async (text) => {
                     const success = await copyToClipboard(text);
@@ -1554,113 +1574,77 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                         </div>
                     </div>
 
-                    {/* 3-Column Settings Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-                        {/* 1. 请求日志保留策略 */}
+                    {/* 2-Column Balanced Settings Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                        {/* 1. 请求日志与报文保留策略 */}
                         <div className="p-3.5 bg-white dark:bg-base-100 rounded-xl border border-gray-200/90 dark:border-base-200 shadow-xs flex flex-col justify-between space-y-3">
-                            <div className="space-y-2.5">
+                            <div className="space-y-3">
                                 <span className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
                                     <Clock size={13} className="text-indigo-500 dark:text-indigo-400" />
-                                    {t('monitor.settings.retention_title', { defaultValue: '请求日志保留策略' })}
+                                    {t('monitor.settings.retention_title', { defaultValue: '请求日志与报文保留策略 (滑动窗口)' })}
                                 </span>
-                                <div className="space-y-2">
+                                <div className="space-y-2.5">
+                                    {/* 空间上限 */}
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
-                                            {t('proxy.config.log_retention_body_hours', { defaultValue: '请求报文保留时间 (小时)' })}
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            max={720}
-                                            value={appConfig.proxy.log_retention?.max_body_age_hours ?? 24}
-                                            onChange={(e) => updateLogRetentionField('max_body_age_hours', Number(e.target.value))}
-                                            className="input input-xs input-bordered bg-gray-50 dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-800 dark:text-white w-full font-mono text-xs focus:border-blue-500"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
-                                            {t('proxy.config.log_retention_storage_gb', { defaultValue: '日志保留空间上限 (GB)' })}
-                                        </label>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <label className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                                                {t('proxy.config.log_retention_storage_gb', { defaultValue: '日志保留空间上限 (GB)' })}
+                                            </label>
+                                            <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                                                {t('proxy.config.log_retention_current_usage', { defaultValue: '当前库占用' })}: <strong className="font-mono text-gray-700 dark:text-gray-200">{dbDiskSizeBytes !== null ? formatBytes(dbDiskSizeBytes) : '...'}</strong>
+                                            </span>
+                                        </div>
                                         <input
                                             type="number"
                                             min={0.1}
                                             max={100}
                                             step={0.1}
-                                            value={appConfig.proxy.log_retention?.max_storage_gb ?? 0.5}
+                                            value={appConfig.proxy.log_retention?.max_storage_gb ?? 1.0}
                                             onChange={(e) => updateLogRetentionField('max_storage_gb', parseFloat(e.target.value))}
                                             className="input input-xs input-bordered bg-gray-50 dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-800 dark:text-white w-full font-mono text-xs focus:border-blue-500"
                                         />
-                                        <div className="flex items-center justify-between mt-1 text-[10px] text-gray-500 dark:text-gray-400">
-                                            <span>{t('proxy.config.log_retention_current_usage', { defaultValue: '当前数据库占用' })}: <strong className="font-mono text-gray-700 dark:text-gray-200">{dbDiskSizeBytes !== null ? formatBytes(dbDiskSizeBytes) : '...'}</strong></span>
-                                            <span className="text-amber-600 dark:text-amber-400 font-medium">超限挤出 30%</span>
-                                        </div>
                                         <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">
-                                            {t('proxy.config.log_retention_storage_gb_desc', { defaultValue: '滑动窗口机制：达到上限自动淘汰最尾部 30% 记录以容纳新日志入库' })}
+                                            {t('proxy.config.log_retention_storage_gb_desc', { defaultValue: '完全由容量上限滑动窗口托管，保留完整报文不被提前掏空；达到上限自动淘汰最尾部 30% 记录' })}
                                         </p>
                                     </div>
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
-                                            {t('proxy.config.log_retention_rows', { defaultValue: '最大保留条数' })}
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min={100}
-                                            step={1000}
-                                            value={appConfig.proxy.log_retention?.max_rows ?? 100000}
-                                            onChange={(e) => updateLogRetentionField('max_rows', Number(e.target.value))}
-                                            className="input input-xs input-bordered bg-gray-50 dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-800 dark:text-white w-full font-mono text-xs focus:border-blue-500"
-                                        />
+
+                                    {/* 最大保留条数与报文模式并排 */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
+                                                {t('proxy.config.log_retention_rows', { defaultValue: '最大保留条数' })}
+                                            </label>
+                                            <input
+                                                type="number"
+                                                min={100}
+                                                step={1000}
+                                                value={appConfig.proxy.log_retention?.max_rows ?? 100000}
+                                                onChange={(e) => updateLogRetentionField('max_rows', Number(e.target.value))}
+                                                className="input input-xs input-bordered bg-gray-50 dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-800 dark:text-white w-full font-mono text-xs focus:border-blue-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
+                                                {t('proxy.config.experimental.payload_storage_mode_label', { defaultValue: '监控报文存储模式' })}
+                                            </label>
+                                            <select
+                                                className="select select-xs select-bordered bg-gray-50 dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-800 dark:text-white w-full text-xs"
+                                                value={appConfig.proxy.experimental?.payload_storage_mode || 'simple'}
+                                                onChange={(e) => updateExperimentalField('payload_storage_mode', e.target.value)}
+                                            >
+                                                <option value="simple">{t('proxy.config.experimental.payload_mode_simple', { defaultValue: '简要模式 (推荐)' })}</option>
+                                                <option value="full">{t('proxy.config.experimental.payload_mode_full', { defaultValue: '完整原文 (排错)' })}</option>
+                                            </select>
+                                        </div>
                                     </div>
+                                    <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-tight">
+                                        {t('proxy.config.experimental.payload_storage_mode_desc', { defaultValue: '简要模式避免工具参数与图片撑爆日志库；排错时可切完整模式。' })}
+                                    </p>
                                 </div>
                             </div>
                         </div>
 
-                        {/* 2. 报文模式与思考块滑动窗口 */}
-                        <div className="p-3.5 bg-white dark:bg-base-100 rounded-xl border border-gray-200/90 dark:border-base-200 shadow-xs flex flex-col justify-between space-y-3">
-                            <div className="space-y-2.5">
-                                <span className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
-                                    <Sparkles size={13} className="text-purple-500 dark:text-purple-400" />
-                                    {t('monitor.settings.payload_thinking_title', { defaultValue: '报文存储与思考块周期' })}
-                                </span>
-                                <div className="space-y-2.5">
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
-                                            {t('proxy.config.experimental.payload_storage_mode_label', { defaultValue: '监控报文存储模式' })}
-                                        </label>
-                                        <select
-                                            className="select select-xs select-bordered bg-gray-50 dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-800 dark:text-white w-full text-xs"
-                                            value={appConfig.proxy.experimental?.payload_storage_mode || 'simple'}
-                                            onChange={(e) => updateExperimentalField('payload_storage_mode', e.target.value)}
-                                        >
-                                            <option value="simple">{t('proxy.config.experimental.payload_mode_simple', { defaultValue: '简要模式 (推荐，防止数据库膨胀)' })}</option>
-                                            <option value="full">{t('proxy.config.experimental.payload_mode_full', { defaultValue: '完整原文 (保存原始请求响应)' })}</option>
-                                        </select>
-                                        <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
-                                            {t('proxy.config.experimental.payload_storage_mode_desc', { defaultValue: '默认简要存储，避免工具参数与图片撑爆日志库；排错时可切完整模式。' })}
-                                        </p>
-                                    </div>
-
-                                    <div className="pt-2 border-t border-gray-100 dark:border-base-200">
-                                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">
-                                            {t('proxy.config.experimental.thinking_retention_days_label', { defaultValue: '思考块保留天数 (滑动窗口)' })}
-                                        </label>
-                                        <input
-                                            type="number"
-                                            min={1}
-                                            max={365}
-                                            value={appConfig.proxy.experimental?.thinking_retention_days ?? 15}
-                                            onChange={(e) => updateExperimentalField('thinking_retention_days', Number(e.target.value))}
-                                            className="input input-xs input-bordered bg-gray-50 dark:bg-base-200 border-gray-300 dark:border-base-300 text-gray-800 dark:text-white w-full font-mono text-xs focus:border-purple-500"
-                                        />
-                                        <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
-                                            {t('proxy.config.experimental.thinking_retention_days_desc', { defaultValue: '只要客户端 session 活跃每次请求自动刷新过期；超过窗口无请求才清理。' })}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* 3. 维护与清理操作 */}
+                        {/* 2. 维护与清理操作 */}
                         <div className="p-3.5 bg-white dark:bg-base-100 rounded-xl border border-gray-200/90 dark:border-base-200 shadow-xs flex flex-col justify-between space-y-3">
                             <div>
                                 <span className="text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5 mb-1.5">
@@ -1805,9 +1789,21 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                                                     );
                                                 })()}
                                                 <span className="text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded font-bold">Out: {formatCompactNumber(selectedLog.output_tokens ?? 0)}</span>
-                                                {selectedLog.cached_tokens != null && selectedLog.cached_tokens > 0 && (
-                                                    <span className="text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/40 px-1.5 py-0.5 rounded font-bold">Cache: {formatCompactNumber(selectedLog.cached_tokens)}</span>
-                                                )}
+                                                {selectedLog.cached_tokens != null && selectedLog.cached_tokens > 0 && (() => {
+                                                    const totalIn = (selectedLog.cached_tokens && selectedLog.cached_tokens > (selectedLog.input_tokens ?? 0))
+                                                        ? (selectedLog.input_tokens ?? 0) + selectedLog.cached_tokens
+                                                        : (selectedLog.input_tokens ?? 0);
+                                                    const hitRate = totalIn > 0 ? Math.min(100, Math.max(0, (selectedLog.cached_tokens / totalIn) * 100)) : 0;
+                                                    const hitRateText = totalIn > 0 ? (hitRate >= 100 ? '100%' : (hitRate % 1 === 0 ? `${hitRate.toFixed(0)}%` : `${hitRate.toFixed(1)}%`)) : '';
+                                                    return (
+                                                        <span
+                                                            className="text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/40 px-1.5 py-0.5 rounded font-bold"
+                                                            title={`Cache: ${selectedLog.cached_tokens.toLocaleString()}${hitRateText ? ` (${hitRateText})` : ''}`}
+                                                        >
+                                                            Cache: {formatCompactNumber(selectedLog.cached_tokens)}{hitRateText ? ` (${hitRateText})` : ''}
+                                                        </span>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
                                         <div>

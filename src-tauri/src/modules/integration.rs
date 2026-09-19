@@ -61,17 +61,20 @@ impl SystemIntegration for DesktopIntegration {
             return Ok(());
         }
 
-        // 1. 先关闭外部正在运行的进程（无论是原生还是IDE，先安全关闭，避免文件或凭据冲突）
-        if process::is_antigravity_running(target_ide) {
-            process::close_antigravity(20, target_ide)?;
-        }
-
-        // 2. 智能决策：是否使用最新的系统 Keychain 凭据管理器方式存储 Token
+        // 1. 智能决策：判断目标是否为 Antigravity IDE (基于 VS Code 定制/经典架构)
         let mut is_ide = target_ide == Some("ide");
 
-        // Auto-detect IDE: if the located executable is the IDE, treat as IDE mode
+        // Auto-detect IDE: if target_ide is not explicitly "ide", perform multi-dimensional detection
         if !is_ide {
-            if let Some(exe_path) = process::get_antigravity_executable_path(target_ide) {
+            // 1.1 依据 target_ide 查找可执行文件
+            let mut detected_exe = process::get_antigravity_executable_path(target_ide);
+
+            // 1.2 若 target_ide 为 None 且未找到原生 Antigravity 可执行文件，回退查找 IDE 可执行文件
+            if detected_exe.is_none() && target_ide.is_none() {
+                detected_exe = process::get_antigravity_executable_path(Some("ide"));
+            }
+
+            if let Some(ref exe_path) = detected_exe {
                 let path_lower = exe_path.to_string_lossy().to_lowercase();
                 if path_lower.contains("antigravity ide") || path_lower.contains("antigravity-ide")
                 {
@@ -81,13 +84,50 @@ impl SystemIntegration for DesktopIntegration {
                     );
                 }
             }
+
+            // 1.3 检查是否存在正在运行的 IDE 进程
+            if !is_ide && target_ide.is_none() {
+                if process::is_antigravity_running(Some("ide")) {
+                    is_ide = true;
+                    crate::modules::logger::log_info(
+                        "[Desktop] Auto-detected running Antigravity IDE process, using IDE account switch logic.",
+                    );
+                }
+            }
+
+            // 1.4 检查是否存在已配置或标准路径下的 IDE 数据库 (state.vscdb)
+            if !is_ide && target_ide.is_none() {
+                if let Ok(db_path) = db::get_db_path(Some("ide")) {
+                    if db_path.exists() {
+                        is_ide = true;
+                        crate::modules::logger::log_info(&format!(
+                            "[Desktop] Auto-detected Antigravity IDE database at {:?}, using IDE account switch logic.",
+                            db_path
+                        ));
+                    }
+                }
+            }
+        }
+
+        // 计算真实操作的 IDE 标识（若已探查出实际环境为 IDE，则统一映射为 "ide"）
+        let effective_target = if is_ide { Some("ide") } else { target_ide };
+
+        // 2. 先关闭外部正在运行的进程（无论是原生还是IDE，先安全关闭，避免文件或凭据冲突）
+        if process::is_antigravity_running(effective_target) {
+            process::close_antigravity(20, effective_target)?;
+        }
+        if effective_target != target_ide
+            && target_ide.is_some()
+            && process::is_antigravity_running(target_ide)
+        {
+            process::close_antigravity(20, target_ide)?;
         }
 
         let mut use_keyring = false;
 
         if !is_ide {
             // 经典原生版：自动探测版本号
-            match version::get_antigravity_version(target_ide) {
+            match version::get_antigravity_version(effective_target) {
                 Ok(ver) => {
                     // 如果版本号 >= 2.0.0
                     if version::compare_version(&ver.short_version, "2.0.0")
@@ -106,12 +146,26 @@ impl SystemIntegration for DesktopIntegration {
                     }
                 }
                 Err(e) => {
-                    // 如果探测失败，为防止对最新版由于没有 storage.json 造成报错阻断，默认作为新凭据注入
-                    use_keyring = true;
-                    crate::modules::logger::log_warn(&format!(
-                        "[Desktop] Failed to detect Antigravity version ({}), defaulting to system Keyring for robustness.",
-                        e
-                    ));
+                    // 如果探测失败，优先检查本地是否存在可用的 SQLite 数据库 (state.vscdb)
+                    // 若存在数据库，说明是经典的 VS Code/IDE 架构，优先使用 SQLite 注入，防止无 secret-tool 时报错
+                    let has_sqlite_db = db::get_db_path(effective_target)
+                        .or_else(|_| db::get_db_path(Some("ide")))
+                        .map(|p| p.exists())
+                        .unwrap_or(false);
+
+                    if has_sqlite_db {
+                        use_keyring = false;
+                        crate::modules::logger::log_info(&format!(
+                            "[Desktop] Failed to detect Antigravity version ({}), but detected existing SQLite database. Falling back to SQLite injection.",
+                            e
+                        ));
+                    } else {
+                        use_keyring = true;
+                        crate::modules::logger::log_warn(&format!(
+                            "[Desktop] Failed to detect Antigravity version ({}) and no SQLite database found, defaulting to system Keyring.",
+                            e
+                        ));
+                    }
                 }
             }
         }
@@ -119,10 +173,49 @@ impl SystemIntegration for DesktopIntegration {
         if use_keyring {
             // ================== 最新版 Antigravity 原生应用逻辑 (>= 2.0.0) ==================
             // 2.1 写入系统 Keychain/Keyring
-            write_to_system_keyring(account)?;
+            if let Err(keyring_err) = write_to_system_keyring(account) {
+                // 如果写入系统 Keyring 失败（例如 Linux 下未安装 secret-tool 或无桌面会话 D-Bus）
+                // 检查本地是否存在可用的 SQLite 数据库，若存在则自动降级回退到 SQLite 注入，确保账号切换顺利完成
+                let db_fallback = if let Ok(db_path) =
+                    db::get_db_path(effective_target).or_else(|_| db::get_db_path(Some("ide")))
+                {
+                    if db_path.exists() {
+                        crate::modules::logger::log_warn(&format!(
+                            "[Desktop] Keyring write failed ({}), but found SQLite DB at {:?}. Falling back to SQLite token injection.",
+                            keyring_err, db_path
+                        ));
+                        let backup_path = db_path.with_extension("vscdb.backup");
+                        let _ = fs::copy(&db_path, &backup_path);
+                        let _ = db::inject_token(
+                            &db_path,
+                            &account.token.access_token,
+                            &account.token.refresh_token,
+                            account.token.expiry_timestamp,
+                            &account.email,
+                            account.token.is_gcp_tos,
+                            account.token.project_id.as_deref(),
+                            account.token.id_token.as_deref(),
+                            account.token.oauth_client_key.as_deref(),
+                            effective_target,
+                        );
+                        if let Some(ref profile) = account.device_profile {
+                            let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if !db_fallback {
+                    return Err(keyring_err);
+                }
+            }
 
             // 2.2 原生应用可能没有 storage.json，但如果有的话，我们也可以尝试安全地写入设备 Profile，以兼容指纹信息
-            if let Ok(storage_path) = device::get_storage_path(target_ide) {
+            if let Ok(storage_path) = device::get_storage_path(effective_target) {
                 if let Some(ref profile) = account.device_profile {
                     let _ = device::write_profile(&storage_path, profile);
                 }
@@ -130,7 +223,7 @@ impl SystemIntegration for DesktopIntegration {
         } else {
             // ================== 原有 Antigravity 旧版或定制 IDE 逻辑 (< 2.0.0) ==================
             // 2.1 获取存储路径
-            let storage_path = device::get_storage_path(target_ide)?;
+            let storage_path = device::get_storage_path(effective_target)?;
 
             // 2.2 写入设备 Profile
             if let Some(ref profile) = account.device_profile {
@@ -138,7 +231,7 @@ impl SystemIntegration for DesktopIntegration {
             }
 
             // 2.3 数据库处理与 Token 注入
-            let db_path = db::get_db_path(target_ide)?;
+            let db_path = db::get_db_path(effective_target)?;
             if db_path.exists() {
                 let backup_path = db_path.with_extension("vscdb.backup");
                 let _ = fs::copy(&db_path, &backup_path);
@@ -154,7 +247,7 @@ impl SystemIntegration for DesktopIntegration {
                 account.token.project_id.as_deref(),
                 account.token.id_token.as_deref(),
                 account.token.oauth_client_key.as_deref(),
-                target_ide,
+                effective_target,
             )?;
 
             // 2.4 同步 Service Machine ID 到数据库
@@ -164,7 +257,7 @@ impl SystemIntegration for DesktopIntegration {
         }
 
         // 3. 重启外部进程
-        process::start_antigravity(target_ide)?;
+        process::start_antigravity(effective_target)?;
 
         // 4. 更新托盘
         let _ = crate::modules::tray::update_tray_menus(&self.app_handle);
@@ -363,9 +456,22 @@ fn write_to_system_keyring(account: &crate::models::Account) -> Result<(), Strin
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
 
-            let mut child = cmd
-                .spawn()
-                .map_err(|e| format!("Failed to spawn secret-tool: {}", e))?;
+            let mut child = match cmd.spawn() {
+                Ok(child) => child,
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        return Err(
+                            "Linux Secret Service utility 'secret-tool' not found (未检测到 secret-tool 工具)。\n\
+                             Please install libsecret-tools to enable Keyring credential storage:\n\
+                             • Ubuntu / Debian: sudo apt install -y libsecret-tools\n\
+                             • Fedora / RHEL: sudo dnf install -y libsecret\n\
+                             • Arch Linux: sudo pacman -S libsecret"
+                                .to_string(),
+                        );
+                    }
+                    return Err(format!("Failed to spawn secret-tool: {}", e));
+                }
+            };
 
             if let Some(mut stdin) = child.stdin.take() {
                 stdin
@@ -410,6 +516,9 @@ fn write_to_system_keyring(account: &crate::models::Account) -> Result<(), Strin
 
         // 2. 同时写入默认集合（保证其他依赖 default collection 的系统工具也能读取）
         let default_res = store_to_collection(None, payload_json.as_bytes());
+
+        // 尝试优先同步写入本地文件凭据 (~/.gemini/oauth_creds.json)
+        let _ = write_to_file_credentials(account);
 
         // 若两者均失败，则返回错误；若至少一个成功，则记录并继续
         if login_res.is_err() && default_res.is_err() {
@@ -531,6 +640,30 @@ fn write_to_file_credentials(account: &crate::models::Account) -> Result<(), Str
     Ok(())
 }
 
+/// 辅助方法：从本地文件凭据 (~/.gemini/oauth_creds.json) 读取 Token 作为跨平台回退
+fn read_from_file_credentials() -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    let home =
+        dirs::home_dir().ok_or_else(|| "Failed to resolve user home directory".to_string())?;
+    let creds_path = home.join(".gemini").join("oauth_creds.json");
+    if !creds_path.exists() {
+        return Err("No ~/.gemini/oauth_creds.json found".to_string());
+    }
+    let content = fs::read_to_string(&creds_path)
+        .map_err(|e| format!("Failed to read oauth_creds.json: {}", e))?;
+    let json: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse oauth_creds.json: {}", e))?;
+    let refresh_token = json
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Refresh token not found in oauth_creds.json".to_string())?
+        .to_string();
+    Ok(crate::modules::migration::ImportedOAuthState {
+        refresh_token,
+        is_gcp_tos: true,
+        project_id: None,
+    })
+}
+
 /// 辅助方法：从宿主操作系统的 Keychain/Credentials Manager 读取 Token
 pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedOAuthState, String> {
     #[cfg(target_os = "macos")]
@@ -549,6 +682,9 @@ pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedO
             .map_err(|e| format!("Failed to execute security command: {}", e))?;
 
         if !output.status.success() {
+            if let Ok(file_state) = read_from_file_credentials() {
+                return Ok(file_state);
+            }
             return Err("No credential found in macOS Keychain".to_string());
         }
 
@@ -614,6 +750,9 @@ pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedO
         unsafe {
             let res = CredReadW(target_wide.as_ptr(), 1, 0, &mut cred_ptr);
             if res == 0 || cred_ptr.is_null() {
+                if let Ok(file_state) = read_from_file_credentials() {
+                    return Ok(file_state);
+                }
                 return Err("No credential found in Windows Credential Manager".to_string());
             }
 
@@ -631,12 +770,33 @@ pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedO
 
     #[cfg(target_os = "linux")]
     {
-        let output = Command::new("secret-tool")
+        let output = match Command::new("secret-tool")
             .args(["lookup", "service", "gemini", "username", "antigravity"])
             .output()
-            .map_err(|e| format!("Failed to execute secret-tool: {}", e))?;
+        {
+            Ok(out) => out,
+            Err(e) => {
+                if let Ok(file_state) = read_from_file_credentials() {
+                    return Ok(file_state);
+                }
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return Err(
+                        "Linux Secret Service utility 'secret-tool' not found (未检测到 secret-tool 工具)。\n\
+                         Please install libsecret-tools to enable Keyring storage:\n\
+                         • Ubuntu / Debian: sudo apt install -y libsecret-tools\n\
+                         • Fedora / RHEL: sudo dnf install -y libsecret\n\
+                         • Arch Linux: sudo pacman -S libsecret"
+                            .to_string(),
+                    );
+                }
+                return Err(format!("Failed to execute secret-tool: {}", e));
+            }
+        };
 
         if !output.status.success() {
+            if let Ok(file_state) = read_from_file_credentials() {
+                return Ok(file_state);
+            }
             return Err("No credential found in Linux secret-tool".to_string());
         }
 
@@ -783,5 +943,43 @@ impl SystemIntegration for SystemManager {
 
     fn show_notification(&self, title: &str, body: &str) {
         self.show_notification(title, body);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_keyring_payload_nested_token() {
+        let payload = r#"{
+            "token": {
+                "access_token": "ya29.test",
+                "token_type": "Bearer",
+                "refresh_token": "1//test_refresh_token_123",
+                "expiry": "2026-09-19T10:00:00.000000Z"
+            },
+            "auth_method": "consumer"
+        }"#;
+        let state = parse_keyring_payload(payload).expect("Failed to parse nested keyring payload");
+        assert_eq!(state.refresh_token, "1//test_refresh_token_123");
+        assert!(state.is_gcp_tos);
+    }
+
+    #[test]
+    fn test_parse_keyring_payload_flat_token() {
+        let payload = r#"{
+            "access_token": "ya29.test",
+            "refresh_token": "1//test_refresh_token_flat"
+        }"#;
+        let state = parse_keyring_payload(payload).expect("Failed to parse flat keyring payload");
+        assert_eq!(state.refresh_token, "1//test_refresh_token_flat");
+    }
+
+    #[test]
+    fn test_parse_keyring_payload_missing_token() {
+        let payload = r#"{ "auth_method": "consumer" }"#;
+        let res = parse_keyring_payload(payload);
+        assert!(res.is_err());
     }
 }

@@ -673,6 +673,7 @@ pub fn run() {
             commands::proxy::get_proxy_logs_filtered,
             commands::proxy::set_proxy_monitor_enabled,
             commands::proxy::clear_proxy_logs,
+            commands::proxy::clear_thinking_store,
             commands::proxy::get_proxy_db_disk_size,
             commands::proxy::generate_api_key,
             commands::proxy::reload_proxy_accounts,

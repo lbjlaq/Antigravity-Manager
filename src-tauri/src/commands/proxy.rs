@@ -253,6 +253,7 @@ pub async fn ensure_admin_server(
         config.experimental.log_retention_days,
         config.experimental.thinking_store_enabled,
         config.experimental.thinking_retention_days,
+        Some(config.experimental.thinking_max_memory_turns),
     );
     crate::proxy::config::update_global_compression_level(
         config.experimental.compression_level.clone(),
@@ -326,6 +327,7 @@ pub async fn ensure_admin_server(
         config.experimental.log_retention_days,
         config.experimental.thinking_store_enabled,
         config.experimental.thinking_retention_days,
+        Some(config.experimental.thinking_max_memory_turns),
     );
 
     Ok(())
@@ -458,6 +460,19 @@ pub async fn clear_proxy_logs(state: State<'_, ProxyServiceState>) -> Result<(),
         .map_err(|e| format!("Spawn blocking failed: {}", e))?;
     }
     Ok(())
+}
+
+/// 清空所有思考块缓存与持久化数据 (包含 RAM 内存滑动窗口与 SQLite 数据库，但不删除任何请求日志)
+#[tauri::command]
+pub async fn clear_thinking_store() -> Result<usize, String> {
+    // 1. 清空内存中 ThinkingStore 实例与 SignatureCache
+    crate::proxy::thinking_store::ThinkingStore::global().clear();
+    crate::proxy::SignatureCache::global().clear();
+
+    // 2. 清空 SQLite 数据库中所有的 thinking_records 与 thinking_sessions
+    tokio::task::spawn_blocking(crate::modules::proxy_db::clear_all_thinking_data)
+        .await
+        .map_err(|e| format!("Spawn blocking failed: {}", e))?
 }
 
 /// 获取反代请求日志 (分页)

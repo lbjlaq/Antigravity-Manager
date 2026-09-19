@@ -110,28 +110,38 @@ impl OutboundThinkingPipeline {
         }
 
         // 入库 ThinkingStore
-        if let Some(ref th) = payload.thought {
-            if crate::proxy::thinking_store::is_meaningful_thought(th) {
-                let tool_ids: Vec<String> = payload
-                    .tool_calls
-                    .iter()
-                    .filter_map(|tc| tc.get("id").and_then(|i| i.as_str()).map(str::to_string))
-                    .collect();
+        let has_meaningful_thought = payload
+            .thought
+            .as_deref()
+            .map(crate::proxy::thinking_store::is_meaningful_thought)
+            .unwrap_or(false);
+        let has_real_signature = payload
+            .signature
+            .as_deref()
+            .map(crate::proxy::thinking_store::is_real_signature)
+            .unwrap_or(false);
 
-                let fp = crate::proxy::thinking_store::fingerprint(&payload.text, &tool_ids, &[]);
+        if has_meaningful_thought || has_real_signature {
+            let tool_ids: Vec<String> = payload
+                .tool_calls
+                .iter()
+                .filter_map(|tc| tc.get("id").and_then(|i| i.as_str()).map(str::to_string))
+                .collect();
 
-                crate::proxy::thinking_store::ThinkingStore::global().record(
-                    store_key,
-                    crate::proxy::thinking_store::ThinkingRecord {
-                        fingerprint: fp,
-                        thought: th.clone(),
-                        signature: payload.signature.clone(),
-                        tool_ids,
-                        tool_names: Vec::new(),
-                        visible: payload.text.clone(),
-                    },
-                );
-            }
+            let th = payload.thought.clone().unwrap_or_default();
+            let fp = crate::proxy::thinking_store::fingerprint(&payload.text, &tool_ids, &[]);
+
+            crate::proxy::thinking_store::ThinkingStore::global().record(
+                store_key,
+                crate::proxy::thinking_store::ThinkingRecord {
+                    fingerprint: fp,
+                    thought: th,
+                    signature: payload.signature.clone(),
+                    tool_ids,
+                    tool_names: Vec::new(),
+                    visible: payload.text.clone(),
+                },
+            );
         }
     }
 

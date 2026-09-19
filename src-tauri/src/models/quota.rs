@@ -145,10 +145,7 @@ pub fn normalize_subscription_tier(tier: &str) -> String {
     }
 
     // 3) 付费档：g1-pro-tier / "Google AI Pro" / premium / advanced
-    if lower.contains("pro")
-        || lower.contains("premium")
-        || lower.contains("advanced")
-    {
+    if lower.contains("pro") || lower.contains("premium") || lower.contains("advanced") {
         return "PRO".to_string();
     }
 
@@ -203,7 +200,10 @@ mod tests {
         // 上游真实 id（loadCodeAssist 返回的权威字段）
         assert_eq!(normalize_subscription_tier("free-tier"), "FREE");
         assert_eq!(normalize_subscription_tier("g1-pro-tier"), "PRO");
-        assert_eq!(normalize_subscription_tier("standard-tier"), "standard-tier");
+        assert_eq!(
+            normalize_subscription_tier("standard-tier"),
+            "standard-tier"
+        );
         assert_eq!(normalize_subscription_tier("g1-ultra-tier"), "ULTRA");
         assert_eq!(normalize_subscription_tier("GOOGLE_ONE_HELIUM"), "ULTRA");
         assert_eq!(normalize_subscription_tier("GDP_HELIUM"), "ULTRA");
@@ -228,7 +228,10 @@ mod tests {
         // 空值 / 未识别原样返回
         assert_eq!(normalize_subscription_tier(""), "");
         assert_eq!(normalize_subscription_tier("   "), "");
-        assert_eq!(normalize_subscription_tier("totally-unknown"), "totally-unknown");
+        assert_eq!(
+            normalize_subscription_tier("totally-unknown"),
+            "totally-unknown"
+        );
     }
 
     #[test]

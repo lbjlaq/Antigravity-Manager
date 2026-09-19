@@ -44,7 +44,25 @@
     "copied": "已复制到剪贴板",
     "reason": "原因",
     "show_raw": "显示原始报文",
-    "show_parsed": "显示解析后"
+    "show_parsed": "显示解析后",
+    "settings": "设置",
+    "saving": "保存中...",
+    "required": "必填",
+    "copy_failed": "复制失败",
+    "create": "创建",
+    "back": "返回",
+    "deselect_all": "取消全选",
+    "select_all": "全选",
+    "optional": "可选",
+    "actions": "操作",
+    "none": "无",
+    "disable": "禁用",
+    "enable": "启用",
+    "deleted": "已删除",
+    "selected": "已选择",
+    "claude_series": "Claude 系列",
+    "maximize": "最大化",
+    "app_name": "Antigravity Tools"
   },
   "nav": {
     "dashboard": "仪表盘",
@@ -81,7 +99,9 @@
     "switch_to_malay_short": "MY",
     "user_token": "用户 Token",
     "apikey_fun": "中转站",
-    "logout": "登出"
+    "logout": "登出",
+    "more": "更多",
+    "mini_view": "迷你悬浮窗"
   },
   "dashboard": {
     "hello": "你好, 用户 👋",
@@ -599,7 +619,12 @@
       "support_desc": "如果您觉得本工具对您有帮助，欢迎扫码请作者喝杯咖啡！您的支持是我持续维护项目的最大动力。",
       "support_alipay": "支付宝",
       "support_wechat": "微信支付",
-      "support_buymeacoffee": "Buy Me a Coffee"
+      "support_buymeacoffee": "Buy Me a Coffee",
+      "upgrade_now_btn": "立即下载并自动更新",
+      "update_dialog_title": "发现新版本可用",
+      "update_confirm_desc": "检测到有新版本发布。是否立即下载更新？客户端将在下载完成后自动热重启以应用更新。",
+      "current_version": "当前版本",
+      "latest_version_label": "最新版本"
     },
     "advanced_thinking": {
       "title": "高级思维与全局配置",
@@ -821,7 +846,13 @@
         "clear_bindings": "清除会话绑定",
         "clear_bindings_tooltip": "立即断开所有会话与账号的绑定关系，强制下一次请求重新分配账号。",
         "clear_rate_limits": "清除限流记录",
-        "clear_rate_limits_tooltip": "立即清除所有账号的本地限流记录，强制下一次请求尝试直接调用上游。"
+        "clear_rate_limits_tooltip": "立即清除所有账号的本地限流记录，强制下一次请求尝试直接调用上游。",
+        "round_robin_set": "已开启轮换模式",
+        "fixed_account_set": "已开启固定账号模式",
+        "fixed_account": "固定账号模式",
+        "fixed_account_tooltip": "开启后，所有 API 请求将仅使用选定的账号，而不是在账号之间轮换。",
+        "start_proxy_first": "启动反代服务以配置固定账号模式。",
+        "account_changed": "已切换至 {{email}}"
       },
       "circuit_breaker": {
         "title": "自适应熔断器",
@@ -934,9 +965,9 @@
         "tier_tiered": "Tiered (自由模型)",
         "flash_family_title": "Gemini Flash 系列 (如 3-flash, 3.7-flash, tiered 等)",
         "flash_family_desc": "控制 Flash 思考模型的四大档位预算（填 -1 则不指定走官方自适应）",
-        "flash_low_hint": "极低推理 (默认 1000)",
-        "flash_medium_hint": "标准平衡档 (默认 4000)",
-        "flash_high_hint": "深度推理档 (默认 10000)",
+        "flash_low_hint": "极低推理 (默认 1024)",
+        "flash_medium_hint": "标准平衡档 (默认 4096)",
+        "flash_high_hint": "深度推理档 (默认 16384)",
         "flash_tiered_hint": "自适应/自由强度 (默认 -1)",
         "flash_default_hint": "已启用官方默认模式：完全透传官方模型 ID，不注入 thinkingBudget，完全由 Google 上游模型自主决定思考行为。",
         "tiered_desc": "💡 Tiered 自由模型说明：该模型专为谷歌动态自适应打造。设置为 -1 时，模型根据问题难度自动分配思考量；若指定具体数值（如 30000+），可突破 High 档位解锁 Max 极限思考。",
@@ -949,12 +980,62 @@
         "claude_family_desc": "调控 Claude 思考模型的 Token 预算（官方模型列表仅区分 -thinking 与普通模型，此项专用于思考模型）",
         "claude_low_hint": "轻量思考 (默认 1024)",
         "claude_medium_hint": "日常平衡档 (默认 4096)",
-        "claude_high_hint": "深度思考档 (默认 16000)",
+        "claude_high_hint": "深度思考档 (默认 16384)",
         "claude_default_hint": "已启用官方默认模式：完全按官方协议规范透传，不注入额外自定义预算限制。",
         "store_enabled": "服务端思考块与签名回填",
         "store_enabled_desc": "自动截获并持久化思考过程与加密签名；当商业 Agent（如 Cline, Roo, Claude Code 等）多轮对话未带回思考时由服务端自动补齐，杜绝上游 400 报错或上下文丢失。",
         "default_on_tag": "默认开启",
-        "claude_thinking_note": "💡 Claude 模型说明：Anthropic 官方模型列表仅区分带 `-thinking`（如 claude-3-7-sonnet-thinking）与普通模型。本自定义预算专门控制带 thinking 模型的思考配额；若调用普通非 thinking 模型，上游不产生思考过程。"
+        "claude_thinking_note": "💡 Claude 模型说明：Anthropic 官方模型列表仅区分带 `-thinking`（如 claude-3-7-sonnet-thinking）与普通模型。本自定义预算专门控制带 thinking 模型的思考配额；若调用普通非 thinking 模型，上游不产生思考过程。",
+        "max_memory_turns_label": "每轮对话的内存 Thinking 存储最大轮次",
+        "default_600_tag": "默认 600",
+        "max_memory_turns_desc": "控制单会话在内存 (RAM) 中常驻保留的历史思考块轮次。单轮思考块的预估内存消耗约为 1.5 KB ~ 2.5 KB（600 轮约占用 1.2 MB / 会话）。",
+        "turns_unit": "轮",
+        "window_guide_title": "滑动窗口淘汰机制与各并发规模选型建议",
+        "window_guide_desc": "超长会话超过此设定轮次时，采用先进先出（FIFO）滑动窗口自动淘汰最旧思考块。被淘汰轮次绝不降级为破坏缓存的占位符，而是由本地 SQLite 专属索引（primary_tool_id）在纳秒级精准穿透回捞，保证 Prompt Cache 100% 字节级严格对齐且绝不 OOM。",
+        "tooltip_32768": "32,768 Tokens：适合复杂编程与深度架构任务",
+        "tooltip_16384": "1.6w 档位 (16,384 Tokens)：适合复杂 Agent 任务",
+        "tooltip_8192": "8,192 Tokens：适合中等复杂度多步推理与代码排错",
+        "tooltip_4096": "4,096 Tokens：标准平衡档，兼顾思考质量与响应速度",
+        "tooltip_2048": "2,048 Tokens：日常轻量推理档",
+        "tooltip_1024": "1,024 Tokens：轻量极速思考，消耗极低",
+        "tooltip_65536": "65,536 Tokens：超长深度思考链极限档",
+        "tooltip_1001": "1,001 Tokens：Google 官方 3.1 Pro 低思考基准档",
+        "tooltip_10001": "10,001 Tokens：Google 官方 3.1 Pro 深度推理主力档",
+        "tooltip_adaptive": "自适应 (-1)：完全由上游模型根据问题难度自动分配",
+        "preset_adaptive": "自适应 (-1)",
+        "window_settings_title": "思考块双层滑动窗口与容量配置 (RAM + SQLite)",
+        "dual_layer_tag": "双层索引穿透",
+        "clear_btn": "清空思考块",
+        "clear_btn_tooltip": "清空所有思考块缓存与数据库（不影响请求日志）",
+        "clear_tip": "仅当缓存命中异常、版本更新或开发者要求时才删除",
+        "clear_modal_title": "确认清空思考块存储？",
+        "clear_modal_desc": "此操作将彻底清空内存常驻轮次 (RAM) 与本地 SQLite 数据库中所有的历史思维链和工具签名记录。\n\n⚠️ 注意：此操作仅清理思考块数据，绝不删除任何反向代理请求日志。",
+        "clear_modal_warning": "建议仅在出现缓存命中异常、版本升级或开发者明确要求时执行。清空后新请求将重新建立干净的前缀索引。",
+        "clear_confirm_btn": "确认清空",
+        "clear_success": "已成功清空思考块存储 (共清理 {{count}} 条历史记录)",
+        "clear_error": "清空思考块失败: {{error}}",
+        "days_unit": "天",
+        "claude_budget_title": "Claude 思考模型预算 (Tokens)",
+        "claude_budget_desc": "客户端调用思考模型（如 claude-3-7-sonnet-thinking）时的核心 Token 预算（填 -1 则由官方自适应）",
+        "claude_budget_current": "推荐默认值: 16,384 Tokens (兼顾思考深度与响应速率)",
+        "claude_hide_advanced": "收起客户端 Effort 档位映射",
+        "claude_show_advanced": "展开高级设置：客户端 Effort 档位映射 (low / medium / high)",
+        "claude_effort_mapping_desc": "当部分商业客户端（如 Cline, Roo 等）在请求头或参数中附带 reasoning_effort 时，按以下预算映射：",
+        "save_hint": "修改思考预算设置后点击保存即可立即生效，配置将即时热更新至当前运行的反代服务。",
+        "save_btn": "保存思考设置并热生效",
+        "max_memory_turns_subdesc": "单轮思考约 2 KB；600 轮 ≈ 1.2 MB / 会话。",
+        "default_15_days_tag": "默认 15天",
+        "retention_days_subdesc": "活跃会话每次请求自动顺延，无请求才过期。",
+        "guide_preset_1g_title": "1GB 内存轻量服务器:",
+        "guide_preset_1g_desc": "推荐填写 <1>100 ~ 200 轮</1>。几百个并发会话仅消耗约 50MB 内存，极端抗爆。",
+        "guide_preset_team_title": "个人 ~ 10 人自用团队:",
+        "guide_preset_team_desc": "推荐填写 <1>600 ~ 1000 轮</1>。数千轮历史对话常驻物理内存 0ms 闪电直出。",
+        "guide_preset_enterprise_title": "100 人企业级并发 (2G-4G):",
+        "guide_preset_enterprise_desc": "推荐填写 <1>300 ~ 600 轮</1>。95%+ 请求命中 RAM，兼具极致性能与绝对稳健。",
+        "guide_preset_relay_title": "1K+ 用户公共中转站 (4G-8G):",
+        "guide_preset_relay_desc": "推荐填写 <1>150 ~ 300 轮</1>。内存优先倾斜给长连接池，长对话冷历史托付 SQLite。",
+        "guide_preset_cluster_title": "1W+ ~ 10W+ 海量并发集群:",
+        "guide_preset_cluster_desc": "推荐填写 <1>50 ~ 100 轮</1>。单机无压承载数万并发会话，WAL 高速索引并发无锁秒级响应。"
       },
       "thinking_settings": {
         "title": "思考设置 (Thinking Settings)"
@@ -1211,6 +1292,9 @@
       },
       "sync_confirm_title": "同步确认",
       "sync_confirm_message": "即将为您同步 {{name}} 的配置。⚠️ 注意：此操作将覆盖您本地已有的配置文件（如登录状态、API Key 等）。确定要继续吗？"
+    },
+    "error": {
+      "load_failed": "加载失败"
     }
   },
   "monitor": {
@@ -1219,6 +1303,7 @@
     "open_monitor": "打开监控",
     "input": "输入",
     "output": "输出",
+    "cached": "缓",
     "logging_status": {
       "active": "正在录制",
       "paused": "已暂停"
@@ -1276,7 +1361,8 @@
       "wrap_lines": "自动折行",
       "no_wrap": "单行模式",
       "no_matches": "无匹配",
-      "no_upstream_payload": "无中转报文 (直接转发或未记录)"
+      "no_upstream_payload": "无中转报文 (直接转发或未记录)",
+      "headers": "请求与响应头 (Headers)"
     },
     "timing": {
       "title": "耗时分类诊断",
@@ -1324,7 +1410,10 @@
     "toast": {
       "not_ready": "自动更新包尚未就绪，为您跳转到下载页面...",
       "failed": "自动更新失败，为您跳转到下载页面..."
-    }
+    },
+    "restart_prompt": "更新已准备就绪，重启应用后即可完成升级。",
+    "btn_restart": "立即重启",
+    "btn_later": "稍后"
   },
   "login": {
     "title": "安全访问控制",
@@ -1506,7 +1595,11 @@
     "placeholder_desc": "选填备注",
     "placeholder_max_ips": "0 = 不限制",
     "hint_max_ips": "0 表示不限制",
-    "hint_curfew": "留空则禁用。基于服务器时间。"
+    "hint_curfew": "留空则禁用。基于服务器时间。",
+    "custom_expires_required": "请选择自定义过期时间",
+    "expires_custom": "自定义时间",
+    "custom_expires_at": "自定义到期时间",
+    "hint_custom_expires": "设置 Token 的精确到期时间点"
   },
   "apiKeyFun": {
     "title": "APIKEY.FUN 中转站",

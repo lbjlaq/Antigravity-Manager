@@ -159,6 +159,7 @@ export interface ExperimentalConfig {
     log_retention_days?: number;
     thinking_store_enabled?: boolean;
     thinking_retention_days?: number;
+    thinking_max_memory_turns?: number;
 }
 
 export interface CircuitBreakerConfig {

@@ -25,6 +25,259 @@ pub fn is_workflow_tool(tool_name: &str) -> bool {
     )
 }
 
+/// 剥离命令字符串外部包裹的 Markdown 代码块标签、反引号以及动作提示词前缀
+pub fn strip_markdown_and_action_prefixes(raw: &str) -> String {
+    let mut s = raw.trim();
+    // 剥离 Markdown 代码块: ```bash\n...\n``` 或 ```...```
+    if s.starts_with("```") {
+        if let Some(end) = s.rfind("```") {
+            if end > 3 {
+                let inner = &s[3..end];
+                if let Some(nl) = inner.find('\n') {
+                    s = inner[nl + 1..].trim();
+                } else {
+                    s = inner.trim();
+                }
+            }
+        }
+    }
+    // 剥离行内代码反引号: `cmd`
+    if s.starts_with('`') && s.ends_with('`') && s.len() >= 2 {
+        s = s[1..s.len() - 1].trim();
+    }
+
+    // 循环迭代剥离常见动作前缀（支持英文大小写不敏感，支持中英文全角半角标点）
+    let prefixes = [
+        "run: ",
+        "run ",
+        "execute: ",
+        "execute ",
+        "check: ",
+        "check ",
+        "command: ",
+        "command ",
+        "cmd: ",
+        "cmd ",
+        "执行: ",
+        "执行：",
+        "执行 ",
+        "运行: ",
+        "运行：",
+        "运行 ",
+        "命令: ",
+        "命令：",
+        "命令 ",
+        "powershell: ",
+        "pwsh: ",
+        "bash: ",
+        "sh: ",
+        "$ ",
+        "# ",
+        "> ",
+        "ps> ",
+    ];
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for pfx in &prefixes {
+            let matches = if pfx.is_ascii() {
+                s.to_ascii_lowercase().starts_with(pfx)
+            } else {
+                s.starts_with(pfx)
+            };
+            if matches {
+                s = s[pfx.len()..].trim();
+                changed = true;
+            }
+        }
+    }
+    s.to_string()
+}
+
+/// 判定清洗后的字符串是否符合可执行命令特征，避免与纯自然语言描述混淆
+pub fn is_likely_command(candidate: &str) -> bool {
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // 1. 包含典型管道符或命令串联/重定向运算符
+    if trimmed.contains(" | ")
+        || trimmed.contains(" && ")
+        || trimmed.contains(" || ")
+        || trimmed.contains(';')
+    {
+        return true;
+    }
+
+    // 2. 路径形式命令（相对路径、绝对路径或 Windows 盘符路径）
+    if trimmed.starts_with("./")
+        || trimmed.starts_with(".\\")
+        || trimmed.starts_with("../")
+        || trimmed.starts_with("..\\")
+        || trimmed.starts_with('/')
+    {
+        return true;
+    }
+    if trimmed.len() >= 3
+        && trimmed.as_bytes()[1] == b':'
+        && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/')
+    {
+        return true;
+    }
+
+    // 排除含有明显自然语言连词或英语叙述结构的短语（如 "Run git tag and git push", "git pull and build", "git tag to origin"）
+    // 避免因为以 "git", "npm", "cargo" 等开头就将复合英文描述误判为单一合法命令
+    let lower_trimmed = trimmed.to_ascii_lowercase();
+    for conjunction in &[
+        " and ",
+        " then ",
+        " but ",
+        " to origin",
+        " to main",
+        " to master",
+    ] {
+        if lower_trimmed.contains(conjunction) {
+            return false;
+        }
+    }
+
+    let first_token = trimmed.split_whitespace().next().unwrap_or("");
+    let first_token_lower = first_token.to_ascii_lowercase();
+
+    // 3. PowerShell 标准动宾 Cmdlet (如 Get-Process, Set-Item, New-Item, Test-Path, Invoke-RestMethod)
+    if first_token.contains('-') {
+        let parts: Vec<&str> = first_token.split('-').collect();
+        if parts.len() == 2
+            && parts[0].chars().all(|c| c.is_alphabetic())
+            && parts[1].chars().all(|c| c.is_alphanumeric())
+        {
+            return true;
+        }
+    }
+
+    // 4. 常见 CLI 工具与内置 Shell 命令库
+    const KNOWN_COMMANDS: &[&str] = &[
+        "git",
+        "ls",
+        "dir",
+        "cd",
+        "cat",
+        "cargo",
+        "npm",
+        "npx",
+        "pnpm",
+        "yarn",
+        "bun",
+        "deno",
+        "node",
+        "python",
+        "python3",
+        "py",
+        "pip",
+        "pip3",
+        "go",
+        "rustc",
+        "make",
+        "cmake",
+        "dotnet",
+        "mvn",
+        "gradle",
+        "docker",
+        "docker-compose",
+        "podman",
+        "kubectl",
+        "helm",
+        "find",
+        "grep",
+        "rg",
+        "sed",
+        "awk",
+        "curl",
+        "wget",
+        "tar",
+        "zip",
+        "unzip",
+        "gzip",
+        "ps",
+        "kill",
+        "killall",
+        "chmod",
+        "chown",
+        "mkdir",
+        "rm",
+        "rmdir",
+        "cp",
+        "mv",
+        "touch",
+        "echo",
+        "which",
+        "where",
+        "head",
+        "tail",
+        "more",
+        "less",
+        "clear",
+        "cls",
+        "powershell",
+        "pwsh",
+        "cmd",
+        "wsl",
+        "ssh",
+        "scp",
+        "sudo",
+        "apt",
+        "yum",
+        "brew",
+        "env",
+        "export",
+        "type",
+        "tasklist",
+        "taskkill",
+        "ipconfig",
+        "ifconfig",
+        "ping",
+        "netstat",
+        "whoami",
+        "attrib",
+        "tree",
+        "start",
+        "gci",
+        "gc",
+        "sc",
+        "gps",
+        "saps",
+        "iex",
+        "irm",
+        "iwr",
+    ];
+
+    if KNOWN_COMMANDS.contains(&first_token_lower.as_str()) {
+        return true;
+    }
+
+    // 5. 常见可执行脚本后缀
+    if first_token_lower.ends_with(".exe")
+        || first_token_lower.ends_with(".bat")
+        || first_token_lower.ends_with(".cmd")
+        || first_token_lower.ends_with(".ps1")
+        || first_token_lower.ends_with(".sh")
+        || first_token_lower.ends_with(".py")
+    {
+        return true;
+    }
+
+    // 6. 第二个 token 是典型命令行参数标志 (-f, --help 等)
+    if let Some(second_token) = trimmed.split_whitespace().nth(1) {
+        if second_token.starts_with('-') && !second_token.chars().all(|c| c.is_numeric()) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// 标准化并清洗 shell / PowerShell / DSH (DeepSeek Harness) 等工具参数
 /// 1. 将 cmd / code / script / shell_command / input 等别名重命名为 command
 /// 2. [DSH tool-pwsh / tool-bash & WorkBuddy]：
@@ -137,31 +390,15 @@ pub fn normalize_and_sanitize_tool_args(tool_name: &str, args: &mut Value) {
                 .trim()
                 .to_string();
 
-            // 如果 description 看起来像一条可执行命令（如包含管道、常见命令开头等），不要盲目覆盖成 echo
-            let is_likely_command = !raw_desc.is_empty()
-                && (raw_desc.starts_with("git ")
-                    || raw_desc.starts_with("ls ")
-                    || raw_desc.starts_with("dir ")
-                    || raw_desc.starts_with("cd ")
-                    || raw_desc.starts_with("cat ")
-                    || raw_desc.starts_with("cargo ")
-                    || raw_desc.starts_with("npm ")
-                    || raw_desc.starts_with("pnpm ")
-                    || raw_desc.starts_with("yarn ")
-                    || raw_desc.starts_with("node ")
-                    || raw_desc.starts_with("python ")
-                    || raw_desc.starts_with("Get-")
-                    || raw_desc.starts_with("Set-")
-                    || raw_desc.contains(" | ")
-                    || raw_desc.contains(";"));
+            let candidate_str = strip_markdown_and_action_prefixes(&raw_desc);
 
-            if is_likely_command {
-                obj.insert("command".to_string(), Value::String(raw_desc));
+            if is_likely_command(&candidate_str) {
+                obj.insert("command".to_string(), Value::String(candidate_str));
             } else {
-                let desc_for_log = if raw_desc.is_empty() {
-                    "Action logged"
+                let desc_for_log = if candidate_str.is_empty() {
+                    "Action required"
                 } else {
-                    raw_desc.as_str()
+                    candidate_str.as_str()
                 };
 
                 let safe_desc: String = desc_for_log
@@ -170,17 +407,27 @@ pub fn normalize_and_sanitize_tool_args(tool_name: &str, args: &mut Value) {
                     .collect();
                 let trimmed = safe_desc.trim();
                 let safe_title = if trimmed.is_empty() {
-                    "Action logged"
+                    "Action required"
                 } else {
                     trimmed
                 };
 
-                let fallback_cmd = format!("echo \"[OK: Action logged - {}]\"", safe_title);
+                let fallback_cmd = if tool_name.eq_ignore_ascii_case("cmd") {
+                    format!(
+                        "echo Error: No executable command provided in tool call - {} & exit /b 1",
+                        safe_title
+                    )
+                } else {
+                    format!(
+                        "echo \"[Error: No command provided - {}]\" >&2; exit 1",
+                        safe_title
+                    )
+                };
                 obj.insert("command".to_string(), Value::String(fallback_cmd));
                 tracing::warn!(
                     tool = %tool_name,
                     description = %raw_desc,
-                    "Injected safe fallback 'command' into tool call arguments to prevent downstream client crash (Issue #3430)"
+                    "Injected non-zero error fallback 'command' into tool call arguments to trigger agent self-recovery (Issue #3430)"
                 );
             }
         }
@@ -744,7 +991,7 @@ mod tests {
         normalize_and_sanitize_tool_args("PowerShell", &mut args);
         assert_eq!(
             args["command"],
-            "echo \"[OK: Action logged - 列出目录内容]\""
+            "echo \"[Error: No command provided - 列出目录内容]\" >&2; exit 1"
         );
         assert_eq!(args["description"], "列出目录内容");
     }
@@ -758,7 +1005,7 @@ mod tests {
         normalize_and_sanitize_tool_args("Bash", &mut args);
         assert_eq!(
             args["command"],
-            "echo \"[OK: Action logged - Fetch status]\""
+            "echo \"[Error: No command provided - Fetch status]\" >&2; exit 1"
         );
     }
 
@@ -799,7 +1046,7 @@ mod tests {
             serde_json::from_str(&tool_calls[0].function.as_ref().unwrap().arguments).unwrap();
         assert_eq!(
             parsed_args["command"],
-            "echo \"[OK: Action logged - 查看当前系统信息]\""
+            "echo \"[Error: No command provided - 查看当前系统信息]\" >&2; exit 1"
         );
     }
 
@@ -827,6 +1074,45 @@ mod tests {
         normalize_and_sanitize_tool_args("pwsh", &mut args);
         assert_eq!(args["command"], "git status -s");
         assert_eq!(args["description"], "git status -s");
+    }
+
+    #[test]
+    fn test_normalize_and_sanitize_tool_args_command_with_action_prefixes() {
+        let test_cases = [
+            ("Run: git diff", "git diff"),
+            ("Run git status", "git status"),
+            ("Execute: cargo check", "cargo check"),
+            ("执行: cargo test", "cargo test"),
+            ("运行: npm run build", "npm run build"),
+            ("powershell: Get-Process", "Get-Process"),
+            ("```bash\ngit log -n 5\n```", "git log -n 5"),
+            ("`docker ps -a`", "docker ps -a"),
+            ("$ ./deploy.sh --prod", "./deploy.sh --prod"),
+        ];
+
+        for (input_desc, expected_cmd) in test_cases {
+            let mut args = json!({ "description": input_desc });
+            normalize_and_sanitize_tool_args("bash", &mut args);
+            assert_eq!(
+                args["command"], expected_cmd,
+                "Failed to extract command from '{}'",
+                input_desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_likely_command_excludes_natural_language_conjunctions() {
+        // 自然语言动作描述（含 and, then, but, to origin 等），即使以 git/cargo 开头也不应被误判为合法命令
+        assert!(!is_likely_command("git tag and git push"));
+        assert!(!is_likely_command("git pull and build"));
+        assert!(!is_likely_command("git push to origin"));
+        assert!(!is_likely_command("cargo build then test"));
+
+        // 真实合法命令保持正常识别
+        assert!(is_likely_command("git tag -a v1.0"));
+        assert!(is_likely_command("git push origin main"));
+        assert!(is_likely_command("cargo check --workspace"));
     }
 
     #[test]

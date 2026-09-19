@@ -1159,7 +1159,8 @@ fn check_standard_locations(target_ide: Option<&str>) -> Option<std::path::PathB
     } else if target_ide == Some("code") || target_ide == Some("cursor") {
         &["Antigravity"]
     } else {
-        &["Antigravity"]
+        // target_ide = None: 优先查找 Antigravity 经典版，回退查找 Antigravity IDE
+        &["Antigravity", "Antigravity IDE"]
     };
 
     #[cfg(target_os = "macos")]

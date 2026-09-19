@@ -47,7 +47,24 @@
     "back": "뒤로",
     "reason": "사유",
     "show_raw": "원본 보기",
-    "show_parsed": "파싱 결과 보기"
+    "show_parsed": "파싱 결과 보기",
+    "settings": "설정",
+    "saving": "저장 중...",
+    "required": "필수",
+    "copy_failed": "복사 실패",
+    "create": "생성",
+    "deselect_all": "모두 선택 해제",
+    "select_all": "모두 선택",
+    "optional": "선택 사항",
+    "actions": "작업",
+    "none": "없음",
+    "disable": "비활성화",
+    "enable": "활성화",
+    "deleted": "삭제됨",
+    "selected": "선택됨",
+    "claude_series": "Claude 시리즈",
+    "maximize": "최대화",
+    "app_name": "Antigravity Tools"
   },
   "nav": {
     "dashboard": "대시보드",
@@ -84,7 +101,9 @@
     "switch_to_malay_short": "MY",
     "user_token": "사용자 토큰",
     "apikey_fun": "API 중계소",
-    "logout": "로그아웃"
+    "logout": "로그아웃",
+    "more": "더 보기",
+    "mini_view": "미니 뷰"
   },
   "dashboard": {
     "hello": "안녕하세요, 사용자님 👋",
@@ -344,7 +363,9 @@
       "batch_warmup_msg": "선택한 {{count}}개 계정에 대해 즉시 웜업을 트리거하시겠습니까?"
     },
     "switch_to_agy": "Antigravity CLI (agy)로 전환",
-    "drag_disabled_during_sort": "열 정렬이 활성화되어 드래그 정렬이 일시 중지되었습니다"
+    "drag_disabled_during_sort": "열 정렬이 활성화되어 드래그 정렬이 일시 중지되었습니다",
+    "go_to_appeal": "이의 제기하러 가기",
+    "copy_appeal_url": "이의 제기 URL 복사"
   },
   "settings": {
     "save": "설정 저장",
@@ -458,7 +479,8 @@
         "checking": "확인 중",
         "healthy": "정상",
         "timeout": "시간 초과"
-      }
+      },
+      "interval_tooltip": "상태 검사 주기 (초)"
     },
     "advanced": {
       "title": "고급 설정",
@@ -525,7 +547,22 @@
       "http_api_port_placeholder": "기본 포트 19527",
       "http_api_port_invalid": "잘못된 포트 번호 (범위: 1024-65535)",
       "http_api_settings_saved": "HTTP API 설정이 저장되었습니다. 적용하려면 다시 시작해야 합니다",
-      "http_api_restart_required": "⚠️ 적용하려면 다시 시작해야 합니다"
+      "http_api_restart_required": "⚠️ 적용하려면 다시 시작해야 합니다",
+      "migrate_btn": "변경 및 이전",
+      "data_dir_select": "데이터 디렉터리 선택",
+      "data_dir_migrate_title": "데이터 디렉터리 이전",
+      "data_dir_migrate_msg": "모든 데이터를 다음 경로로 이전합니다: {{path}}",
+      "data_dir_migrated": "데이터 디렉터리가 이전되었습니다.",
+      "data_dir_restart_hint": "앱을 다시 시작하는 것이 좋습니다.",
+      "migrate_title": "데이터 디렉터리 이전",
+      "migrate_desc": "현재 데이터 디렉터리를 새 위치로 이전합니다.",
+      "migrate_source": "원본 디렉터리",
+      "migrate_target": "대상 디렉터리",
+      "migrate_clean_source": "이전 성공 후 이전 디렉터리 정리",
+      "migrate_restart_notice": "이전 완료 후 앱이 자동으로 다시 시작됩니다.",
+      "migrate_confirm_btn": "이전 시작 및 재시작",
+      "migrating_text": "데이터를 이전하는 중...",
+      "migrate_success": "데이터 이전 성공. 앱을 다시 시작하는 중..."
     },
     "debug": {
       "title": "디버그 콘솔",
@@ -584,7 +621,12 @@
       "support_desc": "이 프로젝트가 도움이 되었다면 커피 한 잔 사주세요! 여러분의 후원은 프로젝트를 유지하는 데 큰 힘이 됩니다.",
       "support_alipay": "알리페이",
       "support_wechat": "위챗 페이",
-      "support_buymeacoffee": "Buy Me a Coffee 후원"
+      "support_buymeacoffee": "Buy Me a Coffee 후원",
+      "upgrade_now_btn": "지금 다운로드하여 자동 업데이트",
+      "update_dialog_title": "새 버전을 사용할 수 있습니다",
+      "update_confirm_desc": "새 버전이 감지되었습니다. 지금 업데이트를 다운로드하시겠습니까? 다운로드가 완료되면 앱이 자동으로 다시 시작됩니다.",
+      "current_version": "현재 버전",
+      "latest_version_label": "최신 버전"
     },
     "advanced_thinking": {
       "title": "고급 사고 및 전역 설정",
@@ -648,7 +690,7 @@
   "proxy": {
     "title": "API 프록시 서비스",
     "error": {
-      "load_failed": "설정을 불러오지 못했습니다"
+      "load_failed": "로드 실패"
     },
     "status": {
       "running": "서비스 실행 중",
@@ -807,7 +849,13 @@
         "clear_bindings": "세션 바인딩 지우기",
         "clear_bindings_tooltip": "모든 세션-계정 바인딩을 하드 리셋하여 다음 요청 시 계정이 다시 할당되도록 합니다.",
         "clear_rate_limits": "속도 제한 기록 지우기",
-        "clear_rate_limits_tooltip": "모든 계정의 로컬 속도 제한을 즉시 삭제하고, 다음 요청 시 직접 시도하도록 강제합니다."
+        "clear_rate_limits_tooltip": "모든 계정의 로컬 속도 제한을 즉시 삭제하고, 다음 요청 시 직접 시도하도록 강제합니다.",
+        "round_robin_set": "라운드 로빈 모드가 활성화되었습니다",
+        "fixed_account_set": "고정 계정 모드가 활성화되었습니다",
+        "fixed_account": "고정 계정 모드",
+        "fixed_account_tooltip": "활성화하면 모든 API 요청이 계정 간에 순환되지 않고 선택한 계정만 사용합니다.",
+        "start_proxy_first": "고정 계정 모드를 구성하려면 프록시 서비스를 시작하세요.",
+        "account_changed": "{{email}}(으)로 전환됨"
       },
       "circuit_breaker": {
         "title": "적응형 서킷 브레이커",
@@ -816,7 +864,9 @@
         "input_placeholder": "백오프 기간을 초 단위로 쉼표로 구분하여 입력하세요",
         "level": "레벨 {{level}}",
         "invalid_format": "잘못된 형식입니다. 쉼표로 구분된 숫자(예: 60, 300)를 사용하세요.",
-        "clear_records": "모든 제한 기록 삭제"
+        "clear_records": "모든 제한 기록 삭제",
+        "lock_on_zero_quota": "할당량 소진 시 차단기 작동 (5시간 / 주간)",
+        "lock_on_zero_quota_desc": "계정의 5시간 또는 주간 할당량이 소진(0%)되면 즉시 잠금 처리합니다."
       },
       "experimental": {
         "title": "실험적 설정",
@@ -835,7 +885,15 @@
         "context_compression_threshold_l2": "L2 압축 임계값 (Thinking 압축)",
         "context_compression_threshold_l2_tooltip": "서명을 보존하면서 초기 생각 블록을 압축합니다. 권장: 0.55 (55%)",
         "context_compression_threshold_l3": "L3 압축 임계값 (요약 피벗)",
-        "context_compression_threshold_l3_tooltip": "궁극적인 재설정: XML 상태 요약을 생성하고 새 세션으로 피벗합니다. 가장 효율적인 토큰 사용. 권장: 0.7 (70%)"
+        "context_compression_threshold_l3_tooltip": "궁극적인 재설정: XML 상태 요약을 생성하고 새 세션으로 피벗합니다. 가장 효율적인 토큰 사용. 권장: 0.7 (70%)",
+        "payload_storage_mode_label": "페이로드 저장 모드",
+        "payload_storage_mode_tooltip": "간약 모드는 생각 블록, 토큰 수, 세션 ID 및 핵심 대화만 SQLite에 저장합니다.",
+        "payload_storage_mode_desc": "기본 간약 저장으로 로그 비대화를 방지합니다.",
+        "payload_mode_simple": "간약 (기본값)",
+        "payload_mode_full": "전체 원문",
+        "log_retention_days_label": "요청 로그 보존 일수",
+        "thinking_retention_days_label": "생각 블록 보존 일수 (슬라이딩 윈도우)",
+        "thinking_retention_days_desc": "기본 15일 슬라이딩 윈도우."
       },
       "opencode_sync": {
         "card_title": "OpenCode",
@@ -930,14 +988,70 @@
         "store_enabled": "서버 측 추론 블록 및 서명 자동 보완",
         "store_enabled_desc": "추론 과정과 암호화 서명을 자동으로 캡처하고 유지합니다. 상용 에이전트(Cline, Roo, Claude Code 등)가 다중 턴 대화에서 추론을 반환하지 않을 때 게이트웨이가 자동으로 보충하여 업스트림 400 오류나 컨텍스트 손실을 방지합니다.",
         "default_on_tag": "기본 활성화",
-        "claude_thinking_note": "💡 Claude 모델 안내: Anthropic 공식 모델 목록은 `-thinking`이 붙은 모델(예: claude-3-7-sonnet-thinking)과 일반 모델만 구분합니다. 이 맞춤 예산은 thinking 모델의 추론 할당량을 제어하며, 일반 모델을 호출할 경우 상류에서 추론이 생성되지 않습니다."
+        "claude_thinking_note": "💡 Claude 모델 안내: Anthropic 공식 모델 목록은 `-thinking`이 붙은 모델(예: claude-3-7-sonnet-thinking)과 일반 모델만 구분합니다. 이 맞춤 예산은 thinking 모델의 추론 할당량을 제어하며, 일반 모델을 호출할 경우 상류에서 추론이 생성되지 않습니다.",
+        "max_memory_turns_label": "세션당 메모리 Thinking 보존 최대 턴 수",
+        "default_600_tag": "기본 600",
+        "max_memory_turns_desc": "세션별 메모리(RAM)에 상주하는 이전 생각 블록 턴 수를 제어합니다. 턴당 예상 메모리 사용량은 약 1.5KB ~ 2.5KB입니다(600턴당 세션당 약 1.2MB).",
+        "turns_unit": "턴",
+        "window_guide_title": "슬라이딩 윈도우 제거 메커니즘 및 동시성 권장 사양 가이드",
+        "window_guide_desc": "설정 턴 수를 초과하면 FIFO 슬라이딩 윈도우가 가장 오래된 생각 블록을 자동으로 제거합니다. 제거된 블록은 로컬 SQLite 인덱스를 통해 나노초 단위로 복원되어 프롬프트 캐시를 완벽히 유지하면서 OOM을 방지합니다.",
+        "tooltip_32768": "32,768 토큰: 복잡한 코딩 및 심층 아키텍처 설계에 적합",
+        "tooltip_16384": "1.6만 티어 (16,384 토큰): 복잡한 Agent 워크플로에 최적",
+        "tooltip_8192": "8,192 토큰: 다단계 추론 및 코드 디버깅에 균형 잡힌 설정",
+        "tooltip_4096": "4,096 토큰: 생각 품질과 응답 속도의 표준 균형",
+        "tooltip_2048": "2,048 토큰: 일상적인 경량 추론",
+        "tooltip_1024": "1,024 토큰: 최소한의 토큰 소모를 가진 초고속 경량 생각",
+        "tooltip_65536": "65,536 토큰: 극한의 초심층 추론 체인",
+        "tooltip_1001": "1,001 토큰: Google 공식 3.1 Pro Low 생각 기준값",
+        "tooltip_10001": "10,001 토큰: Google 공식 3.1 Pro High 심층 추론 주력 티어",
+        "tooltip_adaptive": "적응형 (-1): 질문 난이도에 따라 업스트림 모델이 자동 할당",
+        "preset_adaptive": "적응형 (-1)",
+        "window_settings_title": "Thinking 2계층 슬라이딩 윈도우 및 용량 설정 (RAM + SQLite)",
+        "dual_layer_tag": "2계층 인덱스",
+        "days_unit": "일",
+        "claude_budget_title": "Claude 생각 모델 예산 (Tokens)",
+        "claude_budget_desc": "claude-3-7-sonnet-thinking과 같은 생각 모델 호출 시의 핵심 토큰 예산 (-1은 공식 적응형)",
+        "claude_budget_current": "권장 기본값: 16,384 토큰 (생각 깊이와 응답 속도의 균형)",
+        "claude_hide_advanced": "클라이언트 Effort 매핑 접기",
+        "claude_show_advanced": "고급 설정: 클라이언트 Effort 매핑 (low / medium / high)",
+        "claude_effort_mapping_desc": "Cline, Roo 등의 상용 클라이언트가 reasoning_effort를 전달할 때 다음 예산으로 매핑됩니다:",
+        "save_hint": "생각 예산 변경 사항은 저장 즉시 적용되며 실행 중인 프록시 서비스에 즉시 핫 리로드됩니다.",
+        "save_btn": "생각 설정 저장 및 핫 리로드",
+        "max_memory_turns_subdesc": "턴당 약 2KB, 600턴 ≈ 세션당 1.2MB.",
+        "default_15_days_tag": "기본 15일",
+        "retention_days_subdesc": "활성 세션은 요청마다 자동 연장되며, 유휴 상태일 때만 만료됩니다.",
+        "guide_preset_1g_title": "1GB 메모리 경량 서버:",
+        "guide_preset_1g_desc": "권장 설정: <1>100 ~ 200 턴</1>. 수백 개의 동시 세션에서도 약 50MB 메모리만 소비하여 OOM에 매우 강력합니다.",
+        "guide_preset_team_title": "개인 ~ 10인 팀:",
+        "guide_preset_team_desc": "권장 설정: <1>600 ~ 1000 턴</1>. 수천 턴의 대화 기록이 물리적 RAM에 상주하여 0ms로 즉시 응답합니다.",
+        "guide_preset_enterprise_title": "100인 기업 동시 접속 (2G-4G):",
+        "guide_preset_enterprise_desc": "권장 설정: <1>300 ~ 600 턴</1>. 95% 이상의 요청이 RAM에 적중하여 최고의 성능과 절대적 안정성을 보장합니다.",
+        "guide_preset_relay_title": "1K+ 사용자 공용 중계소 (4G-8G):",
+        "guide_preset_relay_desc": "권장 설정: <1>150 ~ 300 턴</1>. 연결 풀에 메모리를 우선 할당하고 긴 대화의 콜드 기록은 SQLite에 위임합니다.",
+        "guide_preset_cluster_title": "1만 ~ 10만+ 대규모 동시성 클러스터:",
+        "guide_preset_cluster_desc": "권장 설정: <1>50 ~ 100 턴</1>. 단일 머신으로 수만 개의 동시 세션을 원활히 처리하며, WAL 고속 인덱스로 락 없이 즉각 응답합니다.",
+        "clear_btn": "생각 블록 비우기",
+        "clear_btn_tooltip": "모든 생각 블록 캐시 및 데이터베이스 삭제 (요청 로그는 보존됨)",
+        "clear_tip": "캐시 적중 이상, 버전 업데이트 또는 개발자 요청 시에만 삭제하세요",
+        "clear_modal_title": "생각 블록 저장소를 비우시겠습니까?",
+        "clear_modal_desc": "이 작업은 상주 메모리(RAM)와 로컬 SQLite 데이터베이스의 모든 이전 생각 체인 및 도구 서명 기록을 완전히 비웁니다.\n\n⚠️ 주의: 이 작업은 생각 블록 데이터만 정리하며, 프록시 요청 로그는 절대 삭제하지 않습니다.",
+        "clear_modal_warning": "캐시 적중 이상 발생, 버전 업데이트 후 또는 개발자의 명시적 요청이 있을 때만 실행하는 것을 권장합니다. 비운 후 새 요청은 깨끗한 접두사 색인을 다시 생성합니다.",
+        "clear_confirm_btn": "비우기 확인",
+        "clear_success": "생각 블록 저장소를 성공적으로 비웠습니다 (총 {{count}}개 기록 정리)",
+        "clear_error": "생각 블록 비우기 실패: {{error}}"
       },
       "thinking_settings": {
         "title": "추론 설정 (Thinking Settings)"
       },
       "prompt_multimodal": {
         "title": "글로벌 프롬프트 및 멀티모달 설정"
-      }
+      },
+      "log_retention_title": "요청 로그 보존",
+      "log_retention_body_hours": "바디 보존 시간",
+      "log_retention_storage_gb": "로그 저장 용량 한도 (GB)",
+      "log_retention_storage_gb_desc": "한도 도달 시 슬라이딩 윈도우가 작동하여 오래된 로그 30%를 정리합니다.",
+      "log_retention_current_usage": "현재 DB 용량",
+      "log_retention_rows": "최대 로그 행 수"
     },
     "cloudflared": {
       "title": "공개 액세스 (Cloudflared)",
@@ -1241,7 +1355,19 @@
       "protocol": "프로토콜",
       "account_used": "사용된 계정",
       "id": "요청 ID",
-      "payload_empty": "데이터 없음"
+      "payload_empty": "데이터 없음",
+      "upstream_request_payload": "전달 페이로드 (Forwarded)",
+      "concise_mode": "간약 모드",
+      "full_mode": "전체 모드",
+      "concise_desc": "도구 매개변수와 중복 필드를 생략하고 생각 블록, 사용량 및 대화 내용을 강조합니다.",
+      "search_placeholder": "페이로드 검색...",
+      "search_placeholder_with_shortcut": "페이로드 검색... (Enter 다음, Shift+Enter 이전)",
+      "case_sensitive": "대소문자 구분",
+      "wrap_lines": "자동 줄 바꿈",
+      "no_wrap": "줄 바꿈 안 함",
+      "no_matches": "일치 없음",
+      "no_upstream_payload": "전달 페이로드 없음",
+      "headers": "헤더 (Headers)"
     },
     "dialog": {
       "clear_title": "프록시 로그 지우기",
@@ -1282,10 +1408,30 @@
       "subtitle": "요청 로그 보존 기간, 추론 블록 슬라이딩 윈도우 및 디스크 공간 정리를 통합 관리",
       "retention_title": "요청 로그 보존 정책",
       "payload_thinking_title": "페이로드 저장 및 추론 주기",
-      "maintenance_title": "로그 유지 관리 및 공간 정리"
+      "maintenance_title": "로그 유지 관리 및 공간 정리",
+      "save_retention": "보존 정책 저장",
+      "save_thinking": "생각 및 페이로드 설정 저장"
     },
     "actions": {
       "clear_all_requests": "모든 기록 요청 지우기"
+    },
+    "cached": "Cache",
+    "timing": {
+      "title": "소요 시간 진단",
+      "clean": "초기 세션 정제",
+      "clean_desc": "캐시 제어 제거 / 중복 역할 병합 / 손상된 생각 필터링",
+      "norm": "정규화 및 전송",
+      "norm_desc": "모델 라우팅 / 계정 스케줄링 / Gemini 형식 변환",
+      "thinking": "생각 블록 및 서명 보완",
+      "thinking_desc": "ThinkingStore 복원 / 생각 체인 및 센티널 서명 주입",
+      "ttft": "첫 토큰 대기 시간 (TTFT)",
+      "ttft_desc": "게이트웨이 요청부터 첫 유효 데이터 수신까지",
+      "stream": "스트림 전송 시간",
+      "stream_desc": "첫 번째 청크 도착부터 스트림 완료까지",
+      "total": "총 소요 시간",
+      "copy_timing": "시간 진단 복사",
+      "copied_timing": "복사됨",
+      "legacy_hint": "이전 기록에는 세부 단계별 시간이 기록되지 않았습니다."
     }
   },
   "update_notification": {
@@ -1295,8 +1441,8 @@
     "downloading": "업데이트 다운로드 중...",
     "restarting": "애플리케이션 재시작 중...",
     "auto_update": "자동 업데이트",
-    "restart_prompt": "업데이트가 다운로드되어 설치할 준비가 되었습니다. 지금 재시작하시겠습니까?",
-    "btn_restart": "재시작",
+    "restart_prompt": "업데이트가 준비되었습니다. 앱을 다시 시작하여 변경 사항을 적용하세요.",
+    "btn_restart": "지금 다시 시작",
     "btn_later": "나중에",
     "toast": {
       "not_ready": "자동 업데이트 패키지가 준비되지 않았습니다. 다운로드 페이지로 이동합니다...",
@@ -1416,7 +1562,10 @@
       "expires_placeholder": "영구적으로 비워두기",
       "cancel": "취소",
       "confirm": "추가",
-      "add_btn": "추가"
+      "add_btn": "추가",
+      "error_duplicate": "이미 차단 목록에 있는 IP입니다.",
+      "error_invalid_ip": "잘못된 IP 형식입니다. IP 주소 또는 CIDR 표기법을 사용하세요.",
+      "error_add_failed": "추가 실패"
     },
     "whitelist": {
       "add_ip": "신뢰할 수 있는 IP 추가",
@@ -1480,7 +1629,11 @@
     "placeholder_desc": "선택 사항 메모",
     "placeholder_max_ips": "0 = 무제한",
     "hint_max_ips": "0 = 무제한",
-    "hint_curfew": "비워두면 비활성화됩니다. 서버 시간 기준."
+    "hint_curfew": "비워두면 비활성화됩니다. 서버 시간 기준.",
+    "custom_expires_required": "사용자 지정 만료 시간을 선택하세요",
+    "expires_custom": "사용자 지정 시간",
+    "custom_expires_at": "사용자 지정 만료일시",
+    "hint_custom_expires": "토큰의 정확한 만료 일시 설정"
   },
   "apiKeyFun": {
     "title": "APIKEY.FUN 허브",

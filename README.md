@@ -466,6 +466,7 @@ response = client.chat.completions.create(
 <summary><b>👥 核心贡献者 (Contributors) - 点击展开</b></summary>
 
 <a href="https://github.com/lbjlaq"><img src="https://github.com/lbjlaq.png" width="50px" style="border-radius: 50%;" alt="lbjlaq"/></a>
+<a href="https://github.com/jeikl"><img src="https://github.com/jeikl.png" width="50px" style="border-radius: 50%;" alt="jeikl"/></a>
 <a href="https://github.com/XinXin622"><img src="https://github.com/XinXin622.png" width="50px" style="border-radius: 50%;" alt="XinXin622"/></a>
 <a href="https://github.com/llsenyue"><img src="https://github.com/llsenyue.png" width="50px" style="border-radius: 50%;" alt="llsenyue"/></a>
 <a href="https://github.com/salacoste"><img src="https://github.com/salacoste.png" width="50px" style="border-radius: 50%;" alt="salacoste"/></a>

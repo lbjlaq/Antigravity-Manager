@@ -10,7 +10,19 @@ use crate::proxy::SignatureCache; // Assuming this is available at crate root or
 
 /// Collects a Gemini SSE stream into a complete Gemini Response Value
 /// ALSO performs signature caching side-effect
-pub async fn collect_stream_to_json<S, E>(mut stream: S, session_id: &str) -> Result<Value, String>
+pub async fn collect_stream_to_json<S, E>(stream: S, session_id: &str) -> Result<Value, String>
+where
+    S: futures::Stream<Item = Result<Bytes, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    collect_stream_to_json_with_anchor(stream, session_id, None).await
+}
+
+pub async fn collect_stream_to_json_with_anchor<S, E>(
+    mut stream: S,
+    session_id: &str,
+    anchor: Option<&str>,
+) -> Result<Value, String>
 where
     S: futures::Stream<Item = Result<Bytes, E>> + Unpin,
     E: std::fmt::Display,
@@ -123,7 +135,12 @@ where
         }
     }
 
-    crate::proxy::thinking_store::capture_gemini_parts(session_id, &content_parts);
+    let anchor_str = anchor.unwrap_or("root");
+    crate::proxy::thinking_store::capture_gemini_parts_with_anchor(
+        session_id,
+        &content_parts,
+        anchor_str,
+    );
 
     // Construct final response
     collected_response["candidates"][0]["content"]["parts"] = json!(content_parts);

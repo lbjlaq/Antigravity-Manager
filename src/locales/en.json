@@ -47,7 +47,24 @@
     "back": "Back",
     "reason": "Reason",
     "show_raw": "Show Raw",
-    "show_parsed": "Show Parsed"
+    "show_parsed": "Show Parsed",
+    "settings": "Settings",
+    "saving": "Saving...",
+    "required": "Required",
+    "copy_failed": "Copy failed",
+    "create": "Create",
+    "deselect_all": "Deselect All",
+    "select_all": "Select All",
+    "optional": "Optional",
+    "actions": "Actions",
+    "none": "None",
+    "disable": "Disable",
+    "enable": "Enable",
+    "deleted": "Deleted",
+    "selected": "Selected",
+    "claude_series": "Claude Series",
+    "maximize": "Maximize",
+    "app_name": "Antigravity Tools"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -84,7 +101,9 @@
     "switch_to_malay_short": "MY",
     "user_token": "User Tokens",
     "apikey_fun": "Transit Station",
-    "logout": "Logout"
+    "logout": "Logout",
+    "more": "More",
+    "mini_view": "Mini View"
   },
   "dashboard": {
     "hello": "Hello, User 👋",
@@ -173,6 +192,8 @@
     "click_to_verify": "Click to Verify",
     "copy_validation_url": "Copy Verification Link",
     "validation_url_copied": "Verification link copied to clipboard",
+    "go_to_appeal": "Go to Appeal",
+    "copy_appeal_url": "Copy Appeal URL",
     "fix_guide": {
       "title": "Terminal Quick Fix (Resolves internal 403s)",
       "step1_title": "🚀 Quickest Solution",
@@ -430,6 +451,7 @@
       "tags": "Tags",
       "add_tag_placeholder": "Add tag...",
       "seconds": "Sec",
+      "interval_tooltip": "Health check interval (seconds)",
       "test_completed": "Health check completed",
       "test_failed": "Health check failed",
       "confirm_delete": "Are you sure you want to delete this proxy?",
@@ -599,7 +621,12 @@
       "support_desc": "If you find this project helpful, feel free to buy me a coffee! Your support is the biggest motivation for me to maintain this project.",
       "support_alipay": "Alipay",
       "support_wechat": "WeChat Pay",
-      "support_buymeacoffee": "Buy Me a Coffee"
+      "support_buymeacoffee": "Buy Me a Coffee",
+      "upgrade_now_btn": "Download & Auto Update",
+      "update_dialog_title": "New Version Available",
+      "update_confirm_desc": "A new version is available. Would you like to download and update now? The app will automatically restart once downloaded.",
+      "current_version": "Current Version",
+      "latest_version_label": "Latest Version"
     },
     "advanced_thinking": {
       "title": "Advanced Thinking & Global Config",
@@ -663,7 +690,7 @@
   "proxy": {
     "title": "API Proxy Service",
     "error": {
-      "load_failed": "Failed to load configuration"
+      "load_failed": "Failed to load"
     },
     "status": {
       "running": "Service Running",
@@ -828,7 +855,13 @@
         "clear_bindings": "Clear Session Bindings",
         "clear_bindings_tooltip": "Hard reset all session-account bindings, forcing accounts to be re-assigned on next request.",
         "clear_rate_limits": "Clear Rate Limit Records",
-        "clear_rate_limits_tooltip": "Immediately clear local rate limit records for all accounts, forcing next requests to try upstream directly."
+        "clear_rate_limits_tooltip": "Immediately clear local rate limit records for all accounts, forcing next requests to try upstream directly.",
+        "round_robin_set": "Round-robin mode enabled",
+        "fixed_account_set": "Fixed account mode enabled",
+        "fixed_account": "Fixed Account Mode",
+        "fixed_account_tooltip": "When enabled, all API requests will use only the selected account instead of rotating between accounts.",
+        "start_proxy_first": "Start the proxy service to configure fixed account mode.",
+        "account_changed": "Switched to {{email}}"
       },
       "circuit_breaker": {
         "title": "Adaptive Circuit Breaker",
@@ -941,9 +974,9 @@
         "tier_tiered": "Tiered (Freeform Model)",
         "flash_family_title": "Gemini Flash Series (3-flash, 3.7-flash, tiered, etc.)",
         "flash_family_desc": "Manage four tier budgets for Flash reasoning models (enter -1 for official adaptive)",
-        "flash_low_hint": "Light reasoning (Default 1000)",
-        "flash_medium_hint": "Balanced tier (Default 4000)",
-        "flash_high_hint": "Deep reasoning (Default 10000)",
+        "flash_low_hint": "Light reasoning (Default 1024)",
+        "flash_medium_hint": "Balanced tier (Default 4096)",
+        "flash_high_hint": "Deep reasoning (Default 16384)",
         "flash_tiered_hint": "Adaptive / Freeform (Default -1)",
         "flash_default_hint": "Official default mode enabled: passes model ID directly without injecting thinkingBudget.",
         "tiered_desc": "💡 Tiered Model Note: Designed for Google's dynamic adaptation. When set to -1, the model allocates reasoning dynamically based on task difficulty; setting 30000+ unlocks Max reasoning beyond High.",
@@ -956,12 +989,62 @@
         "claude_family_desc": "Manage Claude thinking model token budgets (official models only differentiate between -thinking and standard models; this applies specifically to thinking models)",
         "claude_low_hint": "Light thinking (Default 1024)",
         "claude_medium_hint": "Everyday balanced (Default 4096)",
-        "claude_high_hint": "Deep reasoning (Default 16000)",
+        "claude_high_hint": "Deep reasoning (Default 16384)",
         "claude_default_hint": "Official default mode enabled: adheres to standard Anthropic specifications without custom limits.",
         "store_enabled": "Server-side Thought & Signature Restoration",
         "store_enabled_desc": "Automatically captures and persists reasoning blocks and encrypted signatures. When client agents (e.g. Cline, Roo, Claude Code) omit thought content in multi-turn chats, the gateway restores them to prevent upstream 400 errors or context loss.",
         "default_on_tag": "Default On",
-        "claude_thinking_note": "💡 Claude Model Note: Anthropic official models only differentiate between `-thinking` (e.g. claude-3-7-sonnet-thinking) and standard models. This custom budget specifically manages quotas for thinking models; calling standard models will not trigger upstream reasoning."
+        "claude_thinking_note": "💡 Claude Model Note: Anthropic official models only differentiate between `-thinking` (e.g. claude-3-7-sonnet-thinking) and standard models. This custom budget specifically manages quotas for thinking models; calling standard models will not trigger upstream reasoning.",
+        "max_memory_turns_label": "Max Memory Thinking Turns per Session",
+        "default_600_tag": "Default: 600",
+        "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
+        "turns_unit": "turns",
+        "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
+        "window_guide_desc": "When session length exceeds this limit, FIFO sliding window automatically evicts oldest thinking blocks from memory. Evicted blocks are rehydrated in nanoseconds via indexed SQLite (primary_tool_id), maintaining strict byte-level Prompt Cache alignment without OOM.",
+        "tooltip_32768": "32,768 Tokens: Ideal for complex coding and deep architecture design",
+        "tooltip_16384": "16K tier (16,384 Tokens): Best for complex agentic workflows",
+        "tooltip_8192": "8,192 Tokens: Balanced for multi-step reasoning and debugging",
+        "tooltip_4096": "4,096 Tokens: Standard balance between reasoning quality and speed",
+        "tooltip_2048": "2,048 Tokens: Lightweight daily reasoning tier",
+        "tooltip_1024": "1,024 Tokens: Ultra-fast lightweight thinking with minimal token usage",
+        "tooltip_65536": "65,536 Tokens: Extreme maximum depth reasoning chain tier",
+        "tooltip_1001": "1,001 Tokens: Google official 3.1 Pro Low thinking baseline",
+        "tooltip_10001": "10,001 Tokens: Google official 3.1 Pro High deep reasoning primary tier",
+        "tooltip_adaptive": "Adaptive (-1): Dynamic budget allocated automatically by upstream model",
+        "preset_adaptive": "Adaptive (-1)",
+        "window_settings_title": "Dual-Layer Thinking Sliding Window & Storage Limits (RAM + SQLite)",
+        "dual_layer_tag": "Dual-layer Index",
+        "clear_btn": "Clear Thinking Store",
+        "clear_btn_tooltip": "Clear all thinking block caches and database (logs are preserved)",
+        "clear_tip": "Only delete when cache hit anomalies occur, version updates, or requested by developers",
+        "clear_modal_title": "Clear Thinking Block Store?",
+        "clear_modal_desc": "This operation will completely clear all resident memory turns (RAM) and local SQLite database thinking chains and tool signatures.\n\n⚠️ Note: This only clears thinking data and will NOT delete any proxy request logs.",
+        "clear_modal_warning": "Recommended only when cache hit anomalies occur, after version updates, or when requested by developers. New requests will rebuild clean prefix indexes.",
+        "clear_confirm_btn": "Confirm Clear",
+        "clear_success": "Successfully cleared thinking store ({{count}} records cleaned)",
+        "clear_error": "Failed to clear thinking store: {{error}}",
+        "days_unit": "days",
+        "claude_budget_title": "Claude Thinking Model Budget (Tokens)",
+        "claude_budget_desc": "Core token budget when client calls thinking models like claude-3-7-sonnet-thinking (-1 for upstream default)",
+        "claude_budget_current": "Recommended default: 16,384 Tokens (balanced depth and latency)",
+        "claude_hide_advanced": "Collapse Client Effort Mapping",
+        "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
+        "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
+        "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "~2 KB per turn; 600 turns ≈ 1.2 MB / session.",
+        "default_15_days_tag": "Default: 15 days",
+        "retention_days_subdesc": "Active sessions auto-extend on each request; expires only when idle.",
+        "guide_preset_1g_title": "1GB RAM Lightweight Server:",
+        "guide_preset_1g_desc": "Recommended: <1>100 ~ 200 turns</1>. Hundreds of concurrent sessions consume only ~50MB RAM, extremely resilient against OOM.",
+        "guide_preset_team_title": "Personal & Small Teams (1-10 Users):",
+        "guide_preset_team_desc": "Recommended: <1>600 ~ 1000 turns</1>. Thousands of historical turns stay resident in RAM for 0ms lightning-fast responses.",
+        "guide_preset_enterprise_title": "100 Users Enterprise (2G-4G):",
+        "guide_preset_enterprise_desc": "Recommended: <1>300 ~ 600 turns</1>. 95%+ requests hit RAM, delivering peak performance with rock-solid stability.",
+        "guide_preset_relay_title": "1K+ Users Public Relay (4G-8G):",
+        "guide_preset_relay_desc": "Recommended: <1>150 ~ 300 turns</1>. Memory prioritized for connection pools; long-turn cold histories safely offloaded to SQLite.",
+        "guide_preset_cluster_title": "10K ~ 100K+ Massive Cluster:",
+        "guide_preset_cluster_desc": "Recommended: <1>50 ~ 100 turns</1>. Effortlessly sustains tens of thousands of concurrent sessions; lock-free WAL index ensures sub-second responses."
       },
       "thinking_settings": {
         "title": "Thinking Settings"
@@ -1226,6 +1309,7 @@
     "open_monitor": "Open Monitor",
     "input": "Input",
     "output": "Output",
+    "cached": "Cache",
     "logging_status": {
       "active": "Recording",
       "paused": "Paused"
@@ -1283,7 +1367,8 @@
       "wrap_lines": "Wrap Lines",
       "no_wrap": "Single Line",
       "no_matches": "No matches",
-      "no_upstream_payload": "No forwarded payload (direct forwarding or unrecorded)"
+      "no_upstream_payload": "No forwarded payload (direct forwarding or unrecorded)",
+      "headers": "Headers"
     },
     "timing": {
       "title": "Stage Timing Diagnostics",
@@ -1356,8 +1441,8 @@
     "downloading": "Downloading update in background...",
     "restarting": "Restarting application...",
     "auto_update": "Auto Update",
-    "restart_prompt": "Update downloaded and ready to install. Restart now?",
-    "btn_restart": "Restart",
+    "restart_prompt": "Update is ready. Restart the app to apply changes.",
+    "btn_restart": "Restart Now",
     "btn_later": "Later",
     "toast": {
       "not_ready": "Update artifacts are not ready yet. Will retry later.",
@@ -1477,7 +1562,10 @@
       "expires_placeholder": "Leave empty for permanent",
       "cancel": "Cancel",
       "confirm": "Add",
-      "add_btn": "Add"
+      "add_btn": "Add",
+      "error_duplicate": "This IP already exists in the blocklist",
+      "error_invalid_ip": "Invalid IP format. Please use an IP address or CIDR notation (e.g. 192.168.1.0/24)",
+      "error_add_failed": "Failed to add"
     },
     "whitelist": {
       "add_ip": "Add Trusted IP",
@@ -1541,7 +1629,11 @@
     "placeholder_desc": "Optional notes",
     "placeholder_max_ips": "0 = Unlimited",
     "hint_max_ips": "0 = Unlimited",
-    "hint_curfew": "Leave empty to disable. Based on server time."
+    "hint_curfew": "Leave empty to disable. Based on server time.",
+    "custom_expires_required": "Please select custom expiration time",
+    "expires_custom": "Custom Time",
+    "custom_expires_at": "Custom Expiration At",
+    "hint_custom_expires": "Set precise expiration timestamp for this token"
   },
   "apiKeyFun": {
     "title": "APIKEY.FUN Hub",

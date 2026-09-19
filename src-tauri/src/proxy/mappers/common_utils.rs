@@ -1518,3 +1518,214 @@ pub fn model_keeps_thinking_without_signature(mapped_model: &str) -> bool {
     let m = mapped_model.to_lowercase();
     m.contains("flash") || m.contains("gemini-pro-agent")
 }
+
+/// [JEIKCODE SYNTHETIC USER REMINDER]
+/// 将对话中途动态插入的系统消息就地包装为 `<system-reminder>` 标签块。
+/// 提示词采用英文，明确告知模型：本内容为系统层注入的背景提醒，并非本轮用户输入，
+/// 从而保证用户原始 query 完整透传，同时全局顶层 systemInstruction 保持绝对冻结以稳定 KV Cache。
+pub fn wrap_in_system_reminder(content: &str) -> String {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.starts_with("<system-reminder>") && trimmed.ends_with("</system-reminder>") {
+        return trimmed.to_string();
+    }
+    format!(
+        "<system-reminder>\nBefore the user's request for this turn, the system provides the following reminder for your awareness. Please note that this is from prior system messages, not spoken by the user:\n{}\n</system-reminder>",
+        trimmed
+    )
+}
+
+/// [DEFENSE] 通用中转报文保底文本（温和提示继续分析，避免触发 Agent 误进入修改阶段）
+pub const TRANSIT_DEFENSE_FALLBACK_TEXT: &str = "Please continue your analysis.";
+
+/// [DEFENSE] 通用中转报文保底防御节点（协议无关性）
+/// 确保发给 Google Gemini 的报文末尾轮次严格符合规范：
+/// 1. 自动兼容平铺 payload 或包含 "request" 包装的 payload；
+/// 2. 若 contents 为空，追加 {"role": "user", "parts": [{"text": TRANSIT_DEFENSE_FALLBACK_TEXT}]}；
+/// 3. 若末尾轮次为 "model"（缺失用户轮次），追加 {"role": "user", "parts": [{"text": TRANSIT_DEFENSE_FALLBACK_TEXT}]}；
+/// 4. 若末尾轮次为 "user" 且其 parts 为空、或仅含有空文本 / "(no content)" / "·" 且无工具/图片，规范化填充为 [{"text": TRANSIT_DEFENSE_FALLBACK_TEXT}]；
+/// 5. 修复中间轮次中 parts 为空的情况，防止 Google 返回 400 "parts must not be empty"。
+pub fn ensure_gemini_payload_ends_with_user(body: &mut Value) -> bool {
+    let contents = if let Some(contents) = body
+        .get_mut("request")
+        .and_then(|r| r.get_mut("contents"))
+        .and_then(|c| c.as_array_mut())
+    {
+        contents
+    } else if let Some(contents) = body.get_mut("contents").and_then(|c| c.as_array_mut()) {
+        contents
+    } else {
+        return false;
+    };
+
+    let mut modified = false;
+
+    // 防御 1: contents 整体为空
+    if contents.is_empty() {
+        tracing::warn!("[Defense] Gemini contents array is empty, appending fallback user turn");
+        contents.push(json!({
+            "role": "user",
+            "parts": [{ "text": TRANSIT_DEFENSE_FALLBACK_TEXT }]
+        }));
+        return true;
+    }
+
+    // 防御 2: 修复历史/中间轮次中可能存在的 parts 为空
+    for turn in contents.iter_mut() {
+        let is_model = turn
+            .get("role")
+            .and_then(|r| r.as_str())
+            .map(|r| r == "model" || r == "assistant")
+            .unwrap_or(false);
+        if let Some(parts) = turn.get_mut("parts").and_then(|p| p.as_array_mut()) {
+            if parts.is_empty() {
+                modified = true;
+                if is_model {
+                    parts.push(json!({ "text": "..." }));
+                } else {
+                    parts.push(json!({ "text": TRANSIT_DEFENSE_FALLBACK_TEXT }));
+                }
+            }
+        }
+    }
+
+    // 防御 3: 检查末尾轮次
+    let need_append_user = if let Some(last_turn) = contents.last_mut() {
+        let role = last_turn.get("role").and_then(|r| r.as_str()).unwrap_or("");
+        if role == "model" || role == "assistant" {
+            true
+        } else {
+            if let Some(parts) = last_turn.get_mut("parts").and_then(|p| p.as_array_mut()) {
+                let has_substantive_part = parts.iter().any(|part| {
+                    if part.get("functionCall").is_some()
+                        || part.get("functionResponse").is_some()
+                        || part.get("inlineData").is_some()
+                        || part.get("fileData").is_some()
+                    {
+                        return true;
+                    }
+                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                        let t = text.trim();
+                        !t.is_empty() && t != "(no content)" && t != "·"
+                    } else {
+                        false
+                    }
+                });
+
+                if !has_substantive_part {
+                    tracing::warn!(
+                        "[Defense] Last user turn has no substantive content, normalizing to '{}'",
+                        TRANSIT_DEFENSE_FALLBACK_TEXT
+                    );
+                    *parts = vec![json!({ "text": TRANSIT_DEFENSE_FALLBACK_TEXT })];
+                    modified = true;
+                }
+            }
+            false
+        }
+    } else {
+        false
+    };
+
+    if need_append_user {
+        tracing::warn!(
+            "[Defense] Gemini payload ended with model turn, appending user turn with '{}'",
+            TRANSIT_DEFENSE_FALLBACK_TEXT
+        );
+        contents.push(json!({
+            "role": "user",
+            "parts": [{ "text": TRANSIT_DEFENSE_FALLBACK_TEXT }]
+        }));
+        modified = true;
+    }
+
+    modified
+}
+
+#[cfg(test)]
+mod defense_tests {
+    use super::*;
+
+    #[test]
+    fn test_ensure_gemini_payload_ends_with_user_empty() {
+        let mut payload = json!({
+            "contents": []
+        });
+        assert!(ensure_gemini_payload_ends_with_user(&mut payload));
+        let contents = payload["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(
+            contents[0]["parts"][0]["text"],
+            TRANSIT_DEFENSE_FALLBACK_TEXT
+        );
+    }
+
+    #[test]
+    fn test_ensure_gemini_payload_ends_with_user_model_ending() {
+        let mut payload = json!({
+            "request": {
+                "contents": [
+                    { "role": "user", "parts": [{ "text": "hello" }] },
+                    { "role": "model", "parts": [{ "text": "hi there" }] }
+                ]
+            }
+        });
+        assert!(ensure_gemini_payload_ends_with_user(&mut payload));
+        let contents = payload["request"]["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(
+            contents[2]["parts"][0]["text"],
+            TRANSIT_DEFENSE_FALLBACK_TEXT
+        );
+    }
+
+    #[test]
+    fn test_ensure_gemini_payload_ends_with_user_no_content() {
+        let mut payload = json!({
+            "contents": [
+                { "role": "user", "parts": [{ "text": "(no content)" }] }
+            ]
+        });
+        assert!(ensure_gemini_payload_ends_with_user(&mut payload));
+        let contents = payload["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(
+            contents[0]["parts"][0]["text"],
+            TRANSIT_DEFENSE_FALLBACK_TEXT
+        );
+    }
+
+    #[test]
+    fn test_ensure_gemini_payload_ends_with_user_valid_untouched() {
+        let mut payload = json!({
+            "contents": [
+                { "role": "user", "parts": [{ "text": "valid message" }] }
+            ]
+        });
+        assert!(!ensure_gemini_payload_ends_with_user(&mut payload));
+        let contents = payload["contents"].as_array().unwrap();
+        assert_eq!(contents[0]["parts"][0]["text"], "valid message");
+    }
+
+    #[test]
+    fn test_wrap_in_system_reminder() {
+        use super::wrap_in_system_reminder;
+
+        // Empty content returns empty string
+        assert_eq!(wrap_in_system_reminder("   "), "");
+
+        // Raw text gets wrapped with English reminder header
+        let wrapped = wrap_in_system_reminder("Current date: 2026-09-19");
+        assert!(wrapped.starts_with("<system-reminder>\nBefore the user's request for this turn"));
+        assert!(wrapped.contains("Current date: 2026-09-19"));
+        assert!(wrapped.ends_with("</system-reminder>"));
+
+        // Already wrapped content is untouched (no double wrapping)
+        let already = "<system-reminder>\nsome text\n</system-reminder>";
+        assert_eq!(wrap_in_system_reminder(already), already);
+    }
+}

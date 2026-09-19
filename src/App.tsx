@@ -121,6 +121,14 @@ function App() {
       })
     );
 
+    // 监听手动触发自动更新事件
+    unlistenPromises.push(
+      listen('app://trigger-update', () => {
+        console.log('[App] Received app://trigger-update event, showing updater...');
+        setShowUpdateNotification(true);
+      })
+    );
+
     // Cleanup
     return () => {
       Promise.all(unlistenPromises).then(unlisteners => {

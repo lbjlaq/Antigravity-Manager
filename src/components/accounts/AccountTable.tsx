@@ -370,6 +370,48 @@ function AccountRowContent({
         });
     }, [quotaWindow, account.quota?.quota_groups]);
 
+    // 综合计算模型有效配额（结合周配额状态）
+    const getModelEffectiveQuota = (modelId: string, modelData?: { percentage: number; reset_time?: string }) => {
+        if (!account.quota?.quota_groups || account.quota.quota_groups.length === 0) {
+            return {
+                percentage: modelData?.percentage || 0,
+                resetTime: modelData?.reset_time,
+                isWeeklyConstrained: false,
+            };
+        }
+        const nameLower = modelId.toLowerCase();
+        const isClaudeOrGpt = nameLower.startsWith('claude') || nameLower.startsWith('gpt');
+        const isGemini = nameLower.startsWith('gemini');
+
+        for (const group of account.quota.quota_groups) {
+            const gname = group.display_name.toLowerCase();
+            const matches = isClaudeOrGpt
+                ? gname.includes('claude') || gname.includes('gpt') || gname.includes('3p')
+                : isGemini
+                ? gname.includes('gemini') || (!gname.includes('claude') && !gname.includes('gpt') && !gname.includes('3p'))
+                : false;
+
+            if (matches) {
+                const weeklyBucket = group.buckets.find(b =>
+                    b.window?.toLowerCase().includes('week') || b.bucket_id?.toLowerCase().includes('week') || b.window?.toLowerCase().includes('7d')
+                );
+                if (weeklyBucket && (weeklyBucket.remaining_fraction ?? 1) <= 0.001) {
+                    return {
+                        percentage: 0,
+                        resetTime: weeklyBucket.reset_time,
+                        isWeeklyConstrained: true,
+                    };
+                }
+            }
+        }
+
+        return {
+            percentage: modelData?.percentage || 0,
+            resetTime: modelData?.reset_time,
+            isWeeklyConstrained: false,
+        };
+    };
+
     // 获取要显示的模型列表
     const pinnedModels = ensurePinnedImageSelector(
         config?.pinned_quota_models?.models || Object.keys(MODEL_CONFIG),
@@ -597,15 +639,17 @@ function AccountRowContent({
                         ) : (
                             displayModels.map((model) => {
                                 const modelData = model.data;
+                                const effective = getModelEffectiveQuota(model.id, modelData);
 
                                 return (
                                     <QuotaItem
                                         key={model.id}
                                         label={model.label}
-                                        percentage={modelData?.percentage || 0}
-                                        resetTime={modelData?.reset_time}
+                                        percentage={effective.percentage}
+                                        resetTime={effective.resetTime}
                                         isProtected={Boolean(config?.quota_protection?.enabled && isModelProtected(account.protected_models, model.protectedKey))}
                                         liveLimit={getLiveLimitForModel(account, model.id, model.protectedKey)}
+                                        isWeeklyConstrained={effective.isWeeklyConstrained}
                                         Icon={MODEL_CONFIG[model.id]?.Icon || Bot}
                                     />
                                 );

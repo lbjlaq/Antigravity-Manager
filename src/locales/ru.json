@@ -44,10 +44,27 @@
     "delete_success": "Успешно удалено",
     "copied": "Скопировано в буфер обмена",
     "retry": "Повторить",
-    "back": "Назад",
+    "back": "Back",
     "reason": "Причина",
     "show_raw": "Показать исходный",
-    "show_parsed": "Показать обработанный"
+    "show_parsed": "Показать обработанный",
+    "settings": "Настройки",
+    "saving": "Сохранение...",
+    "required": "Обязательно",
+    "copy_failed": "Copy failed",
+    "create": "Create",
+    "deselect_all": "Deselect All",
+    "select_all": "Select All",
+    "optional": "Optional",
+    "actions": "Actions",
+    "none": "None",
+    "disable": "Disable",
+    "enable": "Enable",
+    "deleted": "Deleted",
+    "selected": "Selected",
+    "claude_series": "Claude Series",
+    "maximize": "Maximize",
+    "app_name": "Antigravity Tools"
   },
   "nav": {
     "dashboard": "Дашборд",
@@ -84,7 +101,9 @@
     "switch_to_malay_short": "MY",
     "user_token": "Токены пользователей",
     "apikey_fun": "Транзитная станция",
-    "logout": "Выйти"
+    "logout": "Выйти",
+    "more": "More",
+    "mini_view": "Mini View"
   },
   "dashboard": {
     "hello": "Привет, Пользователь 👋",
@@ -344,7 +363,9 @@
       "batch_warmup_msg": "Вы уверены, что хотите запустить разогрев для выбранных {{count}} аккаунтов немедленно?"
     },
     "switch_to_agy": "Переключить для Antigravity CLI (agy)",
-    "drag_disabled_during_sort": "Активна сортировка по столбцам; перетаскивание приостановлено"
+    "drag_disabled_during_sort": "Активна сортировка по столбцам; перетаскивание приостановлено",
+    "go_to_appeal": "Go to Appeal",
+    "copy_appeal_url": "Copy Appeal URL"
   },
   "settings": {
     "save": "Сохранить настройки",
@@ -458,7 +479,8 @@
         "checking": "Checking",
         "healthy": "Healthy",
         "timeout": "Timeout"
-      }
+      },
+      "interval_tooltip": "Health check interval (seconds)"
     },
     "advanced": {
       "title": "Дополнительные настройки",
@@ -525,7 +547,22 @@
       "http_api_port_placeholder": "Порт по умолчанию 19527",
       "http_api_port_invalid": "Недопустимый номер порта (диапазон: 1024-65535)",
       "http_api_settings_saved": "Настройки HTTP API сохранены, требуется перезапуск для применения",
-      "http_api_restart_required": "⚠️ Требуется перезапуск для применения"
+      "http_api_restart_required": "⚠️ Требуется перезапуск для применения",
+      "migrate_btn": "Change & Migrate",
+      "data_dir_select": "Select data directory",
+      "data_dir_migrate_title": "Migrate data directory",
+      "data_dir_migrate_msg": "All data will be moved to: {{path}}\nThe old folder will be deleted (or renamed if they share a parent). Stop the API proxy and tunnel first.",
+      "data_dir_migrated": "Data directory migrated",
+      "data_dir_restart_hint": "Restart the app so log files that were in use fully switch to the new folder",
+      "migrate_title": "Migrate Data Directory",
+      "migrate_desc": "Migrate all current data (including accounts, configs, request logs, and databases) to a new location.",
+      "migrate_source": "Source Directory",
+      "migrate_target": "Target Directory",
+      "migrate_clean_source": "Clean source directory after migration (Free up disk space)",
+      "migrate_restart_notice": "The app will automatically restart after migration to load the new data directory.",
+      "migrate_confirm_btn": "Start Migration & Restart",
+      "migrating_text": "Migrating data and preparing restart...",
+      "migrate_success": "Data migrated successfully, restarting app..."
     },
     "debug": {
       "title": "Консоль отладки",
@@ -584,7 +621,12 @@
       "support_desc": "Если вы считаете этот проект полезным, не стесняйтесь купить мне кофе! Ваша поддержка — главная мотивация для меня поддерживать этот проект.",
       "support_alipay": "Alipay",
       "support_wechat": "WeChat Pay",
-      "support_buymeacoffee": "Buy Me a Coffee"
+      "support_buymeacoffee": "Buy Me a Coffee",
+      "upgrade_now_btn": "Download & Auto Update",
+      "update_dialog_title": "New Version Available",
+      "update_confirm_desc": "A new version is available. Would you like to download and update now? The app will automatically restart once downloaded.",
+      "current_version": "Current Version",
+      "latest_version_label": "Latest Version"
     },
     "advanced_thinking": {
       "title": "Расширенное мышление и глобальная конфигурация",
@@ -648,7 +690,7 @@
   "proxy": {
     "title": "Сервис API Прокси",
     "error": {
-      "load_failed": "Не удалось загрузить конфигурацию"
+      "load_failed": "Ошибка загрузки"
     },
     "status": {
       "running": "Сервис запущен",
@@ -807,7 +849,13 @@
         "clear_bindings": "Очистить привязки сессий",
         "clear_bindings_tooltip": "Жесткий сброс всех привязок сессия-аккаунт, принудительное переназначение аккаунтов при следующем запросе.",
         "clear_rate_limits": "Очистить записи лимитов",
-        "clear_rate_limits_tooltip": "Немедленно очистить локальные записи ограничений скорости для всех аккаунтов, заставляя следующие запросы пробовать апстрим напрямую."
+        "clear_rate_limits_tooltip": "Немедленно очистить локальные записи ограничений скорости для всех аккаунтов, заставляя следующие запросы пробовать апстрим напрямую.",
+        "round_robin_set": "Round-robin mode enabled",
+        "fixed_account_set": "Fixed account mode enabled",
+        "fixed_account": "Fixed Account Mode",
+        "fixed_account_tooltip": "When enabled, all API requests will use only the selected account instead of rotating between accounts.",
+        "start_proxy_first": "Start the proxy service to configure fixed account mode.",
+        "account_changed": "Switched to {{email}}"
       },
       "circuit_breaker": {
         "title": "Адаптивный автоматический выключатель",
@@ -816,7 +864,9 @@
         "input_placeholder": "Введите задержки в секундах через запятую",
         "level": "Ур. {{level}}",
         "invalid_format": "Неверный формат. Используйте числа, разделенные запятыми (например: 60, 300)",
-        "clear_records": "Очистить все записи об ограничениях скорости"
+        "clear_records": "Очистить все записи об ограничениях скорости",
+        "lock_on_zero_quota": "Lock on Zero Quota (5h / Weekly)",
+        "lock_on_zero_quota_desc": "Automatically locks the account until its exact quota reset time whenever 5-hour rolling or weekly quota hits 0%, skipping short backoffs. Note: Quota state discovery and automatic recovery depend on 'Auto Refresh Quotas' in General Settings."
       },
       "experimental": {
         "title": "Экспериментальные настройки",
@@ -835,7 +885,15 @@
         "context_compression_threshold_l2": "Порог сжатия L2 (Сжатие мышления)",
         "context_compression_threshold_l2_tooltip": "Сжимает ранние блоки мышления, сохраняя подписи. Рекомендуется: 0.55 (55%)",
         "context_compression_threshold_l3": "Порог сжатия L3 (Сброс сводки)",
-        "context_compression_threshold_l3_tooltip": "Генерирует сводку состояния XML и переходит к свежему сеансу. Рекомендуется: 0.7 (70%)"
+        "context_compression_threshold_l3_tooltip": "Генерирует сводку состояния XML и переходит к свежему сеансу. Рекомендуется: 0.7 (70%)",
+        "payload_storage_mode_label": "Monitor payload storage",
+        "payload_storage_mode_tooltip": "Simple mode stores thinking, usage, session ids and slim conversation only. Full mode stores original bodies. API keys in request headers are always redacted; thinking session ids are kept for ops comparison.",
+        "payload_storage_mode_desc": "Default is simple storage to keep the SQLite log small.",
+        "payload_mode_simple": "Simple (default)",
+        "payload_mode_full": "Full original",
+        "log_retention_days_label": "Request log retention (days)",
+        "thinking_retention_days_label": "Thinking-store retention (sliding window, days)",
+        "thinking_retention_days_desc": "Default is a 15-day sliding window. While the client session ID stays active, each request refreshes expiry; records are cleaned only after the window lapses with no requests."
       },
       "opencode_sync": {
         "card_title": "OpenCode",
@@ -930,14 +988,70 @@
         "store_enabled": "Восстановление блоков мышления и подписи на сервере",
         "store_enabled_desc": "Автоматически сохраняет мыслительный процесс и зашифрованные подписи. Если агент (Cline, Roo, Claude Code и т. д.) не возвращает размышления в диалоге, шлюз восстанавливает их во избежание ошибок 400 и потери контекста.",
         "default_on_tag": "Включено по умолчанию",
-        "claude_thinking_note": "💡 Примечание к моделям Claude: Официальный список моделей Anthropic разделяет только модели с `-thinking` (напр., claude-3-7-sonnet-thinking) и обычные. Этот бюджет управляет квотами моделей thinking; обычные модели не генерируют процесс размышления."
+        "claude_thinking_note": "💡 Примечание к моделям Claude: Официальный список моделей Anthropic разделяет только модели с `-thinking` (напр., claude-3-7-sonnet-thinking) и обычные. Этот бюджет управляет квотами моделей thinking; обычные модели не генерируют процесс размышления.",
+        "max_memory_turns_label": "Max Memory Thinking Turns per Session",
+        "default_600_tag": "По умолчанию: 600",
+        "max_memory_turns_desc": "Controls the maximum number of historical thinking turns kept in RAM per session. Estimated RAM usage per turn is ~1.5 KB - 2.5 KB (~1.2 MB / session for 600 turns).",
+        "turns_unit": "turns",
+        "window_guide_title": "FIFO Sliding Window Eviction & Concurrency Sizing Guide",
+        "window_guide_desc": "When session length exceeds this limit, FIFO sliding window automatically evicts oldest thinking blocks from memory. Evicted blocks are rehydrated in nanoseconds via indexed SQLite (primary_tool_id), maintaining strict byte-level Prompt Cache alignment without OOM.",
+        "tooltip_32768": "32,768 Tokens: Ideal for complex coding and deep architecture design",
+        "tooltip_16384": "16K tier (16,384 Tokens): Best for complex agentic workflows",
+        "tooltip_8192": "8,192 Tokens: Balanced for multi-step reasoning and debugging",
+        "tooltip_4096": "4,096 Tokens: Standard balance between reasoning quality and speed",
+        "tooltip_2048": "2,048 Tokens: Lightweight daily reasoning tier",
+        "tooltip_1024": "1,024 Tokens: Ultra-fast lightweight thinking with minimal token usage",
+        "tooltip_65536": "65,536 Tokens: Extreme maximum depth reasoning chain tier",
+        "tooltip_1001": "1,001 Tokens: Google official 3.1 Pro Low thinking baseline",
+        "tooltip_10001": "10,001 Tokens: Google official 3.1 Pro High deep reasoning primary tier",
+        "tooltip_adaptive": "Adaptive (-1): Dynamic budget allocated automatically by upstream model",
+        "preset_adaptive": "Adaptive (-1)",
+        "window_settings_title": "Dual-Layer Thinking Sliding Window & Storage Limits (RAM + SQLite)",
+        "dual_layer_tag": "Dual-layer Index",
+        "days_unit": "days",
+        "claude_budget_title": "Claude Thinking Model Budget (Tokens)",
+        "claude_budget_desc": "Core token budget when client calls thinking models like claude-3-7-sonnet-thinking (-1 for upstream default)",
+        "claude_budget_current": "Recommended default: 16,384 Tokens (balanced depth and latency)",
+        "claude_hide_advanced": "Collapse Client Effort Mapping",
+        "claude_show_advanced": "Advanced: Client Effort Tier Mapping (low / medium / high)",
+        "claude_effort_mapping_desc": "When commercial agents (Cline, Roo, etc.) send reasoning_effort in parameters or headers, budgets are mapped as follows:",
+        "save_hint": "Changes take effect immediately upon saving and are hot-reloaded into the running proxy service.",
+        "save_btn": "Save & Hot Reload Thinking Config",
+        "max_memory_turns_subdesc": "~2 КБ на ход; 600 ходов ≈ 1.2 МБ / сессия.",
+        "default_15_days_tag": "По умолчанию: 15 дней",
+        "retention_days_subdesc": "Активные сессии автоматически продлеваются при каждом запросе; истекают только при бездействии.",
+        "guide_preset_1g_title": "Легковесный сервер с 1 ГБ RAM:",
+        "guide_preset_1g_desc": "Рекомендуется: <1>100 ~ 200 ходов</1>. Сотни параллельных сессий расходуют всего ~50 МБ RAM, отличная защита от OOM.",
+        "guide_preset_team_title": "Для одного или команды (1–10 чел):",
+        "guide_preset_team_desc": "Рекомендуется: <1>600 ~ 1000 ходов</1>. Тысячи ходов диалога постоянно в физической памяти, отклик 0 мс.",
+        "guide_preset_enterprise_title": "Корпоративная нагрузка на 100 чел (2–4 ГБ):",
+        "guide_preset_enterprise_desc": "Рекомендуется: <1>300 ~ 600 ходов</1>. 95%+ запросов попадают в RAM, сочетая высокую скорость и надежность.",
+        "guide_preset_relay_title": "Публичный ретранслятор на 1K+ пользователей (4–8 ГБ):",
+        "guide_preset_relay_desc": "Рекомендуется: <1>150 ~ 300 ходов</1>. Память отдается пулу соединений, долгая история выгружается в SQLite.",
+        "guide_preset_cluster_title": "Высоконагруженный кластер (10K ~ 100K+ сессий):",
+        "guide_preset_cluster_desc": "Рекомендуется: <1>50 ~ 100 ходов</1>. Легко выдерживает десятки тысяч сессий; быстрый неблокирующий индекс WAL.",
+        "clear_btn": "Очистить блоки размышлений",
+        "clear_btn_tooltip": "Очистить все кэши и базу блоков размышлений (логи запросов сохраняются)",
+        "clear_tip": "Удалять только при аномалиях кэша, обновлениях версии или по запросу разработчиков",
+        "clear_modal_title": "Очистить хранилище блоков размышлений?",
+        "clear_modal_desc": "Эта операция полностью очистит постоянную память (RAM) и локальную базу данных SQLite от цепочек размышлений и подписей инструментов.\n\n⚠️ Примечание: очищаются только данные размышлений, логи запросов прокси НЕ удаляются.",
+        "clear_modal_warning": "Рекомендуется выполнять только при сбоях кэша, обновлении версии или по запросу разработчиков. Новые запросы заново построят чистый индекс префиксов.",
+        "clear_confirm_btn": "Подтвердить очистку",
+        "clear_success": "Хранилище размышлений успешно очищено (удалено {{count}} записей)",
+        "clear_error": "Не удалось очистить блоки размышлений: {{error}}"
       },
       "thinking_settings": {
         "title": "Настройки мышления (Thinking Settings)"
       },
       "prompt_multimodal": {
         "title": "Глобальный промпт и мультимодальность"
-      }
+      },
+      "log_retention_title": "Request log retention",
+      "log_retention_body_hours": "Request body age (hours)",
+      "log_retention_storage_gb": "Log storage limit (GB)",
+      "log_retention_storage_gb_desc": "When reaching limit, sliding window evicts oldest 30% logs to accommodate new entries",
+      "log_retention_current_usage": "Current database disk usage",
+      "log_retention_rows": "Maximum log rows"
     },
     "cloudflared": {
       "title": "Публичный доступ (Cloudflared)",
@@ -1241,7 +1355,19 @@
       "protocol": "Протокол",
       "account_used": "Использованный аккаунт",
       "id": "ID запроса",
-      "payload_empty": "Нет данных"
+      "payload_empty": "Нет данных",
+      "upstream_request_payload": "Forwarded Request Payload",
+      "concise_mode": "Concise Mode",
+      "full_mode": "Full Mode",
+      "concise_desc": "Tool arguments and verbose metadata are omitted, highlighting thinking, tokens, and messages",
+      "search_placeholder": "Search payload...",
+      "search_placeholder_with_shortcut": "Search payload... (Enter next, Shift+Enter prev)",
+      "case_sensitive": "Match Case",
+      "wrap_lines": "Wrap Lines",
+      "no_wrap": "Single Line",
+      "no_matches": "No matches",
+      "no_upstream_payload": "No forwarded payload (direct forwarding or unrecorded)",
+      "headers": "Headers"
     },
     "dialog": {
       "clear_title": "Очистить логи прокси",
@@ -1282,10 +1408,30 @@
       "subtitle": "Централизованное управление сроком хранения логов, скользящим окном размышлений и очисткой диска",
       "retention_title": "Политика хранения логов запросов",
       "payload_thinking_title": "Хранение полезной нагрузки и блоков размышлений",
-      "maintenance_title": "Обслуживание логов и освобождение места"
+      "maintenance_title": "Обслуживание логов и освобождение места",
+      "save_retention": "Save Retention Policy",
+      "save_thinking": "Save Thinking & Payload Settings"
     },
     "actions": {
       "clear_all_requests": "Очистить всю историю запросов"
+    },
+    "cached": "Cache",
+    "timing": {
+      "title": "Stage Timing Diagnostics",
+      "clean": "Initial Session Clean",
+      "clean_desc": "Cache control stripping / message deduplication / purification",
+      "norm": "Normalization & Transit",
+      "norm_desc": "Model routing / account scheduling / Gemini format conversion",
+      "thinking": "Thinking & Signature Fill",
+      "thinking_desc": "ThinkingStore hydration / sentinel signature injection",
+      "ttft": "Time To First Token (TTFT)",
+      "ttft_desc": "Gateway dispatch to first thinking/tool/content SSE chunk",
+      "stream": "Stream Transfer Duration",
+      "stream_desc": "First chunk arrival to stream completion",
+      "total": "Total Duration",
+      "copy_timing": "Copy Timing",
+      "copied_timing": "Copied",
+      "legacy_hint": "Micro-stage timing not recorded for historical logs"
     }
   },
   "update_notification": {
@@ -1295,9 +1441,9 @@
     "downloading": "Загрузка обновления в фоне...",
     "restarting": "Перезапуск приложения...",
     "auto_update": "Авто-обновление",
-    "restart_prompt": "Обновление загружено и готово к установке. Перезапустить?",
-    "btn_restart": "Перезапустить",
-    "btn_later": "Позже",
+    "restart_prompt": "Update is ready. Restart the app to apply changes.",
+    "btn_restart": "Restart Now",
+    "btn_later": "Later",
     "toast": {
       "not_ready": "Артефакты обновления ещё не готовы. Повторим позже.",
       "failed": "Автообновление не удалось"
@@ -1416,7 +1562,10 @@
       "expires_placeholder": "Оставьте пустым для бессрочного",
       "cancel": "Отмена",
       "confirm": "Добавить",
-      "add_btn": "Добавить"
+      "add_btn": "Добавить",
+      "error_duplicate": "This IP already exists in the blocklist",
+      "error_invalid_ip": "Invalid IP format. Please use an IP address or CIDR notation (e.g. 192.168.1.0/24)",
+      "error_add_failed": "Failed to add"
     },
     "whitelist": {
       "add_ip": "Добавить доверенный IP",
@@ -1480,7 +1629,11 @@
     "placeholder_desc": "Необязательные заметки",
     "placeholder_max_ips": "0 = Безлимитно",
     "hint_max_ips": "0 означает безлимитно",
-    "hint_curfew": "Оставьте пустым, чтобы отключить. По времени сервера."
+    "hint_curfew": "Оставьте пустым, чтобы отключить. По времени сервера.",
+    "custom_expires_required": "Please select custom expiration time",
+    "expires_custom": "Custom Time",
+    "custom_expires_at": "Custom Expiration At",
+    "hint_custom_expires": "Set precise expiration timestamp for this token"
   },
   "apiKeyFun": {
     "title": "APIKEY.FUN Hub",

@@ -306,6 +306,9 @@ pub async fn handle_generate(
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
             &mut wrapped_body,
         );
+        crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(
+            &mut wrapped_body,
+        );
 
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&wrapped_body);
@@ -341,6 +344,7 @@ pub async fn handle_generate(
 
         // [FIX #1522] Inject Anthropic Beta Headers for Claude models
         let mut extra_headers = std::collections::HashMap::new();
+        extra_headers.insert("x-session-id".to_string(), client_session_id.clone());
         if mapped_model.to_lowercase().contains("claude") {
             extra_headers.insert("anthropic-beta".to_string(), "claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14".to_string());
             tracing::debug!(
@@ -348,6 +352,14 @@ pub async fn handle_generate(
                 mapped_model
             );
         }
+
+        let preceding_turn_anchor = wrapped_body
+            .get("contents")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.last())
+            .cloned();
+        let causal_anchor =
+            crate::proxy::thinking_store::compute_causal_anchor(preceding_turn_anchor.as_ref());
 
         let upstream_req_start = std::time::Instant::now();
         let call_result = match upstream
@@ -497,13 +509,15 @@ pub async fn handle_generate(
                 let image_success_manager = token_manager.clone();
                 let image_success_account = account_id.clone();
                 let image_success_model = mapped_model.clone();
+                let causal_anchor_clone = causal_anchor.clone();
                 let stream = async_stream::stream! {
                     let _image_permit = image_permit_for_stream;
                     let mut first_data = first_chunk;
                     let mut meta_sent = false;
                     let mut saw_image_data = false;
                     let mut stream_failed = false;
-                    let mut thinking_acc = crate::proxy::thinking_store::TurnAccumulator::new();
+                    let mut thinking_acc =
+                        crate::proxy::thinking_store::TurnAccumulator::with_anchor(&causal_anchor_clone);
 
                     loop {
                         // [NEW] 阶段 6.2: 补全 __cloudCodeMeta 响应元数据透传
@@ -667,8 +681,14 @@ pub async fn handle_generate(
                         .into_response());
                 } else {
                     // Collect to JSON
-                    use crate::proxy::mappers::gemini::collector::collect_stream_to_json;
-                    match collect_stream_to_json(Box::pin(stream), &s_id).await {
+                    use crate::proxy::mappers::gemini::collector::collect_stream_to_json_with_anchor;
+                    match collect_stream_to_json_with_anchor(
+                        Box::pin(stream),
+                        &s_id,
+                        Some(&causal_anchor),
+                    )
+                    .await
+                    {
                         Ok(gemini_resp) => {
                             info!(
                                 "[{}] ✓ Stream collected and converted to JSON (Gemini)",
@@ -754,7 +774,12 @@ pub async fn handle_generate(
                 }
             }
 
-            crate::proxy::thinking_store::capture_gemini_response(&session_id, &gemini_resp);
+            let preceding_turn = preceding_turn_anchor.as_ref();
+            crate::proxy::thinking_store::capture_gemini_response_with_preceding(
+                &session_id,
+                &gemini_resp,
+                preceding_turn,
+            );
             let unwrapped = unwrap_response(&gemini_resp);
             return Ok(Response::builder()
                 .status(StatusCode::OK)
@@ -836,6 +861,19 @@ pub async fn handle_generate(
                     tracing::error!("Failed to set forbidden status: {}", e);
                 }
             }
+        }
+
+        // [FIX session-1M] 上游按 sessionId 在服务端累计会话输入，长工具循环会把累计推过 1M，
+        // 之后该 sessionId 的所有请求都 400 "input token count exceeds ... 1048576"。
+        // 给 (账号, 对话) 的 sessionId 升代并立即重试:新 sessionId = 上游全新会话,对话无感恢复。
+        if status_code == 400 && error_text.contains("exceeds the maximum number of tokens") {
+            let fingerprint = session_id.as_str();
+            let generation = crate::proxy::common::session::bump_session(&account_id, fingerprint);
+            tracing::warn!(
+                "[Gemini] Upstream session token accumulation exceeded 1M on account {}. sessionId bumped to generation {}, retrying with a fresh upstream session.",
+                email, generation
+            );
+            continue; // 重试:下一轮读取新代数,派生全新 sessionId
         }
 
         if status_code == 429 || status_code == 529 {

@@ -382,15 +382,11 @@ impl RateLimitTracker {
                 .or_else(|| self.parse_retry_time_from_body_baseline(body)),
         };
         let has_explicit_retry_time = retry_after_sec.is_some();
-        let preserve_long_image_quota = parser_mode == RetryParserMode::Current
+        let preserve_explicit_quota = parser_mode == RetryParserMode::Current
             && status == 429
             && reason == RateLimitReason::QuotaExhausted
             && has_explicit_quota_exhausted(body)
-            && has_explicit_retry_time
-            && model
-                .as_deref()
-                .and_then(normalize_image_model_id)
-                .is_some();
+            && has_explicit_retry_time;
 
         // 4. 处理默认值与软避让逻辑（根据限流类型设置不同默认值）
         let retry_sec = match retry_after_sec {
@@ -505,7 +501,7 @@ impl RateLimitTracker {
             .max()
             .unwrap_or(MAX_LOCKOUT_SECONDS)
             .max(MAX_LOCKOUT_SECONDS);
-        if retry_sec > max_allowed_lockout && !preserve_long_image_quota {
+        if retry_sec > max_allowed_lockout && !preserve_explicit_quota {
             tracing::info!(
                 "Capping retry lockout time for {} from {}s to {}s (max backoff limit)",
                 account_id,
@@ -758,6 +754,13 @@ impl RateLimitTracker {
         }
 
         count
+    }
+
+    /// 只清除账号本身的全局限流（不清除具体的模型级配额耗尽锁定）
+    pub fn clear_account_only(&self, account_id: &str) -> bool {
+        let cleared = self.limits.remove(account_id).is_some();
+        self.failure_counts.remove(account_id);
+        cleared
     }
 
     /// 清除指定账号的限流记录

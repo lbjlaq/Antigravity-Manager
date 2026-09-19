@@ -35,6 +35,8 @@ pub struct ProxyRequestLog {
     pub cached_tokens: Option<u32>,
     pub protocol: Option<String>, // 协议类型: "openai", "anthropic", "gemini"
     pub username: Option<String>, // User token username
+    #[serde(default)]
+    pub session_id: Option<String>, // 会话标识 (如 sess-xxx)
 }
 
 #[cfg(test)]
@@ -135,6 +137,7 @@ impl ProxyRequestLog {
             cached_tokens: self.cached_tokens,
             protocol: self.protocol.clone(),
             username: self.username.clone(),
+            session_id: self.session_id.clone(),
         }
     }
 }

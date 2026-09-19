@@ -18,9 +18,7 @@ pub use request::{
 };
 pub use response::transform_response;
 pub use streaming::{PartProcessor, StreamingState};
-pub use thinking_utils::{
-    close_tool_loop_for_thinking, filter_invalid_thinking_blocks_with_family,
-}; // [NEW]
+pub use thinking_utils::filter_invalid_thinking_blocks_with_family; // [NEW]
 
 use bytes::Bytes;
 use futures::Stream;

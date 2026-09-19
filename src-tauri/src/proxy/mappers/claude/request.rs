@@ -408,24 +408,57 @@ pub fn transform_claude_request_in_timed(
     // 原封不动发回导致的 "Extra inputs are not permitted" 错误
     let mut cleaned_req = claude_req.clone();
 
-    // [CRITICAL FIX] 提取并过滤 role == "system" 的消息，防止混入 contents 导致 Gemini 返回 400 INVALID_ARGUMENT
+    // [JEIKCODE FROZEN SYSTEM PRINCIPLE]
+    // 仅收集最开头的连续 role == "system" 消息进入 extra_system_messages。
+    // 一旦对话开始（遇到首个非 system 轮次），后续中途出现的任何 system 消息绝对严禁提升至 systemInstruction，
+    // 否则会导致发往 Google 上游的顶层系统前缀发生字节级突变并引发 KV Cache 崩溃！
+    // 中途 system 消息就地转为 synthetic user 消息留在原时间线中，并在后续由 merge_consecutive_messages 自然融合。
     let mut extra_system_messages = Vec::new();
     let mut filtered_messages = Vec::new();
+    let mut in_leading_system = true;
+
     for msg in cleaned_req.messages {
         if msg.role == "system" {
-            match &msg.content {
-                MessageContent::String(text) => {
-                    extra_system_messages.push(text.clone());
-                }
-                MessageContent::Array(blocks) => {
-                    for block in blocks {
-                        if let ContentBlock::Text { text } = block {
-                            extra_system_messages.push(text.clone());
+            if in_leading_system {
+                match &msg.content {
+                    MessageContent::String(text) => {
+                        extra_system_messages.push(text.clone());
+                    }
+                    MessageContent::Array(blocks) => {
+                        for block in blocks {
+                            if let ContentBlock::Text { text } = block {
+                                extra_system_messages.push(text.clone());
+                            }
                         }
                     }
                 }
+            } else {
+                let text = match &msg.content {
+                    MessageContent::String(t) => t.clone(),
+                    MessageContent::Array(blocks) => {
+                        let mut joined = String::new();
+                        for b in blocks {
+                            if let ContentBlock::Text { text } = b {
+                                if !joined.is_empty() {
+                                    joined.push('\n');
+                                }
+                                joined.push_str(text);
+                            }
+                        }
+                        joined
+                    }
+                };
+                let wrapped_reminder =
+                    crate::proxy::mappers::common_utils::wrap_in_system_reminder(&text);
+                if !wrapped_reminder.is_empty() {
+                    filtered_messages.push(Message {
+                        role: "user".to_string(),
+                        content: MessageContent::String(wrapped_reminder),
+                    });
+                }
             }
         } else {
+            in_leading_system = false;
             filtered_messages.push(msg);
         }
     }
@@ -735,13 +768,6 @@ pub fn transform_claude_request_in_timed(
         body["requestType"] = json!("image_gen");
     } else if is_agent_request {
         body["requestType"] = json!("agent");
-    }
-
-    // 如果提供了 metadata.user_id，则复用为 sessionId
-    if let Some(metadata) = &claude_req.metadata {
-        if let Some(user_id) = &metadata.user_id {
-            body["request"]["sessionId"] = json!(user_id);
-        }
     }
 
     // [FIX #593] 最后一道防线: 递归深度清理所有 cache_control 字段
@@ -1656,7 +1682,11 @@ fn build_google_content(
     )?;
 
     if parts.is_empty() {
-        return Ok(json!(null)); // Indicate no content to add
+        if role == "user" {
+            parts.push(json!({ "text": crate::proxy::mappers::common_utils::TRANSIT_DEFENSE_FALLBACK_TEXT }));
+        } else {
+            return Ok(json!(null)); // Indicate no content to add
+        }
     }
 
     if role == "model" {
@@ -1835,6 +1865,24 @@ fn build_tools(
                     "properties": {}
                 }));
                 crate::proxy::common::json_schema::clean_json_schema(&mut input_schema);
+
+                // [FIX] 针对 Shell / Terminal 类工具彻底从 parameters.properties 中剔除 description 字段
+                if crate::proxy::mappers::openai::response::is_shell_or_terminal_tool(name) {
+                    if let Some(params_obj) = input_schema.as_object_mut() {
+                        if let Some(props) = params_obj
+                            .get_mut("properties")
+                            .and_then(|p| p.as_object_mut())
+                        {
+                            props.remove("description");
+                        }
+                        if let Some(req_arr) = params_obj
+                            .get_mut("required")
+                            .and_then(|r| r.as_array_mut())
+                        {
+                            req_arr.retain(|v| v.as_str() != Some("description"));
+                        }
+                    }
+                }
 
                 function_declarations.push(json!({
                     "name": name,
@@ -2137,7 +2185,7 @@ mod tests {
 
         assert!(system_texts.contains(&CLAUDE_CODE_CLI_IDENTITY));
         assert!(!system_texts.contains(&CLAUDE_AGENT_SDK_IDENTITY));
-        assert!(system_texts.contains(&"x-anthropic-billing-header: cc_entrypoint=sdk-cli;"));
+        assert!(!system_texts.contains(&"x-anthropic-billing-header: cc_entrypoint=sdk-cli;"));
     }
 
     #[test]
@@ -2600,10 +2648,14 @@ mod tests {
         let contents = body["request"]["contents"].as_array().unwrap();
         let parts = contents[0]["parts"].as_array().unwrap();
 
-        // 验证空 thinking 块被降级为包含 "..." 的非 thought 文本块
-        let downgraded_part = parts
-            .iter()
-            .find(|p| p.get("text") == Some(&json!("...")) && p.get("thought").is_none());
+        // 验证空 thinking 块被降级为包含 "..." 的非 thought 文本部分（并与后续文本紧凑合并）
+        let downgraded_part = parts.iter().find(|p| {
+            p.get("text")
+                .and_then(|t| t.as_str())
+                .map(|s| s.contains("..."))
+                .unwrap_or(false)
+                && p.get("thought").is_none()
+        });
         assert!(
             downgraded_part.is_some(),
             "Empty thinking should be downgraded to text without thought: true"
@@ -3113,7 +3165,7 @@ mod tests {
 
         // Check injection: Claude models use thinkingLevel in adaptive mode
         assert_eq!(thinking_config["includeThoughts"], true);
-        assert_eq!(thinking_config["thinkingLevel"], "high");
+        assert_eq!(thinking_config["thinkingLevel"], "HIGH");
         assert!(thinking_config.get("thinkingBudget").is_none());
         assert!(thinking_config.get("thinkingType").is_none());
         assert!(thinking_config.get("effort").is_none());
@@ -3595,8 +3647,8 @@ mod tests {
 
         assert_eq!(thinking_config["includeThoughts"], true);
         assert_eq!(
-            thinking_config["thinkingBudget"], 10000,
-            "Client budget (99999) must be ignored in favor of tier dictionary budget (10000)"
+            thinking_config["thinkingBudget"], 16384,
+            "Client budget (99999) must be ignored in favor of tier dictionary budget (16384)"
         );
     }
 

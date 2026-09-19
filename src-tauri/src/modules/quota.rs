@@ -358,8 +358,7 @@ pub async fn fetch_quota_with_cache(
                             "Quota API {} returned {}, falling back to next endpoint",
                             ep_url, status
                         ));
-                        last_error =
-                            Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
+                        last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                         continue; // 换下一个 endpoint
                     }
@@ -465,21 +464,41 @@ pub async fn fetch_quota_with_cache(
                             };
 
                             if matches_group {
-                                // Look for 5h bucket first, then fallback to any bucket
-                                let target_bucket = group
-                                    .buckets
-                                    .iter()
-                                    .find(|b| {
-                                        let win = b.window.to_lowercase();
-                                        let bid = b.bucket_id.to_lowercase();
-                                        win.contains("5h")
-                                            || bid.contains("5h")
-                                            || win.contains("hour")
-                                            || bid.contains("hour")
-                                    })
-                                    .or_else(|| group.buckets.first());
+                                // 找到 5h 桶和 weekly 桶，综合计算受限程度最大的实际可用配额
+                                let bucket_5h = group.buckets.iter().find(|b| {
+                                    let win = b.window.to_lowercase();
+                                    let bid = b.bucket_id.to_lowercase();
+                                    win.contains("5h")
+                                        || bid.contains("5h")
+                                        || win.contains("hour")
+                                        || bid.contains("hour")
+                                });
+                                let bucket_weekly = group.buckets.iter().find(|b| {
+                                    let win = b.window.to_lowercase();
+                                    let bid = b.bucket_id.to_lowercase();
+                                    win.contains("week")
+                                        || bid.contains("week")
+                                        || win.contains("7d")
+                                        || bid.contains("7d")
+                                });
 
-                                if let Some(b) = target_bucket {
+                                let chosen_bucket = match (bucket_5h, bucket_weekly) {
+                                    (Some(h), Some(w)) => {
+                                        // 若周配额耗尽 (<= 0.001)，模型直接受限于周配额，重置时间使用周重置
+                                        if w.remaining_fraction <= 0.001 {
+                                            Some(w)
+                                        } else if h.remaining_fraction <= w.remaining_fraction {
+                                            Some(h)
+                                        } else {
+                                            Some(w)
+                                        }
+                                    }
+                                    (Some(h), None) => Some(h),
+                                    (None, Some(w)) => Some(w),
+                                    _ => group.buckets.first(),
+                                };
+
+                                if let Some(b) = chosen_bucket {
                                     model.percentage =
                                         (b.remaining_fraction * 100.0).round() as i32;
                                     if !b.reset_time.is_empty() {

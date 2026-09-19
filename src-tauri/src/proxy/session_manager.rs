@@ -56,17 +56,7 @@ impl SessionManager {
     /// 1. metadata.user_id (客户端显式提供)
     /// 2. 第一条用户消息的 SHA256 哈希
     pub fn extract_session_id(request: &ClaudeRequest) -> String {
-        // 1. 优先使用 metadata 中的 user_id
-        if let Some(metadata) = &request.metadata {
-            if let Some(user_id) = &metadata.user_id {
-                if !user_id.is_empty() && !user_id.contains("session-") {
-                    tracing::debug!("[SessionManager] Using explicit user_id: {}", user_id);
-                    return user_id.clone();
-                }
-            }
-        }
-
-        // 2. 备选方案：基于第一条用户消息的 SHA256 哈希
+        // 基于第一条用户消息的 SHA256 哈希作为会话锚点
         let mut hasher = Sha256::new();
 
         let mut content_found = false;
@@ -118,7 +108,7 @@ impl SessionManager {
             }
         }
 
-        // [NEW] 融合多维环境特征 (System Prompt 摘要 + 可用 Tools 列表摘要)
+        // [NEW] 融合多维环境特征 (System Prompt 完整摘要 + 可用 Tools 列表摘要)
         // 彻底解决多窗口首条消息完全相同（如均输入“你好”）的碰撞问题！
         hasher.update([0xff]);
         if let Some(sys) = &request.system {
@@ -132,11 +122,7 @@ impl SessionManager {
             };
             let clean_sys = sanitize_user_text_for_fingerprint(&sys_text);
             if !clean_sys.is_empty() {
-                // [FIX] Slicing &str with raw byte index panics if cut inside a multi-byte UTF-8 char (e.g. Chinese)!
-                // Convert to byte slice first before taking the prefix for hasher.
-                let sys_bytes = clean_sys.as_bytes();
-                let take_len = sys_bytes.len().min(512);
-                hasher.update(&sys_bytes[..take_len]);
+                hasher.update(clean_sys.as_bytes());
             }
         }
 
@@ -242,11 +228,7 @@ impl SessionManager {
                     };
                     let clean_sys = sanitize_user_text_for_fingerprint(&text);
                     if !clean_sys.is_empty() {
-                        // [FIX] Slicing &str with raw byte index panics if cut inside a multi-byte UTF-8 char (e.g. Chinese)!
-                        // Convert to byte slice first before taking the prefix for hasher.
-                        let sys_bytes = clean_sys.as_bytes();
-                        let take_len = sys_bytes.len().min(512);
-                        hasher.update(&sys_bytes[..take_len]);
+                        hasher.update(clean_sys.as_bytes());
                         break;
                     }
                 }
@@ -330,11 +312,7 @@ impl SessionManager {
                 }
                 let clean_sys = sanitize_user_text_for_fingerprint(&sys_texts.join(" "));
                 if !clean_sys.is_empty() {
-                    // [FIX] Slicing &str with raw byte index panics if cut inside a multi-byte UTF-8 char (e.g. Chinese)!
-                    // Convert to byte slice first before taking the prefix for hasher.
-                    let sys_bytes = clean_sys.as_bytes();
-                    let take_len = sys_bytes.len().min(512);
-                    hasher.update(&sys_bytes[..take_len]);
+                    hasher.update(clean_sys.as_bytes());
                 }
             }
         }

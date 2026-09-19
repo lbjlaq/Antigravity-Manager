@@ -42,7 +42,28 @@
     "create_success": "建立成功",
     "update_success": "更新成功",
     "delete_success": "刪除成功",
-    "copied": "已複製到剪貼簿"
+    "copied": "已複製到剪貼簿",
+    "reason": "Reason",
+    "show_raw": "Show Raw",
+    "show_parsed": "Show Parsed",
+    "settings": "設定",
+    "saving": "儲存中...",
+    "required": "必填",
+    "copy_failed": "複製失敗",
+    "create": "建立",
+    "back": "返回",
+    "deselect_all": "取消全選",
+    "select_all": "全選",
+    "optional": "可選",
+    "actions": "操作",
+    "none": "無",
+    "disable": "停用",
+    "enable": "啟用",
+    "deleted": "已刪除",
+    "selected": "已選擇",
+    "claude_series": "Claude 系列",
+    "maximize": "最大化",
+    "app_name": "Antigravity Tools"
   },
   "nav": {
     "dashboard": "儀表板",
@@ -77,7 +98,11 @@
     "switch_to_spanish_short": "ES",
     "switch_to_malay": "切換到馬來語",
     "switch_to_malay_short": "MY",
-    "user_token": "用戶 Token"
+    "user_token": "用戶 Token",
+    "apikey_fun": "Transit Station",
+    "logout": "Logout",
+    "more": "更多",
+    "mini_view": "迷你懸浮窗"
   },
   "dashboard": {
     "hello": "你好, 使用者 👋",
@@ -148,7 +173,11 @@
     "status": {
       "forbidden": "403 Forbidden",
       "disabled": "帳號已停用",
-      "proxy_disabled": "反向代理已停用"
+      "proxy_disabled": "反向代理已停用",
+      "validation_required": "Verification Required",
+      "risk_controlled": "Risk / Rate Limited",
+      "oauth_reauth_required": "OAuth Re-auth Required",
+      "violation_blocked": "Blocked due to Violation"
     },
     "error_details": "錯誤詳情",
     "error_status": "錯誤狀態",
@@ -311,7 +340,32 @@
       "batch_warmup_msg": "確定要為選中的 {{count}} 個帳號立即觸發預熱嗎？"
     },
     "switch_to_agy": "Switch to Antigravity CLI (agy)",
-    "drag_disabled_during_sort": "已啟用欄位排序，拖曳排序已暫停"
+    "drag_disabled_during_sort": "已啟用欄位排序，拖曳排序已暫停",
+    "import_json": "Import",
+    "import_success": "Successfully imported {{count}} accounts",
+    "import_partial": "Import completed: {{success}} succeeded, {{fail}} failed",
+    "import_fail": "Import failed: {{error}}",
+    "import_invalid_format": "Invalid JSON format, please ensure the file contains email and refresh_token fields",
+    "copy_validation_url": "Copy Verification Link",
+    "validation_url_copied": "Verification link copied to clipboard",
+    "go_to_appeal": "前往申訴",
+    "copy_appeal_url": "複製申訴連結",
+    "fix_guide": {
+      "title": "Terminal Quick Fix (Resolves internal 403s)",
+      "step1_title": "🚀 Quickest Solution",
+      "step1_desc": "Open your Terminal and run the following command to tell Google \"it's me\", which resolves most 403 blocks:",
+      "step1_li1": "Press Enter, input <1>Y</1> when prompted to continue.",
+      "step1_li2": "Your browser will open automatically, select your account and click \"Allow\".",
+      "step1_li3": "Once you see <1>You are now authenticated</1>, you're all set!",
+      "step2_title": "🧹 If that fails (Clear Cache)",
+      "step2_li1_prefix": "Run this to clear your old credentials:",
+      "step2_li2_prefix": "Then log in again:",
+      "tips_title": "💡 Common Tips",
+      "tip1": "If you still get 403, try running <1>unset GOOGLE_APPLICATION_CREDENTIALS</1> in terminal first.",
+      "tip2": "For production environments, using a <1>Service Account</1> JSON key is highly recommended for stability and headless operation.",
+      "tip3": "If it still fails, check the Generative Language API in <1>Google Cloud Console</1> to see if permissions are frozen. If so, your account is under risk control. Please let the account cool down for 72 hours before trying again.",
+      "tip4": "You can also try <1>npm install -g @google/gemini-cli</1>. If it doesn't throw errors, simply deleting and re-authorizing the account in the app will likely fix it."
+    }
   },
   "settings": {
     "save": "儲存設定",
@@ -425,7 +479,8 @@
         "checking": "正在檢測",
         "healthy": "正常",
         "timeout": "已逾時"
-      }
+      },
+      "interval_tooltip": "健康檢查間隔 (秒)"
     },
     "advanced": {
       "title": "進階設定",
@@ -484,7 +539,30 @@
       "http_api_port_placeholder": "預設通訊埠 19527",
       "http_api_port_invalid": "通訊埠號無效(範圍:1024-65535)",
       "http_api_settings_saved": "HTTP API 設定已儲存,重啟應用後生效",
-      "http_api_restart_required": "⚠️ 需要重啟應用後生效"
+      "http_api_restart_required": "⚠️ 需要重啟應用後生效",
+      "migrate_btn": "變更並遷移",
+      "data_dir_select": "選擇資料目錄",
+      "data_dir_migrate_title": "遷移資料目錄",
+      "data_dir_migrate_msg": "將把全部資料遷移到：{{path}}\n原目錄會被刪除（同一父目錄則重新命名）。請先停止 API 反代和隧道。",
+      "data_dir_migrated": "資料目錄已遷移",
+      "data_dir_restart_hint": "建議重新啟動應用程式，讓日誌等檔案完全切換到新目錄",
+      "migrate_title": "遷移資料目錄",
+      "migrate_desc": "將目前資料目錄（包括帳號、設定、請求日誌及資料庫）完整遷移至新位置。",
+      "migrate_source": "來源資料目錄",
+      "migrate_target": "新資料目錄",
+      "migrate_clean_source": "遷移成功後清理原目錄資料（釋放磁碟空間）",
+      "migrate_restart_notice": "遷移完成後客戶端將自動重新啟動以載入新資料目錄。",
+      "migrate_confirm_btn": "開始遷移並重新啟動",
+      "migrating_text": "正在遷移資料並準備重新啟動...",
+      "migrate_success": "資料遷移成功，正在重新啟動應用程式...",
+      "patch_eligibility_title": "Bypass Account Eligibility Check",
+      "patch_eligibility_desc": "Newer agy client versions enforce account checks. This operation dynamically patches it to skip checks.",
+      "patch_btn": "Bypass Check",
+      "antigravity_cli_path": "Antigravity CLI (agy) Path",
+      "antigravity_cli_path_placeholder": "Not set (Will use auto-detection)",
+      "antigravity_cli_path_desc": "Set the executable path for the command line client (agy) to bypass account restrictions.",
+      "antigravity_cli_path_select": "Select Antigravity CLI (agy) Executable",
+      "antigravity_cli_path_detected": "Detected CLI path updated"
     },
     "about": {
       "title": "關於",
@@ -506,11 +584,43 @@
       "support_desc": "如果您覺得本工具對您有幫助，歡迎掃碼請作者喝杯咖啡！您的支持是我持續維護項目的最大動力。",
       "support_alipay": "Alipay",
       "support_wechat": "Weixin Pay",
-      "support_buymeacoffee": "Buy Me a Coffee"
+      "support_buymeacoffee": "Buy Me a Coffee",
+      "telegram": "Telegram Channel",
+      "brew_upgrade": "Update via Homebrew",
+      "brew_upgrading": "Upgrading...",
+      "brew_confirm_title": "Update via Homebrew",
+      "brew_confirm_desc": "The following command will be executed to update the app. A restart is required after the upgrade.",
+      "brew_quarantine_hint": "If you see an \"App is damaged\" error after update, run in terminal:",
+      "brew_confirm_btn": "Start Update",
+      "brew_success_title": "Upgrade Complete",
+      "brew_upgrade_success": "Homebrew upgrade succeeded. Please restart the app to load the new version.",
+      "brew_restart_btn": "Restart Now",
+      "brew_restart_failed": "Auto restart failed. Please close and reopen the app manually",
+      "brew_upgrade_failed": "Homebrew upgrade failed. Try running manually: brew upgrade --cask antigravity-tools",
+      "brew_error_brew_not_found": "Homebrew not found. Please ensure brew is installed",
+      "brew_error_brew_exec_failed": "Failed to execute brew command. Try running manually in terminal",
+      "brew_error_brew_timeout": "Homebrew upgrade timed out (3min). Try running manually: brew upgrade --cask antigravity-tools",
+      "brew_error_brew_already_latest": "Already up to date, no upgrade needed",
+      "brew_error_brew_not_supported": "Homebrew update is not supported on this platform",
+      "upgrade_now_btn": "立即下載並自動更新",
+      "update_dialog_title": "發現新版本可用",
+      "update_confirm_desc": "檢測到有新版本發布。是否立即下載更新？用戶端將在下載完成後自動熱重新啟動以套用更新。",
+      "current_version": "目前版本",
+      "latest_version_label": "最新版本"
     },
     "debug": {
       "debug_logging": "除錯日誌",
-      "debug_logging_desc": "啟用後會記錄完整請求與回應鏈路，建議僅在排查問題時開啟。"
+      "debug_logging_desc": "啟用後會記錄完整請求與回應鏈路，建議僅在排查問題時開啟。",
+      "title": "Debug Console",
+      "desc": "View real-time application logs for debugging",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "disabled_hint": "Debug Console is Off",
+      "disabled_desc": "Enable to start recording application logs",
+      "console_title": "Debug Console",
+      "console_desc": "View real-time application logs to troubleshoot issues.",
+      "enable_desc": "Enable to capture and display backend logs.",
+      "open_btn": "Open Console"
     },
     "menu": {
       "title": "選單顯示設定",
@@ -529,12 +639,20 @@
       "mode": {
         "auto": "自動限制",
         "passthrough": "透傳",
-        "custom": "自定義"
+        "custom": "自定義",
+        "adaptive": "Adaptive"
       },
       "auto_hint": "自動模式：對 Flash 模型、-thinking 後綴模型、以及啟用 Web Search 的請求自動限制在 24576 以避免 API 錯誤。",
       "passthrough_warning": "透傳：直接使用調用方原始值，不支持高值可能導致失敗。",
       "custom_value_hint": "推薦：24576 (Flash) 或 51200 (擴展)",
-      "tokens": "tokens"
+      "tokens": "tokens",
+      "effort_label": "Thinking Effort",
+      "effort": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
+      },
+      "adaptive_hint": "Adaptive mode: The model automatically adjusts thinking budget based on task complexity. Recommended for Claude 4.6+."
     },
     "image_thinking_mode": {
       "title": "圖像思維模式 (Image Thinking Mode)",
@@ -725,9 +843,12 @@
         "clear_bindings_tooltip": "立即斷開所有會話與帳號的繫結關係，強制下一次請求重新分配帳號。",
         "clear_rate_limits": "清除限流記錄",
         "clear_rate_limits_tooltip": "立即清除所有帳號的本地限流記錄，強制下一次請求嘗試直接呼叫上游。",
-        "fixed_account": "固定帳戶模式",
-        "fixed_account_tooltip": "啟用後，所有 API 請求將只使用所選帳戶，而不會在帳戶之間輪換。",
-        "round_robin_set": "輪詢模式已啟用"
+        "fixed_account": "固定帳號模式",
+        "fixed_account_tooltip": "開啟後，所有 API 請求將僅使用選定的帳號，而不是在帳號之間輪換。",
+        "round_robin_set": "已開啟輪換模式",
+        "fixed_account_set": "已開啟固定帳號模式",
+        "start_proxy_first": "啟動反代服務以設定固定帳號模式。",
+        "account_changed": "已切換至 {{email}}"
       },
       "circuit_breaker": {
         "title": "自適應熔斷器",
@@ -736,7 +857,9 @@
         "input_placeholder": "輸入退避時長 (秒)，以逗號分隔",
         "level": "等級 {{level}}",
         "invalid_format": "格式無效。請使用逗號分隔的數字 (例如 60, 300)",
-        "clear_records": "清除所有限流記錄"
+        "clear_records": "清除所有限流記錄",
+        "lock_on_zero_quota": "零配額持續熔斷 (5小時 / 週配額)",
+        "lock_on_zero_quota_desc": "開啟後，若帳號 5 小時滾動窗口或週配額用罄 (0%)，立即將其鎖定至官方重置時間，跳過短階梯退避並杜絕無效調用。"
       },
       "experimental": {
         "title": "實驗性設定 (Experimental)",
@@ -749,7 +872,21 @@
         "level_disabled": "關閉 (Disabled)",
         "level_low": "低度 (Low - 日誌降噪)",
         "level_medium": "中度 (Medium - 日誌+口語)",
-        "level_high": "高度 (High - 動態防暴)"
+        "level_high": "高度 (High - 動態防暴)",
+        "context_compression_threshold_l1": "L1 Compression Threshold (Tool Trimming)",
+        "context_compression_threshold_l1_tooltip": "Trims old tool call records to save space. Recommended: 0.4 (40%)",
+        "context_compression_threshold_l2": "L2 Compression Threshold (Thinking Compression)",
+        "context_compression_threshold_l2_tooltip": "Compresses early thinking blocks while preserving signatures. Recommended: 0.55 (55%)",
+        "context_compression_threshold_l3": "L3 Compression Threshold (Summary Pivot)",
+        "context_compression_threshold_l3_tooltip": "Ultimate reset: generates an XML state summary and pivots to a fresh session. Most token-efficient. Recommended: 0.7 (70%)",
+        "payload_storage_mode_label": "監控報文儲存模式",
+        "payload_storage_mode_tooltip": "簡要模式只將思考區塊、用量、工作階段識別碼和精簡對話寫入 SQLite；完整模式儲存原文。",
+        "payload_storage_mode_desc": "預設簡要儲存，避免工具參數和圖片將日誌庫撐爆。",
+        "payload_mode_simple": "簡要 (預設)",
+        "payload_mode_full": "完整原文",
+        "log_retention_days_label": "請求日誌保留天數",
+        "thinking_retention_days_label": "思考區塊保留天數（滑動窗口）",
+        "thinking_retention_days_desc": "預設 15 天滑動窗口。只要用戶端 sessionID 仍在活躍窗口內，每次請求都會自動重新整理過期時間。"
       },
       "cloudflared": {
         "title": "公網訪問 (Cloudflared)",
@@ -837,13 +974,121 @@
         "store_enabled": "伺服端思考塊與簽名回填",
         "store_enabled_desc": "自動攔截並持久化思考過程與加密簽名；當商業 Agent（如 Cline, Roo, Claude Code 等）多輪對話未帶回思考時由伺服端自動補齊，杜絕上游 400 報錯或上下文遺失。",
         "default_on_tag": "預設開啟",
-        "claude_thinking_note": "💡 Claude 模型說明：Anthropic 官方模型列表僅區分帶 `-thinking`（如 claude-3-7-sonnet-thinking）與普通模型。本自訂預算專門控制帶 thinking 模型的思考配額；若調用普通非 thinking 模型，上游不產生思考過程。"
+        "claude_thinking_note": "💡 Claude 模型說明：Anthropic 官方模型列表僅區分帶 `-thinking`（如 claude-3-7-sonnet-thinking）與普通模型。本自訂預算專門控制帶 thinking 模型的思考配額；若調用普通非 thinking 模型，上游不產生思考過程。",
+        "max_memory_turns_label": "每輪對話的記憶體 Thinking 儲存最大輪次",
+        "default_600_tag": "預設 600",
+        "max_memory_turns_desc": "控制單一工作階段在記憶體 (RAM) 中常駐保留的歷史思考區塊輪次。單輪思考區塊預估記憶體消耗約為 1.5 KB ~ 2.5 KB（600 輪約佔用 1.2 MB / 工作階段）。",
+        "turns_unit": "輪",
+        "window_guide_title": "滑動窗口淘汰機制與各並發規模選型建議",
+        "window_guide_desc": "超長工作階段超過此設定輪次時，採用先進先出（FIFO）滑動窗口自動淘汰最舊思考區塊。被淘汰輪次絕不降級為破壞快取的佔位符，而是由本機 SQLite 專屬索引在奈秒級精準穿透回撈，保證 Prompt Cache 100% 位元組級嚴格對齊且絕不 OOM。",
+        "tooltip_32768": "32,768 Tokens：適合複雜編程與深度架構任務",
+        "tooltip_16384": "1.6w 檔位 (16,384 Tokens)：適合複雜 Agent 任務",
+        "tooltip_8192": "8,192 Tokens：適合中等複雜度多步推理與代碼除錯",
+        "tooltip_4096": "4,096 Tokens：標準平衡檔，兼顧思考品質與回應速度",
+        "tooltip_2048": "2,048 Tokens：日常輕量推理檔",
+        "tooltip_1024": "1,024 Tokens：輕量極速思考，消耗極低",
+        "tooltip_65536": "65,536 Tokens：超長深度思考鏈極限檔",
+        "tooltip_1001": "1,001 Tokens：Google 官方 3.1 Pro 低思考基準檔",
+        "tooltip_10001": "10,001 Tokens：Google 官方 3.1 Pro 深度推理主力檔",
+        "tooltip_adaptive": "自適應 (-1)：完全由上游模型根據問題難度自動分配",
+        "preset_adaptive": "自適應 (-1)",
+        "window_settings_title": "思考區塊雙層滑動窗口與容量設定 (RAM + SQLite)",
+        "dual_layer_tag": "雙層索引穿透",
+        "days_unit": "天",
+        "claude_budget_title": "Claude 思考模型預算 (Tokens)",
+        "claude_budget_desc": "用戶端呼叫思考模型（如 claude-3-7-sonnet-thinking）時的核心 Token 預算（填 -1 則由官方自適應）",
+        "claude_budget_current": "推薦預設值: 16,384 Tokens (兼顧思考深度與回應速率)",
+        "claude_hide_advanced": "收起用戶端 Effort 檔位對應",
+        "claude_show_advanced": "展開進階設定：用戶端 Effort 檔位對應 (low / medium / high)",
+        "claude_effort_mapping_desc": "當部分商業用戶端（如 Cline, Roo 等）在請求標頭或參數中附加 reasoning_effort 時，按以下預算對應：",
+        "save_hint": "修改思考預算設定後點擊儲存即可立即生效，設定將即時熱更新至目前執行的反代服務。",
+        "save_btn": "儲存思考設定並熱生效",
+        "max_memory_turns_subdesc": "單輪思考約 2 KB；600 輪 ≈ 1.2 MB / 工作階段。",
+        "default_15_days_tag": "預設 15天",
+        "retention_days_subdesc": "活躍工作階段每次請求自動順延，無請求才過期。",
+        "guide_preset_1g_title": "1GB 記憶體輕量伺服器:",
+        "guide_preset_1g_desc": "推薦填寫 <1>100 ~ 200 輪</1>。數百個並發工作階段僅消耗約 50MB 記憶體，極端抗爆。",
+        "guide_preset_team_title": "個人 ~ 10 人自用團隊:",
+        "guide_preset_team_desc": "推薦填寫 <1>600 ~ 1000 輪</1>。數千輪歷史對話常駐實體記憶體 0ms 閃電直出。",
+        "guide_preset_enterprise_title": "100 人企業級並發 (2G-4G):",
+        "guide_preset_enterprise_desc": "推薦填寫 <1>300 ~ 600 輪</1>。95%+ 請求命中 RAM，兼具極致效能與絕對穩健。",
+        "guide_preset_relay_title": "1K+ 使用者公共中轉站 (4G-8G):",
+        "guide_preset_relay_desc": "推薦填寫 <1>150 ~ 300 輪</1>。記憶體優先傾斜給長連線池，長對話冷歷史託付 SQLite。",
+        "guide_preset_cluster_title": "1W+ ~ 10W+ 海量並發叢集:",
+        "guide_preset_cluster_desc": "推薦填寫 <1>50 ~ 100 輪</1>。單機無壓承載數萬並發工作階段，WAL 高速索引並發無鎖秒級回應。",
+        "clear_btn": "清空思考區塊",
+        "clear_btn_tooltip": "清空所有思考區塊快取與資料庫（不影響請求日誌）",
+        "clear_tip": "僅當快取命中異常、版本更新或開發者要求時才刪除",
+        "clear_modal_title": "確認清空思考區塊儲存？",
+        "clear_modal_desc": "此操作將徹底清空記憶體常駐輪次 (RAM) 與本機 SQLite 資料庫中所有的歷史思維鏈和工具簽名記錄。\n\n⚠️ 注意：此操作僅清理思考區塊資料，絕不刪除任何反向代理請求日誌。",
+        "clear_modal_warning": "建議僅在出現快取命中異常、版本升級或開發者明確要求時執行。清空後新請求將重新建立乾淨的前綴索引。",
+        "clear_confirm_btn": "確認清空",
+        "clear_success": "已成功清空思考區塊儲存 (共清理 {{count}} 條歷史記錄)",
+        "clear_error": "清空思考區塊失敗: {{error}}"
       },
       "thinking_settings": {
         "title": "思考設定 (Thinking Settings)"
       },
       "prompt_multimodal": {
         "title": "全域提示詞與多模態設定 (Prompt & Multimodal)"
+      },
+      "log_retention_title": "請求日誌保留",
+      "log_retention_body_hours": "請求主體保留小時數",
+      "log_retention_storage_gb": "日誌保留空間上限 (GB)",
+      "log_retention_storage_gb_desc": "達到上限後自動觸發滑動窗口，淘汰最尾端 30% 日誌記錄以容納新日誌寫入",
+      "log_retention_current_usage": "目前資料庫空間",
+      "log_retention_rows": "最大日誌行數",
+      "opencode_sync": {
+        "card_title": "OpenCode",
+        "status": {
+          "detecting": "Detecting...",
+          "installed": "Installed ({{version}})",
+          "not_installed": "Not Installed",
+          "synced": "Synced",
+          "not_synced": "Not Synced",
+          "current_base_url": "Current Base URL"
+        },
+        "sync_accounts": "Sync accounts to antigravity-accounts.json",
+        "btn_sync": "Sync Config",
+        "btn_view": "View Config",
+        "btn_restore": "Restore",
+        "btn_restore_backup": "Restore Backup",
+        "btn_clear": "Clear Config",
+        "clear_confirm_title": "Confirm Clear Config",
+        "clear_confirm_message": "Are you sure you want to clear OpenCode configuration? This will remove the config file.",
+        "toast": {
+          "config_missing": "Please generate API Key and start service first",
+          "sync_success": "OpenCode config synced successfully",
+          "sync_error": "OpenCode sync failed: {{error}}",
+          "clear_success": "OpenCode config cleared successfully",
+          "clear_error": "Failed to clear OpenCode config: {{error}}"
+        },
+        "modal": {
+          "view_title": "OpenCode Config Viewer",
+          "copy_success": "Config copied"
+        },
+        "sync_confirm_title": "Confirm Sync",
+        "sync_confirm_message": "OpenCode config will be overwritten based on current proxy settings. Continue?",
+        "restore_confirm": "Are you sure you want to restore OpenCode to default settings?",
+        "restore_backup_confirm": "Are you sure you want to restore OpenCode config from backup?",
+        "modal_title": "Select OpenCode Models",
+        "select_models": "Select models to sync",
+        "auth_plugin_warning": "Detected opencode-antigravity-auth plugin. Sync only creates provider antigravity-manager and will not overwrite the google provider/plugin.",
+        "btn_confirm_sync": "Confirm Sync",
+        "custom_base_url_label": "Custom Manager BaseURL",
+        "custom_base_url_desc": "For Docker Compose networking",
+        "custom_base_url_reset": "Reset"
+      },
+      "droid_sync": {
+        "modal_title": "Add models to Droid",
+        "modal_desc": "Selected models will be added as customModels to settings.json",
+        "selected": "selected",
+        "btn_confirm_sync": "Add selected models",
+        "toast": {
+          "no_models_selected": "Please select at least one model",
+          "sync_success_count": "Added {{count}} model(s) to Droid",
+          "sync_error": "Sync failed: {{error}}"
+        }
       }
     },
     "example": {
@@ -883,7 +1128,10 @@
       "pro_image_1_1": "圖片生成 (1:1)",
       "claude_sonnet": "程式碼推理",
       "claude_sonnet_thinking": "思維鏈",
-      "claude_opus_thinking": "最強思維"
+      "claude_opus_thinking": "最強思維",
+      "gemini_2_5_flash": "Flash Model (2.5 Flash)",
+      "gemini_2_5_pro": "High Performance (2.5 Pro)",
+      "claude_4_6": "Latest Reasoning (4.6)"
     },
     "mapping": {
       "title": "Claude Code 模型對映",
@@ -977,7 +1225,13 @@
       "gemini3_only_warning": "⚠️ 僅支援 Gemini 3 系列",
       "default_suffix": "（預設）",
       "select_target_model": "選擇目標模型",
-      "original_placeholder": "原始名 (如 gpt-4 或 gpt-4*)"
+      "original_placeholder": "原始名 (如 gpt-4 或 gpt-4*)",
+      "only_raw_quota_models": "Only Expose Quota Models",
+      "only_raw_quota_models_tooltip": "When enabled, /v1/models only lists active quota models fetched from connected accounts, hiding built-in alias models (like gpt-4o) and image ratio variants.",
+      "gemini3_group_label": "Gemini 3 (Recommended)",
+      "gemini3_option_high": "gemini-3.1-pro-high (High Quality)",
+      "gemini3_option_low": "gemini-3.1-pro-low (Balanced)",
+      "gemini3_option_flash": "gemini-3-flash (Fast)"
     },
     "examples": {
       "title": "使用示例"
@@ -1024,7 +1278,8 @@
         "config_missing": "請先生成 API Key 並啟動服務",
         "sync_success": "同步成功！{{name}} 已準備就緒。",
         "sync_error": "同步 {{name}} 失敗: {{error}}"
-      }
+      },
+      "model_select": "Select Model"
     },
     "supported_models": {
       "title": "支援模型與整合 (Supported Models & Integration)",
@@ -1032,6 +1287,62 @@
       "model_id": "模型 ID",
       "description": "描述",
       "action": "操作"
+    },
+    "cloudflared": {
+      "title": "Public Access (Cloudflared)",
+      "subtitle": "Expose your local service to the internet via Cloudflare Tunnel",
+      "not_installed": "Cloudflared not installed",
+      "install_hint": "Cloudflared is a free tunnel tool from Cloudflare. It exposes your local proxy to the internet without a public IP or port forwarding. Click the button below to install.",
+      "install": "Install Now",
+      "installing": "Installing...",
+      "install_success": "Cloudflared installed successfully",
+      "install_failed": "Installation failed: {{error}}",
+      "installed": "Installed",
+      "version": "Version",
+      "mode_label": "Tunnel Mode",
+      "mode_quick": "Quick Tunnel",
+      "mode_quick_desc": "Auto-generated temporary URL (*.trycloudflare.com), no account needed, URL changes on restart",
+      "mode_auth": "Named Tunnel",
+      "mode_auth_desc": "Use Cloudflare account token, supports custom domain, persistent URL",
+      "token": "Tunnel Token",
+      "token_placeholder": "Paste your Cloudflare Tunnel Token here",
+      "token_hint": "Get from Cloudflare Zero Trust dashboard",
+      "token_required": "Token is required for Named Tunnel mode",
+      "use_http2": "Use HTTP/2",
+      "use_http2_desc": "More compatible, recommended for China mainland",
+      "status_label": "Tunnel Status",
+      "status_stopped": "Stopped",
+      "status_starting": "Starting...",
+      "status_running": "Running",
+      "status_stopping": "Stopping...",
+      "status_error": "Error",
+      "public_url": "Public URL",
+      "public_url_placeholder": "Public URL will appear here after tunnel starts",
+      "copy_url": "Copy URL",
+      "url_copied": "URL copied",
+      "start_tunnel": "Start Tunnel",
+      "stop_tunnel": "Stop Tunnel",
+      "running": "Tunnel Running",
+      "started": "Tunnel started",
+      "stopped": "Tunnel stopped",
+      "start_failed": "Start failed: {{error}}",
+      "stop_failed": "Stop failed: {{error}}",
+      "require_proxy_running": "Please start the local proxy service first",
+      "connection_info": "Connection Info",
+      "local_port": "Local Port",
+      "tunnel_protocol": "Tunnel Protocol"
+    },
+    "models": {
+      "flash": "Ultra-fast",
+      "flash_thinking": "Thinking Capability",
+      "pro_high": "Best Reasoning",
+      "pro_low": "Low Quota",
+      "sonnet": "Code Reasoning",
+      "sonnet_thinking": "Chain of Thought",
+      "opus_thinking": "Strongest Thinking"
+    },
+    "error": {
+      "load_failed": "載入失敗"
     }
   },
   "monitor": {
@@ -1092,7 +1403,13 @@
       "full_mode": "完整模式",
       "concise_desc": "已為您精簡工具參數與冗餘欄位，突出思考塊、用量與對話主體",
       "search_placeholder": "搜尋此封包...",
-      "no_upstream_payload": "無轉出封包 (直接轉發或未記錄)"
+      "no_upstream_payload": "無轉出封包 (直接轉發或未記錄)",
+      "search_placeholder_with_shortcut": "搜尋此報文... (Enter 下一個, Shift+Enter 上一個)",
+      "case_sensitive": "區分大小寫",
+      "wrap_lines": "自動折行",
+      "no_wrap": "單行模式",
+      "no_matches": "無相符項目",
+      "headers": "請求與回應標頭 (Headers)"
     },
     "timing": {
       "title": "耗時分類診斷",
@@ -1122,11 +1439,14 @@
       "subtitle": "統一管理請求日誌保留天數、思考塊滑動視窗與磁碟空間回收",
       "retention_title": "請求日誌保留策略",
       "payload_thinking_title": "報文儲存與思考塊週期",
-      "maintenance_title": "日誌維護與空間清理"
+      "maintenance_title": "日誌維護與空間清理",
+      "save_retention": "儲存保留策略",
+      "save_thinking": "儲存思考與報文設定"
     },
     "actions": {
       "clear_all_requests": "清空全部歷史請求"
-    }
+    },
+    "cached": "緩"
   },
   "update_notification": {
     "title": "發現新版本",
@@ -1138,7 +1458,10 @@
     "toast": {
       "not_ready": "自動更新包尚未就緒，為您跳轉到下載頁面...",
       "failed": "自動更新失敗，為您跳轉到下載頁面..."
-    }
+    },
+    "restart_prompt": "更新已準備就緒，重新啟動應用程式後即可完成升級。",
+    "btn_restart": "立即重新啟動",
+    "btn_later": "稍後"
   },
   "login": {
     "title": "安全存取控制",
@@ -1244,7 +1567,10 @@
       "expires_placeholder": "留空則永久生效",
       "cancel": "取消",
       "confirm": "新增",
-      "add_btn": "新增"
+      "add_btn": "新增",
+      "error_duplicate": "該 IP 已存在於黑名單中",
+      "error_invalid_ip": "無效的 IP 格式。請使用 IP 位址或 CIDR 表示法（例如 192.168.1.0/24）",
+      "error_add_failed": "新增失敗"
     },
     "whitelist": {
       "add_ip": "新增信任 IP",
@@ -1308,7 +1634,11 @@
     "placeholder_desc": "選填備註",
     "placeholder_max_ips": "0 = 不限制",
     "hint_max_ips": "0 表示不限制",
-    "hint_curfew": "留空則禁用。基於伺服器時間。"
+    "hint_curfew": "留空則禁用。基於伺服器時間。",
+    "custom_expires_required": "請選擇自訂過期時間",
+    "expires_custom": "自訂時間",
+    "custom_expires_at": "自訂到期時間",
+    "hint_custom_expires": "設定 Token 的精確到期時間點"
   },
   "apiKeyFun": {
     "title": "APIKEY.FUN 中轉站",
@@ -1351,6 +1681,15 @@
       "parseFormat": "解析格式異常: {{err}}",
       "fetchFailed": "取得失敗: {{err}}",
       "queryFailed": "無法取得有效的額度資料，請確認 API Key 是否有效。"
+    }
+  },
+  "errors": {
+    "stream": {
+      "timeout_error": "Request timeout, please check your network connection",
+      "connection_error": "Connection failed, please check your network or proxy settings",
+      "decode_error": "Network unstable, data transmission interrupted. Try: 1) Check network 2) Switch proxy 3) Retry",
+      "stream_error": "Stream transmission error, please retry later",
+      "unknown_error": "Unknown error occurred, please retry later"
     }
   }
 }

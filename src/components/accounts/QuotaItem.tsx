@@ -12,16 +12,19 @@ interface QuotaItemProps {
     resetTime?: string;
     isProtected?: boolean;
     liveLimit?: LiveLimitStatus;
+    isWeeklyConstrained?: boolean;
     className?: string;
     Icon?: React.ComponentType<{ size?: number; className?: string }>;
 }
 
-export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit, className, Icon }: QuotaItemProps) {
+export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit, isWeeklyConstrained, className, Icon }: QuotaItemProps) {
     const { t } = useTranslation();
     const liveState = getLiveLimitState(liveLimit);
     const showLiveIssue = liveState.shouldShow;
     const liveStatus = liveLimit?.status || 'ERR';
-    const liveLimitTitle = liveLimit
+    const liveLimitTitle = isWeeklyConstrained
+        ? `${label}: ${t('accounts.weekly_exhausted_tooltip', '周配额已耗尽 (0%)，等待周重置')} (${resetTime ? formatTimeRemaining(resetTime) || resetTime : ''})`
+        : liveLimit
         ? [
             liveState.isActive
                 ? `Live image endpoint is temporarily unavailable for ${formatCompactDuration(liveState.secondsRemaining)}.`

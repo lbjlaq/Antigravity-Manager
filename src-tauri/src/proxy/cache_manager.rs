@@ -944,12 +944,12 @@ mod tests {
 
         thread::sleep(Duration::from_millis(10));
 
-        // should be expired
-        assert!(cm.lookup_prefix("prefix_key").is_none());
-
         let evicted = cm.evict_expired();
         // prefix entry removed, SI and tools still valid (30min TTL)
         assert_eq!(evicted, 1, "Only prefix should be evicted");
+
+        // should be expired and removed
+        assert!(cm.lookup_prefix("prefix_key").is_none());
 
         let stats = cm.get_layer_stats();
         assert_eq!(stats.active_si_entries, 1);

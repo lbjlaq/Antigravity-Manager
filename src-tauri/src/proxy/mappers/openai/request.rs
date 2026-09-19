@@ -108,9 +108,14 @@ fn collect_system_instruction_blocks(request: &OpenAIRequest) -> Vec<String> {
         }
     }
 
+    // [JEIKCODE FROZEN SYSTEM PRINCIPLE]
+    // 严格遵循系统指令绝对冻结法则：仅收集最开头的连续 system / developer 消息。
+    // 一旦遇到首个非 system/developer 消息（即对话已进入多轮状态），立即停止收集！
+    // 对话中途出现的任何 system/developer 消息一律保留在 contents 中作为 synthetic user 处理，
+    // 绝对严禁提取并追加至 systemInstruction，杜绝顶层系统前缀突变破坏 KV Cache！
     for msg in &request.messages {
         if msg.role != "system" && msg.role != "developer" {
-            continue;
+            break;
         }
         match &msg.content {
             Some(OpenAIContent::String(text)) => {
@@ -138,6 +143,7 @@ fn is_apply_patch_tool_name(name: &str) -> bool {
     name == "apply_patch" || name == "apply_patch_v2"
 }
 
+#[allow(dead_code)]
 fn should_preserve_tool_output(tool_name: &str, output: &str) -> bool {
     is_apply_patch_tool_name(tool_name)
         || output.contains("apply_patch verification failed")
@@ -495,19 +501,30 @@ pub fn transform_openai_request_with_session(
         }
     }
 
-    // 2. 构建 Gemini contents (过滤掉 system/developer 指令)
-    let total_messages = request.messages.len();
-    let recent_message_window = 24usize;
+    // 2. 构建 Gemini contents (过滤掉已作为 leading system 的指令，中途 system 消息就地转为 user 保持前缀)
+    let leading_system_count = request
+        .messages
+        .iter()
+        .take_while(|m| m.role == "system" || m.role == "developer")
+        .count();
+
+    // 找出 messages 中最后一个 assistant 角色的下标 (绝对索引)
+    let last_assistant_msg_idx = request
+        .messages
+        .iter()
+        .enumerate()
+        .rposition(|(_, m)| m.role == "assistant");
+
     let contents: Vec<Value> = request
         .messages
         .iter()
         .enumerate()
-        .filter(|(_, msg)| msg.role != "system" && msg.role != "developer")
+        .filter(|(idx, _)| *idx >= leading_system_count)
         .map(|(msg_index, msg)| {
-            let is_latest = msg_index >= total_messages.saturating_sub(recent_message_window);
             let role = match msg.role.as_str() {
                 "assistant" => "model",
                 "tool" | "function" => "user",
+                "system" | "developer" => "user",
                 _ => &msg.role,
             };
 
@@ -532,6 +549,8 @@ pub fn transform_openai_request_with_session(
                         "..."
                     };
 
+                    let is_last_assistant = Some(msg_index) == last_assistant_msg_idx;
+
                     // 签名处理：Responses 协议对齐 Anthropic 校验并采纳客户端合法签名；Chat 协议签名完全由服务端参与回填
                     let effective_sig = if is_responses_api {
                         let mut sig_opt = None;
@@ -551,12 +570,26 @@ pub fn transform_openai_request_with_session(
                             }
                         }
                         if sig_opt.is_none() {
-                            sig_opt = thought_sig.clone();
+                            // 关键修复：只有最新一条 assistant 消息（对应 previous_response_id）才允许采纳全局 thought_sig；
+                            // 历史更早的 assistant 轮次，绝不能被最新签名覆盖篡改！
+                            // 历史轮次优先从位置缓存获取；若无则设为哨兵占位符，由后续 ThinkingStore hydrate 拓扑保序精准恢复
+                            if is_last_assistant {
+                                sig_opt = thought_sig.clone();
+                            } else {
+                                sig_opt = crate::proxy::SignatureCache::global()
+                                    .get_session_signature_at(&session_id, msg_index);
+                            }
                         }
                         sig_opt.unwrap_or_else(|| crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
                     } else {
-                        // OpenAI Chat 协议：签名完全由服务端参与回填
-                        thought_sig.clone().unwrap_or_else(|| crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
+                        // OpenAI Chat 协议：同样只有最新一条 assistant 允许使用当前最新签名
+                        if is_last_assistant {
+                            thought_sig.clone().unwrap_or_else(|| crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
+                        } else {
+                            crate::proxy::SignatureCache::global()
+                                .get_session_signature_at(&session_id, msg_index)
+                                .unwrap_or_else(|| crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string())
+                        }
                     };
 
                     parts.push(json!({
@@ -581,19 +614,44 @@ pub fn transform_openai_request_with_session(
             // [FIX] Skip standard content mapping for tool/function roles to avoid duplicate parts
             // These are handled below in the "Handle tool response" section.
             let is_tool_role = msg.role == "tool" || msg.role == "function";
+            let is_mid_system_role = msg.role == "system" || msg.role == "developer";
             if let (Some(content), false) = (&msg.content, is_tool_role) {
-                match content {
-                    OpenAIContent::String(s) => {
-                        if !s.is_empty() {
-                            parts.extend(crate::proxy::mappers::common_utils::parse_markdown_images_to_parts(s));
-                        }
-                    }
-                    OpenAIContent::Array(blocks) => {
-                        for block in blocks {
-                            match block {
-                                OpenAIContentBlock::Text { text } => {
-                                    parts.extend(crate::proxy::mappers::common_utils::parse_markdown_images_to_parts(text));
+                if is_mid_system_role {
+                    // [JEIKCODE SYNTHETIC USER] 中途系统消息，转换为用户态下的 <system-reminder>，不破坏全局 systemInstruction 前缀
+                    let sys_text = match content {
+                        OpenAIContent::String(s) => s.clone(),
+                        OpenAIContent::Array(blocks) => {
+                            let mut joined = String::new();
+                            for b in blocks {
+                                if let OpenAIContentBlock::Text { text } = b {
+                                    if !joined.is_empty() {
+                                        joined.push('\n');
+                                    }
+                                    joined.push_str(text);
                                 }
+                            }
+                            joined
+                        }
+                    };
+                    let wrapped_reminder = crate::proxy::mappers::common_utils::wrap_in_system_reminder(&sys_text);
+                    if !wrapped_reminder.is_empty() {
+                        parts.push(json!({
+                            "text": wrapped_reminder
+                        }));
+                    }
+                } else {
+                    match content {
+                        OpenAIContent::String(s) => {
+                            if !s.is_empty() {
+                                parts.extend(crate::proxy::mappers::common_utils::parse_markdown_images_to_parts(s));
+                            }
+                        }
+                        OpenAIContent::Array(blocks) => {
+                            for block in blocks {
+                                match block {
+                                    OpenAIContentBlock::Text { text } => {
+                                        parts.extend(crate::proxy::mappers::common_utils::parse_markdown_images_to_parts(text));
+                                    }
                                 OpenAIContentBlock::ImageUrl { image_url } => {
                                     if image_url.url.starts_with("data:") {
                                         if let Some(pos) = image_url.url.find(",") {
@@ -705,6 +763,7 @@ pub fn transform_openai_request_with_session(
                     }
                 }
             }
+            }
 
             // Handle tool calls (assistant message)
             if let Some(tool_calls) = &msg.tool_calls {
@@ -730,10 +789,6 @@ pub fn transform_openai_request_with_session(
                         continue;
                     }
 
-                    if !is_latest && args_str.len() > 1000 && !is_apply_patch_tool_name(&func_name)
-                    {
-                        args_str = "{\"_truncated\": \"Arguments truncated to save context window.\"}".to_string();
-                    }
                     let mut args = serde_json::from_str::<Value>(&args_str).unwrap_or(json!({}));
 
                     // [New] 利用通用引擎修正参数类型 (替代以前硬编码的 shell 工具修复逻辑)
@@ -776,9 +831,6 @@ pub fn transform_openai_request_with_session(
                     if effective_tc_sig.is_none() {
                         effective_tc_sig = tool_specific_sig;
                     }
-                    if effective_tc_sig.is_none() {
-                        effective_tc_sig = thought_sig.clone();
-                    }
 
                     if let Some(ref sig) = effective_tc_sig {
                         func_call_part["thoughtSignature"] = json!(sig);
@@ -801,16 +853,7 @@ pub fn transform_openai_request_with_session(
                 let mut extra_parts = Vec::new();
 
                 let content_val = match &msg.content {
-                    Some(OpenAIContent::String(s)) => {
-                        if !is_latest
-                            && s.len() > 1000
-                            && !should_preserve_tool_output(final_name, s)
-                        {
-                            format!("[Tool output truncated to save context. Original length: {}]", s.len())
-                        } else {
-                            s.clone()
-                        }
-                    },
+                    Some(OpenAIContent::String(s)) => s.clone(),
                     Some(OpenAIContent::Array(blocks)) => {
                         let mut texts = Vec::new();
                         for block in blocks {
@@ -879,9 +922,6 @@ pub fn transform_openai_request_with_session(
                     let mut effective_fr_sig = None;
                     if let Some(ref call_id) = msg.tool_call_id {
                         effective_fr_sig = crate::proxy::SignatureCache::global().get_tool_signature(call_id);
-                    }
-                    if effective_fr_sig.is_none() {
-                        effective_fr_sig = thought_sig.clone();
                     }
                     if effective_fr_sig.is_none() {
                         effective_fr_sig = Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE.to_string());
@@ -1277,6 +1317,12 @@ pub fn transform_openai_request_with_session(
                     *obj = clean_obj;
                 }
 
+                let is_shell_tool = gemini_func
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(super::response::is_shell_or_terminal_tool)
+                    .unwrap_or(false);
+
                 if gemini_func.get("name").and_then(|v| v.as_str()) == Some("apply_patch") {
                     gemini_func.as_object_mut().unwrap().insert(
                         "parameters".to_string(),
@@ -1294,6 +1340,27 @@ pub fn transform_openai_request_with_session(
                 } else if let Some(params) = gemini_func.get_mut("parameters") {
                     // [DEEP FIX] 统一调用公共库清洗：展开 $ref 并剔除所有层级的 format/definitions
                     crate::proxy::common::json_schema::clean_json_schema(params);
+
+                    // [FIX] 针对 Shell / Terminal 类工具（如 run_command, bash, powershell, cmd 等）：
+                    // 彻底从 parameters.properties 中剔除 `description` 参数字段！
+                    // 谷歌 Gemini 上游极易产生字段语义混淆，误将人类意图输出到参数中的 description 字段，
+                    // 从而把真正的 command 字段漏掉。从源头剔除 description 字段，强迫模型只能把命令填入 command 字段。
+                    if is_shell_tool {
+                        if let Some(params_obj) = params.as_object_mut() {
+                            if let Some(props) = params_obj
+                                .get_mut("properties")
+                                .and_then(|p| p.as_object_mut())
+                            {
+                                props.remove("description");
+                            }
+                            if let Some(req_arr) = params_obj
+                                .get_mut("required")
+                                .and_then(|r| r.as_array_mut())
+                            {
+                                req_arr.retain(|v| v.as_str() != Some("description"));
+                            }
+                        }
+                    }
 
                     // Gemini v1internal 要求：
                     // 1. type 必须是大写 (OBJECT, STRING 等)
@@ -1703,7 +1770,7 @@ mod tests {
             transform_openai_request(&req_high, "test-p", "gemini-3.7-flash-high", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            10000
+            16384
         );
 
         // 2. 裸模型 Flash 接管客户端 reasoning_effort
@@ -1717,7 +1784,7 @@ mod tests {
             transform_openai_request(&req_flash_high, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            10000
+            16384
         );
 
         let req_flash_low: OpenAIRequest = serde_json::from_value(json!({
@@ -1730,10 +1797,10 @@ mod tests {
             transform_openai_request(&req_flash_low, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            1000
+            1024
         );
 
-        // 3. 裸模型 Flash 客户端未填或试图关闭：绝不关闭思考，强制回填 -medium (4000)
+        // 3. 裸模型 Flash 客户端未填或试图关闭：绝不关闭思考，强制回填 -medium (4096)
         let req_flash_none: OpenAIRequest = serde_json::from_value(json!({
             "model": "gemini-3-flash",
             "messages": [{"role": "user", "content": "hi"}]
@@ -1743,7 +1810,7 @@ mod tests {
             transform_openai_request(&req_flash_none, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            4000
+            4096
         );
 
         let req_flash_disabled: OpenAIRequest = serde_json::from_value(json!({
@@ -1756,7 +1823,7 @@ mod tests {
             transform_openai_request(&req_flash_disabled, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            4000
+            4096
         );
 
         // 4. 裸模型 Flash 客户端传入自定义 budget_tokens：彻底被忽略，由服务端权威等级回填
@@ -1770,7 +1837,7 @@ mod tests {
             transform_openai_request(&req_flash_custom_budget, "test-p", "gemini-3-flash", None);
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            4000
+            4096
         );
 
         let req_flash_high_custom_budget: OpenAIRequest = serde_json::from_value(json!({
@@ -1788,7 +1855,7 @@ mod tests {
         );
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            10000
+            16384
         );
     }
 
@@ -2646,7 +2713,7 @@ mod tests {
         let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_u64()
             .expect("thinkingBudget from model_specs");
-        assert_eq!(budget, 10000, "client budget + Passthrough must be ignored");
+        assert_eq!(budget, 16384, "client budget + Passthrough must be ignored");
 
         let contents = result["request"]["contents"].as_array().unwrap();
         let model_msg = contents
@@ -2862,5 +2929,170 @@ mod tests {
             chat_thought["thoughtSignature"].as_str(),
             Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE)
         );
+    }
+
+    #[test]
+    fn test_shell_tool_strips_description_parameter_for_gemini() {
+        let req = OpenAIRequest {
+            model: "gemini-2.5-pro".to_string(),
+            messages: vec![OpenAIMessage {
+                role: "user".to_string(),
+                content: Some(OpenAIContent::String("run command".to_string())),
+                ..Default::default()
+            }],
+            tools: Some(vec![json!({
+                "type": "function",
+                "function": {
+                    "name": "run_command",
+                    "description": "Run a shell command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "command": { "type": "string", "description": "CLI command" },
+                            "description": { "type": "string", "description": "Optional human label" }
+                        },
+                        "required": ["command", "description"]
+                    }
+                }
+            })]),
+            ..Default::default()
+        };
+
+        let (result, _, _, _) = transform_openai_request_with_session(
+            &req,
+            "test-proj",
+            "gemini-2.5-pro",
+            None,
+            "routing-1",
+            None,
+            false,
+        );
+
+        let tools = result["request"]["tools"].as_array().unwrap();
+        let func_decls = tools[0]["functionDeclarations"].as_array().unwrap();
+        let run_cmd = func_decls
+            .iter()
+            .find(|f| f["name"] == "run_command")
+            .unwrap();
+        let props = run_cmd["parameters"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("command"));
+        assert!(
+            !props.contains_key("description"),
+            "description parameter must be stripped for Gemini"
+        );
+        let req_arr = run_cmd["parameters"]["required"].as_array().unwrap();
+        assert!(req_arr.iter().any(|v| v == "command"));
+        assert!(
+            !req_arr.iter().any(|v| v == "description"),
+            "description must not be required"
+        );
+    }
+
+    #[test]
+    fn test_multi_turn_responses_preserves_historical_signature_prefix() {
+        let sid = format!("test-sess-{}", uuid::Uuid::new_v4());
+        let sig_round_1 = "s1_".to_string() + &"a".repeat(60);
+        let sig_round_2 = "s2_".to_string() + &"b".repeat(60);
+
+        // 缓存第 1 轮工具的专属签名
+        crate::proxy::SignatureCache::global().cache_tool_signature("call_1", sig_round_1.clone());
+
+        // 模拟第 2 轮刚完成，产生了会话级别的最新签名 sig_round_2 (通过 previous_response_id)
+        let prev_resp_id = format!("resp-prev-{}", uuid::Uuid::new_v4());
+        crate::proxy::SignatureCache::global().cache_session_signature(
+            &prev_resp_id,
+            sig_round_2.clone(),
+            3,
+        );
+
+        // 构造第 3 轮请求：包含历史第 1 轮、第 2 轮的完整上下文
+        let req = OpenAIRequest {
+            model: "gemini-3.8-flash-high".to_string(),
+            messages: vec![
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("第 1 轮指令".to_string())),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_1".to_string(),
+                        r#type: "function".to_string(),
+                        function: Some(ToolFunction {
+                            name: "run_command".to_string(),
+                            arguments: "{\"command\":\"ls\"}".to_string(),
+                        }),
+                        status: None,
+                        call_id: None,
+                        operation: None,
+                        signature: None,
+                    }]),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "tool".to_string(),
+                    tool_call_id: Some("call_1".to_string()),
+                    content: Some(OpenAIContent::String("file1.txt".to_string())),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_2".to_string(),
+                        r#type: "function".to_string(),
+                        function: Some(ToolFunction {
+                            name: "run_command".to_string(),
+                            arguments: "{\"command\":\"cat file1.txt\"}".to_string(),
+                        }),
+                        status: None,
+                        call_id: None,
+                        operation: None,
+                        signature: None,
+                    }]),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "tool".to_string(),
+                    tool_call_id: Some("call_2".to_string()),
+                    content: Some(OpenAIContent::String("hello world".to_string())),
+                    ..Default::default()
+                },
+                OpenAIMessage {
+                    role: "user".to_string(),
+                    content: Some(OpenAIContent::String("第 3 轮指令".to_string())),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let (result, _, _, _) = transform_openai_request_with_session(
+            &req,
+            "test-proj",
+            "gemini-3.8-flash-high",
+            None,
+            &sid,
+            Some(&prev_resp_id),
+            true, // is_responses_api
+        );
+
+        let contents = result["request"]["contents"].as_array().unwrap();
+
+        // 验证：第 1 轮 model
+        let model_1_parts = contents[1]["parts"].as_array().unwrap();
+        assert_eq!(model_1_parts[0]["thought"], true, "第 1 轮首位必须是思考块");
+        let sig_1 = model_1_parts[0]["thoughtSignature"].as_str().unwrap();
+        // 核心断言：历史第 1 轮绝不能被最新一轮的签名 sig_round_2 覆盖！
+        assert_ne!(sig_1, sig_round_2, "历史第 1 轮绝不能被最新签名覆盖");
+
+        // 验证：最新一条 model（第 2 轮）
+        let model_2_parts = contents[3]["parts"].as_array().unwrap();
+        assert_eq!(model_2_parts[0]["thought"], true, "第 2 轮首位必须是思考块");
+        let sig_2 = model_2_parts[0]["thoughtSignature"].as_str().unwrap();
+        // 最新一条 model 应当正确采纳 prev_resp_id 的签名
+        assert_eq!(sig_2, sig_round_2, "最新一条 model 应当正确继承上一轮签名");
     }
 }

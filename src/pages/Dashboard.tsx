@@ -35,25 +35,48 @@ function Dashboard() {
 
     // 计算统计数据
     const stats = useMemo(() => {
-        const getGeminiProQuota = (a: Account) =>
-            findQuotaModel(a.quota?.models, 'gemini-pro')?.percentage || 0;
+        const getEffectiveModelPercentage = (a: Account, modelKey: 'gemini-pro' | 'gemini-image' | 'claude') => {
+            const isClaude = modelKey === 'claude';
+            const isImage = modelKey === 'gemini-image';
+            const model = isImage
+                ? findImageQuotaModel(a.quota?.models)
+                : findQuotaModel(a.quota?.models, modelKey);
+
+            if (a.quota?.quota_groups) {
+                for (const group of a.quota.quota_groups) {
+                    const gname = group.display_name.toLowerCase();
+                    const matches = isClaude
+                        ? gname.includes('claude') || gname.includes('gpt') || gname.includes('3p')
+                        : gname.includes('gemini') || (!gname.includes('claude') && !gname.includes('gpt') && !gname.includes('3p'));
+                    if (matches) {
+                        const weekly = group.buckets.find(b =>
+                            b.window?.toLowerCase().includes('week') || b.bucket_id?.toLowerCase().includes('week') || b.window?.toLowerCase().includes('7d')
+                        );
+                        if (weekly && (weekly.remaining_fraction ?? 1) <= 0.001) {
+                            return 0;
+                        }
+                    }
+                }
+            }
+            return model?.percentage || 0;
+        };
 
         const geminiQuotas = accounts
-            .map(a => getGeminiProQuota(a))
+            .map(a => getEffectiveModelPercentage(a, 'gemini-pro'))
             .filter(q => q > 0);
 
         const geminiImageQuotas = accounts
-            .map(a => findImageQuotaModel(a.quota?.models)?.percentage || 0)
+            .map(a => getEffectiveModelPercentage(a, 'gemini-image'))
             .filter(q => q > 0);
 
         const claudeQuotas = accounts
-            .map(a => findQuotaModel(a.quota?.models, 'claude')?.percentage || 0)
+            .map(a => getEffectiveModelPercentage(a, 'claude'))
             .filter(q => q > 0);
 
         const lowQuotaCount = accounts.filter(a => {
             if (a.quota?.is_forbidden) return false;
-            const gemini = getGeminiProQuota(a);
-            const claude = findQuotaModel(a.quota?.models, 'claude')?.percentage || 0;
+            const gemini = getEffectiveModelPercentage(a, 'gemini-pro');
+            const claude = getEffectiveModelPercentage(a, 'claude');
             return gemini < 20 || claude < 20;
         }).length;
 
