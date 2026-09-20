@@ -1673,12 +1673,28 @@
     },
     "models": {
       "title": "Available Models",
-      "empty": "No models returned for current API Key."
+      "empty": "Enter key and query to load available models.",
+      "emptyFromKey": "No models returned yet. Query to fetch models."
     },
     "errors": {
       "parseFormat": "Parse format error: {{err}}",
       "fetchFailed": "Fetch failed: {{err}}",
       "queryFailed": "Failed to get valid quota or models. Please check if the API Key and Base URL are correct."
-    }
+    },
+    "opencode": {
+      "modelsRequired": "Refresh this key to load available models before activating its OpenCode profile.",
+      "active": "Active",
+      "modified": "Modified",
+      "inactive": "Inactive",
+      "syncedToast": "Synced to OpenCode: {{name}}",
+      "removedToast": "Removed from OpenCode: {{name}}",
+      "clickToRemove": "OpenCode profile is active and synced. Click to deactivate/remove",
+      "clickToUpdate": "Settings or models differ. Click to update",
+      "clickToActivate": "Click to activate separate profile in OpenCode",
+      "syncedActiveTooltip": "OpenCode: profile is active and fully synced. Click to deactivate",
+      "partialTooltip": "OpenCode: settings or models differ. Click to sync"
+    },
+    "syncSuccess": "Successfully synced to {{app}}",
+    "syncError": "Failed to sync: {{error}}"
   }
 }

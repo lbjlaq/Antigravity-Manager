@@ -1636,46 +1636,62 @@
     "hint_custom_expires": "Set precise expiration timestamp for this token"
   },
   "apiKeyFun": {
-    "title": "APIKEY.FUN Hub",
-    "eyebrow": "Hub",
-    "description": "The official Antigravity Tools API Hub, providing stable, open, and cost-effective large model API services. Supports mainstream models like Claude, OpenAI, and Gemini. Ideal for unified configuration in Codex, Gemini CLI, Claude Code, and other development tools.",
-    "viewNow": "View Now",
+    "title": "Хаб APIKEY.FUN",
+    "eyebrow": "Хаб",
+    "description": "Официальный партнерский хаб Antigravity Tools для стабильного и выгодного доступа к API больших моделей (Claude, OpenAI, Gemini). Подходит для конфигурации в Codex, Claude Code и других CLI.",
+    "viewNow": "Перейти",
     "usage": {
-      "remainingAmount": "Remaining",
-      "usedAmount": "Used",
-      "todayRequests": "Today's Requests",
-      "todayTokens": "Today's Tokens",
-      "totalRequests": "Total Requests",
-      "totalTokens": "Total Tokens"
+      "remainingAmount": "Остаток",
+      "usedAmount": "Использовано",
+      "todayRequests": "Запросов сегодня",
+      "todayTokens": "Токенов сегодня",
+      "totalRequests": "Всего запросов",
+      "totalTokens": "Всего токенов"
     },
     "keyManager": {
-      "title": "Key Management",
-      "desc": "Save frequently used API Keys. Click to switch and query balance automatically.",
-      "lastRemainingLabel": "Last Balance",
+      "title": "Управление ключами",
+      "desc": "Сохраняйте ключи для быстрого переключения и проверки баланса.",
+      "lastRemainingLabel": "Прошлый баланс",
       "lastRemaining": "${{value}}",
-      "notQueried": "Not queried",
-      "addedAt": "Added at",
-      "empty": "No saved keys."
+      "notQueried": "Не проверялся",
+      "addedAt": "Добавлен",
+      "empty": "Нет сохраненных ключей."
     },
-    "queryTitle": "Key Quota Query",
+    "queryTitle": "Проверка баланса ключа",
     "apiKeyLabel": "API Key",
-    "apiKeyPlaceholder": "Paste your API Key...",
-    "queryButton": "Refresh",
+    "apiKeyPlaceholder": "Вставьте API-ключ...",
+    "queryButton": "Обновить",
     "cli": {
-      "quickConfig": "One-Click Local Dev Setup",
-      "syncDesc": "Sync to official standard configuration",
-      "codexTooltip": "Sync API Key & BaseURL to Antigravity Codex",
-      "claudeTooltip": "Sync API Key & BaseURL to Claude Code",
+      "quickConfig": "Быстрая настройка окружения",
+      "syncDesc": "Синхронизация со стандартной конфигурацией",
+      "codexTooltip": "Синхронизировать API Key и BaseURL с Codex / ChatGPT CLI",
+      "claudeTooltip": "Синхронизировать API Key и BaseURL с Claude Code",
       "opencodeTooltip": "Синхронизировать API Key, BaseURL и модели в OpenCode"
     },
     "models": {
-      "title": "Available Models",
-      "empty": "No models returned for current API Key."
+      "title": "Доступные модели",
+      "empty": "Введите ключ и нажмите «Обновить», чтобы загрузить список моделей.",
+      "emptyFromKey": "Модели еще не получены. Нажмите «Обновить» для загрузки списка моделей."
     },
     "errors": {
-      "parseFormat": "Parse format error: {{err}}",
-      "fetchFailed": "Fetch failed: {{err}}",
-      "queryFailed": "Failed to get valid quota or models. Please check if the API Key and Base URL are correct."
-    }
+      "parseFormat": "Ошибка формата ответа: {{err}}",
+      "fetchFailed": "Ошибка запроса: {{err}}",
+      "queryFailed": "Не удалось получить данные о балансе или моделях. Проверьте правильность ключа и адреса."
+    },
+    "opencode": {
+      "modelsRequired": "Обновите данные ключа, чтобы загрузить модели перед активацией профиля OpenCode.",
+      "active": "Активен",
+      "modified": "Изменен",
+      "inactive": "Нет профиля",
+      "syncedToast": "Синхронизировано с OpenCode: {{name}}",
+      "removedToast": "Удалено из OpenCode: {{name}}",
+      "clickToRemove": "OpenCode профиль активен и синхронизирован. Кликните для отключения",
+      "clickToUpdate": "Есть отличия в настройках. Кликните для обновления",
+      "clickToActivate": "Кликните для создания отдельного профиля в OpenCode",
+      "syncedActiveTooltip": "OpenCode: профиль активен и полностью синхронизирован. Кликните, чтобы отключить",
+      "partialTooltip": "OpenCode: настройки или модели отличаются. Кликните для синхронизации"
+    },
+    "syncSuccess": "Успешно синхронизировано с {{app}}",
+    "syncError": "Ошибка синхронизации: {{error}}"
   }
 }

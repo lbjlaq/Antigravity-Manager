@@ -765,10 +765,18 @@ impl AxumServer {
                 "/proxy/opencode/status",
                 post(admin_get_opencode_sync_status),
             )
+            .route(
+                "/proxy/opencode/providers",
+                get(admin_get_opencode_providers),
+            )
             .route("/proxy/opencode/sync", post(admin_execute_opencode_sync))
             .route(
                 "/proxy/opencode/openai-sync",
                 post(admin_execute_opencode_openai_sync),
+            )
+            .route(
+                "/proxy/opencode/remove-provider",
+                post(admin_execute_opencode_remove_provider),
             )
             .route(
                 "/proxy/opencode/restore",
@@ -4217,11 +4225,48 @@ async fn admin_execute_opencode_openai_sync(
     .await
     .map(|_| StatusCode::OK)
     .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse { error: e }),
-        )
+        let status = if crate::proxy::opencode_sync::is_provider_validation_error(&e) {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        (status, Json(ErrorResponse { error: e }))
     })
+}
+
+async fn admin_get_opencode_providers(
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::opencode_sync::get_opencode_providers()
+        .await
+        .map(Json)
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpencodeRemoveProviderRequest {
+    provider_id: String,
+}
+
+async fn admin_execute_opencode_remove_provider(
+    Json(payload): Json<OpencodeRemoveProviderRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::proxy::opencode_sync::execute_opencode_remove_provider(payload.provider_id)
+        .await
+        .map(|_| StatusCode::OK)
+        .map_err(|e| {
+            let status = if crate::proxy::opencode_sync::is_provider_validation_error(&e) {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(ErrorResponse { error: e }))
+        })
 }
 
 async fn admin_execute_opencode_restore(

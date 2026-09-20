@@ -1675,13 +1675,29 @@
     },
     "models": {
       "title": "可用模型",
-      "empty": "當前 API Key 未返回模型列表。"
+      "empty": "輸入 API Key 並查詢以取得可用模型清單。",
+      "emptyFromKey": "尚未取得模型。請點擊重新整理以取得模型清單。"
     },
     "errors": {
       "parseFormat": "解析格式異常: {{err}}",
       "fetchFailed": "取得失敗: {{err}}",
       "queryFailed": "無法取得有效的額度資料，請確認 API Key 是否有效。"
-    }
+    },
+    "opencode": {
+      "modelsRequired": "請先重新整理此金鑰以載入可用模型，再啟用其 OpenCode 設定。",
+      "active": "已同步",
+      "modified": "有差異",
+      "inactive": "未啟用",
+      "syncedToast": "已同步至 OpenCode: {{name}}",
+      "removedToast": "已從 OpenCode 移除設定檔 {{name}}",
+      "clickToRemove": "OpenCode 設定檔已啟用且一致。點擊停用（移除設定檔）",
+      "clickToUpdate": "設定或模型存在差異。點擊更新",
+      "clickToActivate": "點擊以在 OpenCode 中啟用獨立設定檔",
+      "syncedActiveTooltip": "OpenCode: 設定完全相符（已啟用）。點擊停用／移除",
+      "partialTooltip": "OpenCode: 設定或模型存在差異。點擊同步"
+    },
+    "syncSuccess": "成功同步至 {{app}}",
+    "syncError": "同步失敗: {{error}}"
   },
   "errors": {
     "stream": {

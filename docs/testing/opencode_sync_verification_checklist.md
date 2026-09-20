@@ -203,3 +203,37 @@ cargo test --lib opencode_sync
 - **Antigravity Manager Version**: 
 - **Test Date**: 
 - **Tester**: 
+
+## APIKEY.FUN multiple key profiles
+
+Each saved key can have an independent OpenCode provider. Its default ID is
+`apikey-fun-<last six SHA-256 hex characters of the trimmed key>`. A colliding
+short ID uses the full digest instead; writes also reject an existing suffixed
+profile owned by another key. A matching legacy `apikey-fun` provider remains
+usable. No automatic migration or deletion of the legacy profile is needed.
+
+The checkbox creates missing profiles, updates differing profiles, and removes
+fully synced profiles. Models must be loaded before creating a new profile.
+Removing a saved key from the sidebar does not delete its OpenCode profile.
+
+Automated regression checks (from the repository root):
+
+```sh
+npm run build
+node scripts/test-opencode-profiles.mjs
+cargo test --manifest-path src-tauri/Cargo.toml opencode_sync --lib --locked
+```
+
+Manual scenarios to verify with test credentials:
+
+- [ ] Activate two keys, restart the page, and confirm both profiles remain active.
+- [ ] Deactivate one key and confirm the other key and unrelated providers remain unchanged.
+- [ ] Change a profile's URL, model IDs, or npm adapter externally; refresh and verify the next click updates it.
+- [ ] Activate a key already stored in the legacy provider and confirm no duplicate is created.
+- [ ] Switch or clear keys during a delayed model request; confirm stale results and errors do not appear.
+- [ ] Use Space/Enter on the profile checkbox and confirm its state matches the banner.
+- [ ] Use both the desktop Tauri commands and the authenticated web management endpoints.
+
+User-supplied UI reference, with API key fragments redacted:
+
+![OpenCode profile controls with API key fragments redacted](../images/opencode-multiple-key-profiles.png)
