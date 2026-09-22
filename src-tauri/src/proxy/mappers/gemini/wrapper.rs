@@ -839,19 +839,7 @@ pub fn wrap_request_v2(
             for tool in tools_arr {
                 if let Some(decls) = tool.get_mut("functionDeclarations") {
                     if let Some(decls_arr) = decls.as_array_mut() {
-                        // 1. 过滤掉联网关键字函数
-                        decls_arr.retain(|decl| {
-                            if let Some(name) = decl.get("name").and_then(|v| v.as_str()) {
-                                if name == "web_search" || name == "google_search" {
-                                    return false;
-                                }
-                            }
-                            true
-                        });
-
-                        // 2. 清洗剩余 Schema
-                        // [FIX] Gemini CLI 使用 parametersJsonSchema，而标准 Gemini API 使用 parameters
-                        // 需要将 parametersJsonSchema 重命名为 parameters
+                        // 清洗 Schema: 如果存在 parametersJsonSchema，将其标准化为 parameters
                         for decl in decls_arr {
                             // 检测并转换字段名
                             if let Some(decl_obj) = decl.as_object_mut() {

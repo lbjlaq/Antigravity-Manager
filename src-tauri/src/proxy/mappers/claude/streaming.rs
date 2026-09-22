@@ -10,157 +10,15 @@ use crate::proxy::SignatureCache;
 use bytes::Bytes;
 use serde_json::{json, Value};
 
-/// Known parameter remappings for Gemini → Claude compatibility
-/// [FIX] Gemini sometimes uses different parameter names than specified in tool schema
+/// Passthrough tool arguments for Gemini → Claude compatibility
 pub fn remap_function_call_args(name: &str, args: &mut Value) {
-    // [DEBUG] Always log incoming tool usage for diagnosis
+    // 纯透传协议工具参数，不进行任何字段重命名与拦截改写
     if let Some(obj) = args.as_object() {
-        tracing::debug!("[Streaming] Tool Call: '{}' Args: {:?}", name, obj);
-    }
-
-    // [IMPORTANT] Claude Code CLI 的 EnterPlanMode 工具禁止携带任何参数
-    // 代理层注入的 reason 参数会导致 InputValidationError
-    if name == "EnterPlanMode" {
-        if let Some(obj) = args.as_object_mut() {
-            obj.clear();
-        }
-        return;
-    }
-
-    if let Some(obj) = args.as_object_mut() {
-        // [IMPROVED] Case-insensitive matching for tool names
-        match name.to_lowercase().as_str() {
-            "grep" | "search" | "search_code_definitions" | "search_code_snippets" => {
-                // [FIX] Gemini hallucination: maps parameter description to "description" field
-                if let Some(desc) = obj.remove("description") {
-                    if !obj.contains_key("pattern") {
-                        obj.insert("pattern".to_string(), desc);
-                        tracing::debug!("[Streaming] Remapped Grep: description → pattern");
-                    }
-                }
-
-                // Gemini uses "query", Claude Code expects "pattern"
-                if let Some(query) = obj.remove("query") {
-                    if !obj.contains_key("pattern") {
-                        obj.insert("pattern".to_string(), query);
-                        tracing::debug!("[Streaming] Remapped Grep: query → pattern");
-                    }
-                }
-
-                // [CRITICAL FIX] Claude Code uses "path" (string), NOT "paths" (array)!
-                if !obj.contains_key("path") {
-                    if let Some(paths) = obj.remove("paths") {
-                        let path_str = if let Some(arr) = paths.as_array() {
-                            arr.get(0)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(".")
-                                .to_string()
-                        } else if let Some(s) = paths.as_str() {
-                            s.to_string()
-                        } else {
-                            ".".to_string()
-                        };
-                        obj.insert("path".to_string(), serde_json::json!(path_str));
-                        tracing::debug!(
-                            "[Streaming] Remapped Grep: paths → path(\"{}\")",
-                            path_str
-                        );
-                    } else {
-                        // Default to current directory if missing
-                        obj.insert("path".to_string(), json!("."));
-                        tracing::debug!("[Streaming] Added default path: \".\"");
-                    }
-                }
-
-                // Note: We keep "-n" and "output_mode" if present as they are valid in Grep schema
-            }
-            "glob" => {
-                // [FIX] Gemini hallucination: maps parameter description to "description" field
-                if let Some(desc) = obj.remove("description") {
-                    if !obj.contains_key("pattern") {
-                        obj.insert("pattern".to_string(), desc);
-                        tracing::debug!("[Streaming] Remapped Glob: description → pattern");
-                    }
-                }
-
-                // Gemini uses "query", Claude Code expects "pattern"
-                if let Some(query) = obj.remove("query") {
-                    if !obj.contains_key("pattern") {
-                        obj.insert("pattern".to_string(), query);
-                        tracing::debug!("[Streaming] Remapped Glob: query → pattern");
-                    }
-                }
-
-                // [CRITICAL FIX] Claude Code uses "path" (string), NOT "paths" (array)!
-                if !obj.contains_key("path") {
-                    if let Some(paths) = obj.remove("paths") {
-                        let path_str = if let Some(arr) = paths.as_array() {
-                            arr.get(0)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(".")
-                                .to_string()
-                        } else if let Some(s) = paths.as_str() {
-                            s.to_string()
-                        } else {
-                            ".".to_string()
-                        };
-                        obj.insert("path".to_string(), serde_json::json!(path_str));
-                        tracing::debug!(
-                            "[Streaming] Remapped Glob: paths → path(\"{}\")",
-                            path_str
-                        );
-                    } else {
-                        // Default to current directory if missing
-                        obj.insert("path".to_string(), json!("."));
-                        tracing::debug!("[Streaming] Added default path: \".\"");
-                    }
-                }
-            }
-            "read" => {
-                // Gemini might use "path" vs "file_path"
-                if let Some(path) = obj.remove("path") {
-                    if !obj.contains_key("file_path") {
-                        obj.insert("file_path".to_string(), path);
-                        tracing::debug!("[Streaming] Remapped Read: path → file_path");
-                    }
-                }
-            }
-            "ls" => {
-                // LS tool: ensure "path" parameter exists
-                if !obj.contains_key("path") {
-                    obj.insert("path".to_string(), json!("."));
-                    tracing::debug!("[Streaming] Remapped LS: default path → \".\"");
-                }
-            }
-            other => {
-                // [NEW] [Issue #785] Generic Property Mapping for all tools
-                // If a tool has "paths" (array of 1) but no "path", convert it.
-                let mut path_to_inject = None;
-                if !obj.contains_key("path") {
-                    if let Some(paths) = obj.get("paths").and_then(|v| v.as_array()) {
-                        if paths.len() == 1 {
-                            if let Some(p) = paths[0].as_str() {
-                                path_to_inject = Some(p.to_string());
-                            }
-                        }
-                    }
-                }
-
-                if let Some(path) = path_to_inject {
-                    obj.insert("path".to_string(), json!(path));
-                    tracing::debug!(
-                        "[Streaming] Probabilistic fix for tool '{}': paths[0] → path(\"{}\")",
-                        other,
-                        path
-                    );
-                }
-                tracing::debug!(
-                    "[Streaming] Unmapped tool call processed via generic rules: {} (keys: {:?})",
-                    other,
-                    obj.keys()
-                );
-            }
-        }
+        tracing::debug!(
+            "[Streaming] Tool Call (Passthrough): '{}' Args: {:?}",
+            name,
+            obj
+        );
     }
 }
 
@@ -1228,35 +1086,7 @@ impl<'a> PartProcessor<'a> {
             )
         });
 
-        let mut tool_name = fc.name.clone();
-        if tool_name.to_lowercase() == "search" {
-            tool_name = "grep".to_string();
-            tracing::debug!("[Streaming] Normalizing tool name: Search → grep");
-        }
-
-        // [FIX #MCP] MCP tool name fuzzy matching
-        // Gemini often hallucinates incorrect MCP tool names, e.g.:
-        //   "mcp__puppeteer_navigate" instead of "mcp__puppeteer__puppeteer_navigate"
-        // We attempt to find the closest registered tool name.
-        if tool_name.starts_with("mcp__") && !self.state.registered_tool_names.is_empty() {
-            if !self.state.registered_tool_names.contains(&tool_name) {
-                if let Some(matched) =
-                    fuzzy_match_mcp_tool(&tool_name, &self.state.registered_tool_names)
-                {
-                    tracing::warn!(
-                        "[FIX #MCP] Corrected MCP tool name: '{}' → '{}'",
-                        tool_name,
-                        matched
-                    );
-                    tool_name = matched;
-                } else {
-                    tracing::warn!(
-                        "[FIX #MCP] No fuzzy match found for MCP tool '{}'. Passing as-is.",
-                        tool_name
-                    );
-                }
-            }
-        }
+        let tool_name = fc.name.clone();
 
         // Record real tool_id into TurnAccumulator for precise session/fingerprint recovery
         self.state.thinking_acc.record_tool_id(&tool_name, &tool_id);
@@ -1299,14 +1129,7 @@ impl<'a> PartProcessor<'a> {
         {
             let json_str = if let Some(args) = &fc.args {
                 let mut remapped_args = args.clone();
-
-                let tool_name_title = fc.name.clone();
-                let mut final_tool_name = tool_name_title;
-                if final_tool_name.to_lowercase() == "search" {
-                    final_tool_name = "Grep".to_string();
-                }
-                remap_function_call_args(&final_tool_name, &mut remapped_args);
-
+                remap_function_call_args(&fc.name, &mut remapped_args);
                 serde_json::to_string(&remapped_args).unwrap_or_else(|_| "{}".to_string())
             } else {
                 // [FIX #Bug4] No args provided (e.g. EnterPlanMode): emit empty JSON object
@@ -1327,118 +1150,6 @@ impl<'a> PartProcessor<'a> {
         chunks.extend(self.state.end_block());
 
         chunks
-    }
-}
-
-/// [FIX #MCP] Fuzzy match an incorrect MCP tool name against registered tool names.
-///
-/// MCP tool naming convention: `mcp__<server_name>__<tool_name>`
-/// Gemini often hallucinates by:
-///   1. Dropping the server prefix: `mcp__navigate` → should be `mcp__puppeteer__puppeteer_navigate`
-///   2. Merging server+tool: `mcp__puppeteer_navigate` → should be `mcp__puppeteer__puppeteer_navigate`
-///   3. Partial name: `mcp__pup_navigate` → should be `mcp__puppeteer__puppeteer_navigate`
-///
-/// Strategy (in priority order):
-///   1. Exact suffix match: if the hallucinated name's suffix exactly matches a registered tool's suffix
-///   2. Suffix contained: if the hallucinated name (without `mcp__`) is contained in a registered tool name
-///   3. Longest common subsequence scoring: picks the registered tool with the best LCS ratio
-fn fuzzy_match_mcp_tool(hallucinated: &str, registered: &[String]) -> Option<String> {
-    let mcp_tools: Vec<&String> = registered
-        .iter()
-        .filter(|name| name.starts_with("mcp__"))
-        .collect();
-
-    if mcp_tools.is_empty() {
-        return None;
-    }
-
-    // Extract the part after "mcp__" for the hallucinated name
-    let hallucinated_suffix = &hallucinated[5..]; // skip "mcp__"
-
-    // Strategy 1: Exact suffix match
-    // e.g., hallucinated = "mcp__puppeteer_navigate", registered = "mcp__puppeteer__puppeteer_navigate"
-    // Check if any registered tool ends with the hallucinated suffix after `__`
-    for tool in &mcp_tools {
-        // For registered tool "mcp__server__tool_name", extract "tool_name"
-        if let Some(last_sep) = tool.rfind("__") {
-            let tool_suffix = &tool[last_sep + 2..];
-            if hallucinated_suffix == tool_suffix {
-                return Some(tool.to_string());
-            }
-        }
-    }
-
-    // Strategy 2: Suffix contained match
-    // e.g., hallucinated = "mcp__puppeteer_navigate", check if "puppeteer_navigate" is a substring
-    // of any registered tool's full name
-    let mut contained_matches: Vec<(&String, usize)> = Vec::new();
-    for tool in &mcp_tools {
-        let tool_lower = tool.to_lowercase();
-        let hall_lower = hallucinated_suffix.to_lowercase();
-        if tool_lower.contains(&hall_lower) {
-            contained_matches.push((tool, tool.len()));
-        }
-    }
-    // Pick the shortest match (most specific)
-    if !contained_matches.is_empty() {
-        contained_matches.sort_by_key(|(_, len)| *len);
-        return Some(contained_matches[0].0.to_string());
-    }
-
-    // Strategy 3: Normalized token overlap scoring
-    // Split both names into tokens by '_' and '__', compute overlap ratio
-    let hall_tokens: Vec<&str> = hallucinated_suffix
-        .split(|c: char| c == '_')
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    if hall_tokens.is_empty() {
-        return None;
-    }
-
-    let mut best_match: Option<String> = None;
-    let mut best_score: f64 = 0.0;
-    let threshold = 0.4; // Minimum overlap ratio to consider a match
-
-    for tool in &mcp_tools {
-        let tool_after_mcp = &tool[5..]; // skip "mcp__"
-        let tool_tokens: Vec<&str> = tool_after_mcp
-            .split(|c: char| c == '_')
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        if tool_tokens.is_empty() {
-            continue;
-        }
-
-        // Count matching tokens
-        let mut matches = 0;
-        for ht in &hall_tokens {
-            if tool_tokens.iter().any(|tt| tt.eq_ignore_ascii_case(ht)) {
-                matches += 1;
-            }
-        }
-
-        // Score = matching tokens / max(hall_tokens, tool_tokens)
-        let max_len = hall_tokens.len().max(tool_tokens.len()) as f64;
-        let score = matches as f64 / max_len;
-
-        if score > best_score {
-            best_score = score;
-            best_match = Some(tool.to_string());
-        }
-    }
-
-    if best_score >= threshold {
-        tracing::debug!(
-            "[FIX #MCP] Fuzzy match score for '{}': {:.2} -> {:?}",
-            hallucinated,
-            best_score,
-            best_match
-        );
-        best_match
-    } else {
-        None
     }
 }
 
@@ -1596,95 +1307,6 @@ mod tests {
             &output[..output.len().min(600)]
         );
         assert!(state.used_tool);
-    }
-
-    #[test]
-    fn test_fuzzy_match_mcp_tool_exact_suffix() {
-        let registered = vec![
-            "mcp__puppeteer__puppeteer_navigate".to_string(),
-            "mcp__puppeteer__puppeteer_screenshot".to_string(),
-            "mcp__filesystem__read_file".to_string(),
-        ];
-
-        // Gemini drops server prefix, produces: mcp__puppeteer_navigate
-        // Should match mcp__puppeteer__puppeteer_navigate via suffix "puppeteer_navigate"
-        let result = fuzzy_match_mcp_tool("mcp__puppeteer_navigate", &registered);
-        assert_eq!(
-            result,
-            Some("mcp__puppeteer__puppeteer_navigate".to_string())
-        );
-    }
-
-    #[test]
-    fn test_fuzzy_match_mcp_tool_exact_match_no_correction() {
-        let registered = vec!["mcp__puppeteer__puppeteer_navigate".to_string()];
-
-        // Already correct - should not be called (the caller checks contains first)
-        // But if called, should find it
-        let result = fuzzy_match_mcp_tool("mcp__puppeteer__puppeteer_navigate", &registered);
-        // It will match via suffix strategy
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn test_fuzzy_match_mcp_tool_suffix_contained() {
-        let registered = vec![
-            "mcp__puppeteer__puppeteer_navigate".to_string(),
-            "mcp__puppeteer__puppeteer_click".to_string(),
-        ];
-
-        // Gemini produces a partial-but-contained name
-        let result = fuzzy_match_mcp_tool("mcp__navigate", &registered);
-        assert_eq!(
-            result,
-            Some("mcp__puppeteer__puppeteer_navigate".to_string())
-        );
-    }
-
-    #[test]
-    fn test_fuzzy_match_mcp_tool_token_overlap() {
-        let registered = vec![
-            "mcp__filesystem__read_file".to_string(),
-            "mcp__filesystem__write_file".to_string(),
-            "mcp__filesystem__list_directory".to_string(),
-        ];
-
-        // Gemini produces: mcp__read_file → should match mcp__filesystem__read_file
-        let result = fuzzy_match_mcp_tool("mcp__read_file", &registered);
-        assert_eq!(result, Some("mcp__filesystem__read_file".to_string()));
-    }
-
-    #[test]
-    fn test_fuzzy_match_mcp_tool_no_match() {
-        let registered = vec!["mcp__puppeteer__puppeteer_navigate".to_string()];
-
-        // Completely unrelated name
-        let result = fuzzy_match_mcp_tool("mcp__totally_unrelated_xyz", &registered);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_fuzzy_match_mcp_tool_no_mcp_tools() {
-        let registered = vec!["regular_tool".to_string(), "another_tool".to_string()];
-
-        // No MCP tools in registry
-        let result = fuzzy_match_mcp_tool("mcp__puppeteer_navigate", &registered);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_fuzzy_match_mcp_tool_screenshot() {
-        let registered = vec![
-            "mcp__puppeteer__puppeteer_navigate".to_string(),
-            "mcp__puppeteer__puppeteer_screenshot".to_string(),
-            "mcp__puppeteer__puppeteer_click".to_string(),
-        ];
-
-        let result = fuzzy_match_mcp_tool("mcp__puppeteer_screenshot", &registered);
-        assert_eq!(
-            result,
-            Some("mcp__puppeteer__puppeteer_screenshot".to_string())
-        );
     }
 
     // -------------------------------------------------------------------------

@@ -1156,57 +1156,6 @@ mod tests {
     }
 }
 
-pub fn sanitize_system_prompt_for_tokens(text: &str) -> String {
-    use regex::Regex;
-    let mut cleaned = text.to_string();
-
-    // [CACHE] Step 1: 剥离动态内容（时间戳、UUID），确保跨请求的前缀一致性
-    // 这对 Gemini 隐式前缀缓存命中至关重要
-    let time_patterns = [
-        r"(?im)^Current (date|time)(\s+is)?\s*:.*$",
-        r"(?im)^Today is\s*:.*$",
-        r"(?im)^Date:\s+\d{4}-\d{2}-\d{2}.*$",
-    ];
-    for pat in &time_patterns {
-        if let Ok(re) = Regex::new(pat) {
-            cleaned = re.replace_all(&cleaned, "").into_owned();
-        }
-    }
-
-    // 剥离 UUID
-    if let Ok(re) = Regex::new(r"\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b")
-    {
-        cleaned = re.replace_all(&cleaned, "{uuid}").into_owned();
-    }
-
-    // 剥离随机 request/session/trace ID
-    if let Ok(re) = Regex::new(r"\b(req|sid|trace)_[a-f0-9]{6,32}\b") {
-        cleaned = re.replace_all(&cleaned, "{id}").into_owned();
-    }
-
-    // Step 2: Compress massive XML tags injected by thick clients to save tokens
-
-    let tags_to_compress = [
-        "skills_instructions",
-        "skills",
-        "plugins",
-        "subagents",
-        "customizations",
-        "conversation_transcript",
-        "guidelines",
-    ];
-
-    for tag in tags_to_compress.iter() {
-        let pattern = format!(r"(?s)<{}>.*?</{}>", tag, tag);
-        if let Ok(re) = Regex::new(&pattern) {
-            let replacement = format!("<{}>\n[Omitted by Antigravity Proxy to save tokens. Tool definitions remain available.]\n</{}>", tag, tag);
-            cleaned = re.replace_all(&cleaned, replacement).into_owned();
-        }
-    }
-
-    cleaned
-}
-
 /// [FIX] Parse markdown base64 images from text and split into Gemini parts
 /// This prevents base64 reflection bloat where generated images are sent back as huge text strings
 pub fn parse_markdown_images_to_parts(text: &str) -> Vec<Value> {

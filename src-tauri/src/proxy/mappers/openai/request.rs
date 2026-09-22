@@ -17,86 +17,6 @@ pub(crate) fn is_tiered_flash_model(model: &str) -> bool {
         .is_some_and(|version| !version.is_empty())
 }
 
-/// 清洗 system instruction 中的动态内容，确保跨请求的前缀字节一致性
-/// 以便触发 Gemini 隐式前缀缓存（Prefix Cache）。
-///
-/// 清洗规则：
-/// - 时间戳（Current time/date: ..., Today is: ...）
-/// - UUID (8-4-4-4-12 格式)
-/// - 随机 request/session/trace ID (req_xxx, sid_xxx, trace_xxx)
-/// - [CACHE] environment_context XML 标签 (<current_date>, <timezone>, <cwd>, <shell>)
-/// - [CACHE] skill/plugin 路径中的动态版本号 (如 /26.609.41114/)
-/// - 多行空行合并为最多两个连续空行
-fn sanitize_system_instruction_for_cache(text: &str) -> String {
-    let mut cleaned = text.to_string();
-
-    // 剥离时间戳（多种常见格式）
-    // 注意：只匹配 system prompt 中注入的元数据行，不匹配代码中的时间字符串
-    let time_patterns = [
-        r"(?im)^Current (date|time)(\s+is)?\s*:.*$",
-        r"(?im)^Today is\s*:.*$",
-        r"(?im)^Date:\s+\d{4}-\d{2}-\d{2}.*$",
-    ];
-    for pat in &time_patterns {
-        if let Ok(re) = regex::Regex::new(pat) {
-            cleaned = re.replace_all(&cleaned, "").into_owned();
-        }
-    }
-
-    // [CACHE] 清洗 environment_context XML 标签中的动态值
-    // Codex 在每个请求的 user/system 消息中注入这些标签，其值随环境变化
-    let env_xml_patterns: &[(&str, &str)] = &[
-        (
-            r"<current_date>[^<]*</current_date>",
-            "<current_date>[DATE_FROZEN]</current_date>",
-        ),
-        (
-            r"<timezone>[^<]*</timezone>",
-            "<timezone>[TZ_FROZEN]</timezone>",
-        ),
-        (r"<cwd>[^<]*</cwd>", "<cwd>[WORKSPACE_FROZEN]</cwd>"),
-        (r"<shell>[^<]*</shell>", "<shell>[SHELL_FROZEN]</shell>"),
-    ];
-    for (pat, replacement) in env_xml_patterns {
-        if let Ok(re) = regex::Regex::new(pat) {
-            cleaned = re.replace_all(&cleaned, *replacement).into_owned();
-        }
-    }
-
-    // [CACHE] 清洗 skill/plugin 路径中的动态版本号 (如 /26.609.41114/ )
-    // 这些版本号在 Codex/plugin 更新时会变化，但语义相同
-    if let Ok(re) = regex::Regex::new(r"/\d{2}\.\d{3}\.\d{5}/") {
-        cleaned = re.replace_all(&cleaned, "/[VERSION_FROZEN]/").into_owned();
-    }
-
-    // 剥离 UUID (标准 8-4-4-4-12 格式)
-    if let Ok(re) =
-        regex::Regex::new(r"\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b")
-    {
-        cleaned = re.replace_all(&cleaned, "{uuid}").into_owned();
-    }
-
-    // 剥离随机 request/session/trace ID (如 req_a1b2c3, sid-xxxxxxxx, trace_xxxxxxxx)
-    if let Ok(re) = regex::Regex::new(r"\b(req|sid|trace)_[a-f0-9]{6,32}\b") {
-        cleaned = re.replace_all(&cleaned, "{id}").into_owned();
-    }
-
-    // 多行空行合并为最多两个连续空行
-    if let Ok(re) = regex::Regex::new(r"\n{3,}") {
-        cleaned = re.replace_all(&cleaned, "\n\n").into_owned();
-    }
-
-    // 去除首尾空白
-    cleaned.trim().to_string()
-}
-
-fn system_instruction_dedupe_key(text: &str) -> String {
-    sanitize_system_instruction_for_cache(text)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Collect system/developer text without joining. A string content is one block;
 /// a content array contributes one block per text part.
 fn collect_system_instruction_blocks(request: &OpenAIRequest) -> Vec<String> {
@@ -405,45 +325,23 @@ pub fn transform_openai_request_with_session(
     // text part becomes one Gemini systemInstruction part (Anthropic-style).
     let mut system_instructions: Vec<String> = collect_system_instruction_blocks(request);
 
-    // [CACHE:L1] 清洗 system instructions 中的动态内容（时间戳/UUID/随机ID）
-    // 确保跨请求的前缀字节一致，触发 Gemini 隐式前缀缓存命中
-    // 多层级缓存: Layer 1 缓存 sanitized 结果，跨 session 复用
-    let cm = crate::proxy::cache_manager::global_cache_manager();
-    let mut si_layer_stats = (0u64, 0u64); // (hits, misses) for logging
+    // 遵循纯透传原则：不替换日期、路径、UUID 等任何动态字段，完整保留客户端与 Agent 的真实环境感知。
+    // 仅保留通用自适应归一化：剥离基于 GPT-5 / GPT-6 等竞品模型的声明指纹，防止触发上游 Google WAF 伪限流。
     system_instructions = system_instructions
         .into_iter()
         .map(|s| {
-            // 通用自适应归一化：剥离基于 GPT-5 / GPT-6 等竞品模型的声明指纹，防止触发上游 WAF 伪限流
-            let s = if s.contains("Codex") && s.contains("based on") {
+            if s.contains("Codex") && s.contains("based on") {
                 RE_CODEX_IDENTITY.replace_all(&s, "$1$2").into_owned()
             } else {
                 s
-            };
-            let raw_key = crate::proxy::cache_manager::CacheManager::compute_si_key(&s);
-            if let Some(cached) = cm.lookup_si(&raw_key) {
-                si_layer_stats.0 += 1;
-                cached
-            } else {
-                si_layer_stats.1 += 1;
-                let sanitized = sanitize_system_instruction_for_cache(&s);
-                cm.cache_si(raw_key, sanitized.clone());
-                sanitized
             }
         })
         .collect();
     let mut seen_system_instruction_keys = std::collections::HashSet::new();
     system_instructions.retain(|inst| {
-        let key = system_instruction_dedupe_key(inst);
-        !key.is_empty() && seen_system_instruction_keys.insert(key)
+        let key = inst.trim();
+        !key.is_empty() && seen_system_instruction_keys.insert(key.to_string())
     });
-    if si_layer_stats.0 > 0 || si_layer_stats.1 > 0 {
-        tracing::debug!(
-            "[Cache-Opt:L1-SI] hits={} misses={} total={}",
-            si_layer_stats.0,
-            si_layer_stats.1,
-            si_layer_stats.0 + si_layer_stats.1
-        );
-    }
 
     // Pre-scan to map tool_call_id to function name (for Codex)
     let mut tool_id_to_name = std::collections::HashMap::new();
@@ -1263,7 +1161,7 @@ pub fn transform_openai_request_with_session(
         let raw_json = serde_json::to_string(original_tools).unwrap_or_default();
         if !raw_json.is_empty() {
             let key = crate::proxy::cache_manager::CacheManager::compute_tools_key(&format!(
-                "apply_patch_input_schema_v2:{raw_json}"
+                "pure_tools_v3:{raw_json}"
             ));
             let cm = crate::proxy::cache_manager::global_cache_manager();
             if let Some(cached_json) = cm.lookup_tools(&key) {
@@ -1327,12 +1225,6 @@ pub fn transform_openai_request_with_session(
                     {
                         continue;
                     }
-
-                    if name == "local_shell_call" {
-                        if let Some(obj) = gemini_func.as_object_mut() {
-                            obj.insert("name".to_string(), json!("shell"));
-                        }
-                    }
                 } else {
                     // [FIX] 如果工具没有名称，视为无效工具直接跳过 (防止 REQUIRED_FIELD_MISSING)
                     tracing::warn!(
@@ -1357,50 +1249,9 @@ pub fn transform_openai_request_with_session(
                     *obj = clean_obj;
                 }
 
-                let is_shell_tool = gemini_func
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(super::response::is_shell_or_terminal_tool)
-                    .unwrap_or(false);
-
-                if gemini_func.get("name").and_then(|v| v.as_str()) == Some("apply_patch") {
-                    gemini_func.as_object_mut().unwrap().insert(
-                        "parameters".to_string(),
-                        json!({
-                            "type": "OBJECT",
-                            "properties": {
-                                "input": {
-                                    "type": "STRING",
-                                    "description": "The exact freeform V4A patch text to pass to Codex apply_patch. It must start with *** Begin Patch and end with *** End Patch. Do not wrap it in a shell command or command array."
-                                }
-                            },
-                            "required": ["input"]
-                        }),
-                    );
-                } else if let Some(params) = gemini_func.get_mut("parameters") {
+                if let Some(params) = gemini_func.get_mut("parameters") {
                     // [DEEP FIX] 统一调用公共库清洗：展开 $ref 并剔除所有层级的 format/definitions
                     crate::proxy::common::json_schema::clean_json_schema(params);
-
-                    // [FIX] 针对 Shell / Terminal 类工具（如 run_command, bash, powershell, cmd 等）：
-                    // 彻底从 parameters.properties 中剔除 `description` 参数字段！
-                    // 谷歌 Gemini 上游极易产生字段语义混淆，误将人类意图输出到参数中的 description 字段，
-                    // 从而把真正的 command 字段漏掉。从源头剔除 description 字段，强迫模型只能把命令填入 command 字段。
-                    if is_shell_tool {
-                        if let Some(params_obj) = params.as_object_mut() {
-                            if let Some(props) = params_obj
-                                .get_mut("properties")
-                                .and_then(|p| p.as_object_mut())
-                            {
-                                props.remove("description");
-                            }
-                            if let Some(req_arr) = params_obj
-                                .get_mut("required")
-                                .and_then(|r| r.as_array_mut())
-                            {
-                                req_arr.retain(|v| v.as_str() != Some("description"));
-                            }
-                        }
-                    }
 
                     // Gemini v1internal 要求：
                     // 1. type 必须是大写 (OBJECT, STRING 等)
@@ -1418,13 +1269,7 @@ pub fn transform_openai_request_with_session(
                         "parameters".to_string(),
                         json!({
                             "type": "OBJECT",
-                            "properties": {
-                                "content": {
-                                    "type": "STRING",
-                                    "description": "The raw content or patch to be applied"
-                                }
-                            },
-                            "required": ["content"]
+                            "properties": {}
                         }),
                     );
                 }

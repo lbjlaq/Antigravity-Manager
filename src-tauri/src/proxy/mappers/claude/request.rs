@@ -3,7 +3,6 @@
 
 use super::models::*;
 use crate::proxy::mappers::signature_store::get_thought_signature; // Deprecated, kept for fallback
-use crate::proxy::mappers::tool_result_compressor;
 use crate::proxy::session_manager::SessionManager;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -1445,18 +1444,10 @@ fn build_contents(
                             .cloned()
                             .unwrap_or_else(|| tool_use_id.clone());
 
-                        // [FIX #593] 工具输出压缩: 处理超大工具输出
-                        // 使用智能压缩策略(浏览器快照、大文件提示等)
-                        let mut compacted_content = content.clone();
-                        if let Some(blocks) = compacted_content.as_array_mut() {
-                            tool_result_compressor::sanitize_tool_result_blocks(blocks);
-                        }
-
-                        // Smart Truncation: No longer stripping images from Tool Results
                         // Tool results should pass transparency. If images are present, map them to inlineData.
                         let mut extra_parts = Vec::new();
 
-                        let mut merged_content = match &compacted_content {
+                        let mut merged_content = match content {
                             serde_json::Value::String(s) => s.clone(),
                             serde_json::Value::Array(arr) => {
                                 let mut texts = Vec::new();
@@ -1880,24 +1871,6 @@ fn build_tools(
                     "properties": {}
                 }));
                 crate::proxy::common::json_schema::clean_json_schema(&mut input_schema);
-
-                // [FIX] 针对 Shell / Terminal 类工具彻底从 parameters.properties 中剔除 description 字段
-                if crate::proxy::mappers::openai::response::is_shell_or_terminal_tool(name) {
-                    if let Some(params_obj) = input_schema.as_object_mut() {
-                        if let Some(props) = params_obj
-                            .get_mut("properties")
-                            .and_then(|p| p.as_object_mut())
-                        {
-                            props.remove("description");
-                        }
-                        if let Some(req_arr) = params_obj
-                            .get_mut("required")
-                            .and_then(|r| r.as_array_mut())
-                        {
-                            req_arr.retain(|v| v.as_str() != Some("description"));
-                        }
-                    }
-                }
 
                 function_declarations.push(json!({
                     "name": name,
