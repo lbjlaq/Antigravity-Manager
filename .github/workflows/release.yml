@@ -166,10 +166,21 @@ jobs:
         run: |
           VERSION="${{ github.ref_name }}"
           echo "Extracting release notes for version $VERSION"
+          # 版本串按字面匹配 (index 比较，正则元字符不参与解释)，且要求其后紧跟空白，
+          # 确保与 CHANGELOG 标题逐字符对齐，避免 v4.7.14 命中 v4.7.14-beta 等同基线条目。
           awk -v ver="$VERSION" '
-            BEGIN { capture=0 }
-            $0 ~ "^[[:space:]]*[*+-][[:space:]]+\\*\\*" ver { capture=1; next }
-            capture && $0 ~ "^[[:space:]]*[*+-][[:space:]]+\\*\\*v" { capture=0; exit }
+            BEGIN { capture = 0; needle = "**" ver }
+            {
+              if (capture && $0 ~ /^[[:space:]]*[*+-][[:space:]]+\*\*v/) exit
+              if (!capture && $0 ~ /^[[:space:]]*[*+-][[:space:]]+\*\*/) {
+                title = $0
+                sub(/^[[:space:]]*[*+-][[:space:]]+/, "", title)
+                if (index(title, needle) == 1) {
+                  sep = substr(title, length(needle) + 1, 1)
+                  if (sep == " " || sep == "\t") { capture = 1; next }
+                }
+              }
+            }
             capture { print }
           ' CHANGELOG.md | sed 's/^[[:space:]]\{8\}//' > release_notes.md
           if [ ! -s release_notes.md ]; then
@@ -272,6 +283,20 @@ jobs:
           done
           find release-files -maxdepth 1 -type f -print
 
+      # 判定预发布标签 (SemVer 2.0 pre-release: vX.Y.Z-beta.N / -cleaned / -alpha / -rc)
+      # 含 '-' 即视为预发布，避免预发布版本被标记为 Latest 并经由 /releases/latest/updater.json 推送给正式用户
+      - name: Detect prerelease tag
+        id: prerelease
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ "$TAG" == *-* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Detected pre-release tag: $TAG"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Detected stable tag: $TAG"
+          fi
+
       # 使用 ncipollo/release-action 进行统一发布，支持稳健覆盖
       - name: Create or Update GitHub Release
         uses: ncipollo/release-action@v1
@@ -285,7 +310,8 @@ jobs:
           artifacts: "release-files/*,updater.json"
           artifactErrorsFailBuild: false
           replacesArtifacts: true
-          makeLatest: legacy
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          makeLatest: ${{ steps.prerelease.outputs.is_prerelease == 'true' && 'false' || 'legacy' }}
 
   docker-build-amd64:
     runs-on: ubuntu-latest

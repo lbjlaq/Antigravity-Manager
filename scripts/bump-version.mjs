@@ -8,10 +8,12 @@
  *   npm run bump minor                 # 自动自增次版本号 (例如 4.7.13 -> 4.8.0)
  *   npm run bump major                 # 自动自增主版本号 (例如 4.7.13 -> 5.0.0)
  *   npm run bump beta                  # 自动生成或自增 Beta 预发版 (例如 4.7.13 -> 4.7.14-beta.1)
- *   npm run bump 4.7.13-beta           # 发布测试/预发布双版本 (支持 -beta, -cleaned 等)
- *   npm run bump 4.7.13-cleaned        # 发布特定衍生/优化双版本
+ *   npm run bump 4.7.14-beta           # 发布测试/预发布双版本 (支持 -beta, -cleaned 等)
+ *   npm run bump 4.7.14-cleaned        # 发布特定衍生/优化双版本
  *   npm run bump patch --dry-run       # 模拟演练模式，仅检查和输出 diff，不实际写磁盘
  *   npm run bump patch --commit        # 自动生成标准提交 `chore(release): bump version to ...`
+ *
+ * 注: 版本号含预发布标签 (SemVer 2.0, Tag 含 '-') 时，README 标题与徽章保持最新正式版不变。
  */
 
 import fs from 'node:fs';
@@ -143,6 +145,10 @@ const newVersion = nextSem.prerelease
     ? `${nextSem.major}.${nextSem.minor}.${nextSem.patch}-${nextSem.prerelease}`
     : `${nextSem.major}.${nextSem.minor}.${nextSem.patch}`;
 
+// 预发布 / 衍生版本（SemVer 2.0 预发布语义，Tag 含 '-'）仅在 CHANGELOG 留痕。
+// README 始终只反映最新正式版，详见 AGENTS.md -> Release Discipline。
+const isPrerelease = Boolean(nextSem.prerelease);
+
 // 4. 防呆校验逻辑 (支持双版本发布与预发布转正)
 function validateVersionUpgrade(next, cur) {
     if (next.raw === cur.raw) {
@@ -236,6 +242,7 @@ const TARGET_FILES = [
     {
         name: 'README.md (标题与徽章)',
         relPath: 'README.md',
+        stableOnly: true,
         replace: (content) => content
             .replace(`(v${currentVersion})`, `(v${newVersion})`)
             .replace(`Version-${currentVersion}-blue`, `Version-${newVersion}-blue`),
@@ -243,6 +250,7 @@ const TARGET_FILES = [
     {
         name: 'README_EN.md (标题与徽章)',
         relPath: 'README_EN.md',
+        stableOnly: true,
         replace: (content) => content
             .replace(`(v${currentVersion})`, `(v${newVersion})`)
             .replace(`Version-${currentVersion}-blue`, `Version-${newVersion}-blue`),
@@ -264,7 +272,7 @@ const TARGET_FILES = [
         ),
     },
     {
-        name: 'CHANGELOG.md (自动插入新版本与贡献者致谢骨架)',
+        name: 'CHANGELOG.md (自动插入新版本骨架)',
         relPath: 'CHANGELOG.md',
         replace: (content) => {
             if (content.includes(`v${newVersion}`)) {
@@ -275,12 +283,12 @@ const TARGET_FILES = [
                 return content;
             }
             const eol = content.includes('\r\n') ? '\r\n' : '\n';
-            const newBlock = `*   **版本演进**:${eol}    *   **v${newVersion} (${today})**:${eol}        -   **[更新分类] 核心更新标题 (PR #xxx)**:${eol}            -   **功能详述**: 详细说明请在此处补充。${eol}        -   **🤝 v${newVersion} 核心贡献者致谢 (Contributors)**:${eol}            -   特别感谢以下贡献者对 v${newVersion} 版本的研发与技术贡献:${eol}                *   @jeikl (主导本次版本核心架构)${eol}                *   @JeikCode (全流程 AI 协同架构与代码实现, Co-authored)${eol}                *   @contributor (PR #xxx: 贡献详述)${eol}`;
+            const newBlock = `*   **版本演进**:${eol}    *   **v${newVersion} (${today})**:${eol}        -   **[更新分类] 核心更新标题 (PR #xxx)**:${eol}            -   **功能详述**: 详细说明请在此处补充；涉及外部贡献者时以行内 \`(Thanks to @username)\` 标注。${eol}`;
             return content.replace(anchor, newBlock);
         },
     },
     {
-        name: 'CHANGELOG_EN.md (自动插入英文版本与致谢骨架)',
+        name: 'CHANGELOG_EN.md (自动插入英文版本骨架)',
         relPath: 'CHANGELOG_EN.md',
         replace: (content) => {
             if (content.includes(`v${newVersion}`)) {
@@ -291,7 +299,7 @@ const TARGET_FILES = [
                 return content;
             }
             const eol = content.includes('\r\n') ? '\r\n' : '\n';
-            const newBlock = `*   **Version History**:${eol}    *   **v${newVersion} (${today})**:${eol}        -   **[Feature Category] Main Update Summary (PR #xxx)**:${eol}            -   **Description**: Please document update details here.${eol}        -   **🤝 v${newVersion} Core Contributors & Acknowledgements**:${eol}            -   Special thanks to the following contributors for this release:${eol}                *   @jeikl (Lead Architect)${eol}                *   @JeikCode (AI Architecture & Implementation, Co-authored)${eol}                *   @contributor (PR #xxx: Contribution details)${eol}`;
+            const newBlock = `*   **Version History**:${eol}    *   **v${newVersion} (${today})**:${eol}        -   **[Feature Category] Main Update Summary (PR #xxx)**:${eol}            -   **Description**: Please document update details here; credit external contributors inline as \`(Thanks to @username)\`.${eol}`;
             return content.replace(anchor, newBlock);
         },
     },
@@ -301,6 +309,11 @@ const TARGET_FILES = [
 let updatedCount = 0;
 
 for (const target of TARGET_FILES) {
+    if (target.stableOnly && isPrerelease) {
+        log(`预发布版本 ${newVersion} 不写入 ${target.relPath} (README 仅反映最新正式版)。`);
+        continue;
+    }
+
     const fullPath = path.join(ROOT_DIR, target.relPath);
     if (!fs.existsSync(fullPath)) {
         warn(`未找到目标文件 ${target.relPath}，已自动跳过。`);
@@ -355,7 +368,7 @@ if (!isDryRun && autoCommit) {
 console.log(`
 ${colors.bold}${colors.green}🎉 版本号已全部成功升级到 v${newVersion}！${colors.reset}
 后续发版三步走提示:
-  1. 在 ${colors.cyan}CHANGELOG.md${colors.reset} 补充本次发版的核心更新内容与致谢
+  1. 在 ${colors.cyan}CHANGELOG.md${colors.reset} 补充本次发版的核心更新内容（外部贡献者以行内 (Thanks to @username) 标注）
   2. 提交发版准备: ${colors.cyan}git commit -am "chore(release): bump version to ${newVersion} and update changelog"${colors.reset}
   3. 推送主干与标签: ${colors.cyan}git push origin main && git tag v${newVersion} && git push origin v${newVersion}${colors.reset}
 `);

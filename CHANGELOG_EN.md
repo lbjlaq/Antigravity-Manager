@@ -3,6 +3,18 @@
 > Complete version history for Antigravity Tools. Return to project home at [README_EN.md](README_EN.md).
 
 *   **Version History**:
+    *   **v4.7.14-beta (2026-09-22)**:
+        -   **[Full-Protocol Tool & Argument 100% Pure Passthrough] Eliminate Agent-Client Tool Call Failures Caused by Legacy Truncation and Opaque Rewriting (PR #3504)**:
+            -   **Lossless Tool & Argument Egress**: Removed tool-name mapping, argument alias rewriting, and erroneous command injection across the OpenAI, Anthropic Claude, and Google Gemini adapters, so tool names and arguments reach the upstream with the client's original semantics intact — resolving the erratic tool call errors reported by OpenClaw and other agent clients due to legacy truncation and rewriting.
+            -   **Zero-Intrusion Tool Descriptions**: Removed write-based injection into `description` during tool schema validation; description fields now pass through 100% unmodified.
+            -   **Uncompressed Tool Results**: Removed the tool output compressor and patch error folding, so tool execution results are returned verbatim and in full.
+            -   **System Instruction Absolute Freeze**: Removed aggressive regex freezing of dates, timezones, working paths, and UUIDs in the System Prompt; mid-stream dynamic messages are now faithfully demoted into user turns via `<system-reminder>`.
+            -   **Security Guardrails Preserved**: Retained Codex identity normalization and high-risk pseudo-header stripping, so WAF mitigation remains intact.
+            -   **Dead Code Excised**: Removed the unreferenced `ToolAdapter` / `PencilAdapter` architecture and 700+ lines of `apply_patch` diagnostics, netting 3,300+ lines of redundant code.
+        -   **[Release & CI Discipline Codified] End-to-End Safe Pre-release Pipeline (PR #3504)**:
+            -   **Automatic Pre-release Isolation**: `release.yml` now detects pre-release tags; any tag containing `-` (`-beta` / `-cleaned` / `-alpha` / `-rc`) is marked as a Pre-release and excluded from Latest, so pre-release builds are never delivered to stable users via `releases/latest/download/updater.json`.
+            -   **CI Gates & Release Pre-flight**: `AGENTS.md` now documents the CI-parity pre-flight command list and the pre-tag check requirement; `docs/RELEASE_GUIDE.md` was condensed and extended with pre-release and branch-tagging guidance.
+
     *   **v4.7.13 (2026-09-22)**:
         -   **[Support "Lightweight Mode" for Minimized Background RAM Footprint] Destroy & Release WebView Renderer on Close/Minimize to Tray (Fixes #3502)**:
             -   **On-Demand Destruction & Drastic RAM Reduction**: Supports explicitly destroying the webview rendering process upon closing or minimizing to the tray (`enter_lightweight_mode`), while core Rust services (reverse proxy gateway, 7-day smart warmup, quota monitor, circuit breaker) remain 100% active in Tokio runtime. Background RAM drops from ~160MB-250MB down to ~30MB-35MB.
