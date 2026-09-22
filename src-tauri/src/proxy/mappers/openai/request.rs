@@ -180,6 +180,15 @@ static RE_CODEX_IDENTITY: once_cell::sync::Lazy<regex::Regex> = once_cell::sync:
     regex::Regex::new(r"(?i)(You are Codex,\s+[^.]+?)\s+based on\s+[^.]+(\.?)").unwrap()
 });
 
+/// 通用厂商归属指纹归一化正则：剥离 "<…> AI assistant/agent created by <厂商>." 中的厂商归属声明。
+/// 与 RE_CODEX_IDENTITY 属同一类上游伪限流诱因：触发上游拒绝的是身份归属声明（而非模型能力），
+/// 网关若原样透传，该请求会在每个账号上都被拒，并被误记为账号限流进而波及整池。
+/// 已用 Hermes (Nous Research) 客户端实测复现与验证（去掉归属声明后立即恢复正常）。
+static RE_VENDOR_IDENTITY: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+    regex::Regex::new(r"(?i)(\bAI\s+(?:assistant|agent|coding agent)\b)\s+created by\s+[^.]+(\.?)")
+        .unwrap()
+});
+
 pub fn transform_openai_request_with_session(
     request: &OpenAIRequest,
     project_id: &str,
@@ -326,12 +335,17 @@ pub fn transform_openai_request_with_session(
     let mut system_instructions: Vec<String> = collect_system_instruction_blocks(request);
 
     // 遵循纯透传原则：不替换日期、路径、UUID 等任何动态字段，完整保留客户端与 Agent 的真实环境感知。
-    // 仅保留通用自适应归一化：剥离基于 GPT-5 / GPT-6 等竞品模型的声明指纹，防止触发上游 Google WAF 伪限流。
+    // 仅保留通用自适应归一化：剥离基于竞品模型的声明指纹与厂商归属声明，防止触发上游 Google WAF 伪限流。
     system_instructions = system_instructions
         .into_iter()
         .map(|s| {
-            if s.contains("Codex") && s.contains("based on") {
+            let s = if s.contains("Codex") && s.contains("based on") {
                 RE_CODEX_IDENTITY.replace_all(&s, "$1$2").into_owned()
+            } else {
+                s
+            };
+            if s.contains("created by") {
+                RE_VENDOR_IDENTITY.replace_all(&s, "$1$2").into_owned()
             } else {
                 s
             }
@@ -1574,6 +1588,14 @@ mod tests {
             (
                 "You are Codex, an advanced coding agent based on GPT-6.",
                 "You are Codex, an advanced coding agent.",
+            ),
+            (
+                "You are Hermes Agent, an intelligent AI assistant created by Nous Research.",
+                "You are Hermes Agent, an intelligent AI assistant.",
+            ),
+            (
+                "You are an AI agent created by Example Corp.",
+                "You are an AI agent.",
             ),
         ] {
             let req: OpenAIRequest = serde_json::from_value(json!({
