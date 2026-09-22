@@ -1674,6 +1674,8 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    use serde_json::json;
+
     fn tmp_file(name: &str, content: &str) -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(name);

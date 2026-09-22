@@ -88,6 +88,7 @@ pub(crate) mod prompt_log_tests {
             stats: RwLock::new(ProxyStats::default()),
             max_logs: 2,
             enabled: Arc::new(AtomicBool::new(true)),
+            capture_health_logs: Arc::new(AtomicBool::new(false)),
             app_handle: None,
         };
         let log = sample_log("detail", 4096);
