@@ -417,7 +417,11 @@
       "auto_check_update_disabled": "Semakan automatik dinyahaktifkan",
       "update_check_interval": "Selang Semakan (jam)",
       "update_check_interval_desc": "Tetapkan selang semakan automatik (1-168 jam)",
-      "update_check_interval_saved": "Tetapan selang semakan disimpan"
+      "update_check_interval_saved": "Tetapan selang semakan disimpan",
+      "lightweight_mode": "Mod Ringan (Lepaskan Memori)",
+      "lightweight_mode_desc": "Tamatkan proses paparan WebView apabila diminimumkan ke dulang sistem untuk mengurangkan memori ke ~35MB. Membuka semula tetingkap memerlukan beberapa milisaat.",
+      "lightweight_mode_enabled": "Mod ringan didayakan",
+      "lightweight_mode_disabled": "Mod ringan dilumpuhkan"
     },
     "account": {
       "title": "Tetapan Akaun",
@@ -704,7 +708,8 @@
     "quit": "Keluar Aplikasi",
     "no_account": "Tiada Akaun",
     "unknown_quota": "Tidak diketahui (Klik untuk Muat Semula)",
-    "forbidden": "Akaun Dilarang"
+    "forbidden": "Akaun Dilarang",
+    "lightweight_mode": "Mod Ringan (Lepaskan memori semasa di dulang)"
   },
   "proxy": {
     "title": "Perkhidmatan Proksi API",

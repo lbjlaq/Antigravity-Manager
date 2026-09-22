@@ -58,6 +58,20 @@ fn extract_boundary(content_type: &str) -> Option<String> {
     })
 }
 
+fn is_health_check_path(path: &str) -> bool {
+    let clean_path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
+    clean_path == "/health" || clean_path == "/healthz" || clean_path == "/api/health"
+}
+
+fn should_log_health_checks() -> bool {
+    std::env::var("ABV_LOG_HEALTH_CHECKS")
+        .map(|val| {
+            let v = val.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        })
+        .unwrap_or(false)
+}
+
 fn find_subslice(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
     if needle.is_empty() || start >= haystack.len() {
         return None;
@@ -685,15 +699,6 @@ pub async fn monitor_middleware(
         return next.run(request).await;
     }
 
-    // [HEALTH-CHECK LOGGING FILTER]
-    // 默认关闭捕获健康检查日志：对 GET /health /healthz 请求全部过滤且不入库，只捕获非 GET 请求；
-    // 只有当用户在面板明确开启 capture_health_logs 时才记录并落库。
-    let path = request.uri().path();
-    let is_health_check = path == "/health" || path == "/healthz" || path == "/api/health";
-    if is_health_check && method == "GET" && !state.monitor.is_capture_health_logs() {
-        return next.run(request).await;
-    }
-
     let start = Instant::now();
 
     // Extract client IP from headers (X-Forwarded-For or X-Real-IP)
@@ -801,6 +806,19 @@ pub async fn monitor_middleware(
 
     let duration = start.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
+
+    // 过滤健康检查请求，避免每 30 秒探针刷屏淹没真实业务日志 (Issue #3498)
+    // 1. 默认仅过滤成功的 GET 健康检查 (2xx)，非 GET 请求或异常状态 (如 503) 依然记录以供排障；
+    // 2. 联动面板胶囊开关 (capture_health_logs) 与环境变量 (ABV_LOG_HEALTH_CHECKS)。
+    let capture_health_enabled =
+        state.monitor.is_capture_health_logs() || should_log_health_checks();
+    if is_health_check_path(&uri)
+        && method == "GET"
+        && response.status().is_success()
+        && !capture_health_enabled
+    {
+        return response;
+    }
 
     let content_type = response
         .headers()
@@ -1704,5 +1722,21 @@ mod tests {
         assert_eq!(super::extract_input_tokens(&usage), Some(10000));
         assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
         assert_eq!(super::extract_output_tokens(&usage), Some(150));
+    }
+
+    #[test]
+    fn test_is_health_check_path() {
+        assert!(super::is_health_check_path("/health"));
+        assert!(super::is_health_check_path("/health/"));
+        assert!(super::is_health_check_path("/healthz"));
+        assert!(super::is_health_check_path("/healthz/"));
+        assert!(super::is_health_check_path("/api/health"));
+        assert!(super::is_health_check_path("/health?probe=k8s"));
+        assert!(super::is_health_check_path("/healthz?t=123"));
+
+        assert!(!super::is_health_check_path("/v1/chat/completions"));
+        assert!(!super::is_health_check_path("/v1/models"));
+        assert!(!super::is_health_check_path("/api/accounts"));
+        assert!(!super::is_health_check_path("/healthy"));
     }
 }

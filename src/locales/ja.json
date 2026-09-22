@@ -419,7 +419,11 @@
       "auto_check_update_disabled": "自動確認は無効です",
       "update_check_interval": "確認間隔（時間）",
       "update_check_interval_desc": "自動確認の間隔を設定します（1-168時間）",
-      "update_check_interval_saved": "確認間隔の設定を保存しました"
+      "update_check_interval_saved": "確認間隔の設定を保存しました",
+      "lightweight_mode": "軽量モード (メモリ解放)",
+      "lightweight_mode_desc": "トレイに最小化または終了する際にWebView描画プロセスを破棄し、常駐メモリを約35MBまで削減します。再表示時にわずかな再構築時間を要します。",
+      "lightweight_mode_enabled": "軽量モードを有効にしました",
+      "lightweight_mode_disabled": "軽量モードを無効にしました"
     },
     "account": {
       "title": "アカウント設定",
@@ -710,7 +714,8 @@
     "quit": "アプリを終了",
     "no_account": "アカウントなし",
     "unknown_quota": "不明 (クリックして更新)",
-    "forbidden": "アカウント使用不可"
+    "forbidden": "アカウント使用不可",
+    "lightweight_mode": "軽量モード (トレイ時にメモリ解放)"
   },
   "proxy": {
     "title": "APIプロキシサービス",

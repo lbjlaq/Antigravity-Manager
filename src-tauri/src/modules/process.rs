@@ -66,19 +66,47 @@ pub fn is_process_running_by_name(target_name: &str) -> bool {
 
 /// Helper process discriminator to filter out sub-processes, audio/gpu/renderers, crashpads, and language servers
 pub(crate) fn is_helper_process(name: &str, args_str: &str, exe_path: &str) -> bool {
-    args_str.contains("--type=")
-        || name.contains("helper")
-        || name.contains("plugin")
-        || name.contains("renderer")
-        || name.contains("gpu")
-        || name.contains("crashpad")
-        || name.contains("utility")
-        || name.contains("audio")
-        || name.contains("sandbox")
-        || name.contains("language_server")
-        || args_str.contains("language_server")
-        || exe_path.contains("crashpad")
-        || exe_path.contains("helper")
+    let name_lower = name.to_lowercase();
+    let args_lower = args_str.to_lowercase();
+    let exe_lower = exe_path.to_lowercase();
+
+    args_lower.contains("--type=")
+        || args_lower.contains("node-ipc")
+        || args_lower.contains("nodeipc")
+        || args_lower.contains("max-old-space-size")
+        || args_lower.contains("node_modules")
+        || args_lower.contains("--standalone")
+        || args_lower.contains("--subclient_type")
+        || args_lower.contains("--override_ide_name")
+        || name_lower.contains("helper")
+        || name_lower.contains("plugin")
+        || name_lower.contains("renderer")
+        || name_lower.contains("gpu")
+        || name_lower.contains("crashpad")
+        || name_lower.contains("utility")
+        || name_lower.contains("audio")
+        || name_lower.contains("sandbox")
+        || name_lower.contains("language_server")
+        || args_lower.contains("language_server")
+        || exe_lower.contains("crashpad")
+        || exe_lower.contains("helper")
+        || exe_lower.contains("language_server")
+}
+
+/// Sanitize restart arguments to prevent internal engine/language_server arguments
+/// (such as --standalone or --override_ide_name) from leaking into IDE relaunch commands.
+pub(crate) fn sanitize_restart_args(args: &[String]) -> Vec<String> {
+    args.iter()
+        .filter(|arg| {
+            let lower = arg.trim().to_lowercase();
+            !lower.is_empty()
+                && !lower.starts_with("--standalone")
+                && !lower.starts_with("--override_ide_name")
+                && !lower.starts_with("--subclient_type")
+                && !lower.contains("language_server")
+        })
+        .cloned()
+        .collect()
 }
 
 /// Check if Antigravity is running
@@ -873,9 +901,10 @@ pub fn start_antigravity_with_fallback_path(
             .as_ref()
             .and_then(|c| c.antigravity_executable.clone())
     };
-    let args = config
+    let raw_args = config
         .and_then(|c| c.antigravity_args.clone())
         .or_else(|| preferred_args.map(|a| a.to_vec()));
+    let args = raw_args.map(|a| sanitize_restart_args(&a));
 
     if let Some(mut path_str) = manual_path {
         let mut path = std::path::PathBuf::from(&path_str);
@@ -909,10 +938,15 @@ pub fn start_antigravity_with_fallback_path(
                     let mut cmd = Command::new("open");
                     cmd.arg("-a").arg(&path_str);
 
-                    // Add startup arguments
+                    // Add startup arguments (must be after --args for macOS open)
                     if let Some(ref args) = args {
-                        for arg in args {
-                            cmd.arg(arg);
+                        let valid_args: Vec<_> =
+                            args.iter().filter(|a| !a.trim().is_empty()).collect();
+                        if !valid_args.is_empty() {
+                            cmd.arg("--args");
+                            for arg in valid_args {
+                                cmd.arg(arg);
+                            }
                         }
                     }
 
@@ -985,8 +1019,12 @@ pub fn start_antigravity_with_fallback_path(
                     cmd.arg("-a").arg(&*path_str);
                 }
                 if let Some(ref args) = args {
-                    for arg in args {
-                        cmd.arg(arg);
+                    let valid_args: Vec<_> = args.iter().filter(|a| !a.trim().is_empty()).collect();
+                    if !valid_args.is_empty() {
+                        cmd.arg("--args");
+                        for arg in valid_args {
+                            cmd.arg(arg);
+                        }
                     }
                 }
                 let output = cmd
@@ -1044,10 +1082,14 @@ pub fn start_antigravity_with_fallback_path(
         };
         cmd.args(["-a", app_name]);
 
-        // Add startup arguments
+        // Add startup arguments (must be after --args for macOS open)
         if let Some(ref args) = args {
-            for arg in args {
-                cmd.arg(arg);
+            let valid_args: Vec<_> = args.iter().filter(|a| !a.trim().is_empty()).collect();
+            if !valid_args.is_empty() {
+                cmd.arg("--args");
+                for arg in valid_args {
+                    cmd.arg(arg);
+                }
             }
         }
 
@@ -1142,24 +1184,13 @@ fn get_process_info(target_ide: Option<&str>) -> (Option<std::path::PathBuf>, Op
 
             let args_str = args.join(" ");
 
-            // Common helper process exclusion logic
-            let is_helper = args_str.contains("--type=")
-                || args_str.contains("node-ipc")
-                || args_str.contains("nodeipc")
-                || args_str.contains("max-old-space-size")
-                || args_str.contains("node_modules")
-                || name.contains("helper")
-                || name.contains("plugin")
-                || name.contains("renderer")
-                || name.contains("gpu")
-                || name.contains("crashpad")
-                || name.contains("utility")
-                || name.contains("audio")
-                || name.contains("sandbox")
-                || exe_path.contains("crashpad");
+            // Common helper process exclusion logic (strictly excludes language_server and sub-processes)
+            let is_helper = is_helper_process(&name, &args_str, &exe_path);
 
+            // Sanitize snapshot arguments to prevent engine parameters like --standalone from leaking into relaunch
+            let clean_args = sanitize_restart_args(&args);
             let path = Some(exe.to_path_buf());
-            let args = Some(args);
+            let args = Some(clean_args);
 
             // Is the process a match for target_ide?
             let is_ide_match = if target_ide == Some("ide") {
@@ -1455,4 +1486,71 @@ pub fn get_antigravity_cli_executable_path() -> Option<std::path::PathBuf> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_helper_process_detection() {
+        // Normal main processes
+        assert!(!is_helper_process(
+            "Antigravity",
+            "/Applications/Antigravity.app/Contents/MacOS/Antigravity",
+            "/Applications/Antigravity.app/Contents/MacOS/Antigravity"
+        ));
+        assert!(!is_helper_process(
+            "Antigravity.exe",
+            "C:\\Program Files\\Antigravity\\Antigravity.exe",
+            "C:\\Program Files\\Antigravity\\Antigravity.exe"
+        ));
+
+        // Language server / engine processes (must be detected as helper)
+        assert!(is_helper_process(
+            "language_server",
+            "--standalone --override_ide_name antigravity --subclient_type hub",
+            "/Applications/Antigravity.app/Contents/Resources/bin/language_server"
+        ));
+        assert!(is_helper_process(
+            "language_server.exe",
+            "--standalone",
+            "C:\\Antigravity\\resources\\bin\\language_server.exe"
+        ));
+        assert!(is_helper_process(
+            "Antigravity",
+            "--type=utility --utility-sub-type=audio.mojom.AudioService",
+            "/Applications/Antigravity.app/Contents/Frameworks/Antigravity Helper.app/Contents/MacOS/Antigravity Helper"
+        ));
+        assert!(is_helper_process(
+            "Antigravity",
+            "--type=renderer",
+            "/Applications/Antigravity.app/Contents/Frameworks/Antigravity Helper (Renderer).app"
+        ));
+        assert!(is_helper_process(
+            "crashpad_handler",
+            "",
+            "/Applications/Antigravity.app/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler"
+        ));
+    }
+
+    #[test]
+    fn test_sanitize_restart_args() {
+        let dirty_args = vec![
+            "--standalone".to_string(),
+            "--override_ide_name".to_string(),
+            "antigravity".to_string(),
+            "--subclient_type".to_string(),
+            "hub".to_string(),
+            "--user-data-dir=/tmp/test".to_string(),
+            "/path/to/project".to_string(),
+        ];
+
+        let cleaned = sanitize_restart_args(&dirty_args);
+        assert!(!cleaned.contains(&"--standalone".to_string()));
+        assert!(!cleaned.contains(&"--override_ide_name".to_string()));
+        assert!(!cleaned.contains(&"--subclient_type".to_string()));
+        assert!(cleaned.contains(&"--user-data-dir=/tmp/test".to_string()));
+        assert!(cleaned.contains(&"/path/to/project".to_string()));
+    }
 }

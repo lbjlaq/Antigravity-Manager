@@ -436,13 +436,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let _ = app.get_webview_window("main").map(|window| {
-                let _ = window.show();
-                let _ = window.set_focus();
-                #[cfg(target_os = "macos")]
-                app.set_activation_policy(tauri::ActivationPolicy::Regular)
-                    .unwrap_or(());
-            });
+            let _ = modules::lightweight::exit_lightweight_mode(app);
         }))
         .manage(commands::proxy::ProxyServiceState::new())
         .manage(commands::cloudflared::CloudflaredState::new())
@@ -580,16 +574,25 @@ pub fn run() {
                     .unwrap_or(true);
 
                 if tray_enabled {
-                    let _ = window.hide();
-                    #[cfg(target_os = "macos")]
-                    {
-                        use tauri::Manager;
-                        window
-                            .app_handle()
-                            .set_activation_policy(tauri::ActivationPolicy::Accessory)
-                            .unwrap_or(());
-                    }
                     api.prevent_close();
+
+                    let is_lightweight = modules::load_app_config()
+                        .map(|c| c.lightweight_mode)
+                        .unwrap_or(false);
+
+                    if is_lightweight {
+                        let _ = modules::lightweight::enter_lightweight_mode(window.app_handle());
+                    } else {
+                        let _ = window.hide();
+                        #[cfg(target_os = "macos")]
+                        {
+                            use tauri::Manager;
+                            window
+                                .app_handle()
+                                .set_activation_policy(tauri::ActivationPolicy::Accessory)
+                                .unwrap_or(());
+                        }
+                    }
                 }
             }
         })
@@ -777,6 +780,17 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             match event {
+                // Prevent app from exiting when window is destroyed in lightweight mode
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    let tray_enabled = app_handle
+                        .try_state::<AppRuntimeFlags>()
+                        .map(|flags| flags.tray_enabled)
+                        .unwrap_or(true);
+
+                    if tray_enabled {
+                        api.prevent_exit();
+                    }
+                }
                 // Handle app exit - cleanup background tasks and release ports
                 tauri::RunEvent::Exit => {
                     tracing::info!("Application exiting, cleaning up background tasks and releasing ports...");
@@ -814,14 +828,7 @@ pub fn run() {
                 // Handle macOS dock icon click to reopen window
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { .. } => {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.unminimize();
-                        let _ = window.set_focus();
-                        app_handle
-                            .set_activation_policy(tauri::ActivationPolicy::Regular)
-                            .unwrap_or(());
-                    }
+                    let _ = modules::lightweight::exit_lightweight_mode(app_handle);
                 }
                 _ => {}
             }

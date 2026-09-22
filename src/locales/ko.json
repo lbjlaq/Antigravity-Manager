@@ -419,7 +419,11 @@
       "auto_check_update_disabled": "자동 확인 비활성화됨",
       "update_check_interval": "확인 간격 (시간)",
       "update_check_interval_desc": "자동 확인 간격 설정 (1-168 시간)",
-      "update_check_interval_saved": "확인 간격 설정 저장됨"
+      "update_check_interval_saved": "확인 간격 설정 저장됨",
+      "lightweight_mode": "경량 모드 (메모리 해제)",
+      "lightweight_mode_desc": "트레이로 닫거나 최소화할 때 WebView 렌더링 프로세스를 종료하여 상주 메모리를 약 35MB로 줄입니다. 창을 다시 열 때 약간의 재구성 시간이 필요합니다.",
+      "lightweight_mode_enabled": "경량 모드 활성화됨",
+      "lightweight_mode_disabled": "경량 모드 비활성화됨"
     },
     "account": {
       "title": "계정 설정",
@@ -710,7 +714,8 @@
     "quit": "애플리케이션 종료",
     "no_account": "계정 없음",
     "unknown_quota": "알 수 없음 (클릭하여 새로고침)",
-    "forbidden": "계정 금지됨"
+    "forbidden": "계정 금지됨",
+    "lightweight_mode": "경량 모드 (트레이 시 메모리 해제)"
   },
   "proxy": {
     "title": "API 프록시 서비스",

@@ -41,7 +41,7 @@ function Settings() {
     const { config, loadConfig, saveConfig, updateLanguage, updateTheme } = useConfigStore();
     const { enable, disable, isEnabled } = useDebugConsole();
     const [activeTab, setActiveTab] = useState<'general' | 'account' | 'proxy' | 'advanced' | 'debug' | 'about'>('general');
-    const [appVersion, setAppVersion] = useState<string>('4.7.12');
+    const [appVersion, setAppVersion] = useState<string>('4.7.13');
     const [formData, setFormData] = useState<AppConfig>({
         language: 'zh',
         theme: 'system',
@@ -685,6 +685,29 @@ function Settings() {
                                         <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.general.update_check_interval_desc')}</p>
                                     </div>
                                 )}
+                            </>
+
+                            {/* 轻量模式 (释放内存) */}
+                            {isTauri() && (
+                                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300">
+                                    <div>
+                                        <div className="font-medium text-gray-900 dark:text-base-content">{t('settings.general.lightweight_mode')}</div>
+                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{t('settings.general.lightweight_mode_desc')}</p>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={formData.lightweight_mode ?? false}
+                                            onChange={(e) => {
+                                                const enabled = e.target.checked;
+                                                setFormData({ ...formData, lightweight_mode: enabled });
+                                            }}
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                                    </label>
+                                </div>
+                            )}
 
                                 {/* 菜单显示设置 */}
                                 <div className="border-t border-gray-200 dark:border-base-200 pt-6 mt-6">
@@ -780,7 +803,6 @@ function Settings() {
                                         {t('settings.menu.selected_items_note')}
                                     </p>
                                 </div>
-                            </>
                         </div>
                     )}
 

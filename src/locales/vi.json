@@ -419,7 +419,11 @@
       "auto_check_update_disabled": "Đã tắt tự động kiểm tra",
       "update_check_interval": "Chu kỳ kiểm tra (giờ)",
       "update_check_interval_desc": "Đặt khoảng thời gian tự động kiểm tra (1-168 giờ)",
-      "update_check_interval_saved": "Đã lưu cài đặt chu kỳ kiểm tra"
+      "update_check_interval_saved": "Đã lưu cài đặt chu kỳ kiểm tra",
+      "lightweight_mode": "Chế độ nhẹ (Giải phóng bộ nhớ)",
+      "lightweight_mode_desc": "Hủy tiến trình render WebView khi đóng hoặc thu nhỏ xuống khay hệ thống, giảm RAM xuống ~35MB. Cần vài mili-giây để dựng lại cửa sổ khi mở lại.",
+      "lightweight_mode_enabled": "Đã bật chế độ nhẹ",
+      "lightweight_mode_disabled": "Đã tắt chế độ nhẹ"
     },
     "account": {
       "title": "Cài đặt Tài khoản",
@@ -706,7 +710,8 @@
     "quit": "Thoát Ứng dụng",
     "no_account": "Không có Tài khoản",
     "unknown_quota": "Chưa rõ (Click để Làm mới)",
-    "forbidden": "Tài khoản Bị chặn (403)"
+    "forbidden": "Tài khoản Bị chặn (403)",
+    "lightweight_mode": "Chế độ nhẹ (Giải phóng RAM khi thu nhỏ)"
   },
   "proxy": {
     "title": "Dịch vụ API Proxy",

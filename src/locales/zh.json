@@ -420,7 +420,11 @@
       "auto_check_update_disabled": "已禁用自动检查更新",
       "update_check_interval": "检查间隔(小时)",
       "update_check_interval_desc": "设置自动检查更新的时间间隔(1-168 小时)",
-      "update_check_interval_saved": "已保存检查间隔设置"
+      "update_check_interval_saved": "已保存检查间隔设置",
+      "lightweight_mode": "轻量模式 (释放内存)",
+      "lightweight_mode_desc": "退出或最小化到托盘时销毁前端渲染进程，常驻内存可降至 ~35MB。重新打开主窗口时需要数毫秒重建。",
+      "lightweight_mode_enabled": "已启用轻量模式",
+      "lightweight_mode_disabled": "已禁用轻量模式"
     },
     "account": {
       "title": "账号设置",
@@ -707,7 +711,8 @@
     "quit": "退出应用 (Exit)",
     "no_account": "无账号",
     "unknown_quota": "未知 (点击刷新)",
-    "forbidden": "账号被封禁"
+    "forbidden": "账号被封禁",
+    "lightweight_mode": "轻量模式 (退出时释放内存)"
   },
   "proxy": {
     "title": "API 反代服务",

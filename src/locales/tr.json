@@ -419,7 +419,11 @@
       "auto_check_update_disabled": "Auto check disabled",
       "update_check_interval": "Check Interval (hours)",
       "update_check_interval_desc": "Set auto-check interval (1-168 hours)",
-      "update_check_interval_saved": "Check interval settings saved"
+      "update_check_interval_saved": "Check interval settings saved",
+      "lightweight_mode": "Hafif Mod (Bellek Boşaltma)",
+      "lightweight_mode_desc": "Tepsiye küçültüldüğünde veya kapatıldığında WebView işleme sürecini sonlandırarak bellek kullanımını ~35MB'a düşürür. Pencereyi yeniden açarken birkaç milisaniyelik yeniden oluşturma süresi gerekir.",
+      "lightweight_mode_enabled": "Hafif mod etkinleştirildi",
+      "lightweight_mode_disabled": "Hafif mod devre dışı bırakıldı"
     },
     "account": {
       "title": "Hesap Ayarları",
@@ -706,7 +710,8 @@
     "quit": "Uygulamadan Çık",
     "no_account": "Hesap Yok",
     "unknown_quota": "Bilinmiyor (Yenilemek için tıklayın)",
-    "forbidden": "Hesap Yasaklı"
+    "forbidden": "Hesap Yasaklı",
+    "lightweight_mode": "Hafif Mod (Tepsideyken belleği boşalt)"
   },
   "proxy": {
     "title": "API Proxy Hizmeti",

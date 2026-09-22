@@ -9,6 +9,7 @@ pub mod device;
 pub mod http_api;
 pub mod i18n;
 pub mod integration;
+pub mod lightweight;
 pub mod log_bridge;
 pub mod logger;
 pub mod migration;

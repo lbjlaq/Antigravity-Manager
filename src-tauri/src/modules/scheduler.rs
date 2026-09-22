@@ -64,6 +64,31 @@ fn parse_reset_time_ts(s: &str) -> Option<i64> {
     None
 }
 
+/// Select a model to ping for a given group, honoring user's monitored_models preference if available
+fn pick_model_for_group(group_name: &str, bucket_id: &str, monitored_models: &[String]) -> String {
+    let is_3p = bucket_id.to_lowercase().contains("3p")
+        || group_name.to_lowercase().contains("claude")
+        || group_name.to_lowercase().contains("gpt");
+
+    if is_3p {
+        if let Some(m) = monitored_models.iter().find(|m| {
+            let l = m.to_lowercase();
+            l.contains("claude") || l.contains("gpt")
+        }) {
+            return m.clone();
+        }
+        "claude-sonnet-4-6".to_string()
+    } else {
+        if let Some(m) = monitored_models.iter().find(|m| {
+            let l = m.to_lowercase();
+            l.contains("gemini")
+        }) {
+            return m.clone();
+        }
+        "gemini-3-flash".to_string()
+    }
+}
+
 /// Start smart weekly scheduler
 pub fn start_scheduler(
     app_handle: Option<tauri::AppHandle>,
@@ -125,41 +150,59 @@ pub fn start_scheduler(
                 if let Some(groups) = &fresh_quota.quota_groups {
                     for group in groups {
                         for bucket in &group.buckets {
-                            let is_weekly = bucket.window.to_lowercase().contains("week")
-                                || bucket.bucket_id.to_lowercase().contains("week");
+                            let win_lower = bucket.window.to_lowercase();
+                            let bid_lower = bucket.bucket_id.to_lowercase();
+                            let is_weekly = win_lower.contains("week")
+                                || bid_lower.contains("week")
+                                || win_lower.contains("7d")
+                                || bid_lower.contains("7d");
                             if !is_weekly {
                                 continue;
                             }
 
                             // If fraction is 1.0 (100% full)
                             if bucket.remaining_fraction >= 0.999 {
-                                if let Some(reset_ts) = parse_reset_time_ts(&bucket.reset_time) {
-                                    // Check if current time has passed reset_time (with 1 minute buffer)
-                                    if now_ts >= reset_ts - 60 {
-                                        let history_key = format!(
+                                let reset_ts_opt = parse_reset_time_ts(&bucket.reset_time);
+                                let should_warmup = match reset_ts_opt {
+                                    Some(reset_ts) => {
+                                        // Periodic reset: current time has passed reset_time (with 1 min buffer)
+                                        now_ts >= reset_ts - 60
+                                    }
+                                    None => {
+                                        // Cold start: reset_time is empty (e.g. Gemini weekly bucket not yet activated this week)
+                                        // Triggering a warmup activates the 7-day timer upstream.
+                                        true
+                                    }
+                                };
+
+                                if should_warmup {
+                                    let history_key = match reset_ts_opt {
+                                        Some(reset_ts) => format!(
                                             "{}:{}:weekly:{}",
                                             acc.email, bucket.bucket_id, reset_ts
-                                        );
-                                        // 6-day cooldown for the same weekly cycle
-                                        if !check_cooldown(&history_key, 6 * 86400) {
-                                            // Pick representative model for this group
-                                            let model_to_ping = if bucket.bucket_id.contains("3p")
-                                                || group.display_name.contains("Claude")
-                                            {
-                                                "claude-sonnet-4-6".to_string()
-                                            } else {
-                                                "gemini-3-flash".to_string()
-                                            };
+                                        ),
+                                        None => format!(
+                                            "{}:{}:weekly:initial",
+                                            acc.email, bucket.bucket_id
+                                        ),
+                                    };
 
-                                            tasks_to_run.push((
-                                                acc.id.clone(),
-                                                acc.email.clone(),
-                                                model_to_ping,
-                                                token.clone(),
-                                                pid.clone(),
-                                                history_key,
-                                            ));
-                                        }
+                                    // 6-day cooldown for the same cycle
+                                    if !check_cooldown(&history_key, 6 * 86400) {
+                                        let model_to_ping = pick_model_for_group(
+                                            &group.display_name,
+                                            &bucket.bucket_id,
+                                            &app_config.scheduled_warmup.monitored_models,
+                                        );
+
+                                        tasks_to_run.push((
+                                            acc.id.clone(),
+                                            acc.email.clone(),
+                                            model_to_ping,
+                                            token.clone(),
+                                            pid.clone(),
+                                            history_key,
+                                        ));
                                     }
                                 }
                             }
@@ -284,41 +327,55 @@ pub async fn trigger_warmup_for_account(account: &Account) {
     if let Some(groups) = fresh_quota.quota_groups {
         for group in groups {
             for bucket in group.buckets {
-                let is_weekly = bucket.window.to_lowercase().contains("week")
-                    || bucket.bucket_id.to_lowercase().contains("week");
+                let win_lower = bucket.window.to_lowercase();
+                let bid_lower = bucket.bucket_id.to_lowercase();
+                let is_weekly = win_lower.contains("week")
+                    || bid_lower.contains("week")
+                    || win_lower.contains("7d")
+                    || bid_lower.contains("7d");
                 if !is_weekly {
                     continue;
                 }
 
                 if bucket.remaining_fraction >= 0.999 {
-                    if let Some(reset_ts) = parse_reset_time_ts(&bucket.reset_time) {
-                        if now_ts >= reset_ts - 60 {
-                            let history_key = format!(
-                                "{}:{}:weekly:{}",
-                                account.email, bucket.bucket_id, reset_ts
-                            );
-                            if !check_cooldown(&history_key, 6 * 86400) {
-                                let model_to_ping = if bucket.bucket_id.contains("3p")
-                                    || group.display_name.contains("Claude")
-                                {
-                                    "claude-sonnet-4-6".to_string()
-                                } else {
-                                    "gemini-3-flash".to_string()
-                                };
+                    let reset_ts_opt = parse_reset_time_ts(&bucket.reset_time);
+                    let should_warmup = match reset_ts_opt {
+                        Some(reset_ts) => now_ts >= reset_ts - 60,
+                        None => true, // Cold-start for uninitialized weekly timer (Gemini)
+                    };
 
-                                let success = quota::warmup_model_directly(
-                                    &token,
-                                    &model_to_ping,
-                                    &pid,
-                                    &account.email,
-                                    100,
-                                    Some(&account.id),
+                    if should_warmup {
+                        let history_key = match reset_ts_opt {
+                            Some(reset_ts) => {
+                                format!(
+                                    "{}:{}:weekly:{}",
+                                    account.email, bucket.bucket_id, reset_ts
                                 )
-                                .await;
+                            }
+                            None => {
+                                format!("{}:{}:weekly:initial", account.email, bucket.bucket_id)
+                            }
+                        };
 
-                                if success {
-                                    record_warmup_history(&history_key, now_ts);
-                                }
+                        if !check_cooldown(&history_key, 6 * 86400) {
+                            let model_to_ping = pick_model_for_group(
+                                &group.display_name,
+                                &bucket.bucket_id,
+                                &app_config.scheduled_warmup.monitored_models,
+                            );
+
+                            let success = quota::warmup_model_directly(
+                                &token,
+                                &model_to_ping,
+                                &pid,
+                                &account.email,
+                                100,
+                                Some(&account.id),
+                            )
+                            .await;
+
+                            if success {
+                                record_warmup_history(&history_key, now_ts);
                             }
                         }
                     }

@@ -423,7 +423,11 @@
       "auto_check_update_disabled": "Verificação automática desabilitada",
       "update_check_interval": "Intervalo de Verificação (horas)",
       "update_check_interval_desc": "Definir intervalo de verificação automática (1-168 horas)",
-      "update_check_interval_saved": "Configurações de intervalo de verificação salvas"
+      "update_check_interval_saved": "Configurações de intervalo de verificação salvas",
+      "lightweight_mode": "Modo Leve (Liberar Memória)",
+      "lightweight_mode_desc": "Destrói o processo de renderização WebView ao fechar ou minimizar para a bandeja, reduzindo a memória para ~35MB. Leva alguns milissegundos para reconstruir a janela ao reabrir.",
+      "lightweight_mode_enabled": "Modo leve habilitado",
+      "lightweight_mode_disabled": "Modo leve desabilitado"
     },
     "account": {
       "title": "Configurações de Conta",
@@ -723,7 +727,8 @@
     "quit": "Sair do Aplicativo",
     "no_account": "Sem Conta",
     "unknown_quota": "Desconhecido (Clique para Atualizar)",
-    "forbidden": "Conta Proibida"
+    "forbidden": "Conta Proibida",
+    "lightweight_mode": "Modo Leve (Liberar memória ao fechar)"
   },
   "proxy": {
     "title": "Serviço de Proxy da API",

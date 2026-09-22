@@ -419,7 +419,11 @@
       "auto_check_update_disabled": "已停用自動檢查更新",
       "update_check_interval": "檢查間隔(小時)",
       "update_check_interval_desc": "設定自動檢查更新的時間間隔(1-168 小時)",
-      "update_check_interval_saved": "已儲存檢查間隔設定"
+      "update_check_interval_saved": "已儲存檢查間隔設定",
+      "lightweight_mode": "輕量模式 (釋放記憶體)",
+      "lightweight_mode_desc": "退出或最小化到系統匣時銷毀前端渲染行程，常駐記憶體可降至約 35MB。重新開啟主視窗時需要數毫秒重建。",
+      "lightweight_mode_enabled": "已啟用輕量模式",
+      "lightweight_mode_disabled": "已停用輕量模式"
     },
     "account": {
       "title": "帳號設定",
@@ -706,7 +710,8 @@
     "quit": "退出應用 (Exit)",
     "no_account": "無帳號",
     "unknown_quota": "未知 (點選重新整理)",
-    "forbidden": "帳號被封禁"
+    "forbidden": "帳號被封禁",
+    "lightweight_mode": "輕量模式 (退出時釋放記憶體)"
   },
   "proxy": {
     "title": "API 反向代理服務",

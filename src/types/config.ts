@@ -192,6 +192,7 @@ export interface AppConfig {
     circuit_breaker: CircuitBreakerConfig; // [NEW] 熔断器配置
     proxy: ProxyConfig;
     cloudflared: CloudflaredConfig; // [NEW] Cloudflared 配置
+    lightweight_mode?: boolean; // [NEW] 轻量模式：关闭到托盘时释放 WebView
 }
 
 // ============================================================================

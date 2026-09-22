@@ -71,7 +71,7 @@ export default function MiniView() {
                 }
             } else {
                 // Fallback for web mode if needed, or import from package.json
-                setAppVersion('4.7.12');
+                setAppVersion('4.7.13');
             }
         };
         fetchVersion();

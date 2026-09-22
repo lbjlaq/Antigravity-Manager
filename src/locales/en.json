@@ -422,7 +422,11 @@
       "auto_check_update_disabled": "Auto check disabled",
       "update_check_interval": "Check Interval (hours)",
       "update_check_interval_desc": "Set auto-check interval (1-168 hours)",
-      "update_check_interval_saved": "Check interval settings saved"
+      "update_check_interval_saved": "Check interval settings saved",
+      "lightweight_mode": "Lightweight Mode (Release RAM)",
+      "lightweight_mode_desc": "Destroy the webview renderer process when minimized or closed to tray. Reduces memory to ~35MB, with a slight delay when reopening the window.",
+      "lightweight_mode_enabled": "Lightweight mode enabled",
+      "lightweight_mode_disabled": "Lightweight mode disabled"
     },
     "account": {
       "title": "Account Settings",
@@ -713,7 +717,8 @@
     "quit": "Quit Application",
     "no_account": "No Account",
     "unknown_quota": "Unknown (Click to Refresh)",
-    "forbidden": "Account Forbidden"
+    "forbidden": "Account Forbidden",
+    "lightweight_mode": "Lightweight Mode (Release RAM)"
   },
   "proxy": {
     "title": "API Proxy Service",

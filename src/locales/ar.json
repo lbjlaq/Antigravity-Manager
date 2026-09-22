@@ -417,7 +417,11 @@
       "auto_check_update_disabled": "التحقق التلقائي معطل",
       "update_check_interval": "فاصل التحقق (ساعات)",
       "update_check_interval_desc": "تعيين فاصل التحقق التلقائي (1-168 ساعة)",
-      "update_check_interval_saved": "تم حفظ إعدادات فاصل التحقق"
+      "update_check_interval_saved": "تم حفظ إعدادات فاصل التحقق",
+      "lightweight_mode": "الوضع الخفيف (تحرير الذاكرة)",
+      "lightweight_mode_desc": "إنهاء عملية عرض WebView عند التصغير إلى شريط المهام لتقليل الذاكرة إلى ~35 ميجابايت. يستغرق إعادة فتح النافذة بضع أجزاء من الثانية.",
+      "lightweight_mode_enabled": "تم تفعيل الوضع الخفيف",
+      "lightweight_mode_disabled": "تم تعطيل الوضع الخفيف"
     },
     "account": {
       "title": "إعدادات الحساب",
@@ -704,7 +708,8 @@
     "quit": "إنهاء التطبيق",
     "no_account": "لا يوجد حساب",
     "unknown_quota": "مجهول (انقر للتحديث)",
-    "forbidden": "الحساب محظور"
+    "forbidden": "الحساب محظور",
+    "lightweight_mode": "الوضع الخفيف (تحرير الذاكرة في شريط المهام)"
   },
   "proxy": {
     "title": "خدمة وكيل API",

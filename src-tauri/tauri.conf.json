@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Antigravity Tools",
-  "version": "4.7.12",
+  "version": "4.7.13",
   "identifier": "com.lbjlaq.antigravity-tools",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -13,6 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
+        "label": "main",
         "title": "Antigravity Tools",
         "width": 1024,
         "height": 700,

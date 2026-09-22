@@ -32,6 +32,8 @@ pub struct AppConfig {
     pub hidden_menu_items: Vec<String>, // Hidden menu item path list
     #[serde(default)]
     pub cloudflared: CloudflaredConfig, // [NEW] Cloudflared configuration
+    #[serde(default)]
+    pub lightweight_mode: bool, // [NEW] Lightweight mode: destroy webview on minimize/close to tray
 }
 
 /// Scheduled warmup configuration
@@ -201,6 +203,7 @@ impl AppConfig {
             circuit_breaker: CircuitBreakerConfig::default(),
             hidden_menu_items: Vec::new(),
             cloudflared: CloudflaredConfig::default(),
+            lightweight_mode: false,
         }
     }
 }
