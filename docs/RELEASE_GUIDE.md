@@ -35,13 +35,20 @@ git status # 应显示: nothing to commit, working tree clean
 使用项目内置的原子化版本同步脚本，自动计算新版本并一键修改全仓库 11 处配置文件与文档：
 
 ```bash
-# 场景 A: 补丁版本升级 (例如 4.7.9 -> 4.7.10) [日常 Bugfix / 性能调优]
+# 场景 A: 补丁版本升级 (例如 4.7.13 -> 4.7.14) [日常 Bugfix / 性能调优]
 npm run bump patch
 
-# 场景 B: 次版本号升级 (例如 4.7.9 -> 4.8.0) [引入重大新特性]
+# 场景 B: 次版本号升级 (例如 4.7.13 -> 4.8.0) [引入重大新特性]
 npm run bump minor
 
-# 场景 C: 指定明确版本号
+# 场景 C: 预发布版本递增 (例如 4.7.13 -> 4.7.14-beta.1，或 beta.1 -> beta.2)
+npm run bump beta
+
+# 场景 D: 发布特定测试/衍生双版本 (例如针对纯透传分支发布 4.7.13-cleaned 或 4.7.13-beta)
+npm run bump 4.7.13-cleaned
+npm run bump 4.7.13-beta
+
+# 场景 E: 指定任意合法 SemVer 版本号
 npm run bump 4.8.0
 
 # [可选安全演练]: 仅测试检查，不写入磁盘
@@ -67,12 +74,19 @@ npm run bump patch --dry-run
 
 ```markdown
 *   **版本演进**:
-    *   **v4.7.10 (2026-09-21)**:
+    *   **v4.7.14 (2026-09-22)**:
         -   **[核心分类] 核心更新标题 (PR #xxx)**:
             -   **功能详述**: 描述该版本修复的核心问题或新增功能。
+        -   **🤝 v4.7.14 核心贡献者致谢 (Contributors)**:
+            -   特别感谢以下贡献者对 v4.7.14 版本的研发与技术贡献:
+                *   @jeikl (主导本次版本核心架构)
+                *   @JeikCode (全流程 AI 协同架构与代码实现, Co-authored)
+                *   @contributor (PR #xxx: 贡献说明)
 ```
 
-> **提示**：GitHub Actions 发布流水线会自动使用 `awk` 脚本精确提取该版本号下方的内容，作为最终 GitHub Releases 页面的正文说明。
+> **提示**：
+> 1. GitHub Actions 流水线会自动使用 `awk` 提取该版本号下方的内容作为前言说明；
+> 2. 云端发布流水线已开启 `generateReleaseNotes: true`，GitHub 官方会自动在说明正文下方追加 **`What's Changed` 与 `New Contributors` 完整列表**（包含所有 PR 链接与贡献者头像/主页致谢）。
 
 ---
 

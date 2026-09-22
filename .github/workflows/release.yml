@@ -280,6 +280,7 @@ jobs:
           allowUpdates: true
           name: "Antigravity Tools ${{ github.ref_name }}"
           bodyFile: "release_notes.md"
+          generateReleaseNotes: true
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: "release-files/*,updater.json"
           artifactErrorsFailBuild: false
