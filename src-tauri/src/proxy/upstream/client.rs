@@ -55,7 +55,10 @@ pub fn sanitize_error_for_log(error_text: &str) -> String {
 
     // 限制长度防止日志炸弹
     if redacted.len() > 1000 {
-        format!("{}... (truncated)", &redacted[..1000])
+        format!(
+            "{}... (truncated)",
+            crate::proxy::mappers::common_utils::safe_truncate_str(&redacted, 1000)
+        )
     } else {
         redacted.into_owned()
     }

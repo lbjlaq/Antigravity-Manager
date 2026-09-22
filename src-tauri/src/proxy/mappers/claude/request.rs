@@ -464,20 +464,20 @@ pub fn transform_claude_request_in(
         }
     }
 
-    // 1. System Instruction (注入动态身份防护 & MCP XML 协议)
-    let system_instruction = build_system_instruction(
-        &claude_req.system,
-        &claude_req.model,
-        has_mcp_tools,
-        &extra_system_messages,
-    );
-
     //  Map model name (Use standard mapping)
     // [IMPROVED] 提取 web search 模型为常量，便于维护
     const WEB_SEARCH_FALLBACK_MODEL: &str = "gemini-2.5-flash";
 
     let mapped_model =
         crate::proxy::common::model_mapping::map_claude_model_to_gemini(&claude_req.model);
+
+    // 1. System Instruction (注入动态身份防护 & MCP XML 协议，若目标为 Gemini 则自动过滤客户端计费元数据 #3452)
+    let system_instruction = build_system_instruction(
+        &claude_req.system,
+        &mapped_model,
+        has_mcp_tools,
+        &extra_system_messages,
+    );
 
     // 将 Claude 工具转为 Value 数组以便探测联网
     let tools_val: Option<Vec<Value>> = claude_req.tools.as_ref().map(|list| {
@@ -917,10 +917,18 @@ fn has_valid_signature_for_function_calls(
     false
 }
 
+fn is_gemini_client_billing_metadata(model: &str, text: &str) -> bool {
+    let text = text.trim();
+    model.starts_with("gemini-")
+        && text.starts_with("x-anthropic-billing-header:")
+        && !text.contains('\n')
+        && !text.contains('\r')
+}
+
 /// 构建 System Instruction (支持动态身份映射与 Prompt 隔离)
 fn build_system_instruction(
     system: &Option<SystemPrompt>,
-    _model_name: &str,
+    model_name: &str,
     has_mcp_tools: bool,
     extra_system_messages: &[String],
 ) -> Option<Value> {
@@ -967,14 +975,17 @@ fn build_system_instruction(
     if let Some(sys) = system {
         match sys {
             SystemPrompt::String(text) => {
-                // [MODIFIED] No longer filter "You are an interactive CLI tool"
-                // We pass everything through to ensure Flash/Lite models get full instructions
-                parts.push(json!({"text": normalize_claude_client_identity(text)}));
+                // [Issue #3452] 过滤客户端注入的单行计费元数据，防止与大量工具组合时触发 Google 上游 429 RESOURCE_EXHAUSTED
+                if !is_gemini_client_billing_metadata(model_name, text) {
+                    parts.push(json!({"text": normalize_claude_client_identity(text)}));
+                }
             }
             SystemPrompt::Array(blocks) => {
                 for block in blocks {
                     if block.block_type == "text" {
-                        // [MODIFIED] No longer filter "You are an interactive CLI tool"
+                        if is_gemini_client_billing_metadata(model_name, &block.text) {
+                            continue;
+                        }
                         parts.push(json!({
                             "text": normalize_claude_client_identity(&block.text)
                         }));
@@ -986,6 +997,9 @@ fn build_system_instruction(
 
     // 添加提取出来的 role == "system" 消息
     for extra_text in extra_system_messages {
+        if is_gemini_client_billing_metadata(model_name, extra_text) {
+            continue;
+        }
         if !extra_text.trim().is_empty() {
             parts.push(json!({"text": format!("\n{}", extra_text)}));
         }

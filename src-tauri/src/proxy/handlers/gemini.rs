@@ -760,21 +760,58 @@ pub async fn handle_generate(
             }
         }
 
-        // [FIX] 429 时立即解绑当前会话，确保换号重试与后续请求不会死锁在受限账号上
+        // [FIX] 429/529 时立即解绑当前会话并清空最近使用记录，彻底打破会话粘性死锁
         if status_code == 429 || status_code == 529 {
-            token_manager.clear_session_binding(&session_id);
+            token_manager
+                .unbind_session_and_clear_last_used(Some(&session_id))
+                .await;
             tracing::debug!("[Gemini] Unbound session {} from account {} due to status {}", session_id, email, status_code);
         }
 
+        // [FIX #3492] 404/模型不存在绝不打入账号限流池，直接终止重试并返回，杜绝号池自噬
+        if status_code == 404 || crate::proxy::handlers::common::is_model_not_found_error(status_code, &error_text) {
+            tracing::warn!(
+                "[Gemini] Target model [{}] not found on upstream (HTTP {}). Terminating retry loop without account lockout.",
+                mapped_model, status_code
+            );
+            return Ok((
+                StatusCode::from_u16(status_code).unwrap_or(StatusCode::NOT_FOUND),
+                [
+                    ("X-Account-Email", email.as_str()),
+                    ("X-Mapped-Model", mapped_model.as_str()),
+                ],
+                Json(json!({
+                    "error": {
+                        "code": status_code,
+                        "message": format!("Model [{}] not found or unsupported: {}", mapped_model, error_text),
+                        "status": "NOT_FOUND"
+                    }
+                })),
+            )
+                .into_response());
+        }
+
+        let scheduling_mode = token_manager.get_scheduling_mode().await;
+        let allow_grace = match scheduling_mode {
+            crate::proxy::sticky_config::SchedulingMode::Balance => {
+                token_manager.tokens_count() <= 1
+            }
+            crate::proxy::sticky_config::SchedulingMode::CacheFirst => true,
+            crate::proxy::sticky_config::SchedulingMode::PerformanceFirst => false,
+        };
+
         // 确定重试策略
-        let strategy = retry_state.determine_strategy(
+        let strategy = retry_state.determine_strategy_with_grace(
             &account_id,
             status_code,
             &error_text,
             retry_after.as_deref(),
             false,
+            allow_grace,
         );
-        let needs_quota_refresh = if config.request_type == "image_gen" && status_code == 429 {
+        let should_mark_limited =
+            status_code == 429 || status_code == 529 || status_code == 503 || status_code == 500;
+        let needs_quota_refresh = if should_mark_limited {
             token_manager
                 .mark_rate_limited_fast(
                     &email,

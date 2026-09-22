@@ -1047,6 +1047,49 @@ mod tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn test_safe_truncate_str_utf8_boundaries() {
+        let text = "你好世界";
+        assert_eq!(safe_truncate_str(text, 0), "");
+        assert_eq!(safe_truncate_str(text, 1), "");
+        assert_eq!(safe_truncate_str(text, 2), "");
+        assert_eq!(safe_truncate_str(text, 3), "你");
+        assert_eq!(safe_truncate_str(text, 4), "你");
+        assert_eq!(safe_truncate_str(text, 5), "你");
+        assert_eq!(safe_truncate_str(text, 6), "你好");
+        assert_eq!(safe_truncate_str(text, 12), "你好世界");
+        assert_eq!(safe_truncate_str(text, 100), "你好世界");
+
+        let mut s3493 = "a".repeat(55);
+        s3493.push_str("中文测试");
+        assert!(!s3493.is_char_boundary(57));
+        let truncated = safe_truncate_str(&s3493, 57);
+        assert_eq!(truncated.len(), 55);
+        assert_eq!(truncated, "a".repeat(55));
+
+        let emoji = "🦀🦀";
+        assert_eq!(safe_truncate_str(emoji, 2), "");
+        assert_eq!(safe_truncate_str(emoji, 4), "🦀");
+        assert_eq!(safe_truncate_str(emoji, 6), "🦀");
+        assert_eq!(safe_truncate_str(emoji, 8), "🦀🦀");
+    }
+
+    #[test]
+    fn test_safe_truncate_chars_utf8() {
+        let text = "你好世界，Rust编程！";
+        assert_eq!(safe_truncate_chars(text, 0), "");
+        assert_eq!(safe_truncate_chars(text, 2), "你好");
+        assert_eq!(safe_truncate_chars(text, 4), "你好世界");
+        assert_eq!(safe_truncate_chars(text, 5), "你好世界，");
+        assert_eq!(safe_truncate_chars(text, 100), text);
+
+        let emoji_text = "🎉Hello世界🦀";
+        assert_eq!(safe_truncate_chars(emoji_text, 1), "🎉");
+        assert_eq!(safe_truncate_chars(emoji_text, 6), "🎉Hello");
+        assert_eq!(safe_truncate_chars(emoji_text, 8), "🎉Hello世界");
+        assert_eq!(safe_truncate_chars(emoji_text, 9), "🎉Hello世界🦀");
+    }
 }
 
 pub fn sanitize_system_prompt_for_tokens(text: &str) -> String {
@@ -1167,4 +1210,26 @@ pub fn enhance_gemini_skills_prompt(text: &str) -> String {
     }
 
     enhanced
+}
+
+/// 安全地按最大字节数截断字符串切片，保证切片边界严格对齐在 UTF-8 字符边界上。
+/// 若 max_bytes 恰好落在多字节字符中间，会自动向左回退到最近的合法字符边界。
+pub fn safe_truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// 安全地按最大字符数 (Unicode 标量值) 截断字符串切片。
+/// 如果字符总数超过 max_chars，截取前 max_chars 个字符对应的有效切片。
+pub fn safe_truncate_chars(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => &s[..byte_idx],
+        None => s,
+    }
 }

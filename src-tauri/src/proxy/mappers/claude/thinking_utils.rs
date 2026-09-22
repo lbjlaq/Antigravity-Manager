@@ -3,6 +3,40 @@ use crate::proxy::SignatureCache;
 use tracing::{debug, info, warn};
 
 pub const MIN_SIGNATURE_LENGTH: usize = 50;
+pub const SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
+
+/// 判断签名是否符合 Google Gemini 原生 Protobuf 签名特征：
+/// 1. 官方跳过验签哨兵 (skip_thought_signature_validator)；
+/// 2. 或满足有效长度 (>= MIN_SIGNATURE_LENGTH)，且 Base64 解码后首字节为 Protobuf Tag 2 (0x12)
+///    (单层 Base64 通常以 'E' 开头，双层 Base64 包装通常以 'R' 开头)
+pub fn is_likely_gemini_signature(sig: &str) -> bool {
+    if sig == SENTINEL_SIGNATURE {
+        return true;
+    }
+    if sig.len() < MIN_SIGNATURE_LENGTH {
+        return false;
+    }
+    if !sig.starts_with('E') && !sig.starts_with('R') {
+        return false;
+    }
+    use base64::Engine;
+    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(sig) {
+        if decoded.first() == Some(&0x12) {
+            return true;
+        }
+        // 双层 Base64 包装支持（Google Vertex AI 格式）
+        if let Ok(s) = std::str::from_utf8(&decoded) {
+            if s.starts_with('E') {
+                if let Ok(inner) = base64::engine::general_purpose::STANDARD.decode(s) {
+                    if inner.first() == Some(&0x12) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
 
 #[derive(Debug, Default)]
 pub struct ConversationState {
@@ -185,41 +219,69 @@ pub fn filter_invalid_thinking_blocks_with_family(
         }
 
         if let MessageContent::Array(blocks) = &mut msg.content {
-            let original_len = blocks.len();
-            blocks.retain(|block| {
+            for block in blocks.iter_mut() {
                 if let ContentBlock::Thinking { signature, .. } = block {
-                    // 1. Basic length check - allow empty signatures to pass through for compatibility
-                    let sig = match signature {
-                        Some(s) if s.len() >= MIN_SIGNATURE_LENGTH || s.is_empty() => s,
-                        None => return true, // Allow None signatures to pass through
-                        _ => {
-                            stripped_count += 1;
-                            return false;
+                    if let Some(s) = signature.as_deref() {
+                        // Empty signature: keep thinking block, normalize signature to None for sentinel resolution
+                        if s.is_empty() {
+                            *signature = None;
+                            continue;
                         }
-                    };
 
-                    // 2. Family compatibility check (Prevents SONNET-Thinking sig being sent to OPUS-Thinking)
-                    if let Some(target) = target_family {
-                        if let Some(origin_family) = get_signature_family(sig) {
-                            if origin_family != target {
-                                warn!("[Thinking-Sanitizer] Dropping signature from family '{}' for target '{}'", origin_family, target);
-                                stripped_count += 1;
-                                return false;
-                            }
-                        } else {
-                            // [CRITICAL] Signature family not found in cache.
-                            // This happens after a server restart when memory is cleared.
-                            // If we pass this unverified signature to the upstream, it will likely return 400 "Invalid signature".
-                            // It is safer to strip the signature and let the upstream regenerate it.
-                            debug!("[Thinking-Sanitizer] Dropping unverified signature (cache miss after restart)");
+                        // Signature too short: strip signature only if not sentinel, keep thinking content
+                        if s.len() < MIN_SIGNATURE_LENGTH && s != SENTINEL_SIGNATURE {
+                            info!("[Thinking-Sanitizer] Stripping too-short signature (len: {}), preserving thinking block", s.len());
+                            *signature = None;
                             stripped_count += 1;
-                            return false;
+                            continue;
                         }
-                    } else if get_signature_family(sig).is_none() && !sig.is_empty() {
-                        // Even if no target family is specified, we still want to filter out signatures
-                        // that we can't verify (unless they are empty, which indicates a fresh start).
-                        debug!("[Thinking-Sanitizer] Dropping unverified signature (no target family)");
-                        stripped_count += 1;
+
+                        // Family compatibility check:
+                        // Only drop if origin family is known AND strictly cross-family incompatible.
+                        // If origin is not in cache (e.g. server restart or fresh session), TRUST valid signatures!
+                        // Upstream Google Gemini validates its own signatures. Stripping valid signatures leads to 400 Bad Request.
+                        if let Some(target) = target_family {
+                            let target_lc = target.to_lowercase();
+                            if let Some(origin_family) = get_signature_family(s) {
+                                let origin_lc = origin_family.to_lowercase();
+                                let is_incompatible = (target_lc == "gemini"
+                                    && (origin_lc.starts_with("claude-3-opus")
+                                        || origin_lc.contains("anthropic-native")))
+                                    || (target_lc == "claude" && origin_lc.contains("gemini"));
+
+                                if is_incompatible {
+                                    warn!(
+                                        "[Thinking-Sanitizer] Dropping cross-family signature from family '{}' for target '{}'",
+                                        origin_family, target
+                                    );
+                                    *signature = None;
+                                    stripped_count += 1;
+                                }
+                            } else if target_lc.contains("gemini")
+                                && !is_likely_gemini_signature(s)
+                            {
+                                warn!(
+                                    "[Thinking-Sanitizer] Dropping unknown non-Gemini signature (len: {}) for target '{}'",
+                                    s.len(), target
+                                );
+                                *signature = None;
+                                stripped_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Clean up completely empty thinking blocks without text or signature
+            let original_len = blocks.len();
+            blocks.retain(|b| {
+                if let ContentBlock::Thinking {
+                    thinking,
+                    signature,
+                    ..
+                } = b
+                {
+                    if thinking.trim().is_empty() && signature.is_none() {
                         return false;
                     }
                 }
@@ -237,7 +299,7 @@ pub fn filter_invalid_thinking_blocks_with_family(
 
     if stripped_count > 0 {
         info!(
-            "[Thinking-Sanitizer] Stripped {} invalid or incompatible thinking blocks",
+            "[Thinking-Sanitizer] Sanitized {} invalid or incompatible thinking signatures (preserved thinking blocks)",
             stripped_count
         );
     }

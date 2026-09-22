@@ -41,7 +41,27 @@ impl RequestRetryState {
         retry_after: Option<&str>,
         retried_without_thinking: bool,
     ) -> RetryStrategy {
-        let allow_grace_retry = !self.grace_retried_accounts.contains(account_id);
+        self.determine_strategy_with_grace(
+            account_id,
+            status_code,
+            error_text,
+            retry_after,
+            retried_without_thinking,
+            true,
+        )
+    }
+
+    pub fn determine_strategy_with_grace(
+        &mut self,
+        account_id: &str,
+        status_code: u16,
+        error_text: &str,
+        retry_after: Option<&str>,
+        retried_without_thinking: bool,
+        allow_grace: bool,
+    ) -> RetryStrategy {
+        let allow_grace_retry =
+            allow_grace && !self.grace_retried_accounts.contains(account_id);
         let strategy = determine_retry_strategy_inner(
             status_code,
             error_text,
@@ -170,10 +190,11 @@ fn determine_retry_strategy_inner(
             let is_hard_quota_exhausted = lower.contains("resource_exhausted")
                 || lower.contains("quota_exhausted")
                 || lower.contains("exceeded your current quota")
-                || lower.contains("insufficient_quota");
+                || lower.contains("insufficient_quota")
+                || lower.contains("credits");
 
-            // [FIX] 硬配额耗尽必须立即轮换账号，绝不走 Grace Retry
-            if is_hard_quota_exhausted {
+            // [FIX] 硬配额耗尽或不允许 grace retry (平衡/性能模式且多账号) 必须立即轮换账号，绝不走 Grace Retry 或长退避
+            if is_hard_quota_exhausted || !allow_grace_retry {
                 return RetryStrategy::FixedDelay(Duration::from_millis(50));
             }
 
@@ -367,11 +388,29 @@ pub fn should_rotate_account(status_code: u16, strategy: Option<&RetryStrategy>)
 
     match status_code {
         // 这些错误是账号级别或特定节点配额的，需要轮换
-        429 | 401 | 403 | 404 | 500 => true,
-        // 503/529 通常是后端过载，切号效果有限，暂不轮换
-        503 | 529 => false,
+        // [FIX #3485] 503/529 边缘节点熔断或特定账号负载过高，多账号时支持轮换逃逸，杜绝死锁死等
+        429 | 401 | 403 | 404 | 500 | 503 | 529 => true,
         _ => false,
     }
+}
+
+/// 判断是否为模型不存在/不支持的错误
+pub fn is_model_not_found_error(status: u16, body: &str) -> bool {
+    if status == 404 {
+        return true;
+    }
+    let lower = body.to_lowercase();
+    lower.contains("model not found")
+        || lower.contains("unknown model")
+        || lower.contains("does not exist")
+        || lower.contains("is not found")
+        || lower.contains("unsupported model")
+        || lower.contains("not found for api version")
+        || lower.contains("publisher model")
+        || lower.contains("model_not_found")
+        || lower.contains("no such model")
+        || lower.contains("invalid model")
+        || lower.contains("model is not available")
 }
 
 /// Detects model capabilities and configuration
