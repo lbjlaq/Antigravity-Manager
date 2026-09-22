@@ -1352,6 +1352,8 @@
       "gemini": "Gemini",
       "claude": "Claude",
       "images": "绘图",
+      "capture_health": "捕获健康检查",
+      "capture_health_tip": "默认关闭：过滤 GET /health 探活且不入库；开启后才记录并落库",
       "reset": "重置",
       "by_account": "按账号筛选",
       "all_accounts": "全部账号"

@@ -1228,6 +1228,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     const globalFilterInputRef = useRef<HTMLInputElement>(null);
     const [selectedLog, setSelectedLog] = useState<ProxyRequestLog | null>(null);
     const [isLoggingEnabled, setIsLoggingEnabled] = useState(false);
+    const [captureHealthLogs, setCaptureHealthLogs] = useState(false);
     const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
     const [payloadViewMode, setPayloadViewMode] = useState<'concise' | 'full'>('concise');
     const [showMetadata, setShowMetadata] = useState(true);
@@ -1364,7 +1365,10 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
             if (config && config.proxy) {
                 setAppConfig(config);
                 setIsLoggingEnabled(config.proxy.enable_logging);
+                const healthLogsEnabled = !!config.proxy.capture_health_logs;
+                setCaptureHealthLogs(healthLogsEnabled);
                 await invoke('set_proxy_monitor_enabled', { enabled: config.proxy.enable_logging });
+                await invoke('set_proxy_capture_health_logs', { enabled: healthLogsEnabled });
             }
 
             const errorsOnly = searchFilter === '__ERROR__';
@@ -1442,6 +1446,22 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
             }
         } catch (e) {
             console.error("Failed to toggle logging", e);
+        }
+    };
+
+    const toggleCaptureHealthLogs = async () => {
+        const newState = !captureHealthLogs;
+        try {
+            const config = await invoke<AppConfig>('load_config');
+            if (config && config.proxy) {
+                config.proxy.capture_health_logs = newState;
+                await invoke('save_config', { config });
+                await invoke('set_proxy_capture_health_logs', { enabled: newState });
+                setCaptureHealthLogs(newState);
+                loadData(1, filter, accountFilter);
+            }
+        } catch (e) {
+            console.error("Failed to toggle capture health logs", e);
         }
     };
 
@@ -1569,11 +1589,20 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     }, [filter, accountFilter]);
 
     // Logs are already filtered and sorted by backend
-    // Apply account filter on frontend
+    // Apply account filter and health check filter on frontend
     const filteredLogs = useMemo(() => {
-        if (!accountFilter) return logs;
-        return logs.filter(log => log.account_email === accountFilter);
-    }, [logs, accountFilter]);
+        let result = logs;
+        if (!captureHealthLogs) {
+            result = result.filter(log => {
+                const isHealthPath = log.url === '/health' || log.url === '/healthz' || log.url === '/api/health';
+                return !(isHealthPath && log.method?.toUpperCase() === 'GET');
+            });
+        }
+        if (accountFilter) {
+            result = result.filter(log => log.account_email === accountFilter);
+        }
+        return result;
+    }, [logs, accountFilter, captureHealthLogs]);
 
     const quickFilters = [
         { label: t('monitor.filters.all'), value: '' },
@@ -1766,6 +1795,18 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                             {q.label}
                         </button>
                     ))}
+                    <button
+                        onClick={toggleCaptureHealthLogs}
+                        className={`px-3 py-0.5 rounded-full text-xs font-semibold border transition-all flex items-center gap-1.5 ${
+                            captureHealthLogs
+                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+                                : 'bg-white dark:bg-base-200 text-gray-700 dark:text-gray-200 border-gray-300 dark:border-base-300 hover:bg-gray-100 dark:hover:bg-base-300/80 hover:text-gray-900 dark:hover:text-white shadow-2xs'
+                        }`}
+                        title={t('monitor.filters.capture_health_tip', { defaultValue: '默认关闭：过滤 GET /health 探活且不入库；开启后才记录并落库' })}
+                    >
+                        <span className={`w-1.5 h-1.5 rounded-full ${captureHealthLogs ? 'bg-white animate-pulse' : 'bg-gray-400 dark:bg-gray-500'}`} />
+                        {t('monitor.filters.capture_health', { defaultValue: '捕获健康检查' })}
+                    </button>
                     {(filter || accountFilter) && (
                         <button
                             onClick={() => { setFilter(''); setAccountFilter(''); }}

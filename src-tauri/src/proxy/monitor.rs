@@ -241,6 +241,7 @@ pub struct ProxyMonitor {
     pub stats: RwLock<ProxyStats>,
     pub max_logs: usize,
     pub enabled: Arc<AtomicBool>,
+    pub capture_health_logs: Arc<AtomicBool>,
     app_handle: Option<tauri::AppHandle>,
 }
 
@@ -339,6 +340,7 @@ impl ProxyMonitor {
             stats: RwLock::new(ProxyStats::default()),
             max_logs,
             enabled: Arc::new(AtomicBool::new(false)), // Default to disabled
+            capture_health_logs: Arc::new(AtomicBool::new(false)), // Default to false
             app_handle,
         }
     }
@@ -349,6 +351,14 @@ impl ProxyMonitor {
 
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn set_capture_health_logs(&self, enabled: bool) {
+        self.capture_health_logs.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn is_capture_health_logs(&self) -> bool {
+        self.capture_health_logs.load(Ordering::Relaxed)
     }
 
     pub async fn log_request(&self, log: ProxyRequestLog) {

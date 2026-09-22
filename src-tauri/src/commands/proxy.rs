@@ -142,6 +142,7 @@ pub async fn internal_start_proxy_service(
         // Sync enabled state from config
         if let Some(monitor) = monitor_lock.as_ref() {
             monitor.set_enabled(config.enable_logging);
+            monitor.set_capture_health_logs(config.capture_health_logs);
         }
     }
 
@@ -440,6 +441,19 @@ pub async fn set_proxy_monitor_enabled(
     let monitor_lock = state.monitor.read().await;
     if let Some(monitor) = monitor_lock.as_ref() {
         monitor.set_enabled(enabled);
+    }
+    Ok(())
+}
+
+/// 设置捕获健康检查日志状态
+#[tauri::command]
+pub async fn set_proxy_capture_health_logs(
+    state: State<'_, ProxyServiceState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let monitor_lock = state.monitor.read().await;
+    if let Some(monitor) = monitor_lock.as_ref() {
+        monitor.set_capture_health_logs(enabled);
     }
     Ok(())
 }

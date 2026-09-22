@@ -685,6 +685,15 @@ pub async fn monitor_middleware(
         return next.run(request).await;
     }
 
+    // [HEALTH-CHECK LOGGING FILTER]
+    // 默认关闭捕获健康检查日志：对 GET /health /healthz 请求全部过滤且不入库，只捕获非 GET 请求；
+    // 只有当用户在面板明确开启 capture_health_logs 时才记录并落库。
+    let path = request.uri().path();
+    let is_health_check = path == "/health" || path == "/healthz" || path == "/api/health";
+    if is_health_check && method == "GET" && !state.monitor.is_capture_health_logs() {
+        return next.run(request).await;
+    }
+
     let start = Instant::now();
 
     // Extract client IP from headers (X-Forwarded-For or X-Real-IP)

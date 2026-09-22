@@ -838,6 +838,10 @@ impl AxumServer {
                 post(admin_set_proxy_monitor_enabled),
             )
             .route(
+                "/proxy/monitor/health-logs/toggle",
+                post(admin_set_proxy_capture_health_logs),
+            )
+            .route(
                 "/proxy/cloudflared/status",
                 get(admin_cloudflared_get_status),
             )
@@ -1981,6 +1985,23 @@ async fn admin_start_proxy_service(State(state): State<AppState>) -> impl IntoRe
     let mut running = state.is_running.write().await;
     *running = true;
     logger::log_info("[API] 反代服务功能已启用 (持久化已同步)");
+    StatusCode::OK
+}
+
+async fn admin_set_proxy_capture_health_logs(
+    State(state): State<AppState>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let enabled = payload
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if state.monitor.is_capture_health_logs() != enabled {
+        state.monitor.set_capture_health_logs(enabled);
+        logger::log_info(&format!("[API] 捕获健康检查日志状态已设置为: {}", enabled));
+    }
+
     StatusCode::OK
 }
 

@@ -447,6 +447,12 @@ pub async fn save_config(
         Some(config.proxy.experimental.thinking_max_memory_turns),
     );
 
+    // 同步健康检查日志捕获开关
+    let monitor_lock = proxy_state.monitor.read().await;
+    if let Some(monitor) = monitor_lock.as_ref() {
+        monitor.set_capture_health_logs(config.proxy.capture_health_logs);
+    }
+
     // 热更新正在运行的服务
     let instance_lock = proxy_state.instance.read().await;
     if let Some(instance) = instance_lock.as_ref() {

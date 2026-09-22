@@ -14,6 +14,7 @@ export interface ProxyConfig {
     custom_mapping?: Record<string, string>;
     request_timeout: number;
     enable_logging: boolean;
+    capture_health_logs?: boolean;
     log_retention?: LogRetentionConfig;
     debug_logging?: DebugLoggingConfig;
     upstream_proxy: UpstreamProxyConfig;
