@@ -71,6 +71,151 @@ pub struct DesktopIntegration {
     pub app_handle: tauri::AppHandle,
 }
 
+/// 写入账号凭据：>= 2.0.0 的原生应用走系统 Keyring，旧架构与定制 IDE 走 SQLite 注入。
+///
+/// 抽成独立函数是为了让「热切号」能在终止 language_server 子进程**之前**完成凭据写入
+/// （见 `on_account_switch` 的顺序说明），同时让完整重启路径保持原有的「先杀后写」顺序。
+fn apply_account_credentials(
+    account: &Account,
+    effective_target: Option<&str>,
+    is_ide: bool,
+    active_exe_path: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let mut use_keyring = false;
+
+    if !is_ide {
+        // 经典原生版：自动探测版本号（优先使用预快照路径）
+        match version::get_antigravity_version_with_path(
+            effective_target,
+            active_exe_path.as_deref(),
+        ) {
+            Ok(ver) => {
+                // 如果版本号 >= 2.0.0
+                if version::compare_version(&ver.short_version, "2.0.0") != std::cmp::Ordering::Less
+                {
+                    use_keyring = true;
+                    crate::modules::logger::log_info(&format!(
+                        "[Desktop] Detected Antigravity version {} >= 2.0.0, using system Keyring.",
+                        ver.short_version
+                    ));
+                } else {
+                    crate::modules::logger::log_info(&format!(
+                        "[Desktop] Detected Antigravity version {} < 2.0.0, falling back to legacy SQLite injection.",
+                        ver.short_version
+                    ));
+                }
+            }
+            Err(e) => {
+                // 如果探测失败，优先检查本地是否存在可用的 SQLite 数据库 (state.vscdb)
+                // 若存在数据库，说明是经典的 VS Code/IDE 架构，优先使用 SQLite 注入，防止无 secret-tool 时报错
+                let has_sqlite_db = db::get_db_path(effective_target)
+                    .map(|p| p.exists())
+                    .unwrap_or(false);
+
+                if has_sqlite_db {
+                    use_keyring = false;
+                    crate::modules::logger::log_info(&format!(
+                        "[Desktop] Failed to detect Antigravity version ({}), but detected existing SQLite database. Falling back to SQLite injection.",
+                        e
+                    ));
+                } else {
+                    use_keyring = true;
+                    crate::modules::logger::log_warn(&format!(
+                        "[Desktop] Failed to detect Antigravity version ({}) and no SQLite database found, defaulting to system Keyring.",
+                        e
+                    ));
+                }
+            }
+        }
+    }
+
+    if use_keyring {
+        // ================== 最新版 Antigravity 原生应用逻辑 (>= 2.0.0) ==================
+        // 2.1 写入系统 Keychain/Keyring
+        if let Err(keyring_err) = write_to_system_keyring(account) {
+            // 如果写入系统 Keyring 失败（例如 Linux 下未安装 secret-tool 或无桌面会话 D-Bus）
+            // 检查本地是否存在可用的 SQLite 数据库，若存在则自动降级回退到 SQLite 注入，确保账号切换顺利完成
+            let db_fallback = if let Ok(db_path) = db::get_db_path(effective_target) {
+                if db_path.exists() {
+                    crate::modules::logger::log_warn(&format!(
+                        "[Desktop] Keyring write failed ({}), but found SQLite DB at {:?}. Falling back to SQLite token injection.",
+                        keyring_err, db_path
+                    ));
+                    let backup_path = db_path.with_extension("vscdb.backup");
+                    let _ = fs::copy(&db_path, &backup_path);
+                    let _ = db::inject_token(
+                        &db_path,
+                        &account.token.access_token,
+                        &account.token.refresh_token,
+                        account.token.expiry_timestamp,
+                        &account.email,
+                        account.token.is_gcp_tos,
+                        account.token.project_id.as_deref(),
+                        account.token.id_token.as_deref(),
+                        account.token.oauth_client_key.as_deref(),
+                        effective_target,
+                    );
+                    if let Some(ref profile) = account.device_profile {
+                        let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
+                    }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !db_fallback {
+                return Err(keyring_err);
+            }
+        }
+
+        // 2.2 原生应用可能没有 storage.json，但如果有的话，我们也可以尝试安全地写入设备 Profile，以兼容指纹信息
+        if let Ok(storage_path) = device::get_storage_path(effective_target) {
+            if let Some(ref profile) = account.device_profile {
+                let _ = device::write_profile(&storage_path, profile);
+            }
+        }
+    } else {
+        // ================== 原有 Antigravity 旧版或定制 IDE 逻辑 (< 2.0.0) ==================
+        // 2.1 获取存储路径
+        let storage_path = device::get_storage_path(effective_target)?;
+
+        // 2.2 写入设备 Profile
+        if let Some(ref profile) = account.device_profile {
+            device::write_profile(&storage_path, profile)?;
+        }
+
+        // 2.3 数据库处理与 Token 注入
+        let db_path = db::get_db_path(effective_target)?;
+        if db_path.exists() {
+            let backup_path = db_path.with_extension("vscdb.backup");
+            let _ = fs::copy(&db_path, &backup_path);
+        }
+
+        db::inject_token(
+            &db_path,
+            &account.token.access_token,
+            &account.token.refresh_token,
+            account.token.expiry_timestamp,
+            &account.email,
+            account.token.is_gcp_tos,
+            account.token.project_id.as_deref(),
+            account.token.id_token.as_deref(),
+            account.token.oauth_client_key.as_deref(),
+            effective_target,
+        )?;
+
+        // 2.4 同步 Service Machine ID 到数据库
+        if let Some(ref profile) = account.device_profile {
+            let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
+        }
+    }
+
+    Ok(())
+}
+
 impl SystemIntegration for DesktopIntegration {
     async fn on_account_switch(
         &self,
@@ -139,8 +284,68 @@ impl SystemIntegration for DesktopIntegration {
         let active_exe_path = process::get_antigravity_executable_path(effective_target);
         let active_args = process::get_args_from_running_process(effective_target);
 
-        // 2. 先关闭外部正在运行的进程（无论是原生还是IDE，先安全关闭，避免文件或凭据冲突）
-        if process::is_antigravity_running(effective_target) {
+        // 2. 决定切换模式（热切号 / 完整重启）并处理进程与凭据
+        //
+        //    · 热切号 —— 仅 IDE 目标（issue #3503 方案 A）：只终止 language_server 子进程、保留主窗口，
+        //      IDE 内置 supervisor 会在约 2 秒内原地重建子进程并重载 Webview，从而保住用户的
+        //      未保存缓冲区 / 终端任务 / 断点 / 文件树。顺序是**先写凭据 → 再杀子进程 →（best-effort）再补写一次**：
+        //      supervisor 重启有约 2s 退避窗口，而写入只需毫秒级，"写在前"保证重新拉起的子进程
+        //      必然读到新凭据，不存在"子进程先起来、加载旧账号"的竞态；杀完再补写一次是为了覆盖
+        //      "写 → 杀"这几十毫秒窗口内旧语言服务把旧 token 回写进数据库的极端情况。
+        //      另外写入失败会在杀进程之前返回错误，IDE 保持原样不受影响。
+        //    · 完整重启 —— 经典原生版（或未定位到语言服务子进程）：沿用原顺序「先杀 → 再写 → 再启动」，
+        //      因为旧架构下运行中的应用会在退出时刷盘覆盖刚写入的 Token。
+        let running = process::is_antigravity_running(effective_target);
+        let mut hot_switch = false;
+        let mut credentials_applied = false;
+
+        if is_ide && running {
+            apply_account_credentials(
+                account,
+                effective_target,
+                is_ide,
+                active_exe_path.as_deref(),
+            )?;
+            credentials_applied = true;
+
+            match process::kill_language_server_subprocesses(effective_target) {
+                Ok(n) if n > 0 => {
+                    hot_switch = true;
+                    crate::modules::logger::log_info(&format!(
+                        "[Desktop] Hot switch: terminated {} language_server subprocess(es); \
+                         main window kept alive, supervisor will respawn the child with the new credentials.",
+                        n
+                    ));
+
+                    // 补写一次凭据（best-effort）：子进程已被终止，此时数据库不存在竞争写者，
+                    // 这次写入即为权威值 —— 用于覆盖"写凭据 → 杀子进程"这几十毫秒窗口内
+                    // 旧语言服务可能把旧 token 回写进 state.vscdb 的情况，
+                    // 确保 supervisor 约 2s 后重新拉起的子进程读到的一定是新凭据。
+                    // 失败只告警，不使整个切号失败：第一次写入已经就位。
+                    if let Err(e) = apply_account_credentials(
+                        account,
+                        effective_target,
+                        is_ide,
+                        active_exe_path.as_deref(),
+                    ) {
+                        crate::modules::logger::log_warn(&format!(
+                            "[Desktop] Hot switch: post-kill credential re-assert failed ({}); \
+                             the pre-kill write is already in place, continuing.",
+                            e
+                        ));
+                    }
+                }
+                Ok(_) => crate::modules::logger::log_info(
+                    "[Desktop] Hot switch unavailable: no language_server subprocess found; falling back to full restart.",
+                ),
+                Err(e) => crate::modules::logger::log_warn(&format!(
+                    "[Desktop] Hot switch failed ({}); falling back to full restart.",
+                    e
+                )),
+            }
+        }
+
+        if !hot_switch && running {
             process::close_antigravity(20, effective_target)?;
         }
         if effective_target != target_ide
@@ -150,140 +355,36 @@ impl SystemIntegration for DesktopIntegration {
             process::close_antigravity(20, target_ide)?;
         }
 
-        let mut use_keyring = false;
-
-        if !is_ide {
-            // 经典原生版：自动探测版本号（优先使用预快照路径）
-            match version::get_antigravity_version_with_path(
+        // 凭据写入（热切号已在终止子进程之前完成，避免重复写入；完整重启路径保持「先杀后写」）
+        if !credentials_applied {
+            apply_account_credentials(
+                account,
                 effective_target,
+                is_ide,
                 active_exe_path.as_deref(),
-            ) {
-                Ok(ver) => {
-                    // 如果版本号 >= 2.0.0
-                    if version::compare_version(&ver.short_version, "2.0.0")
-                        != std::cmp::Ordering::Less
-                    {
-                        use_keyring = true;
-                        crate::modules::logger::log_info(&format!(
-                            "[Desktop] Detected Antigravity version {} >= 2.0.0, using system Keyring.",
-                            ver.short_version
-                        ));
-                    } else {
-                        crate::modules::logger::log_info(&format!(
-                            "[Desktop] Detected Antigravity version {} < 2.0.0, falling back to legacy SQLite injection.",
-                            ver.short_version
-                        ));
-                    }
-                }
-                Err(e) => {
-                    // 如果探测失败，优先检查本地是否存在可用的 SQLite 数据库 (state.vscdb)
-                    // 若存在数据库，说明是经典的 VS Code/IDE 架构，优先使用 SQLite 注入，防止无 secret-tool 时报错
-                    let has_sqlite_db = db::get_db_path(effective_target)
-                        .map(|p| p.exists())
-                        .unwrap_or(false);
-
-                    if has_sqlite_db {
-                        use_keyring = false;
-                        crate::modules::logger::log_info(&format!(
-                            "[Desktop] Failed to detect Antigravity version ({}), but detected existing SQLite database. Falling back to SQLite injection.",
-                            e
-                        ));
-                    } else {
-                        use_keyring = true;
-                        crate::modules::logger::log_warn(&format!(
-                            "[Desktop] Failed to detect Antigravity version ({}) and no SQLite database found, defaulting to system Keyring.",
-                            e
-                        ));
-                    }
-                }
-            }
-        }
-
-        if use_keyring {
-            // ================== 最新版 Antigravity 原生应用逻辑 (>= 2.0.0) ==================
-            // 2.1 写入系统 Keychain/Keyring
-            if let Err(keyring_err) = write_to_system_keyring(account) {
-                // 如果写入系统 Keyring 失败（例如 Linux 下未安装 secret-tool 或无桌面会话 D-Bus）
-                // 检查本地是否存在可用的 SQLite 数据库，若存在则自动降级回退到 SQLite 注入，确保账号切换顺利完成
-                let db_fallback = if let Ok(db_path) = db::get_db_path(effective_target) {
-                    if db_path.exists() {
-                        crate::modules::logger::log_warn(&format!(
-                            "[Desktop] Keyring write failed ({}), but found SQLite DB at {:?}. Falling back to SQLite token injection.",
-                            keyring_err, db_path
-                        ));
-                        let backup_path = db_path.with_extension("vscdb.backup");
-                        let _ = fs::copy(&db_path, &backup_path);
-                        let _ = db::inject_token(
-                            &db_path,
-                            &account.token.access_token,
-                            &account.token.refresh_token,
-                            account.token.expiry_timestamp,
-                            &account.email,
-                            account.token.is_gcp_tos,
-                            account.token.project_id.as_deref(),
-                            account.token.id_token.as_deref(),
-                            account.token.oauth_client_key.as_deref(),
-                            effective_target,
-                        );
-                        if let Some(ref profile) = account.device_profile {
-                            let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                if !db_fallback {
-                    return Err(keyring_err);
-                }
-            }
-
-            // 2.2 原生应用可能没有 storage.json，但如果有的话，我们也可以尝试安全地写入设备 Profile，以兼容指纹信息
-            if let Ok(storage_path) = device::get_storage_path(effective_target) {
-                if let Some(ref profile) = account.device_profile {
-                    let _ = device::write_profile(&storage_path, profile);
-                }
-            }
-        } else {
-            // ================== 原有 Antigravity 旧版或定制 IDE 逻辑 (< 2.0.0) ==================
-            // 2.1 获取存储路径
-            let storage_path = device::get_storage_path(effective_target)?;
-
-            // 2.2 写入设备 Profile
-            if let Some(ref profile) = account.device_profile {
-                device::write_profile(&storage_path, profile)?;
-            }
-
-            // 2.3 数据库处理与 Token 注入
-            let db_path = db::get_db_path(effective_target)?;
-            if db_path.exists() {
-                let backup_path = db_path.with_extension("vscdb.backup");
-                let _ = fs::copy(&db_path, &backup_path);
-            }
-
-            db::inject_token(
-                &db_path,
-                &account.token.access_token,
-                &account.token.refresh_token,
-                account.token.expiry_timestamp,
-                &account.email,
-                account.token.is_gcp_tos,
-                account.token.project_id.as_deref(),
-                account.token.id_token.as_deref(),
-                account.token.oauth_client_key.as_deref(),
-                effective_target,
             )?;
-
-            // 2.4 同步 Service Machine ID 到数据库
-            if let Some(ref profile) = account.device_profile {
-                let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
-            }
         }
 
         // 3. 重启外部进程（优先使用预快照路径与启动参数）
+        //    热切号路径下主窗口仍然存活：只需等 supervisor 把 language_server 拉起即可，
+        //    绝不能再去启动一次主窗口（否则会变成双实例）。
+        if hot_switch {
+            if process::wait_for_language_server_respawn(effective_target, 15) {
+                crate::modules::logger::log_info(&format!(
+                    "[Desktop] Hot switch completed for {}: language_server respawned with the new credentials.",
+                    account.email
+                ));
+                let _ = crate::modules::tray::update_tray_menus(&self.app_handle);
+                return Ok(());
+            }
+
+            // 子进程迟迟未恢复 → 降级为完整重启，避免留下"窗口活着但 AI 引擎已死"的残状态
+            crate::modules::logger::log_warn(
+                "[Desktop] Hot switch degraded: language_server did not respawn within timeout; performing a full restart.",
+            );
+            process::close_antigravity(20, effective_target)?;
+        }
+
         process::start_antigravity_with_fallback_path(
             effective_target,
             active_exe_path.as_deref(),
