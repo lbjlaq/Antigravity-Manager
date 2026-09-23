@@ -1,0 +1,19 @@
+# 关键路径的自动审查指派。
+# 语法说明：https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+# 规则：最后匹配的一条生效；目录规则需以 / 结尾。
+
+# 默认：仓库所有者
+*                                   @lbjlaq
+
+# 高风险面（改动必须由维护者审查）
+# 代理核心：四协议适配 + 统一流水线（出站清洗、身份归一化、限流与冷却链路）
+/src-tauri/src/proxy/               @lbjlaq
+# 桌面集成与进程控制：账号切换、轻量模式、托盘
+/src-tauri/src/modules/             @lbjlaq
+# 发版基建：版本同步脚本与 SOP（改动纪律见 AGENTS.md）
+/scripts/                           @lbjlaq
+/docs/                              @lbjlaq
+# CI 与发布流水线
+/.github/workflows/                 @lbjlaq
+# 项目规范本身
+/AGENTS.md                          @lbjlaq
