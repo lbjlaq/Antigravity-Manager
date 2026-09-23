@@ -174,21 +174,6 @@ pub fn transform_openai_request(
     )
 }
 
-/// 通用 Codex 身份声明归一化正则 (Thanks to @cuteyuchen for PR #3489)：
-/// 自动匹配并剥离 "You are Codex, <任意角色定语> based on <任意竞品模型>." 中的敏感模型特征
-static RE_CODEX_IDENTITY: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-    regex::Regex::new(r"(?i)(You are Codex,\s+[^.]+?)\s+based on\s+[^.]+(\.?)").unwrap()
-});
-
-/// 通用厂商归属指纹归一化正则：剥离 "<…> AI assistant/agent created by <厂商>." 中的厂商归属声明。
-/// 与 RE_CODEX_IDENTITY 属同一类上游伪限流诱因：触发上游拒绝的是身份归属声明（而非模型能力），
-/// 网关若原样透传，该请求会在每个账号上都被拒，并被误记为账号限流进而波及整池。
-/// 已用 Hermes (Nous Research) 客户端实测复现与验证（去掉归属声明后立即恢复正常）。
-static RE_VENDOR_IDENTITY: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-    regex::Regex::new(r"(?i)(\bAI\s+(?:assistant|agent|coding agent)\b)\s+created by\s+[^.]+(\.?)")
-        .unwrap()
-});
-
 pub fn transform_openai_request_with_session(
     request: &OpenAIRequest,
     project_id: &str,
@@ -335,22 +320,10 @@ pub fn transform_openai_request_with_session(
     let mut system_instructions: Vec<String> = collect_system_instruction_blocks(request);
 
     // 遵循纯透传原则：不替换日期、路径、UUID 等任何动态字段，完整保留客户端与 Agent 的真实环境感知。
-    // 仅保留通用自适应归一化：剥离基于竞品模型的声明指纹与厂商归属声明，防止触发上游 Google WAF 伪限流。
-    system_instructions = system_instructions
-        .into_iter()
-        .map(|s| {
-            let s = if s.contains("Codex") && s.contains("based on") {
-                RE_CODEX_IDENTITY.replace_all(&s, "$1$2").into_owned()
-            } else {
-                s
-            };
-            if s.contains("created by") {
-                RE_VENDOR_IDENTITY.replace_all(&s, "$1$2").into_owned()
-            } else {
-                s
-            }
-        })
-        .collect();
+    // 身份声明归一化（Codex `based on GPT-x` / 厂商 `created by …` / Claude Agent SDK 等）已**统一收敛**
+    // 到协议无关的提示词清洗流水线节点：`PromptSanitizer::normalize_system_identity`，在系统提示词头部
+    // 窗口内做广谱匹配。依据 AGENTS.md「Pipeline First / Fix Strategy」——适配层只做参数归一化与协议转换，
+    // 清洗一律由流水线统一处理，避免同一类 WAF 风险在四个协议里各写一份特例。
     let mut seen_system_instruction_keys = std::collections::HashSet::new();
     system_instructions.retain(|inst| {
         let key = inst.trim();
@@ -1576,27 +1549,13 @@ mod tests {
 
     #[test]
     fn prompt_log_identity_cleanup_only_changes_system_instructions() {
-        for (old, normalized) in [
-            (
-                "You are Codex, an agent based on GPT-5.",
-                "You are Codex, an agent.",
-            ),
-            (
-                "You are Codex, a coding agent based on GPT-5.",
-                "You are Codex, a coding agent.",
-            ),
-            (
-                "You are Codex, an advanced coding agent based on GPT-6.",
-                "You are Codex, an advanced coding agent.",
-            ),
-            (
-                "You are Hermes Agent, an intelligent AI assistant created by Nous Research.",
-                "You are Hermes Agent, an intelligent AI assistant.",
-            ),
-            (
-                "You are an AI agent created by Example Corp.",
-                "You are an AI agent.",
-            ),
+        // 身份声明归一化由协议无关的流水线节点承担（`PromptSanitizer::sanitize_gemini_payload`），
+        // 适配层只产出原样系统提示词。本用例校验「适配层产出 → 流水线清洗」的真实链路：
+        // 系统提示词块内的身份声明被统一归一化为中性身份，user / tool 文本逐字保留。
+        for old in [
+            "You are Codex, an agent based on GPT-5.",
+            "You are Codex, a coding agent based on GPT-5.",
+            "You are Codex, an advanced coding agent based on GPT-6.",
         ] {
             let req: OpenAIRequest = serde_json::from_value(json!({
                 "model": "gemini-3.7-flash-high",
@@ -1610,12 +1569,24 @@ mod tests {
                 ]
             }))
             .unwrap();
-            let (body, _, _, _) = transform_openai_request(&req, "test-project", &req.model, None);
+            let (mut body, _, _, _) =
+                transform_openai_request(&req, "test-project", &req.model, None);
+
+            // 适配层保持纯透传：身份声明在流水线节点介入前原样保留
+            assert!(body["request"]["systemInstruction"]
+                .to_string()
+                .contains(old));
+
+            crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
+                &mut body,
+            );
+
             let system = body["request"]["systemInstruction"].to_string();
             assert!(!system.contains(old));
-            assert!(system.contains(&format!("Top-level: {normalized}")));
-            assert!(system.contains(&format!("System: {normalized}")));
-            assert!(system.contains(&format!("<model_switch>{normalized}</model_switch>")));
+            assert!(system.contains("Top-level: You are an AI Agent."));
+            assert!(system.contains("System: You are an AI Agent."));
+            assert!(system.contains("<model_switch>You are an AI Agent.</model_switch>"));
+            // 用户提问与工具消息（含管道自身提示词）零改动
             let contents = body["request"]["contents"].to_string();
             assert_eq!(contents.matches(old).count(), 2);
         }
