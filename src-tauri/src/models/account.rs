@@ -142,8 +142,6 @@ impl Account {
                                 .unwrap_or(quota.last_updated.saturating_mul(1000));
                             if current_observed_at <= observed_at {
                                 *current = previous;
-                            } else {
-                                current.retain_cycle_boundary(&previous, current_observed_at);
                             }
                         } else {
                             groups[index].buckets.push(previous);

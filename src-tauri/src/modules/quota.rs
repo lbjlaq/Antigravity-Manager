@@ -601,7 +601,6 @@ async fn fetch_quota_summary(
                                     remaining_fraction: b.remaining_fraction?,
                                     reset_time: b.reset_time.unwrap_or_default(),
                                     observed_at: Some(chrono::Utc::now().timestamp_millis()),
-                                    cycle_start: None,
                                     cycle_tokens: None,
                                     display_name: b.display_name,
                                     description: b.description,

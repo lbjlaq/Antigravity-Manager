@@ -705,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn weekly_usage_tracks_accounts_groups_and_observed_cycle_boundaries() {
+    fn weekly_usage_tracks_accounts_groups_and_official_reset_cycles() {
         let now = 1_700_000_000;
         let reset = now + 100;
         let start = reset - 7 * 86400;
@@ -722,6 +722,8 @@ mod tests {
             ("a", "claude-sonnet", start + 100, 20, 0),
             ("a", "gpt-oss", now, 30, 0),
             ("a", "custom-alias", now, 900, 0),
+            ("b", "gemini-pro", start - 51, 900, 0),
+            ("b", "gemini-pro", start - 50, 7, 3),
             ("b", "gemini-pro", now, 900, 0),
             ("a", "gemini-pro", reset, 40, 0),
         ] {
@@ -731,9 +733,9 @@ mod tests {
             )
             .unwrap();
         }
-        let mut accounts: Vec<_> = ["a", "b"]
+        let mut accounts: Vec<_> = [("a", reset), ("b", reset - 50)]
             .into_iter()
-            .map(|email| {
+            .map(|(email, account_reset)| {
                 let token = crate::models::TokenData::new(
                     String::new(),
                     String::new(),
@@ -745,7 +747,7 @@ mod tests {
                     None,
                 );
                 let mut account = crate::models::Account::new(email.into(), email.into(), token);
-                account.update_quota(weekly_snapshot(now, reset, 0.0));
+                account.update_quota(weekly_snapshot(now, account_reset, 0.0));
                 account
             })
             .collect();
@@ -763,27 +765,35 @@ mod tests {
         };
         populate_weekly_usage_with_conn(&conn, &mut accounts, now).unwrap();
         assert_eq!(buckets(&accounts[0]), vec![Some(13), None, Some(50)]);
-        assert_eq!(buckets(&accounts[1]), vec![Some(900), None, Some(0)]);
+        assert_eq!(buckets(&accounts[1]), vec![Some(910), None, Some(0)]);
 
-        // Early replenishment starts at its first newer observation, then survives refresh/reload.
-        accounts[0].update_quota(weekly_snapshot(now + 1, reset, 1.0));
-        accounts[0] = serde_json::from_value(serde_json::to_value(&accounts[0]).unwrap()).unwrap();
-        accounts[0].update_quota(weekly_snapshot(now + 2, reset, 0.9));
-        let first = &accounts[0]
-            .quota
-            .as_ref()
-            .unwrap()
-            .quota_groups
-            .as_ref()
-            .unwrap()[0]
-            .buckets[0];
-        assert_eq!(first.cycle_start, Some(now + 1));
+        // Legacy persisted boundaries are ignored and omitted on the next serialization.
+        let mut legacy = serde_json::to_value(&accounts[0]).unwrap();
+        legacy["quota"]["quota_groups"][0]["buckets"][0]["cycle_start"] = now.into();
+        accounts[0] = serde_json::from_value(legacy).unwrap();
+        assert!(
+            serde_json::to_value(&accounts[0]).unwrap()["quota"]["quota_groups"][0]["buckets"][0]
+                .get("cycle_start")
+                .is_none()
+        );
+        populate_weekly_usage_with_conn(&conn, &mut accounts, now).unwrap();
+        assert_eq!(buckets(&accounts[0]), vec![Some(13), None, Some(50)]);
+
+        // Small and large replenishments, refreshes and reloads keep the official interval.
+        for (offset, fraction) in [(1, 0.000001), (2, 1.0), (3, 0.9)] {
+            accounts[0].update_quota(weekly_snapshot(now + offset, reset, fraction));
+            accounts[0] =
+                serde_json::from_value(serde_json::to_value(&accounts[0]).unwrap()).unwrap();
+            populate_weekly_usage_with_conn(&conn, &mut accounts, now + offset).unwrap();
+            assert_eq!(buckets(&accounts[0]), vec![Some(13), None, Some(50)]);
+            assert_eq!(buckets(&accounts[1]), vec![Some(910), None, Some(0)]);
+        }
         // An older positive observation cannot move the boundary.
-        accounts[0].update_quota(weekly_snapshot(now, reset, 1.0));
-        populate_weekly_usage_with_conn(&conn, &mut accounts, now + 2).unwrap();
-        assert_eq!(buckets(&accounts[0]), vec![Some(0), None, Some(50)]);
+        accounts[0].update_quota(weekly_snapshot(now, reset + 10, 1.0));
+        populate_weekly_usage_with_conn(&conn, &mut accounts, now + 3).unwrap();
+        assert_eq!(buckets(&accounts[0]), vec![Some(13), None, Some(50)]);
 
-        // A normal next cycle discards the early boundary and includes its exact new start.
+        // A new official reset switches cycles and includes its exact new start.
         accounts[0].update_quota(weekly_snapshot(reset, reset + 7 * 86400, 1.0));
         populate_weekly_usage_with_conn(&conn, &mut accounts, reset).unwrap();
         assert_eq!(buckets(&accounts[0]), vec![Some(40), None, None]);
@@ -795,7 +805,10 @@ mod tests {
             .as_ref()
             .unwrap()[0]
             .buckets[0];
-        assert_eq!(first.cycle_start, None);
+        assert_eq!(
+            first.weekly_cycle_bounds(reset),
+            Some((reset, reset + 7 * 86400))
+        );
 
         // Invalid and expired periods are unavailable, never fabricated zero totals.
         accounts[0]
