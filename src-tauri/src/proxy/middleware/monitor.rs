@@ -58,9 +58,26 @@ fn extract_boundary(content_type: &str) -> Option<String> {
     })
 }
 
-fn is_health_check_path(path: &str) -> bool {
-    let clean_path = path.split('?').next().unwrap_or(path).trim_end_matches('/');
-    clean_path == "/health" || clean_path == "/healthz" || clean_path == "/api/health"
+/// 噪音请求日志抑制判定。
+///
+/// 面板「捕获健康请求」胶囊开关（`capture_health_logs`）**默认关闭**。关闭时：
+/// **所有 GET 成功请求一律不记录、不落库**（含 `/v1/models`、`/v1beta/models`、`/v1/models/claude`
+/// 等模型列表轮询，以及 `/health` `/healthz` `/api/health` 探针）。
+///
+/// 之所以从"仅过滤 `/health` 探针"放宽到"全部 GET 成功"：真实客户端的健康/能力探测会高频轮询
+/// **模型列表**接口（issue #3498 的探针刷屏 + 面板中 `/v1/models` 200 连片淹没业务日志），
+/// 这类请求没有对话语义、无业务价值，却会把真实业务日志挤出视图。
+///
+/// 边界（刻意保守，绝不影响排障）：
+/// - 失败请求（非 2xx）**始终记录**，无论路径与方法；
+/// - 非 GET（POST 等真实业务请求）**始终记录**；
+/// - 开关开启（或环境变量 `ABV_LOG_HEALTH_CHECKS` 为真）时全部记录并落库。
+fn should_skip_request_log(
+    method: &str,
+    status: axum::http::StatusCode,
+    capture_enabled: bool,
+) -> bool {
+    !capture_enabled && method.eq_ignore_ascii_case("GET") && status.is_success()
 }
 
 fn should_log_health_checks() -> bool {
@@ -807,16 +824,12 @@ pub async fn monitor_middleware(
     let duration = start.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
 
-    // 过滤健康检查请求，避免每 30 秒探针刷屏淹没真实业务日志 (Issue #3498)
-    // 1. 默认仅过滤成功的 GET 健康检查 (2xx)，非 GET 请求或异常状态 (如 503) 依然记录以供排障；
-    // 2. 联动面板胶囊开关 (capture_health_logs) 与环境变量 (ABV_LOG_HEALTH_CHECKS)。
+    // 过滤噪音请求，避免客户端探针刷屏淹没真实业务日志 (Issue #3498 + `/v1/models` 轮询刷屏)
+    // 胶囊开关关闭时（默认）：所有 GET 成功请求不记录、不落库；失败请求与非 GET 业务请求始终记录。
+    // 详见 `should_skip_request_log` 的行为边界说明。
     let capture_health_enabled =
         state.monitor.is_capture_health_logs() || should_log_health_checks();
-    if is_health_check_path(&uri)
-        && method == "GET"
-        && response.status().is_success()
-        && !capture_health_enabled
-    {
+    if should_skip_request_log(&method, response.status(), capture_health_enabled) {
         return response;
     }
 
@@ -1725,18 +1738,66 @@ mod tests {
     }
 
     #[test]
-    fn test_is_health_check_path() {
-        assert!(super::is_health_check_path("/health"));
-        assert!(super::is_health_check_path("/health/"));
-        assert!(super::is_health_check_path("/healthz"));
-        assert!(super::is_health_check_path("/healthz/"));
-        assert!(super::is_health_check_path("/api/health"));
-        assert!(super::is_health_check_path("/health?probe=k8s"));
-        assert!(super::is_health_check_path("/healthz?t=123"));
+    fn test_should_skip_request_log_only_suppresses_successful_get() {
+        use axum::http::StatusCode;
 
-        assert!(!super::is_health_check_path("/v1/chat/completions"));
-        assert!(!super::is_health_check_path("/v1/models"));
-        assert!(!super::is_health_check_path("/api/accounts"));
-        assert!(!super::is_health_check_path("/healthy"));
+        // 胶囊开关关闭（默认）：GET 成功请求一律不记录 —— 含 /v1/models 轮询（本次修复的核心场景）
+        // 与 /health 探针，且与路径无关（GET 成功即噪音）
+        for path in [
+            "/v1/models",
+            "/v1/models?limit=100",
+            "/v1beta/models",
+            "/v1/models/claude",
+            "/health",
+            "/healthz?t=123",
+            "/api/health/",
+            "/stats/overview",
+        ] {
+            for status in [200, 204, 201] {
+                assert!(
+                    super::should_skip_request_log(
+                        "GET",
+                        StatusCode::from_u16(status).unwrap(),
+                        false
+                    ),
+                    "GET {status} {path} 应被抑制"
+                );
+            }
+        }
+
+        // 大写的 GET 同样识别
+        assert!(super::should_skip_request_log("get", StatusCode::OK, false));
+
+        // 失败请求始终记录（供排障）—— 无论路径与方法
+        for status in [400, 401, 403, 404, 429, 500, 502, 503, 504] {
+            assert!(
+                !super::should_skip_request_log(
+                    "GET",
+                    StatusCode::from_u16(status).unwrap(),
+                    false
+                ),
+                "GET {status} 必须记录"
+            );
+        }
+
+        // 非 GET 业务请求始终记录
+        for method in ["POST", "PUT", "PATCH", "DELETE", "post"] {
+            assert!(
+                !super::should_skip_request_log(method, StatusCode::OK, false),
+                "{method} 200 必须记录"
+            );
+        }
+
+        // 开关开启（或 ABV_LOG_HEALTH_CHECKS=true）→ 全部记录并落库
+        for (method, status) in [("GET", 200), ("GET", 503), ("POST", 200)] {
+            assert!(
+                !super::should_skip_request_log(
+                    method,
+                    StatusCode::from_u16(status).unwrap(),
+                    true
+                ),
+                "开关开启时 {method} {status} 必须记录"
+            );
+        }
     }
 }

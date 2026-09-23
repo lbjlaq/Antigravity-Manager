@@ -1589,13 +1589,15 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
     }, [filter, accountFilter]);
 
     // Logs are already filtered and sorted by backend
-    // Apply account filter and health check filter on frontend
+    // Apply account filter and noise filter on frontend (与后端 should_skip_request_log 语义保持一致)
     const filteredLogs = useMemo(() => {
         let result = logs;
         if (!captureHealthLogs) {
             result = result.filter(log => {
-                const isHealthPath = log.url === '/health' || log.url === '/healthz' || log.url === '/api/health';
-                return !(isHealthPath && log.method?.toUpperCase() === 'GET');
+                const isGetSuccess = log.method?.toUpperCase() === 'GET'
+                    && typeof log.status === 'number'
+                    && log.status >= 200 && log.status < 300;
+                return !isGetSuccess;
             });
         }
         if (accountFilter) {
@@ -1802,7 +1804,7 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                                 ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
                                 : 'bg-white dark:bg-base-200 text-gray-700 dark:text-gray-200 border-gray-300 dark:border-base-300 hover:bg-gray-100 dark:hover:bg-base-300/80 hover:text-gray-900 dark:hover:text-white shadow-2xs'
                         }`}
-                        title={t('monitor.filters.capture_health_tip', { defaultValue: '默认关闭：过滤 GET /health 探活且不入库；开启后才记录并落库' })}
+                        title={t('monitor.filters.capture_health_tip', { defaultValue: '默认关闭：过滤全部 GET 成功请求（含 /v1/models 模型列表轮询与 /health 探针）且不入库；失败请求始终记录；开启后才全部记录并落库' })}
                     >
                         <span className={`w-1.5 h-1.5 rounded-full ${captureHealthLogs ? 'bg-white animate-pulse' : 'bg-gray-400 dark:bg-gray-500'}`} />
                         {t('monitor.filters.capture_health', { defaultValue: '捕获健康检查' })}

@@ -1364,7 +1364,7 @@
       "claude": "Claude",
       "images": "Images",
       "capture_health": "Capture Health",
-      "capture_health_tip": "Disabled by default: skips GET /health logging & persistence; enable to record & save",
+      "capture_health_tip": "Disabled by default: skips all successful GET requests (incl. /v1/models polling and /health probes) and does not persist them; failed requests are always recorded; enable to record & save everything",
       "reset": "Reset",
       "by_account": "Filter by account",
       "all_accounts": "All Accounts"
