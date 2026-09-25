@@ -1,20 +1,44 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Clock, AlertCircle, Bot } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Account, getAccountTier, getTierLabel } from '../../types/account';
 import { formatDate } from '../../utils/format';
 import { useTranslation } from 'react-i18next';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
+import { showToast } from '../common/ToastContainer';
 
 interface AccountDetailsDialogProps {
     account: Account | null;
     onClose: () => void;
+    onUpdatePriority: (accountId: string, priority: number) => Promise<void>;
 }
 
-export default function AccountDetailsDialog({ account, onClose }: AccountDetailsDialogProps) {
+export default function AccountDetailsDialog({ account, onClose, onUpdatePriority }: AccountDetailsDialogProps) {
     const { t } = useTranslation();
     const [activeTab, setActiveTab] = useState<'basic' | 'detailed'>('basic');
+    const [priorityInput, setPriorityInput] = useState('50');
+    const [savingPriority, setSavingPriority] = useState(false);
+    useEffect(() => {
+        setPriorityInput(String(account?.priority ?? 50));
+    }, [account?.id, account?.priority]);
     if (!account) return null;
+
+    const savePriority = async () => {
+        const priority = Number(priorityInput);
+        if (!Number.isInteger(priority) || priority < 1 || priority > 100) {
+            showToast(t('accounts.priority_invalid'), 'error');
+            return;
+        }
+        setSavingPriority(true);
+        try {
+            await onUpdatePriority(account.id, priority);
+            showToast(t('accounts.priority_updated'), 'success');
+        } catch (error) {
+            showToast(`${t('common.error')}: ${error}`, 'error');
+        } finally {
+            setSavingPriority(false);
+        }
+    };
 
     return createPortal(
         <div className="modal modal-open z-[100]">
@@ -75,6 +99,19 @@ export default function AccountDetailsDialog({ account, onClose }: AccountDetail
 
                 {/* Content */}
                 <div className="p-6 max-h-[60vh] overflow-y-auto">
+                    <div className="mb-6">
+                        <label className="text-sm font-medium" htmlFor="account-priority">{t('accounts.priority')}</label>
+                        <div className="flex items-center gap-2 mt-2">
+                            <input id="account-priority" type="number" min={1} max={100} step={1}
+                                className="input input-bordered input-sm w-24" value={priorityInput}
+                                disabled={savingPriority} onChange={event => setPriorityInput(event.target.value)} />
+                            <button className="btn btn-primary btn-sm" onClick={savePriority}
+                                disabled={savingPriority || priorityInput === String(account.priority ?? 50)}>
+                                {t(savingPriority ? 'common.saving' : 'common.save')}
+                            </button>
+                        </div>
+                        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{t('accounts.priority_hint')}</p>
+                    </div>
                     {/* Protected Models Section */}
                     {account.protected_models && account.protected_models.length > 0 && (
                         <div className="mb-6">

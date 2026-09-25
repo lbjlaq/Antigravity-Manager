@@ -281,6 +281,7 @@ struct AccountResponse {
     id: String,
     email: String,
     name: Option<String>,
+    priority: u8,
     is_current: bool,
     disabled: bool,
     disabled_reason: Option<String>,
@@ -373,6 +374,7 @@ fn to_account_response(
         id: account.id.clone(),
         email: account.email.clone(),
         name: account.name.clone(),
+        priority: account.priority,
         is_current: current_id.as_ref() == Some(&account.id),
         disabled: account.disabled,
         disabled_reason: account.disabled_reason.clone(),
@@ -905,6 +907,10 @@ impl AxumServer {
             .route("/accounts/warmup", post(admin_warm_up_all_accounts))
             .route("/accounts/:accountId/warmup", post(admin_warm_up_account))
             .route(
+                "/accounts/:accountId/priority",
+                post(admin_update_account_priority),
+            )
+            .route(
                 "/system/data-dir",
                 get(admin_get_data_dir_path).post(admin_set_data_dir),
             )
@@ -1313,6 +1319,7 @@ async fn admin_list_accounts(
                 id: acc.id,
                 email: acc.email,
                 name: acc.name,
+                priority: acc.priority,
                 is_current,
                 disabled: acc.disabled,
                 disabled_reason: acc.disabled_reason,
@@ -1394,6 +1401,7 @@ async fn admin_get_current_account(
                 id: acc.id,
                 email: acc.email,
                 name: acc.name,
+                priority: acc.priority,
                 is_current: true,
                 disabled: acc.disabled,
                 disabled_reason: acc.disabled_reason,
@@ -2946,6 +2954,31 @@ async fn admin_fetch_account_quota(
 struct ToggleProxyRequest {
     enable: bool,
     reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AccountPriorityRequest {
+    #[serde(deserialize_with = "crate::models::account::deserialize_priority")]
+    priority: u8,
+}
+
+async fn admin_update_account_priority(
+    State(state): State<AppState>,
+    Path(account_id): Path<String>,
+    Json(payload): Json<AccountPriorityRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::modules::account::update_account_priority(&account_id, payload.priority).map_err(
+        |e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e }),
+            )
+        },
+    )?;
+    state
+        .token_manager
+        .update_account_priority(&account_id, payload.priority);
+    Ok(StatusCode::OK)
 }
 
 async fn admin_toggle_proxy_status(
@@ -4543,6 +4576,32 @@ mod image_scheduler_tests {
         assert!(scheduler.try_acquire("account-1").is_none());
         drop(permit);
         assert_eq!(scheduler.available_slots(), 1);
+    }
+
+    #[test]
+    fn account_priority_web_response_preserves_saved_and_default_values() {
+        let token = crate::models::TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = crate::models::Account::new(
+            "test-priority".into(),
+            "test-priority@test.invalid".into(),
+            token,
+        );
+
+        for priority in [7, 50] {
+            account.priority = priority;
+            let payload =
+                serde_json::to_value(super::to_account_response(&account, &None)).unwrap();
+            assert_eq!(payload.get("priority"), Some(&serde_json::json!(priority)));
+        }
     }
 
     #[test]

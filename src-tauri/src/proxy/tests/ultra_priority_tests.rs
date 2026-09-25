@@ -38,6 +38,7 @@ fn create_test_token(
 
     ProxyToken {
         account_id: email.to_string(),
+        priority: crate::models::account::default_priority(),
         access_token: "test_token".to_string(),
         refresh_token: "test_refresh".to_string(),
         expires_in: 3600,

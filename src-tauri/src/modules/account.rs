@@ -1213,6 +1213,15 @@ pub fn save_account(account: &Account) -> Result<(), String> {
     save_account_at_path(&account_path, account)
 }
 
+/// Save proxy selection priority using the shared account write lock.
+pub fn update_account_priority(account_id: &str, priority: u8) -> Result<(), String> {
+    crate::models::account::validate_priority(priority)?;
+    let _account_write = lock_account_file_updates()?;
+    let mut account = load_account(account_id)?;
+    account.priority = priority;
+    save_account(&account)
+}
+
 /// List all accounts
 pub fn list_accounts() -> Result<Vec<Account>, String> {
     crate::modules::logger::log_info("Listing accounts...");

@@ -55,6 +55,7 @@ function Accounts() {
     warmUpAccounts,
     warmUpAccount,
     updateAccountLabel,
+    updateAccountPriority,
   } = useAccountStore();
   const { config, showAllQuotas, toggleShowAllQuotas } = useConfigStore();
 
@@ -1150,8 +1151,9 @@ function Accounts() {
       )}
 
       <AccountDetailsDialog
-        account={detailsAccount}
+        account={accounts.find(a => a.id === detailsAccount?.id) || null}
         onClose={() => setDetailsAccount(null)}
+        onUpdatePriority={updateAccountPriority}
       />
       <DeviceFingerprintDialog
         account={deviceAccount}
@@ -1243,12 +1245,6 @@ function Accounts() {
         isDestructive={false}
         onConfirm={handleWarmupAll}
         onCancel={() => setIsWarmupConfirmOpen(false)}
-      />
-
-      {/* 账号详情弹窗 */}
-      <AccountDetailsDialog
-        account={detailsAccount}
-        onClose={() => setDetailsAccount(null)}
       />
 
       {/* 账号错误详情弹窗 */}

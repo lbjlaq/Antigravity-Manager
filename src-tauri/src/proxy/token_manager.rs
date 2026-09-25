@@ -116,6 +116,7 @@ fn unix_timestamp_ceil(time: std::time::SystemTime) -> Option<i64> {
 #[derive(Debug, Clone)]
 pub struct ProxyToken {
     pub account_id: String,
+    pub priority: u8,
     pub access_token: String,
     pub refresh_token: String,
     pub expires_in: i64,
@@ -365,6 +366,13 @@ impl TokenManager {
     /// 根据账号 ID 获取完整的 ProxyToken 对象 (v4.1.29)
     pub fn get_token_by_id(&self, account_id: &str) -> Option<ProxyToken> {
         self.tokens.get(account_id).map(|t| t.clone())
+    }
+
+    /// Apply a saved priority without resetting sessions or live rate limits.
+    pub fn update_account_priority(&self, account_id: &str, priority: u8) {
+        if let Some(mut token) = self.tokens.get_mut(account_id) {
+            token.priority = priority;
+        }
     }
 
     /// Check if an account has been disabled on disk.
@@ -726,6 +734,12 @@ impl TokenManager {
 
         Ok(Some(ProxyToken {
             account_id,
+            priority: crate::models::account::deserialize_priority(
+                account.get("priority").unwrap_or(&serde_json::json!(
+                    crate::models::account::default_priority()
+                )),
+            )
+            .map_err(|e| format!("invalid account priority: {}", e))?,
             access_token,
             refresh_token,
             expires_in,
@@ -1298,7 +1312,7 @@ impl TokenManager {
         use rand::Rng;
 
         // 过滤可用 token
-        let available: Vec<&ProxyToken> = candidates
+        let mut available: Vec<&ProxyToken> = candidates
             .iter()
             .filter(|t| !attempted.contains(&t.account_id))
             .filter(|t| {
@@ -1306,9 +1320,9 @@ impl TokenManager {
             })
             .collect();
 
-        if available.is_empty() {
-            return None;
-        }
+        // Keep lower-priority groups for retries; only this draw is restricted.
+        let priority = available.iter().map(|t| t.priority).min()?;
+        available.retain(|t| t.priority == priority);
         if available.len() == 1 {
             return Some(available[0]);
         }
@@ -1592,6 +1606,11 @@ impl TokenManager {
         }
 
         tokens_snapshot.sort_by(|a, b| {
+            let priority_cmp = a.priority.cmp(&b.priority);
+            if priority_cmp != std::cmp::Ordering::Equal {
+                return priority_cmp;
+            }
+
             // Priority 0: 严格的订阅等级排序 (ULTRA > PRO > FREE)
             // 用户要求：轮询应当遵循 Ultra -> Pro -> Free
             // 既然已经过滤掉了不支持该模型的账号，剩下的都是支持的
@@ -4915,6 +4934,7 @@ mod tests {
     ) -> ProxyToken {
         ProxyToken {
             account_id: email.to_string(),
+            priority: crate::models::account::default_priority(),
             access_token: "test_token".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_in: 3600,
@@ -5267,6 +5287,7 @@ mod tests {
     ) -> ProxyToken {
         ProxyToken {
             account_id: email.to_string(),
+            priority: crate::models::account::default_priority(),
             access_token: "test_token".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_in: 3600,
@@ -5306,6 +5327,89 @@ mod tests {
             // 由于只有两个候选，应该总是选择 high_quota
             assert_eq!(result.unwrap().email, "high@test.com");
         }
+    }
+
+    #[test]
+    fn account_priority_p2c_stays_in_highest_available_group() {
+        let manager = TokenManager::new(PathBuf::new());
+        let mut high = create_test_token("high", Some("FREE"), 0.5, None, Some(1));
+        high.priority = 1;
+        let low = create_test_token("low", Some("ULTRA"), 1.0, None, Some(100));
+        let mut candidates = vec![low, high]; // Deliberately unsorted.
+        let mut attempted = HashSet::new();
+        for _ in 0..20 {
+            let selected = manager
+                .select_with_p2c(&candidates, &attempted, "claude", true)
+                .unwrap();
+            assert_eq!(selected.account_id, "high");
+        }
+        attempted.insert("high".to_string());
+        let selected = manager
+            .select_with_p2c(&candidates, &attempted, "claude", true)
+            .unwrap();
+        assert_eq!(selected.account_id, "low");
+        attempted.clear();
+        candidates[1].protected_models.insert("claude".to_string());
+        let selected = manager
+            .select_with_p2c(&candidates, &attempted, "claude", true)
+            .unwrap();
+        assert_eq!(selected.account_id, "low");
+    }
+
+    #[tokio::test]
+    async fn account_priority_save_reselects_preserving_sessions_and_limits() {
+        async fn select(manager: &TokenManager, group: &str, session: Option<&str>) -> String {
+            manager
+                .get_token(group, false, session, "claude-sonnet-4-6")
+                .await
+                .unwrap()
+                .3
+        }
+        let _dir = crate::proxy::monitor::prompt_log_tests::TestDataDir::new();
+        let data_dir = crate::modules::account::get_data_dir().unwrap();
+        let manager = TokenManager::new(data_dir.clone());
+        for (id, priority) in [("high", 1), ("low", 100)] {
+            let mut account = weekly_quota_account(chrono::Utc::now().timestamp());
+            account["id"] = serde_json::json!(id);
+            account["email"] = serde_json::json!(format!("{id}@test.invalid"));
+            account["priority"] = serde_json::json!(priority);
+            let account: crate::models::Account = serde_json::from_value(account).unwrap();
+            crate::modules::account::save_account(&account).unwrap();
+            manager.reload_account(id).await.unwrap();
+        }
+        assert_eq!(select(&manager, "claude", Some("existing")).await, "high");
+        crate::modules::account::update_account_priority("high", 100).unwrap();
+        manager.update_account_priority("high", 100);
+        crate::modules::account::update_account_priority("low", 1).unwrap();
+        manager.update_account_priority("low", 1);
+        assert_eq!(
+            crate::modules::account::load_account("low")
+                .unwrap()
+                .priority,
+            1
+        );
+        assert_eq!(select(&manager, "claude", Some("existing")).await, "high");
+        assert_eq!(select(&manager, "claude", Some("new")).await, "low");
+        manager
+            .set_preferred_account(Some("high".to_string()))
+            .await;
+        assert_eq!(select(&manager, "image_gen", None).await, "high");
+        manager.set_preferred_account(None).await;
+        manager.rate_limit_tracker.set_lockout_until(
+            "low",
+            std::time::SystemTime::now() + Duration::from_secs(60),
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+            Some("claude".to_string()),
+        );
+        manager.update_account_priority("low", 2);
+        assert!(manager
+            .rate_limit_tracker
+            .is_rate_limited("low", Some("claude")));
+        assert_eq!(select(&manager, "image_gen", None).await, "high");
+        manager.rate_limit_tracker.clear("low");
+        // A stale/failed disk candidate must not remove the lower-priority fallback.
+        std::fs::write(data_dir.join("accounts/low.json"), "invalid JSON").unwrap();
+        assert_eq!(select(&manager, "image_gen", None).await, "high");
     }
 
     #[test]

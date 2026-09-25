@@ -2,6 +2,13 @@ import i18n from '../i18n';
 import { Account, DeviceProfile, DeviceProfileVersion, QuotaData } from '../types/account';
 import { request as invoke } from '../utils/request';
 
+export async function updateAccountPriority(accountId: string, priority: number): Promise<void> {
+    if (!Number.isInteger(priority) || priority < 1 || priority > 100) {
+        throw new Error(i18n.t('accounts.priority_invalid'));
+    }
+    await invoke('update_account_priority', { accountId, priority });
+}
+
 // 检查环境 (可选)
 function ensureTauriEnvironment() {
     // Web 模式下 request 也是一个 function，所以这里不应抛错
@@ -220,4 +227,3 @@ export async function exportAccounts(accountIds: string[]): Promise<ExportAccoun
 export async function updateAccountLabel(accountId: string, label: string): Promise<void> {
     return await invoke('update_account_label', { accountId, label });
 }
-

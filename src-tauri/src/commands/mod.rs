@@ -1242,6 +1242,22 @@ pub async fn warm_up_account(account_id: String) -> Result<String, String> {
     modules::quota::warm_up_account(&account_id).await
 }
 
+/// Save account priority and apply it to the running proxy.
+#[tauri::command]
+pub async fn update_account_priority(
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+    account_id: String,
+    priority: u8,
+) -> Result<(), String> {
+    modules::account::update_account_priority(&account_id, priority)?;
+    if let Some(instance) = proxy_state.instance.read().await.as_ref() {
+        instance
+            .token_manager
+            .update_account_priority(&account_id, priority);
+    }
+    Ok(())
+}
+
 /// 更新账号自定义标签
 #[tauri::command]
 pub async fn update_account_label(account_id: String, label: String) -> Result<(), String> {

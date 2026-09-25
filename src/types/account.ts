@@ -2,6 +2,7 @@ export interface Account {
     id: string;
     email: string;
     name?: string;
+    priority?: number;
     token: TokenData;
     device_profile?: DeviceProfile;
     device_history?: DeviceProfileVersion[];
