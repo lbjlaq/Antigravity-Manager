@@ -906,7 +906,8 @@ pub async fn handle_messages(
         // 0. 尝试提取 session_id 用于粘性调度 (Phase 2/3)
         // 使用 SessionManager 生成稳定的会话指纹，优先以显式会话头对齐跨协议 store_key
         let explicit_sid = headers
-            .get("x-session-id")
+            .get("x-claude-code-session-id")
+            .or_else(|| headers.get("x-session-id"))
             .or_else(|| headers.get("x-jeikcode-session-id"))
             .and_then(|v| v.to_str().ok())
             .map(|s| s.trim())

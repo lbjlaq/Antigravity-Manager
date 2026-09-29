@@ -226,7 +226,8 @@ pub async fn handle_generate(
         // 4. 获取 Token (使用准确的 request_type)
         // 提取 SessionId (粘性指纹，优先以显式会话头对齐跨协议 store_key)
         let explicit_sid = headers
-            .get("x-session-id")
+            .get("x-claude-code-session-id")
+            .or_else(|| headers.get("x-session-id"))
             .or_else(|| headers.get("x-jeikcode-session-id"))
             .and_then(|v| v.to_str().ok())
             .map(|s| s.trim())

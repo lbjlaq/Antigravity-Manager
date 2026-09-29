@@ -2074,7 +2074,8 @@ pub async fn handle_chat_completions(
         effort_hint.as_deref(),
     );
     let explicit_sid = headers
-        .get("x-session-id")
+        .get("x-claude-code-session-id")
+        .or_else(|| headers.get("x-session-id"))
         .or_else(|| headers.get("x-jeikcode-session-id"))
         .and_then(|v| v.to_str().ok())
         .map(|s| s.trim())
@@ -3717,7 +3718,8 @@ pub async fn handle_completions(
 
     // [NEW v4.2.0] Context Management & Reasoning Replay
     let explicit_sid = headers
-        .get("x-session-id")
+        .get("x-claude-code-session-id")
+        .or_else(|| headers.get("x-session-id"))
         .or_else(|| headers.get("x-jeikcode-session-id"))
         .and_then(|v| v.to_str().ok())
         .map(|s| s.trim())

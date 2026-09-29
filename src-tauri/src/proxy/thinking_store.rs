@@ -1901,6 +1901,7 @@ pub fn explicit_session_id(headers: &HeaderMap, body: Option<&Value>) -> Option<
 
 /// Product-specific `x-**-session-id` / `x-**-sessionid`. Checked before generic `x-session-id`.
 const PRODUCT_SESSION_HEADERS: &[&str] = &[
+    "x-claude-code-session-id",
     "x-jeikcode-sessionid",
     "x-jeikcode-session-id",
     "x-atomcode-session-id",
@@ -3381,6 +3382,17 @@ mod tests {
         assert_eq!(
             explicit_session_id_with_query(&jeik, None, None).as_deref(),
             Some("jeik-session")
+        );
+
+        let mut claude = HeaderMap::new();
+        claude.insert("x-session-id", "generic-session".parse().unwrap());
+        claude.insert(
+            "x-claude-code-session-id",
+            "claude-code-session".parse().unwrap(),
+        );
+        assert_eq!(
+            explicit_session_id_with_query(&claude, None, None).as_deref(),
+            Some("claude-code-session")
         );
 
         let mut atom = HeaderMap::new();
