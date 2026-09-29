@@ -1010,9 +1010,12 @@ pub async fn migrate_data_dir(new_path: String, clean_source: bool) -> Result<()
     Ok(())
 }
 
-/// 显示主窗口
+/// 显示主窗口（自启时若带 --minimized 参数则静默保持在托盘）
 #[tauri::command]
 pub async fn show_main_window(window: tauri::Window) -> Result<(), String> {
+    if std::env::args().any(|arg| arg == "--minimized") {
+        return Ok(());
+    }
     window.show().map_err(|e| e.to_string())
 }
 
