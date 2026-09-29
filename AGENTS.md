@@ -10,9 +10,8 @@
 
 ## Platform Scope: Windows-Only（2026-09 起）
 
-- 仅积极维护 **Windows**（无 WebView 服务包 + WebUI + Windows 托盘）。
-- macOS / Linux 只要求 CI 编译成功（Linux no-GUI 因 tauri 核心 Linux 实现依赖 gtk3，CI 需 `libgtk-3-dev`；服务版托盘仅 Windows 启用），**不验证运行时行为**。
-- 新增依赖只需评估：Windows 影响面 + Linux CI 可编译性。
+- 仅积极维护 **Windows**（无 WebView 服务包 + WebUI + Windows 托盘），**CI 也只编译 Windows**，其它平台不编译、不发布、不修。
+- 新增依赖只需评估 Windows 影响面；服务版托盘等平台相关代码用 `cfg(target_os = "windows")` 隔离，保持其它平台可编译即可（不做验证）。
 
 ## Repository Layout
 
@@ -20,7 +19,7 @@
 - `src-tauri/src/proxy/` — 网关核心（axum）：`server.rs`（HTTP 服务 + `/api` 管理路由 + `/api/events` SSE 事件桥 + `ABV_DIST_PATH` 静态托管）、`pipeline/`、`adapters/` + `mappers/`、`handlers/`、`thinking_store.rs`、`token_manager.rs`、`event_bus.rs`（双轨事件总线）。
 - `src-tauri/src/commands/` — Tauri IPC 命令层（薄壳，供 Web `/api` 与命令注册复用）；`src-tauri/src/modules/` — 领域服务（accounts、oauth、db、scheduler、tray_headless、updater 等）。`modules/http_api.rs` 仅剩设置读写（19527 服务是已移除的死代码）。
 - `release/` — 自包含服务运行包（`antigravity-tools.exe` + `dist/` + `start-webui.bat/.sh` + README）。二进制与 dist 被 gitignore，仅启动脚本入库。
-- `.github/workflows/build-headless-manual.yml` — 手动触发的无 GUI CI 构建（4 平台，Windows 产物即 release 包）。
+- `.github/workflows/build-headless-manual.yml` — 手动触发的无 GUI CI 构建（仅 Windows，产物即 release 包）。
 - `docker/` — GUI 镜像（`Dockerfile`）与无 GUI 服务镜像（`Dockerfile.service`，无 webkit/gtk 运行时依赖）；`web_site/` — 营销页，非应用 UI；`docs/` — 计划与发布文档。
 
 ## Architecture: Pipeline First

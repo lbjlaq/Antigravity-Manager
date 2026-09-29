@@ -22,7 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-2025, ubuntu-22.04, ubuntu-24.04-arm, macos-latest]
+        # 仅维护 Windows：服务版托盘等运行时行为只在 Windows 验证，其它平台不编译不发布
+        platform: [windows-2025]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

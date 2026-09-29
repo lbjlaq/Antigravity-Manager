@@ -33,7 +33,7 @@ pub fn spawn_tray(ctx: HeadlessTrayContext) {
 
 fn menu_texts() -> (&'static str, &'static str, &'static str) {
     // (打开 Web UI, 退出, tooltip)
-    let zh = modules::config::load_app_config()
+    let zh = crate::modules::config::load_app_config()
         .map(|c| c.language.starts_with("zh"))
         .unwrap_or(true);
     if zh {
@@ -63,7 +63,8 @@ fn run_tray(ctx: HeadlessTrayContext) {
         return;
     }
 
-    let tray = TrayIconBuilder::with_id("headless")
+    let tray = TrayIconBuilder::new()
+        .with_id("headless")
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(true)
         .with_icon(icon)
