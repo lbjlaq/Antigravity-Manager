@@ -27,12 +27,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # no-GUI 构建无需 webkit2gtk/gtk3；仅需 boring-sys2（BoringSSL）的构建前置
+      # no-GUI 构建无需 webkit2gtk；但 tauri 核心在 Linux 仍依赖 gtk3（gdk-sys），
+      # 以及 boring-sys2（BoringSSL）的构建前置 cmake/go/clang/nasm
       - name: Install dependencies (Linux)
         if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl wget file libssl-dev pkg-config perl cmake golang-go clang nasm
+          sudo apt-get install -y build-essential curl wget file libssl-dev pkg-config perl cmake golang-go clang nasm libgtk-3-dev
 
       - name: Rust setup
         uses: dtolnay/rust-toolchain@stable
