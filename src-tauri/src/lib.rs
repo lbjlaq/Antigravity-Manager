@@ -300,8 +300,8 @@ pub fn run() {
     }
 }
 
-/// 用系统默认浏览器打开 URL（`--open`，服务模式辅助）
-fn open_in_system_browser(url: &str) {
+/// 用系统默认浏览器打开 URL（`--open`，服务模式辅助；服务版托盘"打开 Web UI"也走这里）
+pub(crate) fn open_in_system_browser(url: &str) {
     let result = open_in_system_browser_impl(url);
     if let Err(e) = result {
         error!("Failed to open browser: {}", e);
@@ -490,6 +490,18 @@ fn run_headless(open_browser: bool) {
                 // Start smart scheduler for 7-day weekly reset warmup
                 modules::scheduler::start_scheduler(None, proxy_state.clone());
                 info!("Smart scheduler (7-Day Weekly Reset Warmup) started in headless mode.");
+
+                // 系统托盘（Windows）：独立线程创建并泵 Win32 消息，退出菜单走统一清理流程。
+                // ANTIGRAVITY_DISABLE_TRAY=1 可禁用；失败只记日志，不影响服务。
+                #[cfg(target_os = "windows")]
+                if should_enable_tray() {
+                    modules::tray_headless::spawn_tray(modules::tray_headless::HeadlessTrayContext {
+                        runtime: tokio::runtime::Handle::current(),
+                        port: service_port,
+                        proxy_state: proxy_state.clone(),
+                        cf_state: cf_state.clone(),
+                    });
+                }
             }
             Err(e) => {
                 error!("Failed to load config for headless mode: {}", e);

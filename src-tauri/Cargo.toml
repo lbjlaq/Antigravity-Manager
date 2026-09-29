@@ -86,6 +86,11 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 
+# 服务版（headless）Windows 系统托盘：独立于 tauri runtime，tray-icon + 自带 Win32 消息泵
+[target.'cfg(target_os = "windows")'.dependencies]
+tray-icon = { version = "0.21", default-features = false }
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [features]
 # gui = 含 WebView（tauri/wry）：桌面形态。no-GUI 服务形态用 --no-default-features 构建，
 # 二进制不链接 WebView2/wry/WebKitGTK（见 docs/WEBUI_NO_WEBVIEW2_PLAN.md 阶段 3/4）。

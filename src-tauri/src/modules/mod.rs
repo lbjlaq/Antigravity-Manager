@@ -24,6 +24,8 @@ pub mod security_db;
 pub mod token_stats;
 #[cfg(feature = "gui")]
 pub mod tray;
+#[cfg(target_os = "windows")]
+pub mod tray_headless;
 pub mod update_checker;
 pub mod user_token_db;
 pub mod version;
