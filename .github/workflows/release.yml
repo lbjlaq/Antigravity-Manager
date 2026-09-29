@@ -240,8 +240,91 @@ jobs:
             src-tauri/target/**/release/bundle/rpm/*.sig
           if-no-files-found: warn
 
+  # 无 GUI 服务形态（--no-default-features，不链接 WebView2/wry/WebKitGTK）
+  # 产物为 zip 直装二进制，不进 updater.json 自动更新通道（见 docs/WEBUI_NO_WEBVIEW2_PLAN.md 阶段 4）
+  build-headless:
+    name: Build Headless Service (no WebView)
+    needs: verify-release-target
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-2025, ubuntu-22.04, ubuntu-24.04-arm, macos-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # no-GUI 构建无需 webkit2gtk/gtk3；仅需 boring-sys2（BoringSSL）的构建前置
+      - name: Install dependencies (Linux)
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file libssl-dev pkg-config perl cmake golang-go clang nasm
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Ensure frontend dist directory exists
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          if (-not (Test-Path "dist/index.html")) { Set-Content -Path "dist/index.html" -Value "<html/>" }
+
+      # GitHub 托管 Windows 镜像自带 cmake/go；NASM / LLVM(libclang) 按需补装
+      - name: Prepare BoringSSL build toolchain (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm -y --no-progress
+            $nasmDir = (Get-ChildItem 'C:\Program Files\NASM' -Filter 'nasm.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).DirectoryName
+            if ($nasmDir) { Add-Content $env:GITHUB_PATH $nasmDir }
+          }
+          $llvmBin = 'C:\Program Files\LLVM\bin'
+          if (-not (Test-Path "$llvmBin\libclang.dll") -and -not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            choco install llvm -y --no-progress
+          }
+          if (Test-Path "$llvmBin\libclang.dll") {
+            "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+      - name: Build headless service binary
+        run: cargo build --release --no-default-features
+
+      - name: Package headless binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          VER="${{ needs.verify-release-target.outputs.release_tag }}"
+          case "${{ matrix.platform }}" in
+            windows-2025) ARCH=x64 ;;
+            ubuntu-22.04) ARCH=amd64 ;;
+            ubuntu-24.04-arm) ARCH=aarch64 ;;
+            macos-latest) ARCH=darwin-aarch64 ;;
+            *) ARCH=unknown ;;
+          esac
+          mkdir -p "${{ github.workspace }}/headless-out"
+          cd src-tauri/target/release
+          zip -j "${{ github.workspace }}/headless-out/antigravity-manager_${VER}_${ARCH}-headless.zip" antigravity-tools
+
+      - name: Package headless binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ver = "${{ needs.verify-release-target.outputs.release_tag }}"
+          New-Item -ItemType Directory -Force -Path "headless-out" | Out-Null
+          Compress-Archive -Path "src-tauri/target/release/antigravity-tools.exe" -DestinationPath "headless-out/antigravity-manager_${ver}_x64-headless.zip"
+
+      - name: Upload headless artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-assets-${{ matrix.platform }}-${{ strategy.job-index }}
+          path: headless-out/*.zip
+          if-no-files-found: warn
+
   publish-release:
-    needs: [verify-release-target, build-tauri]
+    needs: [verify-release-target, build-tauri, build-headless]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -254,7 +337,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: all-artifacts
-          pattern: "{release-assets-*,updater-json-*}"
+          pattern: "{release-assets-*,updater-json-*,headless-assets-*}"
           merge-multiple: true
 
       - name: Extract Release Notes
@@ -373,7 +456,8 @@ jobs:
             -name "*.exe" -o \
             -name "*.rpm" -o \
             -name "*.app.tar.gz" -o \
-            -name "*.sig" \
+            -name "*.sig" -o \
+            -name "*-headless.zip" \
           \) -print0 | while IFS= read -r -d '' file; do
             cp "$file" release-files/
           done

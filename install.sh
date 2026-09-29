@@ -152,6 +152,22 @@ get_version() {
 build_download_url() {
     local base_url="https://github.com/${REPO}/releases/download/v${RELEASE_VERSION}"
 
+    # HEADLESS=1：无 GUI 服务版直装 zip（阶段 4，不依赖 webkit2gtk）
+    if [[ "${HEADLESS:-0}" == "1" ]]; then
+        case "$ARCH_LABEL" in
+            x86_64)  HEADLESS_ARCH="amd64" ;;
+            aarch64) HEADLESS_ARCH="aarch64" ;;
+            *)       HEADLESS_ARCH="amd64" ;;
+        esac
+        case "$PLATFORM" in
+            macos) HEADLESS_ARCH="darwin-aarch64" ;;
+        esac
+        DOWNLOAD_URL="${base_url}/antigravity-manager_v${RELEASE_VERSION}_${HEADLESS_ARCH}-headless.zip"
+        FILENAME="antigravity-manager_v${RELEASE_VERSION}_${HEADLESS_ARCH}-headless.zip"
+        info "Download URL: $DOWNLOAD_URL"
+        return
+    fi
+
     case "$PLATFORM" in
         linux)
             case "$PKG_EXT" in
@@ -302,6 +318,19 @@ cleanup() {
     fi
 }
 
+# 无 GUI 服务版安装（阶段 4）：解压二进制到 ~/.local/bin
+install_headless() {
+    local install_dir="${HOME}/.local/bin"
+    mkdir -p "$install_dir"
+    info "Extracting headless service binary to $install_dir..."
+    run unzip -o "$DOWNLOAD_PATH" -d "$install_dir"
+    run chmod +x "${install_dir}/antigravity-tools"
+    success "${APP_NAME} headless service installed."
+    echo ""
+    info "Run: ${install_dir}/antigravity-tools --headless --open"
+    echo ""
+}
+
 # Main
 main() {
     for arg in "$@"; do
@@ -324,6 +353,11 @@ main() {
     get_version
     build_download_url
     download_installer
+
+    if [[ "${HEADLESS:-0}" == "1" ]]; then
+        install_headless
+        return
+    fi
 
     case "$PLATFORM" in
         linux) install_linux ;;

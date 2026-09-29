@@ -19,7 +19,7 @@ crate-type = ["rlib"]
 tauri-build = { version = "^2.2.5", features = [] }
 
 [dependencies]
-tauri = { version = "^2.2.5", features = ["tray-icon", "image-png"] }
+tauri = { version = "^2.2.5", default-features = false, features = ["compression", "dynamic-acl", "test"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
@@ -87,7 +87,10 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 gtk = "0.18"
 
 [features]
-default = ["custom-protocol"]
+# gui = 含 WebView（tauri/wry）：桌面形态。no-GUI 服务形态用 --no-default-features 构建，
+# 二进制不链接 WebView2/wry/WebKitGTK（见 docs/WEBUI_NO_WEBVIEW2_PLAN.md 阶段 3/4）。
+default = ["gui", "custom-protocol"]
+gui = ["tauri/wry", "tauri/tray-icon", "tauri/image-png", "tauri/common-controls-v6", "tauri/x11"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]

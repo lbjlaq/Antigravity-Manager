@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { listen } from '@tauri-apps/api/event';
+import { subscribe, onBridgeStateChange, bridgeState } from '../../utils/events';
 import ModalDialog from '../common/ModalDialog';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../../utils/request';
@@ -1532,7 +1532,6 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         let updateTimeout: number | null = null;
 
         const setupListener = async () => {
-            if (!isTauri()) return;
             // Prevent duplicate listener registration (React 18 StrictMode)
             if (listenerSetupRef.current) {
                 console.debug('[ProxyMonitor] Listener already set up, skipping...');
@@ -1540,11 +1539,9 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
             }
             listenerSetupRef.current = true;
 
-            console.debug('[ProxyMonitor] Setting up event listener for proxy://request');
-            unlistenFn = await listen<ProxyRequestLog>('proxy://request', (event) => {
+            console.debug('[ProxyMonitor] Setting up event subscription for proxy://request');
+            unlistenFn = await subscribe<ProxyRequestLog>('proxy://request', (newLog) => {
                 if (!isMountedRef.current) return;
-
-                const newLog = event.payload;
 
                 // 移除 body 以减少内存占用
                 const logSummary = {
@@ -1601,16 +1598,30 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
         };
         setupListener();
 
-        // Web 模式補強：如果不是 Tauri 環境，則啟用定時輪詢
+        // Web 模式兜底：仅当事件桥不可用（dead）时启用 10s 轮询；
+        // SSE 正常时以实时推送为准，避免与轮询重复渲染
         let pollInterval: number | null = null;
-        if (!isTauri()) {
-            console.debug('[ProxyMonitor] Web mode detected, starting auto-poll (10s)');
+        const startPollFallback = () => {
+            if (pollInterval) return;
+            console.debug('[ProxyMonitor] Event bridge unavailable, starting poll fallback (10s)');
             pollInterval = window.setInterval(() => {
                 if (isMountedRef.current && !loading) {
                     // [FIX] 使用 ref.current 获取最新的筛选条件
                     loadData(currentPageRef.current, filterRef.current, accountFilterRef.current);
                 }
             }, 10000);
+        };
+        if (!isTauri()) {
+            const off = onBridgeStateChange((s) => {
+                if (s === 'dead') {
+                    off();
+                    startPollFallback();
+                }
+            });
+            if (bridgeState() === 'dead') {
+                off();
+                startPollFallback();
+            }
         }
 
         return () => {

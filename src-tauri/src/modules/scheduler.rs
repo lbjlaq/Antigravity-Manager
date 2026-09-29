@@ -91,10 +91,10 @@ fn pick_model_for_group(group_name: &str, bucket_id: &str, monitored_models: &[S
 
 /// Start smart weekly scheduler
 pub fn start_scheduler(
-    app_handle: Option<tauri::AppHandle>,
+    app_handle: Option<crate::AppHandle>,
     proxy_state: crate::commands::proxy::ProxyServiceState,
 ) {
-    tauri::async_runtime::spawn(async move {
+    crate::utils::spawn::spawn_task(async move {
         logger::log_info(
             "[Scheduler] Weekly Reset Warmup Scheduler started. Monitoring 7-day quota windows...",
         );

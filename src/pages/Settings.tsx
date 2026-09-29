@@ -213,8 +213,42 @@ function Settings() {
         }
     };
 
+    // Web 模式：手输服务器路径 + /api/system/validate-path 校验（阶段 2，替代不可用的本地目录选择）
+    const promptPathWeb = async (kind: 'dir' | 'file', title?: string): Promise<string | null> => {
+        const input = window.prompt(
+            `${title ? title + '\n' : ''}${t('settings.web_input_path_hint', '请输入服务器上的绝对路径')}`,
+            ''
+        );
+        if (input === null) return null;
+        const trimmed = input.trim();
+        if (!trimmed) return null;
+        try {
+            const res = await invoke<{ exists: boolean; is_dir: boolean }>('validate_path', { path: trimmed });
+            if (!res.exists) {
+                showToast(t('settings.web_path_not_exists', '路径不存在'), 'error');
+                return null;
+            }
+            if (kind === 'dir' && !res.is_dir) {
+                showToast(t('settings.web_path_not_dir', '该路径不是目录'), 'error');
+                return null;
+            }
+            return trimmed;
+        } catch (error) {
+            showToast(`${t('common.error')}: ${error}`, 'error');
+            return null;
+        }
+    };
+
     const handleSelectDataDir = async () => {
         try {
+            if (!isTauri()) {
+                const picked = await promptPathWeb('dir', t('settings.advanced.data_dir_select'));
+                if (picked && picked !== dataDirPath) {
+                    setPendingDataDir(picked);
+                    setIsMigrateDataDirOpen(true);
+                }
+                return;
+            }
             const selected = await open({
                 directory: true,
                 multiple: false,
@@ -254,6 +288,13 @@ function Settings() {
 
     const handleSelectExportPath = async () => {
         try {
+            if (!isTauri()) {
+                const picked = await promptPathWeb('dir', t('settings.advanced.export_path'));
+                if (picked) {
+                    setFormData({ ...formData, default_export_path: picked });
+                }
+                return;
+            }
             // @ts-ignore
             const selected = await open({
                 directory: true,
@@ -270,6 +311,13 @@ function Settings() {
 
     const handleSelectAntigravityPath = async () => {
         try {
+            if (!isTauri()) {
+                const picked = await promptPathWeb('file', t('settings.advanced.antigravity_path_select'));
+                if (picked) {
+                    setFormData({ ...formData, antigravity_executable: picked });
+                }
+                return;
+            }
             const selected = await open({
                 directory: false,
                 multiple: false,
@@ -285,6 +333,13 @@ function Settings() {
 
     const handleSelectAntigravityIdePath = async () => {
         try {
+            if (!isTauri()) {
+                const picked = await promptPathWeb('file', t('settings.advanced.antigravity_ide_path_select', 'Select Antigravity IDE Executable'));
+                if (picked) {
+                    setFormData({ ...formData, antigravity_ide_executable: picked });
+                }
+                return;
+            }
             const selected = await open({
                 directory: false,
                 multiple: false,
@@ -300,6 +355,22 @@ function Settings() {
 
     const handleSelectDebugLogDir = async () => {
         try {
+            if (!isTauri()) {
+                const picked = await promptPathWeb('dir', t('settings.advanced.debug_log_dir_select'));
+                if (picked) {
+                    setFormData({
+                        ...formData,
+                        proxy: {
+                            ...formData.proxy,
+                            debug_logging: {
+                                enabled: formData.proxy?.debug_logging?.enabled ?? false,
+                                output_dir: picked,
+                            },
+                        },
+                    });
+                }
+                return;
+            }
             const selected = await open({
                 directory: true,
                 multiple: false,
@@ -335,6 +406,13 @@ function Settings() {
 
     const handleSelectAntigravityCliPath = async () => {
         try {
+            if (!isTauri()) {
+                const picked = await promptPathWeb('file', t('settings.advanced.antigravity_cli_path_select', 'Select Antigravity CLI (agy) Executable'));
+                if (picked) {
+                    setFormData({ ...formData, antigravity_cli_executable: picked });
+                }
+                return;
+            }
             const selected = await open({
                 directory: false,
                 multiple: false,
@@ -349,6 +427,11 @@ function Settings() {
     };
 
     const handleDetectAntigravityCliPath = async () => {
+        if (!isTauri()) {
+            // 本地可执行文件探测是桌面能力（Web 服务器无此语义）
+            showToast(t('settings.web_mode_limitation', '(Web 模式不支持)'), 'info');
+            return;
+        }
         try {
             const path = await invoke<string>('get_antigravity_cli_path', { bypassConfig: true });
             setFormData({ ...formData, antigravity_cli_executable: path });
@@ -409,8 +492,12 @@ function Settings() {
                     window.open(updateInfo.downloadUrl, '_blank', 'noopener,noreferrer');
                 }
             }
-        } else if (updateInfo?.downloadUrl) {
-            window.open(updateInfo.downloadUrl, '_blank', 'noopener,noreferrer');
+        } else if (updateInfo) {
+            // Web 模式：本页已有更新通知组件（App 级监听 CustomEvent），同时给出手动下载兜底
+            window.dispatchEvent(new CustomEvent('app://trigger-update'));
+            if (updateInfo.downloadUrl) {
+                window.open(updateInfo.downloadUrl, '_blank', 'noopener,noreferrer');
+            }
         }
     };
 

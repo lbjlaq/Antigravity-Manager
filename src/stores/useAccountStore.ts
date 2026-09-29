@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Account } from '../types/account';
 import * as accountService from '../services/accountService';
+import { uploadRequest } from '../utils/request';
 
 interface AccountState {
     accounts: Account[];
@@ -26,6 +27,7 @@ interface AccountState {
     importV1Accounts: () => Promise<void>;
     importFromDb: () => Promise<void>;
     importFromCustomDb: (path: string) => Promise<void>;
+    importFromCustomDbUpload: (file: File) => Promise<void>;
     syncAccountFromDb: () => Promise<void>;
     toggleProxyStatus: (accountId: string, enable: boolean, reason?: string) => Promise<void>;
     warmUpAccounts: () => Promise<string>;
@@ -237,6 +239,22 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         set({ loading: true, error: null });
         try {
             await accountService.importFromCustomDb(path);
+            await Promise.all([
+                get().fetchAccounts(),
+                get().fetchCurrentAccount()
+            ]);
+            set({ loading: false });
+        } catch (error) {
+            set({ error: String(error), loading: false });
+            throw error;
+        }
+    },
+
+    // Web 模式：浏览器文件上传导入 .vscdb（阶段 2，副作用与路径导入一致）
+    importFromCustomDbUpload: async (file: File) => {
+        set({ loading: true, error: null });
+        try {
+            await uploadRequest('/api/accounts/import/db-custom-upload', file);
             await Promise.all([
                 get().fetchAccounts(),
                 get().fetchCurrentAccount()

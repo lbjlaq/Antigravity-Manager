@@ -62,7 +62,7 @@ pub async fn list_accounts(
 /// 添加账号
 #[tauri::command]
 pub async fn add_account(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     _email: String,
     refresh_token: String,
 ) -> Result<Account, String> {
@@ -88,7 +88,7 @@ pub async fn add_account(
 /// 删除账号
 #[tauri::command]
 pub async fn delete_account(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     account_id: String,
 ) -> Result<(), String> {
@@ -106,7 +106,7 @@ pub async fn delete_account(
 /// 批量删除账号
 #[tauri::command]
 pub async fn delete_accounts(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     account_ids: Vec<String>,
 ) -> Result<(), String> {
@@ -120,6 +120,7 @@ pub async fn delete_accounts(
     })?;
 
     // 强制同步托盘
+    #[cfg(feature = "gui")]
     crate::modules::tray::update_tray_menus(&app);
 
     // Reload token pool
@@ -152,7 +153,7 @@ pub async fn reorder_accounts(
 /// 切换账号
 #[tauri::command]
 pub async fn switch_account(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     account_id: String,
     target_ide: Option<String>,
@@ -166,6 +167,7 @@ pub async fn switch_account(
         .await?;
 
     // 同步托盘
+    #[cfg(feature = "gui")]
     crate::modules::tray::update_tray_menus(&app);
 
     // [FIX #820] Notify proxy to clear stale session bindings and reload accounts
@@ -204,7 +206,7 @@ pub async fn export_accounts(account_ids: Vec<String>) -> Result<AccountExportRe
 
 /// 内部辅助功能：在添加或导入账号后自动刷新一次额度
 async fn internal_refresh_account_quota(
-    app: &tauri::AppHandle,
+    app: &crate::AppHandle,
     account: &mut Account,
 ) -> Result<QuotaData, String> {
     modules::logger::log_info(&format!("自动触发刷新配额: {}", account.email));
@@ -215,6 +217,7 @@ async fn internal_refresh_account_quota(
             // 更新账号配额
             let _ = modules::update_account_quota(&account.id, quota.clone());
             // 更新托盘菜单
+            #[cfg(feature = "gui")]
             crate::modules::tray::update_tray_menus(app);
             Ok(quota)
         }
@@ -228,7 +231,7 @@ async fn internal_refresh_account_quota(
 /// 查询账号配额
 #[tauri::command]
 pub async fn fetch_account_quota(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     account_id: String,
 ) -> crate::error::AppResult<QuotaData> {
@@ -245,6 +248,7 @@ pub async fn fetch_account_quota(
 
     quota.ensure_subscription_tier();
 
+    #[cfg(feature = "gui")]
     crate::modules::tray::update_tray_menus(&app);
 
     // 5. 同步到运行中的反代服务（如果已启动）
@@ -285,7 +289,7 @@ pub use modules::account::RefreshStats;
 /// 刷新所有账号配额 (内部实现)
 pub async fn refresh_all_quotas_internal(
     proxy_state: &crate::commands::proxy::ProxyServiceState,
-    app_handle: Option<tauri::AppHandle>,
+    app_handle: Option<crate::AppHandle>,
 ) -> Result<RefreshStats, String> {
     let stats = modules::account::refresh_all_quotas_logic().await?;
 
@@ -295,7 +299,8 @@ pub async fn refresh_all_quotas_internal(
         let _ = instance.token_manager.reload_all_accounts().await;
     }
 
-    // 发送全局刷新事件给 UI (如果需要)
+    // 发送全局刷新事件给 UI (如果需要) — 双轨：SSE 总线 + Tauri
+    crate::proxy::event_bus::emit("accounts://refreshed", &());
     if let Some(handle) = app_handle {
         use tauri::Emitter;
         let _ = handle.emit("accounts://refreshed", ());
@@ -308,7 +313,7 @@ pub async fn refresh_all_quotas_internal(
 #[tauri::command]
 pub async fn refresh_all_quotas(
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
-    app_handle: tauri::AppHandle,
+    app_handle: crate::AppHandle,
 ) -> Result<RefreshStats, String> {
     refresh_all_quotas_internal(&proxy_state, Some(app_handle)).await
 }
@@ -383,7 +388,7 @@ pub async fn delete_device_version(account_id: String, version_id: String) -> Re
 
 /// 打开设备存储目录
 #[tauri::command]
-pub async fn open_device_folder(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn open_device_folder(app: crate::AppHandle) -> Result<(), String> {
     let dir = modules::device::get_storage_dir()?;
     let dir_str = dir
         .to_str()
@@ -409,7 +414,7 @@ pub async fn get_config() -> Result<AppConfig, String> {
 /// 保存配置
 #[tauri::command]
 pub async fn save_config(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     mut config: AppConfig,
 ) -> Result<(), String> {
@@ -423,7 +428,8 @@ pub async fn save_config(
 
     modules::save_app_config(&config)?;
 
-    // 通知托盘配置已更新
+    // 通知托盘配置已更新 — 双轨：SSE 总线 + Tauri
+    crate::proxy::event_bus::emit("config://updated", &());
     let _ = app.emit("config://updated", ());
 
     // 同步全局内存配置（无论反代服务当前是否处于运行状态）
@@ -527,7 +533,7 @@ pub async fn save_config(
 
 #[tauri::command]
 pub async fn start_oauth_login(
-    app_handle: tauri::AppHandle,
+    app_handle: crate::AppHandle,
     oauth_client_key: Option<String>,
 ) -> Result<Account, String> {
     modules::logger::log_info("开始 OAuth 授权流程...");
@@ -551,7 +557,7 @@ pub async fn start_oauth_login(
 
 /// 完成 OAuth 授权（不自动打开浏览器）
 #[tauri::command]
-pub async fn complete_oauth_login(app_handle: tauri::AppHandle) -> Result<Account, String> {
+pub async fn complete_oauth_login(app_handle: crate::AppHandle) -> Result<Account, String> {
     modules::logger::log_info("完成 OAuth 授权流程 (manual)...");
     let service = modules::account_service::AccountService::new(
         crate::modules::integration::SystemManager::Desktop(app_handle.clone()),
@@ -574,7 +580,7 @@ pub async fn complete_oauth_login(app_handle: tauri::AppHandle) -> Result<Accoun
 /// 预生成 OAuth 授权链接 (不打开浏览器)
 #[tauri::command]
 pub async fn prepare_oauth_url(
-    app_handle: tauri::AppHandle,
+    app_handle: crate::AppHandle,
     oauth_client_key: Option<String>,
 ) -> Result<String, String> {
     let service = modules::account_service::AccountService::new(
@@ -616,7 +622,7 @@ pub async fn set_active_oauth_client(client_key: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn import_v1_accounts(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
 ) -> Result<Vec<Account>, String> {
     let accounts = modules::migration::import_from_v1().await?;
@@ -634,7 +640,7 @@ pub async fn import_v1_accounts(
 
 #[tauri::command]
 pub async fn import_from_db(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     target_ide: Option<String>,
 ) -> Result<Vec<Account>, String> {
@@ -653,6 +659,7 @@ pub async fn import_from_db(
         let _ = internal_refresh_account_quota(&app, &mut account).await;
     }
 
+    #[cfg(feature = "gui")]
     crate::modules::tray::update_tray_menus(&app);
     let _ = crate::commands::proxy::reload_proxy_accounts(proxy_state).await;
 
@@ -662,7 +669,7 @@ pub async fn import_from_db(
 #[tauri::command]
 #[allow(dead_code)]
 pub async fn import_custom_db(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     path: String,
 ) -> Result<Account, String> {
@@ -677,6 +684,7 @@ pub async fn import_custom_db(
     let _ = internal_refresh_account_quota(&app, &mut account).await;
 
     // 刷新托盘图标展示
+    #[cfg(feature = "gui")]
     crate::modules::tray::update_tray_menus(&app);
 
     // Reload token pool
@@ -687,7 +695,7 @@ pub async fn import_custom_db(
 
 #[tauri::command]
 pub async fn sync_account_from_db(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
 ) -> Result<Option<Account>, String> {
     // Check if the current target is one we should not sync (like agy CLI)
@@ -736,6 +744,7 @@ pub async fn sync_account_from_db(
     let _ = internal_refresh_account_quota(&app, &mut account).await;
 
     // 刷新托盘图标展示
+    #[cfg(feature = "gui")]
     crate::modules::tray::update_tray_menus(&app);
 
     // Reload token pool
@@ -1012,13 +1021,13 @@ pub async fn migrate_data_dir(new_path: String, clean_source: bool) -> Result<()
 
 /// 显示主窗口
 #[tauri::command]
-pub async fn show_main_window(window: tauri::Window) -> Result<(), String> {
+pub async fn show_main_window(window: crate::Window) -> Result<(), String> {
     window.show().map_err(|e| e.to_string())
 }
 
 /// 设置窗口主题（用于同步 Windows 标题栏按钮颜色）
 #[tauri::command]
-pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<(), String> {
+pub async fn set_window_theme(window: crate::Window, theme: String) -> Result<(), String> {
     use tauri::Theme;
 
     let tauri_theme = match theme.as_str() {
@@ -1242,7 +1251,7 @@ pub async fn save_update_settings(
 /// 切换账号的反代禁用状态
 #[tauri::command]
 pub async fn toggle_proxy_status(
-    app: tauri::AppHandle,
+    app: crate::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     account_id: String,
     enable: bool,
@@ -1324,6 +1333,7 @@ pub async fn toggle_proxy_status(
     }
 
     // 5. 更新托盘菜单
+    #[cfg(feature = "gui")]
     crate::modules::tray::update_tray_menus(&app);
 
     Ok(())
@@ -1360,54 +1370,27 @@ pub async fn update_account_priority(
 /// 更新账号自定义标签
 #[tauri::command]
 pub async fn update_account_label(account_id: String, label: String) -> Result<(), String> {
-    // 验证标签长度（按字符数计算，支持中文）
-    if label.chars().count() > 15 {
-        return Err("标签长度不能超过15个字符".to_string());
-    }
-
     modules::logger::log_info(&format!(
         "更新账号标签: {} -> {:?}",
         account_id,
         if label.is_empty() { "无" } else { &label }
     ));
 
-    // 1. 读取账号文件
-    let data_dir = modules::account::get_data_dir()?;
-    let account_path = data_dir
-        .join("accounts")
-        .join(format!("{}.json", account_id));
-
-    if !account_path.exists() {
-        return Err(format!("账号文件不存在: {}", account_id));
-    }
-
-    let content =
-        std::fs::read_to_string(&account_path).map_err(|e| format!("读取账号文件失败: {}", e))?;
-
-    let mut account_json: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析账号文件失败: {}", e))?;
-
-    // 2. 更新 custom_label 字段
-    if label.is_empty() {
-        account_json["custom_label"] = serde_json::Value::Null;
-    } else {
-        account_json["custom_label"] = serde_json::Value::String(label.clone());
-    }
-
-    // 3. 保存到磁盘
-    let json_str = serde_json::to_string_pretty(&account_json)
-        .map_err(|e| format!("序列化账号数据失败: {}", e))?;
-    std::fs::write(&account_path, json_str).map_err(|e| format!("写入账号文件失败: {}", e))?;
-
-    modules::logger::log_info(&format!(
-        "账号标签已更新: {} ({})",
-        account_id,
-        if label.is_empty() {
-            "已清除".to_string()
-        } else {
-            label
-        }
-    ));
+    tokio::task::spawn_blocking(move || {
+        let result = modules::account::update_account_label(&account_id, &label);
+        modules::logger::log_info(&format!(
+            "账号标签已更新: {} ({})",
+            account_id,
+            if label.is_empty() {
+                "已清除".to_string()
+            } else {
+                label.clone()
+            }
+        ));
+        result
+    })
+    .await
+    .unwrap_or_else(|_| Err("Task panicked".to_string()))?;
 
     Ok(())
 }
@@ -1498,25 +1481,6 @@ pub async fn get_token_stats_account_trend_daily(
 
 #[tauri::command]
 pub async fn query_transit_info(url: String, key: String) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| e.to_string())?;
-
-    let response = client
-        .get(&url)
-        .bearer_auth(key)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let status = response.status();
-    let text = response.text().await.map_err(|e| e.to_string())?;
-
-    if status.is_success() {
-        Ok(text)
-    } else {
-        Err(format!("HTTP {}: {}", status, text))
-    }
+    // 实现收敛到 /api 侧共享的 relay_get_with_bearer（桌面与 Web 同一逻辑）
+    crate::proxy::server::relay_get_with_bearer(url, key).await
 }

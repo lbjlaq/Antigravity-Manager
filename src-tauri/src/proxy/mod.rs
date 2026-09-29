@@ -14,6 +14,7 @@ pub mod cli_sync; // CLI 配置同步 (v3.3.35)
 pub mod common; // 公共工具
 pub mod debug_logger;
 pub mod droid_sync; // Droid (Factory CLI) 配置同步
+pub mod event_bus; // 应用事件总线（桌面 Tauri 事件 + Web SSE 双轨）
 pub mod handlers; // API 端点处理器
 pub mod hermes_sync; // Hermes Agent 配置同步
 pub mod http_session_store; // HTTP多轮对话会话历史存储

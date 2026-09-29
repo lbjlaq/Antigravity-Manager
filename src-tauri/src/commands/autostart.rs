@@ -2,7 +2,7 @@
 use tauri_plugin_autostart::ManagerExt;
 
 #[tauri::command]
-pub async fn toggle_auto_launch(app: tauri::AppHandle, enable: bool) -> Result<(), String> {
+pub async fn toggle_auto_launch(app: crate::AppHandle, enable: bool) -> Result<(), String> {
     let manager = app.autolaunch();
 
     if enable {
@@ -32,7 +32,7 @@ pub async fn toggle_auto_launch(app: tauri::AppHandle, enable: bool) -> Result<(
 }
 
 #[tauri::command]
-pub async fn is_auto_launch_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+pub async fn is_auto_launch_enabled(app: crate::AppHandle) -> Result<bool, String> {
     let manager = app.autolaunch();
     manager.is_enabled().map_err(|e| e.to_string())
 }

@@ -35,6 +35,9 @@ jobs:
       - name: TypeScript check
         run: npx tsc --noEmit
 
+      - name: Web parity check (Tauri command ↔ HTTP mapping)
+        run: npm run check:parity
+
       - name: Build frontend
         run: npm run build
 
@@ -86,6 +89,12 @@ jobs:
         run: |
           cd src-tauri
           cargo check
+
+      # no-GUI 服务形态编译检查（不链接 WebView2/wry，阶段 4）
+      - name: Check no-GUI service build
+        run: |
+          cd src-tauri
+          cargo check --no-default-features
 
   # Tauri 构建测试（不打包）
   build-tauri:

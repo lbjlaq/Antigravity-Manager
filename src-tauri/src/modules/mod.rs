@@ -9,6 +9,7 @@ pub mod device;
 pub mod http_api;
 pub mod i18n;
 pub mod integration;
+#[cfg(feature = "gui")]
 pub mod lightweight;
 pub mod log_bridge;
 pub mod logger;
@@ -21,6 +22,7 @@ pub mod quota;
 pub mod scheduler;
 pub mod security_db;
 pub mod token_stats;
+#[cfg(feature = "gui")]
 pub mod tray;
 pub mod update_checker;
 pub mod user_token_db;

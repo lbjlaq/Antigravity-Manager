@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "check:parity": "node scripts/check-web-parity.mjs",
     "bump": "node scripts/bump-version.mjs",
     "tauri": "tauri",
     "tauri:debug": "RUST_LOG=debug npm run tauri dev"

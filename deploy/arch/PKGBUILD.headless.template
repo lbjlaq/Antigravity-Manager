@@ -1,0 +1,23 @@
+# 无 GUI 服务形态的 Arch 打包模板（阶段 4）：
+# 与 PKGBUILD.template 的区别：depends 不含 gtk3 / webkit2gtk-4.1 / librsvg。
+# 配套 CI 产物 antigravity-manager_<ver>_<arch>-headless.zip 使用。
+pkgname=antigravity-tools-headless
+pkgver=__VERSION__
+pkgrel=1
+pkgdesc="Professional AI Account Management & Proxy System (headless service, no WebView2)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/lbjlaq/Antigravity-Manager"
+license=('CC-BY-NC-SA-4.0')
+# 无 GUI：仅基础运行库，不含 webkit2gtk-4.1 / gtk3 / librsvg
+depends=('openssl' 'libnm')
+provides=('antigravity-tools')
+conflicts=('antigravity-tools')
+source_x86_64=("${pkgname}_${pkgver}_amd64-headless.zip")
+source_aarch64=("${pkgname}_${pkgver}_aarch64-headless.zip")
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+    install -Dm755 "${srcdir}/antigravity-tools" "${pkgdir}/usr/bin/antigravity-tools"
+    # 服务形态说明：以 --headless / --serve 运行，WebUI 通过 http://localhost:8045 访问
+}

@@ -69,7 +69,7 @@ pub async fn start_proxy_service(
     config: ProxyConfig,
     state: State<'_, ProxyServiceState>,
     cf_state: State<'_, crate::commands::cloudflared::CloudflaredState>,
-    app_handle: tauri::AppHandle,
+    app_handle: crate::AppHandle,
 ) -> Result<ProxyStatus, String> {
     let result = internal_start_proxy_service(
         config,

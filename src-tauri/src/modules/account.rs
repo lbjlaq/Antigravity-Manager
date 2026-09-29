@@ -1222,6 +1222,22 @@ pub fn update_account_priority(account_id: &str, priority: u8) -> Result<(), Str
     save_account(&account)
 }
 
+/// Update (or clear, when empty) an account's custom label using the shared account write lock.
+pub fn update_account_label(account_id: &str, label: &str) -> Result<(), String> {
+    // 验证标签长度（按字符数计算，支持中文）
+    if label.chars().count() > 15 {
+        return Err("标签长度不能超过15个字符".to_string());
+    }
+    let _account_write = lock_account_file_updates()?;
+    let mut account = load_account(account_id)?;
+    account.custom_label = if label.is_empty() {
+        None
+    } else {
+        Some(label.to_string())
+    };
+    save_account(&account)
+}
+
 /// List all accounts
 pub fn list_accounts() -> Result<Vec<Account>, String> {
     crate::modules::logger::log_info("Listing accounts...");

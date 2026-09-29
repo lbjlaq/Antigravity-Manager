@@ -22,7 +22,7 @@ static LOG_BRIDGE_ENABLED: AtomicBool = AtomicBool::new(false);
 static LOG_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Global app handle for emitting events (set once during setup)
-static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+static APP_HANDLE: OnceLock<crate::AppHandle> = OnceLock::new();
 
 /// Global log buffer for storing logs before UI connects
 static LOG_BUFFER: OnceLock<Arc<RwLock<VecDeque<LogEntry>>>> = OnceLock::new();
@@ -44,7 +44,7 @@ pub struct LogEntry {
 }
 
 /// Initialize the log bridge with app handle (call from setup)
-pub fn init_log_bridge(app_handle: tauri::AppHandle) {
+pub fn init_log_bridge(app_handle: crate::AppHandle) {
     let _ = APP_HANDLE.set(app_handle);
     tracing::debug!("[LogBridge] Initialized with app handle");
 }
@@ -53,10 +53,11 @@ pub fn init_log_bridge(app_handle: tauri::AppHandle) {
 pub fn enable_log_bridge() {
     LOG_BRIDGE_ENABLED.store(true, Ordering::SeqCst);
 
-    // Emit all buffered logs to frontend
-    if let Some(handle) = APP_HANDLE.get() {
-        let buffer = get_log_buffer().read();
-        for entry in buffer.iter() {
+    // Emit all buffered logs to frontend (双轨：SSE 总线 + Tauri)
+    let buffer = get_log_buffer().read();
+    for entry in buffer.iter() {
+        crate::proxy::event_bus::emit("log-event", entry);
+        if let Some(handle) = APP_HANDLE.get() {
             let _ = handle.emit("log-event", entry.clone());
         }
     }
@@ -88,6 +89,7 @@ pub fn clear_log_buffer() {
 /// Emit accounts://refreshed event to notify the frontend of account state changes
 /// This is used by background tasks (e.g. warmup 403 handling) that cannot access AppHandle directly.
 pub fn emit_accounts_refreshed() {
+    crate::proxy::event_bus::emit("accounts://refreshed", &());
     if let Some(handle) = APP_HANDLE.get() {
         let _ = handle.emit("accounts://refreshed", ());
         tracing::debug!("[LogBridge] Emitted accounts://refreshed event to frontend");
@@ -210,7 +212,8 @@ where
             buffer.push_back(entry.clone());
         }
 
-        // Emit to frontend
+        // Emit to frontend (双轨：SSE 总线 + Tauri)
+        crate::proxy::event_bus::emit("log-event", &entry);
         if let Some(handle) = APP_HANDLE.get() {
             let _ = handle.emit("log-event", entry);
         }

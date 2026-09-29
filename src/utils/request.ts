@@ -98,6 +98,12 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'execute_openclaw_clear': { url: '/api/proxy/openclaw/clear', method: 'POST' },
   'get_openclaw_config_content': { url: '/api/proxy/openclaw/config', method: 'POST' },
 
+  // Droid (Factory CLI) Sync
+  'get_droid_sync_status': { url: '/api/proxy/droid/status', method: 'POST' },
+  'execute_droid_sync': { url: '/api/proxy/droid/sync', method: 'POST' },
+  'execute_droid_restore': { url: '/api/proxy/droid/restore', method: 'POST' },
+  'get_droid_config_content': { url: '/api/proxy/droid/config', method: 'POST' },
+
   // Stats
   'get_token_stats_hourly': { url: '/api/stats/token/hourly', method: 'GET' },
   'get_token_stats_daily': { url: '/api/stats/token/daily', method: 'GET' },
@@ -114,6 +120,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   // System
   'get_data_dir_path': { url: '/api/system/data-dir', method: 'GET' },
   'set_data_dir': { url: '/api/system/data-dir', method: 'POST' },
+  'validate_path': { url: '/api/system/validate-path', method: 'POST' },
   'get_update_settings': { url: '/api/system/updates/settings', method: 'GET' },
   'save_update_settings': { url: '/api/system/updates/save', method: 'POST' },
   'is_auto_launch_enabled': { url: '/api/system/autostart/status', method: 'GET' },
@@ -148,6 +155,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'import_v1_accounts': { url: '/api/accounts/import/v1', method: 'POST' },
   'import_from_db': { url: '/api/accounts/import/db', method: 'POST' },
   'import_custom_db': { url: '/api/accounts/import/db-custom', method: 'POST' },
+  'query_transit_info': { url: '/api/transit/query', method: 'POST' },
   'sync_account_from_db': { url: '/api/accounts/sync/db', method: 'POST' },
 
   // System Extra & Cache
@@ -290,6 +298,48 @@ export async function request<T>(cmd: string, args?: any): Promise<T> {
     }
   } catch (error) {
     console.error(`Web Fetch Error [${cmd}]:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Web 模式专用：multipart 文件上传（阶段 2，.vscdb 导入等场景）。
+ * 仅浏览器环境使用；复用与 request() 相同的鉴权头与 401 处理。
+ */
+export async function uploadRequest<T = any>(url: string, file: File, fieldName = 'file'): Promise<T> {
+  const apiKey = typeof window !== 'undefined' ? sessionStorage.getItem('abv_admin_api_key') : null;
+
+  const form = new FormData();
+  form.append(fieldName, file, file.name || 'upload');
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...(apiKey
+          ? { Authorization: `Bearer ${apiKey}`, 'x-api-key': apiKey }
+          : {}),
+      },
+      body: form,
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        window.dispatchEvent(new CustomEvent('abv-unauthorized'));
+      }
+      const errorData = await response.json().catch(() => ({}));
+      throw errorData.error || `HTTP Error ${response.status}`;
+    }
+
+    const text = await response.text();
+    if (!text) return null as unknown as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return text as unknown as T;
+    }
+  } catch (error) {
+    console.error(`Web Upload Error [${url}]:`, error);
     throw error;
   }
 }

@@ -1,0 +1,103 @@
+# --- 无 GUI 服务形态镜像（阶段 4，见 docs/WEBUI_NO_WEBVIEW2_PLAN.md）---
+# 与 Dockerfile.backend 的区别：
+#   1. cargo build --no-default-features：二进制不链接 WebView2/wry/WebKitGTK；
+#   2. 构建期无需 GTK/WebKitGTK 开发头文件，运行期无需 GTK/WebKitGTK 运行时库（镜像显著瘦身）；
+#   3. WebUI 仍由 8045 端口托管（dist 运行期注入，ABV_DIST_PATH 机制不变）。
+ARG FRONTEND_IMAGE=antigravity-manager:latest
+
+FROM rust:1-slim-bookworm AS backend-builder
+ARG USE_MIRROR=auto
+
+# Conditionally use Aliyun mirror for APT
+RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
+    echo "Using Aliyun mirror for APT..."; \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
+    else \
+    echo "Using default APT sources..."; \
+    fi
+
+# boring-sys2（BoringSSL）构建前置：cmake / go / clang / git / perl（无需 GTK/WebKitGTK/nasm）
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    build-essential \
+    curl \
+    wget \
+    file \
+    libssl-dev \
+    perl \
+    cmake \
+    golang-go \
+    clang \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Use Aliyun mirror for Cargo if needed (Sparse Index)
+ENV CARGO_HTTP_MULTIPLEXING=false
+RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
+    echo "Using Aliyun mirror for Cargo..."; \
+    mkdir -p /root/.cargo && \
+    echo "[source.crates-io]\nreplace-with = 'aliyun'\n\n[source.aliyun]\nregistry = \"sparse+https://mirrors.aliyun.com/crates.io-index/\"" > /root/.cargo/config.toml; \
+    else \
+    echo "Using default Cargo registry..."; \
+    fi
+
+WORKDIR /app
+COPY src-tauri ./src-tauri
+
+# tauri-build 仍会读取 tauri.conf.json，提供占位 dist 通过构建期检查
+# （no-GUI 构建不使用 generate_context!，真实 WebUI dist 在运行期由 ABV_DIST_PATH 注入）
+RUN mkdir -p /app/dist && echo '<html><body>placeholder</body></html>' > /app/dist/index.html
+
+WORKDIR /app/src-tauri
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/app/src-tauri/target \
+    cargo build --release --no-default-features && \
+    cp target/release/antigravity-tools /tmp/antigravity-tools
+
+# --- Frontend Dist Stage (reuse prebuilt image) ---
+ARG FRONTEND_IMAGE=antigravity-manager:latest
+FROM ${FRONTEND_IMAGE} AS frontend-prebuilt
+
+# --- Final Runtime Stage ---
+# 运行时依赖显著少于 GUI 镜像：无 gtk3 / webkit2gtk / appindicator / librsvg
+FROM debian:bookworm-slim
+ARG USE_MIRROR=auto
+WORKDIR /app
+
+RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3 bash -c "</dev/tcp/www.google.com/80" 2>/dev/null ); then \
+    echo "Using Aliyun mirror for APT..."; \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
+    else \
+    echo "Using default APT sources..."; \
+    fi
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    libssl3 \
+    libsqlite3-0 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binary from builder
+COPY --from=backend-builder /tmp/antigravity-tools /app/antigravity-tools
+
+# Copy frontend dist from prebuilt image (WebUI 静态资源，非 WebView)
+COPY --from=frontend-prebuilt /app/dist /app/dist
+
+# Set environment variables
+ENV ABV_DIST_PATH=/app/dist
+ENV RUST_LOG=info
+ENV PORT=8045
+
+# Expose the proxy/admin port
+EXPOSE 8045
+
+# Healthcheck for container orchestration
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://127.0.0.1:8045/health || exit 1
+
+# Run the application in headless (service) mode
+ENTRYPOINT ["/app/antigravity-tools", "--headless"]

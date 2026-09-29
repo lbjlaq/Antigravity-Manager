@@ -243,11 +243,11 @@ pub struct ProxyMonitor {
     pub max_logs: usize,
     pub enabled: Arc<AtomicBool>,
     pub capture_health_logs: Arc<AtomicBool>,
-    app_handle: Option<tauri::AppHandle>,
+    app_handle: Option<crate::AppHandle>,
 }
 
 impl ProxyMonitor {
-    pub fn new(max_logs: usize, app_handle: Option<tauri::AppHandle>) -> Self {
+    pub fn new(max_logs: usize, app_handle: Option<crate::AppHandle>) -> Self {
         // Initialize DB
         if let Err(e) = crate::modules::proxy_db::init_db() {
             tracing::error!("Failed to initialize proxy DB: {}", e);
@@ -403,6 +403,8 @@ impl ProxyMonitor {
             logs.push_front(summary.clone());
         }
 
+        // 双轨事件：SSE 总线（Web）+ Tauri（桌面）
+        crate::proxy::event_bus::emit("proxy://request", &summary);
         if let Some(app) = &self.app_handle {
             let _ = app.emit("proxy://request", &summary);
         }

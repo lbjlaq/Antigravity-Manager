@@ -70,7 +70,7 @@ pub fn resolve_effective_target(
 
 /// 桌面版实现：包含完整的进程控制 and UI 同步
 pub struct DesktopIntegration {
-    pub app_handle: tauri::AppHandle,
+    pub app_handle: crate::AppHandle,
 }
 
 /// 写入账号凭据：>= 2.0.0 的原生应用走系统 Keyring，旧架构与定制 IDE 走 SQLite 注入。
@@ -376,6 +376,7 @@ impl SystemIntegration for DesktopIntegration {
                     "[Desktop] Hot switch completed for {}: language_server respawned with the new credentials.",
                     account.email
                 ));
+                #[cfg(feature = "gui")]
                 let _ = crate::modules::tray::update_tray_menus(&self.app_handle);
                 return Ok(());
             }
@@ -394,12 +395,14 @@ impl SystemIntegration for DesktopIntegration {
         )?;
 
         // 4. 更新托盘
+        #[cfg(feature = "gui")]
         let _ = crate::modules::tray::update_tray_menus(&self.app_handle);
 
         Ok(())
     }
 
     fn update_tray(&self) {
+        #[cfg(feature = "gui")]
         let _ = crate::modules::tray::update_tray_menus(&self.app_handle);
     }
 
@@ -1002,7 +1005,7 @@ impl SystemIntegration for HeadlessIntegration {
 /// 系统集成管理器：替代 Arc<dyn SystemIntegration> 以解决 async trait 的 dyn 兼容性问题
 #[derive(Clone)]
 pub enum SystemManager {
-    Desktop(tauri::AppHandle),
+    Desktop(crate::AppHandle),
     Headless,
 }
 

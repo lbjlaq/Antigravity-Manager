@@ -4,9 +4,11 @@
 # Parameters (set before running):
 #   $Version = "4.2.2"  # Install specific version
 #   $DryRun = $true      # Preview commands without executing
+#   $Headless = $true    # Install the no-WebView headless service build (zip) instead of the desktop installer
 
 if (-not $Version) { $Version = "" }
 if (-not $DryRun) { $DryRun = $false }
+if (-not $Headless) { $Headless = $false }
 
 $ErrorActionPreference = "Continue"
 
@@ -90,9 +92,15 @@ function Get-ReleaseVersion {
 }
 
 function Get-DownloadUrl {
-    # NSIS installer: Antigravity.Tools_4.3.3_x64-setup.exe
-    $script:DownloadUrl = "https://github.com/$Repo/releases/download/v$($script:ReleaseVersion)/Antigravity.Tools_$($script:ReleaseVersion)_x64-setup.exe"
-    $script:Filename = "Antigravity.Tools_$($script:ReleaseVersion)_x64-setup.exe"
+    if ($Headless) {
+        # 无 GUI 服务版（阶段 4）：直装 zip，解压即用，不依赖 WebView2
+        $script:DownloadUrl = "https://github.com/$Repo/releases/download/v$($script:ReleaseVersion)/antigravity-manager_v$($script:ReleaseVersion)_x64-headless.zip"
+        $script:Filename = "antigravity-manager_v$($script:ReleaseVersion)_x64-headless.zip"
+    } else {
+        # NSIS installer: Antigravity.Tools_4.3.3_x64-setup.exe
+        $script:DownloadUrl = "https://github.com/$Repo/releases/download/v$($script:ReleaseVersion)/Antigravity.Tools_$($script:ReleaseVersion)_x64-setup.exe"
+        $script:Filename = "Antigravity.Tools_$($script:ReleaseVersion)_x64-setup.exe"
+    }
 
     Info "Download URL: $($script:DownloadUrl)"
 }
@@ -123,6 +131,25 @@ function Install-App {
     }
 
     Success "Downloaded to $downloadPath"
+
+    if ($Headless) {
+        # 无 GUI 服务版：解压到本地目录，不运行安装器
+        $installDir = Join-Path $env:LOCALAPPDATA "AntigravityTools-Service"
+        Info "Extracting headless service to $installDir..."
+        if ($DryRun) {
+            Write-ColorOutput "Yellow" "[DRY-RUN] Expand-Archive -Path $downloadPath -DestinationPath $installDir"
+        } else {
+            try {
+                New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+                Expand-Archive -Path $downloadPath -DestinationPath $installDir -Force
+            } catch {
+                Script-Error "Extraction failed: $_"
+                return $false
+            }
+        }
+        Success "Headless service installed. Run: $installDir\antigravity-tools.exe --headless --open"
+        return $true
+    }
 
     Info "Running installer..."
 

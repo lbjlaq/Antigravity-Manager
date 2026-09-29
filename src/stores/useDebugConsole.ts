@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 import { request as invoke } from '../utils/request';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { isTauri } from '../utils/env';
 import { request } from '../utils/request';
+import { subscribe, onBridgeStateChange, bridgeState } from '../utils/events';
 
 export interface LogEntry {
     id: number;
@@ -22,7 +22,7 @@ interface DebugConsoleState {
     filter: LogLevel[];
     searchTerm: string;
     autoScroll: boolean;
-    unlistenFn: UnlistenFn | null;
+    unlistenFn: (() => void) | null;
     pollInterval: number | null;
 
     // Actions
@@ -69,11 +69,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
             }
             set({ isEnabled: true });
             await get().loadLogs();
-            if (isTauri()) {
-                await get().startListening();
-            } else {
-                get().startPolling();
-            }
+            await get().startListening();
         } catch (error) {
             console.error('Failed to enable debug console:', error);
         }
@@ -160,19 +156,32 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
     setAutoScroll: (enabled: boolean) => set({ autoScroll: enabled }),
 
     startListening: async () => {
-        // Web 模式下不支持 Tauri 事件监听，跳过
-        if (!isTauri()) return;
-
         const { unlistenFn } = get();
         if (unlistenFn) return; // Already listening
 
+        // 双轨事件桥：Tauri 走 listen，Web 走 SSE（/api/events）
         try {
-            const unlisten = await listen<LogEntry>('log-event', (event) => {
-                get().addLog(event.payload);
+            const unlisten = await subscribe<LogEntry>('log-event', (payload) => {
+                get().addLog(payload);
             });
             set({ unlistenFn: unlisten });
+
+            // Web 模式：SSE 连接不可用（dead）时降级为轮询兜底
+            if (!isTauri()) {
+                const off = onBridgeStateChange((s) => {
+                    if (s === 'dead') {
+                        off();
+                        get().startPolling();
+                    }
+                });
+                if (bridgeState() === 'dead') {
+                    off();
+                    get().startPolling();
+                }
+            }
         } catch (error) {
             console.error('Failed to start listening for logs:', error);
+            if (!isTauri()) get().startPolling();
         }
     },
 
@@ -195,11 +204,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
             set({ isEnabled });
             if (isEnabled) {
                 await get().loadLogs();
-                if (isTauri()) {
-                    await get().startListening();
-                } else {
-                    get().startPolling();
-                }
+                await get().startListening();
             }
         } catch (error) {
             console.error('Failed to check debug console status:', error);

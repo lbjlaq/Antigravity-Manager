@@ -1,0 +1,109 @@
+name: Build Headless Service (Manual)
+
+# 手动触发的无 GUI 服务版构建（无需打 tag / 走发布门禁）：
+# Actions → Build Headless Service (Manual) → Run workflow → 下载 artifact
+# 产物为自包含运行包：二进制 + WebUI dist + 一键启动脚本，解压即用。
+
+on:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: build-headless-manual
+  cancel-in-progress: true
+
+jobs:
+  build-headless:
+    name: Build Headless (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-2025, ubuntu-22.04, ubuntu-24.04-arm, macos-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # no-GUI 构建无需 webkit2gtk/gtk3；仅需 boring-sys2（BoringSSL）的构建前置
+      - name: Install dependencies (Linux)
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file libssl-dev pkg-config perl cmake golang-go clang nasm
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Node.js setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install frontend dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Prepare BoringSSL build toolchain (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm -y --no-progress
+            $nasmDir = (Get-ChildItem 'C:\Program Files\NASM' -Filter 'nasm.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).DirectoryName
+            if ($nasmDir) { Add-Content $env:GITHUB_PATH $nasmDir }
+          }
+          $llvmBin = 'C:\Program Files\LLVM\bin'
+          if (-not (Test-Path "$llvmBin\libclang.dll") -and -not (Get-Command clang -ErrorAction SilentlyContinue)) {
+            choco install llvm -y --no-progress
+          }
+          if (Test-Path "$llvmBin\libclang.dll") {
+            "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
+
+      - name: Build frontend (Web UI dist)
+        run: npm run build
+
+      - name: Build headless service binary
+        run: cargo build --release --no-default-features
+        working-directory: src-tauri
+
+      - name: Package self-contained folder (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p package/dist headless-out
+          cp -r dist/* package/dist/
+          cp src-tauri/target/release/antigravity-tools package/
+          # 一键启动脚本与说明（随仓库提交，缺失时跳过）
+          cp release/start-webui.sh release/start-webui.bat release/README.md package/ 2>/dev/null || true
+          chmod +x package/start-webui.sh package/antigravity-tools 2>/dev/null || true
+          case "${{ matrix.platform }}" in
+            windows-2025) ARCH=x64 ;;
+            ubuntu-22.04) ARCH=amd64 ;;
+            ubuntu-24.04-arm) ARCH=aarch64 ;;
+            macos-latest) ARCH=darwin-aarch64 ;;
+            *) ARCH=unknown ;;
+          esac
+          (cd package && zip -rq "${{ github.workspace }}/headless-out/antigravity-manager-headless_${ARCH}.zip" .)
+
+      - name: Package self-contained folder (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package\dist, headless-out | Out-Null
+          Copy-Item dist\* package\dist\ -Recurse -Force
+          Copy-Item src-tauri\target\release\antigravity-tools.exe package\
+          foreach ($f in @('release\start-webui.bat', 'release\start-webui.sh', 'release\README.md')) {
+            if (Test-Path $f) { Copy-Item $f package\ }
+          }
+          Compress-Archive -Path package\* -DestinationPath headless-out\antigravity-manager-headless_x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-package-${{ matrix.platform }}
+          path: headless-out/*.zip
+          if-no-files-found: error
+          retention-days: 14

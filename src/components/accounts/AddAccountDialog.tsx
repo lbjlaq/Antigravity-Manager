@@ -3,10 +3,10 @@ import { createPortal } from 'react-dom';
 import { Plus, Database, Globe, FileClock, Loader2, CheckCircle2, XCircle, Copy, Check, Info, Link2 } from 'lucide-react';
 import { useAccountStore } from '../../stores/useAccountStore';
 import { useTranslation } from 'react-i18next';
-import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { request as invoke } from '../../utils/request';
 import { isTauri } from '../../utils/env';
+import { subscribe } from '../../utils/events';
 import { copyToClipboard } from '../../utils/clipboard';
 
 interface AddAccountDialogProps {
@@ -30,7 +30,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     const [status, setStatus] = useState<Status>('idle');
     const [message, setMessage] = useState('');
 
-    const { startOAuthLogin, completeOAuthLogin, cancelOAuthLogin, importFromDb, importV1Accounts, importFromCustomDb } = useAccountStore();
+    const { startOAuthLogin, completeOAuthLogin, cancelOAuthLogin, importFromDb, importV1Accounts, importFromCustomDb, importFromCustomDbUpload } = useAccountStore();
 
     const oauthUrlRef = useRef(oauthUrl);
     const statusRef = useRef(status);
@@ -51,14 +51,13 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         }
     }, [isOpen, activeTab]);
 
-    // Listen for OAuth URL
+    // Listen for OAuth URL (双轨：Tauri listen / Web SSE)
     useEffect(() => {
-        if (!isTauri()) return;
         let unlisten: (() => void) | undefined;
 
         const setupListener = async () => {
-            unlisten = await listen('oauth-url-generated', (event) => {
-                setOauthUrl(event.payload as string);
+            unlisten = await subscribe<string>('oauth-url-generated', (payload) => {
+                setOauthUrl(payload);
                 // 自动复制到剪贴板? 可选，这里只设置状态让用户手动复制
             });
         };
@@ -72,11 +71,10 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
 
     // Listen for OAuth callback completion (user may open the URL manually without clicking Start)
     useEffect(() => {
-        if (!isTauri()) return;
         let unlisten: (() => void) | undefined;
 
         const setupListener = async () => {
-            unlisten = await listen('oauth-callback-received', async () => {
+            unlisten = await subscribe('oauth-callback-received', async () => {
                 if (!isOpenRef.current) return;
                 if (activeTabRef.current !== 'oauth') return;
                 if (statusRef.current === 'loading' || statusRef.current === 'success') return;
@@ -417,28 +415,41 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     };
 
     const handleImportCustomDb = async () => {
-        try {
-            if (!isTauri()) {
-                alert(t('common.tauri_api_not_loaded') || 'Storage import only works in desktop app.');
-                return;
-            }
-            const selected = await open({
-                multiple: false,
-                filters: [{
-                    name: 'VSCode DB',
-                    extensions: ['vscdb']
-                }, {
-                    name: 'All Files',
-                    extensions: ['*']
-                }]
-            });
+        if (isTauri()) {
+            try {
+                const selected = await open({
+                    multiple: false,
+                    filters: [{
+                        name: 'VSCode DB',
+                        extensions: ['vscdb']
+                    }, {
+                        name: 'All Files',
+                        extensions: ['*']
+                    }]
+                });
 
-            if (selected && typeof selected === 'string') {
-                handleAction(t('accounts.add.import.btn_custom_db') || 'Import Custom DB', () => importFromCustomDb(selected));
+                if (selected && typeof selected === 'string') {
+                    handleAction(t('accounts.add.import.btn_custom_db') || 'Import Custom DB', () => importFromCustomDb(selected));
+                }
+            } catch (err) {
+                console.error('Failed to open dialog:', err);
             }
-        } catch (err) {
-            console.error('Failed to open dialog:', err);
+            return;
         }
+
+        // Web 模式：浏览器文件选择 + multipart 上传（阶段 2，与桌面路径导入同一后端实现）
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.vscdb,.db';
+        input.onchange = () => {
+            const file = input.files && input.files[0];
+            if (!file) return;
+            handleAction(
+                t('accounts.add.import.btn_custom_db') || 'Import Custom DB',
+                () => importFromCustomDbUpload(file)
+            );
+        };
+        input.click();
     };
 
     // 状态提示组件

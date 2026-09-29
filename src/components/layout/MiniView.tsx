@@ -11,7 +11,7 @@ import { formatTimeRemaining, formatCompactNumber } from '../../utils/format';
 import { enterMiniMode, exitMiniMode } from '../../utils/windowManager';
 import { getModelDisplayName, findQuotaModel } from '../../config/modelConfig';
 import { getVersion } from '@tauri-apps/api/app';
-import { listen } from '@tauri-apps/api/event';
+import { subscribe } from '../../utils/events';
 
 import { useConfigStore } from '../../stores/useConfigStore';
 
@@ -36,16 +36,14 @@ export default function MiniView() {
     const [appVersion, setAppVersion] = useState('0.0.0');
     const [latestLog, setLatestLog] = useState<ProxyRequestLog | null>(null);
 
-    // Subscribe to proxy logs
+    // Subscribe to proxy logs (双轨：Tauri listen / Web SSE)
     useEffect(() => {
         let unlistenFn: (() => void) | null = null;
 
         const setupListener = async () => {
-            if (!isTauri()) return;
             try {
-                unlistenFn = await listen<ProxyRequestLog>('proxy://request', (event) => {
-                    console.log(event)
-                    setLatestLog(event.payload);
+                unlistenFn = await subscribe<ProxyRequestLog>('proxy://request', (payload) => {
+                    setLatestLog(payload);
                 });
             } catch (e) {
                 console.error('Failed to setup log listener:', e);
@@ -59,19 +57,15 @@ export default function MiniView() {
         };
     }, []);
 
-    // Get app version
+    // Get app version (Tauri only; web mode leaves it unset and hides the badge)
     useEffect(() => {
         const fetchVersion = async () => {
-            if (isTauri()) {
-                try {
-                    const version = await getVersion();
-                    setAppVersion(version);
-                } catch (error) {
-                    console.error('Failed to get app version:', error);
-                }
-            } else {
-                // Fallback for web mode if needed, or import from package.json
-                setAppVersion('4.8.4');
+            if (!isTauri()) return;
+            try {
+                const version = await getVersion();
+                setAppVersion(version);
+            } catch (error) {
+                console.error('Failed to get app version:', error);
             }
         };
         fetchVersion();
@@ -318,7 +312,9 @@ export default function MiniView() {
                                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                                 <span>Connected</span>
                             </div>
-                            <span className="font-mono opacity-50">v{appVersion}</span>
+                            {appVersion !== '0.0.0' && (
+                                <span className="font-mono opacity-50">v{appVersion}</span>
+                            )}
                         </>
                     )}
                 </div>

@@ -2,8 +2,9 @@ use crate::models::AppConfig;
 use crate::modules::{account, config, logger, migration, proxy_db, security_db, token_stats};
 use crate::proxy::TokenManager;
 use axum::{
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
+    response::sse::{Event as SseEvent, KeepAlive, Sse},
     response::{Html, IntoResponse, Json, Response},
     routing::{any, delete, get, post},
     Router,
@@ -754,6 +755,10 @@ impl AxumServer {
             .route("/accounts/import/v1", post(admin_import_v1_accounts))
             .route("/accounts/import/db", post(admin_import_from_db))
             .route("/accounts/import/db-custom", post(admin_import_custom_db))
+            .route(
+                "/accounts/import/db-custom-upload",
+                post(admin_import_custom_db_upload),
+            )
             .route("/accounts/sync/db", post(admin_sync_account_from_db))
             .route("/stats/summary", get(admin_get_token_stats_summary))
             .route("/stats/hourly", get(admin_get_token_stats_hourly))
@@ -940,9 +945,15 @@ impl AxumServer {
                 post(admin_update_account_priority),
             )
             .route(
+                "/accounts/:accountId/label",
+                post(admin_update_account_label),
+            )
+            .route(
                 "/system/data-dir",
                 get(admin_get_data_dir_path).post(admin_set_data_dir),
             )
+            .route("/system/validate-path", post(admin_validate_path))
+            .route("/transit/query", post(admin_query_transit_info))
             .route("/system/updates/settings", get(admin_get_update_settings))
             .route(
                 "/system/updates/check-status",
@@ -1012,6 +1023,8 @@ impl AxumServer {
             )
             // OAuth (Web) - Admin 接口
             .route("/auth/url", get(admin_prepare_oauth_url_web))
+            // Web 事件桥 (SSE)：订阅应用事件总线（桌面 Tauri 事件之外的 Web 通道）
+            .route("/events", get(admin_events))
             // 应用管理特定鉴权层 (强制校验)
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -2898,13 +2911,13 @@ async fn admin_save_update_settings(Json(settings): Json<serde_json::Value>) -> 
 }
 
 async fn admin_is_auto_launch_enabled() -> impl IntoResponse {
-    // Note: Autostart requires tauri::AppHandle, which is not available in Axum State easily.
+    // Note: Autostart requires crate::AppHandle, which is not available in Axum State easily.
     // For now, return false in Web mode.
     Json(false)
 }
 
 async fn admin_toggle_auto_launch(Json(_payload): Json<serde_json::Value>) -> impl IntoResponse {
-    // Note: Autostart requires tauri::AppHandle.
+    // Note: Autostart requires crate::AppHandle.
     StatusCode::NOT_IMPLEMENTED
 }
 
@@ -3024,6 +3037,48 @@ async fn admin_update_account_priority(
         .token_manager
         .update_account_priority(&account_id, payload.priority);
     Ok(StatusCode::OK)
+}
+
+#[derive(Deserialize)]
+struct AccountLabelRequest {
+    label: String,
+}
+
+async fn admin_update_account_label(
+    Path(account_id): Path<String>,
+    Json(payload): Json<AccountLabelRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    crate::modules::account::update_account_label(&account_id, &payload.label).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    Ok(StatusCode::OK)
+}
+
+/// `/api/events`：以 SSE 订阅应用事件总线（双轨事件，见 docs/WEBUI_NO_WEBVIEW2_PLAN.md 阶段 1）。
+/// 前端用 fetch 流式读取以携带 Authorization 头，断连后自动重连。
+async fn admin_events(
+) -> Sse<impl futures::Stream<Item = Result<SseEvent, std::convert::Infallible>>> {
+    let mut rx = crate::proxy::event_bus::subscribe();
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok((name, data)) => {
+                    yield Ok(SseEvent::default().event(name).data(data));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("[EventBus] SSE subscriber lagged, dropped {} events", n);
+                    yield Ok(SseEvent::default()
+                        .event(crate::proxy::event_bus::LAGGED_EVENT)
+                        .data(n.to_string()));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn admin_toggle_proxy_status(
@@ -3459,6 +3514,164 @@ async fn admin_import_custom_db(
         )
     })?;
     Ok(Json(to_account_response(&account, &current_id)))
+}
+
+/// 浏览器上传 `.vscdb` 导入（Web 模式无本地路径，见 docs/WEBUI_NO_WEBVIEW2_PLAN.md 阶段 2）。
+/// 落临时文件后复用 `import_from_custom_db_path`，与桌面路径导入共用同一实现。
+async fn admin_import_custom_db_upload(
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let mut file_bytes: Option<Vec<u8>> = None;
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("multipart 解析失败: {}", e),
+            }),
+        )
+    })? {
+        if field.name() == Some("file") {
+            let data = field.bytes().await.map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: format!("文件读取失败: {}", e),
+                    }),
+                )
+            })?;
+            file_bytes = Some(data.to_vec());
+            break;
+        }
+    }
+
+    let data = file_bytes.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "缺少 file 字段（.vscdb 文件）".to_string(),
+            }),
+        )
+    })?;
+
+    // 大小保护：.vscdb 实际远小于此
+    if data.len() > 100 * 1024 * 1024 {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ErrorResponse {
+                error: "文件超过 100MB 限制".to_string(),
+            }),
+        ));
+    }
+
+    let temp_dir = std::env::temp_dir().join("abv_import");
+    std::fs::create_dir_all(&temp_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("创建临时目录失败: {}", e),
+            }),
+        )
+    })?;
+    let temp_path = temp_dir.join(format!("upload_{}.vscdb", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&temp_path, &data).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("写入临时文件失败: {}", e),
+            }),
+        )
+    })?;
+
+    let import_result =
+        migration::import_from_custom_db_path(temp_path.to_string_lossy().to_string()).await;
+    // 无论成败都清理临时文件
+    let _ = std::fs::remove_file(&temp_path);
+    let account = import_result.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+
+    // [FIX #820] 导入后清除过期的会话绑定
+    state.token_manager.clear_all_sessions();
+
+    // [FIX #1166] 导入后立即加载
+    let _ = state.token_manager.load_accounts().await;
+
+    let current_id = state.account_service.get_current_id().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    Ok(Json(to_account_response(&account, &current_id)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ValidatePathRequest {
+    path: String,
+}
+
+#[derive(Serialize)]
+struct ValidatePathResponse {
+    exists: bool,
+    is_dir: bool,
+}
+
+/// `/api/system/validate-path`：Web 模式手输路径的存续性校验（阶段 2）。
+/// 仅管理员可达；只返回存在性/目录性，不返回目录内容。
+async fn admin_validate_path(Json(payload): Json<ValidatePathRequest>) -> impl IntoResponse {
+    let p = std::path::Path::new(&payload.path);
+    Json(ValidatePathResponse {
+        exists: p.exists(),
+        is_dir: p.is_dir(),
+    })
+}
+
+/// 通用 GET 中继（Bearer 鉴权）：ApiKeyFun 中转查询的共享实现，
+/// 桌面命令 `query_transit_info` 与 `/api/transit/query` 共用。
+pub async fn relay_get_with_bearer(url: String, key: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(&url)
+        .bearer_auth(key)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = response.status();
+    let text = response.text().await.map_err(|e| e.to_string())?;
+
+    if status.is_success() {
+        Ok(text)
+    } else {
+        Err(format!("HTTP {}: {}", status, text))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransitQueryRequest {
+    url: String,
+    key: String,
+}
+
+/// `/api/transit/query`：中转查询（与桌面命令同一实现；管理员鉴权下暴露，面与桌面一致）
+async fn admin_query_transit_info(
+    Json(payload): Json<TransitQueryRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    relay_get_with_bearer(payload.url, payload.key)
+        .await
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: e })))
 }
 
 async fn admin_sync_account_from_db(

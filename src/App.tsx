@@ -18,7 +18,7 @@ import { useEffect, useState, startTransition } from 'react';
 import { useConfigStore } from './stores/useConfigStore';
 import { useAccountStore } from './stores/useAccountStore';
 import { useTranslation } from 'react-i18next';
-import { listen } from '@tauri-apps/api/event';
+import { subscribe } from './utils/events';
 import { isTauri } from './utils/env';
 import { request as invoke } from './utils/request';
 import { AdminAuthGuard } from './components/common/AdminAuthGuard';
@@ -87,44 +87,46 @@ function App() {
     }
   }, [config?.language, i18n]);
 
-  // Listen for tray events
+  // Listen for backend events (双轨事件桥：Tauri listen / Web SSE)
   useEffect(() => {
-    if (!isTauri()) return;
     const unlistenPromises: Promise<() => void>[] = [];
 
-    // 监听托盘切换账号事件
-    unlistenPromises.push(
-      listen('tray://account-switched', () => {
-        console.log('[App] Tray account switched, refreshing...');
-        fetchCurrentAccount();
-        fetchAccounts();
-      })
-    );
+    // 监听托盘切换账号事件（仅桌面，Web 无托盘）
+    if (isTauri()) {
+      unlistenPromises.push(
+        subscribe('tray://account-switched', () => {
+          console.log('[App] Tray account switched, refreshing...');
+          fetchCurrentAccount();
+          fetchAccounts();
+        })
+      );
 
-    // 监听托盘刷新事件
-    unlistenPromises.push(
-      listen('tray://refresh-current', () => {
-        console.log('[App] Tray refresh triggered, refreshing...');
-        fetchCurrentAccount();
-        fetchAccounts();
-      })
-    );
+      unlistenPromises.push(
+        subscribe('tray://refresh-current', () => {
+          console.log('[App] Tray refresh triggered, refreshing...');
+          fetchCurrentAccount();
+          fetchAccounts();
+        })
+      );
+    }
 
-    // 监听后端全量刷新事件 (Command / Scheduler)
+    // 监听后端全量刷新事件 (Command / Scheduler)——双轨可用
     unlistenPromises.push(
-      listen('accounts://refreshed', () => {
+      subscribe('accounts://refreshed', () => {
         console.log('[App] Backend triggered quota refresh, syncing UI...');
         fetchCurrentAccount();
         fetchAccounts();
       })
     );
 
-    // 监听手动触发自动更新事件
+    // 监听手动触发自动更新事件（纯前端事件，双轨统一走 window CustomEvent）
+    const onTriggerUpdate = () => {
+      console.log('[App] Received app://trigger-update event, showing updater...');
+      setShowUpdateNotification(true);
+    };
+    window.addEventListener('app://trigger-update', onTriggerUpdate);
     unlistenPromises.push(
-      listen('app://trigger-update', () => {
-        console.log('[App] Received app://trigger-update event, showing updater...');
-        setShowUpdateNotification(true);
-      })
+      Promise.resolve(() => window.removeEventListener('app://trigger-update', onTriggerUpdate))
     );
 
     // Cleanup

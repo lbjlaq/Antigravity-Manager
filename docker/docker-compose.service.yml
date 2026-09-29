@@ -1,0 +1,9 @@
+# 无 GUI 服务形态 override（阶段 4）：
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.service.yml build
+# 使用 --no-default-features 构建的二进制（不链接 WebView2/wry/WebKitGTK），
+# 环境变量约定与 Dockerfile.backend 完全一致。
+services:
+  antigravity-manager:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.service

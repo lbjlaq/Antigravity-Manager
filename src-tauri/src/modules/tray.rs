@@ -6,7 +6,7 @@ use tauri::{
     Emitter, Listener, Manager,
 };
 
-pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+pub fn create_tray(app: &crate::AppHandle) -> tauri::Result<()> {
     // 1. Load config to get language settings
     let config = modules::load_app_config().unwrap_or_default();
     let texts = modules::i18n::get_tray_texts(&config.language);
@@ -106,6 +106,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                                     config.lightweight_mode
                                 ));
                                 let _ = app_handle.emit("config://updated", ());
+                                crate::proxy::event_bus::emit("config://updated", &());
                             }
                         }
                     });
@@ -256,7 +257,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 /// Helper function to update tray menu
-pub fn update_tray_menus(app: &tauri::AppHandle) {
+pub fn update_tray_menus(app: &crate::AppHandle) {
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
         // Read config to get language
