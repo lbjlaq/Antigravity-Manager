@@ -586,24 +586,6 @@ pub fn build_token_error_headers<'a>(
     headers
 }
 
-/// 判断是否为模型不存在/不支持的错误
-pub fn is_model_not_found_error(status: u16, body: &str) -> bool {
-    if status == 404 {
-        return true;
-    }
-    let lower = body.to_lowercase();
-    lower.contains("model not found")
-        || lower.contains("unknown model")
-        || lower.contains("does not exist")
-        || lower.contains("is not found")
-        || lower.contains("unsupported model")
-        || lower.contains("not found for api version")
-        || lower.contains("publisher model")
-        || lower.contains("model_not_found")
-        || lower.contains("no such model")
-        || lower.contains("invalid model")
-        || lower.contains("model is not available")
-}
 
 /// 深度解析、剥离前缀与反转义上游错误，返回 (上游原始纯文本消息, 结构化解析对象)
 pub fn parse_raw_upstream_error(error_text: &str) -> (String, serde_json::Value) {

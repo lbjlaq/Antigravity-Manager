@@ -483,7 +483,6 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
 }
 
 /// 获取所有内置支持的标准公开模型列表 (已清理过期实验模型、重复笛卡尔积及旧快照)
->>>>>>> upstream/main
 pub fn get_supported_models() -> Vec<String> {
     vec![
         // Gemini 3.8 系列

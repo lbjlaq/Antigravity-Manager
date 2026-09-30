@@ -1050,7 +1050,6 @@ pub async fn handle_generate(
         }
 
         let should_mark_limited = classification.should_lock_account();
->>>>>>> upstream/main
         let needs_quota_refresh = if should_mark_limited {
             token_manager
                 .mark_rate_limited_fast(
