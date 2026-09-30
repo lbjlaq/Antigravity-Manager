@@ -395,6 +395,7 @@ export const getModelConfig = (modelId: string): ModelConfig | undefined => {
  * 1. Gemini 系列永远置顶 (Gemini 5 -> 50, Gemini 4 -> 60, Gemini 3 -> 70, Gemini 2.5 -> 75, 其他 Gemini -> 90)
  * 2. Claude 系列排第二 (权重 200)
  * 3. OpenAI 系列排第三 (权重 300)
+ */
 export function getGroupPriority(group: string): number {
     const s = group.trim().toLowerCase();
     if (s.includes('quota')) {

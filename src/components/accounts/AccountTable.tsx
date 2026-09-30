@@ -393,7 +393,7 @@ function AccountRowContent({
 
     if (account.quota?.quota_groups) {
         account.quota.quota_groups.forEach(group => {
-            group.buckets.forEach(bucket => {
+            (group.buckets || []).forEach(bucket => {
                 const id = bucket.bucket_id.toLowerCase();
                 const config = MODEL_CONFIG[id];
                 if (config) {

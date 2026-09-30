@@ -447,7 +447,7 @@ function Dashboard() {
             if (!a.quota || a.quota.is_forbidden) return null;
             if (a.quota.quota_groups) {
                 for (const group of a.quota.quota_groups) {
-                    const bucket = group.buckets.find(b =>
+                    const bucket = group.buckets?.find(b =>
                         b.bucket_id === 'gemini-weekly' ||
                         (b.window === 'weekly' && b.bucket_id.toLowerCase().includes('gemini'))
                     );
@@ -476,7 +476,7 @@ function Dashboard() {
             if (!a.quota || a.quota.is_forbidden) return null;
             if (a.quota.quota_groups) {
                 for (const group of a.quota.quota_groups) {
-                    const bucket = group.buckets.find(b =>
+                    const bucket = group.buckets?.find(b =>
                         b.bucket_id === '3p-weekly' ||
                         (b.window === 'weekly' && (b.bucket_id.toLowerCase().includes('3p') || b.bucket_id.toLowerCase().includes('claude')))
                     );

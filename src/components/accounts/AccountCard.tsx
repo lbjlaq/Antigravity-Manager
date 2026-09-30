@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot, Repeat2, Terminal } from 'lucide-react';
-import { Account, ModelQuota, getAccountTier } from '../../types/account';
+import { Account, getAccountTier } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -93,7 +93,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
         // Inject virtual quota group buckets if present
         if (account.quota?.quota_groups) {
             account.quota.quota_groups.forEach(group => {
-                group.buckets.forEach(bucket => {
+                (group.buckets || []).forEach(bucket => {
                     const id = bucket.bucket_id.toLowerCase();
                     const fullConfig = MODEL_CONFIG[id];
                     if (fullConfig) {
@@ -312,8 +312,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                                 <QuotaItem
                                     key={model.id}
                                     label={model.label}
-                                    percentage={model.data?.percentage || 0}
-                                    resetTime={model.data?.reset_time}
                                     {...getModelQuotaDisplay(model.id, model.data, account.quota?.quota_groups)}
                                     isProtected={isModelProtected(model.protectedKey)}
                                     liveLimit={getLiveLimitForModel(account, model.id, model.protectedKey)}
