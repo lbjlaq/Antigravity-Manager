@@ -4,17 +4,23 @@ use rquest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-// Quota API endpoints (fallback order: Sandbox → Daily → Prod)
+// Quota API endpoints (fallback order: Daily → Sandbox → Prod)
+//
+// [FIX Issue #3525] Daily 优先，与官方 Antigravity language_server 的出站端点一致。
+// Sandbox 在部分地区会对合规账号返回终止性 400 `User location is not supported for the API use.`；
+// 本函数的回退条件只覆盖 429 / 5xx，400 会直接终止整轮配额刷新，因此不能让 Sandbox 排首位。
+// 官方从不访问 sandbox 端点；保留它仅作为可用性兜底，回退判定规则不变。
 const QUOTA_API_ENDPOINTS: [&str; 3] = [
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
     "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
     "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
 ];
 
-// Quota Summary API endpoints (weekly + 5h grouped quota, fallback order 同上)
+// Quota Summary API endpoints (weekly + 5h grouped quota, fallback order: Daily → Sandbox → Prod)
+// 顺序理由同上：优先与官方客户端一致的 Daily 端点。
 const QUOTA_SUMMARY_ENDPOINTS: [&str; 3] = [
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
     "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
     "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
 ];
 
@@ -25,7 +31,7 @@ const RETRY_DELAY_SECS: u64 = 30;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct QuotaResponse {
-    models: std::collections::HashMap<String, ModelInfo>,
+    models: std::collections::HashMap<String, crate::models::OfficialModelInfo>,
     #[serde(rename = "deprecatedModelIds")]
     deprecated_model_ids: Option<std::collections::HashMap<String, DeprecatedModelInfo>>,
 }
@@ -34,35 +40,6 @@ struct QuotaResponse {
 struct DeprecatedModelInfo {
     #[serde(rename = "newModelId")]
     new_model_id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ModelInfo {
-    #[serde(rename = "quotaInfo")]
-    quota_info: Option<QuotaInfo>,
-    #[serde(rename = "displayName")]
-    display_name: Option<String>,
-    #[serde(rename = "supportsImages")]
-    supports_images: Option<bool>,
-    #[serde(rename = "supportsThinking")]
-    supports_thinking: Option<bool>,
-    #[serde(rename = "thinkingBudget")]
-    thinking_budget: Option<i32>,
-    recommended: Option<bool>,
-    #[serde(rename = "maxTokens")]
-    max_tokens: Option<i32>,
-    #[serde(rename = "maxOutputTokens")]
-    max_output_tokens: Option<i32>,
-    #[serde(rename = "supportedMimeTypes")]
-    supported_mime_types: Option<std::collections::HashMap<String, bool>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct QuotaInfo {
-    #[serde(rename = "remainingFraction")]
-    remaining_fraction: Option<f64>,
-    #[serde(rename = "resetTime")]
-    reset_time: Option<String>,
 }
 
 // ---- retrieveUserQuotaSummary 响应反序列化结构 ----
@@ -147,9 +124,11 @@ async fn create_long_standard_client(account_id: Option<&str>) -> rquest::Client
     }
 }
 
+// 项目 / 档位解析端点（fallback order: Daily → Sandbox → Prod）
+// [FIX Issue #3525] 与官方 Antigravity language_server 的出站端点保持一致，理由见上文 QUOTA_API_ENDPOINTS。
 const CLOUD_CODE_LOAD_PROJECT_ENDPOINTS: [&str; 3] = [
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
     "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
     "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
 ];
 
@@ -184,41 +163,43 @@ async fn fetch_project_id(
                     if let Ok(data) = res.json::<LoadProjectResponse>().await {
                         let project_id = data.project_id.clone();
 
-                        // Core logic: Multi-level fallback for tier extraction
-                        // 1. Paid Tier (Google One AI Premium etc.)
-                        // 2. Current Tier (If not ineligible)
-                        // 3. Allowed Tiers (Restricted/Default proxy access)
-                        let mut subscription_tier = data
+                        // 等级提取优先级：
+                        // 1. 优先取 paid_tier：若有付费信息（g1-pro-tier / g1-ultra-tier），直接作为权威付费等级；
+                        // 2. 其次取 current_tier：若当前生效档位为 free-tier，则为 FREE；
+                        // 3. 再次检查 allowed_tiers：若包含且仅能用 free-tier，则为 FREE；
+                        // 4. 若 paid_tier 与 current_tier 均为 null（如地理位置受限、受限账号），则权威判为 FREE，绝不误判为 PRO。
+                        let raw_tier = data
                             .paid_tier
                             .as_ref()
-                            .and_then(|t| t.name.clone())
-                            .or_else(|| data.paid_tier.as_ref().and_then(|t| t.id.clone()));
-
-                        let is_ineligible = data.ineligible_tiers.is_some()
-                            && !data.ineligible_tiers.as_ref().unwrap().is_empty();
-
-                        if subscription_tier.is_none() {
-                            if !is_ineligible {
-                                subscription_tier = data
-                                    .current_tier
+                            .and_then(|t| t.id.clone().or_else(|| t.name.clone()))
+                            .or_else(|| {
+                                data.current_tier
                                     .as_ref()
-                                    .and_then(|t| t.name.clone())
-                                    .or_else(|| data.current_tier.as_ref().and_then(|t| t.id.clone()));
+                                    .and_then(|t| t.id.clone().or_else(|| t.name.clone()))
+                            })
+                            .or_else(|| {
+                                data.allowed_tiers.as_ref().and_then(|allowed| {
+                                    allowed
+                                        .iter()
+                                        .find(|t| {
+                                            t.id.as_deref() == Some("free-tier")
+                                                || t.is_default == Some(true)
+                                        })
+                                        .and_then(|t| t.id.clone().or_else(|| t.name.clone()))
+                                })
+                            })
+                            .unwrap_or_else(|| "free-tier".to_string());
+
+                        let subscription_tier = {
+                            let normalized =
+                                crate::models::quota::normalize_subscription_tier(&raw_tier);
+                            if crate::models::quota::is_known_tier(&normalized) {
+                                Some(normalized)
                             } else {
-                                // If account is marked as INELIGIBLE, drop to allowedTiers and extract default
-                                if let Some(mut allowed) = data.allowed_tiers {
-                                    if let Some(default_tier) =
-                                        allowed.iter_mut().find(|t| t.is_default == Some(true))
-                                    {
-                                        if let Some(name) = &default_tier.name {
-                                            subscription_tier = Some(format!("{} (Restricted)", name));
-                                        } else if let Some(id) = &default_tier.id {
-                                            subscription_tier = Some(format!("{} (Restricted)", id));
-                                        }
-                                    }
-                                }
+                                // standard-tier 或其他未知档位安全归入 FREE
+                                Some("FREE".to_string())
                             }
-                        }
+                        };
 
                         if let Some(ref tier) = subscription_tier {
                             crate::modules::logger::log_info(&format!(
@@ -277,12 +258,27 @@ pub async fn fetch_quota_with_cache(
 ) -> crate::error::AppResult<(QuotaData, Option<String>)> {
     use crate::error::AppError;
 
-    // Optimization: Skip loadCodeAssist call if project_id is cached to save API quota
-    let (project_id, subscription_tier) = if let Some(pid) = cached_project_id {
-        (Some(pid.to_string()), None)
-    } else {
-        fetch_project_id(access_token, email, account_id).await
-    };
+    // `loadCodeAssist` 是订阅等级的唯一权威来源，必须每次都调用。
+    //
+    // 历史实现为了「省一次 API 调用」，在 project_id 已缓存且账号已有 tier 时直接跳过
+    // loadCodeAssist。后果是：一个账号一旦被写入错误的 tier，就再也不可能被纠正
+    // —— 这正是「免费账号被标记成 Pro 后永远是 Pro」无法自愈的原因。
+    //
+    // 而实测三个接口（fetchAvailableModels / retrieveUserQuotaSummary / loadCodeAssist）
+    // 都完全忽略 project 字段，缓存 project_id 本身不带来任何收益，
+    // 这个「优化」只剩副作用，因此移除。
+    //
+    // 现在：始终调用；仅在上游返回空值时用缓存/已存值兜底，避免网络抖动把数据抹掉。
+    let (fresh_project_id, fresh_tier) = fetch_project_id(access_token, email, account_id).await;
+
+    let project_id = fresh_project_id.or_else(|| cached_project_id.map(|s| s.to_string()));
+
+    let existing_tier = account_id
+        .and_then(|id| crate::modules::load_account(id).ok())
+        .and_then(|acc| acc.quota.and_then(|q| q.subscription_tier));
+
+    // 上游值优先；上游这次没给（网络失败 / 未识别）才保留旧值。
+    let subscription_tier = fresh_tier.or(existing_tier);
 
     // We keep project_id to store in the DB, but we NO LONGER force inject it into payload if it's absent
 
@@ -298,191 +294,222 @@ pub async fn fetch_quota_with_cache(
     for (ep_idx, ep_url) in QUOTA_API_ENDPOINTS.iter().enumerate() {
         let has_next = ep_idx + 1 < QUOTA_API_ENDPOINTS.len();
 
-        let mut current_payload = payload.clone();
-        let mut retry_without_project = false;
+        match client
+            .post(*ep_url)
+            .bearer_auth(access_token)
+            .header(
+                rquest::header::USER_AGENT,
+                crate::constants::NATIVE_OAUTH_USER_AGENT.as_str(),
+            )
+            .json(&payload)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                // Convert HTTP error status to AppError
+                if let Err(_) = response.error_for_status_ref() {
+                    let status = response.status();
 
-        loop {
-            match client
-                .post(*ep_url)
-                .bearer_auth(access_token)
-                .header(
-                    rquest::header::USER_AGENT,
-                    crate::constants::NATIVE_OAUTH_USER_AGENT.as_str(),
-                )
-                .json(&current_payload)
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    // Convert HTTP error status to AppError
-                    if let Err(_) = response.error_for_status_ref() {
-                        let status = response.status();
-
-                        // [FIX] 403 Forbidden 处理：如果是带有 project_id 的请求，尝试剥离后重试
-                        if status == rquest::StatusCode::FORBIDDEN {
-                            if current_payload.get("project").is_some() && !retry_without_project {
-                                crate::modules::logger::log_warn(&format!(
-                                    "Quota fetch got 403 with project ID, retrying without project ID..."
-                                ));
-                                current_payload = json!({});
-                                retry_without_project = true;
-                                continue;
-                            }
-
-                            crate::modules::logger::log_warn(&format!(
-                                "Account unauthorized (403 Forbidden), marking as forbidden"
-                            ));
-                            let mut q = QuotaData::new();
-                            q.is_forbidden = true;
-                            q.subscription_tier = subscription_tier.clone();
-                            return Ok((q, project_id.clone()));
-                        }
-
-                        let text = response.text().await.unwrap_or_default();
-
-                        // 429/5xx: fallback to next endpoint
-                        if has_next
-                            && (status == rquest::StatusCode::TOO_MANY_REQUESTS
-                                || status.is_server_error())
-                        {
-                            crate::modules::logger::log_warn(&format!(
-                                "Quota API {} returned {}, falling back to next endpoint",
-                                ep_url, status
-                            ));
-                            last_error =
-                                Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
-                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                            break; // Break the inner retry loop, continue to next endpoint
-                        }
-
-                        return Err(AppError::Unknown(format!(
-                            "API Error: {} - {}",
-                            status, text
-                        )));
-                    }
-
-                    if ep_idx > 0 {
-                        crate::modules::logger::log_info(&format!(
-                            "Quota API fallback succeeded at endpoint #{}",
-                            ep_idx + 1
+                    // 403 说明该账号本身不可用（未验证 / 被限制）。
+                    //
+                    // 这里曾经有一段「剥离 project 后重试」的逻辑，现已删除：
+                    // 实测上游完全忽略 project 字段，剥离后仍是同一个 403，
+                    // 只会白白多打一次请求、拖慢判定。
+                    if status == rquest::StatusCode::FORBIDDEN {
+                        crate::modules::logger::log_warn(&format!(
+                            "Account unauthorized (403 Forbidden), marking as forbidden"
                         ));
+                        let mut q = QuotaData::new();
+                        q.is_forbidden = true;
+                        // 保留本次 loadCodeAssist 拿到的等级；拿不到才回退到已存值
+                        q.subscription_tier = subscription_tier.clone();
+                        return Ok((q, project_id.clone()));
                     }
 
-                    let quota_response: QuotaResponse =
-                        response.json().await.map_err(AppError::from)?;
+                    let text = response.text().await.unwrap_or_default();
 
-                    let mut quota_data = QuotaData::new();
+                    // 429/5xx: fallback to next endpoint
+                    if has_next
+                        && (status == rquest::StatusCode::TOO_MANY_REQUESTS
+                            || status.is_server_error())
+                    {
+                        crate::modules::logger::log_warn(&format!(
+                            "Quota API {} returned {}, falling back to next endpoint",
+                            ep_url, status
+                        ));
+                        last_error = Some(AppError::Unknown(format!("HTTP {} - {}", status, text)));
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        continue; // 换下一个 endpoint
+                    }
 
-                    // Use debug level for detailed info to avoid console noise
-                    tracing::debug!("Quota API returned {} models", quota_response.models.len());
+                    return Err(AppError::Unknown(format!(
+                        "API Error: {} - {}",
+                        status, text
+                    )));
+                }
 
-                    for (name, info) in quota_response.models {
-                        if let Some(quota_info) = info.quota_info {
-                            let percentage = quota_info
-                                .remaining_fraction
-                                .map(|f| (f * 100.0) as i32)
-                                .unwrap_or(0);
+                if ep_idx > 0 {
+                    crate::modules::logger::log_info(&format!(
+                        "Quota API fallback succeeded at endpoint #{}",
+                        ep_idx + 1
+                    ));
+                }
 
-                            let reset_time = quota_info.reset_time.clone().unwrap_or_default();
+                let quota_response: QuotaResponse =
+                    response.json().await.map_err(AppError::from)?;
 
-                            // Only keep models we care about (exclude internal chat models)
-                            if name.starts_with("gemini")
-                                || name.starts_with("claude")
-                                || name.starts_with("gpt")
-                                || name.starts_with("image")
-                                || name.starts_with("imagen")
-                            {
-                                let model_quota = crate::models::quota::ModelQuota {
-                                    name,
-                                    percentage,
-                                    reset_time,
-                                    display_name: info.display_name,
-                                    supports_images: info.supports_images,
-                                    supports_thinking: info.supports_thinking,
-                                    thinking_budget: info.thinking_budget,
-                                    recommended: info.recommended,
-                                    max_tokens: info.max_tokens,
-                                    max_output_tokens: info.max_output_tokens,
-                                    supported_mime_types: info.supported_mime_types,
-                                };
-                                quota_data.add_model(model_quota);
-                            }
+                let mut quota_data = QuotaData::new();
+
+                // Use debug level for detailed info to avoid console noise
+                tracing::debug!("Quota API returned {} models", quota_response.models.len());
+
+                // 动态更新官方全量模型结构体目录缓存
+                crate::models::OfficialModelCatalog::update(quota_response.models.clone());
+
+                for (name, info) in quota_response.models {
+                    if let Some(quota_info) = info.quota_info {
+                        let percentage = quota_info
+                            .remaining_fraction
+                            .map(|f| (f * 100.0) as i32)
+                            .unwrap_or(0);
+
+                        let reset_time = quota_info.reset_time.clone().unwrap_or_default();
+
+                        // Only keep models we care about (exclude internal chat models)
+                        if name.starts_with("gemini")
+                            || name.starts_with("claude")
+                            || name.starts_with("gpt")
+                            || name.starts_with("image")
+                            || name.starts_with("imagen")
+                        {
+                            let model_quota = crate::models::quota::ModelQuota {
+                                name,
+                                percentage,
+                                reset_time,
+                                display_name: info.display_name,
+                                supports_images: info.supports_images,
+                                supports_thinking: info.supports_thinking,
+                                thinking_budget: info.thinking_budget.map(|v| v as i32),
+                                recommended: info.recommended,
+                                max_tokens: info.max_tokens.map(|v| v as i32),
+                                max_output_tokens: info.max_output_tokens.map(|v| v as i32),
+                                model: Some(info.model),
+                                supported_mime_types: info.supported_mime_types,
+                            };
+                            quota_data.add_model(model_quota);
                         }
                     }
+                }
 
-                    // Parse deprecated model routing rules
-                    if let Some(deprecated) = quota_response.deprecated_model_ids {
-                        for (old_id, info) in deprecated {
-                            // Register forwarding rules (including those mapping to gemini-pro-agent)
-                            quota_data
-                                .model_forwarding_rules
-                                .insert(old_id, info.new_model_id);
-                        }
+                // Parse deprecated model routing rules
+                if let Some(deprecated) = quota_response.deprecated_model_ids {
+                    for (old_id, info) in deprecated {
+                        // Register forwarding rules (including those mapping to gemini-pro-agent)
+                        quota_data
+                            .model_forwarding_rules
+                            .insert(old_id, info.new_model_id);
                     }
+                }
 
-                    // Set subscription tier
-                    quota_data.subscription_tier = subscription_tier.clone();
+                // 归一化订阅等级。注意：**不再**用模型列表做兜底推断
+                // （fetchAvailableModels 对免费号和 Pro 号返回完全相同的全量目录）。
+                let final_tier =
+                    crate::models::quota::resolve_subscription_tier(subscription_tier.as_deref());
+                quota_data.subscription_tier = Some(final_tier);
 
-                    // Best-effort: fetch grouped quota summary (weekly + 5h windows).
-                    // Failure here must not block the primary quota result.
-                    let quota_groups =
-                        fetch_quota_summary(access_token, email, project_id.as_deref(), account_id)
-                            .await;
+                // Best-effort: fetch grouped quota summary (weekly + 5h windows).
+                // Failure here must not block the primary quota result.
+                let quota_groups =
+                    fetch_quota_summary(access_token, email, project_id.as_deref(), account_id)
+                        .await;
 
-                    // [FIX #3426] Fuse real bucket quotas into models so UI doesn't show fake 100%
-                    if let Some(ref groups) = quota_groups {
-                        for model in quota_data.models.iter_mut() {
-                            let name_lower = model.name.to_lowercase();
-                            let is_claude_or_gpt = name_lower.starts_with("claude") || name_lower.starts_with("gpt");
-                            let is_gemini = name_lower.starts_with("gemini");
+                // [FIX #3426] Fuse real bucket quotas into models so UI doesn't show fake 100%
+                if let Some(ref groups) = quota_groups {
+                    for model in quota_data.models.iter_mut() {
+                        let name_lower = model.name.to_lowercase();
+                        let is_claude_or_gpt =
+                            name_lower.starts_with("claude") || name_lower.starts_with("gpt");
+                        let is_gemini = name_lower.starts_with("gemini");
 
-                            for group in groups {
-                                let gname = group.display_name.to_lowercase();
-                                let matches_group = if is_claude_or_gpt {
-                                    gname.contains("claude") || gname.contains("gpt") || gname.contains("3p")
-                                } else if is_gemini {
-                                    gname.contains("gemini") || (!gname.contains("claude") && !gname.contains("gpt") && !gname.contains("3p"))
-                                } else {
-                                    false
-                                };
+                        for group in groups {
+                            let gname = group.display_name.to_lowercase();
+                            let matches_group = if is_claude_or_gpt {
+                                gname.contains("claude")
+                                    || gname.contains("gpt")
+                                    || gname.contains("3p")
+                            } else if is_gemini {
+                                gname.contains("gemini")
+                                    || (!gname.contains("claude")
+                                        && !gname.contains("gpt")
+                                        && !gname.contains("3p"))
+                            } else {
+                                false
+                            };
 
-                                if matches_group {
-                                    // Look for 5h bucket first, then fallback to any bucket
-                                    let target_bucket = group.buckets.iter().find(|b| {
-                                        let win = b.window.to_lowercase();
-                                        let bid = b.bucket_id.to_lowercase();
-                                        win.contains("5h") || bid.contains("5h") || win.contains("hour") || bid.contains("hour")
-                                    }).or_else(|| group.buckets.first());
+                            if matches_group {
+                                // 找到 5h 桶和 weekly 桶，综合计算受限程度最大的实际可用配额
+                                let bucket_5h = group.buckets.iter().find(|b| {
+                                    let win = b.window.to_lowercase();
+                                    let bid = b.bucket_id.to_lowercase();
+                                    win.contains("5h")
+                                        || bid.contains("5h")
+                                        || win.contains("hour")
+                                        || bid.contains("hour")
+                                });
+                                let bucket_weekly = group.buckets.iter().find(|b| {
+                                    let win = b.window.to_lowercase();
+                                    let bid = b.bucket_id.to_lowercase();
+                                    win.contains("week")
+                                        || bid.contains("week")
+                                        || win.contains("7d")
+                                        || bid.contains("7d")
+                                });
 
-                                    if let Some(b) = target_bucket {
-                                        model.percentage = (b.remaining_fraction * 100.0).round() as i32;
-                                        if !b.reset_time.is_empty() {
-                                            model.reset_time = b.reset_time.clone();
+                                let chosen_bucket = match (bucket_5h, bucket_weekly) {
+                                    (Some(h), Some(w)) => {
+                                        // 若周配额耗尽 (<= 0.001)，模型直接受限于周配额，重置时间使用周重置
+                                        if w.remaining_fraction <= 0.001 {
+                                            Some(w)
+                                        } else if h.remaining_fraction <= w.remaining_fraction {
+                                            Some(h)
+                                        } else {
+                                            Some(w)
                                         }
-                                        break;
                                     }
+                                    (Some(h), None) => Some(h),
+                                    (None, Some(w)) => Some(w),
+                                    _ => group.buckets.first(),
+                                };
+
+                                if let Some(b) = chosen_bucket {
+                                    model.percentage =
+                                        (b.remaining_fraction * 100.0).round() as i32;
+                                    if !b.reset_time.is_empty() {
+                                        model.reset_time = b.reset_time.clone();
+                                    }
+                                    break;
                                 }
                             }
                         }
                     }
-
-                    quota_data.quota_groups = quota_groups;
-
-                    return Ok((quota_data, project_id.clone()));
                 }
-                Err(e) => {
-                    crate::modules::logger::log_warn(&format!(
-                        "Quota API request failed at {}: {}",
-                        ep_url, e
-                    ));
-                    last_error = Some(AppError::from(e));
-                    if has_next {
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    }
-                    break; // Break the inner retry loop on network error, continue to next endpoint
-                }
+
+                quota_data.quota_groups = quota_groups;
+
+                return Ok((quota_data, project_id.clone()));
             }
-        } // End of inner loop
+            Err(e) => {
+                crate::modules::logger::log_warn(&format!(
+                    "Quota API request failed at {}: {}",
+                    ep_url, e
+                ));
+                last_error = Some(AppError::from(e));
+                if has_next {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+                continue; // 换下一个 endpoint
+            }
+        }
     }
 
     Err(last_error.unwrap_or_else(|| {
@@ -550,13 +577,17 @@ async fn fetch_quota_summary(
                         buckets: g
                             .buckets
                             .into_iter()
-                            .map(|b| crate::models::quota::QuotaBucket {
-                                bucket_id: b.bucket_id.unwrap_or_default(),
-                                window: b.window.unwrap_or_default(),
-                                remaining_fraction: b.remaining_fraction.unwrap_or(0.0),
-                                reset_time: b.reset_time.unwrap_or_default(),
-                                display_name: b.display_name,
-                                description: b.description,
+                            .filter_map(|b| {
+                                Some(crate::models::quota::QuotaBucket {
+                                    bucket_id: b.bucket_id.unwrap_or_default(),
+                                    window: b.window.unwrap_or_default(),
+                                    remaining_fraction: b.remaining_fraction?,
+                                    reset_time: b.reset_time.unwrap_or_default(),
+                                    observed_at: Some(chrono::Utc::now().timestamp_millis()),
+                                    cycle_tokens: None,
+                                    display_name: b.display_name,
+                                    description: b.description,
+                                })
                             })
                             .collect(),
                     })
@@ -685,16 +716,16 @@ pub async fn warmup_model_directly(
                 true
             } else {
                 let text = response.text().await.unwrap_or_default();
-                crate::modules::logger::log_warn(&format!(
-                    "[Warmup] ✗ {} for {} (was {}%): HTTP {} - {}",
+                crate::modules::logger::log_error(&format!(
+                    "[Warmup] ✗ {} for {} (was {}%): HTTP {} - {} (非服务端故障)",
                     model_name, email, percentage, status, text
                 ));
                 false
             }
         }
         Err(e) => {
-            crate::modules::logger::log_warn(&format!(
-                "[Warmup] ✗ {} for {} (was {}%): {}",
+            crate::modules::logger::log_error(&format!(
+                "[Warmup] ✗ {} for {} (was {}%): {} (网络请求异常，非服务端故障)",
                 model_name, email, percentage, e
             ));
             false
@@ -827,45 +858,51 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 
             tokio::spawn(async move {
                 let mut success = 0;
-                let batch_size = 3;
                 let now_ts = chrono::Utc::now().timestamp();
 
-                for (batch_idx, batch) in warmup_items.chunks(batch_size).enumerate() {
-                    let mut handles = Vec::new();
+                // 按账号组织预热任务：同一账号内的多个模型必须串行执行并保持安全间隔（1.5s），
+                // 彻底杜绝因同 Token 并发涌入触发 Google 上游单会话并发互斥与 Cloud Armor WAF 403 频控拦截；
+                // 不同账号之间并发执行以保障处理效率。
+                let mut account_tasks: std::collections::HashMap<
+                    String,
+                    Vec<(String, String, String, String, String, i32)>,
+                > = std::collections::HashMap::new();
 
-                    for (id, email, model, token, pid, pct) in batch.iter() {
-                        let id = id.clone();
-                        let email = email.clone();
-                        let model = model.clone();
-                        let token = token.clone();
-                        let pid = pid.clone();
-                        let pct = *pct;
+                for item in warmup_items {
+                    account_tasks.entry(item.1.clone()).or_default().push(item);
+                }
 
-                        let handle = tokio::spawn(async move {
-                            let result =
+                let mut account_handles = Vec::new();
+                for (_email, items) in account_tasks {
+                    let handle = tokio::spawn(async move {
+                        let mut local_success = 0;
+                        let item_count = items.len();
+                        for (idx, (id, email, model, token, pid, pct)) in
+                            items.into_iter().enumerate()
+                        {
+                            let ok =
                                 warmup_model_directly(&token, &model, &pid, &email, pct, Some(&id))
                                     .await;
-                            (result, email, model)
-                        });
-                        handles.push(handle);
-                    }
-
-                    for handle in handles {
-                        match handle.await {
-                            Ok((true, email, model)) => {
-                                success += 1;
+                            if ok {
+                                local_success += 1;
                                 let history_key = format!("{}:{}:100", email, model);
                                 crate::modules::scheduler::record_warmup_history(
                                     &history_key,
                                     now_ts,
                                 );
                             }
-                            _ => {}
+                            if idx + 1 < item_count {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+                            }
                         }
-                    }
+                        local_success
+                    });
+                    account_handles.push(handle);
+                }
 
-                    if batch_idx < (warmup_items.len() + batch_size - 1) / batch_size - 1 {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                for handle in account_handles {
+                    if let Ok(count) = handle.await {
+                        success += count;
                     }
                 }
 

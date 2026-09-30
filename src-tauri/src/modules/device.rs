@@ -1,5 +1,5 @@
 use crate::models::DeviceProfile;
-use crate::modules::{logger, process};
+use crate::modules::{account, logger, process};
 use chrono::Local;
 use rand::{distributions::Alphanumeric, Rng};
 use rusqlite::Connection;
@@ -8,16 +8,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-const DATA_DIR: &str = ".antigravity_tools";
 const GLOBAL_BASELINE: &str = "device_original.json";
 
 fn get_data_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
-    let data_dir = home.join(DATA_DIR);
-    if !data_dir.exists() {
-        fs::create_dir_all(&data_dir).map_err(|e| format!("failed_to_create_data_dir: {}", e))?;
-    }
-    Ok(data_dir)
+    account::get_data_dir()
 }
 
 /// Find storage.json path (prefer custom/portable paths)
@@ -52,9 +46,11 @@ pub fn get_storage_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
         &["Antigravity IDE"]
     } else if target_ide == Some("code") || target_ide == Some("cursor") {
         &["Antigravity"]
+    } else if target_ide == Some("classic") {
+        &["Antigravity"]
     } else {
-        // target_ide = None: try IDE folder first, fall back to classic name
-        &["Antigravity IDE", "Antigravity"]
+        // target_ide = None: 优先查找 Antigravity 经典版，回退查找 Antigravity IDE
+        &["Antigravity", "Antigravity IDE"]
     };
 
     // 3) Standard installation location

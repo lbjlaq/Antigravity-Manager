@@ -92,13 +92,22 @@ pub struct CloudflaredManager {
 }
 
 impl CloudflaredManager {
-    pub fn new(data_dir: &PathBuf) -> Self {
-        let bin_name = if cfg!(target_os = "windows") {
+    fn cloudflared_bin_name() -> &'static str {
+        if cfg!(target_os = "windows") {
             "cloudflared.exe"
         } else {
             "cloudflared"
-        };
-        let bin_path = data_dir.join("bin").join(bin_name);
+        }
+    }
+
+    fn current_bin_path(&self) -> PathBuf {
+        crate::modules::account::get_data_dir()
+            .map(|dir| dir.join("bin").join(Self::cloudflared_bin_name()))
+            .unwrap_or_else(|_| self.bin_path.clone())
+    }
+
+    pub fn new(data_dir: &PathBuf) -> Self {
+        let bin_path = data_dir.join("bin").join(Self::cloudflared_bin_name());
 
         Self {
             process: Arc::new(RwLock::new(None)),
@@ -110,11 +119,12 @@ impl CloudflaredManager {
 
     /// 检查是否已安装
     pub async fn check_installed(&self) -> (bool, Option<String>) {
-        if !self.bin_path.exists() {
+        let bin_path = self.current_bin_path();
+        if !bin_path.exists() {
             return (false, None);
         }
 
-        let mut cmd = Command::new(&self.bin_path);
+        let mut cmd = Command::new(&bin_path);
         cmd.arg("--version");
         #[cfg(target_os = "windows")]
         cmd.creation_flags(CREATE_NO_WINDOW);
@@ -148,7 +158,8 @@ impl CloudflaredManager {
 
     /// 安装cloudflared
     pub async fn install(&self) -> Result<CloudflaredStatus, String> {
-        let bin_dir = self.bin_path.parent().unwrap();
+        let bin_path = self.current_bin_path();
+        let bin_dir = bin_path.parent().unwrap();
         if !bin_dir.exists() {
             std::fs::create_dir_all(bin_dir)
                 .map_err(|e| format!("Failed to create bin directory: {}", e))?;
@@ -175,7 +186,7 @@ impl CloudflaredManager {
 
         let is_archive = download_url.ends_with(".tgz");
         if is_archive {
-            let archive_path = self.bin_path.with_extension("tgz");
+            let archive_path = bin_path.with_extension("tgz");
             std::fs::write(&archive_path, &bytes)
                 .map_err(|e| format!("Failed to write archive: {}", e))?;
 
@@ -198,14 +209,14 @@ impl CloudflaredManager {
 
             let _ = std::fs::remove_file(&archive_path);
         } else {
-            std::fs::write(&self.bin_path, &bytes)
+            std::fs::write(&bin_path, &bytes)
                 .map_err(|e| format!("Failed to write binary: {}", e))?;
         }
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.bin_path, std::fs::Permissions::from_mode(0o755))
+            std::fs::set_permissions(&bin_path, std::fs::Permissions::from_mode(0o755))
                 .map_err(|e| format!("Failed to set permissions: {}", e))?;
         }
 
@@ -246,11 +257,11 @@ impl CloudflaredManager {
         let local_url = format!("http://localhost:{}", config.port);
         info!("[cloudflared] Starting tunnel to: {}", local_url);
 
-        let mut cmd = Command::new(&self.bin_path);
+        let bin_path = self.current_bin_path();
+        let mut cmd = Command::new(&bin_path);
 
         // 设置工作目录
-        // 设置工作目录
-        if let Some(bin_dir) = self.bin_path.parent() {
+        if let Some(bin_dir) = bin_path.parent() {
             cmd.current_dir(bin_dir);
             debug!("[cloudflared] Working directory: {:?}", bin_dir);
         }
@@ -386,6 +397,10 @@ impl CloudflaredManager {
 
     /// 停止隧道
     pub async fn stop(&self) -> Result<CloudflaredStatus, String> {
+        if let Some(tx) = self.shutdown_tx.write().await.take() {
+            let _ = tx.send(());
+        }
+
         let mut proc_lock = self.process.write().await;
         if let Some(mut child) = proc_lock.take() {
             let _ = child.kill().await;

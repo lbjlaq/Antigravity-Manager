@@ -1,7 +1,7 @@
 use crate::modules;
 use tauri::{
     image::Image,
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Emitter, Listener, Manager,
 };
@@ -48,6 +48,14 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
     // System functions
     let show_i = MenuItem::with_id(app, "show", &texts.show_window, true, None::<&str>)?;
+    let lightweight_i = CheckMenuItem::with_id(
+        app,
+        "toggle_lightweight",
+        &texts.lightweight_mode,
+        true,
+        config.lightweight_mode,
+        None::<&str>,
+    )?;
     let quit_i = MenuItem::with_id(app, "quit", &texts.quit, true, None::<&str>)?;
 
     let sep1 = PredefinedMenuItem::separator(app)?;
@@ -65,6 +73,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             &refresh_curr,
             &sep2,
             &show_i,
+            &lightweight_i,
             &sep3,
             &quit_i,
         ],
@@ -80,33 +89,75 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             let app_handle = app.clone();
             match event.id().as_ref() {
                 "show" => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        #[cfg(target_os = "macos")]
-                        app.set_activation_policy(tauri::ActivationPolicy::Regular)
-                            .unwrap_or(());
-                    }
+                    let _ = modules::lightweight::exit_lightweight_mode(&app_handle);
+                }
+                "toggle_lightweight" => {
+                    tauri::async_runtime::spawn(async move {
+                        if let Ok(mut config) = modules::load_app_config() {
+                            config.lightweight_mode = !config.lightweight_mode;
+                            if let Err(e) = modules::save_app_config(&config) {
+                                modules::logger::log_error(&format!(
+                                    "Failed to toggle lightweight mode: {}",
+                                    e
+                                ));
+                            } else {
+                                modules::logger::log_info(&format!(
+                                    "Lightweight mode toggled to {}",
+                                    config.lightweight_mode
+                                ));
+                                let _ = app_handle.emit("config://updated", ());
+                            }
+                        }
+                    });
                 }
                 "quit" => {
-                    // 先停止 Admin Server 和反代服务，避免进程残留和端口占用
-                    let state = app.state::<crate::commands::proxy::ProxyServiceState>();
-                    let admin_server = state.admin_server.clone();
-                    let instance = state.instance.clone();
+                    let app_handle = app.clone();
                     tauri::async_runtime::spawn(async move {
+                        tracing::info!("[Tray] 退出网关触发，开始全面清理服务与端口...");
+
+                        let state = app_handle.state::<crate::commands::proxy::ProxyServiceState>();
+                        let cf_state =
+                            app_handle.state::<crate::commands::cloudflared::CloudflaredState>();
+
+                        // 1. 终止 cloudflared 隧道子进程
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_millis(500),
+                            cf_state.stop(),
+                        )
+                        .await;
+
+                        // 2. 停止 Admin Server（关闭 TCP 监听器和所有活动连接）
+                        if let Ok(mut lock) = tokio::time::timeout(
+                            std::time::Duration::from_millis(1000),
+                            state.admin_server.write(),
+                        )
+                        .await
                         {
-                            let mut lock = admin_server.write().await;
                             if let Some(admin) = lock.take() {
-                                admin.axum_server.stop();
+                                admin.stop().await;
                             }
                         }
+
+                        // 3. 停止业务代理实例及后台任务
+                        if let Ok(mut lock) = tokio::time::timeout(
+                            std::time::Duration::from_millis(1000),
+                            state.instance.write(),
+                        )
+                        .await
                         {
-                            let mut lock = instance.write().await;
                             if let Some(inst) = lock.take() {
-                                inst.token_manager.abort_background_tasks().await;
+                                let _ = tokio::time::timeout(
+                                    std::time::Duration::from_millis(500),
+                                    inst.token_manager
+                                        .graceful_shutdown(std::time::Duration::from_millis(400)),
+                                )
+                                .await;
                                 inst.axum_server.set_running(false).await;
+                                inst.axum_server.stop();
                             }
                         }
+
+                        // 4. 给予底层套接字彻底注销的微小缓冲，然后干净退出进程
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         std::process::exit(0);
                     });
@@ -183,13 +234,7 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             } = event
             {
                 let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    #[cfg(target_os = "macos")]
-                    app.set_activation_policy(tauri::ActivationPolicy::Regular)
-                        .unwrap_or(());
-                }
+                let _ = modules::lightweight::exit_lightweight_mode(app);
             }
         })
         .build(app)?;
@@ -300,11 +345,24 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
         );
 
         let show_i = MenuItem::with_id(&app_clone, "show", &texts.show_window, true, None::<&str>);
+        let lightweight_i = CheckMenuItem::with_id(
+            &app_clone,
+            "toggle_lightweight",
+            &texts.lightweight_mode,
+            true,
+            config.lightweight_mode,
+            None::<&str>,
+        );
         let quit_i = MenuItem::with_id(&app_clone, "quit", &texts.quit, true, None::<&str>);
 
-        if let (Ok(i_u), Ok(s_n), Ok(r_c), Ok(s), Ok(q)) =
-            (info_user, switch_next, refresh_curr, show_i, quit_i)
-        {
+        if let (Ok(i_u), Ok(s_n), Ok(r_c), Ok(s), Ok(l), Ok(q)) = (
+            info_user,
+            switch_next,
+            refresh_curr,
+            show_i,
+            lightweight_i,
+            quit_i,
+        ) {
             let sep1 = PredefinedMenuItem::separator(&app_clone).ok();
             let sep2 = PredefinedMenuItem::separator(&app_clone).ok();
             let sep3 = PredefinedMenuItem::separator(&app_clone).ok();
@@ -324,6 +382,7 @@ pub fn update_tray_menus(app: &tauri::AppHandle) {
                 items.push(s);
             }
             items.push(&s);
+            items.push(&l);
             if let Some(ref s) = sep3 {
                 items.push(s);
             }

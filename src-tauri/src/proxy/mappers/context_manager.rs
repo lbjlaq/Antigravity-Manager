@@ -125,24 +125,16 @@ fn estimate_inline_data_tokens(mime_type: &str, data_len: usize) -> u32 {
 
 /// [FIX #3325] Estimate raw input tokens directly from an incoming JSON payload string (OpenAI, Claude, or Gemini format)
 /// Used as a fallback when upstream returns an error status (>=400) without token usage metadata.
+/// 接入 Pipeline 协议无关通用估算引擎与全局高并发内容哈希缓存。
 pub fn estimate_raw_tokens_from_payload(payload: &str) -> u32 {
     if payload.is_empty() {
         return 0;
     }
     if let Ok(json) = serde_json::from_str::<Value>(payload) {
-        // Try parsing as OpenAIRequest
-        if let Ok(openai_req) = serde_json::from_value::<OpenAIRequest>(json.clone()) {
-            return ContextManager::estimate_openai_token_usage(&openai_req);
-        }
-        // Try parsing as ClaudeRequest
-        if let Ok(claude_req) = serde_json::from_value::<ClaudeRequest>(json.clone()) {
-            return ContextManager::estimate_token_usage(&claude_req);
-        }
-        // Try estimating directly from Gemini contents/parts
-        return ContextManager::estimate_gemini_token_usage(&json);
+        return crate::proxy::pipeline::estimate_tokens(&json);
     }
     // Fallback: estimate from raw string
-    estimate_tokens_from_str(payload)
+    crate::proxy::pipeline::estimator::estimate_tokens_from_str(payload)
 }
 
 /// Strategy for context purification
@@ -390,82 +382,6 @@ impl ContextManager {
         total
     }
 
-    // ===== [Layer 2] Thinking Content Compression + Signature Preservation =====
-    // Borrowed from learn-claude-code's "append-only log" principle
-    // This layer compresses thinking text but PRESERVES signatures
-    // Advantage: Signature chain remains intact, tool calls won't break
-    // Disadvantage: Still breaks Prompt Cache (modifies content)
-
-    /// Compress thinking content while preserving signatures
-    ///
-    /// This function:
-    /// 1. Keeps signatures intact (critical for tool call chain)
-    /// 2. Compresses thinking text to "..." placeholder
-    /// 3. Protects the last N messages from compression
-    ///
-    /// Returns true if any thinking blocks were compressed
-    pub fn compress_thinking_preserve_signature(
-        messages: &mut Vec<Message>,
-        protected_last_n: usize,
-    ) -> bool {
-        let total_msgs = messages.len();
-        if total_msgs == 0 {
-            return false;
-        }
-
-        let start_protection_idx = total_msgs.saturating_sub(protected_last_n);
-        let mut compressed_count = 0;
-        let mut total_chars_saved = 0;
-
-        for (i, msg) in messages.iter_mut().enumerate() {
-            // Skip protected messages
-            if i >= start_protection_idx {
-                continue;
-            }
-
-            // Only process assistant messages
-            if msg.role == "assistant" {
-                if let MessageContent::Array(blocks) = &mut msg.content {
-                    for block in blocks.iter_mut() {
-                        if let ContentBlock::Thinking {
-                            thinking,
-                            signature,
-                            ..
-                        } = block
-                        {
-                            // [FIX] When compressing thinking, clear signature to avoid Invalid signature errors
-                            // Signature is computed over original thinking content; keeping it with "..." causes
-                            // 400 INVALID_ARGUMENT: Invalid thought signature (Gemini) / Invalid signature (Claude).
-                            if thinking.len() > 10 {
-                                let original_len = thinking.len();
-                                *thinking = "...".to_string();
-                                // Clear signature when content is compressed
-                                *signature = None;
-                                compressed_count += 1;
-                                total_chars_saved += original_len - 3;
-
-                                debug!(
-                                    "[ContextManager] [Layer-2] Compressed thinking: {} → 3 chars (signature cleared)",
-                                    original_len
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if compressed_count > 0 {
-            let estimated_tokens_saved = (total_chars_saved as f32 / 3.5).ceil() as u32;
-            info!(
-                "[ContextManager] [Layer-2] Compressed {} thinking blocks (saved ~{} tokens, signatures preserved)",
-                compressed_count, estimated_tokens_saved
-            );
-        }
-
-        compressed_count > 0
-    }
-
     // ===== [Layer 3 Helper] Extract Last Valid Signature =====
     // Used by Layer 3 to preserve signature when generating XML summary
 
@@ -514,55 +430,15 @@ impl ContextManager {
     // This layer removes old tool call/result pairs while preserving recent ones
     // Advantage: Does NOT break Prompt Cache (only removes messages, doesn't modify content)
 
-    /// Trim old tool messages, keeping only the last N rounds
-    ///
-    /// A "tool round" consists of:
-    /// - An assistant message with tool_use
-    /// - One or more user messages with tool_result
-    ///
-    /// Returns true if any messages were removed
-    pub fn trim_tool_messages(messages: &mut Vec<Message>, keep_last_n_rounds: usize) -> bool {
-        let tool_rounds = identify_tool_rounds(messages);
+    /// 折叠工具回执里的日志噪音。不删除任何工具调用轮次；留哪些调用由客户端决定。
+    pub fn trim_tool_messages(messages: &mut Vec<Message>) -> bool {
         let mut modified = false;
-
-        // Clean retained tool messages using RtkCleaner
         for msg in messages.iter_mut() {
             if Self::clean_tool_message(msg) {
                 modified = true;
             }
         }
-
-        if tool_rounds.len() <= keep_last_n_rounds {
-            return modified; // No trimming needed, but might have cleaned some messages
-        }
-
-        // Identify indices to remove (older rounds)
-        let rounds_to_remove = tool_rounds.len() - keep_last_n_rounds;
-        let mut indices_to_remove = std::collections::HashSet::new();
-
-        for round in tool_rounds.iter().take(rounds_to_remove) {
-            for idx in &round.indices {
-                indices_to_remove.insert(*idx);
-            }
-        }
-
-        // Remove in reverse order to avoid index shifting
-        let mut removed_count = 0;
-        for idx in (0..messages.len()).rev() {
-            if indices_to_remove.contains(&idx) {
-                messages.remove(idx);
-                removed_count += 1;
-            }
-        }
-
-        if removed_count > 0 {
-            info!(
-                "[ContextManager] [Layer-1] Trimmed {} tool messages, kept last {} rounds",
-                removed_count, keep_last_n_rounds
-            );
-        }
-
-        removed_count > 0
+        modified
     }
 
     /// Restore reasoning text for assistant messages from cache in OpenAI format
@@ -627,19 +503,8 @@ impl ContextManager {
                     );
                     msg.reasoning_content = None;
                     modified = true;
-                } else if let Some(ref mut reasoning) = msg.reasoning_content {
-                    // [FIX #3382] For messages with tool calls, compress reasoning_content to "..."
-                    // instead of keeping full text, preserving structure while releasing token burden.
-                    if reasoning.len() > 10 {
-                        tracing::debug!(
-                            "[ContextManager] Purifying (compressing) reasoning_content of message {} with tool_calls (len: {})",
-                            i,
-                            reasoning.len()
-                        );
-                        *reasoning = "...".to_string();
-                        modified = true;
-                    }
                 }
+                // [REMOVED 2026-09-27] 带 tool_calls 的 reasoning 不再压缩为 "..."，保持原样透传。
             }
             if msg.role == "user" || msg.role == "assistant" {
                 if let Some(ref mut content) = msg.content {
@@ -669,171 +534,110 @@ impl ContextManager {
         modified
     }
 
-    /// Trim old tool messages in OpenAI format, keeping only the last N rounds
-    pub fn trim_openai_tool_messages(
-        messages: &mut Vec<OpenAIMessage>,
-        keep_last_n_rounds: usize,
-    ) -> bool {
-        let tool_rounds = identify_openai_tool_rounds(messages);
+    /// 折叠 OpenAI 工具回执里的日志噪音，并丢掉没有对应 tool_call 的回执。
+    /// 不按轮次删历史；留哪些工具调用由客户端决定。
+    pub fn trim_openai_tool_messages(messages: &mut Vec<OpenAIMessage>) -> bool {
         let mut modified = false;
-
-        // Clean retained tool messages using RtkCleaner
         for msg in messages.iter_mut() {
             if Self::clean_openai_tool_message(msg) {
                 modified = true;
             }
         }
-
-        if tool_rounds.len() <= keep_last_n_rounds {
-            return modified;
-        }
-
-        let rounds_to_remove = tool_rounds.len() - keep_last_n_rounds;
-        let mut indices_to_remove = std::collections::HashSet::new();
-
-        for round in tool_rounds.iter().take(rounds_to_remove) {
-            for idx in &round.indices {
-                indices_to_remove.insert(*idx);
-            }
-        }
-
-        let mut removed_count = 0;
-        for idx in (0..messages.len()).rev() {
-            if indices_to_remove.contains(&idx) {
-                messages.remove(idx);
-                removed_count += 1;
-            }
-        }
-
-        if removed_count > 0 {
-            info!(
-                "[ContextManager] [OpenAI] Trimmed {} tool messages, kept last {} rounds",
-                removed_count, keep_last_n_rounds
-            );
-        }
-        removed_count > 0
+        modified || drop_unpaired_openai_tool_results(messages)
     }
 }
 
-/// Represents a tool call round (assistant tool_use + user tool_result(s))
-#[derive(Debug)]
-struct ToolRound {
-    _assistant_index: usize,
-    tool_result_indices: Vec<usize>,
-    indices: Vec<usize>, // All indices in this round
+fn is_openai_tool_result_message(msg: &OpenAIMessage) -> bool {
+    msg.role == "tool"
+        || msg.role == "function"
+        || (msg.tool_call_id.is_some() && msg.role != "assistant")
 }
 
-/// Identify tool call rounds in the message history
-fn identify_tool_rounds(messages: &[Message]) -> Vec<ToolRound> {
-    let mut rounds = Vec::new();
-    let mut current_round: Option<ToolRound> = None;
-
-    for (i, msg) in messages.iter().enumerate() {
-        match msg.role.as_str() {
-            "assistant" => {
-                if has_tool_use(&msg.content) {
-                    // Save previous round if exists
-                    if let Some(round) = current_round.take() {
-                        rounds.push(round);
-                    }
-                    // Start new round
-                    current_round = Some(ToolRound {
-                        _assistant_index: i,
-                        tool_result_indices: Vec::new(),
-                        indices: vec![i],
-                    });
+/// 删掉没有对应 `tool_calls.id` 的 tool 结果。无 id 的结果无法证明是孤儿，保留。
+fn drop_unpaired_openai_tool_results(messages: &mut Vec<OpenAIMessage>) -> bool {
+    let mut call_ids = std::collections::HashSet::new();
+    for msg in messages.iter() {
+        if let Some(calls) = &msg.tool_calls {
+            for call in calls {
+                if !call.id.is_empty() {
+                    call_ids.insert(call.id.clone());
                 }
             }
-            "user" => {
-                if let Some(ref mut round) = current_round {
-                    if has_tool_result(&msg.content) {
-                        round.tool_result_indices.push(i);
-                        round.indices.push(i);
-                    } else {
-                        // Normal user message ends the current round
-                        rounds.push(current_round.take().unwrap());
+        }
+    }
+
+    let before = messages.len();
+    messages.retain(|msg| {
+        if !is_openai_tool_result_message(msg) {
+            return true;
+        }
+        match msg.tool_call_id.as_deref() {
+            Some(id) if !id.is_empty() => call_ids.contains(id),
+            _ => true,
+        }
+    });
+    let dropped = before - messages.len();
+    if dropped > 0 {
+        info!(
+            "[ContextManager] [OpenAI] Dropped {} orphan tool result(s)",
+            dropped
+        );
+    }
+    dropped > 0
+}
+
+/// 去掉 id 在现存 functionCall 中找不到的 functionResponse。无 id 的回执保留。
+pub fn drop_orphan_function_responses(contents: &mut Vec<Value>) -> usize {
+    let mut call_ids = std::collections::HashSet::new();
+    for content in contents.iter() {
+        if let Some(parts) = content.get("parts").and_then(|p| p.as_array()) {
+            for part in parts {
+                if let Some(id) = part
+                    .get("functionCall")
+                    .and_then(|fc| fc.get("id"))
+                    .and_then(|v| v.as_str())
+                {
+                    if !id.is_empty() {
+                        call_ids.insert(id.to_string());
                     }
                 }
             }
-            _ => {}
         }
     }
 
-    // Save last round if exists
-    if let Some(round) = current_round {
-        rounds.push(round);
-    }
-
-    debug!(
-        "[ContextManager] Identified {} tool rounds in {} messages",
-        rounds.len(),
-        messages.len()
-    );
-
-    rounds
-}
-
-struct OpenAIToolRound {
-    _assistant_index: usize,
-    _tool_indices: Vec<usize>,
-    indices: Vec<usize>,
-}
-
-fn identify_openai_tool_rounds(messages: &[OpenAIMessage]) -> Vec<OpenAIToolRound> {
-    let mut rounds = Vec::new();
-    let mut current_round: Option<OpenAIToolRound> = None;
-
-    for (i, msg) in messages.iter().enumerate() {
-        if msg.role == "assistant"
-            && msg.tool_calls.is_some()
-            && !msg.tool_calls.as_ref().unwrap().is_empty()
-        {
-            if let Some(round) = current_round.take() {
-                rounds.push(round);
-            }
-            current_round = Some(OpenAIToolRound {
-                _assistant_index: i,
-                _tool_indices: Vec::new(),
-                indices: vec![i],
+    let mut dropped = 0usize;
+    let mut kept = Vec::with_capacity(contents.len());
+    for mut content in contents.drain(..) {
+        let empty = if let Some(parts) = content.get_mut("parts").and_then(|p| p.as_array_mut()) {
+            let before = parts.len();
+            parts.retain(|part| {
+                let Some(fr) = part.get("functionResponse") else {
+                    return true;
+                };
+                match fr.get("id").and_then(|v| v.as_str()) {
+                    Some(id) if !id.is_empty() => call_ids.contains(id),
+                    _ => true,
+                }
             });
-        } else if msg.role == "tool" || msg.role == "function" || msg.tool_call_id.is_some() {
-            if let Some(ref mut round) = current_round {
-                round._tool_indices.push(i);
-                round.indices.push(i);
-            }
-        } else if msg.role == "user" {
-            if let Some(round) = current_round.take() {
-                rounds.push(round);
-            }
+            dropped += before - parts.len();
+            parts.is_empty()
+        } else {
+            false
+        };
+        if !empty {
+            kept.push(content);
         }
     }
-    if let Some(round) = current_round {
-        rounds.push(round);
+    *contents = kept;
+    if dropped > 0 {
+        info!(
+            "[ContextManager] Dropped {} orphan function response(s)",
+            dropped
+        );
     }
-    rounds
+    dropped
 }
 
-/// Check if message content contains tool_use
-fn has_tool_use(content: &MessageContent) -> bool {
-    if let MessageContent::Array(blocks) = content {
-        blocks
-            .iter()
-            .any(|b| matches!(b, ContentBlock::ToolUse { .. }))
-    } else {
-        false
-    }
-}
-
-/// Check if message content contains tool_result
-fn has_tool_result(content: &MessageContent) -> bool {
-    if let MessageContent::Array(blocks) = content {
-        blocks
-            .iter()
-            .any(|b| matches!(b, ContentBlock::ToolResult { .. }))
-    } else {
-        false
-    }
-}
 impl ContextManager {
     /// Estimate token usage for an OpenAI Request
     pub fn estimate_openai_token_usage(request: &OpenAIRequest) -> u32 {
@@ -925,41 +729,9 @@ impl ContextManager {
         total
     }
 
-    /// Compress thinking content in OpenAI request while keeping it in a lightweight representation
-    pub fn compress_openai_thinking_preserve_signature(
-        messages: &mut Vec<OpenAIMessage>,
-        protected_last_n: usize,
-    ) -> bool {
-        let total_msgs = messages.len();
-        if total_msgs == 0 {
-            return false;
-        }
-
-        let start_protection_idx = total_msgs.saturating_sub(protected_last_n);
-        let mut compressed_count = 0;
-
-        for (i, msg) in messages.iter_mut().enumerate() {
-            if i >= start_protection_idx {
-                continue;
-            }
-
-            if msg.role == "assistant" {
-                if let Some(ref mut reasoning) = msg.reasoning_content {
-                    // [FIX #3382] Even if the assistant message contains tool calls, compress reasoning_content
-                    // to "..." if it is long. Tool calls and their thoughtSignature remain intact on msg.tool_calls.
-                    if reasoning.len() > 10 {
-                        *reasoning = "...".to_string();
-                        compressed_count += 1;
-                    }
-                }
-            }
-        }
-
-        compressed_count > 0
-    }
-
     /// Estimate token usage for a Gemini Request represented as serde_json::Value
     pub fn estimate_gemini_token_usage(body: &Value) -> u32 {
+        let body = body.get("request").unwrap_or(body);
         let mut total = 0;
 
         // systemInstruction
@@ -1039,56 +811,11 @@ impl ContextManager {
         total
     }
 
-    /// Trim old tool messages in Gemini request body, keeping only the last N rounds
-    pub fn trim_gemini_tool_messages(body: &mut Value, keep_last_n_rounds: usize) -> bool {
+    /// 折叠 Gemini 工具回执里的日志噪音，并丢掉没有对应 functionCall 的回执。
+    /// 不按轮次删历史；留哪些工具调用由客户端决定。
+    pub fn trim_gemini_tool_messages(body: &mut Value) -> bool {
         if let Some(contents) = body.get_mut("contents").and_then(|c| c.as_array_mut()) {
-            let mut tool_rounds = Vec::new();
-            let mut current_round: Option<OpenAIToolRound> = None;
-
-            for (i, msg) in contents.iter().enumerate() {
-                let role = msg
-                    .get("role")
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("unknown");
-                let has_function_call = msg
-                    .get("parts")
-                    .and_then(|p| p.as_array())
-                    .map(|arr| arr.iter().any(|part| part.get("functionCall").is_some()))
-                    .unwrap_or(false);
-                let has_function_response = msg
-                    .get("parts")
-                    .and_then(|p| p.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .any(|part| part.get("functionResponse").is_some())
-                    })
-                    .unwrap_or(false);
-
-                if role == "model" && has_function_call {
-                    if let Some(round) = current_round.take() {
-                        tool_rounds.push(round);
-                    }
-                    current_round = Some(OpenAIToolRound {
-                        _assistant_index: i,
-                        _tool_indices: Vec::new(),
-                        indices: vec![i],
-                    });
-                } else if role == "user" && has_function_response {
-                    if let Some(ref mut round) = current_round {
-                        round._tool_indices.push(i);
-                        round.indices.push(i);
-                    }
-                } else if role == "user" {
-                    if let Some(round) = current_round.take() {
-                        tool_rounds.push(round);
-                    }
-                }
-            }
-            if let Some(round) = current_round {
-                tool_rounds.push(round);
-            }
-
-            // 对保留下来的工具消息部分进行 RTK 日志降噪 (就地修改)
+            let mut cleaned = false;
             for msg in contents.iter_mut() {
                 if let Some(parts) = msg.get_mut("parts").and_then(|p| p.as_array_mut()) {
                     for part in parts {
@@ -1098,9 +825,10 @@ impl ContextManager {
                             {
                                 for (_key, val) in resp_obj.iter_mut() {
                                     if let Some(s) = val.as_str() {
-                                        let cleaned = RtkCleaner::clean(s, 48);
-                                        if cleaned != s {
-                                            *val = json!(cleaned);
+                                        let next = RtkCleaner::clean(s, 48);
+                                        if next != s {
+                                            *val = json!(next);
+                                            cleaned = true;
                                         }
                                     }
                                 }
@@ -1109,35 +837,7 @@ impl ContextManager {
                     }
                 }
             }
-
-            if tool_rounds.len() <= keep_last_n_rounds {
-                return false;
-            }
-
-            let rounds_to_remove = tool_rounds.len() - keep_last_n_rounds;
-            let mut indices_to_remove = std::collections::HashSet::new();
-
-            for round in tool_rounds.iter().take(rounds_to_remove) {
-                for idx in &round.indices {
-                    indices_to_remove.insert(*idx);
-                }
-            }
-
-            let mut removed_count = 0;
-            for idx in (0..contents.len()).rev() {
-                if indices_to_remove.contains(&idx) {
-                    contents.remove(idx);
-                    removed_count += 1;
-                }
-            }
-
-            if removed_count > 0 {
-                info!(
-                    "[ContextManager] [Gemini] Trimmed {} tool messages, kept last {} rounds",
-                    removed_count, keep_last_n_rounds
-                );
-            }
-            removed_count > 0
+            cleaned || drop_orphan_function_responses(contents) > 0
         } else {
             false
         }
@@ -1148,7 +848,14 @@ impl ContextManager {
         body: &mut Value,
         protected_last_n: usize,
     ) -> bool {
-        if let Some(contents) = body.get_mut("contents").and_then(|c| c.as_array_mut()) {
+        let contents = if body.get("contents").and_then(|c| c.as_array()).is_some() {
+            body.get_mut("contents").and_then(|c| c.as_array_mut())
+        } else {
+            body.get_mut("request")
+                .and_then(|r| r.get_mut("contents"))
+                .and_then(|c| c.as_array_mut())
+        };
+        if let Some(contents) = contents {
             let total_turns = contents.len();
             if total_turns == 0 {
                 return false;
@@ -1197,6 +904,13 @@ impl ContextManager {
             false
         }
     }
+
+    /// Re-estimate (and optionally compress) AFTER mapping + thinking restore on the transit body.
+    pub fn apply_post_transit_context_mgmt(body: &mut Value, mapped_model: &str) -> u32 {
+        let _ = mapped_model;
+        // 不改写客户端正文、思考或工具回执。用量只用于观测。
+        Self::estimate_gemini_token_usage(body)
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -1219,6 +933,7 @@ mod tests {
             output_config: None,
             size: None,
             quality: None,
+            tool_choice: None,
         }
     }
 
@@ -1335,45 +1050,105 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_compress_openai_thinking_with_tool_calls() {
-        use crate::proxy::mappers::openai::models::{OpenAIContent, ToolCall, ToolFunction};
-        let mut messages = vec![
-            OpenAIMessage {
-                role: "assistant".into(),
-                refusal: None,
-                content: Some(OpenAIContent::String("read file".into())),
-                reasoning_content: Some("a very very long chain of reasoning thoughts that exceeds 10 characters".into()),
-                tool_calls: Some(vec![ToolCall {
-                    id: "call_1".into(),
-                    r#type: "function".into(),
-                    function: Some(ToolFunction {
-                        name: "read_file".into(),
-                        arguments: "{}".into(),
-                    }),
-                    status: None,
-                    call_id: None,
-                    operation: None,
-                }]),
-                tool_call_id: None,
-                name: None,
-            },
-            OpenAIMessage {
-                role: "user".into(),
-                refusal: None,
-                content: Some(OpenAIContent::String("latest user message".into())),
-                reasoning_content: None,
-                tool_calls: None,
-                tool_call_id: None,
-                name: None,
-            },
-        ];
+    fn openai_call(id: &str) -> OpenAIMessage {
+        use crate::proxy::mappers::openai::models::{ToolCall, ToolFunction};
+        OpenAIMessage {
+            role: "assistant".into(),
+            tool_calls: Some(vec![ToolCall {
+                id: id.into(),
+                r#type: "function".into(),
+                function: Some(ToolFunction {
+                    name: "tool".into(),
+                    arguments: "{}".into(),
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        }
+    }
 
-        // protected_last_n = 1 (protects the last user message, leaves index 0 eligible)
-        let modified = ContextManager::compress_openai_thinking_preserve_signature(&mut messages, 1);
-        assert!(modified);
-        assert_eq!(messages[0].reasoning_content.as_deref(), Some("..."));
-        assert!(messages[0].tool_calls.is_some());
-        assert_eq!(messages[0].tool_calls.as_ref().unwrap().len(), 1);
+    fn openai_tool(id: &str) -> OpenAIMessage {
+        use crate::proxy::mappers::openai::models::OpenAIContent;
+        OpenAIMessage {
+            role: "tool".into(),
+            tool_call_id: Some(id.into()),
+            content: Some(OpenAIContent::String("ok".into())),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn parallel_openai_calls_are_not_trimmed() {
+        let mut messages = Vec::new();
+        for n in 0..2 {
+            messages.push(openai_call(&format!("a{n}")));
+            messages.push(openai_call(&format!("b{n}")));
+            messages.push(openai_tool(&format!("a{n}")));
+            messages.push(openai_tool(&format!("b{n}")));
+        }
+        let _ = ContextManager::trim_openai_tool_messages(&mut messages);
+        let call_ids: Vec<_> = messages
+            .iter()
+            .filter_map(|msg| msg.tool_calls.as_ref())
+            .flatten()
+            .map(|call| call.id.as_str())
+            .collect();
+        let result_ids: Vec<_> = messages
+            .iter()
+            .filter_map(|msg| msg.tool_call_id.as_deref())
+            .collect();
+        assert_eq!(call_ids, vec!["a0", "b0", "a1", "b1"]);
+        assert_eq!(result_ids, vec!["a0", "b0", "a1", "b1"]);
+    }
+
+    #[test]
+    fn gemini_parallel_calls_are_not_trimmed() {
+        let fc = |id: &str| json!({"functionCall": {"id": id, "name": "tool", "args": {}}});
+        let fr = |id: &str| json!({"functionResponse": {"id": id, "name": "tool", "response": {"result": "ok"}}});
+        let mut body = json!({
+            "contents": [
+                {"role": "user", "parts": [{"text": "go"}]},
+                {"role": "model", "parts": [fc("a0")]},
+                {"role": "model", "parts": [fc("b0")]},
+                {"role": "user", "parts": [fr("a0")]},
+                {"role": "user", "parts": [fr("b0")]},
+                {"role": "model", "parts": [fc("a1")]},
+                {"role": "model", "parts": [fc("b1")]},
+                {"role": "user", "parts": [fr("a1")]},
+                {"role": "user", "parts": [fr("b1")]},
+            ]
+        });
+        let _ = ContextManager::trim_gemini_tool_messages(&mut body);
+        let contents = body["contents"].as_array().unwrap();
+        let mut call_ids = Vec::new();
+        let mut response_ids = Vec::new();
+        for content in contents {
+            for part in content["parts"].as_array().unwrap() {
+                if let Some(id) = part["functionCall"]["id"].as_str() {
+                    call_ids.push(id.to_string());
+                }
+                if let Some(id) = part["functionResponse"]["id"].as_str() {
+                    response_ids.push(id.to_string());
+                }
+            }
+        }
+        assert_eq!(
+            call_ids,
+            vec![
+                "a0".to_string(),
+                "b0".to_string(),
+                "a1".to_string(),
+                "b1".to_string()
+            ]
+        );
+        assert_eq!(
+            response_ids,
+            vec![
+                "a0".to_string(),
+                "b0".to_string(),
+                "a1".to_string(),
+                "b1".to_string()
+            ]
+        );
     }
 }

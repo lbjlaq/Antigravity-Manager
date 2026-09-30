@@ -88,7 +88,8 @@ pub fn audio_part_from_source(src: &str, declared_mime: Option<&str>) -> Option<
     }
 
     // 3) 本地文件 (file:// 或普通路径)
-    let looks_like_path = src.starts_with("file://") || (src.len() < 4096 && Path::new(src).is_file());
+    let looks_like_path =
+        src.starts_with("file://") || (src.len() < 4096 && Path::new(src).is_file());
     if looks_like_path {
         let file_path = if let Some(rest) = src.strip_prefix("file://") {
             #[cfg(target_os = "windows")]
@@ -114,7 +115,12 @@ pub fn audio_part_from_source(src: &str, declared_mime: Option<&str>) -> Option<
                 }
                 let mime = declared.unwrap_or_else(|| mime_from_path(&file_path));
                 let b64 = AudioProcessor::encode_to_base64(&bytes);
-                tracing::debug!("[Audio] 已加载本地音频 {} ({} bytes, {})", file_path, bytes.len(), mime);
+                tracing::debug!(
+                    "[Audio] 已加载本地音频 {} ({} bytes, {})",
+                    file_path,
+                    bytes.len(),
+                    mime
+                );
                 return Some(json!({ "inlineData": { "mimeType": mime, "data": b64 } }));
             }
             Err(e) => {
@@ -136,7 +142,11 @@ pub fn audio_part_from_source(src: &str, declared_mime: Option<&str>) -> Option<
 fn warn_if_oversized(base64_len: usize, mime: &str) {
     let raw = (base64_len * 3) / 4;
     if AudioProcessor::exceeds_size_limit(raw) {
-        tracing::warn!("[Audio] 内联音频 {} 约 {} bytes，超过 15MB 建议上限", mime, raw);
+        tracing::warn!(
+            "[Audio] 内联音频 {} 约 {} bytes，超过 15MB 建议上限",
+            mime,
+            raw
+        );
     }
 }
 

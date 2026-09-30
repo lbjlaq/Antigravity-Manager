@@ -45,8 +45,10 @@ pub fn get_all_candidate_db_paths(target_ide: Option<&str>) -> Vec<PathBuf> {
         &["Antigravity IDE", "Antigravity"]
     } else if target_ide == Some("code") || target_ide == Some("cursor") {
         &["Antigravity", "Antigravity IDE"]
+    } else if target_ide == Some("classic") {
+        &["Antigravity"]
     } else {
-        &["Antigravity IDE", "Antigravity"]
+        &["Antigravity", "Antigravity IDE"]
     };
 
     #[cfg(target_os = "macos")]
@@ -117,7 +119,7 @@ pub fn inject_token(
     project_id: Option<&str>,
     id_token: Option<&str>,
     oauth_client_key: Option<&str>,
-    target_ide: Option<&str>,
+    _target_ide: Option<&str>,
 ) -> Result<String, String> {
     crate::modules::logger::log_info("Starting Token injection...");
 
@@ -162,6 +164,12 @@ fn inject_new_format(
     id_token: Option<&str>,
 ) -> Result<String, String> {
     let conn = Connection::open(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // 忙等待：热切号场景下 Antigravity 仍在运行，数据库中可能存在并发写者；
+    // 显式设置 busy_timeout，让 SQLite 在瞬时锁竞争时等待重试，而不是立刻抛 SQLITE_BUSY
+    // （rusqlite 默认 busy_timeout = 0，写入会被瞬时锁直接拒绝）。
+    conn.busy_timeout(std::time::Duration::from_millis(2000))
+        .map_err(|e| format!("Failed to set busy_timeout: {}", e))?;
 
     // Create OAuthTokenInfo (binary)
     let oauth_info = protobuf::create_oauth_info(
@@ -272,6 +280,10 @@ pub fn write_service_machine_id(
     service_machine_id: &str,
 ) -> Result<(), String> {
     let conn = Connection::open(db_path).map_err(|e| format!("Failed to open database: {}", e))?;
+
+    // 同 `inject_new_format`：热切号时应用仍在运行，忙等待避免瞬时锁竞争导致写入失败
+    conn.busy_timeout(std::time::Duration::from_millis(2000))
+        .map_err(|e| format!("Failed to set busy_timeout: {}", e))?;
 
     conn.execute(
         "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)",

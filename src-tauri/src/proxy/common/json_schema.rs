@@ -1,37 +1,22 @@
-use super::tool_adapter::ToolAdapter;
-use super::tool_adapters::PencilAdapter;
-use once_cell::sync::Lazy;
 use serde_json::{json, Value};
 
-/// 不被 Gemini 支持但包含重要语义信息的约束字段
-/// 这些字段将在删除前被转化为 description 提示
-const CONSTRAINT_FIELDS: &[(&str, &str)] = &[
-    ("minLength", "minLen"),
-    ("maxLength", "maxLen"),
-    ("pattern", "pattern"),
-    ("minimum", "min"),
-    ("maximum", "max"),
-    ("multipleOf", "multipleOf"),
-    ("exclusiveMinimum", "exclMin"),
-    ("exclusiveMaximum", "exclMax"),
-    ("minItems", "minItems"),
-    ("maxItems", "maxItems"),
-    ("format", "format"),
-];
-
-/// 全局工具适配器注册表
-///
-/// 所有注册的适配器都会在 Schema 清洗时被检查和应用
-static TOOL_ADAPTERS: Lazy<Vec<Box<dyn ToolAdapter>>> = Lazy::new(|| {
-    vec![
-        Box::new(PencilAdapter),
-        // 未来可以轻松添加更多适配器:
-        // Box::new(FilesystemAdapter),
-        // Box::new(DatabaseAdapter),
-    ]
-});
-
 const MAX_RECURSION_DEPTH: usize = 10;
+pub const MAX_DESCRIPTION_LENGTH: usize = 8192;
+
+/// 规范化工具或参数的描述文本：
+/// 1. 保持客户端原始换行与排版格式不变，避免折叠导致指令可读性下降；
+/// 2. 仅对超过安全预算（8192 字符）的极端超长描述进行截断，防止上游解析溢出或拒收。
+pub fn sanitize_description(s: &str) -> String {
+    if s.chars().count() <= MAX_DESCRIPTION_LENGTH {
+        s.to_string()
+    } else {
+        let truncated: String = s
+            .chars()
+            .take(MAX_DESCRIPTION_LENGTH.saturating_sub(15))
+            .collect();
+        format!("{}... [truncated]", truncated)
+    }
+}
 
 /// 递归清理 JSON Schema 以符合 Gemini 接口要求
 ///
@@ -68,35 +53,11 @@ pub fn clean_json_schema(value: &mut Value) {
     clean_json_schema_recursive(value, true, 0);
 }
 
-/// 带工具适配器支持的 Schema 清洗
+/// 清洗 JSON Schema 以符合 Gemini 接口要求
 ///
-/// 这是推荐的清洗入口,支持工具特定的优化
-///
-/// # Arguments
-/// * `value` - 待清洗的 JSON Schema
-/// * `tool_name` - 工具名称,用于匹配适配器
-///
-/// # 处理流程
-/// 1. 查找匹配的工具适配器
-/// 2. 执行适配器的预处理 (工具特定优化)
-/// 3. 执行通用清洗逻辑
-/// 4. 执行适配器的后处理 (最终调整)
-pub fn clean_json_schema_for_tool(value: &mut Value, tool_name: &str) {
-    // 1. 查找匹配的适配器
-    let adapter = TOOL_ADAPTERS.iter().find(|a| a.matches(tool_name));
-
-    // 2. 执行预处理
-    if let Some(adapter) = adapter {
-        let _ = adapter.pre_process(value);
-    }
-
-    // 3. 执行通用清洗
+/// 遵循纯粹协议透传原则，不执行任何特定工具的私有适配逻辑
+pub fn clean_json_schema_for_tool(value: &mut Value, _tool_name: &str) {
     clean_json_schema(value);
-
-    // 4. 执行后处理
-    if let Some(adapter) = adapter {
-        let _ = adapter.post_process(value);
-    }
 }
 
 /// [NEW #952] 递归收集所有层级的 $defs 和 definitions
@@ -372,8 +333,7 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
             }
 
             if let Some(union_array) = union_to_merge {
-                if let Some((best_branch, all_types)) = extract_best_schema_from_union(&union_array)
-                {
+                if let Some(best_branch) = extract_best_schema_from_union(&union_array) {
                     if let Value::Object(branch_obj) = best_branch {
                         // 合并分支属性到当前 map
                         for (k, v) in branch_obj {
@@ -410,12 +370,6 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                             }
                         }
                     }
-
-                    // [NEW] 添加类型提示到描述中 (参考 CLIProxyAPI)
-                    if all_types.len() > 1 {
-                        let type_hint = format!("Accepts: {}", all_types.join(" | "));
-                        append_hint_to_description(map, type_hint);
-                    }
                 }
             }
 
@@ -436,9 +390,12 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
 
             // [NEW] 启发式修复：如果明确是 Schema 节点，但没有标准关键字，却有其他 Key
             // 我们推测这是一个“简写”的对象定义，尝试将其内部 Key 移动到 properties 中。
-            // 补充：必须确保它不是工具调用或结果 (含有 functionCall/functionResponse)，防止结构被破坏。
-            let is_not_schema_payload =
-                map.contains_key("functionCall") || map.contains_key("functionResponse");
+            // 补充：必须确保它不是工具调用或结果 (含有 functionCall/functionResponse/args 等)，防止运行时参数结构被破坏。
+            let is_not_schema_payload = map.contains_key("functionCall")
+                || map.contains_key("functionResponse")
+                || map.contains_key("args")
+                || map.contains_key("tool_calls")
+                || map.contains_key("tool_call_id");
             if is_schema_node && !has_standard_keyword && !map.is_empty() && !is_not_schema_payload
             {
                 let mut properties = serde_json::Map::new();
@@ -459,15 +416,10 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                 }
             }
 
-            let looks_like_schema =
-                (is_schema_node || has_standard_keyword) && !is_not_schema_payload;
+            let looks_like_schema = is_schema_node && !is_not_schema_payload;
 
             if looks_like_schema {
-                // 4. [ROBUST] 约束迁移：在被白名单过滤前，将校验项转为描述 Hint
-                // [NEW] 使用统一的约束回填函数
-                move_constraints_to_description(map);
-
-                // 5. [CRITICAL] 白名单过滤：彻底物理移除 Gemini 不支持的内容，防止 400 错误
+                // 4. [CRITICAL] 白名单过滤：彻底物理移除 Gemini 不支持的内容，防止 400 错误
                 let keys_to_remove: Vec<String> = map
                     .keys()
                     .filter(|k| !allowed_fields.contains(&k.as_str()))
@@ -477,12 +429,19 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
                     map.remove(&k);
                 }
 
+                // 5. 保持客户端原始 description 文本，不折叠换行，不截断内容，保证完全保真透传
+
                 // 6. [SAFETY] 处理空 Object
                 // [FIX] 移除 reason 字段注入逻辑
                 // 之前的实现会为空 Object 注入 reason 字段，导致 Gemini CLI 等工具报 "malformed function call"
                 // 因为模型会生成包含 reason 参数的调用，但工具定义中并没有这个参数
                 // 现在改为：空 Object 保持空的 properties，让 Gemini 模型自行决定是否需要参数
-                if map.get("type").and_then(|t| t.as_str()) == Some("object") {
+                let is_object_type = map
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .map(|t| t.eq_ignore_ascii_case("object"))
+                    .unwrap_or(false);
+                if is_object_type {
                     if !map.contains_key("properties") {
                         map.insert("properties".to_string(), serde_json::json!({}));
                     }
@@ -671,46 +630,6 @@ fn merge_all_of(map: &mut serde_json::Map<String, Value>) {
     }
 }
 
-/// [NEW] 将提示信息追加到 description 字段
-/// 参考 CLIProxyAPI 的 Lazy Hint 策略
-fn append_hint_to_description(map: &mut serde_json::Map<String, Value>, hint: String) {
-    let desc_val = map
-        .entry("description".to_string())
-        .or_insert_with(|| Value::String("".to_string()));
-
-    if let Value::String(s) = desc_val {
-        if s.is_empty() {
-            *s = hint;
-        } else if !s.contains(&hint) {
-            *s = format!("{} {}", s, hint);
-        }
-    }
-}
-
-/// [NEW] 将约束字段转化为 description 提示
-/// 在删除约束字段前,将其语义信息保留在描述中,让模型能够理解约束
-fn move_constraints_to_description(map: &mut serde_json::Map<String, Value>) {
-    let mut hints = Vec::new();
-
-    for (field, label) in CONSTRAINT_FIELDS {
-        if let Some(val) = map.get(*field) {
-            if !val.is_null() {
-                let val_str = if let Some(s) = val.as_str() {
-                    s.to_string()
-                } else {
-                    val.to_string()
-                };
-                hints.push(format!("{}: {}", label, val_str));
-            }
-        }
-    }
-
-    if !hints.is_empty() {
-        let constraint_hint = format!("[Constraint: {}]", hints.join(", "));
-        append_hint_to_description(map, constraint_hint);
-    }
-}
-
 /// [NEW] 计算 Schema 分支的复杂度得分 (用于 anyOf/oneOf 择优)
 /// 评分标准: Object (3) > Array (2) > Scalar (1) > Null (0)
 fn score_schema_option(val: &Value) -> i32 {
@@ -732,53 +651,20 @@ fn score_schema_option(val: &Value) -> i32 {
     0
 }
 
-/// [NEW] 从 anyOf/oneOf 联合类型数组中选取最佳非 null Schema 分支
-/// 返回: (最佳Schema, 所有可能的类型列表)
-/// 参考 CLIProxyAPI 的 selectBest 逻辑
-fn extract_best_schema_from_union(union_array: &Vec<Value>) -> Option<(Value, Vec<String>)> {
+/// 从 anyOf/oneOf 联合类型数组中选取最佳非 null Schema 分支
+fn extract_best_schema_from_union(union_array: &[Value]) -> Option<Value> {
     let mut best_option: Option<&Value> = None;
     let mut best_score = -1;
-    let mut all_types = Vec::new();
 
     for item in union_array {
         let score = score_schema_option(item);
-
-        // 收集类型信息
-        if let Some(type_str) = get_schema_type_name(item) {
-            if !all_types.contains(&type_str) {
-                all_types.push(type_str);
-            }
-        }
-
         if score > best_score {
             best_score = score;
             best_option = Some(item);
         }
     }
 
-    best_option.cloned().map(|schema| (schema, all_types))
-}
-
-/// [NEW] 获取 Schema 的类型名称
-fn get_schema_type_name(schema: &Value) -> Option<String> {
-    if let Value::Object(obj) = schema {
-        // 优先使用显式的 type 字段
-        if let Some(type_val) = obj.get("type") {
-            if let Some(s) = type_val.as_str() {
-                return Some(s.to_string());
-            }
-        }
-
-        // 根据结构推断类型
-        if obj.contains_key("properties") {
-            return Some("object".to_string());
-        }
-        if obj.contains_key("items") {
-            return Some("array".to_string());
-        }
-    }
-
-    None
+    best_option.cloned()
 }
 
 /// 修正工具调用参数的类型，使其符合 schema 定义
@@ -971,27 +857,25 @@ mod tests {
         assert_eq!(schema["type"], "object");
         assert_eq!(schema["properties"]["location"]["type"], "string");
 
-        // 2. 验证标准字段被移除并转为描述 (Robust Constraint Migration)
+        // 2. 验证非标准约束字段被安全移除，且描述保持纯透传不被篡改
         assert!(schema["properties"]["location"].get("minLength").is_none());
         assert!(schema["properties"]["location"].get("format").is_none());
-        assert!(schema["properties"]["location"]["description"]
-            .as_str()
-            .unwrap()
-            .contains("[Constraint: minLen: 1, format: city]"));
+        assert_eq!(
+            schema["properties"]["location"]["description"],
+            "The city and state, e.g. San Francisco, CA"
+        );
 
         // 3. 验证名为 "pattern" 的属性未被误删
         assert!(schema["properties"].get("pattern").is_some());
         assert_eq!(schema["properties"]["pattern"]["type"], "object");
 
-        // 4. 验证内部的 pattern 校验字段被移除并转为描述
+        // 4. 验证内部的 pattern 校验字段被移除，且描述保持原样
         assert!(schema["properties"]["pattern"]["properties"]["regex"]
             .get("pattern")
             .is_none());
-        assert!(
-            schema["properties"]["pattern"]["properties"]["regex"]["description"]
-                .as_str()
-                .unwrap()
-                .contains("[Constraint: pattern: ^[a-z]+$]")
+        assert_eq!(
+            schema["properties"]["pattern"]["properties"]["regex"]["description"],
+            "Regex pattern"
         );
 
         // 5. 验证联合类型被降级为单一类型 (Protobuf 兼容性)
@@ -1192,11 +1076,15 @@ mod tests {
     // [NEW TEST] 验证安全检查：不应处理非 Schema 对象（保护工具调用）
     #[test]
     fn test_clean_json_schema_on_non_schema_object() {
-        // 模拟 request.rs 中转换了一半的 functionCall 对象
+        // 模拟包含 description、command、type 等常规业务字段的运行时工具调用对象
         let mut tool_call = json!({
             "functionCall": {
-                "name": "local_shell_call",
-                "args": { "command": ["ls"] },
+                "name": "run_command",
+                "args": {
+                    "description": "Run: git status",
+                    "command": "git status",
+                    "shell": "default"
+                },
                 "id": "call_123"
             }
         });
@@ -1204,10 +1092,12 @@ mod tests {
         // 调用清洗逻辑
         clean_json_schema(&mut tool_call);
 
-        // 验证：这些非 Schema 字段不应被移除（因为不符合 looks_like_schema 判定）
+        // 验证：非 Schema 字段与运行时实参绝对不应被剥离，command 与 description 必须同时完好保留
         let fc = &tool_call["functionCall"];
-        assert_eq!(fc["name"], "local_shell_call");
-        assert_eq!(fc["args"]["command"][0], "ls");
+        assert_eq!(fc["name"], "run_command");
+        assert_eq!(fc["args"]["command"], "git status");
+        assert_eq!(fc["args"]["description"], "Run: git status");
+        assert_eq!(fc["args"]["shell"], "default");
         assert_eq!(fc["id"], "call_123");
     }
 
@@ -1739,7 +1629,10 @@ mod tests {
         clean_json_schema(&mut schema1);
 
         assert_eq!(schema1["properties"]["action_type"]["type"], "string");
-        assert_eq!(schema1["properties"]["action_type"]["enum"], json!(["element"]));
+        assert_eq!(
+            schema1["properties"]["action_type"]["enum"],
+            json!(["element"])
+        );
         assert!(schema1["properties"]["action_type"].get("const").is_none());
 
         assert_eq!(schema1["properties"]["count"]["type"], "integer");
@@ -1828,5 +1721,32 @@ mod tests {
             schema["properties"]["query"]["properties"]["where"]["items"]["items"],
             json!({ "type": "string" })
         );
+    }
+
+    #[test]
+    fn test_sanitize_description() {
+        let multi_line = "This is a tool description\nwith multiple lines\r\nand   extra   spaces.";
+        assert_eq!(
+            sanitize_description(multi_line),
+            "This is a tool description with multiple lines and extra spaces."
+        );
+
+        let overlong = "a".repeat(3000);
+        let sanitized = sanitize_description(&overlong);
+        assert!(sanitized.len() <= MAX_DESCRIPTION_LENGTH);
+        assert!(sanitized.ends_with("... [truncated]"));
+    }
+
+    #[test]
+    fn test_clean_json_schema_ensures_properties_on_object() {
+        let mut schema = json!({
+            "type": "OBJECT",
+            "description": "Some description\nwith newlines"
+        });
+
+        clean_json_schema(&mut schema);
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["properties"], json!({}));
+        assert_eq!(schema["description"], "Some description with newlines");
     }
 }

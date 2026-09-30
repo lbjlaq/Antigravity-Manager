@@ -1,0 +1,24 @@
+# 关键路径的自动审查指派。
+# 语法说明：https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+# 规则：最后匹配的一条生效；目录规则需以 / 结尾。
+# 说明：一条规则列出多个 owner 时，任一 owner 的审查即满足要求（非必须全部）。
+# 约束力：本文件只负责自动请求审查；「必须审批才能合并」需由 admin 在分支保护 / ruleset
+#         中启用 "Require review from Code Owners"，否则不影响合并。
+
+# 默认：原作者与维护者共同审查（其余简单修复）
+*                                   @lbjlaq @jeikl
+
+# 核心面：由 @jeikl 主导审查
+# 模型交互核心：四协议适配 + 统一流水线（出站清洗、身份归一化、限流与冷却链路）
+/src-tauri/src/proxy/               @jeikl
+# 项目规范本身
+/AGENTS.md                          @jeikl
+# 发版基建：版本同步脚本与发版 SOP
+/scripts/                           @jeikl
+
+# 其余高风险面：原作者与维护者共同审查
+# 桌面集成与进程控制：账号切换、轻量模式、托盘
+/src-tauri/src/modules/             @lbjlaq @jeikl
+/docs/                              @lbjlaq @jeikl
+# CI 与发布流水线
+/.github/workflows/                 @lbjlaq @jeikl

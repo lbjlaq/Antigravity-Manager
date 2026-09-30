@@ -15,31 +15,31 @@ pub mod common; // 公共工具
 pub mod debug_logger;
 pub mod droid_sync; // Droid (Factory CLI) 配置同步
 pub mod handlers; // API 端点处理器
+pub mod hermes_sync; // Hermes Agent 配置同步
 pub mod http_session_store; // HTTP多轮对话会话历史存储
 pub mod mappers; // 协议转换器
 pub mod middleware; // Axum 中间件
 pub mod model_specs; // 模型规格管理 (v4.1.29)
 pub mod monitor; // 监控
+pub mod openclaw_sync; // OpenClaw 配置同步
 pub mod opencode_sync; // OpenCode 配置同步
-pub mod providers; // Extra upstream providers (z.ai, etc.)
+pub mod payload_audit; // 报文审计：头脱敏 / 简要存储
 pub mod proxy_pool; // 代理池管理器
 pub mod rate_limit; // 限流跟踪
 pub mod session_manager; // 会话指纹管理
 pub mod signature_cache; // Signature Cache (v3.3.16)
 pub mod sticky_config; // 粘性调度配置
+pub mod thinking_store; // 服务端完整思考块存储
 pub mod upstream; // 上游客户端
 pub mod video; // 视频处理模块
-pub mod zai_vision_mcp; // Built-in Vision MCP server state
-pub mod zai_vision_tools; // Built-in Vision MCP tools (z.ai vision API) // 调试日志
 
 pub use config::update_global_system_prompt_config;
 pub use config::update_image_thinking_mode;
+pub use config::update_multimodal_config;
 pub use config::update_thinking_budget_config;
 pub use config::ProxyAuthMode;
 pub use config::ProxyConfig;
 pub use config::ProxyPoolConfig;
-pub use config::ZaiConfig;
-pub use config::ZaiDispatchMode;
 pub use security::ProxySecurityConfig;
 pub use server::AxumServer;
 pub use signature_cache::SignatureCache;
@@ -49,3 +49,4 @@ pub use token_manager::TokenManager;
 pub mod tests;
 
 pub mod adapters;
+pub mod pipeline;

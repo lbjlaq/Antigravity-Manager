@@ -45,8 +45,8 @@ export function LanguageDropdown({
     useClickOutside(menuRef, () => setIsOpen(false));
 
     const handleLanguageChange = (langCode: string) => {
-        onLanguageChange(langCode);
         setIsOpen(false);
+        onLanguageChange(langCode);
     };
 
     return (
@@ -61,9 +61,9 @@ export function LanguageDropdown({
                 </span>
             </button>
 
-            {/* 下拉菜单 */}
+            {/* 下拉菜单 (强制右对齐并限制在视口内，彻底解决向右溢出被窗口边缘遮蔽的问题) */}
             {isOpen && (
-                <div className="absolute ltr:right-0 rtl:left-0 mt-2 w-32 bg-white dark:bg-base-200 rounded-xl shadow-lg border border-gray-100 dark:border-base-100 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 ltr:origin-top-right rtl:origin-top-left">
+                <div className="absolute right-0 mt-2 w-36 bg-white dark:bg-base-200 rounded-xl shadow-xl border border-gray-100 dark:border-base-100 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right z-50">
                     {languages.map((lang) => (
                         <button
                             key={lang.code}
@@ -189,8 +189,8 @@ export function MoreDropdown({
     };
 
     const handleLanguageChange = (langCode: string) => {
-        onLanguageChange(langCode);
         setIsOpen(false);
+        onLanguageChange(langCode);
     };
 
     const handleLogout = () => {
@@ -209,9 +209,9 @@ export function MoreDropdown({
                 <MoreVertical className="w-5 h-5 text-gray-700 dark:text-gray-300" />
             </button>
 
-            {/* 下拉菜单 */}
+            {/* 下拉菜单 (强制右对齐防遮蔽) */}
             {isOpen && (
-                <div className="absolute ltr:right-0 rtl:left-0 mt-2 w-40 bg-white dark:bg-base-200 rounded-xl shadow-lg border border-gray-100 dark:border-base-100 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 ltr:origin-top-right rtl:origin-top-left">
+                <div className="absolute right-0 mt-2 w-44 bg-white dark:bg-base-200 rounded-xl shadow-xl border border-gray-100 dark:border-base-100 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right z-50">
                     {/* 迷你视图 */}
                     <button
                         onClick={() => {

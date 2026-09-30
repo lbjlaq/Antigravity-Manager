@@ -497,12 +497,31 @@ pub fn get_blacklist_entry_for_ip(ip: &str) -> Result<Option<IpBlacklistEntry>, 
         return Ok(Some(entry));
     }
 
-    // CIDR 匹配
+    // CIDR 匹配与 IP 等价匹配
     let entries = get_blacklist()?;
     for entry in entries {
         if entry.ip_pattern.contains('/') {
             if cidr_match(ip, &entry.ip_pattern) {
                 // 增加命中计数
+                let _ = conn.execute(
+                    "UPDATE ip_blacklist SET hit_count = hit_count + 1 WHERE id = ?1",
+                    [&entry.id],
+                );
+                return Ok(Some(entry));
+            }
+        } else if let (Ok(client_addr), Ok(entry_addr)) = (
+            ip.trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .parse::<std::net::IpAddr>(),
+            entry
+                .ip_pattern
+                .trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .parse::<std::net::IpAddr>(),
+        ) {
+            if client_addr == entry_addr {
                 let _ = conn.execute(
                     "UPDATE ip_blacklist SET hit_count = hit_count + 1 WHERE id = ?1",
                     [&entry.id],
@@ -515,36 +534,82 @@ pub fn get_blacklist_entry_for_ip(ip: &str) -> Result<Option<IpBlacklistEntry>, 
     Ok(None)
 }
 
-/// 简单的 CIDR 匹配
+/// CIDR 匹配 (同时支持 IPv4 和 IPv6)
 fn cidr_match(ip: &str, cidr: &str) -> bool {
     let parts: Vec<&str> = cidr.split('/').collect();
     if parts.len() != 2 {
         return false;
     }
 
-    let network = parts[0];
-    let prefix_len: u8 = match parts[1].parse() {
+    let network = parts[0].trim();
+    let prefix_len: u8 = match parts[1].trim().parse() {
         Ok(p) => p,
         Err(_) => return false,
     };
 
-    let ip_parts: Vec<u8> = ip.split('.').filter_map(|s| s.parse().ok()).collect();
-    let net_parts: Vec<u8> = network.split('.').filter_map(|s| s.parse().ok()).collect();
+    let ip_clean = ip.trim().trim_matches('[').trim_matches(']');
+    let net_clean = network.trim_matches('[').trim_matches(']');
 
-    if ip_parts.len() != 4 || net_parts.len() != 4 {
-        return false;
-    }
-
-    let ip_u32 = u32::from_be_bytes([ip_parts[0], ip_parts[1], ip_parts[2], ip_parts[3]]);
-    let net_u32 = u32::from_be_bytes([net_parts[0], net_parts[1], net_parts[2], net_parts[3]]);
-
-    let mask = if prefix_len == 0 {
-        0
-    } else {
-        !0u32 << (32 - prefix_len)
+    let ip_addr: std::net::IpAddr = match ip_clean.parse() {
+        Ok(addr) => addr,
+        Err(_) => return false,
+    };
+    let net_addr: std::net::IpAddr = match net_clean.parse() {
+        Ok(addr) => addr,
+        Err(_) => return false,
     };
 
-    (ip_u32 & mask) == (net_u32 & mask)
+    // 尝试展开 IPv4-mapped
+    let ip_addr = match ip_addr {
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                std::net::IpAddr::V4(v4)
+            } else {
+                std::net::IpAddr::V6(v6)
+            }
+        }
+        v4 => v4,
+    };
+    let net_addr = match net_addr {
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                std::net::IpAddr::V4(v4)
+            } else {
+                std::net::IpAddr::V6(v6)
+            }
+        }
+        v4 => v4,
+    };
+
+    match (ip_addr, net_addr) {
+        (std::net::IpAddr::V4(ip_v4), std::net::IpAddr::V4(net_v4)) => {
+            if prefix_len > 32 {
+                return false;
+            }
+            let ip_u32 = u32::from_be_bytes(ip_v4.octets());
+            let net_u32 = u32::from_be_bytes(net_v4.octets());
+            let mask = if prefix_len == 0 {
+                0
+            } else {
+                !0u32 << (32 - prefix_len)
+            };
+            (ip_u32 & mask) == (net_u32 & mask)
+        }
+        (std::net::IpAddr::V6(ip_v6), std::net::IpAddr::V6(net_v6)) => {
+            if prefix_len > 128 {
+                return false;
+            }
+            let ip_u128 = u128::from_be_bytes(ip_v6.octets());
+            let net_u128 = u128::from_be_bytes(net_v6.octets());
+            let mask = if prefix_len == 0 {
+                0
+            } else {
+                !0u128 << (128 - prefix_len)
+            };
+            (ip_u128 & mask) == (net_u128 & mask)
+        }
+        _ => false,
+    }
 }
 
 // ============================================================================
@@ -633,11 +698,26 @@ pub fn is_ip_in_whitelist(ip: &str) -> Result<bool, String> {
         return Ok(true);
     }
 
-    // CIDR 匹配
+    // CIDR 匹配与 IP 等价匹配
     let entries = get_whitelist()?;
     for entry in entries {
         if entry.ip_pattern.contains('/') {
             if cidr_match(ip, &entry.ip_pattern) {
+                return Ok(true);
+            }
+        } else if let (Ok(client_addr), Ok(entry_addr)) = (
+            ip.trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .parse::<std::net::IpAddr>(),
+            entry
+                .ip_pattern
+                .trim()
+                .trim_matches('[')
+                .trim_matches(']')
+                .parse::<std::net::IpAddr>(),
+        ) {
+            if client_addr == entry_addr {
                 return Ok(true);
             }
         }

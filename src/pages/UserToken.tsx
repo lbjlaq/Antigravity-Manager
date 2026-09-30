@@ -140,7 +140,6 @@ const UserToken: React.FC = () => {
     };
 
     const handleEdit = (token: UserToken) => {
-        console.log('Editing token:', token); // 调试日志
         setEditingToken(token);
         setEditUsername(token.username);
         setEditDesc(token.description || '');

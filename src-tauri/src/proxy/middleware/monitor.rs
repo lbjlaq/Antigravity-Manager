@@ -1,5 +1,5 @@
 use crate::proxy::middleware::auth::UserTokenIdentity;
-use crate::proxy::monitor::ProxyRequestLog;
+use crate::proxy::monitor::{ProxyRequestLog, UpstreamRequestBodyHolder};
 use crate::proxy::server::AppState;
 use axum::{
     body::Body,
@@ -56,6 +56,37 @@ fn extract_boundary(content_type: &str) -> Option<String> {
         let value = trimmed.strip_prefix("boundary=")?;
         Some(value.trim_matches('"').to_string())
     })
+}
+
+/// 噪音请求日志抑制判定。
+///
+/// 面板「捕获健康请求」胶囊开关（`capture_health_logs`）**默认关闭**。关闭时：
+/// **所有 GET 成功请求一律不记录、不落库**（含 `/v1/models`、`/v1beta/models`、`/v1/models/claude`
+/// 等模型列表轮询，以及 `/health` `/healthz` `/api/health` 探针）。
+///
+/// 之所以从"仅过滤 `/health` 探针"放宽到"全部 GET 成功"：真实客户端的健康/能力探测会高频轮询
+/// **模型列表**接口（issue #3498 的探针刷屏 + 面板中 `/v1/models` 200 连片淹没业务日志），
+/// 这类请求没有对话语义、无业务价值，却会把真实业务日志挤出视图。
+///
+/// 边界（刻意保守，绝不影响排障）：
+/// - 失败请求（非 2xx）**始终记录**，无论路径与方法；
+/// - 非 GET（POST 等真实业务请求）**始终记录**；
+/// - 开关开启（或环境变量 `ABV_LOG_HEALTH_CHECKS` 为真）时全部记录并落库。
+fn should_skip_request_log(
+    method: &str,
+    status: axum::http::StatusCode,
+    capture_enabled: bool,
+) -> bool {
+    !capture_enabled && method.eq_ignore_ascii_case("GET") && status.is_success()
+}
+
+fn should_log_health_checks() -> bool {
+    std::env::var("ABV_LOG_HEALTH_CHECKS")
+        .map(|val| {
+            let v = val.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        })
+        .unwrap_or(false)
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
@@ -280,80 +311,418 @@ fn record_user_token_usage(
 }
 
 fn extract_cached_tokens(usage: &Value) -> Option<u32> {
-    usage
-        .get("cache_read_input_tokens")
-        .or_else(|| usage.get("total_cached_tokens"))
-        .or_else(|| usage.get("cachedContentTokenCount"))
-        .or_else(|| {
-            usage
-                .get("prompt_tokens_details")
-                .and_then(|details| details.get("cached_tokens"))
-        })
-        .or_else(|| {
-            usage
-                .get("input_tokens_details")
-                .and_then(|details| details.get("cached_tokens"))
-        })
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32)
-}
-
-fn value_as_u32(value: Option<&Value>) -> Option<u32> {
-    value.and_then(|v| v.as_u64()).map(|v| v as u32)
+    let c = crate::proxy::pipeline::CanonicalUsage::from_gemini(usage);
+    if c.cached_tokens > 0 {
+        Some(c.cached_tokens)
+    } else {
+        None
+    }
 }
 
 fn extract_input_tokens(usage: &Value) -> Option<u32> {
-    value_as_u32(
-        usage
-            .get("prompt_tokens")
-            .or_else(|| usage.get("input_tokens"))
-            .or_else(|| usage.get("total_input_tokens"))
-            .or_else(|| usage.get("promptTokenCount")),
-    )
+    let has_field = usage.get("prompt_tokens").is_some()
+        || usage.get("input_tokens").is_some()
+        || usage.get("total_input_tokens").is_some()
+        || usage.get("promptTokenCount").is_some();
+    if !has_field {
+        return None;
+    }
+    let c = crate::proxy::pipeline::CanonicalUsage::from_gemini(usage);
+    Some(c.total_input_tokens)
 }
 
 fn extract_reasoning_tokens(usage: &Value) -> Option<u32> {
-    value_as_u32(
-        usage
-            .get("reasoning_tokens")
-            .or_else(|| {
-                usage
-                    .get("output_tokens_details")
-                    .and_then(|details| details.get("reasoning_tokens"))
-            })
-            .or_else(|| {
-                usage
-                    .get("completion_tokens_details")
-                    .and_then(|details| details.get("reasoning_tokens"))
-            })
-            .or_else(|| usage.get("total_thought_tokens"))
-            .or_else(|| usage.get("totalThoughtTokens"))
-            .or_else(|| usage.get("thoughtsTokenCount")),
-    )
+    let c = crate::proxy::pipeline::CanonicalUsage::from_gemini(usage);
+    if c.reasoning_tokens > 0 {
+        Some(c.reasoning_tokens)
+    } else {
+        None
+    }
 }
 
 fn extract_output_tokens(usage: &Value) -> Option<u32> {
-    if let Some(tokens) = value_as_u32(
-        usage
-            .get("completion_tokens")
-            .or_else(|| usage.get("output_tokens")),
-    ) {
-        return Some(tokens);
+    let has_field = usage.get("completion_tokens").is_some()
+        || usage.get("output_tokens").is_some()
+        || usage.get("total_output_tokens").is_some()
+        || usage.get("candidatesTokenCount").is_some();
+    if !has_field {
+        return None;
+    }
+    let c = crate::proxy::pipeline::CanonicalUsage::from_gemini(usage);
+    Some(c.output_tokens)
+}
+
+fn build_canonical_consolidated_response(
+    thinking_content: String,
+    mut thinking_signature: String,
+    response_content: String,
+    tool_calls: Vec<Value>,
+    session_id: Option<&str>,
+    log_id: &str,
+    timing_obj: serde_json::Map<String, Value>,
+    usage_obj: Option<serde_json::Map<String, Value>>,
+) -> Value {
+    // 权威网关签名回填：若当前签名为空，尝试通过工具调用ID或会话ID从网关状态机(内存 L1 / SQLite L2 DB 思考持久化)恢复
+    if thinking_signature.is_empty() {
+        for tc in &tool_calls {
+            if let Some(call_id) = tc.get("id").and_then(|v| v.as_str()) {
+                if !call_id.is_empty() {
+                    if let Some(sig) = session_id.and_then(|sid| {
+                        crate::proxy::SignatureCache::global().get_tool_signature(sid, call_id)
+                    }) {
+                        thinking_signature = sig;
+                        break;
+                    }
+                }
+            }
+        }
+        if thinking_signature.is_empty() {
+            // 1. 优先按当前轮次的思考文本片段精准直捞专属签名
+            if !thinking_content.is_empty() {
+                let trimmed = thinking_content.trim();
+                let snippet = if trimmed.len() > 32 {
+                    &trimmed[..32]
+                } else {
+                    trimmed
+                };
+                if let Some(sig) =
+                    crate::modules::proxy_db::lookup_signature_by_thought_snippet(snippet)
+                {
+                    thinking_signature = sig;
+                }
+            }
+
+            // 2. 兜底按会话状态机与会话数据库查找最新签名
+            if thinking_signature.is_empty() {
+                if let Some(sid) = session_id {
+                    if let Some(sig) =
+                        crate::proxy::SignatureCache::global().get_session_signature(sid)
+                    {
+                        thinking_signature = sig;
+                    } else if let Some(sig) =
+                        crate::modules::proxy_db::lookup_latest_thinking_signature(sid)
+                    {
+                        thinking_signature = sig;
+                    }
+                }
+            }
+        }
     }
 
-    let base = value_as_u32(
-        usage
-            .get("total_output_tokens")
-            .or_else(|| usage.get("candidatesTokenCount")),
-    )?;
-    let has_new_format = usage.get("total_output_tokens").is_some();
-    if has_new_format {
-        let reasoning = extract_reasoning_tokens(usage).unwrap_or(0);
-        let tool_use = value_as_u32(usage.get("total_tool_use_tokens")).unwrap_or(0);
-        Some(base + reasoning + tool_use)
-    } else {
-        Some(base)
+    let mut consolidated = serde_json::Map::new();
+
+    // 1. 会话/思考唯一标识
+    let candidate_id = session_id.unwrap_or(log_id);
+    consolidated.insert(
+        "_session_thinking_id".to_string(),
+        Value::String(candidate_id.to_string()),
+    );
+
+    // 2. 思考文本与权威签名
+    if !thinking_content.is_empty() {
+        consolidated.insert("thinking".to_string(), Value::String(thinking_content));
     }
+    if !thinking_signature.is_empty() {
+        consolidated.insert(
+            "thinking_signature".to_string(),
+            Value::String(thinking_signature),
+        );
+    }
+
+    // 3. 正文输出
+    if !response_content.is_empty() {
+        consolidated.insert("content".to_string(), Value::String(response_content));
+    }
+
+    // 4. 工具调用列表 (过滤 Null)
+    let clean_tool_calls: Vec<Value> = tool_calls.into_iter().filter(|v| !v.is_null()).collect();
+    if !clean_tool_calls.is_empty() {
+        consolidated.insert("tool_calls".to_string(), Value::Array(clean_tool_calls));
+    }
+
+    // 5. 耗时诊断
+    if !timing_obj.is_empty() {
+        consolidated.insert("_timing".to_string(), Value::Object(timing_obj));
+    }
+
+    // 6. 用量统计
+    if let Some(usage) = usage_obj {
+        if !usage.is_empty() {
+            consolidated.insert("usage".to_string(), Value::Object(usage));
+        }
+    }
+
+    Value::Object(consolidated)
+}
+
+fn consolidate_non_streaming_response(
+    raw_json: &Value,
+    log: &ProxyRequestLog,
+    headers_map: &serde_json::Map<String, Value>,
+) -> Option<Value> {
+    // 若本就已是统一的 consolidated 格式 (例如带有顶层 thinking/tool_calls 且无 choices/candidates)，直接返回 None
+    if (raw_json.get("thinking").is_some()
+        || raw_json.get("tool_calls").is_some()
+        || raw_json.get("_session_thinking_id").is_some())
+        && raw_json.get("choices").is_none()
+        && raw_json.get("candidates").is_none()
+    {
+        return None;
+    }
+
+    let mut thinking_content = String::new();
+    let mut thinking_signature = String::new();
+    let mut response_content = String::new();
+    let mut tool_calls = Vec::new();
+
+    // 1. OpenAI 格式 (choices)
+    if let Some(choices) = raw_json.get("choices").and_then(|c| c.as_array()) {
+        for choice in choices {
+            if let Some(msg) = choice.get("message") {
+                if let Some(rc) = msg.get("reasoning_content").and_then(|v| v.as_str()) {
+                    thinking_content.push_str(rc);
+                }
+                if let Some(th) = msg.get("thinking").and_then(|v| v.as_str()) {
+                    thinking_content.push_str(th);
+                }
+                if let Some(sig) = msg
+                    .get("thoughtSignature")
+                    .or_else(|| msg.get("thought_signature"))
+                    .or_else(|| msg.get("signature"))
+                    .and_then(|v| v.as_str())
+                {
+                    thinking_signature = sig.to_string();
+                }
+                if let Some(c) = msg.get("content").and_then(|v| v.as_str()) {
+                    response_content.push_str(c);
+                }
+                if let Some(tcs) = msg.get("tool_calls").and_then(|t| t.as_array()) {
+                    for tc in tcs {
+                        let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let name = tc
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("");
+                        let args = tc
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .map(|a| {
+                                if let Some(s) = a.as_str() {
+                                    s.to_string()
+                                } else {
+                                    a.to_string()
+                                }
+                            })
+                            .unwrap_or_else(|| "{}".to_string());
+                        tool_calls.push(serde_json::json!({
+                            "id": id,
+                            "type": "function",
+                            "function": { "name": name, "arguments": args }
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    // 2. Gemini 格式 (candidates)
+    else if let Some(candidates) = raw_json.get("candidates").and_then(|c| c.as_array()) {
+        for cand in candidates {
+            if let Some(parts) = cand
+                .get("content")
+                .and_then(|c| c.get("parts"))
+                .and_then(|p| p.as_array())
+            {
+                for part in parts {
+                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                        if part
+                            .get("thought")
+                            .and_then(|t| t.as_bool())
+                            .unwrap_or(false)
+                        {
+                            thinking_content.push_str(text);
+                        } else {
+                            response_content.push_str(text);
+                        }
+                    }
+                    if let Some(sig) = part
+                        .get("thoughtSignature")
+                        .or_else(|| part.get("thought_signature"))
+                        .or_else(|| part.get("signature"))
+                        .or_else(|| {
+                            part.get("functionCall")
+                                .and_then(|fc| fc.get("thoughtSignature"))
+                        })
+                        .or_else(|| {
+                            part.get("functionCall")
+                                .and_then(|fc| fc.get("thought_signature"))
+                        })
+                        .and_then(|s| s.as_str())
+                    {
+                        thinking_signature = sig.to_string();
+                    }
+                    if let Some(fc) = part.get("functionCall") {
+                        if let Some(name) = fc.get("name").and_then(|n| n.as_str()) {
+                            let call_id = if let Some(id_str) = fc
+                                .get("id")
+                                .and_then(|i| i.as_str())
+                                .filter(|s| !s.is_empty())
+                            {
+                                id_str.to_string()
+                            } else {
+                                crate::proxy::thinking_store::synthesize_tool_id(
+                                    name,
+                                    fc.get("args"),
+                                    "root",
+                                    tool_calls.len(),
+                                )
+                            };
+                            let args = fc
+                                .get("args")
+                                .map(|a| a.to_string())
+                                .unwrap_or_else(|| "{}".to_string());
+                            tool_calls.push(serde_json::json!({
+                                "id": call_id,
+                                "type": "function",
+                                "function": { "name": name, "arguments": args }
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 3. Claude 格式 (content 数组)
+    else if let Some(content) = raw_json.get("content").and_then(|c| c.as_array()) {
+        for block in content {
+            match block.get("type").and_then(|t| t.as_str()) {
+                Some("thinking") => {
+                    if let Some(th) = block.get("thinking").and_then(|t| t.as_str()) {
+                        thinking_content.push_str(th);
+                    }
+                    if let Some(sig) = block
+                        .get("signature")
+                        .or_else(|| block.get("thought_signature"))
+                        .or_else(|| block.get("thoughtSignature"))
+                        .and_then(|s| s.as_str())
+                    {
+                        thinking_signature = sig.to_string();
+                    }
+                }
+                Some("text") => {
+                    if let Some(txt) = block.get("text").and_then(|t| t.as_str()) {
+                        response_content.push_str(txt);
+                    }
+                }
+                Some("tool_use") => {
+                    let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let args = block
+                        .get("input")
+                        .map(|a| a.to_string())
+                        .unwrap_or_else(|| "{}".to_string());
+                    tool_calls.push(serde_json::json!({
+                        "id": id,
+                        "type": "function",
+                        "function": { "name": name, "arguments": args }
+                    }));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if thinking_content.is_empty()
+        && thinking_signature.is_empty()
+        && response_content.is_empty()
+        && tool_calls.is_empty()
+    {
+        return None;
+    }
+
+    // 提取耗时诊断
+    let mut timing_obj = serde_json::Map::new();
+    for key in [
+        "clean_ms",
+        "norm_ms",
+        "thinking_ms",
+        "ttft_ms",
+        "stream_ms",
+        "total_ms",
+    ] {
+        let hdr_key = format!("x-timing-{}", key);
+        if let Some(val) = headers_map.get(&hdr_key).and_then(|v| v.as_str()) {
+            if let Ok(n) = val.parse::<f64>() {
+                let out_key = key.replace("_ms", "_s");
+                timing_obj.insert(out_key, serde_json::json!(n / 1000.0));
+            }
+        }
+    }
+    if !timing_obj.contains_key("total_s") {
+        timing_obj.insert(
+            "total_s".to_string(),
+            serde_json::json!(log.duration as f64 / 1000.0),
+        );
+    }
+
+    // 提取 Token 用量与缓存命中率
+    let usage_source = raw_json
+        .get("usage")
+        .or_else(|| raw_json.get("usageMetadata"));
+    let mut usage_obj = serde_json::Map::new();
+    let input_toks = log
+        .input_tokens
+        .or_else(|| usage_source.and_then(extract_input_tokens))
+        .unwrap_or(0);
+    let output_toks = log
+        .output_tokens
+        .or_else(|| usage_source.and_then(extract_output_tokens))
+        .unwrap_or(0);
+    let cached_toks = log
+        .cached_tokens
+        .or_else(|| usage_source.and_then(extract_cached_tokens))
+        .unwrap_or(0);
+    let reasoning_toks = usage_source.and_then(extract_reasoning_tokens).unwrap_or(0);
+
+    let total_in = if cached_toks > input_toks {
+        input_toks + cached_toks
+    } else {
+        input_toks
+    };
+    let total_toks = total_in + output_toks;
+
+    usage_obj.insert("input_tokens".to_string(), serde_json::json!(total_in));
+    usage_obj.insert("output_tokens".to_string(), serde_json::json!(output_toks));
+    usage_obj.insert("total_tokens".to_string(), serde_json::json!(total_toks));
+    if cached_toks > 0 {
+        usage_obj.insert("cached_tokens".to_string(), serde_json::json!(cached_toks));
+        if total_in > 0 {
+            let hit_rate = (cached_toks as f64 / total_in as f64 * 100.0)
+                .min(100.0)
+                .max(0.0);
+            usage_obj.insert(
+                "cache_hit_rate".to_string(),
+                serde_json::json!(format!("{:.1}%", hit_rate)),
+            );
+        }
+    }
+    if reasoning_toks > 0 {
+        usage_obj.insert(
+            "reasoning_tokens".to_string(),
+            serde_json::json!(reasoning_toks),
+        );
+    }
+
+    Some(build_canonical_consolidated_response(
+        thinking_content,
+        thinking_signature,
+        response_content,
+        tool_calls,
+        log.session_id.as_deref(),
+        &log.id,
+        timing_obj,
+        Some(usage_obj),
+    ))
 }
 
 pub async fn monitor_middleware(
@@ -405,10 +774,34 @@ pub async fn monitor_middleware(
         uri.split("/v1beta/models/")
             .nth(1)
             .and_then(|s| s.split(':').next())
+            .and_then(|s| s.split('?').next())
+            .map(|s| s.to_string())
+    } else if uri.contains("/v1/models/claude/") {
+        uri.split("/v1/models/claude/")
+            .nth(1)
+            .and_then(|s| s.split('?').next())
+            .map(|s| s.to_string())
+    } else if uri.contains("/v1/models/") {
+        uri.split("/v1/models/")
+            .nth(1)
+            .and_then(|s| s.split('?').next())
+            .map(|s| s.to_string())
+    } else if uri.contains("/v1/model/") {
+        uri.split("/v1/model/")
+            .nth(1)
+            .and_then(|s| s.split('?').next())
+            .map(|s| s.to_string())
+    } else if uri.contains("/responses/models/") {
+        uri.split("/responses/models/")
+            .nth(1)
+            .and_then(|s| s.split('?').next())
             .map(|s| s.to_string())
     } else {
         None
     };
+
+    let request_headers_json =
+        crate::proxy::payload_audit::headers_to_redacted_json(request.headers());
 
     let request_body_str;
 
@@ -458,12 +851,31 @@ pub async fn monitor_middleware(
         request
     };
 
-    let response = next.run(request).await;
+    let upstream_holder = UpstreamRequestBodyHolder::new();
+    let mut request = request;
+    request.extensions_mut().insert(upstream_holder.clone());
+
+    let response = crate::proxy::monitor::CURRENT_UPSTREAM_CAPTURE
+        .scope(upstream_holder.clone(), next.run(request))
+        .await;
+    let upstream_request_body = upstream_holder.take();
+    let upstream_request_headers = upstream_holder.take_headers();
+    let response_headers_json =
+        crate::proxy::payload_audit::headers_to_redacted_json(response.headers());
 
     // user_token_identity 已在上面从请求 extensions 中提取
 
     let duration = start.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
+
+    // 过滤噪音请求，避免客户端探针刷屏淹没真实业务日志 (Issue #3498 + `/v1/models` 轮询刷屏)
+    // 胶囊开关关闭时（默认）：所有 GET 成功请求不记录、不落库；失败请求与非 GET 业务请求始终记录。
+    // 详见 `should_skip_request_log` 的行为边界说明。
+    let capture_health_enabled =
+        state.monitor.is_capture_health_logs() || should_log_health_checks();
+    if should_skip_request_log(&method, response.status(), capture_health_enabled) {
+        return response;
+    }
 
     let content_type = response
         .headers()
@@ -487,10 +899,12 @@ pub async fn monitor_middleware(
         .map(|s| s.to_string());
 
     // Determine protocol from URL path
-    let protocol = if uri.contains("/v1/messages") {
+    let protocol = if uri.contains("/v1/messages") || uri.contains("/v1/models/claude") {
         Some("anthropic".to_string())
     } else if uri.contains("/v1beta/models") {
         Some("gemini".to_string())
+    } else if uri.contains("/responses") {
+        Some("responses".to_string())
     } else if uri.starts_with("/v1/") {
         Some("openai".to_string())
     } else {
@@ -504,6 +918,14 @@ pub async fn monitor_middleware(
         .as_ref()
         .map(|identity| identity.username.clone());
     let is_image_route = uri.contains("/v1/images/");
+
+    // Extract session ID from response headers (e.g. X-Session-Id or X-Antigravity-Session-Id)
+    let session_id = response
+        .headers()
+        .get("X-Session-Id")
+        .or_else(|| response.headers().get("X-Antigravity-Session-Id"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
     let monitor = state.monitor.clone();
     let mut log = ProxyRequestLog {
@@ -519,20 +941,27 @@ pub async fn monitor_middleware(
         client_ip,
         error: None,
         request_body: request_body_str,
+        upstream_request_body,
         response_body: None,
+        request_headers: Some(request_headers_json),
+        upstream_request_headers,
+        response_headers: Some(response_headers_json),
         input_tokens: None,
         output_tokens: None,
         cached_tokens: None,
         protocol,
         username,
+        session_id,
     };
 
     if content_type.contains("text/event-stream") {
         let (parts, body) = response.into_parts();
         let mut stream = body.into_data_stream();
         let (tx, rx) = tokio::sync::mpsc::channel(64);
+        let start_instant = start;
 
         tokio::spawn(async move {
+            let stream_start = std::time::Instant::now();
             let mut all_stream_data = Vec::new();
             let mut last_few_bytes = Vec::new();
 
@@ -558,6 +987,26 @@ pub async fn monitor_middleware(
                 }
             }
             drop(stream);
+
+            let stream_ms = stream_start.elapsed().as_micros() as f64 / 1000.0;
+            let total_ms = start_instant.elapsed().as_micros() as f64 / 1000.0;
+            log.duration = total_ms.round() as u64;
+
+            let mut headers_map: serde_json::Map<String, Value> = log
+                .response_headers
+                .as_ref()
+                .and_then(|h| serde_json::from_str(h).ok())
+                .unwrap_or_default();
+
+            headers_map.insert(
+                "x-timing-stream-ms".to_string(),
+                serde_json::json!(format!("{:.3}", stream_ms)),
+            );
+            headers_map.insert(
+                "x-timing-total-ms".to_string(),
+                serde_json::json!(format!("{:.3}", total_ms)),
+            );
+            log.response_headers = serde_json::to_string(&Value::Object(headers_map.clone())).ok();
 
             // Parse and consolidate stream data into readable format
             if let Ok(full_response) = std::str::from_utf8(&all_stream_data) {
@@ -587,6 +1036,14 @@ pub async fn monitor_middleware(
                                         delta.get("reasoning_content").and_then(|v| v.as_str())
                                     {
                                         thinking_content.push_str(thinking);
+                                    }
+                                    // Thinking signature in OpenAI delta
+                                    if let Some(sig) = delta
+                                        .get("signature")
+                                        .or_else(|| delta.get("thought_signature"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        thinking_signature = sig.to_string();
                                     }
                                     // Main response content
                                     if let Some(content) =
@@ -646,6 +1103,79 @@ pub async fn monitor_middleware(
                             }
                         }
 
+                        // Gemini format: candidates[0].content.parts
+                        if let Some(candidates) = json.get("candidates").and_then(|c| c.as_array())
+                        {
+                            for cand in candidates {
+                                if let Some(content) = cand.get("content") {
+                                    if let Some(parts) =
+                                        content.get("parts").and_then(|p| p.as_array())
+                                    {
+                                        for part in parts {
+                                            if let Some(text) =
+                                                part.get("text").and_then(|t| t.as_str())
+                                            {
+                                                if part
+                                                    .get("thought")
+                                                    .and_then(|t| t.as_bool())
+                                                    .unwrap_or(false)
+                                                {
+                                                    thinking_content.push_str(text);
+                                                } else {
+                                                    response_content.push_str(text);
+                                                }
+                                            }
+                                            let sig = part
+                                                .get("thoughtSignature")
+                                                .or_else(|| part.get("thought_signature"))
+                                                .or_else(|| part.get("signature"))
+                                                .or_else(|| {
+                                                    part.get("functionCall")
+                                                        .and_then(|fc| fc.get("thoughtSignature"))
+                                                })
+                                                .or_else(|| {
+                                                    part.get("functionCall")
+                                                        .and_then(|fc| fc.get("thought_signature"))
+                                                })
+                                                .and_then(|s| s.as_str());
+                                            if let Some(s) = sig {
+                                                thinking_signature = s.to_string();
+                                            }
+                                            if let Some(fc) = part.get("functionCall") {
+                                                if let Some(name) =
+                                                    fc.get("name").and_then(|n| n.as_str())
+                                                {
+                                                    let call_id = if let Some(id_str) = fc
+                                                        .get("id")
+                                                        .and_then(|i| i.as_str())
+                                                        .filter(|s| !s.is_empty())
+                                                    {
+                                                        id_str.to_string()
+                                                    } else {
+                                                        crate::proxy::thinking_store::synthesize_tool_id(
+                                                            name,
+                                                            fc.get("args"),
+                                                            "root",
+                                                            tool_calls.len(),
+                                                        )
+                                                    };
+                                                    let args = fc
+                                                        .get("args")
+                                                        .map(|a| a.to_string())
+                                                        .unwrap_or_else(|| "{}".to_string());
+                                                    tool_calls.push(serde_json::json!({
+                                                        "id": call_id,
+                                                        "type": "function",
+                                                        "function": { "name": name, "arguments": args }
+                                                    }));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Claude/Anthropic format: content_block_start, content_block_delta, etc.
                         let msg_type = json.get("type").and_then(|t| t.as_str());
                         match msg_type {
@@ -673,6 +1203,19 @@ pub async fn monitor_middleware(
                                             "function": { "name": name, "arguments": "" }
                                         });
                                     }
+                                    if let Some(thinking) =
+                                        block.get("thinking").and_then(|v| v.as_str())
+                                    {
+                                        thinking_content.push_str(thinking);
+                                    }
+                                    if let Some(sig) = block
+                                        .get("signature")
+                                        .or_else(|| block.get("thought_signature"))
+                                        .or_else(|| block.get("thoughtSignature"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        thinking_signature = sig.to_string();
+                                    }
                                 }
                             }
                             Some("content_block_delta") => {
@@ -682,19 +1225,20 @@ pub async fn monitor_middleware(
                                 ) {
                                     let idx = index as usize;
 
-                                    // Tool use input delta
-                                    if let Some(delta_json) =
-                                        delta.get("input_json_delta").and_then(|v| v.as_str())
-                                    {
+                                    // Tool use input delta (Anthropic 官方协议为 partial_json 增量)
+                                    let delta_json = delta
+                                        .get("partial_json")
+                                        .or_else(|| delta.get("input_json_delta"))
+                                        .or_else(|| delta.get("text"))
+                                        .and_then(|v| v.as_str());
+
+                                    if let Some(delta_str) = delta_json {
                                         if idx < tool_calls.len() && !tool_calls[idx].is_null() {
                                             let old_args = tool_calls[idx]["function"]["arguments"]
                                                 .as_str()
                                                 .unwrap_or("");
                                             tool_calls[idx]["function"]["arguments"] =
-                                                Value::String(format!(
-                                                    "{}{}",
-                                                    old_args, delta_json
-                                                ));
+                                                Value::String(format!("{}{}", old_args, delta_str));
                                         }
                                     }
                                     // Legacy/Native thinking block
@@ -702,6 +1246,15 @@ pub async fn monitor_middleware(
                                         delta.get("thinking").and_then(|v| v.as_str())
                                     {
                                         thinking_content.push_str(thinking);
+                                    }
+                                    // Thinking signature in delta (Claude signature_delta or direct signature)
+                                    if let Some(sig) = delta
+                                        .get("signature")
+                                        .or_else(|| delta.get("thought_signature"))
+                                        .or_else(|| delta.get("thoughtSignature"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        thinking_signature = sig.to_string();
                                     }
                                     // Text content
                                     if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
@@ -807,100 +1360,141 @@ pub async fn monitor_middleware(
                     }
                 }
 
-                // Build consolidated response object
-                let mut consolidated = serde_json::Map::new();
+                // [Timing Diagnostics] 注入耗时诊断元数据 (秒)
+                let mut timing_obj = serde_json::Map::new();
+                if let Some(clean) = headers_map
+                    .get("x-timing-clean-ms")
+                    .and_then(|v| v.as_str())
+                {
+                    if let Ok(n) = clean.parse::<f64>() {
+                        timing_obj.insert("clean_s".to_string(), serde_json::json!(n / 1000.0));
+                    }
+                }
+                if let Some(norm) = headers_map.get("x-timing-norm-ms").and_then(|v| v.as_str()) {
+                    if let Ok(n) = norm.parse::<f64>() {
+                        timing_obj.insert("norm_s".to_string(), serde_json::json!(n / 1000.0));
+                    }
+                }
+                if let Some(th) = headers_map
+                    .get("x-timing-thinking-ms")
+                    .and_then(|v| v.as_str())
+                {
+                    if let Ok(n) = th.parse::<f64>() {
+                        timing_obj.insert("thinking_s".to_string(), serde_json::json!(n / 1000.0));
+                    }
+                }
+                if let Some(ttft) = headers_map.get("x-timing-ttft-ms").and_then(|v| v.as_str()) {
+                    if let Ok(n) = ttft.parse::<f64>() {
+                        timing_obj.insert("ttft_s".to_string(), serde_json::json!(n / 1000.0));
+                    }
+                }
+                timing_obj.insert(
+                    "stream_s".to_string(),
+                    serde_json::json!(stream_ms / 1000.0),
+                );
+                timing_obj.insert("total_s".to_string(), serde_json::json!(total_ms / 1000.0));
+
+                // 优先从 tail 兜底提取 token（若当前尚无 token 数据）
+                if log.input_tokens.is_none() && log.output_tokens.is_none() {
+                    if let Ok(full_tail) = std::str::from_utf8(&last_few_bytes) {
+                        for line in full_tail.lines().rev() {
+                            if line.starts_with("data: ")
+                                && (line.contains("\"usage\"")
+                                    || line.contains("\"usageMetadata\""))
+                            {
+                                let json_str = line.trim_start_matches("data: ").trim();
+                                if let Ok(json) = serde_json::from_str::<Value>(json_str) {
+                                    if let Some(usage) = json
+                                        .get("usage")
+                                        .or(json.get("usageMetadata"))
+                                        .or(json.get("response").and_then(|r| r.get("usage")))
+                                        .or(json
+                                            .get("response")
+                                            .and_then(|r| r.get("usageMetadata")))
+                                    {
+                                        log.input_tokens = extract_input_tokens(usage);
+                                        log.output_tokens = extract_output_tokens(usage);
+                                        cached_tokens =
+                                            cached_tokens.or_else(|| extract_cached_tokens(usage));
+                                        log.cached_tokens = log.cached_tokens.or(cached_tokens);
+                                        reasoning_tokens = reasoning_tokens
+                                            .or_else(|| extract_reasoning_tokens(usage));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let has_actual_content = !response_content.is_empty()
                     || !tool_calls.is_empty()
                     || !thinking_content.is_empty();
 
-                if !thinking_content.is_empty() {
-                    consolidated.insert("thinking".to_string(), Value::String(thinking_content));
-                }
-                if !thinking_signature.is_empty() {
-                    consolidated.insert(
-                        "thinking_signature".to_string(),
-                        Value::String(thinking_signature),
-                    );
-                }
-                if !response_content.is_empty() {
-                    consolidated.insert("content".to_string(), Value::String(response_content));
-                }
-
-                if !tool_calls.is_empty() {
-                    let clean_tool_calls: Vec<Value> =
-                        tool_calls.into_iter().filter(|v| !v.is_null()).collect();
-                    if !clean_tool_calls.is_empty() {
-                        consolidated
-                            .insert("tool_calls".to_string(), Value::Array(clean_tool_calls));
-                    }
-                }
-                if has_actual_content {
-                    let mut usage_obj = serde_json::Map::new();
+                let mut usage_obj = serde_json::Map::new();
+                if has_actual_content || log.input_tokens.is_some() || log.output_tokens.is_some() {
                     let input_toks = log.input_tokens.unwrap_or(0);
                     let output_toks = log.output_tokens.unwrap_or(0);
-                    let cached_toks = cached_tokens.unwrap_or(0);
+                    let cached_toks = cached_tokens.or(log.cached_tokens).unwrap_or(0);
                     let reasoning_toks = reasoning_tokens.unwrap_or(0);
-                    let is_responses_api =
-                        log.url.contains("/responses") || log.url.contains("/interactions");
 
-                    if is_responses_api {
-                        usage_obj
-                            .insert("input_tokens".to_string(), Value::Number(input_toks.into()));
-                        usage_obj.insert(
-                            "input_tokens_details".to_string(),
-                            serde_json::json!({ "cached_tokens": cached_toks }),
-                        );
-                        usage_obj.insert(
-                            "output_tokens".to_string(),
-                            Value::Number(output_toks.into()),
-                        );
-                        usage_obj.insert(
-                            "output_tokens_details".to_string(),
-                            serde_json::json!({ "reasoning_tokens": reasoning_toks }),
-                        );
-                        usage_obj.insert(
-                            "total_tokens".to_string(),
-                            Value::Number((input_toks + output_toks).into()),
-                        );
+                    let total_in = if cached_toks > input_toks {
+                        input_toks + cached_toks
                     } else {
-                        usage_obj.insert(
-                            "prompt_tokens".to_string(),
-                            Value::Number(input_toks.into()),
-                        );
-                        usage_obj.insert(
-                            "completion_tokens".to_string(),
-                            Value::Number(output_toks.into()),
-                        );
-                        usage_obj.insert(
-                            "total_tokens".to_string(),
-                            Value::Number((input_toks + output_toks).into()),
-                        );
-                        if cached_tokens.is_some() {
+                        input_toks
+                    };
+                    let total_toks = total_in + output_toks;
+
+                    usage_obj.insert("input_tokens".to_string(), serde_json::json!(total_in));
+                    usage_obj.insert("output_tokens".to_string(), serde_json::json!(output_toks));
+                    usage_obj.insert("total_tokens".to_string(), serde_json::json!(total_toks));
+                    if cached_toks > 0 {
+                        usage_obj
+                            .insert("cached_tokens".to_string(), serde_json::json!(cached_toks));
+                        if total_in > 0 {
+                            let hit_rate = (cached_toks as f64 / total_in as f64 * 100.0)
+                                .min(100.0)
+                                .max(0.0);
                             usage_obj.insert(
-                                "cache_read_input_tokens".to_string(),
-                                Value::Number(cached_toks.into()),
-                            );
-                            usage_obj.insert(
-                                "prompt_tokens_details".to_string(),
-                                serde_json::json!({ "cached_tokens": cached_toks }),
-                            );
-                        }
-                        if reasoning_tokens.is_some() {
-                            usage_obj.insert(
-                                "completion_tokens_details".to_string(),
-                                serde_json::json!({ "reasoning_tokens": reasoning_toks }),
+                                "cache_hit_rate".to_string(),
+                                serde_json::json!(format!("{:.1}%", hit_rate)),
                             );
                         }
                     }
-                    consolidated.insert("usage".to_string(), Value::Object(usage_obj));
+                    if reasoning_toks > 0 {
+                        usage_obj.insert(
+                            "reasoning_tokens".to_string(),
+                            serde_json::json!(reasoning_toks),
+                        );
+                    }
                 }
 
-                if consolidated.is_empty() {
+                // 🌟 构建统一的满血简要版响应报文 (包含网关权威签名回填与确定性 Tool ID)
+                let consolidated = build_canonical_consolidated_response(
+                    thinking_content,
+                    thinking_signature,
+                    response_content,
+                    tool_calls,
+                    log.session_id.as_deref(),
+                    &log.id,
+                    timing_obj,
+                    if usage_obj.is_empty() {
+                        None
+                    } else {
+                        Some(usage_obj)
+                    },
+                );
+
+                if consolidated
+                    .as_object()
+                    .map(|m| m.is_empty())
+                    .unwrap_or(true)
+                {
                     // Fallback: store raw SSE data if parsing failed
                     log.response_body = Some(full_response.to_string());
                 } else {
                     log.response_body = Some(
-                        serde_json::to_string_pretty(&Value::Object(consolidated))
+                        serde_json::to_string_pretty(&consolidated)
                             .unwrap_or_else(|_| full_response.to_string()),
                     );
                 }
@@ -942,13 +1536,20 @@ pub async fn monitor_middleware(
                 log.error = Some("Stream Error or Failed".to_string());
             }
 
-            // [FIX #3325] Fallback input token estimation for stream responses
+            // Fallback input token estimation prefers the transit (upstream) body
             if log.input_tokens.is_none() {
-                if let Some(ref req_body) = log.request_body {
-                    let estimated = crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(req_body);
-                    if estimated > 0 {
-                        log.input_tokens = Some(estimated);
-                    }
+                let estimated = log
+                    .upstream_request_body
+                    .as_ref()
+                    .or(log.request_body.as_ref())
+                    .map(|body| {
+                        crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(
+                            body,
+                        )
+                    })
+                    .unwrap_or(0);
+                if estimated > 0 {
+                    log.input_tokens = Some(estimated);
                 }
             }
 
@@ -963,6 +1564,21 @@ pub async fn monitor_middleware(
             Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx)),
         )
     } else if content_type.contains("application/json") || content_type.contains("text/") {
+        let total_ms = start.elapsed().as_micros() as f64 / 1000.0;
+        log.duration = total_ms.round() as u64;
+
+        let mut headers_map: serde_json::Map<String, Value> = log
+            .response_headers
+            .as_ref()
+            .and_then(|h| serde_json::from_str(h).ok())
+            .unwrap_or_default();
+
+        headers_map.insert(
+            "x-timing-total-ms".to_string(),
+            serde_json::json!(format!("{:.3}", total_ms)),
+        );
+        log.response_headers = serde_json::to_string(&Value::Object(headers_map.clone())).ok();
+
         let (parts, body) = response.into_parts();
         match axum::body::to_bytes(body, MAX_RESPONSE_LOG_SIZE).await {
             Ok(bytes) => {
@@ -994,6 +1610,19 @@ pub async fn monitor_middleware(
                             .ok()
                             .and_then(|json| summarize_image_json_response(&json))
                             .or_else(|| Some(s.to_string()));
+                    } else if let Ok(json) = serde_json::from_str::<Value>(&s) {
+                        // 🌟 非流式响应入库统一转换为满血简要版 (包含网关权威签名回填与防雪崩确定性 Tool ID)
+                        if let Some(canonical) =
+                            consolidate_non_streaming_response(&json, &log, &headers_map)
+                        {
+                            log.response_body = serde_json::to_string_pretty(&canonical)
+                                .ok()
+                                .or_else(|| Some(s.to_string()));
+                        } else {
+                            log.response_body = serde_json::to_string_pretty(&json)
+                                .ok()
+                                .or_else(|| Some(s.to_string()));
+                        }
                     } else {
                         log.response_body = Some(s.to_string());
                     }
@@ -1005,13 +1634,18 @@ pub async fn monitor_middleware(
                     log.error = log.response_body.clone();
                 }
 
-                // [FIX #3325] Fallback input token estimation if upstream returned an error (no usage metadata)
+                // Fallback input token estimation prefers the transit (upstream) body
                 if log.input_tokens.is_none() {
-                    if let Some(ref req_body) = log.request_body {
-                        let estimated = crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(req_body);
-                        if estimated > 0 {
-                            log.input_tokens = Some(estimated);
-                        }
+                    let estimated = log
+                        .upstream_request_body
+                        .as_ref()
+                        .or(log.request_body.as_ref())
+                        .map(|body| {
+                            crate::proxy::mappers::context_manager::estimate_raw_tokens_from_payload(body)
+                        })
+                        .unwrap_or(0);
+                    if estimated > 0 {
+                        log.input_tokens = Some(estimated);
                     }
                 }
 
@@ -1089,5 +1723,129 @@ mod tests {
             .expect("forwarder did not stop after receiver closed")
             .expect("forwarder task panicked");
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_extract_tokens_anthropic() {
+        use serde_json::json;
+        let usage = json!({
+            "input_tokens": 1200,
+            "cache_read_input_tokens": 8800,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 150
+        });
+        assert_eq!(super::extract_input_tokens(&usage), Some(10000));
+        assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
+        assert_eq!(super::extract_output_tokens(&usage), Some(150));
+    }
+
+    #[test]
+    fn test_extract_tokens_openai_chat() {
+        use serde_json::json;
+        let usage = json!({
+            "prompt_tokens": 10000,
+            "completion_tokens": 150,
+            "total_tokens": 10150,
+            "prompt_tokens_details": {
+                "cached_tokens": 8800
+            }
+        });
+        assert_eq!(super::extract_input_tokens(&usage), Some(10000));
+        assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
+        assert_eq!(super::extract_output_tokens(&usage), Some(150));
+    }
+
+    #[test]
+    fn test_extract_tokens_openai_responses() {
+        use serde_json::json;
+        let usage = json!({
+            "input_tokens": 10000,
+            "output_tokens": 150,
+            "total_tokens": 10150,
+            "input_tokens_details": {
+                "cached_tokens": 8800
+            }
+        });
+        assert_eq!(super::extract_input_tokens(&usage), Some(10000));
+        assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
+        assert_eq!(super::extract_output_tokens(&usage), Some(150));
+    }
+
+    #[test]
+    fn test_extract_tokens_gemini_raw() {
+        use serde_json::json;
+        let usage = json!({
+            "promptTokenCount": 10000,
+            "candidatesTokenCount": 150,
+            "totalTokenCount": 10150,
+            "cachedContentTokenCount": 8800
+        });
+        assert_eq!(super::extract_input_tokens(&usage), Some(10000));
+        assert_eq!(super::extract_cached_tokens(&usage), Some(8800));
+        assert_eq!(super::extract_output_tokens(&usage), Some(150));
+    }
+
+    #[test]
+    fn test_should_skip_request_log_only_suppresses_successful_get() {
+        use axum::http::StatusCode;
+
+        // 胶囊开关关闭（默认）：GET 成功请求一律不记录 —— 含 /v1/models 轮询（本次修复的核心场景）
+        // 与 /health 探针，且与路径无关（GET 成功即噪音）
+        for path in [
+            "/v1/models",
+            "/v1/models?limit=100",
+            "/v1beta/models",
+            "/v1/models/claude",
+            "/health",
+            "/healthz?t=123",
+            "/api/health/",
+            "/stats/overview",
+        ] {
+            for status in [200, 204, 201] {
+                assert!(
+                    super::should_skip_request_log(
+                        "GET",
+                        StatusCode::from_u16(status).unwrap(),
+                        false
+                    ),
+                    "GET {status} {path} 应被抑制"
+                );
+            }
+        }
+
+        // 大写的 GET 同样识别
+        assert!(super::should_skip_request_log("get", StatusCode::OK, false));
+
+        // 失败请求始终记录（供排障）—— 无论路径与方法
+        for status in [400, 401, 403, 404, 429, 500, 502, 503, 504] {
+            assert!(
+                !super::should_skip_request_log(
+                    "GET",
+                    StatusCode::from_u16(status).unwrap(),
+                    false
+                ),
+                "GET {status} 必须记录"
+            );
+        }
+
+        // 非 GET 业务请求始终记录
+        for method in ["POST", "PUT", "PATCH", "DELETE", "post"] {
+            assert!(
+                !super::should_skip_request_log(method, StatusCode::OK, false),
+                "{method} 200 必须记录"
+            );
+        }
+
+        // 开关开启（或 ABV_LOG_HEALTH_CHECKS=true）→ 全部记录并落库
+        for (method, status) in [("GET", 200), ("GET", 503), ("POST", 200)] {
+            assert!(
+                !super::should_skip_request_log(
+                    method,
+                    StatusCode::from_u16(status).unwrap(),
+                    true
+                ),
+                "开关开启时 {method} {status} 必须记录"
+            );
+        }
     }
 }

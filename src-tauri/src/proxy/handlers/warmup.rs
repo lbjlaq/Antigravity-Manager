@@ -12,7 +12,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::proxy::mappers::gemini::wrapper::wrap_request;
 use crate::proxy::monitor::ProxyRequestLog;
@@ -38,6 +38,10 @@ pub struct WarmupResponse {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_server_error: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_type: Option<String>,
 }
 
 /// 处理预热请求
@@ -60,16 +64,50 @@ pub async fn handle_warmup(
             match state.token_manager.get_token_by_email(&req.email).await {
                 Ok((at, pid, _, acc_id, _wait_ms)) => (at, pid, acc_id),
                 Err(e) => {
-                    warn!(
-                        "[Warmup-API] Step 1 FAILED: Token error for {}: {}",
+                    error!(
+                        "[Warmup-API] Step 1 FAILED (non-server fault): Token error for {}: {}",
                         req.email, e
                     );
+                    let duration = start_time.elapsed().as_millis() as u64;
+                    let err_msg = format!("获取账号 Token 失败（非服务端故障）: {}", e);
+                    let log = ProxyRequestLog {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        timestamp: chrono::Utc::now().timestamp_millis(),
+                        method: "POST".to_string(),
+                        url: format!("/internal/warmup -> {}", req.model),
+                        status: 400,
+                        duration,
+                        model: Some(req.model.clone()),
+                        mapped_model: Some(req.model.clone()),
+                        account_email: Some(req.email.clone()),
+                        client_ip: Some("127.0.0.1".to_string()),
+                        error: Some(format!("Token Error (非服务端故障): {}", e)),
+                        request_body: Some(format!(
+                            "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
+                            req.model
+                        )),
+                        upstream_request_body: None,
+                        response_body: Some(err_msg.clone()),
+                        input_tokens: Some(0),
+                        output_tokens: Some(0),
+                        cached_tokens: None,
+                        protocol: Some("warmup".to_string()),
+                        username: None,
+                        request_headers: None,
+                        upstream_request_headers: None,
+                        response_headers: None,
+                        session_id: None,
+                    };
+                    state.monitor.log_request(log).await;
+
                     return (
                         StatusCode::BAD_REQUEST,
                         Json(WarmupResponse {
                             success: false,
-                            message: format!("Failed to get token for {}", req.email),
+                            message: err_msg,
                             error: Some(e),
+                            is_server_error: Some(false),
+                            error_type: Some("token_error".to_string()),
                         }),
                     )
                         .into_response();
@@ -110,6 +148,7 @@ pub async fn handle_warmup(
             output_config: None,
             size: None,
             quality: None,
+            tool_choice: None,
         };
 
         match crate::proxy::mappers::claude::transform_claude_request_in(
@@ -122,13 +161,50 @@ pub async fn handle_warmup(
         ) {
             Ok(transformed) => transformed,
             Err(e) => {
-                warn!("[Warmup-API] Step 2 FAILED: Claude transform error: {}", e);
+                error!(
+                    "[Warmup-API] Step 2 FAILED (non-server fault): Claude transform error: {}",
+                    e
+                );
+                let duration = start_time.elapsed().as_millis() as u64;
+                let err_msg = format!("请求报文转换失败（非服务端故障）: {}", e);
+                let log = ProxyRequestLog {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    method: "POST".to_string(),
+                    url: format!("/internal/warmup -> {}", req.model),
+                    status: 400,
+                    duration,
+                    model: Some(req.model.clone()),
+                    mapped_model: Some(req.model.clone()),
+                    account_email: Some(req.email.clone()),
+                    client_ip: Some("127.0.0.1".to_string()),
+                    error: Some(format!("Transform Error (非服务端故障): {}", e)),
+                    request_body: Some(format!(
+                        "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
+                        req.model
+                    )),
+                    upstream_request_body: None,
+                    response_body: Some(err_msg.clone()),
+                    input_tokens: Some(0),
+                    output_tokens: Some(0),
+                    cached_tokens: None,
+                    protocol: Some("warmup".to_string()),
+                    username: None,
+                    request_headers: None,
+                    upstream_request_headers: None,
+                    response_headers: None,
+                    session_id: None,
+                };
+                state.monitor.log_request(log).await;
+
                 return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
+                    StatusCode::BAD_REQUEST,
                     Json(WarmupResponse {
                         success: false,
-                        message: format!("Transform error: {}", e),
+                        message: err_msg,
                         error: Some(e),
+                        is_server_error: Some(false),
+                        error_type: Some("transform_error".to_string()),
                     }),
                 )
                     .into_response();
@@ -175,6 +251,10 @@ pub async fn handle_warmup(
     };
 
     // ===== 步骤 3: 调用 UpstreamClient =====
+    let upstream_req_body = serde_json::to_string_pretty(&body)
+        .or_else(|_| serde_json::to_string(&body))
+        .ok();
+
     let model_lower = req.model.to_lowercase();
     let prefer_non_stream = model_lower.contains("flash-lite") || model_lower.contains("2.5-pro");
 
@@ -218,87 +298,150 @@ pub async fn handle_warmup(
             let status = response.status();
             let status_code = status.as_u16();
 
-            // 记录预热请求到流量日志
-            let log = ProxyRequestLog {
-                id: uuid::Uuid::new_v4().to_string(),
-                timestamp: chrono::Utc::now().timestamp_millis(),
-                method: "POST".to_string(),
-                url: format!("/internal/warmup -> {}", req.model),
-                status: status_code,
-                duration,
-                model: Some(req.model.clone()),
-                mapped_model: Some(req.model.clone()),
-                account_email: Some(req.email.clone()),
-                client_ip: Some("127.0.0.1".to_string()),
-                error: if status.is_success() {
-                    None
-                } else {
-                    Some(format!("HTTP {}", status_code))
-                },
-                request_body: Some(format!(
-                    "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
-                    req.model
-                )),
-                response_body: None,
-                input_tokens: Some(0),
-                output_tokens: Some(0),
-                cached_tokens: None,
-                protocol: Some("warmup".to_string()),
-                username: None,
-            };
-            state.monitor.log_request(log).await;
-
             let mut response = if status.is_success() {
+                let response_text = response.text().await.unwrap_or_default();
                 info!(
                     "[Warmup-API] ========== SUCCESS: {} / {} ({}ms) ==========",
                     req.email, req.model, duration
                 );
+
+                // 记录成功预热请求到流量日志
+                let log = ProxyRequestLog {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    method: "POST".to_string(),
+                    url: format!("/internal/warmup -> {}", req.model),
+                    status: status_code,
+                    duration,
+                    model: Some(req.model.clone()),
+                    mapped_model: Some(req.model.clone()),
+                    account_email: Some(req.email.clone()),
+                    client_ip: Some("127.0.0.1".to_string()),
+                    error: None,
+                    request_body: Some(format!(
+                        "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
+                        req.model
+                    )),
+                    upstream_request_body: upstream_req_body.clone(),
+                    response_body: Some(if response_text.is_empty() {
+                        "OK".to_string()
+                    } else {
+                        response_text
+                    }),
+                    input_tokens: Some(0),
+                    output_tokens: Some(0),
+                    cached_tokens: None,
+                    protocol: Some("warmup".to_string()),
+                    username: None,
+                    request_headers: None,
+                    upstream_request_headers: None,
+                    response_headers: None,
+                    session_id: None,
+                };
+                state.monitor.log_request(log).await;
+
                 (
                     StatusCode::OK,
                     Json(WarmupResponse {
                         success: true,
                         message: format!("Warmup triggered for {}", req.model),
                         error: None,
+                        is_server_error: None,
+                        error_type: None,
                     }),
                 )
                     .into_response()
             } else {
                 let error_text = response.text().await.unwrap_or_default();
 
-                // [FIX] 预热阶段检测到 403 时，标记账号为 forbidden，避免无效账号继续参与轮询
-                // 如果 account_id 为空（直接传入 access_token 的场景），通过 email 从索引中找到 ID
-                if status_code == 403 {
-                    let resolved_account_id = if !account_id.is_empty() {
-                        account_id.clone()
-                    } else {
-                        // 尝试通过 email 查找账号 ID
-                        crate::modules::account::find_account_id_by_email(&req.email)
-                            .unwrap_or_default()
-                    };
+                // 记录内部错误日志，让 error.log 抓到该问题
+                error!(
+                    "[Warmup-API] Upstream returned error (non-server fault): email={}, model={}, status={}, error={}",
+                    req.email, req.model, status_code, error_text
+                );
 
-                    if !resolved_account_id.is_empty() {
-                        warn!(
-                            "[Warmup-API] 403 Forbidden detected for {}, marking account as forbidden",
-                            req.email
-                        );
-                        let _ = crate::modules::account::mark_account_forbidden(
-                            &resolved_account_id,
-                            &error_text,
-                        );
+                // [FIX] 预热阶段检测到 403 时，排查是否属于真正的账号封禁
+                if status_code == 403 {
+                    let is_user_location_error =
+                        error_text.contains("User location is not supported");
+                    let is_waf_rate_limit = error_text.contains("Cloud Armor")
+                        || error_text.contains("Resource has been exhausted")
+                        || error_text.contains("rate limit")
+                        || error_text.contains("RESOURCE_EXHAUSTED");
+
+                    if !is_user_location_error && !is_waf_rate_limit {
+                        let resolved_account_id = if !account_id.is_empty() {
+                            account_id.clone()
+                        } else {
+                            crate::modules::account::find_account_id_by_email(&req.email)
+                                .unwrap_or_default()
+                        };
+
+                        if !resolved_account_id.is_empty() {
+                            warn!(
+                                "[Warmup-API] 403 Forbidden detected for {}, marking account as forbidden",
+                                req.email
+                            );
+                            let _ = crate::modules::account::mark_account_forbidden(
+                                &resolved_account_id,
+                                &error_text,
+                            );
+                        } else {
+                            warn!(
+                                "[Warmup-API] 403 Forbidden detected for {} but could not resolve account_id, skipping mark",
+                                req.email
+                            );
+                        }
                     } else {
                         warn!(
-                            "[Warmup-API] 403 Forbidden detected for {} but could not resolve account_id, skipping mark",
+                            "[Warmup-API] 403 Forbidden detected for {} but identified as location or WAF burst rate-limit, skipping mark_account_forbidden",
                             req.email
                         );
                     }
                 }
 
+                // 记录失败的预热请求到流量日志（包含完整转发报文与响应报文）
+                let log = ProxyRequestLog {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    method: "POST".to_string(),
+                    url: format!("/internal/warmup -> {}", req.model),
+                    status: status_code,
+                    duration,
+                    model: Some(req.model.clone()),
+                    mapped_model: Some(req.model.clone()),
+                    account_email: Some(req.email.clone()),
+                    client_ip: Some("127.0.0.1".to_string()),
+                    error: Some(format!("HTTP {} (上游拒绝，非服务端故障)", status_code)),
+                    request_body: Some(format!(
+                        "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
+                        req.model
+                    )),
+                    upstream_request_body: upstream_req_body.clone(),
+                    response_body: Some(error_text.clone()),
+                    input_tokens: Some(0),
+                    output_tokens: Some(0),
+                    cached_tokens: None,
+                    protocol: Some("warmup".to_string()),
+                    username: None,
+                    request_headers: None,
+                    upstream_request_headers: None,
+                    response_headers: None,
+                    session_id: None,
+                };
+                state.monitor.log_request(log).await;
+
                 (
-                    StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                    StatusCode::from_u16(status_code).unwrap_or(StatusCode::BAD_GATEWAY),
                     Json(WarmupResponse {
                         success: false,
-                        message: format!("Warmup failed: HTTP {}", status_code),
+                        message: format!(
+                            "Warmup failed: HTTP {} (上游拒绝，非服务端故障)",
+                            status_code
+                        ),
                         error: Some(error_text),
+                        is_server_error: Some(false),
+                        error_type: Some("upstream_error".to_string()),
                     }),
                 )
                     .into_response()
@@ -315,8 +458,9 @@ pub async fn handle_warmup(
             response
         }
         Err(e) => {
-            warn!(
-                "[Warmup-API] ========== ERROR: {} / {} - {} ({}ms) ==========",
+            // 关键：升级为 ERROR 级别，写入 error.log
+            error!(
+                "[Warmup-API] ========== ERROR (non-server fault): {} / {} - {} ({}ms) ==========",
                 req.email, req.model, e, duration
             );
 
@@ -326,32 +470,39 @@ pub async fn handle_warmup(
                 timestamp: chrono::Utc::now().timestamp_millis(),
                 method: "POST".to_string(),
                 url: format!("/internal/warmup -> {}", req.model),
-                status: 500,
+                status: 502,
                 duration,
                 model: Some(req.model.clone()),
                 mapped_model: Some(req.model.clone()),
                 account_email: Some(req.email.clone()),
                 client_ip: Some("127.0.0.1".to_string()),
-                error: Some(e.clone()),
+                error: Some(format!("Network Error (网络请求异常，非服务端故障): {}", e)),
                 request_body: Some(format!(
                     "{{\"type\": \"warmup\", \"model\": \"{}\"}}",
                     req.model
                 )),
-                response_body: Some(e.clone()),
+                upstream_request_body: upstream_req_body,
+                response_body: Some(format!("网络请求异常（非服务端故障）: {}", e)),
                 input_tokens: None,
                 output_tokens: None,
                 cached_tokens: None,
                 protocol: Some("warmup".to_string()),
                 username: None,
+                request_headers: None,
+                upstream_request_headers: None,
+                response_headers: None,
+                session_id: None,
             };
             state.monitor.log_request(log).await;
 
             let mut response = (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::BAD_GATEWAY,
                 Json(WarmupResponse {
                     success: false,
-                    message: "Warmup request failed".to_string(),
+                    message: format!("网络请求失败（非服务端故障）: {}", e),
                     error: Some(e),
+                    is_server_error: Some(false),
+                    error_type: Some("network_error".to_string()),
                 }),
             )
                 .into_response();

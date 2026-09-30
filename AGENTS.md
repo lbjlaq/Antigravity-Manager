@@ -73,3 +73,16 @@
 - **增量合入规范**：同步上游主线时，必须始终以当前自研分支为主干基准，采取防御性单点补丁与三方合并方式合入后端底层修复，严禁使用 `git reset --hard` 或全量覆写前端目录。
 - **冲突显式呈报与决策等待准则**：在合并或同步过程中，如果遇到任何代码冲突、接口签名不兼容或业务逻辑冲突，**绝对严禁擅自裁决、静默丢弃自研代码或单方面倾向官方**；必须立即挂起操作，向用户清晰呈报冲突细节、技术影响与备选方案，**严格等待用户明确抉择指示后方可推进**。
 
+---
+
+## 7. 上游底层架构规范 (Upstream Maintenance Guidelines)
+
+- **Architecture**: This project is a gateway that aggregates four AI protocols — OpenAI Responses, OpenAI Chat Completions, Anthropic Claude, and Google Gemini — and outputs Antigravity-style Gemini protocol format.
+- **Pipeline First**: Keep the pipeline strictly decoupled from specific protocols. The four protocols function purely as Gemini adapters. Adapters are restricted to parameter normalization, payload transformation, protocol divergence adaptation, and edge cases unsolvable within the pipeline stage. The pipeline stage uniformly handles the converted Gemini payloads, including thinking block backfilling, thinking budget filtering and backfilling, unified context structural alignment, prefix stability, and the sanitization of risky prompts and request headers.
+- **Backend Fix Strategy**: Prioritize protocol-agnostic, generic fixes within the pipeline rather than localized adapter modifications. Treat adapter-level patches as a last resort only when a generic pipeline solution is infeasible or degrades compatibility.
+- **UI Design & Headless Compatibility**:
+  - **Minimalist & Contextual UI**: Prioritize user-friendly, non-intrusive interactions. Reuse existing design conventions (e.g., pill toggle buttons, badge switches, or contextual setting panels) placed strictly within their most relevant sections rather than scattering unrelated controls.
+  - **Headless & CLI Parity**: Ensure GUI configurations maintain functional parity across headless servers, CLI environments, and cross-platform environments. Provide configuration file fields, environment variable overrides, or dedicated CLI flags/commands for essential settings.
+  - **Cross-Platform Compatibility**: Evaluate every code addition and dependency change for seamless cross-platform support.
+- **Code Quality**: Prioritize root-cause, future-proof fixes rather than hardcoded logic, dead code, or speculative changes. Prioritize generalized solutions that cover entire classes of problems rather than one-off patches.
+- **Release Channels & Staging Protocol**: Keep `main` for stable releases and `beta` for staging. Always maintain changelogs and attribution.

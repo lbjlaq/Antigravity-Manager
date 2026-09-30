@@ -26,7 +26,7 @@ import { showToast } from "../components/common/ToastContainer";
 import { exportAccounts } from "../services/accountService";
 import { useAccountStore } from "../stores/useAccountStore";
 import { useConfigStore } from "../stores/useConfigStore";
-import { Account } from "../types/account";
+import { Account, getAccountTier } from "../types/account";
 import { cn } from "../utils/cn";
 import { isTauri } from "../utils/env";
 import { request as invoke } from "../utils/request";
@@ -53,6 +53,7 @@ function Accounts() {
     warmUpAccounts,
     warmUpAccount,
     updateAccountLabel,
+    updateAccountPriority,
   } = useAccountStore();
   const { config, showAllQuotas, toggleShowAllQuotas } = useConfigStore();
 
@@ -239,39 +240,16 @@ function Accounts() {
   const filterCounts = useMemo(() => {
     return {
       all: searchedAccounts.length,
-      pro: searchedAccounts.filter((a) =>
-        a.quota?.subscription_tier?.toLowerCase().includes("pro"),
-      ).length,
-      ultra: searchedAccounts.filter((a) =>
-        a.quota?.subscription_tier?.toLowerCase().includes("ultra"),
-      ).length,
-      free: searchedAccounts.filter((a) => {
-        const tier = a.quota?.subscription_tier?.toLowerCase();
-        return tier && !tier.includes("pro") && !tier.includes("ultra");
-      }).length,
+      pro: searchedAccounts.filter((a) => getAccountTier(a) === "pro").length,
+      ultra: searchedAccounts.filter((a) => getAccountTier(a) === "ultra").length,
+      free: searchedAccounts.filter((a) => getAccountTier(a) === "free").length,
     };
   }, [searchedAccounts]);
 
   // 过滤和搜索最终结果
   const filteredAccounts = useMemo(() => {
-    let result = searchedAccounts;
-
-    if (filter === "pro") {
-      result = result.filter((a) =>
-        a.quota?.subscription_tier?.toLowerCase().includes("pro"),
-      );
-    } else if (filter === "ultra") {
-      result = result.filter((a) =>
-        a.quota?.subscription_tier?.toLowerCase().includes("ultra"),
-      );
-    } else if (filter === "free") {
-      result = result.filter((a) => {
-        const tier = a.quota?.subscription_tier?.toLowerCase();
-        return tier && !tier.includes("pro") && !tier.includes("ultra");
-      });
-    }
-
-    return result;
+    if (filter === "all") return searchedAccounts;
+    return searchedAccounts.filter((a) => getAccountTier(a) === filter);
   }, [searchedAccounts, filter]);
 
   // Pagination Logic
@@ -1142,8 +1120,9 @@ function Accounts() {
       )}
 
       <AccountDetailsDialog
-        account={detailsAccount}
+        account={accounts.find(a => a.id === detailsAccount?.id) || null}
         onClose={() => setDetailsAccount(null)}
+        onUpdatePriority={updateAccountPriority}
       />
       <DeviceFingerprintDialog
         account={deviceAccount}
@@ -1172,10 +1151,69 @@ function Accounts() {
         }}
       />
 
-      {/* 账号详情弹窗 */}
-      <AccountDetailsDialog
-        account={detailsAccount}
-        onClose={() => setDetailsAccount(null)}
+      <ModalDialog
+        isOpen={isRefreshConfirmOpen}
+        title={
+          selectedIds.size > 0
+            ? t("accounts.dialog.batch_refresh_title")
+            : t("accounts.dialog.refresh_title")
+        }
+        message={
+          selectedIds.size > 0
+            ? t("accounts.dialog.batch_refresh_msg", {
+              count: selectedIds.size,
+            })
+            : t("accounts.dialog.refresh_msg")
+        }
+        type="confirm"
+        confirmText={t("common.refresh")}
+        isDestructive={false}
+        onConfirm={executeRefresh}
+        onCancel={() => setIsRefreshConfirmOpen(false)}
+      />
+
+      {toggleProxyConfirm && (
+        <ModalDialog
+          isOpen={!!toggleProxyConfirm}
+          onCancel={() => setToggleProxyConfirm(null)}
+          onConfirm={executeToggleProxy}
+          title={
+            toggleProxyConfirm.enable
+              ? t("accounts.dialog.enable_proxy_title")
+              : t("accounts.dialog.disable_proxy_title")
+          }
+          message={
+            toggleProxyConfirm.enable
+              ? t("accounts.dialog.enable_proxy_msg")
+              : t("accounts.dialog.disable_proxy_msg")
+          }
+        />
+      )}
+
+      <ModalDialog
+        isOpen={isWarmupConfirmOpen}
+        title={
+          selectedIds.size > 0
+            ? t("accounts.dialog.batch_warmup_title", "批量手动预热")
+            : t("accounts.dialog.warmup_all_title", "全量手动预热")
+        }
+        message={
+          selectedIds.size > 0
+            ? t(
+              "accounts.dialog.batch_warmup_msg",
+              "确定要为选中的 {{count}} 个账号立即触发预热吗？",
+              { count: selectedIds.size },
+            )
+            : t(
+              "accounts.dialog.warmup_all_msg",
+              "确定要立即为所有符合条件的账号触发预热任务吗？这将向 Google 服务发送极小流量。",
+            )
+        }
+        type="confirm"
+        confirmText={t("accounts.warmup_now", "立即预热")}
+        isDestructive={false}
+        onConfirm={handleWarmupAll}
+        onCancel={() => setIsWarmupConfirmOpen(false)}
       />
 
       {/* 账号错误详情弹窗 */}

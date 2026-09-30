@@ -55,6 +55,7 @@ pub struct TrayTexts {
     pub no_account: String,
     pub unknown_quota: String,
     pub forbidden: String,
+    pub lightweight_mode: String,
 }
 
 /// Load translations from JSON
@@ -134,6 +135,10 @@ pub fn get_tray_texts(lang: &str) -> TrayTexts {
             .get("forbidden")
             .cloned()
             .unwrap_or_else(|| "Account Forbidden".to_string()),
+        lightweight_mode: t
+            .get("lightweight_mode")
+            .cloned()
+            .unwrap_or_else(|| "Lightweight Mode".to_string()),
     }
 }
 

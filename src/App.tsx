@@ -12,8 +12,9 @@ import ThemeManager from './components/common/ThemeManager';
 import UserToken from './pages/UserToken';
 import { ApiKeyFun } from './pages/ApiKeyFun';
 import { UpdateNotification } from './components/UpdateNotification';
+import SuggestionDeleteThinkingModal from './components/common/SuggestionDeleteThinkingModal';
 import DebugConsole from './components/debug/DebugConsole';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, startTransition } from 'react';
 import { useConfigStore } from './stores/useConfigStore';
 import { useAccountStore } from './stores/useAccountStore';
 import { useTranslation } from 'react-i18next';
@@ -76,16 +77,13 @@ function App() {
     loadConfig();
   }, [loadConfig]);
 
-  // Sync language from config
+  // Sync language from config (仅在不同步时通过 startTransition 非阻塞调度)
   useEffect(() => {
-    if (config?.language) {
-      i18n.changeLanguage(config.language);
-      // Support RTL
-      if (config.language === 'ar') {
-        document.documentElement.dir = 'rtl';
-      } else {
-        document.documentElement.dir = 'ltr';
-      }
+    if (config?.language && i18n.language !== config.language) {
+      startTransition(() => {
+        i18n.changeLanguage(config.language);
+      });
+      document.documentElement.dir = config.language === 'ar' ? 'rtl' : 'ltr';
     }
   }, [config?.language, i18n]);
 
@@ -118,6 +116,14 @@ function App() {
         console.log('[App] Backend triggered quota refresh, syncing UI...');
         fetchCurrentAccount();
         fetchAccounts();
+      })
+    );
+
+    // 监听手动触发自动更新事件
+    unlistenPromises.push(
+      listen('app://trigger-update', () => {
+        console.log('[App] Received app://trigger-update event, showing updater...');
+        setShowUpdateNotification(true);
       })
     );
 
@@ -161,6 +167,7 @@ function App() {
     <AdminAuthGuard>
       <ThemeManager />
       <DebugConsole />
+      <SuggestionDeleteThinkingModal />
       {showUpdateNotification && (
         <UpdateNotification onClose={() => setShowUpdateNotification(false)} />
       )}

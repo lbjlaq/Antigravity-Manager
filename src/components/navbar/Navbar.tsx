@@ -1,3 +1,5 @@
+import { startTransition } from 'react';
+import i18n from '../../i18n';
 import { LayoutDashboard, Users, Network, Activity, BarChart3, Settings, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -81,15 +83,26 @@ function Navbar() {
         }
     };
 
-    // 语言切换逻辑
-    const handleLanguageChange = async (langCode: string) => {
+    // 语言切换逻辑 (即时响应 + 非阻塞平滑过渡)
+    const handleLanguageChange = (langCode: string) => {
         if (!config) return;
 
-        await saveConfig({
+        // 1. 立即设置 RTL / LTR 布局方向
+        document.documentElement.dir = langCode === 'ar' ? 'rtl' : 'ltr';
+
+        // 2. 使用 startTransition 触发非阻塞渐进式重绘，消除海量信息面板的主线程卡死
+        startTransition(() => {
+            i18n.changeLanguage(langCode);
+        });
+
+        // 3. 异步持久化配置，绝不阻塞 UI 线程
+        saveConfig({
             ...config,
             language: langCode,
             theme: config.theme
-        }, true);
+        }, true).catch(err => {
+            console.error('Failed to persist language config:', err);
+        });
     };
 
     return (

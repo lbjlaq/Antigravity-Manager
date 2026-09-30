@@ -147,29 +147,88 @@ pub async fn ip_filter_middleware(
     next.run(request).await
 }
 
-/// 从请求中提取客户端 IP
-fn extract_client_ip(request: &Request) -> Option<String> {
+/// 规范化 IP 地址字符串：
+/// - 清理首尾空格及方括号 `[...]`
+/// - 剥离客户端端口（例如 `192.168.1.1:54321` 或 `[2409:8a55::1]:8046`）
+/// - 将 IPv4 映射的 IPv6 地址（如 `::ffff:192.168.1.1`）还原为原生 IPv4（`192.168.1.1`）
+pub fn normalize_ip_str(raw: &str) -> String {
+    let trimmed = raw.trim();
+
+    // 优先尝试直接按 IP 地址解析
+    let clean = trimmed.trim_matches('[').trim_matches(']');
+    if let Ok(ip) = clean.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V6(v6) => {
+                if let Some(v4) = v6.to_ipv4_mapped() {
+                    v4.to_string()
+                } else {
+                    v6.to_string()
+                }
+            }
+            std::net::IpAddr::V4(v4) => v4.to_string(),
+        };
+    }
+
+    // 若带有端口（如 192.168.1.100:12345 或 [::1]:8080），尝试解析为 SocketAddr
+    if let Ok(socket_addr) = trimmed.parse::<std::net::SocketAddr>() {
+        return match socket_addr.ip() {
+            std::net::IpAddr::V6(v6) => {
+                if let Some(v4) = v6.to_ipv4_mapped() {
+                    v4.to_string()
+                } else {
+                    v6.to_string()
+                }
+            }
+            std::net::IpAddr::V4(v4) => v4.to_string(),
+        };
+    }
+
+    // 手动前缀回退检测
+    if let Some(stripped) = clean.strip_prefix("::ffff:") {
+        if stripped.parse::<std::net::Ipv4Addr>().is_ok() {
+            return stripped.to_string();
+        }
+    }
+
+    clean.to_string()
+}
+
+/// 从请求中提取客户端 IP（支持 X-Forwarded-For, X-Real-IP, ConnectInfo，并自动规范化 IPv4/IPv6）
+pub fn extract_client_ip(request: &Request) -> Option<String> {
     // 1. 优先从 X-Forwarded-For 提取 (取第一个 IP)
-    request
+    let raw = request
         .headers()
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .map(|s| s.split(',').next().unwrap_or(s).trim())
         .or_else(|| {
             // 2. 备选从 X-Real-IP 提取
             request
                 .headers()
                 .get("x-real-ip")
                 .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .or_else(|| {
-            // 3. 最后尝试从 ConnectInfo 获取 (TCP 连接 IP)
-            // 这可以解决本地开发/测试时没有代理头导致 IP 获取失败的问题
-            request
-                .extensions()
-                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                .map(|info| info.0.ip().to_string())
+                .map(|s| s.trim())
+        });
+
+    if let Some(ip_str) = raw {
+        if !ip_str.is_empty() {
+            return Some(normalize_ip_str(ip_str));
+        }
+    }
+
+    // 3. 最后尝试从 ConnectInfo 获取 (TCP 连接 IP)
+    request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| match info.0.ip() {
+            std::net::IpAddr::V6(v6) => {
+                if let Some(v4) = v6.to_ipv4_mapped() {
+                    v4.to_string()
+                } else {
+                    v6.to_string()
+                }
+            }
+            std::net::IpAddr::V4(v4) => v4.to_string(),
         })
 }
 
@@ -190,4 +249,23 @@ fn create_blocked_response(ip: &str, message: &str) -> Response {
         serde_json::to_string(&body).unwrap_or_else(|_| message.to_string()),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_ip_str() {
+        assert_eq!(normalize_ip_str("192.168.1.1"), "192.168.1.1");
+        assert_eq!(normalize_ip_str("192.168.1.1:8080"), "192.168.1.1");
+        assert_eq!(normalize_ip_str("::ffff:192.168.1.1"), "192.168.1.1");
+        assert_eq!(normalize_ip_str("[::ffff:192.168.1.1]:8046"), "192.168.1.1");
+        assert_eq!(normalize_ip_str("::1"), "::1");
+        assert_eq!(normalize_ip_str("[::1]:8046"), "::1");
+        assert_eq!(
+            normalize_ip_str("2409:8a55:a21:2e60:2e2:69ff:fe17:95cb"),
+            "2409:8a55:a21:2e60:2e2:69ff:fe17:95cb"
+        );
+    }
 }

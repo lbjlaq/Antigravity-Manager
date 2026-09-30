@@ -163,19 +163,8 @@ async fn auth_middleware_internal(
         // 尝试验证 UserToken
         let token = api_key.unwrap();
 
-        // 提取 IP (复用逻辑)
-        let client_ip = request
-            .headers()
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
-            .or_else(|| {
-                request
-                    .headers()
-                    .get("x-real-ip")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.to_string())
-            })
+        // 提取 IP (复用 ip_filter 规范化逻辑，支持 IPv4/IPv6 及 ConnectInfo)
+        let client_ip = crate::proxy::middleware::ip_filter::extract_client_ip(&request)
             .unwrap_or_else(|| "127.0.0.1".to_string()); // Default fallback
 
         // 验证 Token
@@ -253,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_admin_auth_with_password() {
-        let security = Arc::new(RwLock::new(ProxySecurityConfig {
+        let _security = Arc::new(RwLock::new(ProxySecurityConfig {
             auth_mode: ProxyAuthMode::Strict,
             api_key: "sk-api".to_string(),
             admin_password: Some("admin123".to_string()),
@@ -263,7 +252,7 @@ mod tests {
         }));
 
         // 模拟请求 - 管理接口使用正确的管理密码
-        let req = Request::builder()
+        let _req = Request::builder()
             .header("Authorization", "Bearer admin123")
             .uri("/admin/stats")
             .body(axum::body::Body::empty())

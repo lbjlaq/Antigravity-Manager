@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 
 // Node.js proxy uses 2 hours TTL
 const SIGNATURE_TTL: Duration = Duration::from_secs(2 * 60 * 60);
-const MIN_SIGNATURE_LENGTH: usize = 50;
+const MIN_SIGNATURE_LENGTH: usize = 32;
 
 // Different cache limits for different layers
 const TOOL_CACHE_LIMIT: usize = 500; // Layer 1: Tool-specific signatures
@@ -82,17 +82,40 @@ impl SignatureCache {
     }
 
     /// Store a tool call signature
-    pub fn cache_tool_signature(&self, tool_use_id: &str, signature: String) {
+    fn scoped_tool_key(store_key: &str, tool_id: &str) -> Option<String> {
+        let store_key = store_key.trim();
+        let tool_id = tool_id.trim();
+        if store_key.is_empty() || tool_id.is_empty() {
+            return None;
+        }
+        Some(format!("{store_key}\u{1f}{tool_id}"))
+    }
+
+    pub fn cache_tool_signature(&self, store_key: &str, tool_use_id: &str, signature: String) {
+        // 自愈防裂化：若签名被误传为原始 Protobuf 二进制 (首字节 0x12)，自动纠正编码为标准 Base64
+        let signature = if signature.as_bytes().first() == Some(&0x12) {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode(signature.as_bytes())
+        } else {
+            signature
+        };
+
         if signature.len() < MIN_SIGNATURE_LENGTH {
             return;
         }
 
+        let norm_id = crate::proxy::common::utils::normalize_tool_id(tool_use_id);
+        let Some(id_str) = Self::scoped_tool_key(store_key, norm_id.as_ref()) else {
+            return;
+        };
+
+        // 1. 持久化到 SQLite L2 数据库 (支持代理重启后秒级恢复)
+        let _ = crate::modules::proxy_db::save_tool_signature(&id_str, &signature);
+
+        // 2. 写入内存 L1 缓存
         if let Ok(mut cache) = self.tool_signatures.lock() {
-            tracing::debug!(
-                "[SignatureCache] Caching tool signature for id: {}",
-                tool_use_id
-            );
-            cache.insert(tool_use_id.to_string(), CacheEntry::new(signature));
+            tracing::debug!("[SignatureCache] Caching tool signature for id: {}", id_str);
+            cache.insert(id_str, CacheEntry::new(signature));
 
             // Clean up expired entries when limit is reached
             if cache.len() > TOOL_CACHE_LIMIT {
@@ -110,19 +133,50 @@ impl SignatureCache {
         }
     }
 
-    /// Retrieve a signature for a tool_use_id
-    pub fn get_tool_signature(&self, tool_use_id: &str) -> Option<String> {
-        if let Ok(cache) = self.tool_signatures.lock() {
-            if let Some(entry) = cache.get(tool_use_id) {
-                if !entry.is_expired() {
-                    tracing::debug!(
-                        "[SignatureCache] Hit tool signature for id: {}",
-                        tool_use_id
-                    );
-                    return Some(entry.data.clone());
-                }
+    /// Retrieve a signature for a tool_use_id inside one session store.
+    pub fn get_tool_signature(&self, store_key: &str, tool_use_id: &str) -> Option<String> {
+        let norm_id = crate::proxy::common::utils::normalize_tool_id(tool_use_id);
+        let mut candidate_ids = Vec::new();
+        if let Some(scoped) = Self::scoped_tool_key(store_key, norm_id.as_ref()) {
+            candidate_ids.push(scoped);
+        }
+        if norm_id.as_ref() != tool_use_id {
+            if let Some(scoped) = Self::scoped_tool_key(store_key, tool_use_id) {
+                candidate_ids.push(scoped);
             }
         }
+        if candidate_ids.is_empty() {
+            return None;
+        }
+
+        for candidate in &candidate_ids {
+            // 1. 先查内存 L1 缓存
+            if let Ok(cache) = self.tool_signatures.lock() {
+                if let Some(entry) = cache.get(candidate) {
+                    if !entry.is_expired() {
+                        tracing::debug!(
+                            "[SignatureCache] Hit tool signature for id: {}",
+                            candidate
+                        );
+                        return Some(entry.data.clone());
+                    }
+                }
+            }
+
+            // 2. 内存未命中（如代理重启过），从 SQLite L2 数据库恢复
+            if let Ok(Some(sig)) = crate::modules::proxy_db::load_tool_signature(candidate) {
+                let sig: String = sig;
+                if let Ok(mut cache) = self.tool_signatures.lock() {
+                    cache.insert(candidate.clone(), CacheEntry::new(sig.clone()));
+                }
+                tracing::info!(
+                    "[SignatureCache] Restored tool signature from SQLite for id: {}",
+                    candidate
+                );
+                return Some(sig);
+            }
+        }
+
         None
     }
 
@@ -138,7 +192,12 @@ impl SignatureCache {
                 signature.len(),
                 family
             );
-            cache.insert(signature, CacheEntry::new(family));
+            let norm = crate::proxy::thinking_store::normalize_signature_for_comparison(&signature)
+                .into_owned();
+            cache.insert(signature.clone(), CacheEntry::new(family.clone()));
+            if norm != signature {
+                cache.insert(norm, CacheEntry::new(family));
+            }
 
             if cache.len() > FAMILY_CACHE_LIMIT {
                 let before = cache.len();
@@ -165,6 +224,14 @@ impl SignatureCache {
                     tracing::debug!("[SignatureCache] Signature family entry expired");
                 }
             }
+            let alt = crate::proxy::thinking_store::normalize_signature_for_comparison(signature);
+            if alt.as_ref() != signature {
+                if let Some(entry) = cache.get(alt.as_ref()) {
+                    if !entry.is_expired() {
+                        return Some(entry.data.clone());
+                    }
+                }
+            }
         }
         None
     }
@@ -184,6 +251,14 @@ impl SignatureCache {
         signature: String,
         message_count: usize,
     ) {
+        // 自愈防裂化：若签名被误传为原始 Protobuf 二进制 (首字节 0x12)，自动纠正编码为标准 Base64
+        let signature = if signature.as_bytes().first() == Some(&0x12) {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode(signature.as_bytes())
+        } else {
+            signature
+        };
+
         if signature.len() < MIN_SIGNATURE_LENGTH {
             return;
         }
@@ -257,6 +332,7 @@ impl SignatureCache {
     /// Returns None if not found or expired.
     pub fn get_session_signature(&self, session_id: &str) -> Option<String> {
         if let Ok(cache) = self.session_signatures.lock() {
+            // 1. 精确匹配
             if let Some(entry) = cache.get(session_id) {
                 if !entry.is_expired() {
                     // Find the signature with the maximum message_count (the latest one)
@@ -275,6 +351,18 @@ impl SignatureCache {
             }
         }
         None
+    }
+
+    /// Check if the session cache already holds a signature for a turn after `message_count`.
+    pub fn has_session_signature_after(&self, session_id: &str, message_count: usize) -> bool {
+        if let Ok(cache) = self.session_signatures.lock() {
+            if let Some(entry) = cache.get(session_id) {
+                if !entry.is_expired() {
+                    return entry.data.keys().any(|&mc| mc > message_count);
+                }
+            }
+        }
+        false
     }
 
     /// Retrieve the thinking signature for a session at a specific message count.
@@ -410,16 +498,17 @@ mod tests {
         let cache = SignatureCache::new();
         let sig = "x".repeat(60); // Valid length
 
-        cache.cache_tool_signature("tool_1", sig.clone());
-        assert_eq!(cache.get_tool_signature("tool_1"), Some(sig));
-        assert_eq!(cache.get_tool_signature("tool_2"), None);
+        cache.cache_tool_signature("scope", "tool_1", sig.clone());
+        assert_eq!(cache.get_tool_signature("scope", "tool_1"), Some(sig));
+        assert_eq!(cache.get_tool_signature("scope", "tool_2"), None);
+        assert_eq!(cache.get_tool_signature("other", "tool_1"), None);
     }
 
     #[test]
     fn test_min_length() {
         let cache = SignatureCache::new();
-        cache.cache_tool_signature("tool_short", "short".to_string());
-        assert_eq!(cache.get_tool_signature("tool_short"), None);
+        cache.cache_tool_signature("scope", "tool_short", "short".to_string());
+        assert_eq!(cache.get_tool_signature("scope", "tool_short"), None);
     }
 
     #[test]
@@ -482,18 +571,68 @@ mod tests {
         let cache = SignatureCache::new();
         let sig = "x".repeat(60);
 
-        cache.cache_tool_signature("tool_1", sig.clone());
+        cache.cache_tool_signature("scope", "tool_1", sig.clone());
         cache.cache_thinking_family(sig.clone(), "model".to_string());
         cache.cache_session_signature("sid-1", sig.clone(), 1);
 
-        assert!(cache.get_tool_signature("tool_1").is_some());
+        assert!(cache.get_tool_signature("scope", "tool_1").is_some());
         assert!(cache.get_signature_family(&sig).is_some());
         assert!(cache.get_session_signature("sid-1").is_some());
 
         cache.clear();
 
-        assert!(cache.get_tool_signature("tool_1").is_none());
+        assert!(cache.get_tool_signature("scope", "tool_1").is_none());
         assert!(cache.get_signature_family(&sig).is_none());
         assert!(cache.get_session_signature("sid-1").is_none());
+    }
+
+    #[test]
+    fn test_tool_signature_sqlite_recovery() {
+        let tool_id = "call_sig_sqlite_recovery_unique";
+        let sig = "s".repeat(60);
+
+        // 1. Direct save to SQLite
+        let scoped = format!("scope\u{1f}{tool_id}");
+        let db_res = crate::modules::proxy_db::save_tool_signature(&scoped, &sig);
+        if let Err(e) = db_res {
+            eprintln!("Skipping DB test if DB not initialized: {}", e);
+            return;
+        }
+
+        // 2. New in-memory cache (simulating proxy restart)
+        let cache = SignatureCache::new();
+
+        // 3. get_tool_signature should fall back to SQLite and populate L1 cache
+        let recovered = cache.get_tool_signature("scope", tool_id);
+        assert_eq!(recovered, Some(sig.clone()));
+
+        // 4. Second lookup should hit L1
+        assert_eq!(cache.get_tool_signature("scope", tool_id), Some(sig));
+    }
+
+    #[test]
+    fn test_tool_signature_normalization_match() {
+        let cache = SignatureCache::new();
+        let sig = "s".repeat(60);
+
+        // Case A: Upstream generated call_573077, client requests with call573077
+        cache.cache_tool_signature("scope", "call_573077", sig.clone());
+        assert_eq!(
+            cache.get_tool_signature("scope", "call573077"),
+            Some(sig.clone())
+        );
+        assert_eq!(
+            cache.get_tool_signature("scope", "call_573077"),
+            Some(sig.clone())
+        );
+
+        // Case B: Client stored with call888888, lookup with call_888888
+        let sig2 = "t".repeat(60);
+        cache.cache_tool_signature("scope", "call888888", sig2.clone());
+        assert_eq!(
+            cache.get_tool_signature("scope", "call_888888"),
+            Some(sig2.clone())
+        );
+        assert_eq!(cache.get_tool_signature("scope", "call888888"), Some(sig2));
     }
 }

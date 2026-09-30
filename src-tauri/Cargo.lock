@@ -96,7 +96,7 @@ checksum = "34fde25430d87a9388dadbe6e34d7f72a462c8b43ac8d309b42b0a8505d7e2a5"
 
 [[package]]
 name = "antigravity-tools"
-version = "4.7.1"
+version = "4.8.8"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -108,6 +108,7 @@ dependencies = [
  "dashmap",
  "dirs 5.0.1",
  "eventsource-stream",
+ "flate2",
  "futures",
  "gtk",
  "hyper",
@@ -122,12 +123,14 @@ dependencies = [
  "rand 0.8.5",
  "regex",
  "reqwest 0.12.28",
+ "reqwest 0.13.2",
  "rquest",
  "rquest-util",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
+ "socket2 0.5.10",
  "sys-locale",
  "sysinfo",
  "tauri",
@@ -142,6 +145,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -155,6 +159,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "yaml-rt",
 ]
 
 [[package]]
@@ -3772,7 +3777,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.2",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -3809,9 +3814,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7180,6 +7185,21 @@ dependencies = [
  "libc",
  "rustix",
 ]
+
+[[package]]
+name = "yaml-rt"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "933fbb0d92173f051ca38aba5eddae9cdbc2d9fea5451867f1f915bf43594216"
+dependencies = [
+ "yaml-rt-core",
+]
+
+[[package]]
+name = "yaml-rt-core"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2924552979c393234d7cea6cda2cf773801fb5f31de20ec5e89d6ac5ed8de971"
 
 [[package]]
 name = "yoke"

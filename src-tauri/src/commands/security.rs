@@ -257,45 +257,38 @@ pub async fn get_ip_token_stats(
 
 // ==================== 辅助函数 ====================
 
-/// 验证 IP 模式格式 (支持单个 IP 和 CIDR)
+/// 验证 IP 模式格式 (支持单个 IP 和 CIDR，支持 IPv4 和 IPv6)
 fn is_valid_ip_pattern(pattern: &str) -> bool {
+    let clean = pattern.trim().trim_matches('[').trim_matches(']');
     // 检查是否为 CIDR 格式
-    if pattern.contains('/') {
-        let parts: Vec<&str> = pattern.split('/').collect();
+    if clean.contains('/') {
+        let parts: Vec<&str> = clean.split('/').collect();
         if parts.len() != 2 {
             return false;
         }
 
-        // 验证 IP 部分
-        if !is_valid_ip(parts[0]) {
-            return false;
-        }
+        let ip_part = parts[0].trim().trim_matches('[').trim_matches(']');
+        let mask_part = parts[1].trim();
 
-        // 验证掩码部分
-        if let Ok(mask) = parts[1].parse::<u8>() {
-            return mask <= 32;
+        if let Ok(ip_addr) = ip_part.parse::<std::net::IpAddr>() {
+            if let Ok(mask) = mask_part.parse::<u8>() {
+                return match ip_addr {
+                    std::net::IpAddr::V4(_) => mask <= 32,
+                    std::net::IpAddr::V6(_) => mask <= 128,
+                };
+            }
         }
         return false;
     }
 
     // 单个 IP 地址
-    is_valid_ip(pattern)
+    is_valid_ip(clean)
 }
 
-/// 验证 IP 地址格式
+/// 验证 IP 地址格式 (支持 IPv4 和 IPv6)
 fn is_valid_ip(ip: &str) -> bool {
-    let parts: Vec<&str> = ip.split('.').collect();
-    if parts.len() != 4 {
-        return false;
-    }
-
-    for part in parts {
-        if part.parse::<u8>().is_err() {
-            return false;
-        }
-    }
-
-    true
+    let clean = ip.trim().trim_matches('[').trim_matches(']');
+    clean.parse::<std::net::IpAddr>().is_ok()
 }
 
 #[cfg(test)]
@@ -304,11 +297,19 @@ mod tests {
 
     #[test]
     fn test_valid_ip_patterns() {
+        // IPv4
         assert!(is_valid_ip_pattern("192.168.1.1"));
         assert!(is_valid_ip_pattern("10.0.0.0/8"));
         assert!(is_valid_ip_pattern("172.16.0.0/16"));
         assert!(is_valid_ip_pattern("192.168.1.0/24"));
         assert!(is_valid_ip_pattern("8.8.8.8/32"));
+        // IPv6
+        assert!(is_valid_ip_pattern("::1"));
+        assert!(is_valid_ip_pattern("2409:8a55:a21:2e60:2e2:69ff:fe17:95cb"));
+        assert!(is_valid_ip_pattern("2409:8a55::/32"));
+        assert!(is_valid_ip_pattern("fe80::/10"));
+        assert!(is_valid_ip_pattern("::/0"));
+        assert!(is_valid_ip_pattern("[::1]"));
     }
 
     #[test]
@@ -317,6 +318,7 @@ mod tests {
         assert!(!is_valid_ip_pattern("192.168.1"));
         assert!(!is_valid_ip_pattern("192.168.1.1/33"));
         assert!(!is_valid_ip_pattern("192.168.1.1/"));
+        assert!(!is_valid_ip_pattern("2409:8a55::/129"));
         assert!(!is_valid_ip_pattern("invalid"));
     }
 }

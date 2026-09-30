@@ -2,41 +2,9 @@ use super::models::{ContentBlock, Message, MessageContent};
 use crate::proxy::SignatureCache;
 use tracing::{debug, info, warn};
 
-pub const MIN_SIGNATURE_LENGTH: usize = 50;
-pub const SENTINEL_SIGNATURE: &str = "skip_thought_signature_validator";
-
-/// 判断签名是否符合 Google Gemini 原生 Protobuf 签名特征：
-/// 1. 官方跳过验签哨兵 (skip_thought_signature_validator)；
-/// 2. 或满足有效长度 (>= MIN_SIGNATURE_LENGTH)，且 Base64 解码后首字节为 Protobuf Tag 2 (0x12)
-///    (单层 Base64 通常以 'E' 开头，双层 Base64 包装通常以 'R' 开头)
-pub fn is_likely_gemini_signature(sig: &str) -> bool {
-    if sig == SENTINEL_SIGNATURE {
-        return true;
-    }
-    if sig.len() < MIN_SIGNATURE_LENGTH {
-        return false;
-    }
-    if !sig.starts_with('E') && !sig.starts_with('R') {
-        return false;
-    }
-    use base64::Engine;
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(sig) {
-        if decoded.first() == Some(&0x12) {
-            return true;
-        }
-        // 双层 Base64 包装支持（Google Vertex AI 格式）
-        if let Ok(s) = std::str::from_utf8(&decoded) {
-            if s.starts_with('E') {
-                if let Ok(inner) = base64::engine::general_purpose::STANDARD.decode(s) {
-                    if inner.first() == Some(&0x12) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
-}
+pub const MIN_SIGNATURE_LENGTH: usize = 32;
+pub const SENTINEL_SIGNATURE: &str = crate::proxy::thinking_store::SENTINEL_SIGNATURE;
+pub use crate::proxy::thinking_store::is_likely_gemini_signature;
 
 #[derive(Debug, Default)]
 pub struct ConversationState {
@@ -146,10 +114,13 @@ pub fn close_tool_loop_for_thinking(messages: &mut Vec<Message>) {
                     } = block
                     {
                         if !thinking.is_empty()
-                            && signature
-                                .as_ref()
-                                .map(|s| s.len() >= MIN_SIGNATURE_LENGTH)
-                                .unwrap_or(false)
+                            && (signature.is_none()
+                                || signature
+                                    .as_ref()
+                                    .map(|s| {
+                                        s.len() >= MIN_SIGNATURE_LENGTH || s == SENTINEL_SIGNATURE
+                                    })
+                                    .unwrap_or(true))
                         {
                             has_valid_thinking = true;
                             break;
@@ -258,7 +229,7 @@ pub fn filter_invalid_thinking_blocks_with_family(
                                     stripped_count += 1;
                                 }
                             } else if target_lc.contains("gemini")
-                                && !is_likely_gemini_signature(s)
+                                && !crate::proxy::thinking_store::is_likely_gemini_signature(s)
                             {
                                 warn!(
                                     "[Thinking-Sanitizer] Dropping unknown non-Gemini signature (len: {}) for target '{}'",

@@ -39,7 +39,15 @@ where
 
     // 1. 收集所有 SSE 事件
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| format!("Stream error: {}", e))?;
+        let chunk = chunk_result.map_err(|e| {
+            crate::proxy::mappers::error_classifier::report_stream_error(
+                "claude-collector",
+                "collect_stream_to_json",
+                &e,
+                "protocol=claude",
+            )
+            .client_message()
+        })?;
         let text = String::from_utf8_lossy(&chunk);
 
         for line in text.lines() {
@@ -147,7 +155,12 @@ where
                                 {
                                     current_thinking.push_str(thinking);
                                 }
-                                // In case signature comes in delta (less likely but possible update)
+                                // In case signature comes in thinking_delta
+                                if let Some(sig) = delta.get("signature").and_then(|v| v.as_str()) {
+                                    current_signature = Some(sig.to_string());
+                                }
+                            }
+                            "signature_delta" => {
                                 if let Some(sig) = delta.get("signature").and_then(|v| v.as_str()) {
                                     current_signature = Some(sig.to_string());
                                 }
@@ -172,7 +185,7 @@ where
                         text: current_text.clone(),
                     });
                     current_text.clear();
-                } else if !current_thinking.is_empty() {
+                } else if !current_thinking.is_empty() || current_signature.is_some() {
                     response.content.push(ContentBlock::Thinking {
                         thinking: current_thinking.clone(),
                         signature: current_signature.take(),
@@ -325,6 +338,42 @@ mod tests {
             assert_eq!(thinking, "I am thinking");
             // 验证签名是否被正确提取
             assert_eq!(signature.as_deref(), Some("sig_123456"));
+        } else {
+            panic!("Expected Thinking block");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_collect_thinking_response_with_signature_delta() {
+        // 模拟 Anthropic 官方标准的 signature_delta 独立增量事件流
+        let sse_data = vec![
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_think\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-3-7-sonnet\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Detailed thinking...\"}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig_from_signature_delta_123\"}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":10}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        ];
+
+        let byte_stream = stream::iter(
+            sse_data
+                .into_iter()
+                .map(|s| Ok::<Bytes, io::Error>(Bytes::from(s))),
+        );
+
+        let result = collect_stream_to_json(byte_stream).await;
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        if let ContentBlock::Thinking {
+            thinking,
+            signature,
+            ..
+        } = &response.content[0]
+        {
+            assert_eq!(thinking, "Detailed thinking...");
+            assert_eq!(signature.as_deref(), Some("sig_from_signature_delta_123"));
         } else {
             panic!("Expected Thinking block");
         }

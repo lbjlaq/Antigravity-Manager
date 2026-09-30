@@ -2,6 +2,9 @@
 logs
 .logs
 *.log
+*.log.txt
+run_logs.txt
+log.txt
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -15,8 +18,6 @@ dist-ssr
 dist
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
 .idea
 .DS_Store
 *.suo
@@ -33,12 +34,15 @@ src-tauri/.env
 # Environment
 .env
 .env.*
+!.env.example
+!*.env.example
+!**/.env.example
 environment/
 
 # Python virtual environments and test files
 .venv*/
 venv/
-# *.py
+test_*.py
 __pycache__/
 *.pyc
 
@@ -49,5 +53,20 @@ scripts/_*.json
 scripts/dump_quota_raw.py
 scripts/dump_full.py
 scripts/probe_weekly.py
-scripts/probe_quota_summary.pyDOCKER_DEPLOYMENT.md
+scripts/probe_quota_summary.py
 pnpm-lock.yaml
+
+# Dot-directories: ignore all hidden directories, but keep .github (CI/CD workflows)
+.*/
+!.github/
+
+# Traffic dumps & Temporary analysis reports (prevent pushing to GitHub)
+flows*
+docs/GEMINI_3.8_THOUGHT_SIGNATURE_ANALYSIS.md
+docs/THOUGHT_SIGNATURE_IMPL_COMPARISON.md
+docs/FLOWS4_MULTIMODEL_ANALYSIS.md
+docs/FLOWS5_COMPACTION_ANALYSIS.md
+docs/CODEBASE_ALIGNMENT_ANALYSIS.md
+
+# Captured payload samples (contain real thought signatures — never push)
+testJson/

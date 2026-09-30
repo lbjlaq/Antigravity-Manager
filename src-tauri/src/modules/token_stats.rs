@@ -134,6 +134,16 @@ pub fn init_db() -> Result<(), String> {
     )
     .map_err(|e| e.to_string())?;
 
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_account_timestamp ON token_usage (account_email, timestamp DESC)",
+        [],
+    );
+
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_model ON token_usage (model)",
+        [],
+    );
+
     // Create hourly aggregation table for fast queries
     conn.execute(
         "CREATE TABLE IF NOT EXISTS token_stats_hourly (
@@ -149,6 +159,11 @@ pub fn init_db() -> Result<(), String> {
         [],
     )
     .map_err(|e| e.to_string())?;
+
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hourly_account ON token_stats_hourly (account_email, hour_bucket)",
+        [],
+    );
 
     add_column_if_missing(
         &conn,
@@ -254,6 +269,67 @@ pub fn record_usage(
         params![hour_bucket, account_email, input_tokens, output_tokens, cached_tokens, total_tokens],
     ).map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+/// Attach current weekly usage without loading raw history or persisting derived totals.
+pub(crate) fn populate_weekly_usage(accounts: &mut [crate::models::Account]) -> Result<(), String> {
+    if !accounts.iter().any(|account| {
+        account
+            .quota
+            .as_ref()
+            .is_some_and(|q| q.quota_groups.is_some())
+    }) {
+        return Ok(());
+    }
+    let conn = connect_db()?;
+    populate_weekly_usage_with_conn(&conn, accounts, chrono::Utc::now().timestamp())
+}
+
+fn populate_weekly_usage_with_conn(
+    conn: &Connection,
+    accounts: &mut [crate::models::Account],
+    now: i64,
+) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM token_usage
+         WHERE account_email = ?1 AND timestamp >= ?2 AND timestamp < ?3 AND timestamp <= ?4
+         AND ((?5 = 0 AND model LIKE 'gemini%')
+           OR (?5 = 1 AND (model LIKE 'claude%' OR model LIKE 'gpt%')))",
+        )
+        .map_err(|e| e.to_string())?;
+    for account in accounts {
+        let Some(groups) = account
+            .quota
+            .as_mut()
+            .and_then(|quota| quota.quota_groups.as_mut())
+        else {
+            continue;
+        };
+        for group in groups {
+            let name = group.display_name.to_lowercase();
+            for bucket in &mut group.buckets {
+                bucket.cycle_tokens = None;
+                let Some((start, end)) = bucket.weekly_cycle_bounds(now) else {
+                    continue;
+                };
+                let id = bucket.bucket_id.to_lowercase();
+                let third_party =
+                    name.contains("claude") || name.contains("gpt") || id.contains("3p");
+                if !third_party && !name.contains("gemini") && !id.contains("gemini") {
+                    continue;
+                }
+                bucket.cycle_tokens = Some(
+                    stmt.query_row(
+                        params![account.email, start, end, now, third_party],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| e.to_string())?,
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -889,6 +965,150 @@ pub fn get_today_usage_summary() -> Result<TodayUsageSummary, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn weekly_snapshot(observed: i64, reset: i64, fraction: f64) -> crate::models::QuotaData {
+        let iso = |seconds| {
+            chrono::DateTime::from_timestamp(seconds, 0)
+                .unwrap()
+                .to_rfc3339()
+        };
+        serde_json::from_value(serde_json::json!({
+            "models": [], "last_updated": observed,
+            "quota_groups": [
+                {"display_name": "Gemini Models", "buckets": [
+                    {"bucket_id": "gemini-weekly", "window": "weekly", "remaining_fraction": fraction,
+                     "reset_time": iso(reset), "observed_at": observed * 1000},
+                    {"bucket_id": "gemini-5h", "window": "5h", "remaining_fraction": 1,
+                     "reset_time": iso(reset), "observed_at": observed * 1000}
+                ]},
+                {"display_name": "Claude and GPT models", "buckets": [
+                    {"bucket_id": "3p-weekly", "window": "weekly", "remaining_fraction": 0.5,
+                     "reset_time": iso(reset + 100), "observed_at": observed * 1000}
+                ]}
+            ]
+        })).unwrap()
+    }
+
+    #[test]
+    fn weekly_usage_tracks_accounts_groups_and_official_reset_cycles() {
+        let now = 1_700_000_000;
+        let reset = now + 100;
+        let start = reset - 7 * 86400;
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE token_usage (timestamp INTEGER, account_email TEXT,
+            model TEXT, input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER);",
+        )
+        .unwrap();
+        for (email, model, timestamp, input, output) in [
+            ("a", "gemini-pro", start - 1, 900, 0),
+            ("a", "gemini-pro", start, 11, 2),
+            ("a", "claude-sonnet", start, 900, 0),
+            ("a", "claude-sonnet", start + 100, 20, 0),
+            ("a", "gpt-oss", now, 30, 0),
+            ("a", "custom-alias", now, 900, 0),
+            ("b", "gemini-pro", start - 51, 900, 0),
+            ("b", "gemini-pro", start - 50, 7, 3),
+            ("b", "gemini-pro", now, 900, 0),
+            ("a", "gemini-pro", reset, 40, 0),
+        ] {
+            conn.execute(
+                "INSERT INTO token_usage VALUES (?1, ?2, ?3, ?4, ?5, 99)",
+                params![timestamp, email, model, input, output],
+            )
+            .unwrap();
+        }
+        let mut accounts: Vec<_> = [("a", reset), ("b", reset - 50)]
+            .into_iter()
+            .map(|(email, account_reset)| {
+                let token = crate::models::TokenData::new(
+                    String::new(),
+                    String::new(),
+                    0,
+                    None,
+                    None,
+                    None,
+                    false,
+                    None,
+                );
+                let mut account = crate::models::Account::new(email.into(), email.into(), token);
+                account.update_quota(weekly_snapshot(now, account_reset, 0.0));
+                account
+            })
+            .collect();
+        let buckets = |account: &crate::models::Account| {
+            account
+                .quota
+                .as_ref()
+                .unwrap()
+                .quota_groups
+                .as_ref()
+                .unwrap()
+                .iter()
+                .flat_map(|group| group.buckets.iter().map(|bucket| bucket.cycle_tokens))
+                .collect::<Vec<_>>()
+        };
+        populate_weekly_usage_with_conn(&conn, &mut accounts, now).unwrap();
+        assert_eq!(buckets(&accounts[0]), vec![Some(13), None, Some(50)]);
+        assert_eq!(buckets(&accounts[1]), vec![Some(910), None, Some(0)]);
+
+        // Legacy persisted boundaries are ignored and omitted on the next serialization.
+        let mut legacy = serde_json::to_value(&accounts[0]).unwrap();
+        legacy["quota"]["quota_groups"][0]["buckets"][0]["cycle_start"] = now.into();
+        accounts[0] = serde_json::from_value(legacy).unwrap();
+        assert!(
+            serde_json::to_value(&accounts[0]).unwrap()["quota"]["quota_groups"][0]["buckets"][0]
+                .get("cycle_start")
+                .is_none()
+        );
+        populate_weekly_usage_with_conn(&conn, &mut accounts, now).unwrap();
+        assert_eq!(buckets(&accounts[0]), vec![Some(13), None, Some(50)]);
+
+        // Small and large replenishments, refreshes and reloads keep the official interval.
+        for (offset, fraction) in [(1, 0.000001), (2, 1.0), (3, 0.9)] {
+            accounts[0].update_quota(weekly_snapshot(now + offset, reset, fraction));
+            accounts[0] =
+                serde_json::from_value(serde_json::to_value(&accounts[0]).unwrap()).unwrap();
+            populate_weekly_usage_with_conn(&conn, &mut accounts, now + offset).unwrap();
+            assert_eq!(buckets(&accounts[0]), vec![Some(13), None, Some(50)]);
+            assert_eq!(buckets(&accounts[1]), vec![Some(910), None, Some(0)]);
+        }
+        // An older positive observation cannot move the boundary.
+        accounts[0].update_quota(weekly_snapshot(now, reset + 10, 1.0));
+        populate_weekly_usage_with_conn(&conn, &mut accounts, now + 3).unwrap();
+        assert_eq!(buckets(&accounts[0]), vec![Some(13), None, Some(50)]);
+
+        // A new official reset switches cycles and includes its exact new start.
+        accounts[0].update_quota(weekly_snapshot(reset, reset + 7 * 86400, 1.0));
+        populate_weekly_usage_with_conn(&conn, &mut accounts, reset).unwrap();
+        assert_eq!(buckets(&accounts[0]), vec![Some(40), None, None]);
+        let first = &accounts[0]
+            .quota
+            .as_ref()
+            .unwrap()
+            .quota_groups
+            .as_ref()
+            .unwrap()[0]
+            .buckets[0];
+        assert_eq!(
+            first.weekly_cycle_bounds(reset),
+            Some((reset, reset + 7 * 86400))
+        );
+
+        // Invalid and expired periods are unavailable, never fabricated zero totals.
+        accounts[0]
+            .quota
+            .as_mut()
+            .unwrap()
+            .quota_groups
+            .as_mut()
+            .unwrap()[0]
+            .buckets[0]
+            .reset_time = "invalid".into();
+        populate_weekly_usage_with_conn(&conn, &mut accounts, reset + 101).unwrap();
+        assert_eq!(buckets(&accounts[0]), vec![None, None, Some(0)]);
+        assert_eq!(buckets(&accounts[1]), vec![None, None, None]);
+    }
 
     #[test]
     fn test_record_and_query() {

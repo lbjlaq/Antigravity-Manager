@@ -2,6 +2,25 @@ use super::{quota::QuotaData, token::TokenData};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+pub(crate) fn default_priority() -> u8 {
+    50
+}
+
+pub(crate) fn validate_priority(priority: u8) -> Result<(), String> {
+    if !(1..=100).contains(&priority) {
+        return Err("priority must be an integer between 1 and 100".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) fn deserialize_priority<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<u8, D::Error> {
+    let priority = u8::deserialize(deserializer)?;
+    validate_priority(priority).map_err(serde::de::Error::custom)?;
+    Ok(priority)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveLimitStatus {
     pub model: String,
@@ -19,6 +38,12 @@ pub struct Account {
     pub id: String,
     pub email: String,
     pub name: Option<String>,
+    /// Lower values are selected first when assigning a new proxy account.
+    #[serde(
+        default = "default_priority",
+        deserialize_with = "deserialize_priority"
+    )]
+    pub priority: u8,
     pub token: TokenData,
     /// 可选的设备指纹，用于切换账号时固定机器信息
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,6 +108,7 @@ impl Account {
             id,
             email,
             name: None,
+            priority: default_priority(),
             token,
             device_profile: None,
             device_history: Vec::new(),
@@ -112,11 +138,50 @@ impl Account {
     }
 
     pub fn update_quota(&mut self, mut quota: QuotaData) {
-        if let Some(ref existing) = self.quota {
-            if quota.subscription_tier.is_none() {
+        // A failed/partial summary is not evidence that a previously observed bucket recovered.
+        if let Some(existing) = &self.quota {
+            if let Some(old_groups) = &existing.quota_groups {
+                let groups = quota.quota_groups.get_or_insert_with(Vec::new);
+                for old_group in old_groups {
+                    let index = groups
+                        .iter()
+                        .position(|g| g.display_name == old_group.display_name)
+                        .unwrap_or_else(|| {
+                            groups.push(crate::models::quota::QuotaGroup {
+                                buckets: Vec::new(),
+                                ..old_group.clone()
+                            });
+                            groups.len() - 1
+                        });
+                    for old_bucket in &old_group.buckets {
+                        let mut previous = old_bucket.clone();
+                        let observed_at = *previous
+                            .observed_at
+                            .get_or_insert(existing.last_updated.saturating_mul(1000));
+                        if let Some(current) = groups[index]
+                            .buckets
+                            .iter_mut()
+                            .find(|b| b.bucket_id == previous.bucket_id)
+                        {
+                            let current_observed_at = current
+                                .observed_at
+                                .unwrap_or(quota.last_updated.saturating_mul(1000));
+                            if current_observed_at <= observed_at {
+                                *current = previous;
+                            }
+                        } else {
+                            groups[index].buckets.push(previous);
+                        }
+                    }
+                }
+            }
+        }
+        if quota.subscription_tier.is_none() {
+            if let Some(ref existing) = self.quota {
                 quota.subscription_tier = existing.subscription_tier.clone();
             }
         }
+        quota.ensure_subscription_tier();
         self.quota = Some(quota);
     }
 }
@@ -196,4 +261,63 @@ pub struct AccountExportItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountExportResponse {
     pub accounts: Vec<AccountExportItem>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_priority_defaults_and_rejects_invalid_values() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let account = Account::new("test".into(), "test@test.invalid".into(), token);
+        assert_eq!(account.priority, 50);
+        let mut json = serde_json::to_value(account).unwrap();
+        json.as_object_mut().unwrap().remove("priority");
+        assert_eq!(
+            serde_json::from_value::<Account>(json.clone())
+                .unwrap()
+                .priority,
+            50
+        );
+        for priority in [1, 100] {
+            json["priority"] = serde_json::json!(priority);
+            assert_eq!(
+                serde_json::from_value::<Account>(json.clone())
+                    .unwrap()
+                    .priority,
+                priority
+            );
+        }
+        for value in [
+            serde_json::json!(0),
+            serde_json::json!(101),
+            serde_json::json!(-1),
+            serde_json::json!(1.5),
+            serde_json::json!("50"),
+            serde_json::Value::Null,
+        ] {
+            json["priority"] = value;
+            assert!(serde_json::from_value::<Account>(json.clone()).is_err());
+        }
+        assert!(
+            crate::modules::account::update_account_priority("missing", 0)
+                .unwrap_err()
+                .contains("priority")
+        );
+        assert!(
+            crate::modules::account::update_account_priority("missing", 101)
+                .unwrap_err()
+                .contains("priority")
+        );
+    }
 }

@@ -14,7 +14,11 @@ pub async fn service_status_middleware(
     let path = request.uri().path();
 
     // Always allow Admin API, internal endpoints and Auth callback
-    if path.starts_with("/api/") || path.starts_with("/internal/") || path == "/auth/callback" || path == "/health" {
+    if path.starts_with("/api/")
+        || path.starts_with("/internal/")
+        || path == "/auth/callback"
+        || path == "/health"
+    {
         return next.run(request).await;
     }
 

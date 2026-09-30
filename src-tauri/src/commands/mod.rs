@@ -251,6 +251,8 @@ pub async fn fetch_account_quota(
     modules::update_account_quota(&account_id, quota.clone())
         .map_err(crate::error::AppError::Account)?;
 
+    quota.ensure_subscription_tier();
+
     crate::modules::tray::update_tray_menus(&app);
 
     // 5. 同步到运行中的反代服务（如果已启动）
@@ -406,17 +408,61 @@ pub async fn load_config() -> Result<AppConfig, String> {
     modules::load_app_config()
 }
 
+/// 兼容别名：获取配置 (load_config)
+#[tauri::command]
+pub async fn get_config() -> Result<AppConfig, String> {
+    load_config().await
+}
+
 /// 保存配置
 #[tauri::command]
 pub async fn save_config(
     app: tauri::AppHandle,
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
-    config: AppConfig,
+    mut config: AppConfig,
 ) -> Result<(), String> {
+    // 确保保存的 User-Agent 满足最低版本要求 (>= 4.3.0) 避免上游拒绝
+    if let Some(ref ua) = config.proxy.user_agent_override {
+        config.proxy.user_agent_override = Some(crate::constants::sanitize_egress_user_agent(ua));
+    }
+    if let Some(ref ua) = config.proxy.saved_user_agent {
+        config.proxy.saved_user_agent = Some(crate::constants::sanitize_egress_user_agent(ua));
+    }
+
     modules::save_app_config(&config)?;
+
+    crate::modules::logger::set_internal_error_log_budget_bytes(
+        config.proxy.internal_error_log_retention.budget_bytes(),
+    );
+    if let Err(e) =
+        tokio::task::spawn_blocking(crate::modules::logger::apply_internal_error_log_retention)
+            .await
+            .map_err(|e| e.to_string())?
+    {
+        tracing::warn!("Failed to apply internal error log retention: {}", e);
+    }
 
     // 通知托盘配置已更新
     let _ = app.emit("config://updated", ());
+
+    // 同步全局内存配置（无论反代服务当前是否处于运行状态）
+    crate::proxy::update_thinking_budget_config(config.proxy.thinking_budget.clone());
+    crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
+    crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
+    crate::proxy::update_multimodal_config(config.proxy.multimodal.clone());
+    crate::proxy::config::update_global_audit_config(
+        config.proxy.experimental.payload_storage_mode.clone(),
+        config.proxy.experimental.log_retention_days,
+        config.proxy.experimental.thinking_store_enabled,
+        config.proxy.experimental.thinking_retention_days,
+        Some(config.proxy.experimental.thinking_max_memory_turns),
+    );
+
+    // 同步健康检查日志捕获开关
+    let monitor_lock = proxy_state.monitor.read().await;
+    if let Some(monitor) = monitor_lock.as_ref() {
+        monitor.set_capture_health_logs(config.proxy.capture_health_logs);
+    }
 
     // 热更新正在运行的服务
     let instance_lock = proxy_state.instance.read().await;
@@ -435,8 +481,6 @@ pub async fn save_config(
             .await;
         // 更新安全策略 (auth)
         instance.axum_server.update_security(&config.proxy).await;
-        // 更新 z.ai 配置
-        instance.axum_server.update_zai(&config.proxy).await;
         // 更新实验性配置
         instance
             .axum_server
@@ -455,15 +499,13 @@ pub async fn save_config(
         crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
         // [NEW] 更新全局图像思维模式配置
         crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
-        // [NEW] 更新全局压缩等级配置
-        crate::proxy::config::update_global_compression_level(
-            config.proxy.experimental.compression_level.clone(),
-            config.proxy.experimental.enable_usage_scaling,
-        );
-        crate::proxy::config::update_global_thresholds(
-            config.proxy.experimental.context_compression_threshold_l1,
-            config.proxy.experimental.context_compression_threshold_l2,
-            config.proxy.experimental.context_compression_threshold_l3,
+        crate::proxy::update_multimodal_config(config.proxy.multimodal.clone());
+        crate::proxy::config::update_global_audit_config(
+            config.proxy.experimental.payload_storage_mode.clone(),
+            config.proxy.experimental.log_retention_days,
+            config.proxy.experimental.thinking_store_enabled,
+            config.proxy.experimental.thinking_retention_days,
+            Some(config.proxy.experimental.thinking_max_memory_turns),
         );
         // 更新代理池配置
         instance
@@ -850,12 +892,146 @@ pub async fn open_data_folder() -> Result<(), String> {
 #[tauri::command]
 pub async fn get_data_dir_path() -> Result<String, String> {
     let path = modules::account::get_data_dir()?;
-    Ok(path.to_string_lossy().to_string())
+    Ok(modules::account::format_data_dir_path(&path))
 }
 
-/// 显示主窗口
+/// 内部失败日志当日文件路径（按天滚动 + 容量滑动窗口）
+#[tauri::command]
+pub async fn get_internal_error_log_path() -> Result<String, String> {
+    let path = modules::logger::internal_error_log_path()?;
+    Ok(modules::account::format_data_dir_path(&path))
+}
+
+/// 内部失败日志当前占用字节数（error.log*）
+#[tauri::command]
+pub async fn get_internal_error_log_disk_size() -> Result<u64, String> {
+    tokio::task::spawn_blocking(modules::logger::internal_error_log_disk_size)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 选择并迁移数据目录（指针写在家目录，删除旧目录后下次启动仍能找到）
+#[tauri::command]
+pub async fn set_data_dir(
+    path: String,
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+    cf_state: tauri::State<'_, crate::commands::cloudflared::CloudflaredState>,
+) -> Result<String, String> {
+    {
+        let instance = proxy_state.instance.read().await;
+        if instance.is_some() {
+            return Err("请先停止 API 反代服务，再迁移数据目录".to_string());
+        }
+    }
+    {
+        let lock = cf_state.manager.read().await;
+        if let Some(manager) = lock.as_ref() {
+            let status = manager.get_status().await;
+            if status.running {
+                return Err("请先停止 Cloudflared 隧道，再迁移数据目录".to_string());
+            }
+        }
+    }
+
+    let new_path = tokio::task::spawn_blocking(move || {
+        modules::account::migrate_data_dir(PathBuf::from(path))
+    })
+    .await
+    .map_err(|e| format!("迁移任务失败: {}", e))??;
+
+    {
+        let mut lock = cf_state.manager.write().await;
+        *lock = None;
+    }
+
+    Ok(modules::account::format_data_dir_path(&new_path))
+}
+
+/// 递归复制目录内容
+fn copy_dir_all_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ty = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_all_recursive(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(entry.path(), dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// 迁移全量数据目录到新路径
+#[tauri::command]
+pub async fn migrate_data_dir(new_path: String, clean_source: bool) -> Result<(), String> {
+    let source_dir = modules::account::get_data_dir()?;
+    let target_dir = std::path::PathBuf::from(new_path.trim());
+
+    if target_dir.as_os_str().is_empty() {
+        return Err("目标目录路径不能为空".to_string());
+    }
+
+    // 规范化路径以防比较失误
+    let canonical_source =
+        std::fs::canonicalize(&source_dir).unwrap_or_else(|_| source_dir.clone());
+    let canonical_target = if target_dir.exists() {
+        std::fs::canonicalize(&target_dir).unwrap_or_else(|_| target_dir.clone())
+    } else {
+        target_dir.clone()
+    };
+
+    if canonical_source == canonical_target {
+        return Err("目标目录不能与当前数据目录相同".to_string());
+    }
+
+    // 检查是否将源目录嵌套复制到自身子目录
+    if canonical_target.starts_with(&canonical_source) {
+        return Err("目标目录不能位于当前数据目录内部".to_string());
+    }
+
+    // 确保目标目录存在
+    std::fs::create_dir_all(&target_dir).map_err(|e| format!("创建目标目录失败: {}", e))?;
+
+    // 执行递归全量复制
+    copy_dir_all_recursive(&source_dir, &target_dir)
+        .map_err(|e| format!("复制数据到新目录失败: {}", e))?;
+
+    // 写入持久化自举指针文件
+    if let Some(pointer_file) = modules::account::get_data_dir_pointer_file() {
+        if let Some(parent) = pointer_file.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&pointer_file, target_dir.to_string_lossy().trim())
+            .map_err(|e| format!("保存数据目录配置失败: {}", e))?;
+    } else {
+        return Err("无法获取系统配置目录以保存数据指针".to_string());
+    }
+
+    // 若用户选择清理原目录，且原目录不是根目录/系统关键目录
+    if clean_source && source_dir.exists() {
+        // 安全检查：确保 source_dir 的文件名是 .antigravity_tools 或存在 accounts.json
+        let has_accounts = source_dir.join("accounts.json").exists();
+        let is_default_name =
+            source_dir.file_name().and_then(|n| n.to_str()) == Some(".antigravity_tools");
+        if has_accounts || is_default_name {
+            if let Err(e) = std::fs::remove_dir_all(&source_dir) {
+                tracing::warn!("迁移后清理原数据目录失败 (可能部分文件被占用): {}", e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 显示主窗口。登录项的免打扰启动只跳过这一次自动显示。
 #[tauri::command]
 pub async fn show_main_window(window: tauri::Window) -> Result<(), String> {
+    if crate::modules::startup_quiet::take() {
+        tracing::info!("Skipped the automatic first window show for a quiet login launch");
+        return Ok(());
+    }
     window.show().map_err(|e| e.to_string())
 }
 
@@ -927,11 +1103,110 @@ pub async fn get_antigravity_args() -> Result<Vec<String>, String> {
 /// 检测更新响应结构
 pub use crate::modules::update_checker::UpdateInfo;
 
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeUpdateMetadata {
+    pub rid: tauri::ResourceId,
+    pub current_version: String,
+    pub version: String,
+    pub date: Option<String>,
+    pub body: Option<String>,
+    pub raw_json: serde_json::Value,
+}
+
 /// 检测 GitHub releases 更新
 #[tauri::command]
 pub async fn check_for_updates() -> Result<UpdateInfo, String> {
     modules::logger::log_info("收到前端触发的更新检查请求");
     crate::modules::update_checker::check_for_updates().await
+}
+
+/// 基于动态通道和端点进行原生更新检查，支持预发布版 (Beta) 与正式版自动更新分离
+#[tauri::command]
+pub async fn check_native_update<R: tauri::Runtime>(
+    webview: tauri::Webview<R>,
+    endpoint: Option<String>,
+    proxy: Option<String>,
+) -> Result<Option<NativeUpdateMetadata>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    use url::Url;
+
+    let target_endpoint = if let Some(ep) = endpoint.filter(|s| !s.trim().is_empty()) {
+        ep
+    } else {
+        let settings = crate::modules::update_checker::load_update_settings().unwrap_or_default();
+        match settings.update_channel {
+            crate::modules::update_checker::UpdateChannel::Beta => {
+                crate::modules::update_checker::PREVIEW_UPDATER_JSON_URL.to_string()
+            }
+            crate::modules::update_checker::UpdateChannel::Stable => {
+                crate::modules::update_checker::STABLE_UPDATER_JSON_URL.to_string()
+            }
+        }
+    };
+
+    crate::modules::logger::log_info(&format!("原生更新器准备检查目标地址: {}", target_endpoint));
+
+    let mut builder = webview.updater_builder();
+
+    let url = Url::parse(&target_endpoint)
+        .map_err(|e| format!("无效的更新地址 '{}': {}", target_endpoint, e))?;
+    builder = builder.endpoints(vec![url]).map_err(|e| e.to_string())?;
+
+    let proxy_url = proxy.or_else(crate::modules::update_checker::get_upstream_proxy_url);
+    if let Some(proxy_str) = proxy_url {
+        if let Ok(proxy_parsed) = Url::parse(&proxy_str) {
+            crate::modules::logger::log_info(&format!("原生更新器应用代理配置: {}", proxy_str));
+            builder = builder.proxy(proxy_parsed);
+        }
+    }
+
+    builder = builder.version_comparator(|current, release| {
+        crate::modules::update_checker::compare_versions(
+            &release.version.to_string(),
+            &current.to_string(),
+        )
+    });
+
+    let updater = builder.build().map_err(|e| {
+        let msg = format!("构建原生更新器失败: {}", e);
+        crate::modules::logger::log_error(&msg);
+        msg
+    })?;
+
+    let update = updater.check().await.map_err(|e| {
+        let msg = format!("原生更新器检查失败: {}", e);
+        crate::modules::logger::log_error(&msg);
+        msg
+    })?;
+
+    if let Some(update) = update {
+        crate::modules::logger::log_info(&format!(
+            "原生更新器发现可用更新: {} (当前版本: {})",
+            update.version, update.current_version
+        ));
+        let current_version = update.current_version.clone();
+        let version = update.version.clone();
+        let body = update.body.clone();
+        let raw_json = update.raw_json.clone();
+        let formatted_date = update.date.and_then(|date| {
+            date.format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        });
+        let rid = webview.resources_table().add(update);
+        let metadata = NativeUpdateMetadata {
+            rid,
+            current_version,
+            version,
+            date: formatted_date,
+            body,
+            raw_json,
+        };
+        Ok(Some(metadata))
+    } else {
+        crate::modules::logger::log_info("原生更新器未检测到更新");
+        Ok(None)
+    }
 }
 
 #[tauri::command]
@@ -1083,6 +1358,22 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 #[tauri::command]
 pub async fn warm_up_account(account_id: String) -> Result<String, String> {
     modules::quota::warm_up_account(&account_id).await
+}
+
+/// Save account priority and apply it to the running proxy.
+#[tauri::command]
+pub async fn update_account_priority(
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+    account_id: String,
+    priority: u8,
+) -> Result<(), String> {
+    modules::account::update_account_priority(&account_id, priority)?;
+    if let Some(instance) = proxy_state.instance.read().await.as_ref() {
+        instance
+            .token_manager
+            .update_account_priority(&account_id, priority);
+    }
+    Ok(())
 }
 
 /// 更新账号自定义标签

@@ -1,50 +1,79 @@
 {
     "models": {
-        "gemini-2.0-flash": {
+        "gemini-2.5-flash": {
             "max_output_tokens": 65535,
             "thinking_budget": 24576,
             "is_thinking": false
         },
-        "gemini-2.5-flash": {
-            "max_output_tokens": 65535,
-            "thinking_budget": 32768,
+        "gemini-3.5-flash": {
+            "max_output_tokens": 65536,
+            "thinking_budget": 4000,
             "is_thinking": true
         },
-        "gemini-3-flash": {
+        "gemini-3.6-flash": {
+            "max_output_tokens": 65536,
+            "thinking_budget": 4000,
+            "is_thinking": true
+        },
+        "gemini-3.7-flash": {
             "max_output_tokens": 65536,
             "thinking_budget": 32768,
             "is_thinking": true
         },
-        "gemini-3-pro-high": {
+        "gemini-3.8-flash": {
             "max_output_tokens": 65536,
-            "thinking_budget": 49152,
+            "thinking_budget": 32768,
             "is_thinking": true
         },
-        "gemini-3.1-pro-preview": {
+        "gemini-3.1-pro-high": {
             "max_output_tokens": 65536,
-            "thinking_budget": 49152,
+            "thinking_budget": 10001,
+            "is_thinking": true
+        },
+        "gemini-3.1-pro-low": {
+            "max_output_tokens": 65536,
+            "thinking_budget": 1001,
+            "is_thinking": true
+        },
+        "gemini-2.5-pro": {
+            "max_output_tokens": 65536,
+            "thinking_budget": 1024,
             "is_thinking": true
         },
         "claude-sonnet-4-6": {
             "max_output_tokens": 64000,
-            "thinking_budget": 32768,
+            "thinking_budget": 1024,
             "is_thinking": true
         },
         "claude-opus-4-6-thinking": {
             "max_output_tokens": 64000,
-            "thinking_budget": 32768,
+            "thinking_budget": 1024,
             "is_thinking": true
         },
         "gpt-oss-120b-medium": {
             "max_output_tokens": 32768,
-            "thinking_budget": 0,
-            "is_thinking": false
+            "thinking_budget": 8192,
+            "is_thinking": true
         }
     },
     "aliases": {
-        "gpt-4o": "gemini-2.5-flash",
-        "gpt-3.5-turbo": "gemini-2.0-flash-lite",
+        "gpt-4o": "gemini-3.8-flash-high",
+        "gpt-4o-mini": "gemini-3.8-flash-high",
+        "gpt-4": "gemini-3.8-flash-high",
+        "gpt-3.5-turbo": "gemini-2.5-flash",
         "claude-3-5-sonnet": "claude-sonnet-4-6",
-        "claude-3-7-sonnet": "claude-sonnet-4-6-thinking"
+        "claude-3-5-sonnet-latest": "claude-sonnet-4-6",
+        "claude-3-7-sonnet": "claude-sonnet-4-6-thinking",
+        "claude-3-7-sonnet-latest": "claude-sonnet-4-6-thinking",
+        "claude-sonnet-4-5": "claude-sonnet-4-6",
+        "claude-opus-4": "claude-opus-4-6-thinking",
+        "gemini-1.5-pro": "gemini-3.1-pro-high",
+        "gemini-2.0-pro": "gemini-3.1-pro-high",
+        "gemini-3-pro": "gemini-3.1-pro-high",
+        "gemini-3.1-pro": "gemini-3.1-pro-high",
+        "gemini-3.1-pro-preview": "gemini-3.1-pro-high",
+        "gemini-1.5-flash": "gemini-3.8-flash-high",
+        "gemini-2.0-flash": "gemini-3.8-flash-high",
+        "gemini-3-flash": "gemini-3.8-flash-high"
     }
 }

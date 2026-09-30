@@ -3,145 +3,16 @@
 
 use super::models::*;
 use super::utils::to_claude_usage;
-use serde_json::json;
 
-/// Known parameter remappings for Gemini → Claude compatibility
-/// [FIX] Gemini sometimes uses different parameter names than specified in tool schema
+/// Passthrough tool arguments for Gemini → Claude compatibility
 fn remap_function_call_args(tool_name: &str, args: &mut serde_json::Value) {
-    // [DEBUG] Always log incoming tool usage for diagnosis
+    // 纯透传协议工具参数，不进行任何字段重命名与拦截改写
     if let Some(obj) = args.as_object() {
-        tracing::debug!("[Response] Tool Call: '{}' Args: {:?}", tool_name, obj);
-    }
-
-    if let Some(obj) = args.as_object_mut() {
-        // [IMPROVED] Case-insensitive matching for tool names
-        // [IMPROVED] Case-insensitive matching for tool names
-        match tool_name.to_lowercase().as_str() {
-            "grep" | "search" | "search_code_definitions" | "search_code_snippets" => {
-                // [FIX] Gemini hallucination: maps parameter description to "description" field
-                if let Some(desc) = obj.remove("description") {
-                    if !obj.contains_key("pattern") {
-                        obj.insert("pattern".to_string(), desc);
-                        tracing::debug!("[Response] Remapped Grep: description → pattern");
-                    }
-                }
-
-                // Gemini uses "query", Claude Code expects "pattern"
-                if let Some(query) = obj.remove("query") {
-                    if !obj.contains_key("pattern") {
-                        obj.insert("pattern".to_string(), query);
-                        tracing::debug!("[Response] Remapped Grep: query → pattern");
-                    }
-                }
-
-                // [CRITICAL FIX] Claude Code uses "path" (string), NOT "paths" (array)!
-                if !obj.contains_key("path") {
-                    if let Some(paths) = obj.remove("paths") {
-                        let path_str = if let Some(arr) = paths.as_array() {
-                            arr.get(0)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(".")
-                                .to_string()
-                        } else if let Some(s) = paths.as_str() {
-                            s.to_string()
-                        } else {
-                            ".".to_string()
-                        };
-                        obj.insert("path".to_string(), serde_json::json!(path_str));
-                        tracing::debug!("[Response] Remapped Grep: paths → path(\"{}\")", path_str);
-                    } else {
-                        // Default to current directory if missing
-                        obj.insert("path".to_string(), json!("."));
-                        tracing::debug!("[Response] Added default path: \".\"");
-                    }
-                }
-
-                // Note: We keep "-n" and "output_mode" if present as they are valid in Grep schema
-            }
-            "glob" => {
-                // [FIX] Gemini hallucination: maps parameter description to "description" field
-                if let Some(desc) = obj.remove("description") {
-                    if !obj.contains_key("pattern") {
-                        obj.insert("pattern".to_string(), desc);
-                        tracing::debug!("[Response] Remapped Glob: description → pattern");
-                    }
-                }
-
-                // Gemini uses "query", Claude Code expects "pattern"
-                if let Some(query) = obj.remove("query") {
-                    if !obj.contains_key("pattern") {
-                        obj.insert("pattern".to_string(), query);
-                        tracing::debug!("[Response] Remapped Glob: query → pattern");
-                    }
-                }
-
-                // [CRITICAL FIX] Claude Code uses "path" (string), NOT "paths" (array)!
-                if !obj.contains_key("path") {
-                    if let Some(paths) = obj.remove("paths") {
-                        let path_str = if let Some(arr) = paths.as_array() {
-                            arr.get(0)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(".")
-                                .to_string()
-                        } else if let Some(s) = paths.as_str() {
-                            s.to_string()
-                        } else {
-                            ".".to_string()
-                        };
-                        obj.insert("path".to_string(), serde_json::json!(path_str));
-                        tracing::debug!("[Response] Remapped Glob: paths → path(\"{}\")", path_str);
-                    } else {
-                        // Default to current directory if missing
-                        obj.insert("path".to_string(), json!("."));
-                        tracing::debug!("[Response] Added default path: \".\"");
-                    }
-                }
-            }
-            "read" => {
-                // Gemini might use "path" vs "file_path"
-                if let Some(path) = obj.remove("path") {
-                    if !obj.contains_key("file_path") {
-                        obj.insert("file_path".to_string(), path);
-                        tracing::debug!("[Response] Remapped Read: path → file_path");
-                    }
-                }
-            }
-            "ls" => {
-                // LS tool: ensure "path" parameter exists
-                if !obj.contains_key("path") {
-                    obj.insert("path".to_string(), serde_json::json!("."));
-                    tracing::debug!("[Response] Remapped LS: default path → \".\"");
-                }
-            }
-            other => {
-                // [NEW] [Issue #785] Generic Property Mapping for all tools
-                // If a tool has "paths" (array of 1) but no "path", convert it.
-                let mut path_to_inject = None;
-                if !obj.contains_key("path") {
-                    if let Some(paths) = obj.get("paths").and_then(|v| v.as_array()) {
-                        if paths.len() == 1 {
-                            if let Some(p) = paths[0].as_str() {
-                                path_to_inject = Some(p.to_string());
-                            }
-                        }
-                    }
-                }
-
-                if let Some(path) = path_to_inject {
-                    obj.insert("path".to_string(), serde_json::json!(path));
-                    tracing::debug!(
-                        "[Response] Probabilistic fix for tool '{}': paths[0] → path(\"{}\")",
-                        other,
-                        path
-                    );
-                }
-                tracing::debug!(
-                    "[Response] Unmapped tool call processed via generic rules: {} (keys: {:?})",
-                    other,
-                    obj.keys()
-                );
-            }
-        }
+        tracing::debug!(
+            "[Response] Tool Call (Passthrough): '{}' Args: {:?}",
+            tool_name,
+            obj
+        );
     }
 }
 
@@ -233,27 +104,8 @@ impl NonStreamingProcessor {
         self.build_response(gemini_response)
     }
 
-    /// 处理单个 part
     fn process_part(&mut self, part: &GeminiPart) {
-        let signature = part.thought_signature.as_ref().map(|sig| {
-            use base64::Engine;
-            match base64::engine::general_purpose::STANDARD.decode(sig) {
-                Ok(decoded_bytes) => {
-                    match String::from_utf8(decoded_bytes) {
-                        Ok(decoded_str) => {
-                            tracing::debug!(
-                                "[Response] Decoded base64 signature (len {} -> {})",
-                                sig.len(),
-                                decoded_str.len()
-                            );
-                            decoded_str
-                        }
-                        Err(_) => sig.clone(), // Not valid UTF-8, keep as is
-                    }
-                }
-                Err(_) => sig.clone(), // Not base64, keep as is
-            }
-        });
+        let signature = part.thought_signature.clone();
 
         // [FIX #765] Cache signature in NonStreamingProcessor
         if let Some(sig) = &signature {
@@ -298,19 +150,14 @@ impl NonStreamingProcessor {
                 )
             });
 
-            let mut tool_name = fc.name.clone();
-            // [OPTIMIZED] Only rename if it's "search" which is a known hallucination.
-            // Avoid renaming "grep" to "Grep" if possible to protect signature.
-            if tool_name.to_lowercase() == "search" {
-                tool_name = "Grep".to_string();
-            }
+            let tool_name = fc.name.clone();
 
-            // [FIX] Remap args for Gemini → Claude compatibility
+            // 纯透传协议参数
             let mut args = fc.args.clone().unwrap_or(serde_json::json!({}));
             remap_function_call_args(&tool_name, &mut args);
 
             let mut tool_use = ContentBlock::ToolUse {
-                id: tool_id,
+                id: tool_id.clone(),
                 name: tool_name,
                 input: args.clone(),
                 signature: None,
@@ -319,7 +166,15 @@ impl NonStreamingProcessor {
 
             // 只使用 FC 自己的签名
             if let ContentBlock::ToolUse { signature: sig, .. } = &mut tool_use {
-                *sig = signature;
+                *sig = signature.clone();
+            }
+
+            if let (Some(sig), Some(sid)) = (signature.as_ref(), self.session_id.as_deref()) {
+                crate::proxy::SignatureCache::global().cache_tool_signature(
+                    sid,
+                    &tool_id,
+                    sig.clone(),
+                );
             }
 
             self.content_blocks.push(tool_use);

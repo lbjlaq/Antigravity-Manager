@@ -5,12 +5,31 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const GITHUB_API_URL: &str =
     "https://api.github.com/repos/lbjlaq/Antigravity-Manager/releases/latest";
+const GITHUB_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/lbjlaq/Antigravity-Manager/releases?per_page=15";
 const GITHUB_RAW_URL: &str =
     "https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/package.json";
 const JSDELIVR_URL: &str =
     "https://cdn.jsdelivr.net/gh/lbjlaq/Antigravity-Manager@main/package.json";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_CHECK_INTERVAL_HOURS: u64 = 24;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    Stable,
+    Beta,
+}
+
+impl Default for UpdateChannel {
+    fn default() -> Self {
+        if CURRENT_VERSION.contains('-') {
+            UpdateChannel::Beta
+        } else {
+            UpdateChannel::Stable
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateInfo {
@@ -22,6 +41,12 @@ pub struct UpdateInfo {
     pub published_at: String,
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub proxy_url: Option<String>,
+    #[serde(default)]
+    pub channel: Option<UpdateChannel>,
+    #[serde(default)]
+    pub updater_json_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +55,8 @@ pub struct UpdateSettings {
     pub last_check_time: u64,
     #[serde(default = "default_check_interval")]
     pub check_interval_hours: u64,
+    #[serde(default)]
+    pub update_channel: UpdateChannel,
 }
 
 fn default_check_interval() -> u64 {
@@ -42,6 +69,7 @@ impl Default for UpdateSettings {
             auto_check: true,
             last_check_time: 0,
             check_interval_hours: DEFAULT_CHECK_INTERVAL_HOURS,
+            update_channel: UpdateChannel::default(),
         }
     }
 }
@@ -50,74 +78,115 @@ impl Default for UpdateSettings {
 struct GitHubRelease {
     tag_name: String,
     html_url: String,
-    body: String,
-    published_at: String,
+    body: Option<String>,
+    published_at: Option<String>,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    assets: Vec<GitHubReleaseAsset>,
 }
 
-const UPDATER_JSON_URL: &str =
+#[derive(Debug, Deserialize)]
+struct GitHubReleaseAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+pub const STABLE_UPDATER_JSON_URL: &str =
     "https://github.com/lbjlaq/Antigravity-Manager/releases/latest/download/updater.json";
+pub const PREVIEW_UPDATER_JSON_URL: &str =
+    "https://github.com/lbjlaq/Antigravity-Manager/releases/download/preview/updater.json";
+
+pub fn get_upstream_proxy_url() -> Option<String> {
+    if let Ok(config) = crate::modules::config::load_app_config() {
+        if config.proxy.upstream_proxy.enabled && !config.proxy.upstream_proxy.url.trim().is_empty()
+        {
+            let url = config.proxy.upstream_proxy.url.trim();
+            let normalized = if !url.contains("://") {
+                format!("http://{}", url)
+            } else {
+                url.to_string()
+            };
+            return Some(normalized);
+        }
+    }
+
+    // 兜底：若未显式配置上游代理，尝试从系统环境变量获取代理 (HTTPS_PROXY / HTTP_PROXY / ALL_PROXY)
+    for env_var in &[
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    ] {
+        if let Ok(val) = std::env::var(env_var) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                let normalized = if !trimmed.contains("://") {
+                    format!("http://{}", trimmed)
+                } else {
+                    trimmed.to_string()
+                };
+                return Some(normalized);
+            }
+        }
+    }
+
+    None
+}
 
 /// Check for updates with improved strategy:
 /// 1. Check updater.json (Source of Truth for Auto-Update)
 /// 2. Fallback to GitHub API (Informational)
+/// Check for updates with improved strategy:
+/// 1. Check updater.json based on selected channel (Stable vs Beta)
+/// 2. Fallback to GitHub API (Release or Pre-release)
 pub async fn check_for_updates() -> Result<UpdateInfo, String> {
+    let settings = load_update_settings().unwrap_or_default();
+    let mut info = check_for_updates_internal(settings.update_channel).await?;
+    info.proxy_url = get_upstream_proxy_url();
+    info.channel = Some(settings.update_channel);
+    Ok(info)
+}
+
+async fn check_for_updates_internal(channel: UpdateChannel) -> Result<UpdateInfo, String> {
     // 1. Try updater.json first (Critical for functional Auto-Update)
-    match check_updater_json().await {
+    match check_updater_json_channel(channel).await {
         Ok(info) => return Ok(info),
         Err(e) => {
             logger::log_warn(&format!(
-                "updater.json check failed: {}. This might mean artifacts are not ready yet.",
-                e
+                "{:?} updater.json check failed: {}. Trying fallbacks...",
+                channel, e
             ));
-            // Don't return error immediately, try fallbacks for at least informational update
         }
     }
 
     // 2. Try GitHub API
-    match check_github_api().await {
-        Ok(info) => {
-            // If we found an update via API but updater.json failed, we should probably warn or
-            // implies that auto-update won't work yet.
-            // However, the user wants "auto-update to work". If we show "Update Available" based on API
-            // but updater.json is missing, the "Auto Update" button will fail.
-            // So, ideally, if we are in this block, we should perhaps mark it as "Manual Download Only" or similar?
-            // For now, we return it, but maybe the frontend handles "not ready".
-            // Actually, based on User Request, "Update Available" shouldn't show if it's not ready.
-            // But if we return Ok(info) here, the frontend SHOWS it.
-            // If updater.json failed, it likely means the asset isn't uploaded.
-            // So we should maybe return Ok(info) with has_update=false if checking updater.json failed?
-            // Or just log it.
-            // Let's stick to the plan: Prioritize updater.json. If that fails, we fallback.
-            // Use the fallback but maybe the user will see "Auto update failed" and use manual.
+    match check_github_api_channel(channel).await {
+        Ok(info) => return Ok(info),
+        Err(e) => {
+            logger::log_warn(&format!(
+                "GitHub API ({:?}) check failed: {}. Trying static fallbacks...",
+                channel, e
+            ));
+        }
+    }
+
+    // 3. Try GitHub Raw (only applies to stable/main)
+    if channel == UpdateChannel::Stable {
+        if let Ok(info) = check_static_url(GITHUB_RAW_URL, "GitHub Raw").await {
             return Ok(info);
         }
-        Err(e) => {
-            logger::log_warn(&format!(
-                "GitHub API check failed: {}. Trying fallbacks...",
-                e
-            ));
+        if let Ok(info) = check_static_url(JSDELIVR_URL, "jsDelivr").await {
+            return Ok(info);
         }
     }
 
-    // 3. Try GitHub Raw
-    match check_static_url(GITHUB_RAW_URL, "GitHub Raw").await {
-        Ok(info) => return Ok(info),
-        Err(e) => {
-            logger::log_warn(&format!(
-                "GitHub Raw check failed: {}. Trying next fallback...",
-                e
-            ));
-        }
-    }
-
-    // 4. Try jsDelivr
-    match check_static_url(JSDELIVR_URL, "jsDelivr").await {
-        Ok(info) => return Ok(info),
-        Err(e) => {
-            logger::log_error(&format!("All update checks failed. Last error: {}", e));
-            return Err(e);
-        }
-    }
+    Err(format!(
+        "Failed to fetch updates for {:?} channel. Please check network/proxy settings.",
+        channel
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,22 +196,74 @@ struct UpdaterJson {
     pub_date: Option<String>,
 }
 
-async fn check_updater_json() -> Result<UpdateInfo, String> {
-    let client = create_client().await?;
-    logger::log_info("Checking for updates via updater.json...");
+async fn create_client() -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent("Antigravity-Manager")
+        .timeout(std::time::Duration::from_secs(10));
 
-    let response = client
-        .get(UPDATER_JSON_URL)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "updater.json returned status: {}",
-            response.status()
+    // Load config to check for upstream proxy
+    if let Some(proxy_url) = get_upstream_proxy_url() {
+        logger::log_info(&format!(
+            "Update checker using upstream proxy: {}",
+            proxy_url
         ));
+        match reqwest::Proxy::all(&proxy_url) {
+            Ok(proxy) => {
+                builder = builder.proxy(proxy);
+            }
+            Err(e) => {
+                logger::log_warn(&format!("Failed to parse proxy URL '{}': {}", proxy_url, e));
+            }
+        }
     }
+
+    builder
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))
+}
+
+async fn check_updater_json_channel(channel: UpdateChannel) -> Result<UpdateInfo, String> {
+    let client = create_client().await?;
+    let target_url = match channel {
+        UpdateChannel::Stable => STABLE_UPDATER_JSON_URL,
+        UpdateChannel::Beta => PREVIEW_UPDATER_JSON_URL,
+    };
+
+    logger::log_info(&format!(
+        "Checking for updates via {:?} updater.json ({})...",
+        channel, target_url
+    ));
+
+    let response = client.get(target_url).send().await;
+
+    let (response, actual_url) = match response {
+        Ok(res) if res.status().is_success() => (res, target_url.to_string()),
+        other => {
+            if channel == UpdateChannel::Beta {
+                logger::log_info("Preview updater.json endpoint unavailable, checking latest prerelease assets from GitHub API...");
+                if let Ok(asset_url) = fetch_prerelease_updater_json_url(&client).await {
+                    let res = client
+                        .get(&asset_url)
+                        .send()
+                        .await
+                        .map_err(|e| format!("Request failed: {}", e))?;
+                    (res, asset_url)
+                } else {
+                    let err_msg = match other {
+                        Ok(res) => format!("status {}", res.status()),
+                        Err(e) => e.to_string(),
+                    };
+                    return Err(format!("updater.json returned {}", err_msg));
+                }
+            } else {
+                let err_msg = match other {
+                    Ok(res) => format!("status {}", res.status()),
+                    Err(e) => e.to_string(),
+                };
+                return Err(format!("updater.json returned {}", err_msg));
+            }
+        }
+    };
 
     let updater_info: UpdaterJson = response
         .json()
@@ -155,13 +276,13 @@ async fn check_updater_json() -> Result<UpdateInfo, String> {
 
     if has_update {
         logger::log_info(&format!(
-            "New version found (updater.json): {} (Current: {})",
-            latest_version, current_version
+            "New version found ({:?} updater.json): {} (Current: {})",
+            channel, latest_version, current_version
         ));
     } else {
         logger::log_info(&format!(
-            "Up to date (updater.json): {} (Matches {})",
-            current_version, latest_version
+            "Up to date ({:?} updater.json): {} (Matches {})",
+            channel, current_version, latest_version
         ));
     }
 
@@ -181,60 +302,96 @@ async fn check_updater_json() -> Result<UpdateInfo, String> {
         published_at: updater_info
             .pub_date
             .unwrap_or_else(|| Utc::now().to_rfc3339()),
-        source: Some("updater.json".to_string()),
+        source: Some(format!("{:?} updater.json", channel)),
+        proxy_url: None,
+        channel: Some(channel),
+        updater_json_url: Some(actual_url),
     })
 }
 
-async fn create_client() -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .user_agent("Antigravity-Manager")
-        .timeout(std::time::Duration::from_secs(10));
+async fn fetch_prerelease_updater_json_url(client: &reqwest::Client) -> Result<String, String> {
+    let response = client
+        .get(GITHUB_RELEASES_API_URL)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to query releases: {}", e))?;
 
-    // Load config to check for upstream proxy
-    if let Ok(config) = crate::modules::config::load_app_config() {
-        if config.proxy.upstream_proxy.enabled && !config.proxy.upstream_proxy.url.is_empty() {
-            logger::log_info(&format!(
-                "Update checker using upstream proxy: {}",
-                config.proxy.upstream_proxy.url
-            ));
-            match reqwest::Proxy::all(&config.proxy.upstream_proxy.url) {
-                Ok(proxy) => {
-                    builder = builder.proxy(proxy);
-                }
-                Err(e) => {
-                    logger::log_warn(&format!(
-                        "Failed to parse proxy URL '{}': {}",
-                        config.proxy.upstream_proxy.url, e
-                    ));
-                }
+    if !response.status().is_success() {
+        return Err(format!(
+            "Releases API returned status {}",
+            response.status()
+        ));
+    }
+
+    let releases: Vec<GitHubRelease> = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse releases: {}", e))?;
+
+    for release in releases {
+        if release.prerelease {
+            if let Some(asset) = release
+                .assets
+                .into_iter()
+                .find(|a| a.name.eq_ignore_ascii_case("updater.json"))
+            {
+                return Ok(asset.browser_download_url);
             }
         }
     }
 
-    builder
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))
+    Err("No updater.json found in latest pre-releases".to_string())
 }
 
-async fn check_github_api() -> Result<UpdateInfo, String> {
+async fn check_github_api_channel(channel: UpdateChannel) -> Result<UpdateInfo, String> {
     let client = create_client().await?;
+    logger::log_info(&format!(
+        "Checking for updates via GitHub API ({:?} channel)...",
+        channel
+    ));
 
-    logger::log_info("Checking for updates via GitHub API...");
+    let release = match channel {
+        UpdateChannel::Stable => {
+            let response = client
+                .get(GITHUB_API_URL)
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
 
-    let response = client
-        .get(GITHUB_API_URL)
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {}", e))?;
+            if !response.status().is_success() {
+                return Err(format!("GitHub API returned status: {}", response.status()));
+            }
 
-    if !response.status().is_success() {
-        return Err(format!("GitHub API returned status: {}", response.status()));
-    }
+            response
+                .json::<GitHubRelease>()
+                .await
+                .map_err(|e| format!("Failed to parse release info: {}", e))?
+        }
+        UpdateChannel::Beta => {
+            let response = client
+                .get(GITHUB_RELEASES_API_URL)
+                .send()
+                .await
+                .map_err(|e| format!("Request failed: {}", e))?;
 
-    let release: GitHubRelease = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse release info: {}", e))?;
+            if !response.status().is_success() {
+                return Err(format!("GitHub API returned status: {}", response.status()));
+            }
+
+            let releases: Vec<GitHubRelease> = response
+                .json()
+                .await
+                .map_err(|e| format!("Failed to parse releases: {}", e))?;
+
+            // 优先查找最新的 pre-release
+            let latest_pre = releases
+                .into_iter()
+                .find(|r| r.prerelease)
+                .ok_or_else(|| "No pre-release found on GitHub".to_string())?;
+
+            latest_pre
+        }
+    };
 
     let latest_version = release.tag_name.trim_start_matches('v').to_string();
     let current_version = CURRENT_VERSION.to_string();
@@ -242,13 +399,13 @@ async fn check_github_api() -> Result<UpdateInfo, String> {
 
     if has_update {
         logger::log_info(&format!(
-            "New version found (API): {} (Current: {})",
-            latest_version, current_version
+            "New version found (API {:?}): {} (Current: {})",
+            channel, latest_version, current_version
         ));
     } else {
         logger::log_info(&format!(
-            "Up to date (API): {} (Matches {})",
-            current_version, latest_version
+            "Up to date (API {:?}): {} (Matches {})",
+            channel, current_version, latest_version
         ));
     }
 
@@ -257,9 +414,17 @@ async fn check_github_api() -> Result<UpdateInfo, String> {
         latest_version,
         has_update,
         download_url: release.html_url,
-        release_notes: release.body,
-        published_at: release.published_at,
-        source: Some("GitHub API".to_string()),
+        release_notes: release.body.unwrap_or_default(),
+        published_at: release
+            .published_at
+            .unwrap_or_else(|| Utc::now().to_rfc3339()),
+        source: Some(format!("GitHub API ({:?})", channel)),
+        proxy_url: None,
+        channel: Some(channel),
+        updater_json_url: match channel {
+            UpdateChannel::Beta => Some(PREVIEW_UPDATER_JSON_URL.to_string()),
+            UpdateChannel::Stable => Some(STABLE_UPDATER_JSON_URL.to_string()),
+        },
     })
 }
 
@@ -323,29 +488,64 @@ async fn check_static_url(url: &str, source_name: &str) -> Result<UpdateInfo, St
         release_notes,
         published_at: Utc::now().to_rfc3339(), // Approximate time
         source: Some(source_name.to_string()),
+        proxy_url: None,
+        channel: Some(UpdateChannel::Stable),
+        updater_json_url: Some(STABLE_UPDATER_JSON_URL.to_string()),
     })
 }
 
-/// Compare two semantic versions (e.g., "3.3.30" vs "3.3.29")
-fn compare_versions(latest: &str, current: &str) -> bool {
-    let parse_version =
-        |v: &str| -> Vec<u32> { v.split('.').filter_map(|s| s.parse::<u32>().ok()).collect() };
+/// Compare two semantic versions (supports pre-release tags like "4.8.1-beta.2" vs "4.8.1-beta.1")
+pub fn compare_versions(latest: &str, current: &str) -> bool {
+    let parse_semver = |v: &str| -> (Vec<u32>, Option<(String, u32)>) {
+        let clean = v.trim().trim_start_matches('v');
+        if let Some((main_part, pre_part)) = clean.split_once('-') {
+            let nums: Vec<u32> = main_part
+                .split('.')
+                .filter_map(|s| s.parse::<u32>().ok())
+                .collect();
+            // 解析预发布段，如 beta.2 -> ("beta", 2)
+            let pre_info = if let Some((tag, num_str)) = pre_part.split_once('.') {
+                Some((tag.to_lowercase(), num_str.parse::<u32>().unwrap_or(0)))
+            } else {
+                Some((pre_part.to_lowercase(), 0))
+            };
+            (nums, pre_info)
+        } else {
+            let nums: Vec<u32> = clean
+                .split('.')
+                .filter_map(|s| s.parse::<u32>().ok())
+                .collect();
+            (nums, None)
+        }
+    };
 
-    let latest_parts = parse_version(latest);
-    let current_parts = parse_version(current);
+    let (latest_nums, latest_pre) = parse_semver(latest);
+    let (current_nums, current_pre) = parse_semver(current);
 
-    for i in 0..latest_parts.len().max(current_parts.len()) {
-        let latest_part = latest_parts.get(i).unwrap_or(&0);
-        let current_part = current_parts.get(i).unwrap_or(&0);
-
-        if latest_part > current_part {
+    // 1. 先比较主版本号 [major, minor, patch]
+    for i in 0..latest_nums.len().max(current_nums.len()) {
+        let l = latest_nums.get(i).copied().unwrap_or(0);
+        let c = current_nums.get(i).copied().unwrap_or(0);
+        if l > c {
             return true;
-        } else if latest_part < current_part {
-            return false; // e.g. local: 3.3.30, remote: 3.3.30 => false
+        } else if l < c {
+            return false;
         }
     }
 
-    false
+    // 2. 主版本号完全相同时，检查 pre-release (标准 SemVer 规则：无 pre-release > 有 pre-release)
+    match (latest_pre, current_pre) {
+        (None, Some(_)) => true,  // e.g. latest 4.8.1 正式版 > current 4.8.1-beta.2
+        (Some(_), None) => false, // e.g. latest 4.8.1-beta.2 < current 4.8.1 正式版
+        (Some((l_tag, l_num)), Some((c_tag, c_num))) => {
+            if l_tag != c_tag {
+                l_tag > c_tag
+            } else {
+                l_num > c_num // e.g. beta.2 > beta.1
+            }
+        }
+        (None, None) => false, // 完全相同版本
+    }
 }
 
 /// Check if enough time has passed since last check
@@ -520,6 +720,13 @@ mod tests {
         assert!(compare_versions("4.0.3", "3.3.35"));
         assert!(!compare_versions("3.3.34", "3.3.35"));
         assert!(!compare_versions("3.3.35", "3.3.35"));
+
+        // Pre-release tests
+        assert!(compare_versions("4.8.1-beta.2", "4.8.1-beta.1"));
+        assert!(!compare_versions("4.8.1-beta.1", "4.8.1-beta.2"));
+        assert!(compare_versions("4.8.1", "4.8.1-beta.2")); // 正式版 > 预发布版
+        assert!(!compare_versions("4.8.1-beta.2", "4.8.1"));
+        assert!(compare_versions("4.8.2-beta.1", "4.8.1"));
     }
 
     #[test]

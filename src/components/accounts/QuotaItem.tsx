@@ -12,16 +12,22 @@ interface QuotaItemProps {
     resetTime?: string;
     isProtected?: boolean;
     liveLimit?: LiveLimitStatus;
+    isWeeklyConstrained?: boolean;
+    weeklyResetTime?: string;
+    weeklyTokens?: number | null;
     className?: string;
     Icon?: React.ComponentType<{ size?: number; className?: string }>;
 }
 
-export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit, className, Icon }: QuotaItemProps) {
+export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit, isWeeklyConstrained, weeklyResetTime, weeklyTokens, className, Icon }: QuotaItemProps) {
     const { t } = useTranslation();
     const liveState = getLiveLimitState(liveLimit);
-    const showLiveIssue = liveState.shouldShow;
-    const liveStatus = liveLimit?.status || 'ERR';
-    const liveLimitTitle = liveLimit
+    const showLiveIssue = liveState.shouldShow || isWeeklyConstrained;
+    const isUnavailable = liveState.isActive || isWeeklyConstrained;
+    const liveStatus = isWeeklyConstrained ? t('accounts.quota_window_weekly_short', 'Weekly') : liveLimit?.status || 'ERR';
+    const liveLimitTitle = isWeeklyConstrained
+        ? `${label}: ${t('accounts.weekly_exhausted_tooltip', 'Weekly quota exhausted (0%); waiting for weekly reset')} (${weeklyResetTime ? formatTimeRemaining(weeklyResetTime) || weeklyResetTime : ''})`
+        : liveLimit
         ? [
             liveState.isActive
                 ? `Live image endpoint is temporarily unavailable for ${formatCompactDuration(liveState.secondsRemaining)}.`
@@ -62,10 +68,11 @@ export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit
     };
 
     return (
+        <div className="min-w-0">
         <div className={cn(
             "relative h-[22px] flex items-center px-1.5 rounded-md overflow-hidden border border-gray-100/50 dark:border-white/5 bg-gray-50/30 dark:bg-white/5 group/quota",
             showLiveIssue && "border-amber-400/70 dark:border-amber-500/70 bg-amber-50/80 dark:bg-amber-950/30 ring-1 ring-amber-400/30",
-            liveState.isActive && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30",
+            isUnavailable && "border-rose-400/70 dark:border-rose-500/70 bg-rose-50/80 dark:bg-rose-950/30 ring-rose-400/30",
             className
         )}
             title={showLiveIssue ? liveLimitTitle : label}
@@ -74,7 +81,7 @@ export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit
             <div
                 className={cn(
                     "absolute inset-y-0 left-0 transition-all duration-700 ease-out opacity-15 dark:opacity-20",
-                    showLiveIssue ? (liveState.isActive ? "bg-rose-500" : "bg-amber-500") : getBgColorClass(percentage)
+                    showLiveIssue ? (isUnavailable ? "bg-rose-500" : "bg-amber-500") : getBgColorClass(percentage)
                 )}
                 style={{ width: `${percentage}%` }}
             />
@@ -85,14 +92,14 @@ export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit
                 <span className={cn(
                     "flex-1 min-w-0 text-gray-500 dark:text-gray-400 font-bold truncate text-left flex items-center gap-1",
                     showLiveIssue && "text-amber-700 dark:text-amber-300",
-                    liveState.isActive && "text-rose-700 dark:text-rose-300"
+                    isUnavailable && "text-rose-700 dark:text-rose-300"
                 )} title={showLiveIssue ? liveLimitTitle : label}>
                     {showLiveIssue && (
                         <AlertTriangle
                             size={12}
                             className={cn(
                                 "shrink-0",
-                                liveState.isActive ? "text-rose-500" : "text-amber-500"
+                                isUnavailable ? "text-rose-500" : "text-amber-500"
                             )}
                         />
                     )}
@@ -115,8 +122,8 @@ export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit
                 {/* Percentage */}
                 <span className={cn(
                     "text-right font-bold transition-colors flex items-center justify-end gap-0.5 shrink-0",
-                    showLiveIssue ? "w-[58px]" : "w-[28px]",
-                    showLiveIssue ? (liveState.isActive ? "text-rose-700 dark:text-rose-300" : "text-amber-700 dark:text-amber-300") : getTextColorClass(percentage)
+                    showLiveIssue ? "min-w-[58px]" : "w-[28px]",
+                    showLiveIssue ? (isUnavailable ? "text-rose-700 dark:text-rose-300" : "text-amber-700 dark:text-amber-300") : getTextColorClass(percentage)
                 )}>
                     {isProtected && (
                         <span title={t('accounts.quota_protected')}><Lock className="w-2.5 h-2.5 text-amber-500" /></span>
@@ -125,7 +132,7 @@ export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit
                         <span
                             className={cn(
                                 "rounded px-1 py-[1px] text-[9px] leading-none",
-                                liveState.isActive
+                                isUnavailable
                                     ? "bg-rose-500/15 text-rose-700 dark:text-rose-300"
                                     : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
                             )}
@@ -136,6 +143,14 @@ export function QuotaItem({ label, percentage, resetTime, isProtected, liveLimit
                     {percentage}%
                 </span>
             </div>
+        </div>
+        {weeklyTokens !== undefined && (
+            <div className="px-1.5 pt-0.5 text-[10px] text-gray-500 dark:text-gray-400 truncate"
+                title={t('accounts.weekly_tokens_tooltip', 'Tokens recorded by this instance in this quota cycle (input + output)')}>
+                {t('accounts.weekly_tokens', 'Cycle tokens')}: {weeklyTokens !== null && resetTime && Date.parse(resetTime) > Date.now()
+                    ? weeklyTokens.toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 2 }) : 'N/A'}
+            </div>
+        )}
         </div>
     );
 }

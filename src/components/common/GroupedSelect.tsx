@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Check, Edit3 } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import { getGroupPriority } from '../../config/modelConfig';
 
 export interface SelectOption {
     value: string;
@@ -45,6 +46,14 @@ export default function GroupedSelect({
         acc[group].push(option);
         return acc;
     }, {} as Record<string, SelectOption[]>);
+
+    // 按权威优先级对组进行动态排序 (Gemini 高版本优先，再到 Claude，再到 OpenAI/Other)
+    const sortedGroupEntries = Object.entries(groupedOptions).sort(([grpA], [grpB]) => {
+        const prioA = getGroupPriority(grpA);
+        const prioB = getGroupPriority(grpB);
+        if (prioA !== prioB) return prioA - prioB;
+        return grpA.localeCompare(grpB);
+    });
 
     // 获取当前选中项的标签
     const selectedOption = options.find(opt => opt.value === value);
@@ -165,7 +174,7 @@ export default function GroupedSelect({
                         'animate-in fade-in-0 zoom-in-95 duration-100'
                     )}
                 >
-                    {Object.entries(groupedOptions).map(([group, groupOptions]) => (
+                    {sortedGroupEntries.map(([group, groupOptions]) => (
                         <div key={group}>
                             {/* 分组标题 */}
                             <div className="px-3 py-1.5 text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider bg-gray-50 dark:bg-gray-900/50 sticky top-0 z-10">

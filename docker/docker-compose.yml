@@ -14,6 +14,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - API_KEY=${API_KEY:-test}  # [重要] 請設置您的安全密鑰，若不設置則在日誌中查看隨機密鑰
       - ABV_BIND_LOCAL_ONLY=${ABV_BIND_LOCAL_ONLY:-true}  # 僅綁定 127.0.0.1
+      - ABV_DATA_DIR=${ABV_DATA_DIR:-/root/.antigravity_tools}  # 容器内数据目录，需与上方 volume 目标路径一致
     restart: unless-stopped
     logging:
       driver: json-file

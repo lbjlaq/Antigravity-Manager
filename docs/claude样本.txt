@@ -1,0 +1,1865 @@
+{
+  "project": "aicode-consumers",
+  "requestId": "agent/3c49dacf-99bd-43b5-b3eb-0fa82b590761/1790599454364/a625a450-b0e2-435f-b99f-3c821f9149cc/22",
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "<USER_REQUEST>\n你好 请你稍作思考后并行调用三个工具试试 只需要输出helloworld就可以了\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-09-28T20:42:38+08:00.\n</ADDITIONAL_METADATA>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to Claude Opus 4.6 (Thinking). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.\n</USER_SETTINGS_CHANGE>"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "<USER_REQUEST>\n你好 请你稍作思考后并行调用三个工具试试 只需要输出helloworld就可以了\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-09-28T20:42:56+08:00.\n</ADDITIONAL_METADATA>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from Claude Opus 4.6 (Thinking) to Claude Sonnet 4.6 (Thinking). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.\n</USER_SETTINGS_CHANGE>"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "The user wants me to think briefly and then call three tools in parallel, with the output just being \"hello world\". Let me pick three simple parallel tool calls.",
+            "thought": true
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01CGxUTaSG6NpBcdDADhYa9B",
+              "name": "run_command",
+              "args": {
+                "CommandLine": "echo helloworld",
+                "Cwd": "e:\\code\\Antigravity-Manager",
+                "WaitMsBeforeAsync": 3000,
+                "toolAction": "Running echo command",
+                "toolSummary": "Echo helloworld"
+              }
+            },
+            "thoughtSignature": "RXBrRENwUUJDQklRQWhnQ0trRElMR2lTdkQ3bXVnRExDOWVHZy9UNUV2T2RnMUpISUZia2hlR3IrVDFPRDFEbVZKV2ZwOTZuVUZBVGJJaXNpK3EwYWdPMzBaZ3B4U2llZGpJV2FlMStNaEZqYkdGMVpHVXRjMjl1Ym1WMExUUXROamdBUWdoMGFHbHVhMmx1WjFvTU1qRXdNVEkxTlRBM01qSTRjaERhdGtpWjdGSW1YM0V2S05TaVhXUEZpQUVCcUFIU3dlblZCckFCQWhJTUt0eUQxUExXaXRpTm5uTWtHZ3hOWk9uZ21zVThlT3FWMjhvaU1MZlEwNjB0a2JTcXFVTzhIbnNnTFkxZXFaTWNEaEFKdFdqalBJT0RaTkNoeGtqaitSZjlYU2hpYnlXSE1ZUUw3Q3F4QVd2UmlCTmgxL2ZXOWZLNVpWcmIwYkR4SjRibEtuZnRXTThFTnMrR2gxanNnYjhGTlNDUmpJMEZYbTU3ai9xb3N1aDArRVZZTkNxcXlpU2ZPRVlsK2diMmpBTVMwTGlraTlYTzkxRURjZU1nZkJSbmdVWmx0WS9tYnBIL1VUY2pvRTR1ekY1dVUzVHI4cEJMcE1hQVVjcDNPYzlUUGFaL0REOEFJb3ZRODdCQksyL2hBek9xTW82L2Z0RjJtNmFTZ1EwU2wyYlg3WkczNGVKZXZ5emNzT0Nib3dsbXlXc2MvZ2ZRWSs5eHpBdExjQmdC"
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01QsPpjMCGu2A5DuCbXevi3j",
+              "name": "run_command",
+              "args": {
+                "CommandLine": "node -e \"console.log('helloworld')\"",
+                "Cwd": "e:\\code\\Antigravity-Manager",
+                "WaitMsBeforeAsync": 3000,
+                "toolAction": "Running node script",
+                "toolSummary": "Node helloworld"
+              }
+            }
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01XHBqDJ3WUo6GT2exERV7ib",
+              "name": "run_command",
+              "args": {
+                "CommandLine": "python -c \"print('helloworld')\"",
+                "Cwd": "e:\\code\\Antigravity-Manager",
+                "WaitMsBeforeAsync": 3000,
+                "toolAction": "Running python script",
+                "toolSummary": "Python helloworld"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01CGxUTaSG6NpBcdDADhYa9B",
+              "name": "run_command",
+              "response": {
+                "output": "Created At: 2026-09-28T20:43:00+08:00\nCompleted At: 2026-09-28T20:43:03+08:00\n\nThe command exited with code 0.\nOutput:\nhelloworld\r\n\n"
+              }
+            }
+          },
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01QsPpjMCGu2A5DuCbXevi3j",
+              "name": "run_command",
+              "response": {
+                "output": "Created At: 2026-09-28T20:43:01+08:00\nCompleted At: 2026-09-28T20:43:04+08:00\n\nThe command exited with code 0.\nOutput:\nhelloworld\n\n"
+              }
+            }
+          },
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01XHBqDJ3WUo6GT2exERV7ib",
+              "name": "run_command",
+              "response": {
+                "output": "Created At: 2026-09-28T20:43:02+08:00\nCompleted At: 2026-09-28T20:43:05+08:00\n\nThe command exited with code 0.\nOutput:\nhelloworld\r\n\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "三个工具并行执行完毕，均成功输出：\n\n| 工具 | 命令 | 输出 |\n|------|------|------|\n| PowerShell `echo` | `echo helloworld` | `helloworld` |\n| Node.js | `node -e \"console.log('helloworld')\"` | `helloworld` |\n| Python | `python -c \"print('helloworld')\"` | `helloworld` |\n\n**helloworld** ✅"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "<USER_REQUEST>\n请你再串行三个试试\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-09-28T20:43:45+08:00.\n</ADDITIONAL_METADATA>"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "The user wants me to call three tools serially (one after another, waiting for each to complete before calling the next).",
+            "thought": true
+          },
+          {
+            "text": "好的，串行执行——每一步等上一步完成后再继续。\n\n**第一步：**",
+            "thoughtSignature": "RXZFQ0NwUUJDQklRQWhnQ0trQTdOdW40MFpSNi9ONWswZ1dMYUFQT0g2eFFEVjZRc0taSUNwald2dVV4K3VCQ2pKS0xFdm9tMFM5R1lNZFZZdEZsNWphT3dvRC94TWYvT3Jxcno4eFJNaEZqYkdGMVpHVXRjMjl1Ym1WMExUUXROamdBUWdoMGFHbHVhMmx1WjFvTU1qRXdNVEkxTlRBM01qSTRjaERhdGtpWjdGSW1YM0V2S05TaVhXUEZpQUVCcUFHRXd1blZCckFCQWhJTWt5TFV1cEplbmFEcDZtMnRHZ3dlenBLdERRMmtWempiM3hnaU1OY3dIdHNsL1FzdlVVOTlvc2NHTUNDeDFSR2hWVjFPcG1YV2E1TTV1dnZOby9VRVZMYkZtaVIwSkxTblV6eVV2U3FKQWFla1BGZkl6RGo0K2dIKyt2S05ETFF2Z0NPdTVvL21yL2x0NWxwUkxXUDhRK2hhSmVmNEFiSDlPbGxwNkhycHk3UUxDTDNFUlJqTDc5K3NLamtDbTdFZDVXNkdJTnVucGR4VFBCL0RYY3IyQk5lN0FMUnJsdFc1NG1xRzAya0JTMFJEODFVRTlhY1h3M2VPcldPYUlSdHp5MW5FUXhmL0tiYWpPTWJJVXlZcmdXcDNpdVRWWUd2dUdBRT0="
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01WvRiCPbX7cLJbCuuVCf48S",
+              "name": "run_command",
+              "args": {
+                "CommandLine": "echo [1/3] helloworld from PowerShell",
+                "Cwd": "e:\\code\\Antigravity-Manager",
+                "WaitMsBeforeAsync": 3000,
+                "toolAction": "Running first command",
+                "toolSummary": "Step 1 echo"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01WvRiCPbX7cLJbCuuVCf48S",
+              "name": "run_command",
+              "response": {
+                "output": "Created At: 2026-09-28T20:43:51+08:00\nCompleted At: 2026-09-28T20:43:52+08:00\n\nThe command exited with code 0.\nOutput:\n[1/3]\r\nhelloworld\r\nfrom\r\nPowerShell\r\n\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "**第二步：**"
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01Bm4KhPpBvEhGMyLgooe3KZ",
+              "name": "run_command",
+              "args": {
+                "CommandLine": "node -e \"console.log('[2/3] helloworld from Node.js')\"",
+                "Cwd": "e:\\code\\Antigravity-Manager",
+                "WaitMsBeforeAsync": 3000,
+                "toolAction": "Running second command",
+                "toolSummary": "Step 2 node"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01Bm4KhPpBvEhGMyLgooe3KZ",
+              "name": "run_command",
+              "response": {
+                "output": "Created At: 2026-09-28T20:43:55+08:00\nCompleted At: 2026-09-28T20:43:56+08:00\n\nThe command exited with code 0.\nOutput:\n[2/3] helloworld from Node.js\n\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "**第三步：**"
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01GjMx3cEL4muRw6sivBdFAq",
+              "name": "run_command",
+              "args": {
+                "CommandLine": "python -c \"print('[3/3] helloworld from Python')\"",
+                "Cwd": "e:\\code\\Antigravity-Manager",
+                "WaitMsBeforeAsync": 3000,
+                "toolAction": "Running third command",
+                "toolSummary": "Step 3 python"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01GjMx3cEL4muRw6sivBdFAq",
+              "name": "run_command",
+              "response": {
+                "output": "Created At: 2026-09-28T20:43:59+08:00\nCompleted At: 2026-09-28T20:44:01+08:00\n\nThe command exited with code 0.\nOutput:\n[3/3] helloworld from Python\r\n\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "三步串行执行完毕 ✅\n\n| 步骤 | 工具 | 输出 | 完成时间 |\n|------|------|------|----------|\n| 1 | PowerShell `echo` | `[1/3] helloworld from PowerShell` | 20:43:52 |\n| 2 | Node.js | `[2/3] helloworld from Node.js` | 20:43:56 |\n| 3 | Python | `[3/3] helloworld from Python` | 20:44:01 |\n\n与并行（约同时完成）不同，串行每步之间都有明显的时间间隔，严格按顺序依次执行。"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "<USER_REQUEST>\n这次并行试试 \n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-09-28T20:44:06+08:00.\n</ADDITIONAL_METADATA>"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "The user wants parallel tool calls again. Let me make three parallel calls.",
+            "thought": true
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01GmrcgKAAxH8DQCTDZcsUdd",
+              "name": "run_command",
+              "args": {
+                "CommandLine": "echo [1/3] helloworld from PowerShell",
+                "Cwd": "e:\\code\\Antigravity-Manager",
+                "WaitMsBeforeAsync": 3000,
+                "toolAction": "Running first command",
+                "toolSummary": "Step 1 echo"
+              }
+            },
+            "thoughtSignature": "RXNJQ0NwUUJDQklRQWhnQ0trQks4TzR5N2t3UzZXZXNaVDRiV3Y2NThoNEFlSzNmRWhFQ1p0OE9WL1RTWjY0UlVMS053aCtLbEx2SEVaQ0dWSlRlRU1HZHhjd1JqcnJzUFJ2dlhCQ0tNaEZqYkdGMVpHVXRjMjl1Ym1WMExUUXROamdBUWdoMGFHbHVhMmx1WjFvTU1qRXdNVEkxTlRBM01qSTRjaERhdGtpWjdGSW1YM0V2S05TaVhXUEZpQUVCcUFHWXd1blZCckFCQWhJTXF0UE1CRHdGa3lBRmVyZHpHZ3dnTEU3SEpseW81ZWF5QWNVaU1LREQ4WXk1UHI0ODFzdlVVTHhTRFZoU0hDZnd4d3p1YkpuektuQlpNVWJ1OHBIRFlVUmd5R0J4NDY5d0kyR2UwaXBiWTJ2ZjQyMlg0NFo5YW9CK0JCbmtic0s2TTFoQkNtb3ZncTdFN1lUbDlrSWt2ZlQ2UFZaZGQvdERrdEVja21wd1NrVmQ2L2lHTXlaUzFmWGxFL3ZFeHphZWtDZnpKbzhlekxtSmI2M2ErTmV0cGcrdE03ajFhVWJzS0JnQg=="
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01FzmGjxrRksDJBGHDepYv2C",
+              "name": "run_command",
+              "args": {
+                "CommandLine": "node -e \"console.log('[2/3] helloworld from Node.js')\"",
+                "Cwd": "e:\\code\\Antigravity-Manager",
+                "WaitMsBeforeAsync": 3000,
+                "toolAction": "Running second command",
+                "toolSummary": "Step 2 node"
+              }
+            }
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01SWBU6A3pphSPEjtb9VUEiE",
+              "name": "run_command",
+              "args": {
+                "CommandLine": "python -c \"print('[3/3] helloworld from Python')\"",
+                "Cwd": "e:\\code\\Antigravity-Manager",
+                "WaitMsBeforeAsync": 3000,
+                "toolAction": "Running third command",
+                "toolSummary": "Step 3 python"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01GmrcgKAAxH8DQCTDZcsUdd",
+              "name": "run_command",
+              "response": {
+                "output": "Created At: 2026-09-28T20:44:09+08:00\nCompleted At: 2026-09-28T20:44:11+08:00\n\nThe command exited with code 0.\nOutput:\n[1/3]\r\nhelloworld\r\nfrom\r\nPowerShell\r\n\n"
+              }
+            }
+          },
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01FzmGjxrRksDJBGHDepYv2C",
+              "name": "run_command",
+              "response": {
+                "output": "Created At: 2026-09-28T20:44:10+08:00\nCompleted At: 2026-09-28T20:44:13+08:00\n\nThe command exited with code 0.\nOutput:\n[2/3] helloworld from Node.js\n\n"
+              }
+            }
+          },
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01SWBU6A3pphSPEjtb9VUEiE",
+              "name": "run_command",
+              "response": {
+                "output": "Created At: 2026-09-28T20:44:11+08:00\nCompleted At: 2026-09-28T20:44:14+08:00\n\nThe command exited with code 0.\nOutput:\n[3/3] helloworld from Python\r\n\n"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "systemInstruction": {
+      "role": "user",
+      "parts": [
+        {
+          "text": "<identity>\nYou are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\nYou are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\nThe USER will send you requests, which you must always prioritize addressing. User requests are enclosed within <USER_REQUEST> tags.\n</identity>\n<user_information>\nThe USER's OS version is windows.\nThe user has 1 active workspaces, each defined by a URI and a CorpusName. Multiple URIs potentially map to the same CorpusName. The mapping is shown as follows in the format [URI] -> [CorpusName]:\ne:\\code\\Antigravity-Manager -> lbjlaq/Antigravity-Manager\nCode relating to the user's requests should be written in the locations listed above. Avoid writing project code files to tmp, in the .gemini dir, or directly to the Desktop and similar folders unless explicitly asked.\nApp Data Directory: C:\\Users\\Administrator\\.gemini\\antigravity\nConversation ID: 3c49dacf-99bd-43b5-b3eb-0fa82b590761\n</user_information>\n<user_rules>\nThe following are user-defined rules that you MUST ALWAYS FOLLOW WITHOUT ANY EXCEPTION. These rules take precedence over any following instructions.\nReview them carefully and always take them into account when you generate responses and code:\n<RULE[e:\\code\\Antigravity-Manager\\AGENTS.md]>\n# Project Maintenance Guidelines\n\n- **Architecture**: This project is a gateway that aggregates four AI protocols — OpenAI Responses, OpenAI Chat Completions, Anthropic Claude, and Google Gemini — and outputs Antigravity-style Gemini protocol format.\n- **Pipeline First**: Keep the pipeline strictly decoupled from specific protocols. The four protocols function purely as Gemini adapters. Adapters are restricted to parameter normalization, payload transformation, protocol divergence adaptation, and edge cases unsolvable within the pipeline stage. The pipeline stage uniformly handles the converted Gemini payloads, including thinking block backfilling, thinking budget filtering and backfilling, unified context structural alignment, prefix stability, and the sanitization of risky prompts and request headers.\n- **Backend Fix Strategy**: Prioritize protocol-agnostic, generic fixes within the pipeline rather than localized adapter modifications. Treat adapter-level patches as a last resort only when a generic pipeline solution is infeasible or degrades compatibility.\n- **UI Design & Headless Compatibility**:\n  - **Minimalist & Contextual UI**: Prioritize user-friendly, non-intrusive interactions. Reuse existing design conventions (e.g., pill toggle buttons, badge switches, or contextual setting panels) placed strictly within their most relevant sections rather than scattering unrelated controls.\n  - **Headless & CLI Parity**: Ensure GUI configurations maintain functional parity across headless servers, CLI environments, and cross-platform environments. Provide configuration file fields, environment variable overrides, or dedicated CLI flags/commands for essential settings.\n  - **Cross-Platform Compatibility**: Evaluate every code addition and dependency change for seamless cross-platform support.\n- **Code Quality**: Prioritize root-cause, future-proof fixes rather than hardcoded logic, dead code, or speculative changes. Prioritize generalized solutions that cover entire classes of problems rather than one-off patches.\n  - *Model Routing Example*: Prioritize wildcard patterns (e.g., `gemini-*-flash-*`) to anticipate future model releases rather than exact string matches.\n  - *Prompt Sanitization Example*: For agent-client prompt sanitization, prioritize regex-based pattern matching over static keyword replacement, ensuring full coverage without stripping pipeline system prompts or user queries.\n- **Formatting & CI Discipline**:\n  - **Unit Testing**: Keep focused — run targeted tests for touched modules locally; CI compiles test targets without executing them. Skip tests for trivial edits (constants, prompts, or config tweaks). No need to run the full suite locally.\n  - **Local Test Discretion**: For strings, constants, hardcoded values, or other trivial edits, ask after the task whether a small functional check is wanted rather than testing on your own. Self-test only when four or more core backend or frontend interaction files are involved; hardcoded-only edits do not count as core-file changes. In general, follow the user's preference on whether to test.\n  - **Pre-flight Checks**: Run the essentials before submitting PRs or release tags:\n    - `cd src-tauri && cargo fmt -- --check` (for Rust edits)\n    - `cd src-tauri && cargo clippy --all-targets --all-features` (comprehensive Rust gate, already includes compilation — no separate `cargo check` needed)\n    - `npm run build` (when `src/` or frontend configs changed)\n    - Rely on CI for full-app compilation (`tauri build`) and full test execution. Local pre-flight covers fmt + clippy + frontend build only.\n- **Release Channels & Discipline**:\n  - **Release Channel Separation**:\n    - **Stable Releases (正式版)**: Exclusively on `main`. Deploys official production packages, updates Docker/GitHub `latest` tags, and services automatic update channels.\n    - **Preview Releases (预览版 / Beta)**: Exclusively on `beta`. Independently builds and publishes pre-releases (`makeLatest: false`, `prerelease: true`) without touching production update channels.\n  - **Maintainer Staging Protocol**:\n    - When introducing new changes (features, major refactors, non-trivial fixes), prompt and confirm with maintainers whether to implement and test on `beta` branch first.\n    - Validate stability on `beta` (with optional independent preview builds) prior to merging into `main`.\n  - **Standard Release Workflow**:\n    1. **Atomic Version Sync**: Run `npm run bump <patch|minor|beta|version>` to synchronize all project manifests and generate changelog skeletons.\n    2. **Documentation & Attribution**:\n       - Audit Git history (`<last-tag>..HEAD`) and merged PRs to summarize all authors, co-authors, and linked Issues/PRs (`Fixes #xxx`, `PR #xxx`). Attribute every contributor inline (`Thanks to @username`) in `CHANGELOG.md` (and `CHANGELOG_EN.md`).\n       - **Synchronize README Changelog (同步首页更新日志)**: For stable releases, you **MUST** update the release summary in both `README.md` (under \"## 📝 更新日志\") and `README_EN.md` (under \"## 📝 Changelog\"). Never update only `CHANGELOG.md` while leaving `README.md` / `README_EN.md` with outdated release notes. Pre-release / beta versions remain exclusively in changelogs; stable releases require full synchronization across both README files.\n    3. **Pre-flight before Tagging**: Run the Pre-flight Checks above on the exact commit to be tagged.\n    4. **Commit, Tag & Push**: Push stable releases to `main` (`git tag vX.Y.Z && git push origin vX.Y.Z`), reserving `beta` exclusively for pre-releases (`git tag vX.Y.Z-beta.N && git push origin vX.Y.Z-beta.N`). The release gate strictly intercepts cross-branch misplacement. Tags must match `CHANGELOG.md` headings character-for-character (including `v` prefix and pre-release suffix).\n  - *Full procedure*: See `docs/RELEASE_GUIDE.md` for bump options, changelog templates, and rollback steps.\n- **Thinking Cache Invalidation Control (发版清理建议)**:\n  - File: `src/components/common/SuggestionDeleteThinkingModal.tsx`\n  - Routine releases (no prompt): Keep `SUGGESTION_DELETE_THINKING_STORE = false`.\n  - Architecture / schema refactors (prompt users to clean once):\n    1. Set `SUGGESTION_DELETE_THINKING_STORE = true`.\n    2. Set `SUGGESTION_TARGET_VERSION = '<version>'` (e.g. `'4.8.2'`).\n    3. On upgrade, users with existing cache get a one-time prompt; action state persists in `gui_config.json`.\n- **Branch & History Hygiene**:\n  - Branch from remote bases (`origin/beta` for staged features, `origin/main` for direct hotfixes) rather than local branches to prevent untracked ancestor commits.\n  - Inspect in-flight PRs (`gh pr list --base main`) before rewriting published tips, avoiding force-pushes across shared branches.\n  - Retain local rollback refs (`backup/*`) before history rewrites, confirming zero content drift via `git diff --stat <backup> HEAD`.\n- **PR Scope & Grouping**:\n  - **Single Problem Scope**: A PR represents a cohesive collection of fixes or features dedicated to a single problem class. Keep unrelated concerns (such as governance, release tooling, or documentation) in isolated PRs.\n  - **Self-Contained & Individually Revertable**: A PR may contain multiple commits, but each commit must represent an independent, self-contained functional unit that is individually revertable, avoiding messy or tangled changesets.\n  - **Local Convergence & Final-State Commits**: Commit freely during local debugging on development branches; however, before opening or merging a PR, audit and consolidate scattered iterative attempts into clean, high-quality units. Each consolidated commit must describe only its successful final state and rationale, eliminating intermediate trial-and-error noise.\n  - **Review & Template Alignment**: Route every PR through peer review and complete `.github/PULL_REQUEST_TEMPLATE.md` (problem classification, behavior alterations, unverified paths, and rollback strategy).\n- **Contributor Respect & Attribution**:\n  - Preserve authorship by preferring the contributor's own PR for squash commits, or attaching explicit `Co-authored-by:` trailers on merge commits and proxy PRs.\n  - Disclose costs before merging: highlight affected existing behaviors and unverified paths alongside improvements.\n  - Own tooling and documentation gaps directly rather than attributing downstream frictions to contributors.\n  - Accompany every rejection with a concrete file-by-file accept/drop breakdown and an actionable path forward.\n- **Risky Path Replacement**:\n  - Keep an explicit fallback to the verified path whenever you replace it (e.g. \"0 matches found → full restart\"). A silent no-op is worse than the failure it was meant to fix.\n  - Order side effects to fail before the point of no return: write credentials before killing a process, validate before deleting.\n  - Detect broadly, act narrowly: a matcher may recognize a whole class of problems, while its effect stays inside the intended data — not across line breaks, tags, or other clauses. Bound every wait with a timeout.\n\nMaintained by @jeikl\n</RULE[e:\\code\\Antigravity-Manager\\AGENTS.md]>\n</user_rules>\n<skills>\nYou can use specialized 'skills' to help you with complex tasks. Each skill has a name and a description listed below.\n\nSkills are folders of instructions, scripts, and resources that extend your capabilities for specialized tasks. Each skill folder contains:\n- **SKILL.md** (required): The main instruction file with YAML frontmatter (name, description) and detailed markdown instructions\n\nMore complex skills may include additional directories and files as needed, for example:\n- **scripts/** - Helper scripts and utilities that extend your capabilities\n- **examples/** - Reference implementations and usage patterns\n- **resources/** - Additional files, templates, or assets the skill may reference\n- **references/** - Contains additional documentation that agents can read when needed\n\n\nIf a skill seems relevant to your current task, you MUST read its `SKILL.md` instructions using `view_file` before proceeding. You may skip this step only if you are delegating the skill-related task to a subagent that will read and follow the instructions itself.\n\nWhen calling `view_file` on these skill paths, always use the exact path provided in the \"Available skills\" list below.\n\nAvailable skills:\n- agy-customizations (C:\\Users\\Administrator\\.gemini\\antigravity\\builtin\\skills\\agy-customizations\\SKILL.md): Comprehensive guide and reference for the Antigravity Customization System. Use to explain how customizations work, their loading priority, discovery mechanisms, and to guide the creation of skills, rules, plugins, hooks, and MCP servers.\n- antigravity-guide (C:\\Users\\Administrator\\.gemini\\antigravity\\builtin\\skills\\antigravity_guide\\SKILL.md): Provides a comprehensive guide, quick reference, and sitemap for Google Antigravity (AGY), including the Antigravity CLI (agy), Antigravity 2.0, Antigravity IDE, Python SDK, slash commands, keybindings, and customizations (skills, rules, MCP, sidecars). Activate this skill when the user asks questions about how to use, configure, or customize Antigravity, AGY, the agy CLI, the Antigravity IDE, or Antigravity 2.0.\n- generative_ui (C:\\Users\\Administrator\\.gemini\\antigravity\\builtin\\skills\\generative_ui\\SKILL.md): How to render rich interactive HTML widgets inline in the chat or as standalone artifacts. Use this skill when you want to show the user diagrams, data visualizations, interactive controls, educational walkthroughs, or any rich visual content beyond plain text and markdown.\n- migrate-workflows (C:\\Users\\Administrator\\.gemini\\antigravity\\builtin\\skills\\migrate-workflows\\SKILL.md): Automatically migrate legacy workflows to modern skills across global and workspace configurations. Scans for existing workflows, creates target SKILL.md files, and safely archives old workflow files.\n\n\n</skills>\n<subagents>\n## Invoking Subagents\n\nSubagents can be invoked using the invoke_subagent tool. You can invoke an existing subagent by name, or define a new subagent for this conversation using the define_subagent tool, and then invoke it. Agents defined by the define_subagent tool are available for the duration of this conversation. After launching a subagent, you do NOT need to poll or check your inbox in a loop. The system will automatically notify you when the subagent sends a message. Simply proceed with other work or stop calling tools, and you will be notified when there is a message to process.\n\n## Communicating with Another Agent\n\nUse the send_message tool to send a message to another agent by its conversation ID (returned by invoke_subagent). This tool is ONLY for communicating with other agents.\n\n**Do NOT use send_message to communicate with the user.** Instead, output visible text to communicate with the user.\n\nAvailable subagents:\n- self: Subagent that inherits the parent agent's full configuration including tools, system prompt, and model. Use this when you need to run a task in a separate conversation context but with the same capabilities as the current agent.\n- research: Research subagent with read-only tools for exploring the codebase, searching the web, and reading files. Delegate to this agent when you need to run a task in a separate conversation context but with the same capabilities as the current agent, when a research task requires many search and file-reading steps that would clutter your context, or when you need a broad survey of the codebase or documentation. Prefer doing research yourself for quick, targeted lookups.\n\nAfter launching a subagent, you do NOT need to poll or check your inbox in a loop. The system will automatically notify you when the subagent sends a message. Simply proceed with other work or stop calling tools, and you will be notified when there is a message to process.\n\n</subagents>\n<messaging>\nYou are connected to a messaging system where you may receive messages from: agents, background tasks, user-queued messages.\n\n## Receiving Messages\n\nYou receive messages automatically at the start of each invocation. All messages are delivered in full directly into your context — no manual retrieval is needed.\n\n## Reactive Wakeup (No Polling Needed)\n\nThe system automatically resumes your execution when:\n- A message arrives from a subagent or peer agent\n- A **background task** completes or sends you a notification\n- A **user-queued message** is ready to be dequeued\n\nThis means you do **NOT** need to poll in a loop while waiting for messages or updates. After launching anything that performs work asynchronously, you may continue other work or simply stop by calling no more tools. The system will notify you when there is something to process.\n</messaging>\n<conversation_transcript>\nTranscripts are located directly at `<appDataDir>\\brain\\<conversation-id>\\.system_generated\\logs/transcript.jsonl` (and `transcript_full.jsonl`).\n- Start with `transcript.jsonl` (compact). When `truncated_fields` is present, read only the specific corresponding line in `transcript_full.jsonl`.\n- Search subagents by grepping `invoke_subagent` in `transcript.jsonl`.\n- Link conversations using `[<label>](conversation://<conversation-id>)`.\n\n# File Format\nTranscripts are in JSON Lines (JSONL) format. Each line is a single JSON object representing one \"step\" or action in the conversation.\nEach JSON object contains fields such as:\n- `step_index`: The index of the step in the trajectory.\n- `source`: The source of the action (e.g., `USER_EXPLICIT`, `MODEL`, `SYSTEM`).\n- `type`: The type of the step. Particular steps of interest are `USER_INPUT`, which represents a user's prompt, and `PLANNER_RESPONSE`, which represents the agent's response and tool calls.\n- `status`: The status of the step (e.g., `DONE`, `ERROR`).\n- `created_at`: The ISO 8601 timestamp of when the step occurred.\n- `content`: The text content of the step (e.g., the user's request, the model's response, or tool responses).\n- `thinking`: The model's internal reasoning / chain-of-thought (for `PLANNER_RESPONSE` steps).\n- `tool_calls`: An array of tool calls made in this step, including their arguments.\n- `media`: An array of media (e.g. images) attached to the step, each with a `mime_type` and a `uri` referencing the media file on disk. Media bytes are not stored in the transcript; view the `uri` path to see the media.\n- `truncated_fields`: An array of field names that were truncated (e.g., `[\"content\"]`, `[\"thinking\"]`, `[\"tool_calls\"]`). Only present in `transcript.jsonl` when truncation occurred (never in `transcript_full.jsonl`). When present, read the corresponding line in `transcript_full.jsonl` for the complete content.\n\n</conversation_transcript>\n<artifacts>\nArtifacts are special markdown (.md) documents that you can create to present structured information to the user.\nAll artifacts should be written to the artifact directory: `<appDataDir>\\brain\\<conversation-id>`. You do NOT need to create this directory yourself, it will be created automatically when you create artifacts.\n\n# When to Use Artifacts\n\n**Use artifacts for:**\n- Extensive reports and analysis summaries\n- Persistent information you'll update over time (task lists, experiment logs)\n- Code changes formatted as diffs\n\n**Don't use artifacts for:**\n- Simple one-off answers or very short paragraph content - just respond directly\n- Asking questions or requesting user input - just ask directly\n\n**After creating or updating an artifact**, DO NOT re-summarize the artifact contents in your response to the user. Instead, point the user to the artifact and highlight only key open questions or decisions that need their input.\n\n\n# Artifact Formatting Tips\nWhen creating markdown artifacts, use standard markdown and GitHub Flavored Markdown formatting.\n\n## Alerts\nUse GitHub-style alerts strategically to emphasize critical information. Do not place consecutively or nest:\n  > [!NOTE] Background context, implementation details, or explanations\n  > [!TIP] Performance optimizations, best practices, or efficiency suggestions\n  > [!IMPORTANT] Essential requirements, critical steps, or must-know information\n  > [!WARNING] Breaking changes, compatibility issues, or potential problems\n  > [!CAUTION] High-risk actions that could cause data loss or security vulnerabilities\n\n\n## Mermaid Diagrams\nCreate mermaid diagrams using fenced code blocks with language `mermaid` to visualize relationships, workflows, and architectures.\n- Only use supported diagram types:\n  - Flowcharts / Graphs: `flowchart TD` / `flowchart LR` / `graph TD` / `graph LR`\n  - Sequence Diagrams: `sequenceDiagram`\n  - State Diagrams: `stateDiagram-v2` or `stateDiagram`\n  - Class Diagrams: `classDiagram`\n  - Entity-Relationship Diagrams: `erDiagram`\n  - XY Charts: `xychart-beta`\n- All other diagram types are unsupported. For schedules, timelines, or roadmaps, use directed flowcharts (`flowchart LR` / `flowchart TD`) or Markdown tables instead.\n- To prevent syntax errors:\n  - Quote node labels containing special characters like parentheses or brackets. For example, `id[\"Label (Extra Info)\"]` instead of `id[Label (Extra Info)]`.\n  - Avoid HTML tags in labels.\n\n## File Links\n- Link to line ranges using [link text](file:///absolute/path/to/file#L123-L145) format.\n- **IMPORTANT**: If you are embedding a file in an artifact and the file is NOT already in <appDataDir>\\brain\\<conversation-id>, you MUST first copy the file to the artifacts directory before embedding it. Only embed files that are located in the artifacts directory. Always use its absolute path `![caption](/absolute/path)`.\n- **Use basenames for readability**: Use file basenames for the link text instead of the full path\n\n## Carousels\nUse ````carousel syntax with `<!-- slide -->` HTML comments to display related markdown snippets sequentially (before/after comparisons, UI progressions, alternative approaches, walkthroughs). Four backticks enable nesting code blocks within slides.\n\nExample:\n````carousel\n![Image description](/absolute/path/to/image1.png)\n<!-- slide -->\n```python\ndef example():\n    print(\"Code in carousel\")\n```\n````\n\n## LaTeX / Math\nArtifacts render LaTeX math with KaTeX.\n- **Literal `$`**: write `\\$`, or wrap it in backticks. Two unescaped `$` in the same paragraph become math.\n\n# Scratch Scripts and Files\n\nYou may find it useful to create scratch scripts or files for temporary purposes.\n\nExamples:\n- One-off scripts to debug code\n- Temporary data files for testing\n\nStore these files in the `<appDataDir>\\brain\\<conversation-id>/scratch/` directory. They will be persisted.\n\n\nArtifact Directory Path: C:\\Users\\Administrator\\.gemini\\antigravity\\brain\\3c49dacf-99bd-43b5-b3eb-0fa82b590761\n\n</artifacts>\n<slash_commands>\nSlash commands are user-facing shortcuts in the chat UI (e.g., typing `/goal` or `/schedule`) that automate complex workflows or trigger specialized agent behaviors.\n\nYou cannot execute these commands yourself. Your role is to recommend them to the user when they are a good fit for the task at hand, encouraging the user to explore and trigger them.\n\nTo recommend a slash command, suggest it clearly in your response (e.g., \"You can use the `/goal` command to...\").\n\n\nAvailable slash commands you can recommend to the user:\n- /goal: Recommend this when the user wants to run a long-running task (e.g., overnight) and wants the agent to be extra thorough and not stop until the goal is fully achieved.\n- /schedule: Recommend this when the user wants to run an instruction on a recurring schedule or set a one-time timer.\n- /browser: Recommend this when the user's task involves web browsing, searching the web, or interacting with web applications.\n- /plan: Recommend this when the task is complex and requires careful step-by-step planning before execution.\n- /grill-me: Recommend this when the user wants to align on a plan through an interactive interview to resolve design decisions.\n- /teamwork-preview: Recommend this when the user has a large project that would benefit from a team of autonomous agents working together.\n- /learn: Recommend this when the user has corrected the agent or solved a complex setup and wants the agent to persist this behavior for future tasks.\n- /boost: Recommend this when the user has a complex coding or research project that requires deep thinking, strategic planning, multiple perspectives, and rigorous verification.\n\n\n</slash_commands>\n<guidelines>\nFollow these behavioral guidelines at all times:\n- Maintain documentation integrity. Preserve all existing comments and docstrings that are unrelated to your code changes, unless the user specifies otherwise.\n\n</guidelines>\n<communication_style>\n- Keep your responses concise.\n- Format your responses in github-style markdown.\n- You can render LaTeX math (KaTeX): inline with `\\(...\\)` or `$...$`, display with `\\[...\\]` or `$$...$$` placed on its own line.\n- Use math only for genuine mathematical content. Use backticks for code, identifiers, paths, flags, and shell variables.\n- `$` opens inline math, so write a literal dollar as `\\$` or wrap it in backticks. Two unescaped `$` in the same paragraph turn everything between them into math — this bites prices (`\\$100`) and shell syntax written in prose (`$HOME`, awk `$1`).\n\n- If you're unsure about the user's intent, ask for clarification rather than making assumptions.\n- You MUST create clickable links for all files and code symbols (classes, types, functions, structs). Use github style markdown links with the file:// scheme (e.g., [utils.py](file:///path/to/utils.py) or [`ClassName`](file:///path/to/utils.py#L10-L20)). For Windows, use forward slashes for paths.\n</communication_style>"
+        }
+      ]
+    },
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "name": "view_file",
+            "description": "View the contents of a file from the local filesystem. This tool supports text files and following binary files: image, video.\nText file usage:\n- The lines of the file are 1-indexed\n- You can view at most 800 lines at a time\n- Specify StartLine and EndLine to view the lines of the file using slice notation:\n  - Omit both to view the entire file, or the first 800 lines of the file, whichever is smaller.\n  - Specify StartLine only to view the remaining lines of the file, or the next 800 lines, whichever is smaller\n  - Specify EndLine only to view the remaining preceding lines of the file, or the previous 800 lines, whichever is smaller\n  - Specify both to view a precise line range. This range must be smaller than 800 lines or only the first 800 lines of the range will be shown.\n- Content is limited to 46080 bytes per view. If content is truncated, use the ContentOffset parameter to view the remaining content\nBinary file usage:\n- Do not provide StartLine or EndLine arguments, this tool always returns the entire file\n- Files larger than 100 MB cannot be viewed.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "AbsolutePath": {
+                  "type": "STRING",
+                  "description": "Path to file to view. Must be an absolute path."
+                },
+                "ContentOffset": {
+                  "type": "INTEGER",
+                  "description": "Optional. Byte offset into the content. Use this to view content beyond the initial byte limit when the tool output indicates content was truncated."
+                },
+                "EndLine": {
+                  "type": "INTEGER",
+                  "description": "Optional. Endline to view, 1-indexed, inclusive. When specified, this value must be greater than or equal to StartLine."
+                },
+                "StartLine": {
+                  "type": "INTEGER",
+                  "description": "Optional. Startline to view, 1-indexed, inclusive. When specified, this value must be less than or equal to EndLine."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "AbsolutePath",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "run_command",
+            "description": "PROPOSE a command to run on behalf of the user. Operating System: windows. Shell: powershell.\n**NEVER PROPOSE A cd COMMAND**.\nIf you have this tool, note that you DO have the ability to run commands directly on the USER's system.\nMake sure to specify CommandLine exactly as it should be run in the shell.\nIf the step doesn't return the command output, it means that the command was sent to the background as a task. You will receive messages with the command's output as it runs. To interact with a running command, use the manage_task tool. Use `send_input` to send stdin, `kill` to terminate the command, and `status` to check current status. IMPORTANT: Do NOT poll or loop on `status` to wait for completion. The system will automatically notify you with a message when the command finishes. Simply proceed with other work or stop calling tools after launching a command.\nCommands will be run with PAGER=cat. You may want to limit the length of output for commands that usually rely on paging and may contain very long output (e.g. git log, use git log -n <N>).",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "CommandLine": {
+                  "type": "STRING",
+                  "description": "The exact command line string to execute."
+                },
+                "Cwd": {
+                  "type": "STRING",
+                  "description": "The current working directory for the command"
+                },
+                "IsDaemon": {
+                  "type": "BOOLEAN",
+                  "description": "Set to true for long-running support processes that are meant to keep running in the background indefinitely and are not expected to finish on their own (e.g., dev servers, file watchers, tunnels). Leave false (the default) for normal commands that are expected to terminate."
+                },
+                "WaitMsBeforeAsync": {
+                  "type": "INTEGER",
+                  "description": "This specifies the number of milliseconds to wait after starting the command before sending it to the background. If you want the command to complete execution synchronously, set this to a large enough value that you expect the command to complete in that time under ordinary circumstances. If you're starting an interactive or long-running command, set it to a large enough value that it would cause possible failure cases to execute synchronously (e.g. 500ms). Keep the value as small as possible, with a maximum of 10000ms."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Cwd",
+                "WaitMsBeforeAsync",
+                "CommandLine",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "manage_task",
+            "description": "Manage background tasks. Use this tool to list running tasks or interact with tasks that were sent to the background.\n\nActions:\n- 'list': List all currently running background tasks\n- 'kill': Cancel the task's execution\n- 'status': Check the task's current status and log file location\n- 'send_input': Send input to a running task\n\nWhen mentioning tasks to the user, avoid using full task IDs and start timestamps; keep them human-readable.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Action": {
+                  "type": "STRING",
+                  "description": "The action to perform: 'list' (list all running tasks), 'kill' (cancel the task), 'status' (check the task status and log URI), 'send_input' (send input to a running task).",
+                  "enum": [
+                    "list",
+                    "kill",
+                    "status",
+                    "send_input"
+                  ]
+                },
+                "Input": {
+                  "type": "STRING",
+                  "description": "The input to send to the task. Required when Action is 'send_input'."
+                },
+                "TaskId": {
+                  "type": "STRING",
+                  "description": "The task ID to manage. Required when Action is 'kill', 'status', or 'send_input'."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Action",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "send_message",
+            "description": "Send a message to another agent. This tool can be used to communicate with subagents, peer agents, etc. Do not use this tool to communicate with the user.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Message": {
+                  "type": "STRING",
+                  "description": "The message content."
+                },
+                "Recipient": {
+                  "type": "STRING",
+                  "description": "The recipient ID to send the message to, e.g. a subagent conversation ID."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Recipient",
+                "Message",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "schedule",
+            "description": "Schedule a one-shot timer or a recurring cron job that sends notifications in the background.\n\n**NOTE**: This tool call returns immediately and does not pause execution. To wait for the timer to fire, you must stop calling tools to end your turn.\n\nModes:\n1. **One-shot timer**: Set a timer for a specified duration that will notify you with your Prompt when it expires. You can control early termination behavior using TimerCondition:\n\n- 'never' (default): The timer will always fire after the specified duration, unless explicitly cancelled.\nUsage: Use when setting unconditional timers that should always fire after DurationSeconds, unless explicitly cancelled.\n- 'any': The timer will be cancelled early if ANY message from any sender is received before the duration.\nUsage: Useful when multiple background tasks are running and you want to wait for any update, but with some guarantee that you won't be idle forever in case they are all stuck.\n- <sender-id>: The timer will be cancelled early if a message is received from that specific sender ID.\nUsage: Use when you're waiting for an update from a specific subagent or task, but want to set some limit on how long to wait.\n\nNOTE: When a timer is cancelled early, no separate cancellation notification is sent — the message that satisfied the condition is itself your wakeup, and the timer's tool step result records the cancellation.\n\nNOTE: You cannot have multiple concurrently active timers that would early terminate on the same sender ID.\nFor example, if you already have a liveness timer set with \"any\", you cannot set another timer with \"any\" or any other condition.\nIf you already have a timer set with early termination on \"task-123\", you cannot set another timer with \"task-123\" or \"any\".\nYou should rely on the existing timer, or cancel and replace it if needed.\n\nExamples:\n\nScenario: User asks explicitly for a reminder in 10 minutes.\nArgs: DurationSeconds=600, Prompt=\"Remind the user\", TimerCondition=\"never\"\nComments: TimerCondition=\"never\" is appropriate since this timer is unrelated to other ongoing tasks.\n\nScenario: You just ran a command as \"task-123\". You already set a notification on it for 5 minutes, and it just notified you that it's still running. After checking the output, you want to set a new reminder to check on it in 10 minutes if it still hasn't finished.\nArgs: DurationSeconds=600, Prompt=\"Check on the command status\", TimerCondition=\"task-123\"\nComments: TimerCondition=\"task-123\" is appropriate since the timer is not needed if the command finishes ahead of time.\n\nScenario: You just spawned 10 subagents, and you want to check in on progress after 5 minutes if you haven't heard back from any of them.\nArgs: DurationSeconds=300, Prompt=\"Check in on the subagents' progress\", TimerCondition=\"any\"\nComments: TimerCondition=\"any\" is appropriate since you are not waiting for any specific subagent.\n\nScenario: You are running a command that you're sure will terminate, and you want to wait for it to finish.\nArgs: N/A\nComments: A timer is not needed at all in this scenario and will wastefully generate extra messages. Stop calling tools to end your turn instead.\n\n2. **Recurring cron**: Set CronExpression to a standard 5-field cron expression (e.g., '*/5 * * * *' for every 5 minutes). Each time the cron triggers, a notification with your Prompt is sent. The cron runs as a background task. Optionally set MaxIterations to limit the number of triggers. Optionally set IsDaemon to declare how the cron relates to your current task: leave it false (the default) when the cron is how your current task makes progress — polling or monitoring a job until it completes, heartbeat/liveness, or reminders — so your task stays active until the cron ends; set it true only when the cron is an independent standing job that should keep running after your current task is done — e.g. a recurring report or a maintenance job the user asked you to keep going — so you can finish now while it keeps firing in the background.\n\nExamples:\n- Poll deployment status every 5 minutes until it passes: CronExpression=\"*/5 * * * *\", Prompt=\"Check deployment status and report progress\", IsDaemon=false\n- Run a health check every hour, up to 3 times: CronExpression=\"0 * * * *\", MaxIterations=3, Prompt=\"Run the health check script and report results\", IsDaemon=false\n- Inspect newly filed issues in the last 24h and post a daily summary report: CronExpression=\"0 9 * * *\", Prompt=\"Summarize issues filed in the last 24h and post the report\", IsDaemon=true\n\nGeneral Reminders:\n- You must specify exactly one of DurationSeconds or CronExpression.\n- Always provide a Prompt describing what the notification should say.\n- Never run a background 'sleep' command to set a timer, use this tool instead.\n- To cancel a running timer or cron schedule, use the manage_task tool with the task ID returned by this tool.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "CronExpression": {
+                  "type": "STRING",
+                  "description": "A standard cron expression (5 fields: minute hour day-of-month month day-of-week). Use for recurring schedules. Mutually exclusive with DurationSeconds. Example: '*/5 * * * *' for every 5 minutes."
+                },
+                "DurationSeconds": {
+                  "type": "INTEGER",
+                  "description": "The number of seconds to wait. Use for one-shot timers. Mutually exclusive with CronExpression."
+                },
+                "IsDaemon": {
+                  "type": "BOOLEAN",
+                  "description": "Optional. Set to true only when the cron is an independent, standing job that should keep firing even after your current task is done (e.g. a recurring daily/weekly report or a standing maintenance job). Leave false (the default) whenever the cron is part of finishing your current task — including polling or monitoring a running job until it completes, heartbeat/liveness, or reminders."
+                },
+                "MaxIterations": {
+                  "type": "INTEGER",
+                  "description": "Optional. Maximum number of times the cron schedule will fire before stopping. Only applicable when CronExpression is set. Defaults to unlimited."
+                },
+                "Prompt": {
+                  "type": "STRING",
+                  "description": "The message content to include in the notification when the timer fires or cron triggers. This is sent to the agent as a high-priority message."
+                },
+                "TimerCondition": {
+                  "type": "STRING",
+                  "description": "Optional. Controls when a one-shot timer should early terminate upon receiving a message. Options: 'never' (default, timer unconditionally waits until expiry), 'any' (timer cancels if any message is received), or a specific sender ID (timer cancels only if a message is received from that specific subagent conversation ID or background task ID). Only applicable when DurationSeconds is set."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Prompt",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "invoke_subagent",
+            "description": "Invokes one or more subagents by name with a single tool call. Each subagent runs in the background with its own prompt and reports back when done.\n\nSpecify the Subagents array with one or more entries. Each entry defines a subagent to launch.\n\nCommunicate with subagents using the send_message tool. Examples of when to do this:\n* To check on the status of a subagent.\n* To send a running subagent further instructions.\n* To send an idle subagent new instructions.\n\nGuidelines:\n* Each invoked subagent will be uniquely identified by its conversationID.\n* Multiple subagents with the same type name can be invoked, with each subagent receiving a unique conversationID.\n* If a task is a natural continuation of an existing subagent's work, send a message to that subagent with the task rather than invoking a new subagent to conserve resources.\n* When selecting the Model argument, default to 'inherit' unless the user explicitly requests a different model.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Subagents": {
+                  "type": "ARRAY",
+                  "description": "Array of subagents to invoke. Each entry specifies a separate subagent to launch concurrently.",
+                  "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                      "Model": {
+                        "type": "STRING",
+                        "description": "Model to use for the subagent. 'inherit' (default) uses the calling agent's model. 'flash_lite' uses a very light model. 'flash' uses a smaller, faster model suited for simple tasks like research lookups, file reading, or quick searches. 'pro' uses a larger, more capable model suited for complex tasks requiring deep reasoning, large refactors, or multi-step planning.",
+                        "enum": [
+                          "inherit",
+                          "flash_lite",
+                          "flash",
+                          "pro"
+                        ]
+                      },
+                      "Prompt": {
+                        "type": "STRING",
+                        "description": "A clear, actionable task description for the subagent. Be specific about what the subagent should do and what information it should return."
+                      },
+                      "Role": {
+                        "type": "STRING",
+                        "description": "A 2-5 word description of the subagent's role. Should read similar to a job title, e.g. 'Codebase Researcher', 'Database Debugger', etc. Should also be detailed enough to distinguish between different subagents who might share similar purposes."
+                      },
+                      "TypeName": {
+                        "type": "STRING",
+                        "description": "Type name of the subagent to invoke."
+                      },
+                      "Workspace": {
+                        "type": "STRING",
+                        "description": "Workspace mode for the subagent. 'inherit' (default) uses the same workspace as the parent. 'branch' creates a new isolated workspace branched or cloned from the parent. 'share' creates a new workspace sharing the parent's underlying repository directory (similar to a git worktree or Mercurial 'hg share'), allowing independent branching without duplicating storage. If omitted, defaults to 'inherit'."
+                      }
+                    },
+                    "required": [
+                      "TypeName",
+                      "Role",
+                      "Prompt"
+                    ]
+                  }
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Subagents",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "define_subagent",
+            "description": "Defines a new type of subagent that can be invoked via invoke_subagent.\n\n\tGuidelines:\n\t* Use this tool if you need a specialized subagent for a task and none of the existing subagents are suitable.\n\t* Once the subagent is defined, it can be invoked repeatedly using invoke_subagent without calling this tool again.\n\t* The subagent will be defined with the specified name, description, system prompt, and tool groups.\n\t* By default, all subagents have read tools to research the codebase, and tools to communicate with other agents.\n\t",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "description": {
+                  "type": "STRING",
+                  "description": "Human-readable description of what this subagent does and when it should be used."
+                },
+                "enable_mcp_tools": {
+                  "type": "BOOLEAN",
+                  "description": "Set true to enable the subagent to call MCP tools."
+                },
+                "enable_subagent_tools": {
+                  "type": "BOOLEAN",
+                  "description": "Set true to equip the subagent with tools to define and invoke its own subagents"
+                },
+                "enable_write_tools": {
+                  "type": "BOOLEAN",
+                  "description": "Set true to equip the subagent with tools to create and edit files, and run commands."
+                },
+                "name": {
+                  "type": "STRING",
+                  "description": "Unique name for the subagent. Used to invoke it via invoke_subagent. Must start with a letter or digit and contain only letters, digits, '_', '-', and '.'."
+                },
+                "system_prompt": {
+                  "type": "STRING",
+                  "description": "A detailed system prompt for this subagent."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "name",
+                "description",
+                "system_prompt",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "manage_subagents",
+            "description": "Manage existing subagents.\n\tActions:\n\t* 'list': List active direct subagents with their conversation IDs and live state. Each subagent is reported as a JSON object with this schema:\n\t{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"role\":{\"type\":\"string\",\"description\":\"The subagent's role, or its type name if no role was set.\"},\"type\":{\"type\":\"string\",\"description\":\"The subagent's type name.\"},\"conversationId\":{\"type\":\"string\",\"description\":\"The subagent's conversation ID, used to message or kill it.\"},\"transcript\":{\"type\":\"string\",\"description\":\"Absolute URI of the subagent's transcript log, if available.\"},\"state\":{\"type\":\"string\",\"enum\":[\"running\",\"idle\",\"waiting_for_input\",\"waiting_for_dependents\",\"waiting_for_message\",\"canceling\",\"errored\",\"unspecified\"],\"description\":\"The subagent's current lifecycle state.\"},\"stateDetail\":{\"type\":\"string\",\"description\":\"Context for State: the current tool call (name and summary) when running or waiting_for_input, or the failure message when errored.\"}},\"additionalProperties\":false,\"type\":\"object\"}\n\t* 'kill': Terminate specific subagents and all their descendants.\n\t* 'kill_all': Terminate all subagents and all their descendants.\n\n\tWhen a subagent is killed, its branched workspaces will be deleted, but its logs and artifacts will be preserved.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Action": {
+                  "type": "STRING",
+                  "description": "The action to perform. Must be 'list' (list active direct subagents with their live state), 'kill' (terminate specific subagents and all their descendants), or 'kill_all' (terminate all subagents and all their descendants).",
+                  "enum": [
+                    "list",
+                    "kill",
+                    "kill_all"
+                  ]
+                },
+                "ConversationIds": {
+                  "type": "ARRAY",
+                  "description": "The IDs of the subagents to kill. Required for 'kill'.",
+                  "items": {
+                    "type": "STRING"
+                  }
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Action",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "write_to_file",
+            "description": "Use this tool to create new files. The file and any parent directories will be created for you if they do not already exist.\n\t\tFollow these instructions:\n\t\t1. By default this tool will error if TargetFile already exists. To overwrite an existing file, set Overwrite to true.\n\t\t2. When creating an artifact, always provide ArtifactMetadata. When creating non-artifact files, do not provide it.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "ArtifactMetadata": {
+                  "type": "OBJECT",
+                  "description": "Metadata that defines artifact properties. ONLY provide when creating an artifact file in the artifact directory. Omit this field when creating non-artifact files.",
+                  "properties": {
+                    "RequestFeedback": {
+                      "type": "BOOLEAN",
+                      "description": "Set to true if you'd like to request user feedback on this artifact and if the contents of this artifact are executable (e.g., a plan). The user will be provided with a 'Proceed' button to execute it."
+                    },
+                    "Summary": {
+                      "type": "STRING",
+                      "description": "Detailed multi-line summary of the artifact file, after edits have been made. Summary does not need to mention the artifact name and should focus on the contents and purpose of the artifact."
+                    },
+                    "UserFacing": {
+                      "type": "BOOLEAN",
+                      "description": "Set to true if this artifact should be presented to the user. Set to false for scratch scripts, temporary data files, or files that the user does not need to see"
+                    }
+                  },
+                  "required": [
+                    "Summary",
+                    "UserFacing",
+                    "RequestFeedback"
+                  ]
+                },
+                "CodeContent": {
+                  "type": "STRING",
+                  "description": "The code contents to write to the file."
+                },
+                "Description": {
+                  "type": "STRING",
+                  "description": "Brief, user-facing explanation of what this change did. Focus on non-obvious rationale, design decisions, or important context. Don't just restate what the code does."
+                },
+                "Overwrite": {
+                  "type": "BOOLEAN",
+                  "description": "Set this to true to overwrite an existing file. WARNING: This will replace the entire file contents. Only use when you explicitly intend to overwrite. Otherwise, use a code edit tool to modify existing files."
+                },
+                "TargetFile": {
+                  "type": "STRING",
+                  "description": "The target file to create and write code to. Must be an absolute path."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "TargetFile",
+                "Overwrite",
+                "CodeContent",
+                "Description",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "replace_file_content",
+            "description": "Use this tool to edit an existing file. Follow these rules:\n1. Use this tool ONLY when you are making a SINGLE CONTIGUOUS block of edits to the same file (i.e. replacing a single contiguous block of text).\n2. Do NOT make multiple parallel calls to this tool for the same file.\n3. To edit multiple, non-adjacent lines of code in the same file, make multiple calls to this tool.\n4. For the ReplacementChunk, specify StartLine, EndLine, TargetContent and ReplacementContent. StartLine and EndLine should specify a range of lines containing precisely the instances of TargetContent that you wish to edit. To edit a single instance of the TargetContent, the range should be such that it contains that specific instance of the TargetContent and no other instances. In TargetContent, specify the precise lines of code to edit. These lines MUST EXACTLY MATCH text in the existing file content. In ReplacementContent, specify the replacement content for the specified target content. This must be a complete drop-in replacement of the TargetContent, with necessary modifications made.\n5. If you are making multiple edits across a single file, make multiple calls to this tool. DO NOT try to replace the entire existing content with the new content, this is very expensive.\n6. You may not edit file extensions: [.ipynb]",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "AllowMultiple": {
+                  "type": "BOOLEAN",
+                  "description": "If true, multiple occurrences of 'targetContent' will be replaced by 'replacementContent' if they are found. Otherwise if multiple occurrences are found, an error will be returned."
+                },
+                "Description": {
+                  "type": "STRING",
+                  "description": "Brief, user-facing explanation of what this change did. Focus on non-obvious rationale, design decisions, or important context. Don't just restate what the code does."
+                },
+                "EndLine": {
+                  "type": "INTEGER",
+                  "description": "The ending line number of the chunk (1-indexed). Should be at or after the last line containing the target content. Must satisfy StartLine <= EndLine <= number of lines in the file. The target content is searched for within the [StartLine, EndLine] range."
+                },
+                "Instruction": {
+                  "type": "STRING",
+                  "description": "A description of the changes that you are making to the file."
+                },
+                "ReplacementContent": {
+                  "type": "STRING",
+                  "description": "The content to replace the target content with."
+                },
+                "StartLine": {
+                  "type": "INTEGER",
+                  "description": "The starting line number of the chunk (1-indexed). Should be at or before the first line containing the target content. Must satisfy 1 <= StartLine <= EndLine. The target content is searched for within the [StartLine, EndLine] range."
+                },
+                "TargetContent": {
+                  "type": "STRING",
+                  "description": "The exact string to be replaced. This must be the exact character-sequence to be replaced, including whitespace. Be very careful to include any leading whitespace otherwise this will not work at all. This must be a unique substring within the file, or else it will error."
+                },
+                "TargetFile": {
+                  "type": "STRING",
+                  "description": "The target file to modify. Must be an absolute path. Always specify the target file as the very first argument."
+                },
+                "TargetLintErrorIds": {
+                  "type": "ARRAY",
+                  "description": "If applicable, IDs of lint errors this edit aims to fix (they'll have been given in recent IDE feedback). If you believe the edit could fix lints, do specify lint IDs; if the edit is wholly unrelated, do not. A rule of thumb is, if your edit was influenced by lint feedback, include lint IDs. Exercise honest judgement here.",
+                  "items": {
+                    "type": "STRING"
+                  }
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "TargetFile",
+                "Instruction",
+                "Description",
+                "AllowMultiple",
+                "TargetContent",
+                "ReplacementContent",
+                "StartLine",
+                "EndLine",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "generate_image",
+            "description": "Generate an image or edit existing images based on a text prompt. The resulting image will be saved as an artifact for use. You can use this tool to generate user interfaces and iterate on a design with the USER for an application or website that you are building. When creating UI designs, generate only the interface itself without surrounding device frames (laptops, phones, tablets, etc.) unless the user explicitly requests them. You can also use this tool to generate assets for use in an application or website.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "AspectRatio": {
+                  "type": "STRING",
+                  "description": "Optional aspect ratio for the generated image. Supported values: '1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9'. Default is '1:1'."
+                },
+                "ImageName": {
+                  "type": "STRING",
+                  "description": "Name of the generated image to save. Should be all lowercase with underscores, describing what the image contains. Maximum 3 words. Example: 'login_page_mockup'"
+                },
+                "ImagePaths": {
+                  "type": "ARRAY",
+                  "description": "Optional absolute paths to the images to use in generation. You can pass in images here if you would like to edit, combine, or use as references. You can pass in artifact images and any images in the file system. Note: you cannot pass in more than 3 images.",
+                  "items": {
+                    "type": "STRING"
+                  }
+                },
+                "Prompt": {
+                  "type": "STRING",
+                  "description": "The text prompt to generate an image for or the edit instructions."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Prompt",
+                "ImageName",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "read_url_content",
+            "description": "Fetch content from a URL via HTTP request (invisible to USER). Use when: (1) extracting text from public pages, (2) reading static content/documentation, (3) batch processing multiple URLs, (4) speed is important, or (5) no visual interaction needed. Converts HTML to markdown. No JavaScript execution, no authentication. For pages requiring login, JavaScript, or USER visibility, use read_browser_page instead.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Url": {
+                  "type": "STRING",
+                  "description": "URL to read content from"
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Url",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "search_web",
+            "description": "Performs a web search for a given query. Returns a summary of relevant information along with URL citations.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "domain": {
+                  "type": "STRING",
+                  "description": "Optional domain to recommend the search prioritize"
+                },
+                "query": {
+                  "type": "STRING"
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "query",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "ask_question",
+            "description": "Use this tool to ask the user one or more multiple-choice questions, with the goal of:\n- Clarifying underspecified requirements\n- Soliciting design feedback or user preferences\n- Addressing ambiguous user intent\n- Picking a solution from a list of options\n\nWhen called, this tool renders an interactive modal containing the question, selectable options, a default write-in option, and Submit/Skip buttons. Execution is blocked until the user responds.\n\nGuidance:\n- When specifying files in the question, use github markdown links (e.g. [filename](file:///path/to/file)).\n- Don't use this tool to ask trivial questions that can be answered with a single word (e.g. yes/no); output regular text to ask these questions.\n- Don't include an 'other' option for write-in responses; one is always provided in the UI by default.\n- Don't enumerate the options; they are enumerated by default.\n- Don't include \"Select all options that apply\", or similar, in the question; the UI already includes this.\n- If you recommend any options, list it first and prefix the option text with \"(Recommended)\".\n- Format options as the user's direct response instead of describing your own actions.\n- Set 'IsMultiSelect' to true to allow the user to select multiple options with checkboxes.\n",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "questions": {
+                  "type": "ARRAY",
+                  "description": "The list of questions to ask.",
+                  "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                      "is_multi_select": {
+                        "type": "BOOLEAN",
+                        "description": "If true, the user can select multiple options."
+                      },
+                      "options": {
+                        "type": "ARRAY",
+                        "description": "The text for each option, formatted as the user's response. Must have at least 2 options. Do NOT add an 'Other' option to questions.",
+                        "items": {
+                          "type": "STRING"
+                        }
+                      },
+                      "question": {
+                        "type": "STRING",
+                        "description": "The question to ask the user. Do NOT add 'select all that apply' or similar text to the question title."
+                      }
+                    }
+                  }
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "labels": {
+      "last_execution_id": "9648bd6f-4b24-495e-9b82-f5b59ecfa6cc",
+      "last_step_index": "21",
+      "model_enum": "MODEL_PLACEHOLDER_M35",
+      "request_id": "a625a450-b0e2-435f-b99f-3c821f9149cc-8",
+      "trajectory_id": "a625a450-b0e2-435f-b99f-3c821f9149cc",
+      "used_claude": "true",
+      "used_claude_conservative": "true",
+      "used_non_gemini_model": "true"
+    },
+    "generationConfig": {
+      "maxOutputTokens": 64000,
+      "thinkingConfig": {
+        "includeThoughts": true,
+        "thinkingBudget": 1024
+      }
+    },
+    "sessionId": "-3750763034362895579"
+  },
+  "model": "claude-sonnet-4-6",
+  "userAgent": "antigravity",
+  "requestType": "agent"
+}
+
+
+
+
+
+
+
+
+ide样本：
+
+{
+  "project": "aicode-consumers",
+  "requestId": "agent/90546263-053a-47ac-bd07-f435874e38fe/1790611135898/1a5bf067-a359-4d74-a9a1-ea79d8119536/8",
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "<USER_REQUEST>\n你好啊  请你并行执行三个helloworld函数试试\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-09-28T23:58:38+08:00.\n</ADDITIONAL_METADATA>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to Claude Sonnet 4.6 (Thinking). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.\n</USER_SETTINGS_CHANGE>"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "The user wants me to run three \"hello world\" functions in parallel. I'll use invoke_subagent to launch three subagents concurrently, each printing \"Hello World\".",
+            "thought": true
+          },
+          {
+            "text": "你好！我来并行启动三个子代理，每个都执行一个 \"Hello World\" 任务 🚀",
+            "thoughtSignature": "RXBrRENwUUJDQklRQWhnQ0trRG5DbWtpWXpGK0FsVTI5a25BeTduQlhwcWRzd0Z3Q1djOUpBZWVWdFB2dFFvV0IveithcGxuL2VDazErK3B1VmVRTXYvQ2NJVTVKeDhpWHJGekRNbE9NaEZqYkdGMVpHVXRjMjl1Ym1WMExUUXROamdBUWdoMGFHbHVhMmx1WjFvTU1qRXdNVEkxTlRBM01qSTRjaERhdGtpWjdGSW1YM0V2S05TaVhXUEZpQUVCcUFHeG5lclZCckFCQWhJTXltK1pmWWVZVWMxNWZITHFHZ3hCS1UwRm4zcHlXZ1l4dTU4aU1QZDIrU2xUL0FEYXlaajlCazBKb0p4THZ3c2VNYzh2NmI3M3h3SnlpVlBsQitWdG5YbHY3S3J6dCtkeVpPTVQ4eXF4QVErYWh0UVorQmJ4QXB5MUthS0ErSHZkZjhaQnFCVDhyQlFKaWdxMVh0eWw0WEZTSjRPTlpKalVNWFU0V3RvN21KMjArVmwrQTkxNyt5ek44bmF4cGFlS0xMOVVzK2dHa0l1QktDa29Fb0VVTVlKMHJJWU9YdGhhb0E3ZnR5QitiMzVXZTRYYWdGU0N2YnUxYmdEUEkvMmFId2VKODEzc2poenNGcGVGMVN1OE82blU3TlhXZFphVS9GeHUwbFhTT0k2NyttZllrTkczS2pMTi9hQm1UaDZXQzhkZ09nUjg1cTIybmw5c0g2MlY2UmdC"
+          },
+          {
+            "functionCall": {
+              "id": "toolu_vrtx_01TYkRL2v5U5qvYp5pYU1qFb",
+              "name": "invoke_subagent",
+              "args": {
+                "Subagents": [
+                  {
+                    "Prompt": "请输出一条消息：'👋 Hello World from Agent #1! 我是第一个并行执行的子代理！' 然后简单介绍自己是第几号代理。任务完成后直接回复结果即可。",
+                    "Role": "Hello World Runner 1",
+                    "TypeName": "research"
+                  },
+                  {
+                    "Prompt": "请输出一条消息：'👋 Hello World from Agent #2! 我是第二个并行执行的子代理！' 然后简单介绍自己是第几号代理。任务完成后直接回复结果即可。",
+                    "Role": "Hello World Runner 2",
+                    "TypeName": "research"
+                  },
+                  {
+                    "Prompt": "请输出一条消息：'👋 Hello World from Agent #3! 我是第三个并行执行的子代理！' 然后简单介绍自己是第几号代理。任务完成后直接回复结果即可。",
+                    "Role": "Hello World Runner 3",
+                    "TypeName": "research"
+                  }
+                ],
+                "toolAction": "Launching three parallel subagents",
+                "toolSummary": "Parallel Hello World subagents"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "functionResponse": {
+              "id": "toolu_vrtx_01TYkRL2v5U5qvYp5pYU1qFb",
+              "name": "invoke_subagent",
+              "response": {
+                "output": "Created At: 2026-09-28T23:58:46+08:00\nCompleted At: 2026-09-28T23:58:47+08:00\nCreated the following subagents:\n{\n  \"conversationId\": \"506488bd-429e-4ac8-8bb2-b9b98598f7e7\",\n  \"logAbsoluteUri\": \"file:///C:/Users/Administrator/.gemini/antigravity/brain/506488bd-429e-4ac8-8bb2-b9b98598f7e7/.system_generated/logs/transcript.jsonl\",\n  \"workspaceUris\": [\n    \"file:///e%3A/code/Antigravity-Manager\"\n  ]\n}\n{\n  \"conversationId\": \"0e2c710d-23fd-4014-9223-d2c42166a0c7\",\n  \"logAbsoluteUri\": \"file:///C:/Users/Administrator/.gemini/antigravity/brain/0e2c710d-23fd-4014-9223-d2c42166a0c7/.system_generated/logs/transcript.jsonl\",\n  \"workspaceUris\": [\n    \"file:///e%3A/code/Antigravity-Manager\"\n  ]\n}\n{\n  \"conversationId\": \"cfc15780-9b06-4604-b635-ac4c66746a69\",\n  \"logAbsoluteUri\": \"file:///C:/Users/Administrator/.gemini/antigravity/brain/cfc15780-9b06-4604-b635-ac4c66746a69/.system_generated/logs/transcript.jsonl\",\n  \"workspaceUris\": [\n    \"file:///e%3A/code/Antigravity-Manager\"\n  ]\n}\nThe subagents will send you a message when they have completed their task or require guidance. There is no need to poll for their responses."
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "三个子代理已同时启动，等待它们回传结果 ⏳"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "The following is a <SYSTEM_MESSAGE> not actually sent by the user. It is provided by the system as important information to pay attention to.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-09-28T15:58:52Z sender=506488bd-429e-4ac8-8bb2-b9b98598f7e7 priority=MESSAGE_PRIORITY_HIGH content=👋 Hello World from Agent #1! 我是第一个并行执行的子代理！\n\n我是 **1号子代理**，负责代码库探索与信息收集的研究子代理（Research Subagent）。我具备只读访问权限，专注于浏览文件、搜索代码信息，并将发现结果汇报给主代理。\n</SYSTEM_MESSAGE>"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Agent #1 has reported back. Waiting for #2 and #3.",
+            "thought": true
+          },
+          {
+            "text": "✅ **Agent #1** 已回报！等待另外两个...\n\n| 代理 | 状态 | 消息 |\n|------|------|------|\n| 🤖 Agent #1 | ✅ 完成 | 👋 Hello World from Agent #1! 我是第一个并行执行的子代理！ |\n| 🤖 Agent #2 | ⏳ 执行中... | — |\n| 🤖 Agent #3 | ⏳ 执行中... | — |",
+            "thoughtSignature": "RXFrQ0NwUUJDQklRQWhnQ0trQlp6MitsMGZ1enlEb1M3elRyMjNhNXYwOG5ObUp1dCthbTR6VG5BVlNJUXRheWlYZFYxbjNaRkFXSnV1cGExSy9XYnQzb0RsOGhlMGVJK09XYmtJOHBNaEZqYkdGMVpHVXRjMjl1Ym1WMExUUXROamdBUWdoMGFHbHVhMmx1WjFvTU1qRXdNVEkxTlRBM01qSTRjaERhdGtpWjdGSW1YM0V2S05TaVhXUEZpQUVCcUFHK25lclZCckFCQWhJTXhmSWVZZXRXbU5jeGk5czFHZ3hvaUprN2hGazd6bi9TZ1RNaU1IVHR6QzExRys0YjQwVDU5anNiU3NLVFN6TlV4c2tzdlpLMnM1N3BiakZEQUVhWDloN1lmZXFWWHJFY3FKR01HU3BDdnBoSllKS21VbU1ZUEFRZkhST3A2NzZrVDVWYXZDZnpHOXlqYXAxTXl2U0F4OWlwQzBiT2FFb0JpMTBWeldLZHZNVzBjWDlHRndDR25RVGFDU1RTbm4xYUdBRT0="
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "The following is a <SYSTEM_MESSAGE> not actually sent by the user. It is provided by the system as important information to pay attention to.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-09-28T15:58:53Z sender=cfc15780-9b06-4604-b635-ac4c66746a69 priority=MESSAGE_PRIORITY_HIGH content=👋 Hello World from Agent #3! 我是第三个并行执行的子代理！\n\n我是 **3号子代理**，在本次并行任务中作为第三个实例被调度执行。我的职责是代码库探索与信息收集（只读研究子代理），负责浏览文件、搜索代码信息，并将发现汇报给主代理。任务完成！\n</SYSTEM_MESSAGE>"
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "The following is a <SYSTEM_MESSAGE> not actually sent by the user. It is provided by the system as important information to pay attention to.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-09-28T15:58:53Z sender=0e2c710d-23fd-4014-9223-d2c42166a0c7 priority=MESSAGE_PRIORITY_HIGH content=👋 Hello World from Agent #2! 我是第二个并行执行的子代理！\n\n我是 **2号子代理**，专职负责代码库探索、文件读取和信息搜索任务，以只读方式协助主代理收集和分析信息。\n</SYSTEM_MESSAGE>"
+          }
+        ]
+      }
+    ],
+    "systemInstruction": {
+      "role": "user",
+      "parts": [
+        {
+          "text": "<identity>\nYou are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.\nYou are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.\nThe USER will send you requests, which you must always prioritize addressing. User requests are enclosed within <USER_REQUEST> tags.\n</identity>\n<user_information>\nThe USER's OS version is windows.\nThe user has 1 active workspaces, each defined by a URI and a CorpusName. Multiple URIs potentially map to the same CorpusName. The mapping is shown as follows in the format [URI] -> [CorpusName]:\ne:\\code\\Antigravity-Manager -> lbjlaq/Antigravity-Manager\nCode relating to the user's requests should be written in the locations listed above. Avoid writing project code files to tmp, in the .gemini dir, or directly to the Desktop and similar folders unless explicitly asked.\nApp Data Directory: C:\\Users\\Administrator\\.gemini\\antigravity\nConversation ID: 90546263-053a-47ac-bd07-f435874e38fe\n</user_information>\n<user_rules>\nThe following are user-defined rules that you MUST ALWAYS FOLLOW WITHOUT ANY EXCEPTION. These rules take precedence over any following instructions.\nReview them carefully and always take them into account when you generate responses and code:\n<RULE[e:\\code\\Antigravity-Manager\\AGENTS.md]>\n# Project Maintenance Guidelines\n\n- **Architecture**: This project is a gateway that aggregates four AI protocols — OpenAI Responses, OpenAI Chat Completions, Anthropic Claude, and Google Gemini — and outputs Antigravity-style Gemini protocol format.\n- **Pipeline First**: Keep the pipeline strictly decoupled from specific protocols. The four protocols function purely as Gemini adapters. Adapters are restricted to parameter normalization, payload transformation, protocol divergence adaptation, and edge cases unsolvable within the pipeline stage. The pipeline stage uniformly handles the converted Gemini payloads, including thinking block backfilling, thinking budget filtering and backfilling, unified context structural alignment, prefix stability, and the sanitization of risky prompts and request headers.\n- **Backend Fix Strategy**: Prioritize protocol-agnostic, generic fixes within the pipeline rather than localized adapter modifications. Treat adapter-level patches as a last resort only when a generic pipeline solution is infeasible or degrades compatibility.\n- **UI Design & Headless Compatibility**:\n  - **Minimalist & Contextual UI**: Prioritize user-friendly, non-intrusive interactions. Reuse existing design conventions (e.g., pill toggle buttons, badge switches, or contextual setting panels) placed strictly within their most relevant sections rather than scattering unrelated controls.\n  - **Headless & CLI Parity**: Ensure GUI configurations maintain functional parity across headless servers, CLI environments, and cross-platform environments. Provide configuration file fields, environment variable overrides, or dedicated CLI flags/commands for essential settings.\n  - **Cross-Platform Compatibility**: Evaluate every code addition and dependency change for seamless cross-platform support.\n- **Code Quality**: Prioritize root-cause, future-proof fixes rather than hardcoded logic, dead code, or speculative changes. Prioritize generalized solutions that cover entire classes of problems rather than one-off patches.\n  - *Model Routing Example*: Prioritize wildcard patterns (e.g., `gemini-*-flash-*`) to anticipate future model releases rather than exact string matches.\n  - *Prompt Sanitization Example*: For agent-client prompt sanitization, prioritize regex-based pattern matching over static keyword replacement, ensuring full coverage without stripping pipeline system prompts or user queries.\n- **Formatting & CI Discipline**:\n  - **Unit Testing**: Keep focused — run targeted tests for touched modules locally; CI compiles test targets without executing them. Skip tests for trivial edits (constants, prompts, or config tweaks). No need to run the full suite locally.\n  - **Local Test Discretion**: For strings, constants, hardcoded values, or other trivial edits, ask after the task whether a small functional check is wanted rather than testing on your own. Self-test only when four or more core backend or frontend interaction files are involved; hardcoded-only edits do not count as core-file changes. In general, follow the user's preference on whether to test.\n  - **Pre-flight Checks**: Run the essentials before submitting PRs or release tags:\n    - `cd src-tauri && cargo fmt -- --check` (for Rust edits)\n    - `cd src-tauri && cargo clippy --all-targets --all-features` (comprehensive Rust gate, already includes compilation — no separate `cargo check` needed)\n    - `npm run build` (when `src/` or frontend configs changed)\n    - Rely on CI for full-app compilation (`tauri build`) and full test execution. Local pre-flight covers fmt + clippy + frontend build only.\n- **Release Channels & Discipline**:\n  - **Release Channel Separation**:\n    - **Stable Releases (正式版)**: Exclusively on `main`. Deploys official production packages, updates Docker/GitHub `latest` tags, and services automatic update channels.\n    - **Preview Releases (预览版 / Beta)**: Exclusively on `beta`. Independently builds and publishes pre-releases (`makeLatest: false`, `prerelease: true`) without touching production update channels.\n  - **Maintainer Staging Protocol**:\n    - When introducing new changes (features, major refactors, non-trivial fixes), prompt and confirm with maintainers whether to implement and test on `beta` branch first.\n    - Validate stability on `beta` (with optional independent preview builds) prior to merging into `main`.\n  - **Standard Release Workflow**:\n    1. **Atomic Version Sync**: Run `npm run bump <patch|minor|beta|version>` to synchronize all project manifests and generate changelog skeletons.\n    2. **Documentation & Attribution**:\n       - Audit Git history (`<last-tag>..HEAD`) and merged PRs to summarize all authors, co-authors, and linked Issues/PRs (`Fixes #xxx`, `PR #xxx`). Attribute every contributor inline (`Thanks to @username`) in `CHANGELOG.md` (and `CHANGELOG_EN.md`).\n       - **Synchronize README Changelog (同步首页更新日志)**: For stable releases, you **MUST** update the release summary in both `README.md` (under \"## 📝 更新日志\") and `README_EN.md` (under \"## 📝 Changelog\"). Never update only `CHANGELOG.md` while leaving `README.md` / `README_EN.md` with outdated release notes. Pre-release / beta versions remain exclusively in changelogs; stable releases require full synchronization across both README files.\n    3. **Pre-flight before Tagging**: Run the Pre-flight Checks above on the exact commit to be tagged.\n    4. **Commit, Tag & Push**: Push stable releases to `main` (`git tag vX.Y.Z && git push origin vX.Y.Z`), reserving `beta` exclusively for pre-releases (`git tag vX.Y.Z-beta.N && git push origin vX.Y.Z-beta.N`). The release gate strictly intercepts cross-branch misplacement. Tags must match `CHANGELOG.md` headings character-for-character (including `v` prefix and pre-release suffix).\n  - *Full procedure*: See `docs/RELEASE_GUIDE.md` for bump options, changelog templates, and rollback steps.\n- **Thinking Cache Invalidation Control (发版清理建议)**:\n  - File: `src/components/common/SuggestionDeleteThinkingModal.tsx`\n  - Routine releases (no prompt): Keep `SUGGESTION_DELETE_THINKING_STORE = false`.\n  - Architecture / schema refactors (prompt users to clean once):\n    1. Set `SUGGESTION_DELETE_THINKING_STORE = true`.\n    2. Set `SUGGESTION_TARGET_VERSION = '<version>'` (e.g. `'4.8.2'`).\n    3. On upgrade, users with existing cache get a one-time prompt; action state persists in `gui_config.json`.\n- **Branch & History Hygiene**:\n  - Branch from remote bases (`origin/beta` for staged features, `origin/main` for direct hotfixes) rather than local branches to prevent untracked ancestor commits.\n  - Inspect in-flight PRs (`gh pr list --base main`) before rewriting published tips, avoiding force-pushes across shared branches.\n  - Retain local rollback refs (`backup/*`) before history rewrites, confirming zero content drift via `git diff --stat <backup> HEAD`.\n- **PR Scope & Grouping**:\n  - **Single Problem Scope**: A PR represents a cohesive collection of fixes or features dedicated to a single problem class. Keep unrelated concerns (such as governance, release tooling, or documentation) in isolated PRs.\n  - **Self-Contained & Individually Revertable**: A PR may contain multiple commits, but each commit must represent an independent, self-contained functional unit that is individually revertable, avoiding messy or tangled changesets.\n  - **Local Convergence & Final-State Commits**: Commit freely during local debugging on development branches; however, before opening or merging a PR, audit and consolidate scattered iterative attempts into clean, high-quality units. Each consolidated commit must describe only its successful final state and rationale, eliminating intermediate trial-and-error noise.\n  - **Review & Template Alignment**: Route every PR through peer review and complete `.github/PULL_REQUEST_TEMPLATE.md` (problem classification, behavior alterations, unverified paths, and rollback strategy).\n- **Contributor Respect & Attribution**:\n  - Preserve authorship by preferring the contributor's own PR for squash commits, or attaching explicit `Co-authored-by:` trailers on merge commits and proxy PRs.\n  - Disclose costs before merging: highlight affected existing behaviors and unverified paths alongside improvements.\n  - Own tooling and documentation gaps directly rather than attributing downstream frictions to contributors.\n  - Accompany every rejection with a concrete file-by-file accept/drop breakdown and an actionable path forward.\n- **Risky Path Replacement**:\n  - Keep an explicit fallback to the verified path whenever you replace it (e.g. \"0 matches found → full restart\"). A silent no-op is worse than the failure it was meant to fix.\n  - Order side effects to fail before the point of no return: write credentials before killing a process, validate before deleting.\n  - Detect broadly, act narrowly: a matcher may recognize a whole class of problems, while its effect stays inside the intended data — not across line breaks, tags, or other clauses. Bound every wait with a timeout.\n\nMaintained by @jeikl\n</RULE[e:\\code\\Antigravity-Manager\\AGENTS.md]>\n</user_rules>\n<skills>\nYou can use specialized 'skills' to help you with complex tasks. Each skill has a name and a description listed below.\n\nSkills are folders of instructions, scripts, and resources that extend your capabilities for specialized tasks. Each skill folder contains:\n- **SKILL.md** (required): The main instruction file with YAML frontmatter (name, description) and detailed markdown instructions\n\nMore complex skills may include additional directories and files as needed, for example:\n- **scripts/** - Helper scripts and utilities that extend your capabilities\n- **examples/** - Reference implementations and usage patterns\n- **resources/** - Additional files, templates, or assets the skill may reference\n- **references/** - Contains additional documentation that agents can read when needed\n\n\nIf a skill seems relevant to your current task, you MUST read its `SKILL.md` instructions using `view_file` before proceeding. You may skip this step only if you are delegating the skill-related task to a subagent that will read and follow the instructions itself.\n\nWhen calling `view_file` on these skill paths, always use the exact path provided in the \"Available skills\" list below.\n\nAvailable skills:\n- agy-customizations (C:\\Users\\Administrator\\.gemini\\antigravity\\builtin\\skills\\agy-customizations\\SKILL.md): Comprehensive guide and reference for the Antigravity Customization System. Use to explain how customizations work, their loading priority, discovery mechanisms, and to guide the creation of skills, rules, plugins, hooks, and MCP servers.\n- antigravity-guide (C:\\Users\\Administrator\\.gemini\\antigravity\\builtin\\skills\\antigravity_guide\\SKILL.md): Provides a comprehensive guide, quick reference, and sitemap for Google Antigravity (AGY), including the Antigravity CLI (agy), Antigravity 2.0, Antigravity IDE, Python SDK, slash commands, keybindings, and customizations (skills, rules, MCP, sidecars). Activate this skill when the user asks questions about how to use, configure, or customize Antigravity, AGY, the agy CLI, the Antigravity IDE, or Antigravity 2.0.\n- generative_ui (C:\\Users\\Administrator\\.gemini\\antigravity\\builtin\\skills\\generative_ui\\SKILL.md): How to render rich interactive HTML widgets inline in the chat or as standalone artifacts. Use this skill when you want to show the user diagrams, data visualizations, interactive controls, educational walkthroughs, or any rich visual content beyond plain text and markdown.\n- migrate-workflows (C:\\Users\\Administrator\\.gemini\\antigravity\\builtin\\skills\\migrate-workflows\\SKILL.md): Automatically migrate legacy workflows to modern skills across global and workspace configurations. Scans for existing workflows, creates target SKILL.md files, and safely archives old workflow files.\n\n\n</skills>\n<subagents>\n## Invoking Subagents\n\nSubagents can be invoked using the invoke_subagent tool. You can invoke an existing subagent by name, or define a new subagent for this conversation using the define_subagent tool, and then invoke it. Agents defined by the define_subagent tool are available for the duration of this conversation. After launching a subagent, you do NOT need to poll or check your inbox in a loop. The system will automatically notify you when the subagent sends a message. Simply proceed with other work or stop calling tools, and you will be notified when there is a message to process.\n\n## Communicating with Another Agent\n\nUse the send_message tool to send a message to another agent by its conversation ID (returned by invoke_subagent). This tool is ONLY for communicating with other agents.\n\n**Do NOT use send_message to communicate with the user.** Instead, output visible text to communicate with the user.\n\nAvailable subagents:\n- self: Subagent that inherits the parent agent's full configuration including tools, system prompt, and model. Use this when you need to run a task in a separate conversation context but with the same capabilities as the current agent.\n- research: Research subagent with read-only tools for exploring the codebase, searching the web, and reading files. Delegate to this agent when you need to run a task in a separate conversation context but with the same capabilities as the current agent, when a research task requires many search and file-reading steps that would clutter your context, or when you need a broad survey of the codebase or documentation. Prefer doing research yourself for quick, targeted lookups.\n\nAfter launching a subagent, you do NOT need to poll or check your inbox in a loop. The system will automatically notify you when the subagent sends a message. Simply proceed with other work or stop calling tools, and you will be notified when there is a message to process.\n\n</subagents>\n<messaging>\nYou are connected to a messaging system where you may receive messages from: agents, background tasks, user-queued messages.\n\n## Receiving Messages\n\nYou receive messages automatically at the start of each invocation. All messages are delivered in full directly into your context — no manual retrieval is needed.\n\n## Reactive Wakeup (No Polling Needed)\n\nThe system automatically resumes your execution when:\n- A message arrives from a subagent or peer agent\n- A **background task** completes or sends you a notification\n- A **user-queued message** is ready to be dequeued\n\nThis means you do **NOT** need to poll in a loop while waiting for messages or updates. After launching anything that performs work asynchronously, you may continue other work or simply stop by calling no more tools. The system will notify you when there is something to process.\n</messaging>\n<conversation_transcript>\nTranscripts are located directly at `<appDataDir>\\brain\\<conversation-id>\\.system_generated\\logs/transcript.jsonl` (and `transcript_full.jsonl`).\n- Start with `transcript.jsonl` (compact). When `truncated_fields` is present, read only the specific corresponding line in `transcript_full.jsonl`.\n- Search subagents by grepping `invoke_subagent` in `transcript.jsonl`.\n- Link conversations using `[<label>](conversation://<conversation-id>)`.\n\n# File Format\nTranscripts are in JSON Lines (JSONL) format. Each line is a single JSON object representing one \"step\" or action in the conversation.\nEach JSON object contains fields such as:\n- `step_index`: The index of the step in the trajectory.\n- `source`: The source of the action (e.g., `USER_EXPLICIT`, `MODEL`, `SYSTEM`).\n- `type`: The type of the step. Particular steps of interest are `USER_INPUT`, which represents a user's prompt, and `PLANNER_RESPONSE`, which represents the agent's response and tool calls.\n- `status`: The status of the step (e.g., `DONE`, `ERROR`).\n- `created_at`: The ISO 8601 timestamp of when the step occurred.\n- `content`: The text content of the step (e.g., the user's request, the model's response, or tool responses).\n- `thinking`: The model's internal reasoning / chain-of-thought (for `PLANNER_RESPONSE` steps).\n- `tool_calls`: An array of tool calls made in this step, including their arguments.\n- `media`: An array of media (e.g. images) attached to the step, each with a `mime_type` and a `uri` referencing the media file on disk. Media bytes are not stored in the transcript; view the `uri` path to see the media.\n- `truncated_fields`: An array of field names that were truncated (e.g., `[\"content\"]`, `[\"thinking\"]`, `[\"tool_calls\"]`). Only present in `transcript.jsonl` when truncation occurred (never in `transcript_full.jsonl`). When present, read the corresponding line in `transcript_full.jsonl` for the complete content.\n\n</conversation_transcript>\n<artifacts>\nArtifacts are special markdown (.md) documents that you can create to present structured information to the user.\nAll artifacts should be written to the artifact directory: `<appDataDir>\\brain\\<conversation-id>`. You do NOT need to create this directory yourself, it will be created automatically when you create artifacts.\n\n# When to Use Artifacts\n\n**Use artifacts for:**\n- Extensive reports and analysis summaries\n- Persistent information you'll update over time (task lists, experiment logs)\n- Code changes formatted as diffs\n\n**Don't use artifacts for:**\n- Simple one-off answers or very short paragraph content - just respond directly\n- Asking questions or requesting user input - just ask directly\n\n**After creating or updating an artifact**, DO NOT re-summarize the artifact contents in your response to the user. Instead, point the user to the artifact and highlight only key open questions or decisions that need their input.\n\n\n# Artifact Formatting Tips\nWhen creating markdown artifacts, use standard markdown and GitHub Flavored Markdown formatting.\n\n## Alerts\nUse GitHub-style alerts strategically to emphasize critical information. Do not place consecutively or nest:\n  > [!NOTE] Background context, implementation details, or explanations\n  > [!TIP] Performance optimizations, best practices, or efficiency suggestions\n  > [!IMPORTANT] Essential requirements, critical steps, or must-know information\n  > [!WARNING] Breaking changes, compatibility issues, or potential problems\n  > [!CAUTION] High-risk actions that could cause data loss or security vulnerabilities\n\n\n## Mermaid Diagrams\nCreate mermaid diagrams using fenced code blocks with language `mermaid` to visualize relationships, workflows, and architectures.\n- Only use supported diagram types:\n  - Flowcharts / Graphs: `flowchart TD` / `flowchart LR` / `graph TD` / `graph LR`\n  - Sequence Diagrams: `sequenceDiagram`\n  - State Diagrams: `stateDiagram-v2` or `stateDiagram`\n  - Class Diagrams: `classDiagram`\n  - Entity-Relationship Diagrams: `erDiagram`\n  - XY Charts: `xychart-beta`\n- All other diagram types are unsupported. For schedules, timelines, or roadmaps, use directed flowcharts (`flowchart LR` / `flowchart TD`) or Markdown tables instead.\n- To prevent syntax errors:\n  - Quote node labels containing special characters like parentheses or brackets. For example, `id[\"Label (Extra Info)\"]` instead of `id[Label (Extra Info)]`.\n  - Avoid HTML tags in labels.\n\n## File Links\n- Link to line ranges using [link text](file:///absolute/path/to/file#L123-L145) format.\n- **IMPORTANT**: If you are embedding a file in an artifact and the file is NOT already in <appDataDir>\\brain\\<conversation-id>, you MUST first copy the file to the artifacts directory before embedding it. Only embed files that are located in the artifacts directory. Always use its absolute path `![caption](/absolute/path)`.\n- **Use basenames for readability**: Use file basenames for the link text instead of the full path\n\n## Carousels\nUse ````carousel syntax with `<!-- slide -->` HTML comments to display related markdown snippets sequentially (before/after comparisons, UI progressions, alternative approaches, walkthroughs). Four backticks enable nesting code blocks within slides.\n\nExample:\n````carousel\n![Image description](/absolute/path/to/image1.png)\n<!-- slide -->\n```python\ndef example():\n    print(\"Code in carousel\")\n```\n````\n\n## LaTeX / Math\nArtifacts render LaTeX math with KaTeX.\n- **Literal `$`**: write `\\$`, or wrap it in backticks. Two unescaped `$` in the same paragraph become math.\n\n# Scratch Scripts and Files\n\nYou may find it useful to create scratch scripts or files for temporary purposes.\n\nExamples:\n- One-off scripts to debug code\n- Temporary data files for testing\n\nStore these files in the `<appDataDir>\\brain\\<conversation-id>/scratch/` directory. They will be persisted.\n\n\nArtifact Directory Path: C:\\Users\\Administrator\\.gemini\\antigravity\\brain\\90546263-053a-47ac-bd07-f435874e38fe\n\n</artifacts>\n<slash_commands>\nSlash commands are user-facing shortcuts in the chat UI (e.g., typing `/goal` or `/schedule`) that automate complex workflows or trigger specialized agent behaviors.\n\nYou cannot execute these commands yourself. Your role is to recommend them to the user when they are a good fit for the task at hand, encouraging the user to explore and trigger them.\n\nTo recommend a slash command, suggest it clearly in your response (e.g., \"You can use the `/goal` command to...\").\n\n\nAvailable slash commands you can recommend to the user:\n- /goal: Recommend this when the user wants to run a long-running task (e.g., overnight) and wants the agent to be extra thorough and not stop until the goal is fully achieved.\n- /schedule: Recommend this when the user wants to run an instruction on a recurring schedule or set a one-time timer.\n- /browser: Recommend this when the user's task involves web browsing, searching the web, or interacting with web applications.\n- /plan: Recommend this when the task is complex and requires careful step-by-step planning before execution.\n- /grill-me: Recommend this when the user wants to align on a plan through an interactive interview to resolve design decisions.\n- /teamwork-preview: Recommend this when the user has a large project that would benefit from a team of autonomous agents working together.\n- /learn: Recommend this when the user has corrected the agent or solved a complex setup and wants the agent to persist this behavior for future tasks.\n- /boost: Recommend this when the user has a complex coding or research project that requires deep thinking, strategic planning, multiple perspectives, and rigorous verification.\n\n\n</slash_commands>\n<guidelines>\nFollow these behavioral guidelines at all times:\n- Maintain documentation integrity. Preserve all existing comments and docstrings that are unrelated to your code changes, unless the user specifies otherwise.\n\n</guidelines>\n<communication_style>\n- Keep your responses concise.\n- Format your responses in github-style markdown.\n- You can render LaTeX math (KaTeX): inline with `\\(...\\)` or `$...$`, display with `\\[...\\]` or `$$...$$` placed on its own line.\n- Use math only for genuine mathematical content. Use backticks for code, identifiers, paths, flags, and shell variables.\n- `$` opens inline math, so write a literal dollar as `\\$` or wrap it in backticks. Two unescaped `$` in the same paragraph turn everything between them into math — this bites prices (`\\$100`) and shell syntax written in prose (`$HOME`, awk `$1`).\n\n- If you're unsure about the user's intent, ask for clarification rather than making assumptions.\n- You MUST create clickable links for all files and code symbols (classes, types, functions, structs). Use github style markdown links with the file:// scheme (e.g., [utils.py](file:///path/to/utils.py) or [`ClassName`](file:///path/to/utils.py#L10-L20)). For Windows, use forward slashes for paths.\n</communication_style>"
+        }
+      ]
+    },
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "name": "view_file",
+            "description": "View the contents of a file from the local filesystem. This tool supports text files and following binary files: image, video.\nText file usage:\n- The lines of the file are 1-indexed\n- You can view at most 800 lines at a time\n- Specify StartLine and EndLine to view the lines of the file using slice notation:\n  - Omit both to view the entire file, or the first 800 lines of the file, whichever is smaller.\n  - Specify StartLine only to view the remaining lines of the file, or the next 800 lines, whichever is smaller\n  - Specify EndLine only to view the remaining preceding lines of the file, or the previous 800 lines, whichever is smaller\n  - Specify both to view a precise line range. This range must be smaller than 800 lines or only the first 800 lines of the range will be shown.\n- Content is limited to 46080 bytes per view. If content is truncated, use the ContentOffset parameter to view the remaining content\nBinary file usage:\n- Do not provide StartLine or EndLine arguments, this tool always returns the entire file\n- Files larger than 100 MB cannot be viewed.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "AbsolutePath": {
+                  "type": "STRING",
+                  "description": "Path to file to view. Must be an absolute path."
+                },
+                "ContentOffset": {
+                  "type": "INTEGER",
+                  "description": "Optional. Byte offset into the content. Use this to view content beyond the initial byte limit when the tool output indicates content was truncated."
+                },
+                "EndLine": {
+                  "type": "INTEGER",
+                  "description": "Optional. Endline to view, 1-indexed, inclusive. When specified, this value must be greater than or equal to StartLine."
+                },
+                "StartLine": {
+                  "type": "INTEGER",
+                  "description": "Optional. Startline to view, 1-indexed, inclusive. When specified, this value must be less than or equal to EndLine."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "AbsolutePath",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "run_command",
+            "description": "PROPOSE a command to run on behalf of the user. Operating System: windows. Shell: powershell.\n**NEVER PROPOSE A cd COMMAND**.\nIf you have this tool, note that you DO have the ability to run commands directly on the USER's system.\nMake sure to specify CommandLine exactly as it should be run in the shell.\nIf the step doesn't return the command output, it means that the command was sent to the background as a task. You will receive messages with the command's output as it runs. To interact with a running command, use the manage_task tool. Use `send_input` to send stdin, `kill` to terminate the command, and `status` to check current status. IMPORTANT: Do NOT poll or loop on `status` to wait for completion. The system will automatically notify you with a message when the command finishes. Simply proceed with other work or stop calling tools after launching a command.\nCommands will be run with PAGER=cat. You may want to limit the length of output for commands that usually rely on paging and may contain very long output (e.g. git log, use git log -n <N>).",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "CommandLine": {
+                  "type": "STRING",
+                  "description": "The exact command line string to execute."
+                },
+                "Cwd": {
+                  "type": "STRING",
+                  "description": "The current working directory for the command"
+                },
+                "IsDaemon": {
+                  "type": "BOOLEAN",
+                  "description": "Set to true for long-running support processes that are meant to keep running in the background indefinitely and are not expected to finish on their own (e.g., dev servers, file watchers, tunnels). Leave false (the default) for normal commands that are expected to terminate."
+                },
+                "WaitMsBeforeAsync": {
+                  "type": "INTEGER",
+                  "description": "This specifies the number of milliseconds to wait after starting the command before sending it to the background. If you want the command to complete execution synchronously, set this to a large enough value that you expect the command to complete in that time under ordinary circumstances. If you're starting an interactive or long-running command, set it to a large enough value that it would cause possible failure cases to execute synchronously (e.g. 500ms). Keep the value as small as possible, with a maximum of 10000ms."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Cwd",
+                "WaitMsBeforeAsync",
+                "CommandLine",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "manage_task",
+            "description": "Manage background tasks. Use this tool to list running tasks or interact with tasks that were sent to the background.\n\nActions:\n- 'list': List all currently running background tasks\n- 'kill': Cancel the task's execution\n- 'status': Check the task's current status and log file location\n- 'send_input': Send input to a running task\n\nWhen mentioning tasks to the user, avoid using full task IDs and start timestamps; keep them human-readable.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Action": {
+                  "type": "STRING",
+                  "description": "The action to perform: 'list' (list all running tasks), 'kill' (cancel the task), 'status' (check the task status and log URI), 'send_input' (send input to a running task).",
+                  "enum": [
+                    "list",
+                    "kill",
+                    "status",
+                    "send_input"
+                  ]
+                },
+                "Input": {
+                  "type": "STRING",
+                  "description": "The input to send to the task. Required when Action is 'send_input'."
+                },
+                "TaskId": {
+                  "type": "STRING",
+                  "description": "The task ID to manage. Required when Action is 'kill', 'status', or 'send_input'."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Action",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "send_message",
+            "description": "Send a message to another agent. This tool can be used to communicate with subagents, peer agents, etc. Do not use this tool to communicate with the user.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Message": {
+                  "type": "STRING",
+                  "description": "The message content."
+                },
+                "Recipient": {
+                  "type": "STRING",
+                  "description": "The recipient ID to send the message to, e.g. a subagent conversation ID."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Recipient",
+                "Message",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "schedule",
+            "description": "Schedule a one-shot timer or a recurring cron job that sends notifications in the background.\n\n**NOTE**: This tool call returns immediately and does not pause execution. To wait for the timer to fire, you must stop calling tools to end your turn.\n\nModes:\n1. **One-shot timer**: Set a timer for a specified duration that will notify you with your Prompt when it expires. You can control early termination behavior using TimerCondition:\n\n- 'never' (default): The timer will always fire after the specified duration, unless explicitly cancelled.\nUsage: Use when setting unconditional timers that should always fire after DurationSeconds, unless explicitly cancelled.\n- 'any': The timer will be cancelled early if ANY message from any sender is received before the duration.\nUsage: Useful when multiple background tasks are running and you want to wait for any update, but with some guarantee that you won't be idle forever in case they are all stuck.\n- <sender-id>: The timer will be cancelled early if a message is received from that specific sender ID.\nUsage: Use when you're waiting for an update from a specific subagent or task, but want to set some limit on how long to wait.\n\nNOTE: When a timer is cancelled early, no separate cancellation notification is sent — the message that satisfied the condition is itself your wakeup, and the timer's tool step result records the cancellation.\n\nNOTE: You cannot have multiple concurrently active timers that would early terminate on the same sender ID.\nFor example, if you already have a liveness timer set with \"any\", you cannot set another timer with \"any\" or any other condition.\nIf you already have a timer set with early termination on \"task-123\", you cannot set another timer with \"task-123\" or \"any\".\nYou should rely on the existing timer, or cancel and replace it if needed.\n\nExamples:\n\nScenario: User asks explicitly for a reminder in 10 minutes.\nArgs: DurationSeconds=600, Prompt=\"Remind the user\", TimerCondition=\"never\"\nComments: TimerCondition=\"never\" is appropriate since this timer is unrelated to other ongoing tasks.\n\nScenario: You just ran a command as \"task-123\". You already set a notification on it for 5 minutes, and it just notified you that it's still running. After checking the output, you want to set a new reminder to check on it in 10 minutes if it still hasn't finished.\nArgs: DurationSeconds=600, Prompt=\"Check on the command status\", TimerCondition=\"task-123\"\nComments: TimerCondition=\"task-123\" is appropriate since the timer is not needed if the command finishes ahead of time.\n\nScenario: You just spawned 10 subagents, and you want to check in on progress after 5 minutes if you haven't heard back from any of them.\nArgs: DurationSeconds=300, Prompt=\"Check in on the subagents' progress\", TimerCondition=\"any\"\nComments: TimerCondition=\"any\" is appropriate since you are not waiting for any specific subagent.\n\nScenario: You are running a command that you're sure will terminate, and you want to wait for it to finish.\nArgs: N/A\nComments: A timer is not needed at all in this scenario and will wastefully generate extra messages. Stop calling tools to end your turn instead.\n\n2. **Recurring cron**: Set CronExpression to a standard 5-field cron expression (e.g., '*/5 * * * *' for every 5 minutes). Each time the cron triggers, a notification with your Prompt is sent. The cron runs as a background task. Optionally set MaxIterations to limit the number of triggers. Optionally set IsDaemon to declare how the cron relates to your current task: leave it false (the default) when the cron is how your current task makes progress — polling or monitoring a job until it completes, heartbeat/liveness, or reminders — so your task stays active until the cron ends; set it true only when the cron is an independent standing job that should keep running after your current task is done — e.g. a recurring report or a maintenance job the user asked you to keep going — so you can finish now while it keeps firing in the background.\n\nExamples:\n- Poll deployment status every 5 minutes until it passes: CronExpression=\"*/5 * * * *\", Prompt=\"Check deployment status and report progress\", IsDaemon=false\n- Run a health check every hour, up to 3 times: CronExpression=\"0 * * * *\", MaxIterations=3, Prompt=\"Run the health check script and report results\", IsDaemon=false\n- Inspect newly filed issues in the last 24h and post a daily summary report: CronExpression=\"0 9 * * *\", Prompt=\"Summarize issues filed in the last 24h and post the report\", IsDaemon=true\n\nGeneral Reminders:\n- You must specify exactly one of DurationSeconds or CronExpression.\n- Always provide a Prompt describing what the notification should say.\n- Never run a background 'sleep' command to set a timer, use this tool instead.\n- To cancel a running timer or cron schedule, use the manage_task tool with the task ID returned by this tool.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "CronExpression": {
+                  "type": "STRING",
+                  "description": "A standard cron expression (5 fields: minute hour day-of-month month day-of-week). Use for recurring schedules. Mutually exclusive with DurationSeconds. Example: '*/5 * * * *' for every 5 minutes."
+                },
+                "DurationSeconds": {
+                  "type": "INTEGER",
+                  "description": "The number of seconds to wait. Use for one-shot timers. Mutually exclusive with CronExpression."
+                },
+                "IsDaemon": {
+                  "type": "BOOLEAN",
+                  "description": "Optional. Set to true only when the cron is an independent, standing job that should keep firing even after your current task is done (e.g. a recurring daily/weekly report or a standing maintenance job). Leave false (the default) whenever the cron is part of finishing your current task — including polling or monitoring a running job until it completes, heartbeat/liveness, or reminders."
+                },
+                "MaxIterations": {
+                  "type": "INTEGER",
+                  "description": "Optional. Maximum number of times the cron schedule will fire before stopping. Only applicable when CronExpression is set. Defaults to unlimited."
+                },
+                "Prompt": {
+                  "type": "STRING",
+                  "description": "The message content to include in the notification when the timer fires or cron triggers. This is sent to the agent as a high-priority message."
+                },
+                "TimerCondition": {
+                  "type": "STRING",
+                  "description": "Optional. Controls when a one-shot timer should early terminate upon receiving a message. Options: 'never' (default, timer unconditionally waits until expiry), 'any' (timer cancels if any message is received), or a specific sender ID (timer cancels only if a message is received from that specific subagent conversation ID or background task ID). Only applicable when DurationSeconds is set."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Prompt",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "invoke_subagent",
+            "description": "Invokes one or more subagents by name with a single tool call. Each subagent runs in the background with its own prompt and reports back when done.\n\nSpecify the Subagents array with one or more entries. Each entry defines a subagent to launch.\n\nCommunicate with subagents using the send_message tool. Examples of when to do this:\n* To check on the status of a subagent.\n* To send a running subagent further instructions.\n* To send an idle subagent new instructions.\n\nGuidelines:\n* Each invoked subagent will be uniquely identified by its conversationID.\n* Multiple subagents with the same type name can be invoked, with each subagent receiving a unique conversationID.\n* If a task is a natural continuation of an existing subagent's work, send a message to that subagent with the task rather than invoking a new subagent to conserve resources.\n* When selecting the Model argument, default to 'inherit' unless the user explicitly requests a different model.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Subagents": {
+                  "type": "ARRAY",
+                  "description": "Array of subagents to invoke. Each entry specifies a separate subagent to launch concurrently.",
+                  "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                      "Model": {
+                        "type": "STRING",
+                        "description": "Model to use for the subagent. 'inherit' (default) uses the calling agent's model. 'flash_lite' uses a very light model. 'flash' uses a smaller, faster model suited for simple tasks like research lookups, file reading, or quick searches. 'pro' uses a larger, more capable model suited for complex tasks requiring deep reasoning, large refactors, or multi-step planning.",
+                        "enum": [
+                          "inherit",
+                          "flash_lite",
+                          "flash",
+                          "pro"
+                        ]
+                      },
+                      "Prompt": {
+                        "type": "STRING",
+                        "description": "A clear, actionable task description for the subagent. Be specific about what the subagent should do and what information it should return."
+                      },
+                      "Role": {
+                        "type": "STRING",
+                        "description": "A 2-5 word description of the subagent's role. Should read similar to a job title, e.g. 'Codebase Researcher', 'Database Debugger', etc. Should also be detailed enough to distinguish between different subagents who might share similar purposes."
+                      },
+                      "TypeName": {
+                        "type": "STRING",
+                        "description": "Type name of the subagent to invoke."
+                      },
+                      "Workspace": {
+                        "type": "STRING",
+                        "description": "Workspace mode for the subagent. 'inherit' (default) uses the same workspace as the parent. 'branch' creates a new isolated workspace branched or cloned from the parent. 'share' creates a new workspace sharing the parent's underlying repository directory (similar to a git worktree or Mercurial 'hg share'), allowing independent branching without duplicating storage. If omitted, defaults to 'inherit'."
+                      }
+                    },
+                    "required": [
+                      "TypeName",
+                      "Role",
+                      "Prompt"
+                    ]
+                  }
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Subagents",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "define_subagent",
+            "description": "Defines a new type of subagent that can be invoked via invoke_subagent.\n\n\tGuidelines:\n\t* Use this tool if you need a specialized subagent for a task and none of the existing subagents are suitable.\n\t* Once the subagent is defined, it can be invoked repeatedly using invoke_subagent without calling this tool again.\n\t* The subagent will be defined with the specified name, description, system prompt, and tool groups.\n\t* By default, all subagents have read tools to research the codebase, and tools to communicate with other agents.\n\t",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "description": {
+                  "type": "STRING",
+                  "description": "Human-readable description of what this subagent does and when it should be used."
+                },
+                "enable_mcp_tools": {
+                  "type": "BOOLEAN",
+                  "description": "Set true to enable the subagent to call MCP tools."
+                },
+                "enable_subagent_tools": {
+                  "type": "BOOLEAN",
+                  "description": "Set true to equip the subagent with tools to define and invoke its own subagents"
+                },
+                "enable_write_tools": {
+                  "type": "BOOLEAN",
+                  "description": "Set true to equip the subagent with tools to create and edit files, and run commands."
+                },
+                "name": {
+                  "type": "STRING",
+                  "description": "Unique name for the subagent. Used to invoke it via invoke_subagent. Must start with a letter or digit and contain only letters, digits, '_', '-', and '.'."
+                },
+                "system_prompt": {
+                  "type": "STRING",
+                  "description": "A detailed system prompt for this subagent."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "name",
+                "description",
+                "system_prompt",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "manage_subagents",
+            "description": "Manage existing subagents.\n\tActions:\n\t* 'list': List active direct subagents with their conversation IDs and live state. Each subagent is reported as a JSON object with this schema:\n\t{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"role\":{\"type\":\"string\",\"description\":\"The subagent's role, or its type name if no role was set.\"},\"type\":{\"type\":\"string\",\"description\":\"The subagent's type name.\"},\"conversationId\":{\"type\":\"string\",\"description\":\"The subagent's conversation ID, used to message or kill it.\"},\"transcript\":{\"type\":\"string\",\"description\":\"Absolute URI of the subagent's transcript log, if available.\"},\"state\":{\"type\":\"string\",\"enum\":[\"running\",\"idle\",\"waiting_for_input\",\"waiting_for_dependents\",\"waiting_for_message\",\"canceling\",\"errored\",\"unspecified\"],\"description\":\"The subagent's current lifecycle state.\"},\"stateDetail\":{\"type\":\"string\",\"description\":\"Context for State: the current tool call (name and summary) when running or waiting_for_input, or the failure message when errored.\"}},\"additionalProperties\":false,\"type\":\"object\"}\n\t* 'kill': Terminate specific subagents and all their descendants.\n\t* 'kill_all': Terminate all subagents and all their descendants.\n\n\tWhen a subagent is killed, its branched workspaces will be deleted, but its logs and artifacts will be preserved.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Action": {
+                  "type": "STRING",
+                  "description": "The action to perform. Must be 'list' (list active direct subagents with their live state), 'kill' (terminate specific subagents and all their descendants), or 'kill_all' (terminate all subagents and all their descendants).",
+                  "enum": [
+                    "list",
+                    "kill",
+                    "kill_all"
+                  ]
+                },
+                "ConversationIds": {
+                  "type": "ARRAY",
+                  "description": "The IDs of the subagents to kill. Required for 'kill'.",
+                  "items": {
+                    "type": "STRING"
+                  }
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Action",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "write_to_file",
+            "description": "Use this tool to create new files. The file and any parent directories will be created for you if they do not already exist.\n\t\tFollow these instructions:\n\t\t1. By default this tool will error if TargetFile already exists. To overwrite an existing file, set Overwrite to true. To append to an existing file (or create it if it does not exist), set Append to true.\n\t\t2. When creating an artifact, always provide ArtifactMetadata. When creating non-artifact files, do not provide it.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Append": {
+                  "type": "BOOLEAN",
+                  "description": "Set this to true to append CodeContent to the end of TargetFile (creating the file if it does not exist). Cannot be combined with Overwrite=true."
+                },
+                "ArtifactMetadata": {
+                  "type": "OBJECT",
+                  "description": "Metadata that defines artifact properties. ONLY provide when creating an artifact file in the artifact directory. Omit this field when creating non-artifact files.",
+                  "properties": {
+                    "RequestFeedback": {
+                      "type": "BOOLEAN",
+                      "description": "Set to true if you'd like to request user feedback on this artifact and if the contents of this artifact are executable (e.g., a plan). The user will be provided with a 'Proceed' button to execute it."
+                    },
+                    "Summary": {
+                      "type": "STRING",
+                      "description": "Detailed multi-line summary of the artifact file, after edits have been made. Summary does not need to mention the artifact name and should focus on the contents and purpose of the artifact."
+                    },
+                    "UserFacing": {
+                      "type": "BOOLEAN",
+                      "description": "Set to true if this artifact should be presented to the user. Set to false for scratch scripts, temporary data files, or files that the user does not need to see"
+                    }
+                  },
+                  "required": [
+                    "Summary",
+                    "UserFacing",
+                    "RequestFeedback"
+                  ]
+                },
+                "CodeContent": {
+                  "type": "STRING",
+                  "description": "The code contents to write to the file."
+                },
+                "Description": {
+                  "type": "STRING",
+                  "description": "Brief, user-facing explanation of what this change did. Focus on non-obvious rationale, design decisions, or important context. Don't just restate what the code does."
+                },
+                "Overwrite": {
+                  "type": "BOOLEAN",
+                  "description": "Set this to true to overwrite an existing file. WARNING: This will replace the entire file contents. Only use when you explicitly intend to overwrite. Otherwise, use a code edit tool to modify existing files."
+                },
+                "TargetFile": {
+                  "type": "STRING",
+                  "description": "The target file to create and write code to. Must be an absolute path."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "TargetFile",
+                "Overwrite",
+                "CodeContent",
+                "Description",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "replace_file_content",
+            "description": "Use this tool to edit an existing file. Follow these rules:\n1. Use this tool ONLY when you are making a SINGLE CONTIGUOUS block of edits to the same file (i.e. replacing a single contiguous block of text).\n2. Do NOT make multiple parallel calls to this tool for the same file.\n3. To edit multiple, non-adjacent lines of code in the same file, make multiple calls to this tool.\n4. For the ReplacementChunk, specify StartLine, EndLine, TargetContent and ReplacementContent. StartLine and EndLine should specify a range of lines containing precisely the instances of TargetContent that you wish to edit. To edit a single instance of the TargetContent, the range should be such that it contains that specific instance of the TargetContent and no other instances. In TargetContent, specify the precise lines of code to edit. These lines MUST EXACTLY MATCH text in the existing file content. In ReplacementContent, specify the replacement content for the specified target content. This must be a complete drop-in replacement of the TargetContent, with necessary modifications made.\n5. If you are making multiple edits across a single file, make multiple calls to this tool. DO NOT try to replace the entire existing content with the new content, this is very expensive.\n6. You may not edit file extensions: [.ipynb]",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "AllowMultiple": {
+                  "type": "BOOLEAN",
+                  "description": "If true, multiple occurrences of 'targetContent' will be replaced by 'replacementContent' if they are found. Otherwise if multiple occurrences are found, an error will be returned."
+                },
+                "Description": {
+                  "type": "STRING",
+                  "description": "Brief, user-facing explanation of what this change did. Focus on non-obvious rationale, design decisions, or important context. Don't just restate what the code does."
+                },
+                "EndLine": {
+                  "type": "INTEGER",
+                  "description": "The ending line number of the chunk (1-indexed). Should be at or after the last line containing the target content. Must satisfy StartLine <= EndLine <= number of lines in the file. The target content is searched for within the [StartLine, EndLine] range."
+                },
+                "Instruction": {
+                  "type": "STRING",
+                  "description": "A description of the changes that you are making to the file."
+                },
+                "ReplacementContent": {
+                  "type": "STRING",
+                  "description": "The content to replace the target content with."
+                },
+                "StartLine": {
+                  "type": "INTEGER",
+                  "description": "The starting line number of the chunk (1-indexed). Should be at or before the first line containing the target content. Must satisfy 1 <= StartLine <= EndLine. The target content is searched for within the [StartLine, EndLine] range."
+                },
+                "TargetContent": {
+                  "type": "STRING",
+                  "description": "The exact string to be replaced. This must be the exact character-sequence to be replaced, including whitespace. Be very careful to include any leading whitespace otherwise this will not work at all. This must be a unique substring within the file, or else it will error."
+                },
+                "TargetFile": {
+                  "type": "STRING",
+                  "description": "The target file to modify. Must be an absolute path. Always specify the target file as the very first argument."
+                },
+                "TargetLintErrorIds": {
+                  "type": "ARRAY",
+                  "description": "If applicable, IDs of lint errors this edit aims to fix (they'll have been given in recent IDE feedback). If you believe the edit could fix lints, do specify lint IDs; if the edit is wholly unrelated, do not. A rule of thumb is, if your edit was influenced by lint feedback, include lint IDs. Exercise honest judgement here.",
+                  "items": {
+                    "type": "STRING"
+                  }
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "TargetFile",
+                "Instruction",
+                "Description",
+                "AllowMultiple",
+                "TargetContent",
+                "ReplacementContent",
+                "StartLine",
+                "EndLine",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "generate_image",
+            "description": "Generate an image or edit existing images based on a text prompt. The resulting image will be saved as an artifact for use. You can use this tool to generate user interfaces and iterate on a design with the USER for an application or website that you are building. When creating UI designs, generate only the interface itself without surrounding device frames (laptops, phones, tablets, etc.) unless the user explicitly requests them. You can also use this tool to generate assets for use in an application or website.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "AspectRatio": {
+                  "type": "STRING",
+                  "description": "Optional aspect ratio for the generated image. Supported values: '1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9'. Default is '1:1'."
+                },
+                "ImageName": {
+                  "type": "STRING",
+                  "description": "Name of the generated image to save. Should be all lowercase with underscores, describing what the image contains. Maximum 3 words. Example: 'login_page_mockup'"
+                },
+                "ImagePaths": {
+                  "type": "ARRAY",
+                  "description": "Optional absolute paths to the images to use in generation. You can pass in images here if you would like to edit, combine, or use as references. You can pass in artifact images and any images in the file system. Note: you cannot pass in more than 3 images.",
+                  "items": {
+                    "type": "STRING"
+                  }
+                },
+                "Prompt": {
+                  "type": "STRING",
+                  "description": "The text prompt to generate an image for or the edit instructions."
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Prompt",
+                "ImageName",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "read_url_content",
+            "description": "Fetch content from a URL via HTTP request (invisible to USER). Use when: (1) extracting text from public pages, (2) reading static content/documentation, (3) batch processing multiple URLs, (4) speed is important, or (5) no visual interaction needed. Converts HTML to markdown. No JavaScript execution, no authentication. For pages requiring login, JavaScript, or USER visibility, use read_browser_page instead.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "Url": {
+                  "type": "STRING",
+                  "description": "URL to read content from"
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "Url",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "search_web",
+            "description": "Performs a web search for a given query. Returns a summary of relevant information along with URL citations.",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "domain": {
+                  "type": "STRING",
+                  "description": "Optional domain to recommend the search prioritize"
+                },
+                "query": {
+                  "type": "STRING"
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "query",
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "functionDeclarations": [
+          {
+            "name": "ask_question",
+            "description": "Use this tool to ask the user one or more multiple-choice questions, with the goal of:\n- Clarifying underspecified requirements\n- Soliciting design feedback or user preferences\n- Addressing ambiguous user intent\n- Picking a solution from a list of options\n\nWhen called, this tool renders an interactive modal containing the question, selectable options, a default write-in option, and Submit/Skip buttons. Execution is blocked until the user responds.\n\nGuidance:\n- When specifying files in the question, use github markdown links (e.g. [filename](file:///path/to/file)).\n- Don't use this tool to ask trivial questions that can be answered with a single word (e.g. yes/no); output regular text to ask these questions.\n- Don't include an 'other' option for write-in responses; one is always provided in the UI by default.\n- Don't enumerate the options; they are enumerated by default.\n- Don't include \"Select all options that apply\", or similar, in the question; the UI already includes this.\n- If you recommend any options, list it first and prefix the option text with \"(Recommended)\".\n- Format options as the user's direct response instead of describing your own actions.\n- Set 'IsMultiSelect' to true to allow the user to select multiple options with checkboxes.\n",
+            "parameters": {
+              "type": "OBJECT",
+              "properties": {
+                "questions": {
+                  "type": "ARRAY",
+                  "description": "The list of questions to ask.",
+                  "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                      "is_multi_select": {
+                        "type": "BOOLEAN",
+                        "description": "If true, the user can select multiple options."
+                      },
+                      "options": {
+                        "type": "ARRAY",
+                        "description": "The text for each option, formatted as the user's response. Must have at least 2 options. Do NOT add an 'Other' option to questions.",
+                        "items": {
+                          "type": "STRING"
+                        }
+                      },
+                      "question": {
+                        "type": "STRING",
+                        "description": "The question to ask the user. Do NOT add 'select all that apply' or similar text to the question title."
+                      }
+                    }
+                  }
+                },
+                "toolAction": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word phrase in -ing form describing the specific action. Capitalize like a sentence. Some examples: 'Analyzing directory', 'Searching the web', 'Checking git status', 'Running tests', 'Searching code'."
+                },
+                "toolSummary": {
+                  "type": "STRING",
+                  "description": "Brief 2-5 word noun phrase describing the specific task. Capitalize like a sentence. Some examples: 'Directory analysis', 'Web search', 'Git status check', 'Test execution', 'Code search'."
+                }
+              },
+              "required": [
+                "toolSummary",
+                "toolAction"
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "labels": {
+      "last_execution_id": "46670492-91bd-4cb9-8b65-bc07f1bb616a",
+      "last_step_index": "7",
+      "model_enum": "MODEL_PLACEHOLDER_M35",
+      "request_id": "1a5bf067-a359-4d74-a9a1-ea79d8119536-3",
+      "trajectory_id": "1a5bf067-a359-4d74-a9a1-ea79d8119536",
+      "used_claude": "true",
+      "used_claude_conservative": "true",
+      "used_non_gemini_model": "true"
+    },
+    "generationConfig": {
+      "maxOutputTokens": 64000,
+      "thinkingConfig": {
+        "includeThoughts": true,
+        "thinkingBudget": 1024
+      }
+    },
+    "sessionId": "-3750763034362895579"
+  },
+  "model": "claude-sonnet-4-6",
+  "userAgent": "antigravity",
+  "requestType": "agent"
+}

@@ -1,8 +1,13 @@
 use serde_json::Value;
 
+// loadCodeAssist 端点（fallback order: Daily → Sandbox → Prod）
+//
+// [FIX Issue #3525] Daily 优先，与官方 Antigravity language_server 的出站端点一致。
+// Sandbox 在部分地区会对合规账号返回终止性 400 `User location is not supported for the API use.`；
+// 官方从不访问 sandbox 端点，保留它仅作为可用性兜底。
 const LOAD_PROJECT_ENDPOINTS: [&str; 3] = [
-    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
     "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
     "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
 ];
 

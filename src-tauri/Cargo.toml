@@ -1,6 +1,6 @@
 [package]
 name = "antigravity-tools"
-version = "4.7.1"
+version = "4.8.8"
 description = "Antigravity Tools"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"
@@ -13,7 +13,7 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "antigravity_tools_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "^2.2.5", features = [] }
@@ -23,6 +23,7 @@ tauri = { version = "^2.2.5", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+yaml-rt = { version = "0.3.1", default-features = false }
 uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = "0.4"
 dirs = "5.0"
@@ -30,6 +31,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 base64 = "0.22"
 sysinfo = "0.31"
 sys-locale = "0.3.2"
@@ -43,6 +45,7 @@ thiserror = "2.0.17"
 # 反代服务依赖
 axum = { version = "0.7", features = ["multipart", "ws"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
+socket2 = { version = "0.5", features = ["all"] }
 
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
@@ -64,6 +67,8 @@ tracing-appender = "0.2.4"
 tracing-log = "0.2.0"
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-updater = "2"
+# Unify features for reqwest 0.13 used by tauri-plugin-updater to support SOCKS5 upstream proxy
+reqwest_0_13 = { package = "reqwest", version = "0.13", default-features = false, features = ["socks"] }
 tauri-plugin-process = "2"
 sha2 = "0.10"
 toml = "0.8"
@@ -76,6 +81,7 @@ machine-uid = "0.5.4"
 plist = "1.7"
 rquest = { version = "5.1.0", features = ["json", "stream", "socks", "cookies"] }
 rquest-util = "2.2.1"
+time = { version = "0.3", features = ["formatting", "parsing"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

@@ -10,6 +10,7 @@ import clsx from 'clsx';
 import { formatTimeRemaining, formatCompactNumber } from '../../utils/format';
 import { enterMiniMode, exitMiniMode } from '../../utils/windowManager';
 import { getModelDisplayName, findQuotaModel } from '../../config/modelConfig';
+import { getModelConstrainedQuota, DashboardQuotaView } from '../../utils/quotaDisplay';
 import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 
@@ -35,6 +36,15 @@ export default function MiniView() {
     const containerRef = useRef<HTMLDivElement>(null);
     const [appVersion, setAppVersion] = useState('0.0.0');
     const [latestLog, setLatestLog] = useState<ProxyRequestLog | null>(null);
+
+    const [quotaView, setQuotaView] = useState<DashboardQuotaView>(() => {
+        const saved = localStorage.getItem('dashboard_quota_view');
+        return (saved === '5h' || saved === 'weekly' || saved === 'weighted') ? saved : 'weighted';
+    });
+
+    useEffect(() => {
+        localStorage.setItem('dashboard_quota_view', quotaView);
+    }, [quotaView]);
 
     // Subscribe to proxy logs
     useEffect(() => {
@@ -71,7 +81,7 @@ export default function MiniView() {
                 }
             } else {
                 // Fallback for web mode if needed, or import from package.json
-                setAppVersion('4.7.1');
+                setAppVersion('4.8.8');
             }
         };
         fetchVersion();
@@ -145,18 +155,28 @@ export default function MiniView() {
     const renderModelRow = (model: any, displayName: string, colorClass: string) => {
         if (!model) return null;
 
+        const q = getModelConstrainedQuota(model.name, model, currentAccount?.quota?.quota_groups, quotaView);
+        const p = q.effectivePercentage;
+
         // Determine status color based on percentage
-        const getStatusColor = (p: number) => {
-            if (p >= 50) return 'text-emerald-500';
-            if (p >= 20) return 'text-amber-500';
+        const getStatusColor = (percentage: number) => {
+            if (q.isWeeklyExhausted) return 'text-rose-500';
+            if (percentage >= 50) return 'text-emerald-500';
+            if (percentage >= 20) return 'text-amber-500';
             return 'text-rose-500';
         };
 
-        const getBarColor = (p: number) => {
-            if (p >= 50) return colorClass === 'cyan' ? 'bg-gradient-to-r from-cyan-400 to-cyan-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500';
-            if (p >= 20) return colorClass === 'cyan' ? 'bg-gradient-to-r from-orange-400 to-orange-500' : 'bg-gradient-to-r from-amber-400 to-amber-500';
+        const getBarColor = (percentage: number) => {
+            if (q.isWeeklyExhausted) return 'bg-gradient-to-r from-rose-400 to-rose-500';
+            if (percentage >= 50) return colorClass === 'cyan' ? 'bg-gradient-to-r from-cyan-400 to-cyan-500' : 'bg-gradient-to-r from-emerald-400 to-emerald-500';
+            if (percentage >= 20) return colorClass === 'cyan' ? 'bg-gradient-to-r from-orange-400 to-orange-500' : 'bg-gradient-to-r from-amber-400 to-amber-500';
             return 'bg-gradient-to-r from-rose-400 to-rose-500';
         };
+
+        const resetTooltip = [
+            q.fiveHourResetTime ? `5H: ${new Date(q.fiveHourResetTime).toLocaleTimeString()}` : null,
+            q.weeklyResetTime ? `周: ${new Date(q.weeklyResetTime).toLocaleDateString()}` : null,
+        ].filter(Boolean).join(' | ');
 
         return (
             <motion.div
@@ -166,22 +186,37 @@ export default function MiniView() {
                 className="space-y-1.5"
             >
                 <div className="flex justify-between items-baseline">
-                    <span className="text-xs font-medium text-gray-600 dark:text-gray-400">{displayName}</span>
-                    <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-mono">
-                            {model.reset_time ? `R: ${formatTimeRemaining(model.reset_time)}` : t('common.unknown')}
+                    <span className="text-xs font-medium text-gray-600 dark:text-gray-400 truncate max-w-[130px]">{displayName}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                        {/* 状态徽标 */}
+                        {q.isWeeklyExhausted ? (
+                            <span className="text-[9px] font-bold text-rose-500 bg-rose-50 dark:bg-rose-900/30 px-1 py-0.2 rounded" title={t('dashboard.weekly_exhausted_badge', '周额度熔断')}>
+                                {t('dashboard.mini_tag_exhausted', '熔断')}
+                            </span>
+                        ) : quotaView === '5h' && q.isWeeklyConstrained && q.raw5h !== null && q.rawWeekly !== null ? (
+                            <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400" title={t('dashboard.constrained_by_weekly_desc', { raw5h: q.raw5h, rawWeekly: q.rawWeekly, effective: p })}>
+                                [{t('dashboard.mini_tag_constrained', '周限')}: {q.rawWeekly}%]
+                            </span>
+                        ) : quotaView === 'weekly' && q.is5hCooling ? (
+                            <span className="text-[9px] font-bold text-blue-600 dark:text-blue-400" title={t('dashboard.cooling_5h_desc', { rawWeekly: q.rawWeekly })}>
+                                [{t('dashboard.mini_tag_cooling', '冷却')}]
+                            </span>
+                        ) : null}
+
+                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-mono" title={resetTooltip || `${t('accounts.reset_time')}: ${model.reset_time}`}>
+                            {q.resetTime ? `R: ${formatTimeRemaining(q.resetTime)}` : t('common.unknown')}
                         </span>
-                        <span className={clsx("text-xs font-bold", getStatusColor(model.percentage))}>
-                            {model.percentage}%
+                        <span className={clsx("text-xs font-bold font-mono", getStatusColor(p))}>
+                            {p}%
                         </span>
                     </div>
                 </div>
                 <div className="w-full bg-gray-100 dark:bg-white/10 rounded-full h-1.5 overflow-hidden">
                     <motion.div
                         initial={{ width: 0 }}
-                        animate={{ width: `${model.percentage}%` }}
+                        animate={{ width: `${p}%` }}
                         transition={{ duration: 0.8, ease: "easeOut" }}
-                        className={clsx("h-full rounded-full shadow-[0_0_8px_currentColor]", getBarColor(model.percentage))}
+                        className={clsx("h-full rounded-full shadow-[0_0_8px_currentColor]", getBarColor(p))}
                     />
                 </div>
             </motion.div>
@@ -215,22 +250,58 @@ export default function MiniView() {
                         className="flex items-center gap-1 no-drag shrink-0"
                         onMouseDown={(e) => e.stopPropagation()}
                     >
+                        {/* 极简三态切换胶囊 [综 | 5H | 周] */}
+                        <div className="flex items-center bg-gray-200/70 dark:bg-white/10 rounded-md p-0.5 text-[9px] font-bold">
+                            <button
+                                onClick={() => setQuotaView('weighted')}
+                                className={clsx(
+                                    "px-1 py-0.5 rounded transition-all",
+                                    quotaView === 'weighted' ? "bg-indigo-600 text-white shadow-xs" : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                                )}
+                                title={t('dashboard.view_mode_title_weighted', '综合加权')}
+                            >
+                                综
+                            </button>
+                            <button
+                                onClick={() => setQuotaView('5h')}
+                                className={clsx(
+                                    "px-1 py-0.5 rounded transition-all",
+                                    quotaView === '5h' ? "bg-emerald-600 text-white shadow-xs" : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                                )}
+                                title={t('dashboard.view_mode_title_5h', '5H 滚动')}
+                            >
+                                5H
+                            </button>
+                            <button
+                                onClick={() => setQuotaView('weekly')}
+                                className={clsx(
+                                    "px-1 py-0.5 rounded transition-all",
+                                    quotaView === 'weekly' ? "bg-purple-600 text-white shadow-xs" : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                                )}
+                                title={t('dashboard.view_mode_title_weekly', '7天周配额')}
+                            >
+                                周
+                            </button>
+                        </div>
+
+                        <div className="w-px h-3 bg-gray-300 dark:bg-white/20 mx-0.5" />
+
                         <button
                             onClick={handleRefresh}
                             className={clsx(
-                                "p-2 rounded-lg hover:bg-gray-200/50 dark:hover:bg-white/10 transition-colors"
+                                "p-1.5 rounded-lg hover:bg-gray-200/50 dark:hover:bg-white/10 transition-colors"
                             )}
                             title={t('common.refresh', 'Refresh')}
                         >
-                            <RefreshCw size={14} className={clsx(isRefreshing && "animate-spin text-blue-500")} />
+                            <RefreshCw size={13} className={clsx(isRefreshing && "animate-spin text-blue-500")} />
                         </button>
-                        <div className="w-px h-3 bg-gray-300 dark:bg-white/20 mx-1" />
+                        <div className="w-px h-3 bg-gray-300 dark:bg-white/20 mx-0.5" />
                         <button
                             onClick={handleMaximize}
-                            className="p-2 rounded-lg hover:bg-gray-200/50 dark:hover:bg-white/10 transition-colors text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+                            className="p-1.5 rounded-lg hover:bg-gray-200/50 dark:hover:bg-white/10 transition-colors text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
                             title={t('common.maximize', 'Full View')}
                         >
-                            <Maximize2 size={14} />
+                            <Maximize2 size={13} />
                         </button>
                     </div>
                 </div>

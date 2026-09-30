@@ -1,6 +1,8 @@
 import daisyui from "daisyui";
 import containerQueries from "@tailwindcss/container-queries";
 
+const baseColor = (variable) => `color-mix(in srgb, var(${variable}) calc(100% * <alpha-value>), transparent)`;
+
 /** @type {import('tailwindcss').Config} */
 export default {
     content: [
@@ -9,7 +11,14 @@ export default {
     ],
     darkMode: 'class',
     theme: {
-        extend: {},
+        extend: {
+            colors: {
+                'base-100': baseColor('--color-base-100'),
+                'base-200': baseColor('--color-base-200'),
+                'base-300': baseColor('--color-base-300'),
+                'base-content': baseColor('--color-base-content'),
+            },
+        },
     },
     plugins: [daisyui, containerQueries],
     daisyui: {

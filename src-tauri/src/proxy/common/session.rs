@@ -20,8 +20,9 @@ pub fn derive_session_id(account_id: &str) -> String {
 // upstream to start a fresh session, transparently recovering the conversation.
 
 /// Monotonic generation counter per (account_id, conversation fingerprint).
-static SESSION_BUMPS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+static SESSION_BUMPS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, u64>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 fn bump_key(account_id: &str, fingerprint: &str) -> String {
     format!("{}::{}", account_id, fingerprint)
@@ -30,7 +31,9 @@ fn bump_key(account_id: &str, fingerprint: &str) -> String {
 /// Current sessionId generation for (account, conversation). Starts at 0.
 pub fn current_bump(account_id: &str, fingerprint: &str) -> u64 {
     if let Ok(map) = SESSION_BUMPS.lock() {
-        map.get(&bump_key(account_id, fingerprint)).copied().unwrap_or(0)
+        map.get(&bump_key(account_id, fingerprint))
+            .copied()
+            .unwrap_or(0)
     } else {
         0
     }
@@ -61,6 +64,13 @@ pub fn derive_session_scoped(account_id: &str, fingerprint: &str, generation: u6
         return derive_session_id(account_id);
     }
     derive_session_id(&format!("{}|{}|{}", account_id, fingerprint, generation))
+}
+
+/// 上游 `sessionId` 跟思维库的 `store_key` 走。账号粘性是另一把键。
+pub fn apply_upstream_session(inner: &mut serde_json::Value, account_id: &str, store_key: &str) {
+    let generation = current_bump(account_id, store_key);
+    inner["sessionId"] =
+        serde_json::json!(derive_session_scoped(account_id, store_key, generation));
 }
 
 #[cfg(test)]
@@ -96,7 +106,10 @@ mod tests {
     #[test]
     fn test_derive_session_scoped() {
         // Generation 0 with empty fingerprint keeps legacy behavior
-        assert_eq!(derive_session_scoped("acc", "", 0), derive_session_id("acc"));
+        assert_eq!(
+            derive_session_scoped("acc", "", 0),
+            derive_session_id("acc")
+        );
         // Same inputs -> stable
         assert_eq!(
             derive_session_scoped("acc", "fp", 0),

@@ -2,136 +2,33 @@
 use super::models::*;
 use serde_json::Value;
 
-pub fn is_shell_or_terminal_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name.to_ascii_lowercase().as_str(),
-        "shell"
-            | "bash"
-            | "local_shell"
-            | "local_shell_call"
-            | "powershell"
-            | "pwsh"
-            | "terminal"
-            | "cmd"
-            | "run_command"
-            | "execute_command"
-    )
-}
-
-/// 标准化并清洗 shell / 命令执行工具参数
+/// 标准化并清洗 shell / PowerShell / DSH (DeepSeek Harness) 等工具参数
 /// 1. 将 cmd / code / script / shell_command / input 等别名重命名为 command
-/// 2. [Issue #3430] 若仍缺失 command，利用 description 或默认信息填充安全无害的占位命令，
-///    既防止下游客户端（如 WorkBuddy PowerShell/Bash 执行器）抛出 Cannot read properties of undefined (reading 'split') 崩溃，
-///    又带有明确的 [OK] 语义，防止模型在未达预期的循环中重复漏参重试导致死锁。
+/// 2. [DSH tool-pwsh / tool-bash & WorkBuddy]：
+///    - DSH 严格校验 `command` (string) 和 `description` (string) 两个字段必须都存在且非空。
+///    - 若模型将实际命令写在 description / text / prompt 中，且 command 缺失，则优先提取恢复为真实 command。
+///    - 若 command 存在但缺失 description，则基于 command 自动推导截取生成 description。
+///    - 若两者皆无，则填充安全占位命令并保证 description 完整，防止客户端崩溃 (Issue #3430 & #3440)。
+/// 3. [DSH tool-workflow]：
+///    - DSH 严格校验 `script` (string) 和 `meta` (object with `name` and `description`)。
+///    - 若模型返回扁平结构的 `name` / `description`，自动归拢装配进 `meta` 对象中，确保运行期校验通过。
+/// 纯透传协议工具参数，不进行任何字段截断、生成或改写
 pub fn normalize_and_sanitize_tool_args(tool_name: &str, args: &mut Value) {
-    if !is_shell_or_terminal_tool(tool_name) {
-        return;
-    }
-
-    if let Some(obj) = args.as_object_mut() {
-        // 1. 别名归一化
-        if !obj.contains_key("command") {
-            for alt_key in &["cmd", "code", "script", "shell_command", "input"] {
-                if let Some(val) = obj.remove(*alt_key) {
-                    obj.insert("command".to_string(), val);
-                    tracing::debug!(
-                        "[OpenAI] Normalized tool '{}' arg '{}' -> 'command'",
-                        tool_name,
-                        alt_key
-                    );
-                    break;
-                }
-            }
-        }
-
-        // 2. 兜底保护：如果仍缺失 command 或 command 为空字符串
-        let needs_fallback = match obj.get("command") {
-            None => true,
-            Some(v) => v.as_str().map(|s| s.trim().is_empty()).unwrap_or(false),
-        };
-
-        if needs_fallback {
-            let desc_owned: String = obj
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Action logged")
-                .to_string();
-
-            // 过滤危险字符，保留字母、数字、中文及常见标点，构造安全 echo 命令
-            let safe_desc: String = desc_owned
-                .chars()
-                .filter(|c| c.is_alphanumeric() || " _-:.,/".contains(*c))
-                .collect();
-            let trimmed = safe_desc.trim();
-            let safe_title = if trimmed.is_empty() {
-                "Action logged"
-            } else {
-                trimmed
-            };
-
-            let fallback_cmd = format!("echo \"[OK: Action logged - {}]\"", safe_title);
-            obj.insert("command".to_string(), Value::String(fallback_cmd));
-            tracing::warn!(
-                tool = %tool_name,
-                description = %desc_owned,
-                "Injected safe fallback 'command' into tool call arguments to prevent downstream client crash (Issue #3430)"
-            );
-        }
+    if let Some(obj) = args.as_object() {
+        tracing::debug!(
+            "[OpenAI] Tool Call (Passthrough): '{}' Args: {:?}",
+            tool_name,
+            obj
+        );
     }
 }
 
 pub fn resolve_shell_tool_name(
     model_tool_name: &str,
-    client_tool_names: &std::collections::HashSet<String>,
+    _client_tool_names: &std::collections::HashSet<String>,
 ) -> String {
-    if model_tool_name == "shell"
-        || model_tool_name == "bash"
-        || model_tool_name == "local_shell"
-        || model_tool_name == "local_shell_call"
-    {
-        if client_tool_names.contains(model_tool_name) {
-            return model_tool_name.to_string();
-        }
-        for name in &["local_shell_call", "bash", "shell", "local_shell"] {
-            if client_tool_names.contains(*name) {
-                return name.to_string();
-            }
-        }
-        "local_shell_call".to_string()
-    } else {
-        model_tool_name.to_string()
-    }
-}
-fn extract_apply_patch_input(args: &Value) -> String {
-    if let Some(obj) = args.as_object() {
-        if let Some(input) = obj.get("input").and_then(|v| v.as_str()) {
-            return input.to_string();
-        }
-        if let Some(arr) = obj.get("command").and_then(|v| v.as_array()) {
-            if arr.len() > 1 {
-                if let Some(patch) = arr[1].as_str() {
-                    return patch.to_string();
-                }
-            }
-        }
-        if let Some(cmd_str) = obj.get("command").and_then(|v| v.as_str()) {
-            if let Some(patch) = cmd_str.strip_prefix("apply_patch\n") {
-                return patch.to_string();
-            }
-            if let Some(patch) = cmd_str.strip_prefix("apply_patch ") {
-                return patch.to_string();
-            }
-            return cmd_str.to_string();
-        }
-        for key in ["patch_text", "patch", "diff", "content"] {
-            if let Some(patch) = obj.get(key).and_then(|v| v.as_str()) {
-                return patch.to_string();
-            }
-        }
-    }
-    args.as_str()
-        .map(str::to_string)
-        .unwrap_or_else(|| serde_json::to_string(args).unwrap_or_default())
+    // 纯透传工具名称，不进行任何改写
+    model_tool_name.to_string()
 }
 
 pub fn transform_openai_response(
@@ -199,33 +96,7 @@ pub fn transform_openai_response(
                         // [FIX #1575 & #3430] 标准化并清洗 shell / PowerShell 等工具参数名称与必填字段
                         normalize_and_sanitize_tool_args(name, &mut args_json);
 
-                        let mut arguments_str = args_json.to_string();
-
-                        // [FIX] Codex CLI apply_patch freeform raw string
-                        if name == "apply_patch" || name == "apply_patch_v2" {
-                            let extracted_patch = extract_apply_patch_input(&args_json);
-                            let (optimized_patch, _) =
-                                crate::proxy::adapters::apply_patch_preflight::optimize_patch(
-                                    &extracted_patch,
-                                    None,
-                                    true,
-                                );
-                            arguments_str = optimized_patch;
-                            if let Some((line, message)) =
-                                crate::proxy::adapters::apply_patch_preflight::validate_v4a_for_codex(
-                                    &arguments_str,
-                                )
-                            {
-                                if !content_out.is_empty() {
-                                    content_out.push('\n');
-                                }
-                                content_out.push_str(&format!(
-                                    "apply_patch 格式非法，已停止执行以避免重复失败。第 {line} 行：{message}"
-                                ));
-                                continue;
-                            }
-                        }
-
+                        let arguments_str = args_json.to_string();
                         let final_name = resolve_shell_tool_name(name, client_tool_names);
 
                         let id = fc
@@ -234,6 +105,20 @@ pub fn transform_openai_response(
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| format!("{}-{}", final_name, uuid::Uuid::new_v4()));
 
+                        if let Some(sig) = part
+                            .get("thoughtSignature")
+                            .or(part.get("thought_signature"))
+                            .and_then(|s| s.as_str())
+                        {
+                            if let Some(sid) = session_id {
+                                crate::proxy::SignatureCache::global().cache_tool_signature(
+                                    sid,
+                                    &id,
+                                    sig.to_string(),
+                                );
+                            }
+                        }
+
                         tool_calls.push(ToolCall {
                             id,
                             r#type: "function".to_string(),
@@ -241,6 +126,7 @@ pub fn transform_openai_response(
                                 name: final_name.to_string(),
                                 arguments: arguments_str,
                             }),
+                            signature: None,
                             status: None,
                             call_id: None,
                             operation: None,
@@ -289,6 +175,9 @@ pub fn transform_openai_response(
                             ));
                         }
                     }
+                }
+                if let Some(sid) = session_id {
+                    crate::proxy::thinking_store::capture_gemini_parts(sid, parts);
                 }
             }
 
@@ -349,29 +238,30 @@ pub fn transform_openai_response(
             }
 
             let raw_finish_reason = candidate.get("finishReason").and_then(|f| f.as_str());
-            let is_malformed_function_call = raw_finish_reason == Some("MALFORMED_FUNCTION_CALL");
 
-            let finish_reason = raw_finish_reason
-                .map(|f| match f {
-                    "STOP" => "stop",
-                    "MAX_TOKENS" => "length",
-                    "SAFETY" => "content_filter",
-                    "RECITATION" => "content_filter",
-                    "MALFORMED_FUNCTION_CALL" => "stop",
-                    _ => "stop",
-                })
-                .unwrap_or("stop");
+            // 规范化 finish_reason：若包含工具调用，强制遵循 OpenAI 规范映射为 tool_calls
+            let finish_reason = if !tool_calls.is_empty() {
+                "tool_calls"
+            } else {
+                raw_finish_reason
+                    .map(|f| match f {
+                        "STOP" => "stop",
+                        "MAX_TOKENS" => "length",
+                        "SAFETY" | "RECITATION" => "content_filter",
+                        "MALFORMED_FUNCTION_CALL" => "stop",
+                        _ => "stop",
+                    })
+                    .unwrap_or("stop")
+            };
 
             let refusal_val = if finish_reason == "content_filter" {
-                Some("生成由于安全策略或背诵保护被中止".to_string())
+                Some(
+                    "Generation was terminated due to safety policy or recitation checks."
+                        .to_string(),
+                )
             } else {
                 None
             };
-
-            // [FIX MALFORMED_FUNCTION_CALL] 避免客户端空白
-            if is_malformed_function_call && content_out.is_empty() {
-                content_out.push_str("很抱歉，当前模型在尝试调取实时信息时遇到了格式异常。若需要查询实时天气或最新资讯，请尝试使用联网模式（模型名带 -online 后缀）或配置天气/搜索插件。");
-            }
 
             choices.push(Choice {
                 index: idx as u32,
@@ -387,6 +277,7 @@ pub fn transform_openai_response(
                     } else {
                         Some(thought_out)
                     },
+                    signature: None,
                     tool_calls: if tool_calls.is_empty() {
                         None
                     } else {
@@ -408,13 +299,17 @@ pub fn transform_openai_response(
                 .get("blockReason")
                 .and_then(|v| v.as_str())
                 .unwrap_or("UNKNOWN");
-            let refusal_msg = format!("请求由于安全策略被拦截 (blockReason: {})", reason);
+            let refusal_msg = format!(
+                "Request was blocked due to safety policy (blockReason: {}).",
+                reason
+            );
             choices.push(Choice {
                 index: 0,
                 message: OpenAIMessage {
                     role: "assistant".to_string(),
                     content: None,
                     reasoning_content: None,
+                    signature: None,
                     tool_calls: None,
                     tool_call_id: None,
                     name: None,
@@ -428,72 +323,15 @@ pub fn transform_openai_response(
     // Extract and map usage metadata from Gemini to OpenAI format
     // Supports both legacy v1internal format (promptTokenCount/candidatesTokenCount/totalTokenCount/cachedContentTokenCount)
     // and new Interactions API format (total_input_tokens/total_output_tokens/total_thought_tokens/total_cached_tokens)
-    let usage = raw.get("usageMetadata").and_then(|u| {
-        // 优先使用新格式字段，fallback 到旧格式
-        let prompt_tokens = u
-            .get("total_input_tokens")
-            .or_else(|| u.get("promptTokenCount"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let raw_output_tokens = u
-            .get("total_output_tokens")
-            .or_else(|| u.get("candidatesTokenCount"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let raw_total_tokens = u
-            .get("total_tokens")
-            .or_else(|| u.get("totalTokenCount"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-        let cached_tokens = u
-            .get("total_cached_tokens")
-            .or_else(|| u.get("cachedContentTokenCount"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-        // [NEW] 从新格式提取 reasoning/thought tokens
-        let reasoning_tokens = u
-            .get("total_thought_tokens")
-            .or_else(|| u.get("totalThoughtTokens"))
-            .or_else(|| u.get("thoughtsTokenCount"))
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32);
-        let tool_use_tokens = u
+    let usage = raw.get("usageMetadata").map(|u| {
+        let canonical = crate::proxy::pipeline::CanonicalUsage::from_gemini(u);
+        let mut usage = super::models::OpenAIUsage::from(&canonical);
+        usage.input_tokens_by_modality = u.get("input_tokens_by_modality").cloned();
+        usage.total_tool_use_tokens = u
             .get("total_tool_use_tokens")
             .and_then(|v| v.as_u64())
             .map(|v| v as u32);
-        let input_tokens_by_modality = u.get("input_tokens_by_modality").cloned();
-
-        // New Interactions usage keeps thought/tool-use tokens separate from
-        // total_output_tokens. Legacy candidatesTokenCount already includes those.
-        let has_new_format = u.get("total_output_tokens").is_some();
-        let completion_tokens = if has_new_format {
-            raw_output_tokens + reasoning_tokens.unwrap_or(0) + tool_use_tokens.unwrap_or(0)
-        } else {
-            raw_output_tokens
-        };
-
-        // Keep prompt_tokens as Gemini's raw input token count. cached_tokens is a
-        // subset of the prompt, not an amount to subtract from it.
-        let final_total_tokens = raw_total_tokens.unwrap_or(prompt_tokens + completion_tokens);
-
-        Some(super::models::OpenAIUsage {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens: final_total_tokens,
-            prompt_tokens_details: cached_tokens.map(|ct| super::models::PromptTokensDetails {
-                cached_tokens: Some(ct),
-            }),
-            completion_tokens_details: reasoning_tokens.map(|rt| {
-                super::models::CompletionTokensDetails {
-                    reasoning_tokens: Some(rt),
-                }
-            }),
-            input_tokens_by_modality,
-            raw_output_tokens: Some(raw_output_tokens),
-            total_thought_tokens: reasoning_tokens,
-            total_tool_use_tokens: tool_use_tokens,
-            gemini_total_tokens: raw_total_tokens,
-        })
+        usage
     });
 
     OpenAIResponse {
@@ -637,80 +475,63 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_and_sanitize_tool_args_shell_alias() {
+    fn test_normalize_and_sanitize_tool_args_passthrough() {
         let mut args = json!({
-            "cmd": "ls -la /tmp"
+            "cmd": "ls -la /tmp",
+            "description": "Custom description",
+            "arbitrary_field": 123
         });
         normalize_and_sanitize_tool_args("shell", &mut args);
-        assert_eq!(args["command"], "ls -la /tmp");
-        assert!(!args.as_object().unwrap().contains_key("cmd"));
-    }
-
-    #[test]
-    fn test_normalize_and_sanitize_tool_args_powershell_missing_command_with_description() {
-        // [Issue #3430] WorkBuddy PowerShell tool call with only description
-        let mut args = json!({
-            "description": "列出目录内容"
-        });
-        normalize_and_sanitize_tool_args("PowerShell", &mut args);
-        assert_eq!(
-            args["command"],
-            "echo \"[OK: Action logged - 列出目录内容]\""
-        );
-        assert_eq!(args["description"], "列出目录内容");
-    }
-
-    #[test]
-    fn test_normalize_and_sanitize_tool_args_bash_empty_command_fallback() {
-        let mut args = json!({
-            "command": "   ",
-            "description": "Fetch status"
-        });
-        normalize_and_sanitize_tool_args("Bash", &mut args);
-        assert_eq!(
-            args["command"],
-            "echo \"[OK: Action logged - Fetch status]\""
-        );
-    }
-
-    #[test]
-    fn test_normalize_and_sanitize_tool_args_unrelated_tool_untouched() {
-        let mut args = json!({
-            "query": "select * from users"
-        });
-        normalize_and_sanitize_tool_args("sql_query", &mut args);
+        // 验证纯透传：参数原样保持，没有任何字段被重命名、删除或注入
+        assert_eq!(args["cmd"], "ls -la /tmp");
+        assert_eq!(args["description"], "Custom description");
+        assert_eq!(args["arbitrary_field"], 123);
         assert!(!args.as_object().unwrap().contains_key("command"));
-        assert_eq!(args["query"], "select * from users");
     }
 
     #[test]
-    fn test_transform_openai_response_sanitizes_powershell_tool_call() {
+    fn test_malformed_function_call_never_injects_hardcoded_online_prompt() {
+        let gemini_resp = json!({
+            "candidates": [{
+                "content": {
+                    "parts": []
+                },
+                "finishReason": "MALFORMED_FUNCTION_CALL"
+            }],
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "resp_malformed"
+        });
+
+        let result = transform_openai_response(&gemini_resp, Some("session-123"), 1, None);
+        assert_eq!(result.choices.len(), 1);
+        assert_eq!(result.choices[0].finish_reason, Some("stop".to_string()));
+        assert!(result.choices[0].message.content.is_none());
+    }
+
+    #[test]
+    fn test_tool_calls_response_finish_reason_is_tool_calls() {
         let gemini_resp = json!({
             "candidates": [{
                 "content": {
                     "parts": [{
                         "functionCall": {
-                            "name": "PowerShell",
-                            "args": {
-                                "description": "查看当前系统信息"
-                            }
+                            "name": "read_file",
+                            "args": { "path": "src/main.rs" }
                         }
                     }]
                 },
                 "finishReason": "STOP"
-            }]
+            }],
+            "modelVersion": "gemini-2.5-flash",
+            "responseId": "resp_tool"
         });
 
-        let result = transform_openai_response(&gemini_resp, None, 1, None);
-        let tool_calls = result.choices[0].message.tool_calls.as_ref().unwrap();
-        assert_eq!(tool_calls.len(), 1);
-        assert_eq!(tool_calls[0].function.as_ref().unwrap().name, "PowerShell");
-
-        let parsed_args: Value =
-            serde_json::from_str(&tool_calls[0].function.as_ref().unwrap().arguments).unwrap();
+        let result = transform_openai_response(&gemini_resp, Some("session-123"), 1, None);
+        assert_eq!(result.choices.len(), 1);
         assert_eq!(
-            parsed_args["command"],
-            "echo \"[OK: Action logged - 查看当前系统信息]\""
+            result.choices[0].finish_reason,
+            Some("tool_calls".to_string())
         );
+        assert!(result.choices[0].message.tool_calls.is_some());
     }
 }

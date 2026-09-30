@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot, Repeat2, Terminal } from 'lucide-react';
-import { Account } from '../../types/account';
+import { Account, ModelQuota, getAccountTier } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -8,6 +8,7 @@ import { QuotaItem } from './QuotaItem';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
+import { getModelQuotaDisplay } from '../../utils/quotaDisplay';
 
 interface AccountCardProps {
     account: Account;
@@ -26,6 +27,7 @@ interface AccountCardProps {
     onWarmup?: () => void;
     onUpdateLabel?: (label: string) => void;
     onViewError: () => void;
+    quotaWindow?: '5h' | 'weekly';
 }
 
 // 使用统一的模型配置
@@ -36,7 +38,7 @@ const DEFAULT_MODELS = Object.entries(MODEL_CONFIG).map(([id, config]) => ({
     Icon: config.Icon
 }));
 
-function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice, onWarmup, onUpdateLabel, onViewError }: AccountCardProps) {
+function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice, onWarmup, onUpdateLabel, onViewError, quotaWindow }: AccountCardProps) {
     const { t } = useTranslation();
     const { config, showAllQuotas } = useConfigStore();
     const isDisabled = Boolean(account.disabled);
@@ -132,6 +134,28 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
         return sortModels(models).filter(m => m.id !== 'claude-sonnet-4-6-thinking' && m.id !== 'claude-sonnet-4-5-thinking' && m.id !== 'claude-opus-4-5-thinking');
     }, [config, account, showAllQuotas]);
 
+    // 解析周配额项 (当处于 weekly 视图时)
+    const weeklyItems = useMemo(() => {
+        if (quotaWindow !== 'weekly') return [];
+        return (account.quota?.quota_groups || []).flatMap(group => {
+            return (group.buckets || [])
+                .filter(b => b.window.toLowerCase().includes('week') || b.bucket_id.toLowerCase().includes('week'))
+                .map(b => {
+                    const shortGroupName = (group.display_name || '')
+                        .replace(/ models?$/i, '')
+                        .replace(/Claude and GPT/i, 'Claude/GPT');
+                    const weeklySuffix = t('accounts.quota_window_weekly_short', 'Semanal');
+                    return {
+                        id: `${group.display_name}-${b.bucket_id}`,
+                        label: b.display_name ? `${shortGroupName} (${b.display_name})` : `${shortGroupName} (${weeklySuffix})`,
+                        percentage: Math.round((b.remaining_fraction || 0) * 100),
+                        resetTime: b.reset_time,
+                        cycleTokens: b.cycle_tokens,
+                        Icon: shortGroupName.toLowerCase().includes('claude') ? Sparkles : Bot,
+                    };
+                });
+        });
+    }, [quotaWindow, account.quota?.quota_groups]);
     const isModelProtected = (key?: string) => {
         if (!key) return false;
         return account.protected_models?.includes(key);
@@ -202,16 +226,16 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                                 </span>
                             )}
                             {/* 订阅类型徽章 */}
-                            {account.quota?.subscription_tier && (() => {
-                                const tier = account.quota.subscription_tier.toLowerCase();
-                                if (tier.includes('ultra')) {
+                            {(() => {
+                                const tier = getAccountTier(account);
+                                if (tier === 'ultra') {
                                     return (
                                         <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 text-white text-[9px] font-bold shadow-sm">
                                             <Gem className="w-2.5 h-2.5 fill-current" />
                                             ULTRA
                                         </span>
                                     );
-                                } else if (tier.includes('pro')) {
+                                } else if (tier === 'pro') {
                                     return (
                                         <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-[9px] font-bold shadow-sm">
                                             <Diamond className="w-2.5 h-2.5 fill-current" />
@@ -228,6 +252,9 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                                 }
                             })()}
                             {/* 自定义标签 */}
+                            <span className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400 text-[9px] font-bold" title={t('accounts.priority_hint')}>
+                                {t('accounts.priority')}: {account.priority ?? 50}
+                            </span>
                             {account.custom_label && (
                                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[9px] font-bold shadow-sm border border-orange-200/50 dark:border-orange-800/50">
                                     <Tag className="w-2.5 h-2.5" />
@@ -269,17 +296,31 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 gap-2 content-start">
-                        {displayModels.map((model) => (
-                            <QuotaItem
-                                key={model.id}
-                                label={model.label}
-                                percentage={model.data?.percentage || 0}
-                                resetTime={model.data?.reset_time}
-                                isProtected={isModelProtected(model.protectedKey)}
-                                liveLimit={getLiveLimitForModel(account, model.id, model.protectedKey)}
-                                Icon={model.Icon}
-                            />
-                        ))}
+                        {quotaWindow === 'weekly' && weeklyItems.length > 0 ? (
+                            weeklyItems.map((item) => (
+                                <QuotaItem
+                                    key={item.id}
+                                    label={item.label}
+                                    percentage={item.percentage}
+                                    resetTime={item.resetTime}
+                                    weeklyTokens={item.cycleTokens ?? null}
+                                    Icon={item.Icon}
+                                />
+                            ))
+                        ) : (
+                            displayModels.map((model) => (
+                                <QuotaItem
+                                    key={model.id}
+                                    label={model.label}
+                                    percentage={model.data?.percentage || 0}
+                                    resetTime={model.data?.reset_time}
+                                    {...getModelQuotaDisplay(model.id, model.data, account.quota?.quota_groups)}
+                                    isProtected={isModelProtected(model.protectedKey)}
+                                    liveLimit={getLiveLimitForModel(account, model.id, model.protectedKey)}
+                                    Icon={model.Icon}
+                                />
+                            ))
+                        )}
                     </div>
                 )}
             </div>
@@ -349,7 +390,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                     )}
                     <button
                         className={`p-1.5 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-900/10 cursor-not-allowed' : 'text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}
-                        onClick={(e) => { e.stopPropagation(); onSwitch(); }}
+                        onClick={(e) => { e.stopPropagation(); onSwitch('classic'); }}
                         title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_classic', '切换到 Antigravity (经典版)'))}
                         disabled={isSwitching || isDisabled}
                     >

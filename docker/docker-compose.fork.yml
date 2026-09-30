@@ -1,0 +1,25 @@
+# 二改 / 本地构建专用覆盖
+# 用法（在项目根目录）:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.fork.yml up -d --build
+#
+# Windows 注意: host 网络模式不可用，改用端口映射。
+
+services:
+  antigravity-manager:
+    image: antigravity-manager:local
+    # 覆盖官方 compose 的 host 模式，便于 Windows / Docker Desktop
+    network_mode: bridge
+    ports:
+      - "${PORT:-8045}:8045"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - API_KEY=${API_KEY:-changeme}
+      - WEB_PASSWORD=${WEB_PASSWORD:-}
+      - ABV_API_KEY=${API_KEY:-changeme}
+      - ABV_WEB_PASSWORD=${WEB_PASSWORD:-}
+      - ABV_BIND_LOCAL_ONLY=${ABV_BIND_LOCAL_ONLY:-false}
+      - ABV_DATA_DIR=${ABV_DATA_DIR:-/root/.antigravity_tools}
+      - ABV_MAX_BODY_SIZE=${ABV_MAX_BODY_SIZE:-104857600}
+      - PORT=8045
+    volumes:
+      - ${ABV_HOST_DATA_DIR:-~/.antigravity_tools}:/root/.antigravity_tools

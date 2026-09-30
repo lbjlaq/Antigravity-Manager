@@ -15,6 +15,7 @@ interface ModalDialogProps {
     confirmText?: string;
     cancelText?: string;
     isDestructive?: boolean;
+    isLoading?: boolean;
 }
 
 export default function ModalDialog({
@@ -27,7 +28,8 @@ export default function ModalDialog({
     onCancel,
     confirmText,
     cancelText,
-    isDestructive = false
+    isDestructive = false,
+    isLoading = false
 }: ModalDialogProps) {
     const { t } = useTranslation();
     const finalConfirmText = confirmText || t('common.confirm');
@@ -84,19 +86,22 @@ export default function ModalDialog({
                     <div className="flex gap-3 w-full">
                         {showCancel && (
                             <button
-                                className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-base-200 text-gray-700 dark:text-gray-300 font-medium rounded-xl hover:bg-gray-200 dark:hover:bg-base-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-base-300"
+                                disabled={isLoading}
+                                className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-base-200 text-gray-700 dark:text-gray-300 font-medium rounded-xl hover:bg-gray-200 dark:hover:bg-base-300 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-200 dark:focus:ring-base-300 disabled:opacity-50 disabled:cursor-not-allowed"
                                 onClick={onCancel}
                             >
                                 {finalCancelText}
                             </button>
                         )}
                         <button
-                            className={`flex-1 px-4 py-2.5 text-white font-medium rounded-xl shadow-md transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 ${isDestructive && type === 'confirm'
+                            disabled={isLoading}
+                            className={`flex-1 px-4 py-2.5 text-white font-medium rounded-xl shadow-md transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${isDestructive && type === 'confirm'
                                 ? 'bg-red-500 hover:bg-red-600 focus:ring-red-500 shadow-red-100'
                                 : 'bg-blue-500 hover:bg-blue-600 focus:ring-blue-500 shadow-blue-100'
                                 }`}
                             onClick={onConfirm}
                         >
+                            {isLoading && <span className="loading loading-spinner loading-xs"></span>}
                             {finalConfirmText}
                         </button>
                     </div>

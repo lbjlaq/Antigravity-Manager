@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send } from 'lucide-react';
+import { useState, useEffect, startTransition } from 'react';
+import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound } from 'lucide-react';
 import { request as invoke } from '../utils/request';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -15,17 +15,34 @@ import { useDebugConsole } from '../stores/useDebugConsole';
 import { useTranslation } from 'react-i18next';
 import { isTauri } from '../utils/env';
 import { relaunch } from '@tauri-apps/plugin-process';
+import { emit } from '@tauri-apps/api/event';
 
 import DebugConsole from '../components/debug/DebugConsole';
 import ProxyPoolSettings from '../components/settings/ProxyPoolSettings';
 
+function normalizeDataDirDisplay(path: string): string {
+    const trimmed = path.trim();
+    if (trimmed.startsWith('\\\\?\\UNC\\')) {
+        return `\\\\${trimmed.slice('\\\\?\\UNC\\'.length)}`;
+    }
+    if (trimmed.startsWith('\\\\?\\')) {
+        return trimmed.slice('\\\\?\\'.length);
+    }
+    if (trimmed.startsWith('//?/UNC/')) {
+        return `//${trimmed.slice('//?/UNC/'.length)}`;
+    }
+    if (trimmed.startsWith('//?/')) {
+        return trimmed.slice('//?/'.length);
+    }
+    return trimmed;
+}
 
 function Settings() {
     const { t, i18n } = useTranslation();
     const { config, loadConfig, saveConfig, updateLanguage, updateTheme } = useConfigStore();
     const { enable, disable, isEnabled } = useDebugConsole();
     const [activeTab, setActiveTab] = useState<'general' | 'account' | 'proxy' | 'advanced' | 'debug' | 'about'>('general');
-    const [appVersion, setAppVersion] = useState<string>('4.7.1');
+    const [appVersion, setAppVersion] = useState<string>('4.8.8');
     const [formData, setFormData] = useState<AppConfig>({
         language: 'zh',
         theme: 'system',
@@ -76,7 +93,7 @@ function Settings() {
             monitored_models: []
         },
         pinned_quota_models: {
-            models: ['gemini-pro-agent', 'gemini-3-flash-agent', 'gemini-3.1-flash-image', 'claude-opus-4-6-thinking']
+            models: ['gemini-3.1-pro-high', 'gemini-3.8-flash-high', 'gemini-3.1-flash-image', 'claude-opus-4-6-thinking']
         },
         cloudflared: {
             enabled: false,
@@ -93,10 +110,11 @@ function Settings() {
     });
 
     // Dialog state
-    // Dialog state
-    const [isClearLogsOpen, setIsClearLogsOpen] = useState(false);
     const [isSupportModalOpen, setIsSupportModalOpen] = useState(false);
     const [dataDirPath, setDataDirPath] = useState<string>('~/.antigravity_tools/');
+    const [pendingDataDir, setPendingDataDir] = useState<string>('');
+    const [isMigrateDataDirOpen, setIsMigrateDataDirOpen] = useState(false);
+    const [isMigratingDataDir, setIsMigratingDataDir] = useState(false);
 
     // Antigravity cache clearing state
     const [isClearCacheOpen, setIsClearCacheOpen] = useState(false);
@@ -111,6 +129,7 @@ function Settings() {
         currentVersion: string;
         downloadUrl: string;
         source?: string;
+        channel?: 'stable' | 'beta';
     } | null>(null);
 
     // Homebrew Cask state
@@ -118,6 +137,7 @@ function Settings() {
     const [isBrewUpgrading, setIsBrewUpgrading] = useState(false);
     const [isBrewConfirmOpen, setIsBrewConfirmOpen] = useState(false);
     const [isBrewSuccessOpen, setIsBrewSuccessOpen] = useState(false);
+    const [isUpdateConfirmOpen, setIsUpdateConfirmOpen] = useState(false);
 
 
     useEffect(() => {
@@ -125,16 +145,17 @@ function Settings() {
 
         // 获取真实数据目录路径
         invoke<string>('get_data_dir_path')
-            .then(path => setDataDirPath(path))
+            .then(path => setDataDirPath(normalizeDataDirDisplay(path)))
             .catch(err => console.error('Failed to get data dir:', err));
 
         // 加载更新设置
-        invoke<{ auto_check: boolean; last_check_time: number; check_interval_hours: number }>('get_update_settings')
+        invoke<{ auto_check: boolean; last_check_time: number; check_interval_hours: number; update_channel?: 'stable' | 'beta' }>('get_update_settings')
             .then(settings => {
                 setFormData(prev => ({
                     ...prev,
                     auto_check_update: settings.auto_check,
-                    update_check_interval: settings.check_interval_hours
+                    update_check_interval: settings.check_interval_hours,
+                    update_channel: settings.update_channel || (appVersion.includes('-') ? 'beta' : 'stable'),
                 }));
             })
             .catch(err => console.error('Failed to load update settings:', err));
@@ -192,21 +213,52 @@ function Settings() {
         }
     };
 
-    const confirmClearLogs = async () => {
-        try {
-            await invoke('clear_log_cache');
-            showToast(t('settings.advanced.logs_cleared'), 'success');
-        } catch (error) {
-            showToast(`${t('common.error')}: ${error}`, 'error');
-        }
-        setIsClearLogsOpen(false);
-    };
+
 
     const handleOpenDataDir = async () => {
         try {
             await invoke('open_data_folder');
         } catch (error) {
             showToast(`${t('common.error')}: ${error}`, 'error');
+        }
+    };
+
+    const handleSelectDataDir = async () => {
+        try {
+            const selected = await open({
+                directory: true,
+                multiple: false,
+                title: t('settings.advanced.data_dir_select'),
+            });
+            if (!selected || typeof selected !== 'string') {
+                return;
+            }
+            if (selected === dataDirPath) {
+                return;
+            }
+            setPendingDataDir(selected);
+            setIsMigrateDataDirOpen(true);
+        } catch (error) {
+            showToast(`${t('common.error')}: ${error}`, 'error');
+        }
+    };
+
+    const confirmMigrateDataDir = async () => {
+        if (!pendingDataDir || isMigratingDataDir) {
+            return;
+        }
+        setIsMigratingDataDir(true);
+        try {
+            const newPath = await invoke<string>('set_data_dir', { path: pendingDataDir });
+            setDataDirPath(normalizeDataDirDisplay(newPath));
+            setIsMigrateDataDirOpen(false);
+            setPendingDataDir('');
+            showToast(t('settings.advanced.data_dir_migrated'), 'success');
+            showToast(t('settings.advanced.data_dir_restart_hint'), 'info');
+        } catch (error) {
+            showToast(`${t('common.error')}: ${error}`, 'error');
+        } finally {
+            setIsMigratingDataDir(false);
         }
     };
 
@@ -326,6 +378,7 @@ function Settings() {
                 current_version: string;
                 download_url: string;
                 source?: string;
+                channel?: 'stable' | 'beta';
             }>('check_for_updates');
 
             setUpdateInfo({
@@ -334,11 +387,13 @@ function Settings() {
                 currentVersion: result.current_version,
                 downloadUrl: result.download_url,
                 source: result.source,
+                channel: result.channel,
             });
 
             if (result.has_update) {
                 const sourceMsg = result.source && result.source !== 'GitHub API' ? ` (via ${result.source})` : '';
                 showToast(t('settings.about.new_version_available', { version: result.latest_version }) + sourceMsg, 'info');
+                setIsUpdateConfirmOpen(true);
             } else {
                 showToast(t('settings.about.latest_version'), 'success');
             }
@@ -346,6 +401,26 @@ function Settings() {
             showToast(`${t('settings.about.update_check_failed')}: ${error}`, 'error');
         } finally {
             setIsCheckingUpdate(false);
+        }
+    };
+
+    const handleConfirmUpdate = async () => {
+        setIsUpdateConfirmOpen(false);
+        if (isBrewInstalled) {
+            handleBrewUpgrade();
+            return;
+        }
+        if (isTauri()) {
+            try {
+                await emit('app://trigger-update');
+            } catch (err) {
+                console.error('Failed to trigger update event:', err);
+                if (updateInfo?.downloadUrl) {
+                    window.open(updateInfo.downloadUrl, '_blank', 'noopener,noreferrer');
+                }
+            }
+        } else if (updateInfo?.downloadUrl) {
+            window.open(updateInfo.downloadUrl, '_blank', 'noopener,noreferrer');
         }
     };
 
@@ -417,7 +492,7 @@ function Settings() {
                                 ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                                 }`}
-                            onClick={() => setActiveTab('general')}
+                            onClick={() => startTransition(() => setActiveTab('general'))}
                         >
                             {t('settings.tabs.general')}
                         </button>
@@ -426,7 +501,7 @@ function Settings() {
                                 ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                                 }`}
-                            onClick={() => setActiveTab('account')}
+                            onClick={() => startTransition(() => setActiveTab('account'))}
                         >
                             {t('settings.tabs.account')}
                         </button>
@@ -435,7 +510,7 @@ function Settings() {
                                 ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                                 }`}
-                            onClick={() => setActiveTab('proxy')}
+                            onClick={() => startTransition(() => setActiveTab('proxy'))}
                         >
                             {t('settings.tabs.proxy')}
                         </button>
@@ -444,7 +519,7 @@ function Settings() {
                                 ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                                 }`}
-                            onClick={() => setActiveTab('advanced')}
+                            onClick={() => startTransition(() => setActiveTab('advanced'))}
                         >
                             {t('settings.tabs.advanced')}
                         </button>
@@ -453,7 +528,7 @@ function Settings() {
                                 ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                                 }`}
-                            onClick={() => setActiveTab('debug')}
+                            onClick={() => startTransition(() => setActiveTab('debug'))}
                         >
                             {t('settings.tabs.debug')}
                         </button>
@@ -462,7 +537,7 @@ function Settings() {
                                 ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                                 }`}
-                            onClick={() => setActiveTab('about')}
+                            onClick={() => startTransition(() => setActiveTab('about'))}
                         >
                             {t('settings.tabs.about')}
                         </button>
@@ -493,7 +568,10 @@ function Settings() {
                                     onChange={(e) => {
                                         const newLang = e.target.value;
                                         setFormData({ ...formData, language: newLang });
-                                        i18n.changeLanguage(newLang);
+                                        document.documentElement.dir = newLang === 'ar' ? 'rtl' : 'ltr';
+                                        startTransition(() => {
+                                            i18n.changeLanguage(newLang);
+                                        });
                                         updateLanguage(newLang);
                                     }}
                                 >
@@ -559,6 +637,37 @@ function Settings() {
                                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.general.auto_launch_desc')}</p>
                             </div>
 
+                            {isTauri() && (
+                                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300">
+                                    <div>
+                                        <div className="font-medium text-gray-900 dark:text-base-content">{t('settings.general.quiet_autostart')}</div>
+                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{t('settings.general.quiet_autostart_desc')}</p>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={formData.quiet_autostart !== false}
+                                            onChange={async (e) => {
+                                                const enabled = e.target.checked;
+                                                const next = { ...formData, quiet_autostart: enabled };
+                                                setFormData(next);
+                                                if (!config) {
+                                                    return;
+                                                }
+                                                try {
+                                                    await saveConfig(next);
+                                                    showToast(enabled ? t('settings.general.quiet_autostart_enabled') : t('settings.general.quiet_autostart_disabled'), 'success');
+                                                } catch (error) {
+                                                    showToast(`${t('common.error')}: ${error}`, 'error');
+                                                }
+                                            }}
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                                    </label>
+                                </div>
+                            )}
+
                             {/* 自动检查更新 */}
                             <>
                                 <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300">
@@ -621,6 +730,29 @@ function Settings() {
                                         <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">{t('settings.general.update_check_interval_desc')}</p>
                                     </div>
                                 )}
+                            </>
+
+                            {/* 轻量模式 (释放内存) */}
+                            {isTauri() && (
+                                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-base-200 rounded-lg border border-gray-100 dark:border-base-300">
+                                    <div>
+                                        <div className="font-medium text-gray-900 dark:text-base-content">{t('settings.general.lightweight_mode')}</div>
+                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{t('settings.general.lightweight_mode_desc')}</p>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={formData.lightweight_mode ?? false}
+                                            onChange={(e) => {
+                                                const enabled = e.target.checked;
+                                                setFormData({ ...formData, lightweight_mode: enabled });
+                                            }}
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                                    </label>
+                                </div>
+                            )}
 
                                 {/* 菜单显示设置 */}
                                 <div className="border-t border-gray-200 dark:border-base-200 pt-6 mt-6">
@@ -633,6 +765,7 @@ function Settings() {
                                             { path: '/', label: t('nav.dashboard'), icon: LayoutDashboard },
                                             { path: '/accounts', label: t('nav.accounts'), icon: Users },
                                             { path: '/api-proxy', label: t('nav.proxy'), icon: Network },
+                                            { path: '/apikey-fun', label: t('nav.apikey_fun', '中转站'), icon: KeyRound },
                                             { path: '/monitor', label: t('nav.call_records'), icon: Activity },
                                             { path: '/token-stats', label: t('nav.token_stats'), icon: BarChart3 },
                                             { path: '/user-token', label: t('nav.user_token', 'User Tokens'), icon: Users },
@@ -716,7 +849,6 @@ function Settings() {
                                         {t('settings.menu.selected_items_note')}
                                     </p>
                                 </div>
-                            </>
                         </div>
                     )}
 
@@ -941,12 +1073,21 @@ function Settings() {
                                             readOnly
                                         />
                                         {isTauri() ? (
-                                            <button
-                                                className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 hover:text-gray-900 dark:hover:text-base-content transition-colors"
-                                                onClick={handleOpenDataDir}
-                                            >
-                                                {t('settings.advanced.open_btn')}
-                                            </button>
+                                            <>
+                                                <button
+                                                    className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 hover:text-gray-900 dark:hover:text-base-content transition-colors"
+                                                    onClick={handleSelectDataDir}
+                                                    disabled={isMigratingDataDir}
+                                                >
+                                                    {t('settings.advanced.select_btn')}
+                                                </button>
+                                                <button
+                                                    className="px-4 py-2 border border-gray-200 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-base-200 hover:text-gray-900 dark:hover:text-base-content transition-colors"
+                                                    onClick={handleOpenDataDir}
+                                                >
+                                                    {t('settings.advanced.open_btn')}
+                                                </button>
+                                            </>
                                         ) : (
                                             <span className="self-center text-xs text-gray-400 dark:text-gray-500 italic px-2">
                                                 {t('settings.web_mode_limitation', '(Web 模式不支持)')}
@@ -1149,21 +1290,7 @@ function Settings() {
                                     </p>
                                 </div>
 
-                                {/* 日志缓存清理 */}
-                                <div className="border-t border-gray-200 dark:border-base-200 pt-4">
-                                    <h3 className="font-medium text-gray-900 dark:text-base-content mb-3">{t('settings.advanced.logs_title')}</h3>
-                                    <div className="bg-gray-50 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-lg p-3 mb-3">
-                                        <p className="text-sm text-gray-600 dark:text-gray-400">{t('settings.advanced.logs_desc')}</p>
-                                    </div>
-                                    <div className="flex items-center gap-4">
-                                        <button
-                                            className="px-4 py-2 border border-gray-300 dark:border-base-300 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-base-200 transition-colors"
-                                            onClick={() => setIsClearLogsOpen(true)}
-                                        >
-                                            {t('settings.advanced.clear_logs')}
-                                        </button>
-                                    </div>
-                                </div>
+
 
                                 {/* Antigravity 缓存清理 */}
                                 <div className="border-t border-gray-200 dark:border-base-200 pt-4">
@@ -1537,6 +1664,75 @@ function Settings() {
                                     </div>
                                 </div>
 
+                                {/* Update Channel Selector */}
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="flex items-center gap-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+                                        <span>{t('settings.about.update_channel')}:</span>
+                                        <div className="inline-flex p-1 bg-gray-100 dark:bg-base-300 rounded-xl border border-gray-200/60 dark:border-base-200">
+                                            <button
+                                                type="button"
+                                                onClick={async () => {
+                                                    try {
+                                                        await invoke('save_update_settings', {
+                                                            settings: {
+                                                                auto_check: formData.auto_check_update ?? true,
+                                                                last_check_time: 0,
+                                                                check_interval_hours: formData.update_check_interval ?? 24,
+                                                                update_channel: 'stable',
+                                                            }
+                                                        });
+                                                        setFormData(prev => ({ ...prev, update_channel: 'stable' }));
+                                                        setUpdateInfo(null);
+                                                        showToast(`${t('settings.about.update_channel')}: ${t('settings.about.channel_stable')}`, 'info');
+                                                    } catch (err) {
+                                                        showToast(`${t('common.error')}: ${err}`, 'error');
+                                                    }
+                                                }}
+                                                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                                                    (formData.update_channel || 'stable') === 'stable'
+                                                        ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm'
+                                                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                                }`}
+                                            >
+                                                {t('settings.about.channel_stable')}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={async () => {
+                                                    try {
+                                                        await invoke('save_update_settings', {
+                                                            settings: {
+                                                                auto_check: formData.auto_check_update ?? true,
+                                                                last_check_time: 0,
+                                                                check_interval_hours: formData.update_check_interval ?? 24,
+                                                                update_channel: 'beta',
+                                                            }
+                                                        });
+                                                        setFormData(prev => ({ ...prev, update_channel: 'beta' }));
+                                                        setUpdateInfo(null);
+                                                        showToast(`${t('settings.about.update_channel')}: ${t('settings.about.channel_beta')}`, 'info');
+                                                    } catch (err) {
+                                                        showToast(`${t('common.error')}: ${err}`, 'error');
+                                                    }
+                                                }}
+                                                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all flex items-center gap-1 ${
+                                                    formData.update_channel === 'beta'
+                                                        ? 'bg-white dark:bg-base-100 text-amber-600 dark:text-amber-400 shadow-sm'
+                                                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                                }`}
+                                            >
+                                                <span>{t('settings.about.channel_beta')}</span>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {formData.update_channel === 'beta' && (
+                                        <p className="text-[11px] text-amber-600/90 dark:text-amber-400/90">
+                                            {t('settings.about.channel_beta_hint')}
+                                        </p>
+                                    )}
+                                </div>
+
                                 {/* Check for Updates */}
                                 <div className="flex flex-col items-center gap-3">
                                     <button
@@ -1553,11 +1749,16 @@ function Settings() {
                                         <div className="text-center">
                                             {updateInfo.hasUpdate ? (
                                                 <div className="flex flex-col items-center gap-2">
-                                                    <div className="text-sm text-orange-600 dark:text-orange-400 font-medium">
-                                                        {t('settings.about.new_version_available', { version: updateInfo.latestVersion })}
+                                                    <div className="flex items-center gap-1.5 text-sm text-orange-600 dark:text-orange-400 font-medium">
+                                                        <span>{t('settings.about.new_version_available', { version: updateInfo.latestVersion })}</span>
+                                                        {updateInfo.channel === 'beta' && (
+                                                            <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                                                Beta
+                                                            </span>
+                                                        )}
                                                     </div>
-                                                    <div className="flex items-center gap-2">
-                                                        {isBrewInstalled && (
+                                                    <div className="flex items-center gap-2 flex-wrap justify-center">
+                                                        {isBrewInstalled ? (
                                                             <button
                                                                 onClick={() => setIsBrewConfirmOpen(true)}
                                                                 disabled={isBrewUpgrading}
@@ -1572,12 +1773,22 @@ function Settings() {
                                                                     t('settings.about.brew_upgrade')
                                                                 )}
                                                             </button>
+                                                        ) : (
+                                                            isTauri() && (
+                                                                <button
+                                                                    onClick={handleConfirmUpdate}
+                                                                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-all shadow-sm active:scale-95 flex items-center gap-1.5"
+                                                                >
+                                                                    <RefreshCw className="w-3.5 h-3.5" />
+                                                                    {t('settings.about.upgrade_now_btn', { defaultValue: '立即自动更新' })}
+                                                                </button>
+                                                            )
                                                         )}
                                                         <a
                                                             href={updateInfo.downloadUrl}
                                                             target="_blank"
                                                             rel="noreferrer"
-                                                            className="px-4 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
+                                                            className="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-base-200 dark:hover:bg-base-300 text-gray-700 dark:text-gray-200 text-sm rounded-lg transition-colors flex items-center gap-1.5 border border-gray-200 dark:border-base-300"
                                                         >
                                                             {t('settings.about.download_update')}
                                                             <ExternalLink className="w-3.5 h-3.5" />
@@ -1602,17 +1813,26 @@ function Settings() {
                     }
                 </div >
 
+
+
                 <ModalDialog
-                    isOpen={isClearLogsOpen}
-                    title={t('settings.advanced.clear_logs_title')}
-                    message={t('settings.advanced.clear_logs_msg')}
+                    isOpen={isMigrateDataDirOpen}
+                    title={t('settings.advanced.data_dir_migrate_title')}
                     type="confirm"
-                    confirmText={t('common.clear')}
+                    confirmText={isMigratingDataDir ? t('common.loading') : t('common.confirm')}
                     cancelText={t('common.cancel')}
-                    isDestructive={true}
-                    onConfirm={confirmClearLogs}
-                    onCancel={() => setIsClearLogsOpen(false)}
-                />
+                    onConfirm={confirmMigrateDataDir}
+                    onCancel={() => {
+                        if (!isMigratingDataDir) {
+                            setIsMigrateDataDirOpen(false);
+                            setPendingDataDir('');
+                        }
+                    }}
+                >
+                    <p className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-line">
+                        {t('settings.advanced.data_dir_migrate_msg', { path: pendingDataDir })}
+                    </p>
+                </ModalDialog>
 
                 {/* Antigravity Cache Clear Modal */}
                 <ModalDialog
@@ -1716,6 +1936,47 @@ function Settings() {
                     <p className="text-sm text-gray-600 dark:text-gray-400">
                         {t('settings.about.brew_upgrade_success')}
                     </p>
+                </ModalDialog>
+
+                {/* 新版本自动更新确认弹窗 */}
+                <ModalDialog
+                    isOpen={isUpdateConfirmOpen}
+                    title={t('settings.about.update_dialog_title', { defaultValue: '发现新版本可用' })}
+                    type="confirm"
+                    confirmText={t('settings.about.upgrade_now_btn', { defaultValue: '立即下载并自动更新' })}
+                    cancelText={t('common.cancel', { defaultValue: '稍后再说' })}
+                    onConfirm={handleConfirmUpdate}
+                    onCancel={() => setIsUpdateConfirmOpen(false)}
+                >
+                    <div className="space-y-3 py-1 text-sm text-gray-700 dark:text-gray-300">
+                        <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
+                            {t('settings.about.update_confirm_desc', {
+                                defaultValue: '检测到最新版本，点击“立即下载并自动更新”将直接启动自动下载并在准备就绪后覆盖安装生效。',
+                            })}
+                        </p>
+                        <div className="bg-gray-50 dark:bg-base-200 p-3 rounded-lg border border-gray-200 dark:border-base-300 space-y-1.5 font-mono text-xs">
+                            <div className="flex items-center justify-between">
+                                <span className="text-gray-500">{t('settings.about.current_version')}:</span>
+                                <span className="font-semibold text-gray-800 dark:text-gray-200">{updateInfo?.currentVersion || appVersion}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <span className="text-gray-500">{t('settings.about.latest_version_label', { defaultValue: '最新版本' })}:</span>
+                                <div className="flex items-center gap-1.5">
+                                    <span className="font-bold text-emerald-600 dark:text-emerald-400">{updateInfo?.latestVersion}</span>
+                                    {updateInfo?.channel === 'beta' && (
+                                        <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                            Beta
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                            {updateInfo?.source && (
+                                <div className="text-[10px] text-gray-400 text-right pt-1 border-t border-gray-200/50 dark:border-base-300">
+                                    via {updateInfo.source}
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </ModalDialog>
 
                 {/* Support Modal */}

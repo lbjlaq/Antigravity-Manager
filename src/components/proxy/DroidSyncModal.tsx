@@ -24,6 +24,7 @@ interface DroidSyncModalProps {
 
 function buildDroidModel(modelId: string, modelName: string) {
     const isClaude = modelId.startsWith('claude-');
+    const isGemini = modelId.startsWith('gemini-');
     const isThinking = modelId.includes('thinking');
     if (isClaude) {
         return {
@@ -35,11 +36,13 @@ function buildDroidModel(modelId: string, modelName: string) {
             ...(isThinking ? { extraArgs: { thinking: { type: 'enabled', budget_tokens: 32000 } } } : {}),
         };
     }
+    // Gemini 与其他视觉模型全面开启图像支持 (noImageSupport: false)
+    const supportsImage = isGemini || modelId.includes('gpt-4') || modelId.includes('image');
     return {
         model: modelId,
         displayName: `AG-${modelName}`,
         provider: 'generic-chat-completion-api',
-        noImageSupport: !modelId.includes('image'),
+        noImageSupport: !supportsImage,
     };
 }
 

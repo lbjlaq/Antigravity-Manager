@@ -18,7 +18,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 /// 一条 pre-flight 处理记录(给诊断页 / 日志)。
 #[derive(Debug, Clone, PartialEq)]
@@ -29,17 +29,6 @@ pub struct Repair {
     pub kind: String,
     /// 人类可读详情(改了几行 / 为何放行)。
     pub detail: String,
-}
-
-impl Repair {
-    fn to_value(&self) -> Value {
-        json!({"file": self.file, "kind": self.kind, "detail": self.detail})
-    }
-}
-
-/// 把一组 [`Repair`] 转成诊断 `Value` 数组(给 ApplyPatchTrace 的 `repairs` 字段)。
-pub fn repairs_to_value(repairs: &[Repair]) -> Value {
-    Value::Array(repairs.iter().map(Repair::to_value).collect())
 }
 
 /// [MOC-194/MOC-263] 进程级「最近见过的 cwd」候选历史(most-recent-first,去重,容量上限)。
@@ -1684,6 +1673,8 @@ fn resolve_path(path: &str, cwd: &str) -> PathBuf {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    use serde_json::json;
 
     fn tmp_file(name: &str, content: &str) -> (tempfile::TempDir, String) {
         let dir = tempfile::tempdir().unwrap();

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, beta]
   pull_request:
-    branches: [main, master]
+    branches: [main, master, beta]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -65,6 +65,13 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri"
+          save-if: ${{ github.event_name == 'push' }}
+
+      - name: Ensure frontend dist directory exists
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          if (-not (Test-Path "dist/index.html")) { Set-Content -Path "dist/index.html" -Value "<html/>" }
 
       - name: Check Rust formatting
         run: |
@@ -108,6 +115,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "src-tauri"
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: Node.js setup
         uses: actions/setup-node@v4

@@ -5,7 +5,6 @@
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::collections::HashSet;
 
 // Lazy static regular expressions to optimize processing
 static ANSI_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\x1B\[[0-9;?]*[a-zA-Z]").unwrap());

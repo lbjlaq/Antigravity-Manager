@@ -30,7 +30,15 @@ where
     let mut tool_calls_map: HashMap<u32, (String, String, String, Vec<String>)> = HashMap::new();
 
     while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result.map_err(|e| format!("Stream error: {}", e))?;
+        let chunk = chunk_result.map_err(|e| {
+            crate::proxy::mappers::error_classifier::report_stream_error(
+                "openai-collector",
+                "collect_stream_to_json",
+                &e,
+                format!("model={}", response.model),
+            )
+            .client_message()
+        })?;
         let text = String::from_utf8_lossy(&chunk);
 
         for line in text.lines() {
@@ -192,6 +200,7 @@ where
                             name,
                             arguments: args_parts.join(""),
                         }),
+                        signature: None,
                         status: None,
                         call_id: None,
                         operation: None,
@@ -203,10 +212,21 @@ where
         Some(calls.into_iter().map(|(_, tc)| tc).collect())
     };
 
+    let final_finish_reason = if final_tool_calls.is_some() {
+        Some("tool_calls".to_string())
+    } else {
+        finish_reason.or(Some("stop".to_string()))
+    };
+
     let message = OpenAIMessage {
         role: role.unwrap_or("assistant".to_string()),
-        content: Some(OpenAIContent::String(full_content)),
+        content: if full_content.is_empty() && final_tool_calls.is_some() {
+            None
+        } else {
+            Some(OpenAIContent::String(full_content))
+        },
         reasoning_content: full_reasoning,
+        signature: None,
         tool_calls: final_tool_calls,
         tool_call_id: None,
         name: None,
@@ -216,7 +236,7 @@ where
     response.choices.push(Choice {
         index: 0,
         message,
-        finish_reason: finish_reason.or(Some("stop".to_string())),
+        finish_reason: final_finish_reason,
     });
 
     Ok(response)

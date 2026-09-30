@@ -2,5 +2,4 @@
 // 对应上游通讯接口
 
 pub mod client;
-pub mod models;
 pub mod retry;
