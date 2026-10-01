@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional Account Management & Protocol Proxy System for AI Services (v4.8.8)
+> Professional Account Management & Protocol Proxy System for AI Services (v4.9.0)
 
 <div align="center">
   <img src="public/icon.png" width="100" height="100" alt="Antigravity Tools Logo">
@@ -11,7 +11,7 @@
       <img src="https://img.shields.io/github/v/release/lbjlaq/Antigravity-Manager?color=blue&style=flat-square" alt="GitHub release">
     </a>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.8.8-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.9.0-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -483,7 +483,7 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 
 ## 📝 Changelog
 
-> Latest version **v4.8.8** (2026-10-01): Completely refactored the account pool priority sorting algorithm, removing the non-transitive 10-minute fuzzy threshold and introducing deterministic account ID tie-breaking to eliminate Rust slice sort panics and empty replies in dense account pools (Empty reply from server, Fixes #3570, thanks to @Xyloz3n).
+> Latest version **v4.9.0** (2026-10-01): Fixed standard library `char boundary panic` during thought snippet truncation in `monitor.rs` by adopting `safe_truncate_str` to automatically align UTF-8 character boundaries, eradicating worker crashes, downstream connection hangs (`socket hang up` / `Empty reply from server`), and silent log drops (Fixes #3573, thanks to @a3339530357).
 
 👉 **[View Full Changelog → CHANGELOG_EN.md](CHANGELOG_EN.md)**
 

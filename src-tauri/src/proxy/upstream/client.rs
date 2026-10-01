@@ -169,21 +169,32 @@ impl UpstreamClient {
         }
     }
 
-    /// Internal helper to build a client with optional upstream proxy config
-    fn build_client_internal(
-        proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
-    ) -> Result<Client, rquest::Error> {
-        let mut builder = Client::builder()
+    /// Base client builder configured with common connection pool, timeouts, and HTTP/2 keep-alive
+    fn base_client_builder() -> rquest::ClientBuilder {
+        let builder = Client::builder()
             .emulation(rquest_util::Emulation::Chrome123)
             // Connection settings (优化连接复用，减少建立开销)
             .connect_timeout(Duration::from_secs(20))
             .pool_max_idle_per_host(20) // 每主机最多 20 个空闲连接 (对齐官方指纹)
             .pool_idle_timeout(Duration::from_secs(90)) // 空闲连接保持 90 秒
-            .tcp_keepalive(Duration::from_secs(60)) // TCP 保活探测 60 秒
+            .tcp_keepalive(Duration::from_secs(3)) // TCP 保活探测 (3秒)
+            // 穿透配置 HTTP/2 PING：部分代理环境在长思考静默期（>10s）会触发 L7 空闲截断，造成流式腰斩和 Token 浪费
+            .http2(|mut h2| {
+                h2.keep_alive_interval(Duration::from_secs(3))
+                    .keep_alive_timeout(Duration::from_secs(10))
+                    .keep_alive_while_idle(true);
+            })
             // 强制开启 HTTP/2 协议，并支持在 SOCKS/HTTPS 代理下通过 ALPN 强制降级/协商
             .timeout(Duration::from_secs(600));
 
-        builder = Self::apply_default_user_agent(builder);
+        Self::apply_default_user_agent(builder)
+    }
+
+    /// Internal helper to build a client with optional upstream proxy config
+    fn build_client_internal(
+        proxy_config: Option<crate::proxy::config::UpstreamProxyConfig>,
+    ) -> Result<Client, rquest::Error> {
+        let mut builder = Self::base_client_builder();
 
         if let Some(config) = proxy_config {
             if config.enabled && !config.url.is_empty() {
@@ -204,16 +215,8 @@ impl UpstreamClient {
         proxy_config: crate::proxy::proxy_pool::PoolProxyConfig,
     ) -> Result<Client, rquest::Error> {
         // Reuse base settings similar to default client but with specific proxy
-        let builder = Client::builder()
-            .emulation(rquest_util::Emulation::Chrome123)
-            .connect_timeout(Duration::from_secs(20))
-            .pool_max_idle_per_host(20)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Duration::from_secs(60))
-            .timeout(Duration::from_secs(600))
-            .proxy(proxy_config.proxy); // Apply the specific proxy
-
-        Self::apply_default_user_agent(builder).build()
+        let builder = Self::base_client_builder().proxy(proxy_config.proxy);
+        builder.build()
     }
 
     fn apply_default_user_agent(builder: rquest::ClientBuilder) -> rquest::ClientBuilder {

@@ -3,6 +3,17 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.9.0 (2026-10-01)**:
+        -   **[监控日志与思考签名回填安全加固] 修复思考片段按字节切片切在多字节字符中间导致的 Rust worker panic 与连接挂起 (PR #3574, Fixes #3573, Thanks to @a3339530357)**:
+            -   **UTF-8 字符边界安全回退**: 修复在 `monitor.rs` 签名回填路径中对思考内容执行 `&trimmed[..32]` 原生字节切片时，因中文（3 字节/字）或 Emoji（4 字节）等宽字符横跨第 32 字节触发的标准库 `char boundary panic`。改用通用工具 `safe_truncate_str(trimmed, 32)`，在截断点落在多字节内部时自动向左回退至最近合法字符边界。
+            -   **根治下游连接中断与日志静默丢失**: 彻底消除由上述 panic 引发的 tokio worker 崩溃，解决下游应用（如中文 Agent、聊天客户端）在非流式模式下收到的 `socket hang up` / `Empty reply from server` 异常，确保请求监控日志 100% 完整落库。
+
+    *   **v4.8.9 (2026-10-01)**:
+        -   **[上游长思考静默期保活与连接稳定性根治] 穿透底层 hyper 注入 HTTP/2 PING 帧，统一 base_client_builder 杜绝代理 L7 空闲截断与流式腰斩 (PR #3571, Fixes #2195, Fixes #1796, Fixes #2013, Thanks to @EricZhou05)**:
+            -   **底层 Hyper HTTP/2 PING 保活帧穿透注入**: 针对深度思考、长代码生成、大型脚本编写或制定复杂工作计划时上游服务长达 10~15 秒数据生成静默期导致的流式中断，直接穿透 `rquest` 底层 `hyper` 协议栈配置 `keep_alive_interval(Duration::from_secs(3))`、`keep_alive_timeout(Duration::from_secs(10))` 与 `keep_alive_while_idle(true)`。通过向连接周期性注入标准 HTTP/2 PING 帧并由服务端 ACK，持续重置本地代理（如 Clash、软路由、网络代理）的应用层（L7）空闲读超时计时器，彻底根除 `error reading a body from connection`、`RST_STREAM` 报错及 Token 浪费。
+            -   **统一 base_client_builder 消除配置漂移**: 重构 `UpstreamClient` 基础构建逻辑为 `base_client_builder`，使默认客户端与代理池（ProxyPool）专属客户端 100% 共享连接池复用、HTTP/2 PING 保活机制及 3 秒 TCP Keepalive 探测参数，杜绝因代码重复引起的配置遗漏与行为分歧。
+            -   **TCP Keepalive 灵敏度提升**: 将底层 TCP Keepalive 探测周期从 60 秒缩短至 3 秒，显著提升长连接在弱网与复杂拓扑下的故障感知与自愈效率。
+
     *   **v4.8.8 (2026-10-01)**:
         -   **[账号池调度算法严格全序治理与 Panic 根治] 修复重置时间比较函数破坏全序传递性导致的 Rust sort panic 与请求空回复 (Fixes #3570, Thanks to @Xyloz3n)**:
             -   **严格全序关系构建与容差带彻底废除**: 彻底移除 `tokens_snapshot.sort_by` 中将相差小于 10 分钟（600 秒）视为等价的非传递性模糊容差逻辑。该逻辑在多账号候选池且 `reset_time` 分散跨越 600 秒边界时，必然构成 A == B, B == C 但 A < C 的非传递三元环，触发 Rust 1.81+ 标准库 `smallsort / driftsort` 内部断言 panic 并导致 HTTP 连接异常断开（Empty reply from server）。重构为严格的标量时间比较 `reset_a.cmp(&reset_b)`，从数学原理上彻底根除崩溃隐患。

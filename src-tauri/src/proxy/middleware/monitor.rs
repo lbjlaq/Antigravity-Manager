@@ -380,11 +380,7 @@ fn build_canonical_consolidated_response(
             // 1. 优先按当前轮次的思考文本片段精准直捞专属签名
             if !thinking_content.is_empty() {
                 let trimmed = thinking_content.trim();
-                let snippet = if trimmed.len() > 32 {
-                    &trimmed[..32]
-                } else {
-                    trimmed
-                };
+                let snippet = crate::proxy::mappers::common_utils::safe_truncate_str(trimmed, 32);
                 if let Some(sig) =
                     crate::modules::proxy_db::lookup_signature_by_thought_snippet(snippet)
                 {
