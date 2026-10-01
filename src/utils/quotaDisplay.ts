@@ -28,6 +28,42 @@ export interface ConstrainedQuotaResult {
 // An exhausted weekly window takes precedence; protection still uses the backend quota.
 export function getModelQuotaDisplay(modelId: string, model: ModelQuota | undefined, groups: QuotaGroup[] = []) {
     const name = modelId.toLowerCase();
+
+    // 虚拟配额桶自身 (如 gemini-weekly, gemini-5h, 3p-weekly, 3p-5h):
+    // 必须直接呈现自身配额桶的真实百分比与重置时间，严禁将周配额桶劫持替换为 5h 窗口！
+    const isVirtualWeekly = name === 'gemini-weekly' || name === 'gemini_weekly' || name === '3p-weekly' || name === '3p_weekly' || name.startsWith('gemini-weekly') || name.startsWith('3p-weekly');
+    const isVirtual5h = name === 'gemini-5h' || name === 'gemini_5h' || name === '3p-5h' || name === '3p_5h' || name.startsWith('gemini-5h') || name.startsWith('3p-5h');
+
+    if (isVirtualWeekly || isVirtual5h) {
+        const isThirdParty = /claude|gpt|3p/.test(name);
+        const buckets = (groups || []).filter(group => {
+            const groupName = (group?.display_name || '').toLowerCase();
+            const isGroup3P = /claude|gpt|3p/.test(groupName)
+                || (group?.buckets || []).some(bucket => (bucket?.bucket_id || '').toLowerCase().includes('3p'));
+            return isThirdParty ? isGroup3P : !isGroup3P;
+        }).flatMap(group => group?.buckets || []);
+
+        const targetBucket = buckets.find(b => {
+            const bId = (b?.bucket_id || '').toLowerCase();
+            if (bId === name) return true;
+            return isVirtualWeekly
+                ? /week|7d/i.test(`${b?.window || ''} ${b?.bucket_id || ''}`)
+                : /5h|hour/i.test(`${b?.window || ''} ${b?.bucket_id || ''}`);
+        });
+
+        const percentage = targetBucket && typeof targetBucket.remaining_fraction === 'number'
+            ? Math.round(targetBucket.remaining_fraction * 100)
+            : (model?.percentage ?? 0);
+        const resetTime = targetBucket?.reset_time || model?.reset_time;
+
+        return {
+            percentage,
+            resetTime,
+            isWeeklyConstrained: false,
+            weeklyResetTime: isVirtualWeekly ? resetTime : undefined,
+        };
+    }
+
     const thirdParty = name.startsWith('claude') || name.startsWith('gpt');
     const buckets = (groups || []).filter(group => {
         const groupName = (group?.display_name || '').toLowerCase();

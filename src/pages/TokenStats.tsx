@@ -1,10 +1,28 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { request as invoke } from '../utils/request';
 import { useTranslation } from 'react-i18next';
-import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import { Clock, Calendar, CalendarDays, History, Users, Zap, TrendingUp, RefreshCw, Cpu, DollarSign, Settings2, X, RotateCcw, Plus, Trash2 } from 'lucide-react';
+import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+    Clock,
+    Calendar,
+    CalendarDays,
+    History,
+    Users,
+    Zap,
+    TrendingUp,
+    RefreshCw,
+    Cpu,
+    DollarSign,
+    Settings2,
+    Database,
+    BarChart3,
+} from 'lucide-react';
+import { ActivityHeatmapCard, DayUsagePoint } from '../components/token_stats/ActivityHeatmapCard';
+import { HourlyTrendBarCard, HourlyUsagePoint } from '../components/token_stats/HourlyTrendBarCard';
+import { TopModelsShareCard, ModelShareItem } from '../components/token_stats/TopModelsShareCard';
+import { PricingModal } from '../components/token_stats/PricingModal';
 
-interface TokenStatsAggregated {
+export interface TokenStatsAggregated {
     period: string;
     total_input_tokens: number;
     total_output_tokens: number;
@@ -14,7 +32,7 @@ interface TokenStatsAggregated {
     uncached_input_tokens?: number;
 }
 
-interface AccountTokenStats {
+export interface AccountTokenStats {
     account_email: string;
     total_input_tokens: number;
     total_output_tokens: number;
@@ -23,7 +41,7 @@ interface AccountTokenStats {
     request_count: number;
 }
 
-interface ModelTokenStats {
+export interface ModelTokenStats {
     model: string;
     total_input_tokens: number;
     total_output_tokens: number;
@@ -32,17 +50,17 @@ interface ModelTokenStats {
     request_count: number;
 }
 
-interface ModelTrendPoint {
+export interface ModelTrendPoint {
     period: string;
     model_data: Record<string, number>;
 }
 
-interface AccountTrendPoint {
+export interface AccountTrendPoint {
     period: string;
     account_data: Record<string, number>;
 }
 
-interface TokenStatsSummary {
+export interface TokenStatsSummary {
     total_input_tokens: number;
     total_output_tokens: number;
     total_cached_tokens: number;
@@ -82,15 +100,10 @@ const PRICING_STORAGE_KEY = 'antigravity_model_pricing_v2026';
 type TimeRange = 'hourly' | 'daily' | 'weekly' | 'all';
 type ViewMode = 'model' | 'account';
 
-const MODEL_COLORS = [
-    '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
-    '#06b6d4', '#6366f1', '#f43f5e', '#84cc16', '#a855f7',
-    '#14b8a6', '#f97316', '#64748b', '#0ea5e9', '#d946ef'
-];
-
-const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#6366f1', '#f43f5e'];
+const TOP_COLORS = ['#d97757', '#4f85e8', '#10a37f', '#a855f7', '#f59e0b', '#71717a'];
 
 const formatNumber = (num: number): string => {
+    if (num >= 1000000000) return `${(num / 1000000000).toFixed(1)}B`;
     if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
     if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
     return num.toString();
@@ -100,7 +113,7 @@ const TokenStats: React.FC = () => {
     const { t } = useTranslation();
     const [timeRange, setTimeRange] = useState<TimeRange>('daily');
     const [viewMode, setViewMode] = useState<ViewMode>('model');
-    const [chartData, setChartData] = useState<TokenStatsAggregated[]>([]);
+    const [chartType, setChartType] = useState<'bar' | 'area'>('bar');
     const [accountData, setAccountData] = useState<AccountTokenStats[]>([]);
     const [modelData, setModelData] = useState<ModelTokenStats[]>([]);
     const [modelTrendData, setModelTrendData] = useState<any[]>([]);
@@ -109,6 +122,10 @@ const TokenStats: React.FC = () => {
     const [allAccounts, setAllAccounts] = useState<string[]>([]);
     const [summary, setSummary] = useState<TokenStatsSummary | null>(null);
     const [loading, setLoading] = useState(true);
+
+    // 专属 13 周热力图数据与 24 小时紧凑柱状图数据
+    const [heatmapData, setHeatmapData] = useState<DayUsagePoint[]>([]);
+    const [hourlyTrendData, setHourlyTrendData] = useState<HourlyUsagePoint[]>([]);
 
     // 价格体系与自定义价格状态
     const [pricing, setPricing] = useState<Record<string, ModelPricingRule>>(() => {
@@ -119,11 +136,6 @@ const TokenStats: React.FC = () => {
         return DEFAULT_PRICING;
     });
     const [showPricingModal, setShowPricingModal] = useState(false);
-    const [tempPricing, setTempPricing] = useState<Record<string, ModelPricingRule>>(pricing);
-    const [newModelName, setNewModelName] = useState('');
-    const [newInputPrice, setNewInputPrice] = useState('1.00');
-    const [newOutputPrice, setNewOutputPrice] = useState('5.00');
-    const [newCachePrice, setNewCachePrice] = useState('0.10');
 
     const getPricing = useCallback((modelName: string): ModelPricingRule => {
         const key = modelName.toLowerCase();
@@ -149,64 +161,95 @@ const TokenStats: React.FC = () => {
         return modelData.reduce((sum, m) => sum + calculateModelCost(m), 0);
     }, [modelData, calculateModelCost]);
 
+    // 主力模型列表数据（带单项费用）
+    const modelShareItems: ModelShareItem[] = useMemo(() => {
+        return modelData.map(m => ({
+            model: m.model,
+            total_tokens: m.total_tokens,
+            request_count: m.request_count,
+            total_input_tokens: m.total_input_tokens,
+            total_output_tokens: m.total_output_tokens,
+            total_cached_tokens: m.total_cached_tokens,
+            cost: calculateModelCost(m),
+        }));
+    }, [modelData, calculateModelCost]);
+
+    // 缓存命中率与节约成本估算
+    const cacheMetrics = useMemo(() => {
+        if (!summary || summary.total_tokens === 0) return { hitRate: 0, savings: 0 };
+        const totalInput = summary.total_input_tokens;
+        const cached = summary.total_cached_tokens;
+        const hitRate = totalInput > 0 ? (cached / totalInput) * 100 : 0;
+        // 估算节约：假设平均每1M缓存比直接输入便宜约 $1.50
+        const savings = (cached * 1.5) / 1_000_000;
+        return { hitRate, savings };
+    }, [summary]);
+
     const fetchData = async () => {
         setLoading(true);
         try {
             let hours = 24;
-            let data: TokenStatsAggregated[] = [];
             let modelTrend: ModelTrendPoint[] = [];
             let accountTrend: AccountTrendPoint[] = [];
 
             switch (timeRange) {
                 case 'hourly':
                     hours = 24;
-                    data = await invoke<TokenStatsAggregated[]>('get_token_stats_hourly', { hours: 24 });
                     modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_hourly', { hours: 24 });
                     accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_hourly', { hours: 24 });
                     break;
                 case 'daily':
                     hours = 168;
-                    data = await invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 7 });
                     modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 7 });
                     accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 7 });
                     break;
                 case 'weekly':
                     hours = 720;
-                    data = await invoke<TokenStatsAggregated[]>('get_token_stats_weekly', { weeks: 4 });
                     modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 30 });
                     accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 30 });
                     break;
                 case 'all':
                     hours = 0;
-                    data = await invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 0 });
                     modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 0 });
                     accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 0 });
                     break;
             }
 
-            setChartData(data.map(point => ({
-                ...point,
-                total_cached_tokens: point.total_cached_tokens || 0,
-                uncached_input_tokens: Math.max((point.total_input_tokens || 0) - (point.total_cached_tokens || 0), 0)
-            })));
-
-            const models = new Set<string>();
+            // 处理模型趋势数据：提取 Top 5 模型，长尾自动归并到 Other，避免图例与彩带过多导致画面杂乱
+            const modelsSet = new Set<string>();
             modelTrend.forEach(point => {
-                Object.keys(point.model_data).forEach(m => models.add(m));
+                Object.keys(point.model_data).forEach(m => modelsSet.add(m));
             });
-            const modelList = Array.from(models);
-            setAllModels(modelList);
+            const modelTotals: Record<string, number> = {};
+            modelTrend.forEach(p => {
+                Object.entries(p.model_data).forEach(([m, val]) => {
+                    modelTotals[m] = (modelTotals[m] || 0) + val;
+                });
+            });
+            const sortedModels = Array.from(modelsSet).sort((a, b) => (modelTotals[b] || 0) - (modelTotals[a] || 0));
+            const top5Models = sortedModels.slice(0, 5);
+            const hasOther = sortedModels.length > 5;
+            const displayModelKeys = hasOther ? [...top5Models, '其他模型'] : top5Models;
+            setAllModels(displayModelKeys);
 
             const transformedTrend = modelTrend.map(point => {
                 const row: Record<string, any> = { period: point.period };
-                modelList.forEach(model => {
-                    row[model] = point.model_data[model] || 0;
+                let otherSum = 0;
+                Object.entries(point.model_data).forEach(([model, val]) => {
+                    if (top5Models.includes(model)) {
+                        row[model] = val;
+                    } else {
+                        otherSum += val;
+                    }
                 });
+                if (hasOther) {
+                    row['其他模型'] = otherSum;
+                }
                 return row;
             });
             setModelTrendData(transformedTrend);
 
-            // Process Account Trend Data
+            // 处理账号趋势数据
             const accountsSet = new Set<string>();
             accountTrend.forEach(point => {
                 Object.keys(point.account_data).forEach(acc => accountsSet.add(acc));
@@ -223,15 +266,42 @@ const TokenStats: React.FC = () => {
             });
             setAccountTrendData(transformedAccountTrend);
 
-            const [accounts, models_stats, summaryData] = await Promise.all([
+            // 并行获取账户统计、模型统计、全局总结，以及 13周热力图与 24小时柱状图专属数据
+            const [accounts, models_stats, summaryData, raw91Days, raw24Hours] = await Promise.all([
                 invoke<AccountTokenStats[]>('get_token_stats_by_account', { hours }),
                 invoke<ModelTokenStats[]>('get_token_stats_by_model', { hours }),
-                invoke<TokenStatsSummary>('get_token_stats_summary', { hours })
+                invoke<TokenStatsSummary>('get_token_stats_summary', { hours }),
+                invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 91 }),
+                invoke<TokenStatsAggregated[]>('get_token_stats_hourly', { hours: 24 }),
             ]);
 
             setAccountData(accounts);
             setModelData(models_stats);
             setSummary(summaryData);
+
+            // 转换 91 天热力图点
+            setHeatmapData(
+                raw91Days.map(d => ({
+                    date: d.period,
+                    total_tokens: d.total_tokens,
+                    request_count: d.request_count,
+                    total_input_tokens: d.total_input_tokens,
+                    total_output_tokens: d.total_output_tokens,
+                    total_cached_tokens: d.total_cached_tokens,
+                }))
+            );
+
+            // 转换 24 小时柱状图点
+            setHourlyTrendData(
+                raw24Hours.map(h => ({
+                    hour: h.period,
+                    total_tokens: h.total_tokens,
+                    input_tokens: h.total_input_tokens,
+                    output_tokens: h.total_output_tokens,
+                    cached_tokens: h.total_cached_tokens,
+                    request_count: h.request_count,
+                }))
+            );
         } catch (error) {
             console.error('Failed to fetch token stats:', error);
         } finally {
@@ -243,76 +313,37 @@ const TokenStats: React.FC = () => {
         fetchData();
     }, [timeRange]);
 
-    const pieData = accountData.slice(0, 8).map((account, index) => ({
-        name: account.account_email.split('@')[0] + '...',
-        value: account.total_tokens,
-        fullEmail: account.account_email,
-        color: COLORS[index % COLORS.length]
-    }));
-
     const trendChartContainerRef = useRef<HTMLDivElement>(null);
     const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | undefined>(undefined);
 
-    // Ref and state for pie chart tooltip position
-    const pieChartContainerRef = useRef<HTMLDivElement>(null);
-    const [pieTooltipPosition, setPieTooltipPosition] = useState<{ x: number; y: number } | undefined>(undefined);
-
-    // Handle mouse move to calculate tooltip position
     const handleTrendChartMouseMove = useCallback((e: any) => {
         if (!trendChartContainerRef.current || !e?.activeCoordinate) return;
-
         const containerRect = trendChartContainerRef.current.getBoundingClientRect();
-        const tooltipWidth = 200; // Approximate tooltip width
-        const rightEdgeThreshold = containerRect.width - tooltipWidth - 20; // 20px buffer
-
+        const tooltipWidth = 200;
+        const rightEdgeThreshold = containerRect.width - tooltipWidth - 20;
         const mouseXInContainer = e.activeCoordinate.x;
 
         if (mouseXInContainer > rightEdgeThreshold) {
             setTooltipPosition({
                 x: e.activeCoordinate.x - tooltipWidth - 15,
-                y: e.activeCoordinate.y
+                y: e.activeCoordinate.y,
             });
         } else {
-            setTooltipPosition(undefined); // Use default positioning
+            setTooltipPosition(undefined);
         }
     }, []);
 
-    // Handle mouse move for pie chart to calculate tooltip position
-    const handlePieChartMouseMove = useCallback((e: any) => {
-        if (!pieChartContainerRef.current) return;
-
-        const containerRect = pieChartContainerRef.current.getBoundingClientRect();
-        const tooltipWidth = 180; // Approximate tooltip width for pie chart
-
-        // Get mouse position relative to container
-        if (e?.activeCoordinate) {
-            const mouseXInContainer = e.activeCoordinate.x;
-            const rightEdgeThreshold = containerRect.width - tooltipWidth - 20;
-
-            if (mouseXInContainer > rightEdgeThreshold) {
-                setPieTooltipPosition({
-                    x: e.activeCoordinate.x - tooltipWidth - 15,
-                    y: e.activeCoordinate.y
-                });
-            } else {
-                setPieTooltipPosition(undefined);
-            }
-        }
-    }, []);
-
-    // Custom Tooltip for Trend Chart
+    // 趋势图高质感深色 Tooltip
     const CustomTrendTooltip = ({ active, payload, label }: any) => {
         if (!active || !payload || !payload.length) return null;
-
-        // Sort payload by value descending
         const sortedPayload = [...payload].sort((a: any, b: any) => b.value - a.value);
 
         return (
-            <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm p-2.5 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 text-xs z-[100] min-w-[180px] pointer-events-none">
-                <p className="font-semibold text-gray-700 dark:text-gray-200 mb-1.5 border-b border-gray-100 dark:border-gray-700 pb-1.5">
+            <div className="bg-[#181a20]/95 backdrop-blur-md p-3 rounded-xl shadow-2xl border border-white/[0.08] text-xs z-[100] min-w-[190px] pointer-events-none text-white">
+                <p className="font-semibold text-white/90 mb-2 border-b border-white/[0.08] pb-1.5 font-mono text-[11px]">
                     {label}
                 </p>
-                <div className="max-h-[180px] overflow-y-auto space-y-1 pr-1.5 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-gray-700">
+                <div className="max-h-[200px] overflow-y-auto space-y-1.5 pr-1 scrollbar-thin scrollbar-thumb-white/10">
                     {sortedPayload.map((entry: any, index: number) => {
                         const name = entry.name;
                         const displayName = viewMode === 'model' ? name : name.split('@')[0];
@@ -320,11 +351,11 @@ const TokenStats: React.FC = () => {
                             <div key={index} className="flex items-center justify-between gap-4">
                                 <div className="flex items-center gap-2 overflow-hidden">
                                     <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: entry.color }} />
-                                    <span className="text-gray-500 dark:text-gray-400 truncate max-w-[140px]" title={name}>
+                                    <span className="text-white/60 truncate max-w-[120px]" title={name}>
                                         {displayName}
                                     </span>
                                 </div>
-                                <span className="font-mono font-medium text-gray-700 dark:text-gray-200">
+                                <span className="font-mono font-medium text-white/90">
                                     {formatNumber(entry.value)}
                                 </span>
                             </div>
@@ -335,423 +366,389 @@ const TokenStats: React.FC = () => {
         );
     };
 
-    const UsageTrendTooltip = ({ active, payload, label }: any) => {
-        if (!active || !payload || !payload.length) return null;
-        const row = payload[0]?.payload || {};
-        const items = [
-            { label: t('token_stats.total', '合计'), value: row.total_tokens || 0, color: '#111827' },
-            { label: t('token_stats.input', '输入'), value: row.total_input_tokens || 0, color: '#3b82f6' },
-            { label: t('token_stats.cached_token', '缓存命中'), value: row.total_cached_tokens || 0, color: '#93c5fd' },
-            { label: t('token_stats.output', '输出'), value: row.total_output_tokens || 0, color: '#8b5cf6' },
-        ];
-        return (
-            <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm p-2.5 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 text-xs z-[100] pointer-events-none min-w-[170px]">
-                {label && <p className="font-semibold text-gray-700 dark:text-gray-200 mb-2">{label}</p>}
-                <div className="space-y-1">
-                    {items.map((item) => (
-                        <div key={item.label} className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-2">
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }} />
-                                <span className="text-gray-500 dark:text-gray-400">
-                                    {item.label}:
-                                </span>
-                            </div>
-                            <span className="font-mono font-medium text-gray-700 dark:text-gray-200">
-                                {formatNumber(item.value)}
-                            </span>
-                        </div>
-                    ))}
-                    <div className="flex items-center justify-between gap-4 pt-1 border-t border-gray-100 dark:border-gray-700">
-                        <span className="text-gray-500 dark:text-gray-400">
-                            {t('token_stats.requests', '请求数')}:
-                        </span>
-                        <span className="font-mono font-medium text-gray-700 dark:text-gray-200">
-                            {(row.request_count || 0).toLocaleString()}
-                        </span>
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    // Custom Tooltip for Pie Chart
-    const CustomPieTooltip = ({ active, payload }: any) => {
-        if (!active || !payload || !payload.length) return null;
-        const entry = payload[0];
-        return (
-            <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm p-2.5 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 text-xs z-[100] pointer-events-none">
-                <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.payload.color || entry.color }} />
-                    <span className="text-gray-500 dark:text-gray-400">
-                        {entry.payload.fullEmail || entry.name}:
-                    </span>
-                    <span className="font-mono font-medium text-gray-700 dark:text-gray-200">
-                        {formatNumber(entry.value)}
-                    </span>
-                </div>
-            </div>
-        );
-    };
-
     return (
-        <div className="h-full w-full overflow-y-auto">
-            <div className="p-5 space-y-4 max-w-7xl mx-auto">
-                <div className="flex items-center justify-between">
-                    <h1 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center gap-2">
-                        <Zap className="w-6 h-6 text-blue-500" />
-                        {t('token_stats.title', 'Token 消费统计')}
-                    </h1>
-                    <div className="flex items-center gap-2">
-                        <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+        <div className="h-full w-full overflow-y-auto bg-[#0a0a0c] dark:bg-[#0a0a0c] text-white/90">
+            <div className="p-4 sm:p-6 space-y-5 max-w-7xl mx-auto">
+                {/* 顶部标题与控制器栏 */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                            <Zap className="w-5 h-5" />
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                                {t('token_stats.title', 'Token 消费统计')}
+                            </h1>
+                            <p className="text-xs text-white/40 mt-0.5">
+                                全局 Token 消耗流向、模型定价与活跃全景
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5">
+                        {/* 极简深色时间段选择药丸 */}
+                        <div className="flex bg-[#16181d] border border-white/[0.08] rounded-xl p-1 shadow-sm">
                             <button
                                 onClick={() => setTimeRange('hourly')}
-                                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${timeRange === 'hourly'
-                                    ? 'bg-white dark:bg-gray-700 text-blue-600 shadow-sm'
-                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800'
-                                    }`}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                    timeRange === 'hourly'
+                                        ? 'bg-white/[0.12] text-white shadow-sm'
+                                        : 'text-white/50 hover:text-white/80'
+                                }`}
                             >
-                                <Clock className="w-4 h-4" />
+                                <Clock className="w-3.5 h-3.5" />
                                 {t('token_stats.hourly', '小时')}
                             </button>
                             <button
                                 onClick={() => setTimeRange('daily')}
-                                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${timeRange === 'daily'
-                                    ? 'bg-white dark:bg-gray-700 text-blue-600 shadow-sm'
-                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800'
-                                    }`}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                    timeRange === 'daily'
+                                        ? 'bg-white/[0.12] text-white shadow-sm'
+                                        : 'text-white/50 hover:text-white/80'
+                                }`}
                             >
-                                <Calendar className="w-4 h-4" />
+                                <Calendar className="w-3.5 h-3.5" />
                                 {t('token_stats.daily', '日')}
                             </button>
                             <button
                                 onClick={() => setTimeRange('weekly')}
-                                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${timeRange === 'weekly'
-                                    ? 'bg-white dark:bg-gray-700 text-blue-600 shadow-sm'
-                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800'
-                                    }`}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                    timeRange === 'weekly'
+                                        ? 'bg-white/[0.12] text-white shadow-sm'
+                                        : 'text-white/50 hover:text-white/80'
+                                }`}
                             >
-                                <CalendarDays className="w-4 h-4" />
+                                <CalendarDays className="w-3.5 h-3.5" />
                                 {t('token_stats.weekly', '周')}
                             </button>
                             <button
                                 onClick={() => setTimeRange('all')}
-                                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${timeRange === 'all'
-                                    ? 'bg-white dark:bg-gray-700 text-blue-600 shadow-sm'
-                                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-800'
-                                    }`}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                    timeRange === 'all'
+                                        ? 'bg-white/[0.12] text-white shadow-sm'
+                                        : 'text-white/50 hover:text-white/80'
+                                }`}
                             >
-                                <History className="w-4 h-4" />
+                                <History className="w-3.5 h-3.5" />
                                 {t('token_stats.all_time', '全部')}
                             </button>
                         </div>
+
+                        {/* 单价配置按钮 */}
+                        <button
+                            onClick={() => setShowPricingModal(true)}
+                            title={t('token_stats.custom_pricing', '自定义单价')}
+                            className="p-2 rounded-xl bg-[#16181d] border border-white/[0.08] text-white/70 hover:text-white hover:bg-white/[0.06] transition-colors"
+                        >
+                            <Settings2 className="w-4 h-4" />
+                        </button>
+
+                        {/* 刷新按钮 */}
                         <button
                             onClick={fetchData}
                             disabled={loading}
-                            className="p-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors disabled:opacity-50"
+                            className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50 shadow-sm shadow-blue-900/30"
                         >
                             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                         </button>
                     </div>
                 </div>
 
+                {/* 核心指标微卡片（Apple Dark Surface 质感） */}
                 {summary && (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3.5">
-                        <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-800/50 rounded-xl p-4 shadow-sm border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow">
-                            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-sm mb-2">
-                                <div className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700">
-                                    <Zap className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+                        {/* 总 Token */}
+                        <div className="bg-[#121316] border border-white/[0.08] rounded-2xl p-4 shadow-sm hover:border-white/[0.15] transition-all flex flex-col justify-between">
+                            <div className="flex items-center justify-between text-white/50 text-xs">
+                                <span>{t('token_stats.total_tokens', '总 Token')}</span>
+                                <div className="p-1.5 rounded-lg bg-white/[0.04]">
+                                    <Zap className="w-3.5 h-3.5 text-white/70" />
                                 </div>
-                                {t('token_stats.total_tokens', '总 Token')}
                             </div>
-                            <div className="text-2xl font-bold text-gray-800 dark:text-white">
+                            <div className="mt-2 text-2xl font-bold font-mono tracking-tight text-white">
                                 {formatNumber(summary.total_tokens)}
                             </div>
-                        </div>
-                        <div className="bg-gradient-to-br from-blue-50/50 to-white dark:from-blue-900/10 dark:to-gray-800 rounded-xl p-4 shadow-sm border border-blue-100 dark:border-blue-900/30 hover:shadow-md transition-shadow">
-                            <div className="flex items-center gap-2 text-blue-600/80 dark:text-blue-400/80 text-sm mb-2">
-                                <div className="p-1.5 rounded-lg bg-blue-100/50 dark:bg-blue-900/30">
-                                    <TrendingUp className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                                </div>
-                                {t('token_stats.input_tokens', '输入 Token')}
-                            </div>
-                            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                                {formatNumber(summary.total_input_tokens)}
-                            </div>
-                        </div>
-                        <div className="bg-gradient-to-br from-purple-50/50 to-white dark:from-purple-900/10 dark:to-gray-800 rounded-xl p-4 shadow-sm border border-purple-100 dark:border-purple-900/30 hover:shadow-md transition-shadow">
-                            <div className="flex items-center gap-2 text-purple-600/80 dark:text-purple-400/80 text-sm mb-2">
-                                <div className="p-1.5 rounded-lg bg-purple-100/50 dark:bg-purple-900/30">
-                                    <TrendingUp className="w-4 h-4 rotate-180 text-purple-600 dark:text-purple-400" />
-                                </div>
-                                {t('token_stats.output_tokens', '输出 Token')}
-                            </div>
-                            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
-                                {formatNumber(summary.total_output_tokens)}
-                            </div>
-                        </div>
-                        <div className="bg-gradient-to-br from-sky-50/50 to-white dark:from-sky-900/10 dark:to-gray-800 rounded-xl p-4 shadow-sm border border-sky-100 dark:border-sky-900/30 hover:shadow-md transition-shadow">
-                            <div className="flex items-center gap-2 text-sky-600/80 dark:text-sky-400/80 text-sm mb-2">
-                                <div className="p-1.5 rounded-lg bg-sky-100/50 dark:bg-sky-900/30">
-                                    <Zap className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-                                </div>
-                                {t('token_stats.cached_token', '缓存命中')}
-                            </div>
-                            <div className="text-2xl font-bold text-sky-600 dark:text-sky-400">
-                                {formatNumber(summary.total_cached_tokens)}
+                            <div className="text-[11px] text-white/40 mt-1 font-mono">
+                                入 {formatNumber(summary.total_input_tokens)} · 出 {formatNumber(summary.total_output_tokens)}
                             </div>
                         </div>
 
-                        {/* 估算价值卡片 */}
-                        <div className="bg-gradient-to-br from-emerald-50/60 to-white dark:from-emerald-950/20 dark:to-gray-800 rounded-xl p-4 shadow-sm border border-emerald-100 dark:border-emerald-900/40 hover:shadow-md transition-shadow">
-                            <div className="flex items-center justify-between text-emerald-600/90 dark:text-emerald-400 text-sm mb-2">
-                                <div className="flex items-center gap-1.5">
-                                    <div className="p-1.5 rounded-lg bg-emerald-100/60 dark:bg-emerald-900/30">
-                                        <DollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                                    </div>
-                                    <span className="font-medium">{t('token_stats.estimated_value', '估算价值')}</span>
+                        {/* 估算价值 */}
+                        <div className="bg-[#121316] border border-white/[0.08] rounded-2xl p-4 shadow-sm hover:border-white/[0.15] transition-all flex flex-col justify-between">
+                            <div className="flex items-center justify-between text-emerald-400/80 text-xs">
+                                <span className="font-medium">{t('token_stats.estimated_value', '估算价值')}</span>
+                                <div className="p-1.5 rounded-lg bg-emerald-500/10">
+                                    <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
                                 </div>
-                                <button
-                                    onClick={() => {
-                                        setTempPricing(pricing);
-                                        setShowPricingModal(true);
-                                    }}
-                                    title={t('token_stats.custom_pricing', '自定义单价')}
-                                    className="p-1 rounded-md text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/40 transition-colors"
-                                >
-                                    <Settings2 className="w-3.5 h-3.5" />
-                                </button>
                             </div>
-                            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                            <div className="mt-2 text-2xl font-bold font-mono tracking-tight text-emerald-400">
                                 ${totalEstimatedCost.toFixed(2)}
                             </div>
-                            <div className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
-                                {t('token_stats.cost_desc', '按模型单价快照累计')}
+                            <div className="text-[11px] text-white/40 mt-1 flex items-center justify-between">
+                                <span>单价快照累计</span>
+                                <button
+                                    onClick={() => setShowPricingModal(true)}
+                                    className="text-[10px] text-emerald-400 hover:underline"
+                                >
+                                    配置单价
+                                </button>
                             </div>
                         </div>
 
-                        <div className="bg-gradient-to-br from-green-50/50 to-white dark:from-green-900/10 dark:to-gray-800 rounded-xl p-4 shadow-sm border border-green-100 dark:border-green-900/30 hover:shadow-md transition-shadow">
-                            <div className="flex items-center gap-2 text-green-600/80 dark:text-green-400/80 text-sm mb-2">
-                                <div className="p-1.5 rounded-lg bg-green-100/50 dark:bg-green-900/30">
-                                    <Users className="w-4 h-4 text-green-600 dark:text-green-400" />
+                        {/* 缓存命中 */}
+                        <div className="bg-[#121316] border border-white/[0.08] rounded-2xl p-4 shadow-sm hover:border-white/[0.15] transition-all flex flex-col justify-between">
+                            <div className="flex items-center justify-between text-sky-400/80 text-xs">
+                                <span className="font-medium">{t('token_stats.cached_token', '缓存命中')}</span>
+                                <div className="p-1.5 rounded-lg bg-sky-500/10">
+                                    <Database className="w-3.5 h-3.5 text-sky-400" />
                                 </div>
-                                {t('token_stats.accounts_used', '活跃账号')}
                             </div>
-                            <div className="text-2xl font-bold text-green-600 dark:text-green-400">
-                                {summary.unique_accounts}
+                            <div className="mt-2 text-2xl font-bold font-mono tracking-tight text-sky-400 flex items-baseline gap-2">
+                                <span>{formatNumber(summary.total_cached_tokens)}</span>
+                                <span className="text-xs font-normal px-1.5 py-0.5 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-300">
+                                    {cacheMetrics.hitRate.toFixed(1)}%
+                                </span>
+                            </div>
+                            <div className="text-[11px] text-white/40 mt-1 font-mono">
+                                节省约 ${cacheMetrics.savings.toFixed(2)}
                             </div>
                         </div>
-                        <div className="bg-gradient-to-br from-orange-50/50 to-white dark:from-orange-900/10 dark:to-gray-800 rounded-xl p-4 shadow-sm border border-orange-100 dark:border-orange-900/30 hover:shadow-md transition-shadow">
-                            <div className="flex items-center gap-2 text-orange-600/80 dark:text-orange-400/80 text-sm mb-2">
-                                <div className="p-1.5 rounded-lg bg-orange-100/50 dark:bg-orange-900/30">
-                                    <Cpu className="w-4 h-4 text-orange-600 dark:text-orange-400" />
+
+                        {/* 活跃生态 */}
+                        <div className="bg-[#121316] border border-white/[0.08] rounded-2xl p-4 shadow-sm hover:border-white/[0.15] transition-all flex flex-col justify-between">
+                            <div className="flex items-center justify-between text-purple-400/80 text-xs">
+                                <span className="font-medium">活跃生态</span>
+                                <div className="p-1.5 rounded-lg bg-purple-500/10">
+                                    <Users className="w-3.5 h-3.5 text-purple-400" />
                                 </div>
-                                {t('token_stats.models_used', '使用模型')}
                             </div>
-                            <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">
-                                {modelData.length}
+                            <div className="mt-2 text-2xl font-bold font-mono tracking-tight text-white flex items-baseline gap-3">
+                                <span>{summary.unique_accounts} <span className="text-xs text-white/50 font-normal">账号</span></span>
+                                <span className="text-purple-400">{modelData.length} <span className="text-xs text-white/50 font-normal">模型</span></span>
+                            </div>
+                            <div className="text-[11px] text-white/40 mt-1 font-mono">
+                                共 {summary.total_requests.toLocaleString()} 次请求
                             </div>
                         </div>
                     </div>
                 )}
 
-                <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-semibold text-gray-800 dark:text-white flex items-center gap-2">
-                            {viewMode === 'model' ? (
-                                <Cpu className="w-5 h-5 text-purple-500" />
-                            ) : (
-                                <Users className="w-5 h-5 text-green-500" />
-                            )}
-                            {viewMode === 'model'
-                                ? t('token_stats.model_trend', '分模型使用趋势')
-                                : t('token_stats.account_trend', '分账号使用趋势')
-                            }
-                        </h2>
-                        <div className="flex bg-gray-100/80 dark:bg-gray-700/50 rounded-lg p-1">
-                            <button
-                                onClick={() => setViewMode('model')}
-                                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'model'
-                                    ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
-                                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                                    }`}
-                            >
-                                {t('token_stats.by_model', '按模型')}
-                            </button>
-                            <button
-                                onClick={() => setViewMode('account')}
-                                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${viewMode === 'account'
-                                    ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
-                                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-                                    }`}
-                            >
-                                {t('token_stats.by_account_view', '按账号')}
-                            </button>
-                        </div>
-                    </div>
-                    <div className="h-72" ref={trendChartContainerRef}>
-                        {modelTrendData.length > 0 && allModels.length > 0 ? (
-                            <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart
-                                    data={viewMode === 'model' ? modelTrendData : accountTrendData}
-                                    onMouseMove={handleTrendChartMouseMove}
-                                    onMouseLeave={() => setTooltipPosition(undefined)}
-                                >
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" strokeOpacity={0.15} />
-                                    <XAxis
-                                        dataKey="period"
-                                        tick={{ fontSize: 11, fill: '#6b7280' }}
-                                        tickFormatter={(val) => {
-                                            if (timeRange === 'hourly') return val.split(' ')[1] || val;
-                                            if (timeRange === 'daily') return val.split('-').slice(1).join('/');
-                                            return val;
-                                        }}
-                                        axisLine={false}
-                                        tickLine={false}
-                                        dy={10}
-                                    />
-                                    <YAxis
-                                        tick={{ fontSize: 11, fill: '#6b7280' }}
-                                        tickFormatter={(val) => formatNumber(val)}
-                                        axisLine={false}
-                                        tickLine={false}
-                                    />
-                                    <Tooltip
-                                        content={<CustomTrendTooltip />}
-                                        cursor={{ stroke: '#6b7280', strokeWidth: 1, strokeDasharray: '4 4', fill: 'transparent' }}
-                                        allowEscapeViewBox={{ x: true, y: true }}
-                                        position={tooltipPosition}
-                                        wrapperStyle={{ zIndex: 100 }}
-                                    />
-                                    <Legend
-                                        formatter={(value) => viewMode === 'model' ? value : value.split('@')[0]}
-                                        wrapperStyle={{
-                                            fontSize: '11px',
-                                            paddingTop: '10px',
-                                            maxHeight: '60px',
-                                            overflowY: 'auto',
-                                            zIndex: 0
-                                        }}
-                                    />
-                                    {(viewMode === 'model' ? allModels : allAccounts).map((item, index) => (
-                                        <Area
-                                            key={item}
-                                            type="monotone"
-                                            dataKey={item}
-                                            stackId="1"
-                                            stroke={viewMode === 'model' ? MODEL_COLORS[index % MODEL_COLORS.length] : COLORS[index % COLORS.length]}
-                                            fill={viewMode === 'model' ? MODEL_COLORS[index % MODEL_COLORS.length] : COLORS[index % COLORS.length]}
-                                            fillOpacity={0.6}
-                                        />
-                                    ))}
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <div className="h-full flex items-center justify-center text-gray-400">
-                                {loading ? t('common.loading', '加载中...') : t('token_stats.no_data', '暂无数据')}
-                            </div>
-                        )}
-                    </div>
+                {/* 核心亮点：图2同款两大卡片（活动热力图 + 24小时极简圆角柱条） */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* 活动热力图（13周方块日历、Streak火焰、活跃天数、峰值日） */}
+                    <ActivityHeatmapCard
+                        dailyData={heatmapData}
+                        totalEstimatedCost={totalEstimatedCost}
+                        formatNumber={formatNumber}
+                    />
+
+                    {/* 24小时紧凑趋势柱状图（0/12/23时、零消耗底线胶囊、悬浮动态副标题） */}
+                    <HourlyTrendBarCard
+                        hourlyData={hourlyTrendData}
+                        formatNumber={formatNumber}
+                    />
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 flex flex-col">
-                        <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">
-                            {t('token_stats.usage_trend', 'Token 使用趋势')}
-                        </h2>
-                        <div className="flex-1 min-h-[16rem]">
-                            {chartData.length > 0 ? (
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={chartData}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" strokeOpacity={0.15} />
-                                        <XAxis
-                                            dataKey="period"
-                                            tick={{ fontSize: 11, fill: '#6b7280' }}
-                                            tickFormatter={(val) => {
-                                                if (timeRange === 'hourly') return val.split(' ')[1] || val;
-                                                if (timeRange === 'daily') return val.split('-').slice(1).join('/');
-                                                return val;
-                                            }}
-                                            axisLine={false}
-                                            tickLine={false}
-                                            dy={10}
-                                        />
-                                        <YAxis
-                                            tick={{ fontSize: 11, fill: '#6b7280' }}
-                                            tickFormatter={(val) => formatNumber(val)}
-                                            axisLine={false}
-                                            tickLine={false}
-                                        />
-                                        <Tooltip
-                                            content={<UsageTrendTooltip />}
-                                            cursor={{ fill: 'transparent' }}
-                                            allowEscapeViewBox={{ x: true, y: true }}
-                                            wrapperStyle={{ zIndex: 100 }}
-                                        />
-                                        <Bar dataKey="total_cached_tokens" name={t('token_stats.cached_token', '缓存命中')} stackId="input" fill="#93c5fd" radius={[0, 0, 4, 4]} maxBarSize={50} />
-                                        <Bar dataKey="uncached_input_tokens" name={t('token_stats.input', '输入')} stackId="input" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={50} />
-                                        <Bar dataKey="total_output_tokens" name={t('token_stats.output', '输出')} fill="#8b5cf6" radius={[4, 4, 0, 0]} maxBarSize={50} />
-                                    </BarChart>
-                                </ResponsiveContainer>
-                            ) : (
-                                <div className="h-full flex items-center justify-center text-gray-400">
-                                    {loading ? t('common.loading', '加载中...') : t('token_stats.no_data', '暂无数据')}
-                                </div>
-                            )}
-                        </div>
+                {/* 中层区域：主力模型占比条形卡片 + 趋势图 */}
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+                    {/* 主力模型横向胶囊条形清单 (NotchAgentShareCard 同款) */}
+                    <div className="xl:col-span-5">
+                        <TopModelsShareCard
+                            models={modelShareItems}
+                            formatNumber={formatNumber}
+                        />
                     </div>
 
-                    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-                        <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">
-                            {t('token_stats.by_account', '分账号统计')}
-                        </h2>
-                        <div className="h-48" ref={pieChartContainerRef}>
-                            {pieData.length > 0 ? (
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart
-                                        onMouseMove={handlePieChartMouseMove}
-                                        onMouseLeave={() => setPieTooltipPosition(undefined)}
+                    {/* 优化后的分模型/分账号趋势图（支持圆角堆叠柱状图与面积图） */}
+                    <div className="xl:col-span-7 bg-[#121316] rounded-2xl p-4 sm:p-5 border border-white/[0.08] shadow-sm flex flex-col justify-between">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                            <div className="flex items-center gap-2">
+                                {chartType === 'bar' ? (
+                                    <BarChart3 className="w-4 h-4 text-blue-400 opacity-90" />
+                                ) : (
+                                    <TrendingUp className="w-4 h-4 text-blue-400 opacity-90" />
+                                )}
+                                <span className="text-[13px] font-semibold text-white/90 tracking-wide">
+                                    {viewMode === 'model'
+                                        ? t('token_stats.model_trend', '使用趋势 (按模型)')
+                                        : t('token_stats.account_trend', '使用趋势 (按账号)')}
+                                </span>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                {/* 图表形态切换器：柱状图 / 面积图 */}
+                                <div className="flex bg-[#1a1d24] border border-white/[0.08] rounded-xl p-0.5">
+                                    <button
+                                        onClick={() => setChartType('bar')}
+                                        title="柱状图"
+                                        className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
+                                            chartType === 'bar'
+                                                ? 'bg-white/[0.12] text-white shadow-sm'
+                                                : 'text-white/50 hover:text-white/80'
+                                        }`}
                                     >
-                                        <Pie
-                                            data={pieData}
-                                            cx="50%"
-                                            cy="50%"
-                                            innerRadius={40}
-                                            outerRadius={70}
-                                            paddingAngle={2}
-                                            dataKey="value"
+                                        <BarChart3 className="w-3.5 h-3.5" />
+                                        <span>柱状</span>
+                                    </button>
+                                    <button
+                                        onClick={() => setChartType('area')}
+                                        title="面积图"
+                                        className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
+                                            chartType === 'area'
+                                                ? 'bg-white/[0.12] text-white shadow-sm'
+                                                : 'text-white/50 hover:text-white/80'
+                                        }`}
+                                    >
+                                        <TrendingUp className="w-3.5 h-3.5" />
+                                        <span>面积</span>
+                                    </button>
+                                </div>
+
+                                {/* 模型 / 账号 维度切换器 */}
+                                <div className="flex bg-[#1a1d24] border border-white/[0.08] rounded-xl p-0.5">
+                                    <button
+                                        onClick={() => setViewMode('model')}
+                                        className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
+                                            viewMode === 'model'
+                                                ? 'bg-white/[0.12] text-white shadow-sm'
+                                                : 'text-white/50 hover:text-white/80'
+                                        }`}
+                                    >
+                                        {t('token_stats.by_model', '按模型')}
+                                    </button>
+                                    <button
+                                        onClick={() => setViewMode('account')}
+                                        className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
+                                            viewMode === 'account'
+                                                ? 'bg-white/[0.12] text-white shadow-sm'
+                                                : 'text-white/50 hover:text-white/80'
+                                        }`}
+                                    >
+                                        {t('token_stats.by_account_view', '按账号')}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="h-60" ref={trendChartContainerRef}>
+                            {modelTrendData.length > 0 && allModels.length > 0 ? (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    {chartType === 'bar' ? (
+                                        <BarChart
+                                            data={viewMode === 'model' ? modelTrendData : accountTrendData}
+                                            onMouseMove={handleTrendChartMouseMove}
+                                            onMouseLeave={() => setTooltipPosition(undefined)}
                                         >
-                                            {pieData.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={entry.color} />
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.06)" />
+                                            <XAxis
+                                                dataKey="period"
+                                                tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}
+                                                tickFormatter={(val) => {
+                                                    if (timeRange === 'hourly') return val.split(' ')[1] || val;
+                                                    if (timeRange === 'daily') return val.split('-').slice(1).join('/');
+                                                    return val;
+                                                }}
+                                                axisLine={false}
+                                                tickLine={false}
+                                                dy={5}
+                                            />
+                                            <YAxis
+                                                tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}
+                                                tickFormatter={(val) => formatNumber(val)}
+                                                axisLine={false}
+                                                tickLine={false}
+                                            />
+                                            <Tooltip
+                                                content={<CustomTrendTooltip />}
+                                                cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                                                allowEscapeViewBox={{ x: true, y: true }}
+                                                position={tooltipPosition}
+                                            />
+                                            {displayModelKeysOrAccounts(viewMode, allModels, allAccounts).map((item, index) => {
+                                                const items = displayModelKeysOrAccounts(viewMode, allModels, allAccounts);
+                                                const isTop = index === items.length - 1;
+                                                return (
+                                                    <Bar
+                                                        key={item}
+                                                        dataKey={item}
+                                                        stackId="stack"
+                                                        fill={TOP_COLORS[index % TOP_COLORS.length]}
+                                                        radius={isTop ? [3, 3, 0, 0] : [0, 0, 0, 0]}
+                                                        maxBarSize={30}
+                                                    />
+                                                );
+                                            })}
+                                        </BarChart>
+                                    ) : (
+                                        <AreaChart
+                                            data={viewMode === 'model' ? modelTrendData : accountTrendData}
+                                            onMouseMove={handleTrendChartMouseMove}
+                                            onMouseLeave={() => setTooltipPosition(undefined)}
+                                        >
+                                            <defs>
+                                                {displayModelKeysOrAccounts(viewMode, allModels, allAccounts).map((item, idx) => (
+                                                    <linearGradient key={`grad-${item}`} id={`color-${idx}`} x1="0" y1="0" x2="0" y2="1">
+                                                        <stop offset="5%" stopColor={TOP_COLORS[idx % TOP_COLORS.length]} stopOpacity={0.4} />
+                                                        <stop offset="95%" stopColor={TOP_COLORS[idx % TOP_COLORS.length]} stopOpacity={0.0} />
+                                                    </linearGradient>
+                                                ))}
+                                            </defs>
+                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.06)" />
+                                            <XAxis
+                                                dataKey="period"
+                                                tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}
+                                                tickFormatter={(val) => {
+                                                    if (timeRange === 'hourly') return val.split(' ')[1] || val;
+                                                    if (timeRange === 'daily') return val.split('-').slice(1).join('/');
+                                                    return val;
+                                                }}
+                                                axisLine={false}
+                                                tickLine={false}
+                                                dy={5}
+                                            />
+                                            <YAxis
+                                                tick={{ fontSize: 10, fill: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}
+                                                tickFormatter={(val) => formatNumber(val)}
+                                                axisLine={false}
+                                                tickLine={false}
+                                            />
+                                            <Tooltip
+                                                content={<CustomTrendTooltip />}
+                                                cursor={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1, strokeDasharray: '4 4' }}
+                                                allowEscapeViewBox={{ x: true, y: true }}
+                                                position={tooltipPosition}
+                                            />
+                                            {displayModelKeysOrAccounts(viewMode, allModels, allAccounts).map((item, index) => (
+                                                <Area
+                                                    key={item}
+                                                    type="monotone"
+                                                    dataKey={item}
+                                                    stackId="1"
+                                                    stroke={TOP_COLORS[index % TOP_COLORS.length]}
+                                                    strokeWidth={1.5}
+                                                    fill={`url(#color-${index})`}
+                                                />
                                             ))}
-                                        </Pie>
-                                        <Tooltip
-                                            content={<CustomPieTooltip />}
-                                            allowEscapeViewBox={{ x: true, y: true }}
-                                            position={pieTooltipPosition}
-                                            wrapperStyle={{ zIndex: 100 }}
-                                        />
-                                    </PieChart>
+                                        </AreaChart>
+                                    )}
                                 </ResponsiveContainer>
                             ) : (
-                                <div className="h-full flex items-center justify-center text-gray-400">
+                                <div className="h-full flex items-center justify-center text-white/30 text-xs">
                                     {loading ? t('common.loading', '加载中...') : t('token_stats.no_data', '暂无数据')}
                                 </div>
                             )}
                         </div>
-                        <div className="mt-4 space-y-2 max-h-32 overflow-y-auto">
-                            {accountData.slice(0, 5).map((account, index) => (
-                                <div key={account.account_email} className="flex items-center justify-between text-sm">
-                                    <div className="flex items-center gap-2">
-                                        <div
-                                            className="w-3 h-3 rounded-full"
-                                            style={{ backgroundColor: COLORS[index % COLORS.length] }}
-                                        />
-                                        <span className="text-gray-600 dark:text-gray-300 truncate max-w-[120px]">
-                                            {account.account_email.split('@')[0]}
-                                        </span>
-                                    </div>
-                                    <span className="font-medium text-gray-800 dark:text-white">
-                                        {formatNumber(account.total_tokens)}
+
+                        {/* 底部紧凑图例 */}
+                        <div className="flex items-center flex-wrap gap-3 pt-3 border-t border-white/[0.06] text-[11px] font-mono">
+                            {displayModelKeysOrAccounts(viewMode, allModels, allAccounts).map((item, index) => (
+                                <div key={item} className="flex items-center gap-1.5 text-white/60">
+                                    <div
+                                        className="w-2 h-2 rounded-full"
+                                        style={{ backgroundColor: TOP_COLORS[index % TOP_COLORS.length] }}
+                                    />
+                                    <span className="truncate max-w-[120px]">
+                                        {viewMode === 'model' ? item : item.split('@')[0]}
                                     </span>
                                 </div>
                             ))}
@@ -759,361 +756,148 @@ const TokenStats: React.FC = () => {
                     </div>
                 </div>
 
-
-                {
-                    modelData.length > 0 && viewMode === 'model' && (
-                        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-                            <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-4 flex items-center gap-2">
-                                <Cpu className="w-5 h-5 text-blue-500" />
+                {/* 底部详细统计表格 */}
+                {viewMode === 'model' && modelData.length > 0 && (
+                    <div className="bg-[#121316] rounded-2xl p-4 sm:p-5 border border-white/[0.08] shadow-sm">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-[13px] font-semibold text-white/90 flex items-center gap-2">
+                                <Cpu className="w-4 h-4 text-blue-400" />
                                 {t('token_stats.model_details', '分模型详细统计')}
                             </h2>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm">
-                                    <thead>
-                                        <tr className="border-b border-gray-200 dark:border-gray-700">
-                                            <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.model', '模型')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.requests', '请求数')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.input', '输入')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.output', '输出')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.cached_token', '缓存命中')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.total', '合计')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.percentage', '占比')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.model_cost', '估算费用')}
-                                            </th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {modelData.map((model, index) => {
-                                            const percentage = summary ? ((model.total_tokens / summary.total_tokens) * 100).toFixed(1) : '0';
-                                            const cost = calculateModelCost(model);
-                                            return (
-                                                <tr
-                                                    key={model.model}
-                                                    className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30"
-                                                >
-                                                    <td className="py-3 px-4">
-                                                        <div className="flex items-center gap-2">
-                                                            <div
-                                                                className="w-3 h-3 rounded-full"
-                                                                style={{ backgroundColor: MODEL_COLORS[index % MODEL_COLORS.length] }}
-                                                            />
-                                                            <span className="text-gray-800 dark:text-white font-medium">
-                                                                {model.model}
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="py-3 px-4 text-right text-gray-600 dark:text-gray-300">
-                                                        {model.request_count.toLocaleString()}
-                                                    </td>
-                                                    <td className="py-3 px-4 text-right text-blue-600">
-                                                        {formatNumber(model.total_input_tokens)}
-                                                    </td>
-                                                    <td className="py-3 px-4 text-right text-purple-600">
-                                                        {formatNumber(model.total_output_tokens)}
-                                                    </td>
-                                                    <td className="py-3 px-4 text-right text-sky-600">
-                                                        {formatNumber(model.total_cached_tokens)}
-                                                    </td>
-                                                    <td className="py-3 px-4 text-right font-semibold text-gray-800 dark:text-white">
-                                                        {formatNumber(model.total_tokens)}
-                                                    </td>
-                                                    <td className="py-3 px-4 text-right">
-                                                        <div className="flex items-center justify-end gap-2">
-                                                            <div className="w-16 bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                                                                <div
-                                                                    className="h-2 rounded-full"
-                                                                    style={{
-                                                                        width: `${percentage}%`,
-                                                                        backgroundColor: MODEL_COLORS[index % MODEL_COLORS.length]
-                                                                    }}
-                                                                />
-                                                            </div>
-                                                            <span className="text-gray-600 dark:text-gray-300 w-12 text-right">
-                                                                {percentage}%
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="py-3 px-4 text-right font-medium text-emerald-600 dark:text-emerald-400">
-                                                        ${cost.toFixed(2)}
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
+                            <span className="text-xs text-white/40 font-mono">
+                                按照单价快照核算
+                            </span>
                         </div>
-                    )
-                }
-
-                {
-                    accountData.length > 0 && viewMode === 'account' && (
-                        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-                            <h2 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">
-                                {t('token_stats.account_details', '账号详细统计')}
-                            </h2>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm">
-                                    <thead>
-                                        <tr className="border-b border-gray-200 dark:border-gray-700">
-                                            <th className="text-left py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.account', '账号')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.requests', '请求数')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.input', '输入')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.output', '输出')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.cached_token', '缓存命中')}
-                                            </th>
-                                            <th className="text-right py-3 px-4 font-medium text-gray-500 dark:text-gray-400">
-                                                {t('token_stats.total', '合计')}
-                                            </th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {accountData.map((account) => (
-                                            <tr
-                                                key={account.account_email}
-                                                className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30"
-                                            >
-                                                <td className="py-3 px-4 text-gray-800 dark:text-white">
-                                                    {account.account_email}
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                                <thead>
+                                    <tr className="border-b border-white/[0.08] text-white/40 uppercase tracking-wider text-[11px]">
+                                        <th className="text-left py-2.5 px-3 font-medium">{t('token_stats.model', '模型')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.requests', '请求数')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.input', '输入')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.output', '输出')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.cached_token', '缓存命中')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.total', '合计')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.percentage', '占比')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.model_cost', '估算费用')}</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/[0.04]">
+                                    {modelData.map((model, index) => {
+                                        const percentage = summary ? ((model.total_tokens / summary.total_tokens) * 100).toFixed(1) : '0';
+                                        const cost = calculateModelCost(model);
+                                        return (
+                                            <tr key={model.model} className="hover:bg-white/[0.03] transition-colors">
+                                                <td className="py-2.5 px-3">
+                                                    <div className="flex items-center gap-2 font-mono">
+                                                        <div
+                                                            className="w-2 h-2 rounded-full"
+                                                            style={{ backgroundColor: TOP_COLORS[index % TOP_COLORS.length] }}
+                                                        />
+                                                        <span className="text-white/90 font-medium">
+                                                            {model.model}
+                                                        </span>
+                                                    </div>
                                                 </td>
-                                                <td className="py-3 px-4 text-right text-gray-600 dark:text-gray-300">
-                                                    {account.request_count.toLocaleString()}
+                                                <td className="py-2.5 px-3 text-right font-mono text-white/60">
+                                                    {model.request_count.toLocaleString()}
                                                 </td>
-                                                <td className="py-3 px-4 text-right text-blue-600">
-                                                    {formatNumber(account.total_input_tokens)}
+                                                <td className="py-2.5 px-3 text-right font-mono text-blue-400">
+                                                    {formatNumber(model.total_input_tokens)}
                                                 </td>
-                                                <td className="py-3 px-4 text-right text-purple-600">
-                                                    {formatNumber(account.total_output_tokens)}
+                                                <td className="py-2.5 px-3 text-right font-mono text-purple-400">
+                                                    {formatNumber(model.total_output_tokens)}
                                                 </td>
-                                                <td className="py-3 px-4 text-right text-sky-600">
-                                                    {formatNumber(account.total_cached_tokens)}
+                                                <td className="py-2.5 px-3 text-right font-mono text-sky-400">
+                                                    {formatNumber(model.total_cached_tokens)}
                                                 </td>
-                                                <td className="py-3 px-4 text-right font-semibold text-gray-800 dark:text-white">
-                                                    {formatNumber(account.total_tokens)}
+                                                <td className="py-2.5 px-3 text-right font-mono font-semibold text-white">
+                                                    {formatNumber(model.total_tokens)}
+                                                </td>
+                                                <td className="py-2.5 px-3 text-right font-mono text-white/60">
+                                                    {percentage}%
+                                                </td>
+                                                <td className="py-2.5 px-3 text-right font-mono font-medium text-emerald-400">
+                                                    ${cost.toFixed(2)}
                                                 </td>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    )
-                }
-
-                {/* 自定义模型价格模态框 */}
-                {showPricingModal && (
-                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                        <div className="bg-white dark:bg-gray-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-gray-100 dark:border-gray-700 flex flex-col max-h-[85vh]">
-                            <div className="flex items-center justify-between pb-4 border-b border-gray-100 dark:border-gray-700">
-                                <div className="flex items-center gap-2">
-                                    <DollarSign className="w-5 h-5 text-emerald-500" />
-                                    <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                                        {t('token_stats.pricing_settings', '模型单价配置 ($/1M Tokens)')}
-                                    </h3>
-                                </div>
-                                <button
-                                    onClick={() => setShowPricingModal(false)}
-                                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-                                >
-                                    <X className="w-5 h-5" />
-                                </button>
-                            </div>
-
-                            <div className="overflow-y-auto flex-1 my-4 space-y-3 pr-2 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-gray-700">
-                                <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-gray-500 dark:text-gray-400 px-2">
-                                    <div className="col-span-4">模型匹配标识 (模糊匹配)</div>
-                                    <div className="col-span-2 text-right">输入 ($/1M)</div>
-                                    <div className="col-span-2 text-right">输出 ($/1M)</div>
-                                    <div className="col-span-2 text-right">缓存 ($/1M)</div>
-                                    <div className="col-span-2 text-center">操作</div>
-                                </div>
-
-                                {Object.entries(tempPricing).map(([mName, rule]: any) => (
-                                    <div key={mName} className="grid grid-cols-12 gap-2 items-center p-2 rounded-lg bg-gray-50 dark:bg-gray-700/40 text-sm">
-                                        <div className="col-span-4 font-mono text-xs font-medium text-gray-800 dark:text-gray-200 truncate" title={mName}>
-                                            {mName}
-                                        </div>
-                                        <div className="col-span-2">
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                value={rule.input}
-                                                onChange={(e) => {
-                                                    const val = parseFloat(e.target.value) || 0;
-                                                    setTempPricing((prev: any) => ({
-                                                        ...prev,
-                                                        [mName]: { ...prev[mName], input: val }
-                                                    }));
-                                                }}
-                                                className="w-full text-right px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded text-xs text-gray-800 dark:text-white"
-                                            />
-                                        </div>
-                                        <div className="col-span-2">
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                value={rule.output}
-                                                onChange={(e) => {
-                                                    const val = parseFloat(e.target.value) || 0;
-                                                    setTempPricing((prev: any) => ({
-                                                        ...prev,
-                                                        [mName]: { ...prev[mName], output: val }
-                                                    }));
-                                                }}
-                                                className="w-full text-right px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded text-xs text-gray-800 dark:text-white"
-                                            />
-                                        </div>
-                                        <div className="col-span-2">
-                                            <input
-                                                type="number"
-                                                step="0.001"
-                                                value={rule.cached}
-                                                onChange={(e) => {
-                                                    const val = parseFloat(e.target.value) || 0;
-                                                    setTempPricing((prev: any) => ({
-                                                        ...prev,
-                                                        [mName]: { ...prev[mName], cached: val }
-                                                    }));
-                                                }}
-                                                className="w-full text-right px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded text-xs text-gray-800 dark:text-white"
-                                            />
-                                        </div>
-                                        <div className="col-span-2 flex justify-center">
-                                            {mName !== 'default' && (
-                                                <button
-                                                    onClick={() => {
-                                                        const next = { ...tempPricing };
-                                                        delete next[mName];
-                                                        setTempPricing(next);
-                                                    }}
-                                                    className="text-red-400 hover:text-red-600 p-1"
-                                                    title="删除"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {/* 添加新模型规则 */}
-                                <div className="p-2.5 rounded-lg border border-dashed border-gray-200 dark:border-gray-600 mt-3 space-y-2">
-                                    <div className="text-xs font-semibold text-gray-500 dark:text-gray-400">添加自定义模型规则</div>
-                                    <div className="grid grid-cols-12 gap-2 items-center">
-                                        <input
-                                            type="text"
-                                            placeholder="模型标识 (如 claude-5)"
-                                            value={newModelName}
-                                            onChange={(e) => setNewModelName(e.target.value)}
-                                            className="col-span-4 px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded text-xs text-gray-800 dark:text-white"
-                                        />
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            placeholder="输入"
-                                            value={newInputPrice}
-                                            onChange={(e) => setNewInputPrice(e.target.value)}
-                                            className="col-span-2 text-right px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded text-xs text-gray-800 dark:text-white"
-                                        />
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            placeholder="输出"
-                                            value={newOutputPrice}
-                                            onChange={(e) => setNewOutputPrice(e.target.value)}
-                                            className="col-span-2 text-right px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded text-xs text-gray-800 dark:text-white"
-                                        />
-                                        <input
-                                            type="number"
-                                            step="0.001"
-                                            placeholder="缓存"
-                                            value={newCachePrice}
-                                            onChange={(e) => setNewCachePrice(e.target.value)}
-                                            className="col-span-2 text-right px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded text-xs text-gray-800 dark:text-white"
-                                        />
-                                        <button
-                                            onClick={() => {
-                                                if (!newModelName.trim()) return;
-                                                const k = newModelName.trim().toLowerCase();
-                                                setTempPricing((prev: any) => ({
-                                                    ...prev,
-                                                    [k]: {
-                                                        input: parseFloat(newInputPrice) || 0,
-                                                        output: parseFloat(newOutputPrice) || 0,
-                                                        cached: parseFloat(newCachePrice) || 0
-                                                    }
-                                                }));
-                                                setNewModelName('');
-                                            }}
-                                            className="col-span-2 px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded text-xs flex items-center justify-center gap-1"
-                                        >
-                                            <Plus className="w-3.5 h-3.5" /> 添加
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center justify-between pt-4 border-t border-gray-100 dark:border-gray-700">
-                                <button
-                                    onClick={() => {
-                                        setTempPricing(DEFAULT_PRICING);
-                                    }}
-                                    className="px-3 py-1.5 text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white flex items-center gap-1.5 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                                >
-                                    <RotateCcw className="w-3.5 h-3.5" />
-                                    {t('token_stats.reset_pricing', '恢复官方默认')}
-                                </button>
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={() => setShowPricingModal(false)}
-                                        className="px-4 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                                    >
-                                        取消
-                                    </button>
-                                    <button
-                                        onClick={() => {
-                                            setPricing(tempPricing);
-                                            try {
-                                                localStorage.setItem(PRICING_STORAGE_KEY, JSON.stringify(tempPricing));
-                                            } catch (e) {}
-                                            setShowPricingModal(false);
-                                        }}
-                                        className="px-4 py-1.5 text-xs font-medium text-white bg-emerald-500 hover:bg-emerald-600 rounded-lg shadow-sm transition-colors"
-                                    >
-                                        {t('token_stats.save_pricing', '保存单价配置')}
-                                    </button>
-                                </div>
-                            </div>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 )}
+
+                {viewMode === 'account' && accountData.length > 0 && (
+                    <div className="bg-[#121316] rounded-2xl p-4 sm:p-5 border border-white/[0.08] shadow-sm">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-[13px] font-semibold text-white/90 flex items-center gap-2">
+                                <Users className="w-4 h-4 text-green-400" />
+                                {t('token_stats.account_details', '账号详细统计')}
+                            </h2>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-xs">
+                                <thead>
+                                    <tr className="border-b border-white/[0.08] text-white/40 uppercase tracking-wider text-[11px]">
+                                        <th className="text-left py-2.5 px-3 font-medium">{t('token_stats.account', '账号')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.requests', '请求数')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.input', '输入')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.output', '输出')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.cached_token', '缓存命中')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.total', '合计')}</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/[0.04]">
+                                    {accountData.map((account) => (
+                                        <tr key={account.account_email} className="hover:bg-white/[0.03] transition-colors">
+                                            <td className="py-2.5 px-3 font-mono text-white/90">
+                                                {account.account_email}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right font-mono text-white/60">
+                                                {account.request_count.toLocaleString()}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right font-mono text-blue-400">
+                                                {formatNumber(account.total_input_tokens)}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right font-mono text-purple-400">
+                                                {formatNumber(account.total_output_tokens)}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right font-mono text-sky-400">
+                                                {formatNumber(account.total_cached_tokens)}
+                                            </td>
+                                            <td className="py-2.5 px-3 text-right font-mono font-semibold text-white">
+                                                {formatNumber(account.total_tokens)}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
+
+                {/* 自定义模型价格模态框 */}
+                <PricingModal
+                    isOpen={showPricingModal}
+                    onClose={() => setShowPricingModal(false)}
+                    currentPricing={pricing}
+                    onSave={(newRules) => {
+                        setPricing(newRules);
+                        try {
+                            localStorage.setItem(PRICING_STORAGE_KEY, JSON.stringify(newRules));
+                        } catch (e) {}
+                        setShowPricingModal(false);
+                    }}
+                />
             </div>
         </div>
     );
 };
+
+function displayModelKeysOrAccounts(viewMode: ViewMode, allModels: string[], allAccounts: string[]): string[] {
+    return viewMode === 'model' ? allModels : allAccounts;
+}
 
 export default TokenStats;

@@ -30,6 +30,10 @@ dist
 src-tauri/target/
 src-tauri/gen/
 src-tauri/.env
+build_output/
+*.dmg
+*.dmg.bak*
+dist_dmg/
 
 # Environment
 .env
