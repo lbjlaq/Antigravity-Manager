@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.9.0)
+> 专业级 AI 账号管理与协议代理系统 (v4.9.1)
 
 <div align="center">
   <img src="public/icon.png" width="100" height="100" alt="Antigravity Tools Logo">
@@ -11,8 +11,10 @@
       <img src="https://img.shields.io/github/v/release/lbjlaq/Antigravity-Manager?color=blue&style=flat-square" alt="GitHub release">
     </a>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.9.0-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.9.1-blue?style=flat-square" alt="Version">
     </a>
+    <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
+    <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
     <img src="https://img.shields.io/badge/Frontend-React-61DAFB?style=flat-square" alt="React">
     <img src="https://img.shields.io/badge/License-CC--BY--NC--SA--4.0-lightgrey?style=flat-square" alt="License">
   </p>
@@ -22,11 +24,11 @@
   </a>
 
   <p>
-    <a href="#-核心功能">核心功能</a> • 
-    <a href="#-界面导览">界面导览</a> • 
-    <a href="#-技术架构">技术架构</a> • 
-    <a href="#-安装指南">安装指南</a> • 
-    <a href="#-快速接入">快速接入</a>
+    <a href="#-深度功能解析-detailed-features">核心功能</a> • 
+    <a href="#-界面导览-gui-overview">界面导览</a> • 
+    <a href="#-技术架构-architecture">技术架构</a> • 
+    <a href="#-安装指南-installation">安装指南</a> • 
+    <a href="#-快速接入示例">快速接入</a>
   </p>
 
   <p>
@@ -47,11 +49,8 @@
 | :---: | :--- |
 | <img src="docs/images/packycode_logo.png" width="200" alt="PackyCode Logo"> | 感谢 **PackyCode** 对本项目的赞助！PackyCode 是一家可靠高效的 API 中转服务商，提供 Claude Code、Codex、Gemini 等多种服务的中转。PackyCode 为本项目的用户提供了特别优惠：使用[此链接](https://www.packyapi.com/register?aff=Ctrler)注册，并在充值时输入 **“Ctrler”** 优惠码即可享受 **九折优惠**。 |
 | <img src="docs/images/APIKEYFUN.png" width="200" alt="APIKEYFUN Logo"> | 感谢 APIKEY.FUN 赞助本项目！APIKEY.FUN 是一家专业的企业级 AI 中转站，致力于为企业和个人开发者提供稳定、高效、低成本的 AI 模型 API 接入服务。平台支持 Claude、OpenAI、Gemini 等主流热门模型，价格低至官方原价的 7%。通过本项目[专属链接](https://apikey.fan/register?aff=AntManager)注册，还可享受最高 **充值永久 95 折** 专属优惠。 |
-| <img src="docs/images/claudeapilogo.png" width="200" alt="Claude API Logo"> | 感谢 **Claude API** 对本项目的支持！claudeapi.com 是一家走**官方与 AWS 渠道**接入的 **Claude API** 中转站，专注 Claude，主打高稳定、低延迟，完整支持 Claude Code。为本项目用户提供专属福利：通过[专属链接](https://console.claudeapi.com/register?source=antigravity)注册即送**免费测试额度，零门槛跑通**；充值再享 **95 折**专属优惠(联系客服）。 |
+| <img src="docs/images/claudeapilogo.png" width="200" alt="Claude API Logo"> | 感谢 **Claude API** 对本项目的支持！claudeapi.com 是一家走**官方与 AWS 渠道**接入的 **Claude API** 中转站，专注 Claude，主打高稳定、低延迟，完整支持 Claude Code。为本项目用户提供专属福利：通过[专属链接](https://console.claudeapi.com/register?source=antigravity)注册即送**免费测试额度，零门槛跑通**；充值再享 **95 折**专属优惠（联系客服）。 |
 | <img src="docs/images/AICodeMirror.jpg" width="200" alt="AICodeMirror Logo"> | 感谢 AICodeMirror 赞助了本项目！AICodeMirror 提供 Claude Code / Codex / Gemini CLI 官方高稳定中转服务，支持企业级高并发、极速开票、7×24 专属技术支持。 Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更有折上折！AICodeMirror 为 Antigravity-Manager 的用户提供了特别福利，通过[此链接](https://aicodemirror.ai/register?invitecode=MV5XUM)注册的用户，可享受首充8折，企业客户最高可享 7.5 折！ |
-
-
-
 
 ### ☕ 支持项目 (Support)
 
@@ -84,7 +83,7 @@
 ### 3. 🔌 协议转换与中继 (API Proxy)
 *   **全协议适配 (Multi-Sink)**:
     *   **OpenAI 格式**: 提供 `/v1/chat/completions` 端点，兼容 99% 的现有 AI 应用。
-    *   **Anthropic 格式**: 提供原生 `/v1/messages` 接口，支持 **Claude Code CLI** 的全功能（如思思维链、系统提示词）。
+    *   **Anthropic 格式**: 提供原生 `/v1/messages` 接口，支持 **Claude Code CLI** 的全功能（如思维链、系统提示词）。
     *   **Gemini 格式**: 支持 Google 官方 SDK 直接调用。
 *   **智能状态自愈**: 当请求遇到 `429 (Too Many Requests)` 或 `401 (Expire)` 时，后端会毫秒级触发 **自动重试与静默轮换**，确保业务不中断。
 
@@ -127,7 +126,7 @@ graph TD
     ResponseMapper --> Client
 ```
 
-##  安装指南 (Installation)
+## 📥 安装指南 (Installation)
 
 ### 选项 A: 终端安装 (推荐)
 
@@ -254,10 +253,6 @@ docker compose up -d
 > - **持久化**: 需挂载 `/root/.antigravity_tools` 以保存数据。
 > - **架构**: 支持 x86_64 和 ARM64。
 > **详情见**: [Docker 部署指南 (docker)](./docker/README.md)
-
----
-
-Copyright © 2024-2026 [lbjlaq](https://github.com/lbjlaq)
 
 <details>
 <summary><b>🛠️ 常见问题排查 (Troubleshooting) - 点击展开</b></summary>
@@ -459,7 +454,7 @@ curl -X POST http://127.0.0.1:8045/v1/messages \
 **参数说明**:
 - **`imageSize`**: 直接指定分辨率 (`"1K"` / `"2K"` / `"4K"`)
 - **`quality`**: 通过质量等级推断分辨率 (`"standard"` → 1K, `"medium"` → 2K, `"hd"` → 4K)
-- **优先级**: 如果同时指定 `imageSize` 和 `quality`, 系统会优先使用 `imageSize`
+- **优先级**: 如果同时指定 `imageSize` 和 `quality`，系统会优先使用 `imageSize`
 
 #### 方式三：Chat 接口 + 模型后缀
 ```python
@@ -493,7 +488,7 @@ response = client.chat.completions.create(
 
 ## 📝 更新日志
 
-> 最新版本 **v4.9.0**（2026-10-01）：修复 `monitor.rs` 签名回填路径中思考片段原生按字节切片切在多字节字符中间导致的 Rust worker `char boundary panic`，改用 `safe_truncate_str` 自动对齐 UTF-8 字符边界，彻底根治下游连接中断（`socket hang up` / `Empty reply from server`）与请求日志静默丢失（Fixes #3573，感谢 @a3339530357）。
+> 最新版本 **v4.9.1**（2026-10-02）：修复 `gemini-3.1-flash-lite` 误重定向至已故 2.5 系列导致 503 报错的严重问题并恢复健康直传，将后台摘要压缩任务重定向至存活轻量模型，从公开目录清理 2.5 全系列并平滑重定向至 `gemini-3.6-flash-medium`（Fixes #3577，感谢 @Xyloz3n）；收紧下游 SSE 流式思考心跳至 3 秒防止长推理提前断开连接（PR #3578，感谢 @EricZhou05）。
 
 👉 **[查看完整更新日志 CHANGELOG.md →](CHANGELOG.md)**
 
@@ -557,5 +552,5 @@ response = client.chat.completions.create(
 
 <div align="center">
   <p>如果您觉得这个工具有所帮助，欢迎在 GitHub 上点一个 ⭐️</p>
-  <p>Copyright © 2025 Antigravity Team.</p>
+  <p>Copyright © 2024-2026 Antigravity Team.</p>
 </div>

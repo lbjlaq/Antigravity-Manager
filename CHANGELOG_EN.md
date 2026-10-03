@@ -3,6 +3,17 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v4.9.1 (2026-10-02)**:
+        -   **[Model Routing & Deprecated Model Seamless Redirect] Fix Stale gemini-3.1-flash-lite Redirect, Restore Layer-3 Background Summary, and Route Retired 2.5 Family to gemini-3.6-flash-medium (Fixes #3577, Thanks to @Xyloz3n)**:
+            -   **Correct gemini-3.1-flash-lite Direct Passthrough**: Permanently removed the hardcoded redirect that sent healthy `gemini-3.1-flash-lite` requests to the retired `gemini-2.5-flash-lite`. Restored 1:1 passthrough to upstream's active 1M-context `MODEL_PLACEHOLDER_M50`, eliminating upstream 429/503 errors and serving requests as 200 OK.
+            -   **Revive internal-background-task**: Retargeted the internal virtual model `internal-background-task` and background task constants in OpenAI/Gemini handlers from dead 2.5 models to the fast, healthy `gemini-3.1-flash-lite` (1M context), fully restoring Layer-3 conversation history compression and background summarization.
+            -   **Purge Dead Models from Advertised Catalog**: Removed the entirely retired 2.5 family (`gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-thinking`, `gemini-2.5-flash-lite`) and `gemini-3.5-flash-lite` from `get_supported_models()`, `is_model_compliant_with_baseline`, and frontend menus to eliminate dead options, while adding `gemini-3.1-flash-lite` to the compliant catalog.
+            -   **Seamless In-Flight Redirects for Deprecated Names**: Retained internal backwards-compatible routing rules for legacy clients and scripts: `gemini-2.5-flash`, `gemini-2.5-flash-thinking`, and `gpt-3.5-turbo` smoothly redirect to `gemini-3.6-flash-medium`; `gemini-2.5-flash-lite` and `gemini-3.5-flash-lite` redirect to `gemini-3.1-flash-lite`; and `gemini-2.5-pro` redirects to `gemini-pro-agent`.
+        -   **[Downstream SSE Heartbeat Tightening] Reduce SSE Keep-Alive Interval to 3s During Deep Thinking (PR #3578, Thanks to @EricZhou05)**:
+            -   **3s Stream Heartbeat**: Tightened downstream OpenAI-compatible SSE heartbeat interval to 3 seconds, preventing client-side read timeouts and connection drops during extended reasoning and deep-thinking phases.
+        -   **[Documentation & Metadata Alignment] Fix README Typos and Synchronize Bilingual Content (PR #3579, Thanks to @EricZhou05)**:
+            -   **Bilingual Sync**: Fixed typos in documentation, aligned Chinese and English README content, and refreshed metadata.
+
     *   **v4.9.0 (2026-10-01)**:
         -   **[Monitor Logging & Thought-Signature Backfill Hardening] Fix Tokio Worker Panic and Connection Hang Caused by Byte-Slicing Thought Snippets on Multi-Byte Character Boundaries (PR #3574, Fixes #3573, Thanks to @a3339530357)**:
             -   **Safe UTF-8 Character Boundary Truncation**: Fixed a standard library `char boundary panic` in `monitor.rs`'s thought signature backfill path, where raw byte-slicing `&trimmed[..32]` was executed on thinking content. When multi-byte characters (e.g. Chinese at 3 bytes/char or Emojis at 4 bytes) straddled the 32nd byte index, slicing inside a code point caused immediate panics. Replaced with the existing shared utility `safe_truncate_str(trimmed, 32)`, which automatically rolls back to the nearest valid character boundary.

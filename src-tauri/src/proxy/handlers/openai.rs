@@ -7263,7 +7263,7 @@ fn split_namespace_tool_name(qualified_name: &str) -> (String, Option<String>) {
     (name.to_string(), None)
 }
 
-const INTERNAL_BACKGROUND_TASK: &str = "gemini-2.5-flash-lite";
+const INTERNAL_BACKGROUND_TASK: &str = "gemini-3.1-flash-lite";
 const CONTEXT_SUMMARY_PROMPT: &str = r#"You are a context compression specialist. Your task is to create a structured XML snapshot of the conversation history.
 
 This snapshot will become the Agent's ONLY memory of the past. All key details, plans, errors, and user instructions MUST be preserved.

@@ -1226,7 +1226,7 @@
       "only_raw_quota_models": "仅暴露真实配额模型",
       "only_raw_quota_models_tooltip": "开启后 /v1/models 仅展示当前账号已获取配额的真实模型，隐藏内置的虚拟映射别名（如 gpt-4o 等）及画幅变体模型",
       "background_task_title": "后台任务模型",
-      "background_task_desc": "用于 Claude CLI 的标题生成、摘要提取等后台自动化任务 (默认: gemini-2.5-flash)",
+      "background_task_desc": "用于 Claude CLI 的标题生成、摘要提取等后台自动化任务 (默认: gemini-3.1-flash-lite)",
       "use_default": "使用系统默认",
       "current_model": "当前模型",
       "apply_presets": "应用预设映射",

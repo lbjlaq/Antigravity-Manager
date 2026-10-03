@@ -1204,7 +1204,7 @@
       "only_raw_quota_models": "할당량 모델만 노출",
       "only_raw_quota_models_tooltip": "활성화하면 /v1/models는 연결된 계정에서 가져온 활성 할당량 모델만 나열하고, 기본 별칭 모델(예: gpt-4o) 및 이미지 비율 변형을 숨깁니다.",
       "background_task_title": "백그라운드 작업 모델",
-      "background_task_desc": "제목 생성, 요약 등 Claude CLI 백그라운드 작업에 사용되는 모델 (기본값: gemini-2.5-flash)",
+      "background_task_desc": "제목 생성, 요약 등 Claude CLI 백그라운드 작업에 사용되는 모델 (기본값: gemini-3.1-flash-lite)",
       "use_default": "시스템 기본값 사용",
       "current_model": "현재 모델",
       "apply_presets": "프리셋 적용",

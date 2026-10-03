@@ -104,7 +104,7 @@ where
             crate::proxy::thinking_store::TurnAccumulator::new()
         };
 
-        let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(15));
+        let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(3));
         heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {

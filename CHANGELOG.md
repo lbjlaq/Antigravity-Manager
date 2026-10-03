@@ -3,6 +3,17 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v4.9.1 (2026-10-02)**:
+        -   **[模型路由治理与淘汰模型平滑重定向] 修复 3.1-flash-lite 误重定向、拯救 Layer-3 后台摘要与压缩并将已退役 2.5 系列平滑重定向至 3.6-flash-medium (Fixes #3577, Thanks to @Xyloz3n)**:
+            -   **纠正 gemini-3.1-flash-lite 错误降级与健康直传**: 彻底移除核心映射表中将健康存活的 `gemini-3.1-flash-lite` 错误重定向至已故 `gemini-2.5-flash-lite` 的硬编码。恢复为其自身标准直传（出站 1:1 透传上游具备 1M 上下文的 `MODEL_PLACEHOLDER_M50`），彻底消除由此引发的 429 与 503 报错，上游实测 200 OK。
+            -   **拯救 internal-background-task 后台任务**: 将内部虚拟模型 `internal-background-task` 以及 OpenAI/Gemini 适配器中的后台任务模型常量从已下线的 2.5 系列重定向至健康高效且具备 1M 上下文的 `gemini-3.1-flash-lite`，彻底恢复因 2.5 系列退役而瘫痪的 Layer-3 对话历史摘要与长上下文压缩功能。
+            -   **宣传目录与合规基准线净化**: 从内置模型列表 `get_supported_models()`、基准线过滤器 `is_model_compliant_with_baseline` 及前端模型菜单中彻底剔除上游已全线 503 的 2.5 全系列（`gemini-2.5-pro`、`gemini-2.5-flash`、`gemini-2.5-flash-thinking`、`gemini-2.5-flash-lite`）以及 `gemini-3.5-flash-lite`，杜绝死菜单项与无效暴露；同时将健康的 `gemini-3.1-flash-lite` 纳入支持列表与合规基准线。
+            -   **已淘汰模型内部平滑重定向**: 内部完整保留对已淘汰旧模型的重定向兜底，保障历史客户端与自动化脚本平稳运行：`gemini-2.5-flash`、`gemini-2.5-flash-thinking` 与 `gpt-3.5-turbo` 重定向至 `gemini-3.6-flash-medium`；`gemini-2.5-flash-lite` 与 `gemini-3.5-flash-lite` 重定向至 `gemini-3.1-flash-lite`；`gemini-2.5-pro` 重定向至 `gemini-pro-agent`；前端路由预设同步对齐。
+        -   **[下游 SSE 心跳保活收紧] 缩短流式思考心跳间隔至 3 秒防止长推理连接中断 (PR #3578, Thanks to @EricZhou05)**:
+            -   **3 秒流式心跳注入**: 将下游 OpenAI 协议流式输出中的 SSE 心跳保活间隔缩短至 3 秒，防止客户端在长思考/深度推理期间因长久无响应而提前断开连接。
+        -   **[文档与元数据排版校准] 修复 README 错别字并对齐中英双语内容 (PR #3579, Thanks to @EricZhou05)**:
+            -   **双语文档对齐**: 修复 README 文档排版错别字，对齐中英双语内容并更新相关元数据。
+
     *   **v4.9.0 (2026-10-01)**:
         -   **[监控日志与思考签名回填安全加固] 修复思考片段按字节切片切在多字节字符中间导致的 Rust worker panic 与连接挂起 (PR #3574, Fixes #3573, Thanks to @a3339530357)**:
             -   **UTF-8 字符边界安全回退**: 修复在 `monitor.rs` 签名回填路径中对思考内容执行 `&trimmed[..32]` 原生字节切片时，因中文（3 字节/字）或 Emoji（4 字节）等宽字符横跨第 32 字节触发的标准库 `char boundary panic`。改用通用工具 `safe_truncate_str(trimmed, 32)`，在截断点落在多字节内部时自动向左回退至最近合法字符边界。

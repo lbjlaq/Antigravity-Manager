@@ -1198,7 +1198,7 @@
       "subtitle": "Modelleri serilere göre yönlendirin veya özel tam eşlemeler ekleyin.\nNot: Yerel Claude geçiş modelleri (örn. claude-opus-4-6-thinking) varsayılan olarak seri gruplarını atlar. Geçersiz kılmak için \"Uzman Özel Yönlendirme\" kullanın.",
       "subtitle_simple": "Joker karakterlerle veya tam eşlemelerle model yönlendirmeyi özelleştirin",
       "background_task_title": "Arka Plan Görev Modeli",
-      "background_task_desc": "Başlık oluşturma, özetleme vb. Claude CLI arka plan görevleri için kullanılan model (Varsayılan: gemini-2.5-flash)",
+      "background_task_desc": "Başlık oluşturma, özetleme vb. Claude CLI arka plan görevleri için kullanılan model (Varsayılan: gemini-3.1-flash-lite)",
       "use_default": "Sistem Varsayılanını Kullan",
       "current_model": "Mevcut Model",
       "apply_presets": "Ön Ayarları Uygula",

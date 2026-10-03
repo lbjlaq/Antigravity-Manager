@@ -531,14 +531,14 @@ export default function ApiProxy() {
                 "gemini-3.x-flash": "3.x-flash-tiered",
                 "gpt-4*": "gemini-3.1-pro-high",
                 "gpt-4o*": "gemini-3.8-flash-high",
-                "gpt-3.5*": "gemini-2.5-flash",
+                "gpt-3.5*": "gemini-3.6-flash-medium",
                 "o1-*": "gemini-3.1-pro-high",
                 "o3-*": "gemini-3.1-pro-high",
                 "claude-3-5-sonnet-*": "claude-sonnet-4-6",
                 "claude-3-opus-*": "claude-opus-4-6-thinking",
                 "claude-opus-4-6*": "claude-opus-4-6-thinking",
-                "claude-haiku-*": "gemini-2.5-flash",
-                "claude-3-haiku-*": "gemini-2.5-flash",
+                "claude-haiku-*": "gemini-3.6-flash-medium",
+                "claude-3-haiku-*": "gemini-3.6-flash-medium",
             }
         },
         {
@@ -564,15 +564,15 @@ export default function ApiProxy() {
             description: t('proxy.router.preset_cost_desc'),
             mappings: {
                 "gpt-4*": "gemini-3.8-flash-high",
-                "gpt-4o*": "gemini-2.5-flash",
-                "gpt-3.5*": "gemini-2.5-flash",
+                "gpt-4o*": "gemini-3.6-flash-medium",
+                "gpt-3.5*": "gemini-3.1-flash-lite",
                 "o1-*": "gemini-3.8-flash-high",
                 "o3-*": "gemini-3.8-flash-high",
                 "claude-3-5-sonnet-*": "gemini-3.8-flash-high",
                 "claude-3-opus-*": "gemini-3.8-flash-high",
                 "claude-opus-4-*": "gemini-3.8-flash-high",
-                "claude-haiku-*": "gemini-2.5-flash",
-                "claude-3-haiku-*": "gemini-2.5-flash",
+                "claude-haiku-*": "gemini-3.1-flash-lite",
+                "claude-3-haiku-*": "gemini-3.1-flash-lite",
             }
         },
         {
@@ -582,15 +582,15 @@ export default function ApiProxy() {
             mappings: {
                 "gpt-4*": "gemini-3.1-pro-high",
                 "gpt-4o*": "gemini-3.8-flash-high",
-                "gpt-3.5*": "gemini-2.5-flash",
+                "gpt-3.5*": "gemini-3.6-flash-medium",
                 "o1-*": "claude-sonnet-4-6",
                 "o3-*": "claude-sonnet-4-6",
                 "claude-3-5-sonnet-*": "claude-sonnet-4-6",
                 "claude-3-opus-*": "gemini-3.1-pro-high",
                 "claude-opus-4-5*": "gemini-3.1-pro-high",
                 "claude-opus-4-6*": "claude-opus-4-6-thinking",
-                "claude-haiku-*": "gemini-2.5-flash",
-                "claude-3-haiku-*": "gemini-2.5-flash",
+                "claude-haiku-*": "gemini-3.6-flash-medium",
+                "claude-3-haiku-*": "gemini-3.6-flash-medium",
             }
         },
     ], [t]);

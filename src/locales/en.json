@@ -1238,7 +1238,7 @@
       "only_raw_quota_models": "Only Expose Quota Models",
       "only_raw_quota_models_tooltip": "When enabled, /v1/models only lists active quota models fetched from connected accounts, hiding built-in alias models (like gpt-4o) and image ratio variants.",
       "background_task_title": "Background Task Model",
-      "background_task_desc": "Model used for Claude CLI background tasks like title generation, summary, etc. (Default: gemini-2.5-flash)",
+      "background_task_desc": "Model used for Claude CLI background tasks like title generation, summary, etc. (Default: gemini-3.1-flash-lite)",
       "use_default": "Use System Default",
       "current_model": "Current Model",
       "apply_presets": "Apply Presets",

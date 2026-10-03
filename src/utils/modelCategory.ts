@@ -34,6 +34,7 @@ const DEFAULT_MODEL_LABELS: Record<string, string> = {
     'gemini-3.5-flash': 'Gemini 3.5 Flash',
     'gemini-3-flash': 'Gemini 3 Flash',
     'gemini-2.5-flash': 'Gemini 2.5 Flash',
+    'gemini-3.1-flash-lite': 'Gemini 3.1 Flash Lite',
     'gemini-3.1-flash-image': 'Gemini 3.1 Flash Image',
     'gemini-3-pro-image': 'Gemini 3 Image',
     'claude-sonnet-4-6': 'Claude Sonnet 4.6 (Thinking)',
@@ -64,8 +65,8 @@ export function findQuotaModel<T extends { name: string }>(
 ): T | undefined {
     if (!models || models.length === 0) return undefined;
     const preferred: Partial<Record<ModelCategory, string[]>> = {
-        'gemini-pro': ['gemini-pro-agent', 'gemini-3.1-pro-high', 'gemini-3.1-pro', 'gemini-3.1-pro-low', 'gemini-2.5-pro'],
-        'gemini-flash': ['gemini-3-flash-agent', 'gemini-3-flash', 'gemini-3.5-flash'],
+        'gemini-pro': ['gemini-pro-agent', 'gemini-3.1-pro-high', 'gemini-3.1-pro', 'gemini-3.1-pro-low'],
+        'gemini-flash': ['gemini-3.8-flash-high', 'gemini-3.8-flash', 'gemini-3-flash-agent', 'gemini-3-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'],
         'claude': ['claude-sonnet-4-6', 'claude-opus-4-6-thinking'],
     };
     const names = preferred[category];

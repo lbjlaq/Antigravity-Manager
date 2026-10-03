@@ -32,20 +32,16 @@ const ALIAS_TO_CANONICAL: Record<string, { id: string; name: string; group: stri
     'gemini-3.6-flash-low': { id: 'gemini-3.6-flash-low', name: 'gemini-3.6-flash-low', group: 'Gemini 3' },
     'gemini-3.6-flash-tiered': { id: 'gemini-3.6-flash-tiered', name: 'gemini-3.6-flash-tiered', group: 'Gemini 3' },
 
-    // Gemini 3.5 & Pro & Image
+    // Gemini 3.5 & Pro & Image & Lite
     'gemini-3.5-flash': { id: 'gemini-3.5-flash', name: 'gemini-3.5-flash', group: 'Gemini 3' },
     'gemini-3.5-flash-low': { id: 'gemini-3.5-flash-low', name: 'gemini-3.5-flash-low', group: 'Gemini 3' },
     'gemini-3.5-flash-extra-low': { id: 'gemini-3.5-flash-extra-low', name: 'gemini-3.5-flash-extra-low', group: 'Gemini 3' },
     'gemini-3.1-pro-high': { id: 'gemini-3.1-pro-high', name: 'gemini-3.1-pro-high', group: 'Gemini 3' },
     'gemini-3.1-pro-low': { id: 'gemini-3.1-pro-low', name: 'gemini-3.1-pro-low', group: 'Gemini 3' },
+    'gemini-3.1-flash-lite': { id: 'gemini-3.1-flash-lite', name: 'gemini-3.1-flash-lite', group: 'Gemini 3' },
+    'gemini-flash-lite': { id: 'gemini-3.1-flash-lite', name: 'gemini-3.1-flash-lite', group: 'Gemini 3' },
     'gemini-3.1-flash-image': { id: 'gemini-3.1-flash-image', name: 'gemini-3.1-flash-image', group: 'Gemini 3' },
     'gemini-3-pro-image': { id: 'gemini-3-pro-image', name: 'gemini-3-pro-image', group: 'Gemini 3' },
-
-    // Gemini 2.5
-    'gemini-2.5-pro': { id: 'gemini-2.5-pro', name: 'gemini-2.5-pro', group: 'Gemini 2.5' },
-    'gemini-2.5-flash': { id: 'gemini-2.5-flash', name: 'gemini-2.5-flash', group: 'Gemini 2.5' },
-    'gemini-2.5-flash-lite': { id: 'gemini-2.5-flash-lite', name: 'gemini-2.5-flash-lite', group: 'Gemini 2.5' },
-    'gemini-2.5-flash-thinking': { id: 'gemini-2.5-flash-thinking', name: 'gemini-2.5-flash-thinking', group: 'Gemini 2.5' },
 
     // Claude (基准线 >= 4.6)
     'claude-sonnet-4-6': { id: 'claude-sonnet-4-6', name: 'claude-sonnet-4-6', group: 'Claude' },

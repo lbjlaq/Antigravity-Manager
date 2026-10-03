@@ -984,7 +984,7 @@ pub fn inject_ids_to_response(response: &mut Value, model_name: &str) {
     }
 }
 
-const INTERNAL_BACKGROUND_TASK: &str = "gemini-2.5-flash-lite";
+const INTERNAL_BACKGROUND_TASK: &str = "gemini-3.1-flash-lite";
 
 /// Layer-3 后台摘要请求的超时（秒）。
 ///
@@ -1135,7 +1135,7 @@ async fn try_compress_gemini_with_summary(
 
     // 只拼接「非思考 part」的文本。
     //
-    // 实测（gemini-2.5-flash-lite，3/3）响应形如：
+    // 实测（gemini-3.1-flash-lite / gemini-2.5-flash-lite）响应形如：
     //   parts[0] = { "thought": true, "text": "" }   ← 空思考块，排在最前
     //   parts[1] = { "text": "```xml\n<summary>…" }  ← 真正的摘要
     // 因此不能取 `parts[0].text`（会得到空串，把空摘要当成功静默写回），

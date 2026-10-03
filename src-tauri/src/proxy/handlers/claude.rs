@@ -2400,7 +2400,7 @@ async fn call_gemini_sync(
 ///
 /// This function:
 /// 1. Extracts the last valid thinking signature
-/// 2. Calls a cheap model (gemini-2.5-flash-lite) to generate XML summary
+/// 2. Calls a cheap model (gemini-3.1-flash-lite via internal-background-task) to generate XML summary
 /// 3. Creates a new message sequence with summary as prefix
 /// 4. Preserves the signature in the summary
 /// 5. Returns the forked request

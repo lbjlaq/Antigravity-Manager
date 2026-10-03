@@ -1190,7 +1190,7 @@
       "subtitle": "按“規格家族”統一路由 OpenAI/Claude 模型，或新增最高優先順序的“精確對映”。\n注意：Claude 原生直通模型（claude-opus-4-6-thinking 等 3 個）預設直通，需在“專家精確對映”中新增規則才能修改。",
       "subtitle_simple": "透過萬用字元或精確對映自定義模型路由規則",
       "background_task_title": "後台任務模型",
-      "background_task_desc": "用於 Claude CLI 後台任務的模型,如標題生成、總結等。(預設: gemini-2.5-flash)",
+      "background_task_desc": "用於 Claude CLI 後台任務的模型,如標題生成、總結等。(預設: gemini-3.1-flash-lite)",
       "use_default": "使用系統預設",
       "current_model": "目前模型",
       "apply_presets": "應用預設對映",

@@ -42,7 +42,7 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gpt-4o-mini", "gemini-3.8-flash-high");
     m.insert("gpt-4-turbo", "gemini-3.8-flash-high");
     m.insert("gpt-4", "gemini-3.8-flash-high");
-    m.insert("gpt-3.5-turbo", "gemini-2.5-flash");
+    m.insert("gpt-3.5-turbo", "gemini-3.6-flash-medium");
 
     // Gemini 协议与 Claude 兼容映射表
     m.insert("gemini-2.5-flash-lite", "gemini-2.5-flash");
@@ -97,21 +97,21 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gemini-3-pro-low", "gemini-3.1-pro-low");
     m.insert("gemini-3-pro", "gemini-pro-agent");
 
+    m.insert("gemini-3.1-flash-lite", "gemini-3.1-flash-lite");
     m.insert("gemini-3.1-flash-image", "gemini-3.1-flash-image");
     m.insert("gemini-3-pro-image", "gemini-3-pro-image");
 
-    m.insert("gemini-2.5-pro", "gemini-2.5-pro");
-    m.insert("gemini-2.5-flash", "gemini-2.5-flash");
-    m.insert("gemini-2.5-flash-thinking", "gemini-2.5-flash-thinking");
-    m.insert("gemini-2.5-flash-lite", "gemini-2.5-flash-lite");
-
-    // 历史淘汰模型重定向。gemini-3-flash-agent 是 3.5 Flash high 的真实上游 id，保持透传。
+    // 历史淘汰模型重定向。保留旧版请求兼容性，平滑路由到新版健康模型。gemini-3-flash-agent 是 3.5 Flash high 的真实上游 id，保持透传。
     m.insert("gemini-3-flash", "gemini-3.8-flash-high");
-    m.insert("gemini-3.1-flash-lite", "gemini-2.5-flash-lite");
     m.insert("gemini-1.5-pro", "gemini-pro-agent");
     m.insert("gemini-2.0-pro", "gemini-pro-agent");
+    m.insert("gemini-2.5-pro", "gemini-pro-agent");
     m.insert("gemini-1.5-flash", "gemini-3.8-flash-high");
     m.insert("gemini-2.0-flash", "gemini-3.8-flash-high");
+    m.insert("gemini-2.5-flash", "gemini-3.6-flash-medium");
+    m.insert("gemini-2.5-flash-thinking", "gemini-3.6-flash-medium");
+    m.insert("gemini-2.5-flash-lite", "gemini-3.1-flash-lite");
+    m.insert("gemini-3.5-flash-lite", "gemini-3.1-flash-lite");
 
     m
 });
@@ -222,6 +222,7 @@ pub fn map_claude_model_to_gemini(input: &str) -> String {
         }
         "gemini-1.5-pro"
         | "gemini-2.0-pro"
+        | "gemini-2.5-pro"
         | "gemini-3-pro"
         | "gemini-3-pro-preview"
         | "gemini-3.1-pro-preview"
@@ -232,7 +233,13 @@ pub fn map_claude_model_to_gemini(input: &str) -> String {
         "gemini-1.5-flash" | "gemini-2.0-flash" | "gemini-3-flash" => {
             return "gemini-3.8-flash-high".to_string()
         }
-        "internal-background-task" => return "gemini-2.5-flash".to_string(),
+        "gemini-2.5-flash" | "gemini-2.5-flash-thinking" => {
+            return "gemini-3.6-flash-medium".to_string()
+        }
+        "gemini-2.5-flash-lite" | "gemini-3.5-flash-lite" => {
+            return "gemini-3.1-flash-lite".to_string()
+        }
+        "internal-background-task" => return "gemini-3.1-flash-lite".to_string(),
         _ => {}
     }
 
@@ -424,12 +431,18 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
         return m == "gemini-3.1-flash-image" || m == "gemini-3-pro-image";
     }
 
-    // 4. Gemini Pro 系列：以官方为准 (3.1 Pro 与 2.5 Pro)
+    // 4. Gemini Pro 系列：以官方最新为准 (3.1 Pro)，淘汰 2.5 Pro 及以下历史旧模型
     if m.contains("pro") {
-        if m.contains("1.5") || m.contains("2.0") || m == "gemini-3-pro" || m.contains("preview") {
+        if m.contains("1.5")
+            || m.contains("2.0")
+            || m.contains("2.5")
+            || m.contains("2-5")
+            || m == "gemini-3-pro"
+            || m.contains("preview")
+        {
             return false;
         }
-        if m.contains("3.1") || m.contains("2.5") {
+        if m.contains("3.1") {
             return true;
         }
         // 未知更高版本 pro (如 4.x)
@@ -444,11 +457,21 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
         return false;
     }
 
-    // 5. Gemini Flash 系列：以 3.5 为基准线，< 3.5 仅保留 2.5 系列
+    // 5. Gemini Flash 系列：淘汰 2.5 全系列及已 503 的 3.5-flash-lite；放行 3.1-flash-lite 与 >= 3.5 版本
     if m.contains("flash") {
-        // 2.5 经典系列保底
+        // 2.5 全系列已退役淘汰
         if m.contains("2.5") || m.contains("2-5") {
+            return false;
+        }
+
+        // 3.1-flash-lite 特别放行（1M 上下文轻量健康模型）
+        if m == "gemini-3.1-flash-lite" {
             return true;
+        }
+
+        // 3.5-flash-lite 上游已下线 503
+        if m == "gemini-3.5-flash-lite" {
+            return false;
         }
 
         // 解析版本号
@@ -510,14 +533,11 @@ pub fn get_supported_models() -> Vec<String> {
         // Gemini 3.1 Pro 系列
         "gemini-3.1-pro-high",
         "gemini-3.1-pro-low",
+        // Gemini 3.1 Flash Lite 系列 (轻量快速 1M 上下文模型)
+        "gemini-3.1-flash-lite",
         // Gemini 图像生成主力模型
         "gemini-3.1-flash-image",
         "gemini-3-pro-image",
-        // Gemini 2.5 经典系列
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-thinking",
-        "gemini-2.5-flash-lite",
         // Claude 系列 (基准线 >= 4.6)
         "claude-sonnet-4-6",
         "claude-sonnet-4-6-thinking",
@@ -946,21 +966,22 @@ mod tests {
         );
 
         // 1. 内置模型匹配
-        let found = find_dynamic_model(&custom_mapping, None, false, "gemini-2.5-flash").await;
-        assert_eq!(found, Some("gemini-2.5-flash".to_string()));
+        let found = find_dynamic_model(&custom_mapping, None, false, "gemini-3.1-flash-lite").await;
+        assert_eq!(found, Some("gemini-3.1-flash-lite".to_string()));
 
         // 2. 带 models/ 前缀匹配
         let found_prefix =
-            find_dynamic_model(&custom_mapping, None, false, "models/gemini-2.5-flash").await;
-        assert_eq!(found_prefix, Some("gemini-2.5-flash".to_string()));
+            find_dynamic_model(&custom_mapping, None, false, "models/gemini-3.1-flash-lite").await;
+        assert_eq!(found_prefix, Some("gemini-3.1-flash-lite".to_string()));
 
         // 3. 自定义模型匹配
         let found_custom = find_dynamic_model(&custom_mapping, None, false, "custom-gpt4").await;
         assert_eq!(found_custom, Some("custom-gpt4".to_string()));
 
         // 4. 大小写宽容匹配
-        let found_case = find_dynamic_model(&custom_mapping, None, false, "GEMINI-2.5-FLASH").await;
-        assert_eq!(found_case, Some("gemini-2.5-flash".to_string()));
+        let found_case =
+            find_dynamic_model(&custom_mapping, None, false, "GEMINI-3.1-FLASH-LITE").await;
+        assert_eq!(found_case, Some("gemini-3.1-flash-lite".to_string()));
 
         // 5. 不存在的模型
         let not_found =
@@ -1008,6 +1029,48 @@ mod tests {
         assert_eq!(
             resolve_model_route("gemini-3-flash-agent", &empty),
             "gemini-3-flash-agent"
+        );
+
+        // 淘汰旧模型平滑重定向至健康新模型
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-2.5-flash"),
+            "gemini-3.6-flash-medium"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-2.5-flash-thinking"),
+            "gemini-3.6-flash-medium"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-2.5-flash-lite"),
+            "gemini-3.1-flash-lite"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-3.5-flash-lite"),
+            "gemini-3.1-flash-lite"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-2.5-pro"),
+            "gemini-pro-agent"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("gemini-3.1-flash-lite"),
+            "gemini-3.1-flash-lite"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("internal-background-task"),
+            "gemini-3.1-flash-lite"
+        );
+        assert_eq!(
+            resolve_model_route("gemini-2.5-flash", &empty),
+            "gemini-3.6-flash-medium"
+        );
+        assert_eq!(
+            resolve_model_route("gemini-2.5-flash-lite", &empty),
+            "gemini-3.1-flash-lite"
+        );
+        assert_eq!(
+            resolve_model_route("gemini-3.1-flash-lite", &empty),
+            "gemini-3.1-flash-lite"
         );
 
         // Test Normalization (Opus 4.6 now merged into "claude" group)
@@ -1199,25 +1262,26 @@ mod tests {
         assert!(!is_model_compliant_with_baseline("gpt-4"));
         assert!(!is_model_compliant_with_baseline("gpt-3.5-turbo"));
 
-        // Gemini Flash: >= 3.5 passes, 2.5 passes, < 3.5 rejected
+        // Gemini Flash: >= 3.5 passes, 3.1-flash-lite passes, 2.5 rejected, 3.5-flash-lite rejected
         assert!(is_model_compliant_with_baseline("gemini-3.8-flash-high"));
         assert!(is_model_compliant_with_baseline("gemini-3.7-flash-medium"));
         assert!(is_model_compliant_with_baseline("gemini-3.6-flash-low"));
         assert!(is_model_compliant_with_baseline("gemini-3.5-flash-low"));
-        assert!(is_model_compliant_with_baseline("gemini-2.5-flash"));
-        assert!(is_model_compliant_with_baseline("gemini-2.5-flash-lite"));
-        assert!(is_model_compliant_with_baseline(
+        assert!(is_model_compliant_with_baseline("gemini-3.1-flash-lite"));
+        assert!(!is_model_compliant_with_baseline("gemini-2.5-flash"));
+        assert!(!is_model_compliant_with_baseline("gemini-2.5-flash-lite"));
+        assert!(!is_model_compliant_with_baseline(
             "gemini-2.5-flash-thinking"
         ));
+        assert!(!is_model_compliant_with_baseline("gemini-3.5-flash-lite"));
         assert!(!is_model_compliant_with_baseline("gemini-3-flash"));
-        assert!(!is_model_compliant_with_baseline("gemini-3.1-flash-lite"));
         assert!(!is_model_compliant_with_baseline("gemini-1.5-flash"));
         assert!(!is_model_compliant_with_baseline("gemini-2.0-flash"));
 
-        // Gemini Pro: 3.1 & 2.5 pass, 1.5/2.0/3.0 rejected
+        // Gemini Pro: 3.1 pass, 2.5/1.5/2.0/3.0 rejected
         assert!(is_model_compliant_with_baseline("gemini-3.1-pro-high"));
         assert!(is_model_compliant_with_baseline("gemini-3.1-pro-low"));
-        assert!(is_model_compliant_with_baseline("gemini-2.5-pro"));
+        assert!(!is_model_compliant_with_baseline("gemini-2.5-pro"));
         assert!(!is_model_compliant_with_baseline("gemini-1.5-pro"));
         assert!(!is_model_compliant_with_baseline("gemini-2.0-pro"));
         assert!(!is_model_compliant_with_baseline("gemini-3-pro"));

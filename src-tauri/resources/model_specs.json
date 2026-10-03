@@ -1,8 +1,8 @@
 {
     "models": {
-        "gemini-2.5-flash": {
+        "gemini-3.1-flash-lite": {
             "max_output_tokens": 65535,
-            "thinking_budget": 24576,
+            "thinking_budget": 0,
             "is_thinking": false
         },
         "gemini-3.5-flash": {
@@ -60,7 +60,12 @@
         "gpt-4o": "gemini-3.8-flash-high",
         "gpt-4o-mini": "gemini-3.8-flash-high",
         "gpt-4": "gemini-3.8-flash-high",
-        "gpt-3.5-turbo": "gemini-2.5-flash",
+        "gpt-3.5-turbo": "gemini-3.6-flash-medium",
+        "gemini-2.5-flash": "gemini-3.6-flash-medium",
+        "gemini-2.5-flash-thinking": "gemini-3.6-flash-medium",
+        "gemini-2.5-flash-lite": "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite": "gemini-3.1-flash-lite",
+        "gemini-2.5-pro": "gemini-3.1-pro-high",
         "claude-3-5-sonnet": "claude-sonnet-4-6",
         "claude-3-5-sonnet-latest": "claude-sonnet-4-6",
         "claude-3-7-sonnet": "claude-sonnet-4-6-thinking",

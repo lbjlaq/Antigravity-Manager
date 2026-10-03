@@ -1217,7 +1217,7 @@
       "only_raw_quota_models": "Apenas Modelos com Cota Bruta",
       "only_raw_quota_models_tooltip": "Filtra e exibe somente modelos que reportam cotas brutas diretas da API",
       "background_task_title": "Modelo de Tarefa em Segundo Plano",
-      "background_task_desc": "Modelo usado para tarefas em segundo plano do Claude CLI, como geração de título, resumo, etc. (Padrão: gemini-2.5-flash)",
+      "background_task_desc": "Modelo usado para tarefas em segundo plano do Claude CLI, como geração de título, resumo, etc. (Padrão: gemini-3.1-flash-lite)",
       "use_default": "Usar Padrão do Sistema",
       "current_model": "Modelo Atual",
       "apply_presets": "Aplicar Predefinições",

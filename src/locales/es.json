@@ -1204,7 +1204,7 @@
       "only_raw_quota_models": "Exponer solo modelos con cuota",
       "only_raw_quota_models_tooltip": "Cuando está habilitado, /v1/models solo muestra los modelos de cuota activos obtenidos de las cuentas conectadas, ocultando los modelos de alias integrados (como gpt-4o) y las variantes de proporción de imagen.",
       "background_task_title": "Modelo de Tarea en Segundo Plano",
-      "background_task_desc": "Modelo usado para tareas en segundo plano de Claude CLI como generación de título, resumen, etc. (Predeterminado: gemini-2.5-flash)",
+      "background_task_desc": "Modelo usado para tareas en segundo plano de Claude CLI como generación de título, resumen, etc. (Predeterminado: gemini-3.1-flash-lite)",
       "use_default": "Usar Predeterminado del Sistema",
       "current_model": "Modelo Actual",
       "apply_presets": "Aplicar Preajustes",
