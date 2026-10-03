@@ -423,6 +423,32 @@ pub fn resolve_bare_flash_route(model: &str, client_effort: Option<&str>) -> Opt
     Some(routed)
 }
 
+/// Detects bare Claude 5.5 model IDs (without tier suffix) and routes them
+/// to the appropriate tier variant based on client effort.
+/// Default tier when no effort is specified: medium.
+///
+/// Patterns recognized:
+/// - `claude-sonnet-5-5` → `claude-sonnet-5-5-{low|medium|high}`
+/// - `claude-opus-5-5`   → `claude-opus-5-5-{low|medium|high}`
+pub fn resolve_bare_claude55_route(model: &str, client_effort: Option<&str>) -> Option<String> {
+    let lower = model.to_lowercase();
+    let base = if lower == "claude-sonnet-5-5" {
+        "claude-sonnet-5-5"
+    } else if lower == "claude-opus-5-5" {
+        "claude-opus-5-5"
+    } else {
+        return None;
+    };
+
+    let tier = match client_effort.and_then(normalize_client_thinking_level) {
+        Some("LOW") => "low",
+        Some("HIGH") => "high",
+        _ => "medium", // default: medium (covers None and "MEDIUM")
+    };
+
+    Some(format!("{}-{}", base, tier))
+}
+
 /// 检查模型是否匹配 `gemini-3.x-flash` 通配符且 x > 8（例如 gemini-3.9-flash, gemini-3.10-flash 等）。
 /// 若匹配且 x > 8，统一转为 3.x-flash-tiered 模型（如 "gemini-3.9-flash-tiered"）。
 /// 严格要求：x 必须大于 8，对于 3.6 / 3.7 / 3.8 等模型由专用预设接管，3.5 及其以下严格排除。
