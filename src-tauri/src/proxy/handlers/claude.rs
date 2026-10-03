@@ -295,13 +295,14 @@ fn extract_thinking_hint(body: &Value) -> ThinkingHint {
         hint.budget_tokens = Some(budget as u32);
     }
 
-    // Try to extract level from thinkingLevel / reasoning_effort / output_config.effort
+    // Try to extract level from thinkingLevel / reasoning_effort / output_config.effort / thinking.effort
     if let Some(level) = body
         .get("thinkingLevel")
         .or_else(|| body.get("thinking_level"))
         .or_else(|| body.get("reasoning_effort"))
         .or_else(|| body.get("reasoningEffort"))
         .or_else(|| body.get("output_config").and_then(|o| o.get("effort")))
+        .or_else(|| body.get("thinking").and_then(|t| t.get("effort")))
         .and_then(|l| l.as_str())
     {
         hint.level = Some(level.to_lowercase());
@@ -343,10 +344,15 @@ fn apply_thinking_hints(
 
     // If budget is provided, set/override thinking config
     if let Some(budget) = hint.budget_tokens {
+        let existing_effort = request
+            .thinking
+            .as_ref()
+            .and_then(|t| t.effort.clone())
+            .or_else(|| hint.level.clone());
         request.thinking = Some(crate::proxy::mappers::claude::models::ThinkingConfig {
             type_: "enabled".to_string(),
             budget_tokens: Some(budget),
-            effort: None,
+            effort: existing_effort,
         });
         tracing::debug!(
             "[{}] Applied thinking hint: budget_tokens={}",

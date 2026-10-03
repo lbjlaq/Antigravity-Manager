@@ -296,6 +296,28 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         tags: ['opus', 'thinking'],
     },
 
+    // Claude 5.5 系列
+    'claude-sonnet-5-5': {
+        label: 'Claude Sonnet 5.5',
+        shortLabel: 'Sonnet 5.5',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+        i18nKey: 'proxy.model.claude_sonnet',
+        i18nDescKey: 'proxy.model.claude_sonnet',
+        group: 'Claude',
+        tags: ['sonnet', 'thinking'],
+    },
+    'claude-opus-5-5': {
+        label: 'Claude Opus 5.5',
+        shortLabel: 'Opus 5.5',
+        protectedKey: 'claude',
+        Icon: Claude.Color,
+        i18nKey: 'proxy.model.claude_opus',
+        i18nDescKey: 'proxy.model.claude_opus',
+        group: 'Claude',
+        tags: ['opus', 'thinking'],
+    },
+
     // OpenAI / Outros modelos
     'gpt-oss-120b-medium': {
         label: 'GPT-OSS 120B (Medium)',

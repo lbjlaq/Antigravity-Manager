@@ -25,6 +25,13 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("claude-sonnet-4-6-thinking", "claude-sonnet-4-6-thinking");
     m.insert("claude-opus-4-6", "claude-opus-4-6-thinking");
     m.insert("claude-opus-4-6-thinking", "claude-opus-4-6-thinking");
+    // ── Claude 5.5 tier variants — passthrough (bare aliases handled by resolve_bare_claude55_route) ──
+    m.insert("claude-sonnet-5-5-low", "claude-sonnet-5-5-low");
+    m.insert("claude-sonnet-5-5-medium", "claude-sonnet-5-5-medium");
+    m.insert("claude-sonnet-5-5-high", "claude-sonnet-5-5-high");
+    m.insert("claude-opus-5-5-low", "claude-opus-5-5-low");
+    m.insert("claude-opus-5-5-medium", "claude-opus-5-5-medium");
+    m.insert("claude-opus-5-5-high", "claude-opus-5-5-high");
     // 兼容历史老旧 Claude 模型重定向至 4.6
     m.insert("claude-sonnet-4-5", "claude-sonnet-4-6");
     m.insert("claude-sonnet-4-5-thinking", "claude-sonnet-4-6-thinking");
@@ -463,6 +470,15 @@ pub fn get_supported_models() -> Vec<String> {
         "claude-sonnet-4-6-thinking",
         "claude-opus-4-6",
         "claude-opus-4-6-thinking",
+        // Claude 5.5 系列 (裸模型 + 档位变体)
+        "claude-sonnet-5-5",
+        "claude-sonnet-5-5-low",
+        "claude-sonnet-5-5-medium",
+        "claude-sonnet-5-5-high",
+        "claude-opus-5-5",
+        "claude-opus-5-5-low",
+        "claude-opus-5-5-medium",
+        "claude-opus-5-5-high",
         // OpenAI 系列 (以官方为准)
         "gpt-oss-120b-medium",
     ]
@@ -695,6 +711,21 @@ pub fn resolve_model_route_with_effort(
     {
         crate::modules::logger::log_info(&format!(
             "[Router] 3.x Flash 裸模型依据思考档位路由: {} (effort={:?}) -> {}",
+            original_model, client_effort, routed
+        ));
+        return routed;
+    }
+
+    // [NEW] Claude 5.5 裸模型依据客户端思考档位路由：
+    // - low: 直接路由至对应的 claude-*-5-5-low
+    // - high: 直接路由至对应的 claude-*-5-5-high
+    // - medium（或未传档位）：默认路由至对应的 claude-*-5-5-medium
+    // 而显式指定了档位后缀的模型已被前置规则/CLAUDE_TO_GEMINI 原样保留
+    if let Some(routed) =
+        crate::proxy::model_specs::resolve_bare_claude55_route(original_model, client_effort)
+    {
+        crate::modules::logger::log_info(&format!(
+            "[Router] Claude 5.5 裸模型依据思考档位路由: {} (effort={:?}) -> {}",
             original_model, client_effort, routed
         ));
         return routed;
@@ -1223,5 +1254,74 @@ mod tests {
         assert!(!is_model_compliant_with_baseline("chat_23310"));
         assert!(!is_model_compliant_with_baseline("gemini-pro-agent"));
         assert!(!is_model_compliant_with_baseline("gemini-3-flash-agent"));
+    }
+
+    #[test]
+    fn test_claude_55_bare_routing() {
+        let empty = HashMap::new();
+
+        // 1. Bare alias with explicit effort
+        assert_eq!(
+            resolve_model_route_with_effort("claude-sonnet-5-5", &empty, Some("low")),
+            "claude-sonnet-5-5-low"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-sonnet-5-5", &empty, Some("high")),
+            "claude-sonnet-5-5-high"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-opus-5-5", &empty, Some("low")),
+            "claude-opus-5-5-low"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-opus-5-5", &empty, Some("high")),
+            "claude-opus-5-5-high"
+        );
+
+        // 2. Bare alias without effort -> default medium
+        assert_eq!(
+            resolve_model_route_with_effort("claude-sonnet-5-5", &empty, None),
+            "claude-sonnet-5-5-medium"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-opus-5-5", &empty, None),
+            "claude-opus-5-5-medium"
+        );
+
+        // 3. Explicit tier variant passthrough (not affected by bare routing)
+        assert_eq!(
+            resolve_model_route_with_effort("claude-sonnet-5-5-low", &empty, None),
+            "claude-sonnet-5-5-low"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-sonnet-5-5-medium", &empty, None),
+            "claude-sonnet-5-5-medium"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-sonnet-5-5-high", &empty, None),
+            "claude-sonnet-5-5-high"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-opus-5-5-low", &empty, None),
+            "claude-opus-5-5-low"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-opus-5-5-medium", &empty, None),
+            "claude-opus-5-5-medium"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-opus-5-5-high", &empty, None),
+            "claude-opus-5-5-high"
+        );
+
+        // 4. Baseline compliance
+        assert!(is_model_compliant_with_baseline("claude-sonnet-5-5"));
+        assert!(is_model_compliant_with_baseline("claude-sonnet-5-5-low"));
+        assert!(is_model_compliant_with_baseline("claude-sonnet-5-5-medium"));
+        assert!(is_model_compliant_with_baseline("claude-sonnet-5-5-high"));
+        assert!(is_model_compliant_with_baseline("claude-opus-5-5"));
+        assert!(is_model_compliant_with_baseline("claude-opus-5-5-low"));
+        assert!(is_model_compliant_with_baseline("claude-opus-5-5-medium"));
+        assert!(is_model_compliant_with_baseline("claude-opus-5-5-high"));
     }
 }

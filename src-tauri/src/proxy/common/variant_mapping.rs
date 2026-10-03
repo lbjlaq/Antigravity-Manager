@@ -164,6 +164,26 @@ pub fn resolve_non_variant_model(model: &str) -> Option<RealModelSpec> {
     if matches!(key.as_str(), "claude-opus-4-6-thinking" | "claude-opus-4-6") {
         return Some(SPEC_CLAUDE_OPUS_46);
     }
+    // Claude 5.5 Sonnet tier IDs — passthrough specs (id == exact upstream id)
+    if key == "claude-sonnet-5-5-low" {
+        return Some(SPEC_CLAUDE_SONNET_55_LOW);
+    }
+    if key == "claude-sonnet-5-5-medium" {
+        return Some(SPEC_CLAUDE_SONNET_55_MEDIUM);
+    }
+    if key == "claude-sonnet-5-5-high" {
+        return Some(SPEC_CLAUDE_SONNET_55_HIGH);
+    }
+    // Claude 5.5 Opus tier IDs — passthrough specs (id == exact upstream id)
+    if key == "claude-opus-5-5-low" {
+        return Some(SPEC_CLAUDE_OPUS_55_LOW);
+    }
+    if key == "claude-opus-5-5-medium" {
+        return Some(SPEC_CLAUDE_OPUS_55_MEDIUM);
+    }
+    if key == "claude-opus-5-5-high" {
+        return Some(SPEC_CLAUDE_OPUS_55_HIGH);
+    }
     if key == "gpt-oss-120b-medium" {
         return Some(SPEC_GPT_OSS_120B);
     }
@@ -367,6 +387,50 @@ const SPEC_CLAUDE_OPUS_46: RealModelSpec = RealModelSpec {
     id: "claude-opus-4-6-thinking",
     thinking_budget: 1024,
     max_output_tokens: 64000,
+    include_thoughts: true,
+    preserve_client_budget: true,
+};
+// Claude 5.5 Sonnet — preserve_client_budget=true so client budget is respected
+const SPEC_CLAUDE_SONNET_55_LOW: RealModelSpec = RealModelSpec {
+    id: "claude-sonnet-5-5-low",
+    thinking_budget: 1024,
+    max_output_tokens: 128000,
+    include_thoughts: true,
+    preserve_client_budget: true,
+};
+const SPEC_CLAUDE_SONNET_55_MEDIUM: RealModelSpec = RealModelSpec {
+    id: "claude-sonnet-5-5-medium",
+    thinking_budget: 1024,
+    max_output_tokens: 128000,
+    include_thoughts: true,
+    preserve_client_budget: true,
+};
+const SPEC_CLAUDE_SONNET_55_HIGH: RealModelSpec = RealModelSpec {
+    id: "claude-sonnet-5-5-high",
+    thinking_budget: 1024,
+    max_output_tokens: 128000,
+    include_thoughts: true,
+    preserve_client_budget: true,
+};
+// Claude 5.5 Opus — preserve_client_budget=true so client budget is respected
+const SPEC_CLAUDE_OPUS_55_LOW: RealModelSpec = RealModelSpec {
+    id: "claude-opus-5-5-low",
+    thinking_budget: 1024,
+    max_output_tokens: 128000,
+    include_thoughts: true,
+    preserve_client_budget: true,
+};
+const SPEC_CLAUDE_OPUS_55_MEDIUM: RealModelSpec = RealModelSpec {
+    id: "claude-opus-5-5-medium",
+    thinking_budget: 1024,
+    max_output_tokens: 128000,
+    include_thoughts: true,
+    preserve_client_budget: true,
+};
+const SPEC_CLAUDE_OPUS_55_HIGH: RealModelSpec = RealModelSpec {
+    id: "claude-opus-5-5-high",
+    thinking_budget: 1024,
+    max_output_tokens: 128000,
     include_thoughts: true,
     preserve_client_budget: true,
 };
@@ -704,6 +768,28 @@ mod tests {
         assert_eq!(s.id, "claude-sonnet-4-6");
         assert_eq!(s.thinking_budget, 1024);
         assert_eq!(s.max_output_tokens, 64000);
+
+        // Claude 5.5 Sonnet tiers
+        let s = resolve("claude-sonnet-5-5-low", None).unwrap();
+        assert_eq!(s.id, "claude-sonnet-5-5-low");
+        assert_eq!(s.max_output_tokens, 128000);
+        let s = resolve("claude-sonnet-5-5-medium", None).unwrap();
+        assert_eq!(s.id, "claude-sonnet-5-5-medium");
+        assert_eq!(s.max_output_tokens, 128000);
+        let s = resolve("claude-sonnet-5-5-high", None).unwrap();
+        assert_eq!(s.id, "claude-sonnet-5-5-high");
+        assert_eq!(s.max_output_tokens, 128000);
+
+        // Claude 5.5 Opus tiers
+        let s = resolve("claude-opus-5-5-low", None).unwrap();
+        assert_eq!(s.id, "claude-opus-5-5-low");
+        assert_eq!(s.max_output_tokens, 128000);
+        let s = resolve("claude-opus-5-5-medium", None).unwrap();
+        assert_eq!(s.id, "claude-opus-5-5-medium");
+        assert_eq!(s.max_output_tokens, 128000);
+        let s = resolve("claude-opus-5-5-high", None).unwrap();
+        assert_eq!(s.id, "claude-opus-5-5-high");
+        assert_eq!(s.max_output_tokens, 128000);
     }
 
     #[test]

@@ -1939,6 +1939,52 @@ impl TokenManager {
 
         // [NEW] 1. 动态能力过滤 (Capability Filter)
 
+        // 针对 Claude 5.5 系列模型（Google 官方仅向 PRO / ULTRA 订阅开放，Free 账号绝无权限）：
+        let is_claude_55 = target_model.to_lowercase().contains("claude")
+            && (target_model.contains("5-5") || target_model.contains("5.5"));
+        if is_claude_55 {
+            let before_tier = tokens_snapshot.len();
+            // Step A: 只保留 PRO / ULTRA 账号
+            tokens_snapshot.retain(|t| {
+                matches!(
+                    t.subscription_tier
+                        .as_deref()
+                        .map(str::to_uppercase)
+                        .as_deref(),
+                    Some("PRO") | Some("ULTRA")
+                )
+            });
+            if tokens_snapshot.is_empty() {
+                if before_tier > 0 {
+                    tracing::warn!(
+                        "Claude 5.5 requires PRO or ULTRA subscription, but no PRO/ULTRA accounts available in pool"
+                    );
+                    return Err(
+                        "Claude 5.5 requires PRO or ULTRA subscription, but no PRO/ULTRA accounts are available"
+                            .to_string(),
+                    );
+                }
+                return Err("Token pool is empty".to_string());
+            }
+
+            // Step B: 记录哪些 PRO/ULTRA 账号实际拥有 5.5 catalog 条目（用于调试）
+            // 注意：不在此处硬过滤，因为其他 PRO 账号可能也可以使用 5.5（只是 catalog 还未刷新）
+            // 排序器（下方）会将拥有 5.5 model_limits 条目的账号排在更高优先级
+            let has_55_catalog_count = tokens_snapshot
+                .iter()
+                .filter(|t| {
+                    t.model_limits
+                        .keys()
+                        .any(|k| k.contains("5-5") || k.contains("5.5"))
+                })
+                .count();
+            tracing::debug!(
+                "Claude 5.5: {}/{} PRO/ULTRA accounts have 5.5 in model_limits catalog",
+                has_55_catalog_count,
+                tokens_snapshot.len()
+            );
+        }
+
         // 归一化目标模型名为标准 ID
         let normalized_target =
             crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
@@ -1987,6 +2033,15 @@ impl TokenManager {
                 tier_priority(&a.subscription_tier).cmp(&tier_priority(&b.subscription_tier));
             if tier_cmp != std::cmp::Ordering::Equal {
                 return tier_cmp;
+            }
+
+            // 对于 Claude 5.5，如果账号实际在配额中包含该模型（如刚刷新过目录），具有更高优先级
+            if is_claude_55 {
+                let has_model_a = a.model_limits.contains_key(target_model);
+                let has_model_b = b.model_limits.contains_key(target_model);
+                if has_model_a != has_model_b {
+                    return has_model_b.cmp(&has_model_a);
+                }
             }
 
             // Priority 1: 目标模型的 quota (higher is better) -> 保护低配额账号
