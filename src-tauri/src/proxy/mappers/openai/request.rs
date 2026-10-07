@@ -639,18 +639,13 @@ pub fn transform_openai_request_with_session(
                     }
                     */
 
-                    let mut args_str = String::new();
-                    let mut func_name = String::new();
-
-                    if let Some(func) = &tc.function {
-                        args_str = func.arguments.clone();
-                        func_name = func.name.clone();
+                    let (func_name, args_str) = if let Some(func) = &tc.function {
+                        (func.name.clone(), func.arguments.clone())
                     } else if let Some(op) = &tc.operation {
-                        func_name = "apply_patch".to_string();
-                        args_str = serde_json::to_string(op).unwrap_or_else(|_| "{}".to_string());
+                        ("apply_patch".to_string(), serde_json::to_string(op).unwrap_or_else(|_| "{}".to_string()))
                     } else {
                         continue;
-                    }
+                    };
 
                     let mut args = serde_json::from_str::<Value>(&args_str).unwrap_or(json!({}));
 
@@ -1003,7 +998,10 @@ pub fn transform_openai_request_with_session(
 
     // [FIX] Cap maxOutputTokens to prevent 400 Invalid Argument
     if let Some(val) = gen_config["maxOutputTokens"].as_i64() {
-        let safe_limit = if mapped_model_lower.contains("claude") {
+        let safe_limit = if mapped_model_lower.contains("5-5") || mapped_model_lower.contains("5.5")
+        {
+            128000
+        } else if mapped_model_lower.contains("claude") {
             64000
         } else if mapped_model_lower.contains("pro") {
             65535

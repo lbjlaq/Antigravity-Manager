@@ -168,10 +168,80 @@ where
     deserializer.deserialize_any(Visitor)
 }
 
+/// 官方已知的分档后缀标识符
+pub const KNOWN_TIER_SUFFIXES: &[&str] = &[
+    "tiered",
+    "max",
+    "xhigh",
+    "high",
+    "medium",
+    "default",
+    "low",
+    "extra-low",
+    "lite",
+];
+
 /// 官方模型目录管理器（支持动态解析与运行时增量更新）
 pub struct OfficialModelCatalog;
 
 impl OfficialModelCatalog {
+    /// 从官方模型目录中动态收集属于指定 base 模型的所有可用档位后缀（如 ["tiered", "high", "medium", "low"]）
+    pub fn collect_tiers_for_base(base: &str) -> Vec<String> {
+        let base_lower = base.trim().to_lowercase();
+        let mut found = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // 不完整的大版本基准（如 claude-opus-5、claude-sonnet-5、claude-3-opus）缺少次版本，不是完整档位基准
+        if base_lower.starts_with("claude-") {
+            let parts: Vec<&str> = base_lower.split('-').collect();
+            if (parts.len() == 3 && parts[2].chars().all(|c| c.is_ascii_digit()))
+                || (parts.len() == 3 && parts[1].chars().all(|c| c.is_ascii_digit()))
+            {
+                return found;
+            }
+        }
+
+        // 1. 探测已知标准档位标识符（支持别名解析与映射匹配）
+        for tier in KNOWN_TIER_SUFFIXES {
+            let candidate = format!("{}-{}", base_lower, tier);
+            if Self::get(&candidate).is_some() {
+                if seen.insert(tier.to_string()) {
+                    found.push(tier.to_string());
+                }
+            }
+        }
+
+        // 2. 动态扫描目录中任意以 `{base}-` 开头的新型档位
+        if let Ok(lock) = DYNAMIC_CATALOG.read() {
+            let prefix = format!("{}-", base_lower);
+            for key in lock.keys() {
+                let k_lower = key.to_lowercase();
+                if let Some(suffix) = k_lower.strip_prefix(&prefix) {
+                    let s = suffix.trim();
+                    if !s.is_empty()
+                        && !s.contains('@')
+                        && !s.contains('/')
+                        && !s.contains(':')
+                        && !s.chars().any(|c| c.is_ascii_digit())
+                        && s.chars().all(|c| c.is_ascii_alphabetic() || c == '-')
+                        && !s.starts_with('-')
+                        && !s.ends_with('-')
+                        && s != "thinking"
+                        && s != "image"
+                        && s != "preview"
+                        && s != "exp"
+                    {
+                        if seen.insert(s.to_string()) {
+                            found.push(s.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        found
+    }
+
     /// 运行时动态更新官方模型目录 (由 fetchAvailableModels 接口返回数据触发)
     pub fn update(models: HashMap<String, OfficialModelInfo>) {
         if let Ok(mut lock) = DYNAMIC_CATALOG.write() {
@@ -269,6 +339,7 @@ mod tests {
     #[test]
     fn flexible_string_accepts_string_number_and_null() {
         #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
         struct Sample {
             #[serde(default, deserialize_with = "de_flexible_string")]
             thinking_level: Option<String>,
@@ -286,5 +357,36 @@ mod tests {
 
         let missing: Sample = serde_json::from_str("{}").expect("missing");
         assert!(missing.thinking_level.is_none());
+    }
+
+    #[test]
+    fn collect_tiers_for_base_rejects_digit_suffixes() {
+        let tiers_for_incomplete_base =
+            OfficialModelCatalog::collect_tiers_for_base("claude-opus-5");
+        // "claude-opus-5" 绝不能将 "claude-opus-5-5-medium" 截取出的 "5-medium" 当成合法档位！
+        assert!(
+            !tiers_for_incomplete_base.contains(&"5-medium".to_string()),
+            "Incomplete base claude-opus-5 must not extract 5-medium as a tier: {:?}",
+            tiers_for_incomplete_base
+        );
+        assert!(
+            tiers_for_incomplete_base.is_empty(),
+            "claude-opus-5 should have no tiers, got: {:?}",
+            tiers_for_incomplete_base
+        );
+
+        let tiers_for_full_base = OfficialModelCatalog::collect_tiers_for_base("claude-opus-5-5");
+        assert!(
+            tiers_for_full_base.contains(&"medium".to_string()),
+            "claude-opus-5-5 must contain medium tier"
+        );
+        assert!(
+            tiers_for_full_base.contains(&"low".to_string()),
+            "claude-opus-5-5 must contain low tier"
+        );
+        assert!(
+            tiers_for_full_base.contains(&"high".to_string()),
+            "claude-opus-5-5 must contain high tier"
+        );
     }
 }

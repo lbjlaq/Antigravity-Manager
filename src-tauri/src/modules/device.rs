@@ -44,13 +44,9 @@ pub fn get_storage_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
 
     let folder_names: &[&str] = if target_ide == Some("ide") {
         &["Antigravity IDE"]
-    } else if target_ide == Some("code") || target_ide == Some("cursor") {
-        &["Antigravity"]
-    } else if target_ide == Some("classic") {
-        &["Antigravity"]
     } else {
-        // target_ide = None: 优先查找 Antigravity 经典版，回退查找 Antigravity IDE
-        &["Antigravity", "Antigravity IDE"]
+        // target_ide = None 或 classic / code / cursor: 严格使用 Antigravity，严禁回退至 Antigravity IDE
+        &["Antigravity"]
     };
 
     // 3) Standard installation location
@@ -108,6 +104,7 @@ pub fn get_storage_dir() -> Result<PathBuf, String> {
 }
 
 /// Get state.vscdb path (same directory as storage.json)
+#[allow(dead_code)]
 pub fn get_state_db_path() -> Result<PathBuf, String> {
     let dir = get_storage_dir()?;
     Ok(dir.join("state.vscdb"))
@@ -234,7 +231,7 @@ pub fn write_profile(storage_path: &Path, profile: &DeviceProfile) -> Result<(),
     logger::log_info(&format!("device_profile_written to {:?}", storage_path));
 
     // Sync ItemTable.storage.serviceMachineId in state.vscdb
-    let _ = sync_state_service_machine_id_value(&profile.dev_device_id);
+    let _ = sync_state_service_machine_id_value(storage_path, &profile.dev_device_id);
     Ok(())
 }
 
@@ -257,7 +254,7 @@ pub fn sync_service_machine_id(storage_path: &Path, service_id: &str) -> Result<
     fs::write(storage_path, updated).map_err(|e| format!("write_failed: {}", e))?;
     logger::log_info("service_machine_id_synced");
 
-    let _ = sync_state_service_machine_id_value(service_id);
+    let _ = sync_state_service_machine_id_value(storage_path, service_id);
     Ok(())
 }
 
@@ -310,11 +307,23 @@ pub fn sync_service_machine_id_from_storage(storage_path: &Path) -> Result<(), S
         logger::log_info("service_machine_id_added");
     }
 
-    sync_state_service_machine_id_value(&service_id)
+    sync_state_service_machine_id_value(storage_path, &service_id)
 }
 
-fn sync_state_service_machine_id_value(service_id: &str) -> Result<(), String> {
-    let db_path = get_state_db_path()?;
+/// state.vscdb 与目标客户端的 storage.json 同目录；必须从调用方的 storage_path 推导，
+/// 不能走默认经典版路径，否则切换 IDE 账号时会把指纹写进经典版数据库
+fn state_db_path_for(storage_path: &Path) -> Result<PathBuf, String> {
+    storage_path
+        .parent()
+        .map(|dir| dir.join("state.vscdb"))
+        .ok_or_else(|| "failed_to_get_storage_parent_dir".to_string())
+}
+
+fn sync_state_service_machine_id_value(
+    storage_path: &Path,
+    service_id: &str,
+) -> Result<(), String> {
+    let db_path = state_db_path_for(storage_path)?;
     if !db_path.exists() {
         logger::log_warn(&format!("state_db_missing: {:?}", db_path));
         return Ok(());
@@ -439,4 +448,36 @@ fn new_standard_machine_id() -> String {
         }
     }
     id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_profile_syncs_state_db_next_to_target_storage() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage_path = tmp.path().join("storage.json");
+        fs::write(&storage_path, "{}").unwrap();
+        let db_path = tmp.path().join("state.vscdb");
+        Connection::open(&db_path).unwrap();
+
+        let profile = DeviceProfile {
+            machine_id: "machine".to_string(),
+            mac_machine_id: "mac".to_string(),
+            dev_device_id: "dev-device-under-test".to_string(),
+            sqm_id: "sqm".to_string(),
+        };
+        write_profile(&storage_path, &profile).unwrap();
+
+        let stored: String = Connection::open(&db_path)
+            .unwrap()
+            .query_row(
+                "SELECT value FROM ItemTable WHERE key = 'storage.serviceMachineId'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "dev-device-under-test");
+    }
 }

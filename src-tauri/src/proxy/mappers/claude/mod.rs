@@ -75,17 +75,15 @@ where
                         Ok(chunk) => {
                             buffer.extend_from_slice(&chunk);
 
-                            // Process complete lines
                             while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
                                 let line_raw = buffer.split_to(pos + 1);
-                                if let Ok(line_str) = std::str::from_utf8(&line_raw) {
-                                    let line = line_str.trim();
-                                    if line.is_empty() { continue; }
+                                let line_str = String::from_utf8_lossy(&line_raw);
+                                let line = line_str.trim();
+                                if line.is_empty() { continue; }
 
-                                    if let Some(sse_chunks) = process_sse_line(line, &mut state, &trace_id, &email) {
-                                        for sse_chunk in sse_chunks {
-                                            yield Ok(sse_chunk);
-                                        }
+                                if let Some(sse_chunks) = process_sse_line(line, &mut state, &trace_id, &email) {
+                                    for sse_chunk in sse_chunks {
+                                        yield Ok(sse_chunk);
                                     }
                                 }
                             }
@@ -170,14 +168,13 @@ where
         // [FIX #1732] Mandatory Flush remaining buffer on stream termination
         // Prevents hangs when the last SSE chunk doesn't end with a newline (network fragmentation)
         if !buffer.is_empty() {
-             if let Ok(line_str) = std::str::from_utf8(&buffer) {
-                 let line = line_str.trim();
-                 if !line.is_empty() {
-                     tracing::debug!("[{}] SSE Termination: Flushing remaining {} bytes in buffer", trace_id, buffer.len());
-                     if let Some(sse_chunks) = process_sse_line(line, &mut state, &trace_id, &email) {
-                         for sse_chunk in sse_chunks {
-                             yield Ok(sse_chunk);
-                         }
+             let line_str = String::from_utf8_lossy(&buffer);
+             let line = line_str.trim();
+             if !line.is_empty() {
+                 tracing::debug!("[{}] SSE Termination: Flushing remaining {} bytes in buffer", trace_id, buffer.len());
+                 if let Some(sse_chunks) = process_sse_line(line, &mut state, &trace_id, &email) {
+                     for sse_chunk in sse_chunks {
+                         yield Ok(sse_chunk);
                      }
                  }
              }

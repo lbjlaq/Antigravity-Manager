@@ -361,6 +361,10 @@ pub struct ExperimentalConfig {
     /// Cowork 自动响应式压缩触发阈值 (默认 200,000 Tokens)
     #[serde(default = "default_cowork_compact_threshold")]
     pub cowork_compact_threshold: u32,
+
+    /// 启用 Claude Cowork 手动深度归档协议支持 (高危选项，默认 false)
+    #[serde(default = "default_false")]
+    pub enable_cowork_manual_compact: bool,
 }
 
 impl Default for ExperimentalConfig {
@@ -377,6 +381,7 @@ impl Default for ExperimentalConfig {
             thinking_max_memory_turns: default_thinking_max_memory_turns(),
             enable_cowork_auto_compact: false,
             cowork_compact_threshold: default_cowork_compact_threshold(),
+            enable_cowork_manual_compact: false,
         }
     }
 }
@@ -513,40 +518,40 @@ fn default_thinking_budget_mode() -> ThinkingBudgetMode {
 }
 
 fn default_flash_low() -> i32 {
-    1000
+    -1
 }
 fn default_flash_medium() -> i32 {
-    4000
+    -1
 }
 fn default_flash_high() -> i32 {
     -1
 }
 
 fn default_custom_high() -> i32 {
-    16384
+    -1
 }
 fn default_flash_tiered() -> i32 {
     -1
 }
 
 fn default_pro_low() -> i32 {
-    1001
+    -1
 }
 fn default_pro_high() -> i32 {
-    10001
+    -1
 }
 
 fn default_claude_budget() -> i32 {
-    0 // 0 = 使用官方模型结构体的 thinking_budget 默认值，不强制设置
+    -1 // -1 = 采用官方默认的档位预算
 }
 fn default_claude_low() -> i32 {
-    1024
+    -1
 }
 fn default_claude_medium() -> i32 {
-    4096
+    -1
 }
 fn default_claude_high() -> i32 {
-    16384
+    -1
 }
 
 impl Default for ThinkingBudgetConfig {
@@ -970,12 +975,7 @@ pub struct UpstreamProxyConfig {
 }
 
 pub fn default_custom_mapping() -> std::collections::HashMap<String, String> {
-    let mut m = std::collections::HashMap::new();
-    m.insert(
-        "gemini-3.x-flash".to_string(),
-        "3.x-flash-tiered".to_string(),
-    );
-    m
+    std::collections::HashMap::new()
 }
 
 impl Default for ProxyConfig {

@@ -54,16 +54,35 @@ pub(crate) mod prompt_log_tests {
     }
 
     // Tests using ABV_DATA_DIR run serially and restore the previous process setting.
+    // Unified with crate::modules::account::SHARED_TEST_ENV_LOCK to prevent split-brain mutex race.
+    thread_local! {
+        static REENTRANCY_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
     pub(crate) struct TestDataDir {
+        _guard: Option<std::sync::MutexGuard<'static, ()>>,
         _dir: tempfile::TempDir,
         previous: Option<std::ffi::OsString>,
     }
     impl TestDataDir {
         pub(crate) fn new() -> Self {
+            let depth = REENTRANCY_DEPTH.get();
+            let guard = if depth == 0 {
+                Some(
+                    crate::modules::account::SHARED_TEST_ENV_LOCK
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner()),
+                )
+            } else {
+                None
+            };
+            REENTRANCY_DEPTH.set(depth + 1);
+
             let dir = tempfile::tempdir().unwrap();
             let previous = std::env::var_os("ABV_DATA_DIR");
             std::env::set_var("ABV_DATA_DIR", dir.path());
             Self {
+                _guard: guard,
                 _dir: dir,
                 previous,
             }
@@ -75,6 +94,10 @@ pub(crate) mod prompt_log_tests {
                 std::env::set_var("ABV_DATA_DIR", previous);
             } else {
                 std::env::remove_var("ABV_DATA_DIR");
+            }
+            let depth = REENTRANCY_DEPTH.get();
+            if depth > 0 {
+                REENTRANCY_DEPTH.set(depth - 1);
             }
         }
     }

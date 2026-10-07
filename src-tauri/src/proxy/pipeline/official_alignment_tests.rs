@@ -277,6 +277,23 @@ mod tests {
         assert!(gpt.is_non_gemini());
         assert_eq!(gpt.max_output_tokens, Some(32768));
 
+        // 6.1 Claude 5.5 系列官方模型权威元数据测试 (Sonnet & Opus 5.5)
+        let sonnet55 = OfficialModelCatalog::get("claude-sonnet-5-5-high").unwrap();
+        assert_eq!(sonnet55.model, "MODEL_PLACEHOLDER_M405");
+        assert!(sonnet55.is_claude());
+        assert!(sonnet55.is_non_gemini());
+        assert_eq!(sonnet55.max_output_tokens, Some(128000));
+        assert_eq!(sonnet55.max_tokens, Some(1000000));
+        assert_eq!(sonnet55.thinking_level.as_deref(), Some("3"));
+
+        let opus55 = OfficialModelCatalog::get("claude-opus-5-5-low").unwrap();
+        assert_eq!(opus55.model, "MODEL_PLACEHOLDER_M400");
+        assert!(opus55.is_claude());
+        assert!(opus55.is_non_gemini());
+        assert_eq!(opus55.max_output_tokens, Some(128000));
+        assert_eq!(opus55.max_tokens, Some(1000000));
+        assert_eq!(opus55.thinking_level.as_deref(), Some("1"));
+
         // 大小写不同的精确名仍然命中同一条
         let g38_case = OfficialModelCatalog::get("Gemini-3.8-Flash-High").unwrap();
         assert_eq!(g38_case.model, "MODEL_PLACEHOLDER_M318");
@@ -395,7 +412,7 @@ mod tests {
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.8-flash", &empty_mapping, None),
-            "gemini-3.8-flash-high"
+            "gemini-3.8-flash-tiered"
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.8-flash", &empty_mapping, Some("low")),
@@ -413,7 +430,7 @@ mod tests {
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.7-flash", &empty_mapping, None),
-            "gemini-3.7-flash-high"
+            "gemini-3.7-flash-tiered"
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.6-flash", &empty_mapping, Some("medium")),
@@ -442,10 +459,12 @@ mod tests {
     #[test]
     fn test_bare_flash_and_tiered_budget_resolution() {
         use crate::proxy::config::{
-            ThinkingBudgetConfig, ThinkingBudgetMode, ThinkingControlSource,
+            ThinkingBudgetConfig, ThinkingBudgetMode, ThinkingControlSource, TEST_CONFIG_LOCK,
         };
         use crate::proxy::model_specs::resolve_custom_budget;
         use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
+
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
 
         let mut tb_default = ThinkingBudgetConfig::default();
         tb_default.control_source = ThinkingControlSource::Gateway;
@@ -527,6 +546,58 @@ mod tests {
             Some(-1)
         );
 
+        // 5.1 具名后缀绝对优先级测试：
+        // 即使用户/客户端传入了 client_effort = "high"，具名模型 gemini-3.8-flash-medium 也必须返回 medium (4000) 或用户配的 medium！
+        assert_eq!(
+            resolve_custom_budget(
+                "gemini-3.8-flash-medium",
+                Some("high"),
+                None,
+                &tb_default,
+                None
+            ),
+            Some(4000)
+        );
+        assert_eq!(
+            resolve_custom_budget(
+                "gemini-3.8-flash-low",
+                Some("high"),
+                None,
+                &tb_default,
+                None
+            ),
+            Some(1000)
+        );
+
+        // 5.2 具名模型的 Default 模式回退测试：
+        // 当 flash_mode 为 Default 时，resolve_custom_budget 必须返回 None，以便回落至官方模型目录
+        let mut tb_system_default = tb_default.clone();
+        tb_system_default.flash_mode = ThinkingBudgetMode::Default;
+        assert_eq!(
+            resolve_custom_budget(
+                "gemini-3.8-flash-medium",
+                None,
+                None,
+                &tb_system_default,
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_custom_budget("gemini-3.8-flash-low", None, None, &tb_system_default, None),
+            None
+        );
+        assert_eq!(
+            resolve_custom_budget(
+                "gemini-3.8-flash-high",
+                None,
+                None,
+                &tb_system_default,
+                None
+            ),
+            None
+        );
+
         // 6. Inbound pipeline 配置测试：-1 预算正确注入且 maxOutputTokens 不被截断
         let mut gc = json!({});
         InboundThinkingPipeline::configure_inbound_thinking(
@@ -539,5 +610,236 @@ mod tests {
         );
         assert_eq!(gc["thinkingConfig"]["thinkingBudget"], -1);
         assert_eq!(gc["thinkingConfig"]["includeThoughts"], true);
+    }
+
+    #[test]
+    fn test_thinking_budget_invariant_scaled_down_when_output_capped() {
+        use crate::proxy::config::{
+            update_thinking_budget_config, ThinkingBudgetConfig, ThinkingControlSource,
+            TEST_CONFIG_LOCK,
+        };
+        use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
+
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
+        let mut config = ThinkingBudgetConfig::default();
+        config.control_source = ThinkingControlSource::Client;
+        update_thinking_budget_config(config);
+
+        struct ResetGuard;
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                crate::proxy::config::update_thinking_budget_config(ThinkingBudgetConfig::default());
+            }
+        }
+        let _guard = ResetGuard;
+
+        // 模拟客户端传入超大思考预算（与输出上限相等，如 Claude 64000）
+        let mut gc = json!({
+            "maxOutputTokens": 64000
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "claude-sonnet-4-6",
+            &mut gc,
+            ClientThinkingSwitch::Enabled,
+            None,
+            Some(64000),
+            None,
+        );
+
+        let max_tokens = gc["maxOutputTokens"].as_i64().unwrap();
+        let budget = gc["thinkingConfig"]["thinkingBudget"].as_i64().unwrap();
+
+        // 严格断言满足 Google v1internal 铁律：maxOutputTokens > thinkingBudget
+        assert!(max_tokens > budget);
+        assert_eq!(max_tokens, 64000);
+        assert_eq!(budget, 62976);
+
+        // 验证 Gemini Wrapper 层在模型限额截断时的联动缩减
+        let body = json!({
+            "model": "claude-sonnet-4-6",
+            "generationConfig": {
+                "maxOutputTokens": 70000,
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 65000
+                }
+            }
+        });
+        let wrapped = crate::proxy::mappers::gemini::wrapper::wrap_request(
+            &body,
+            "test-proj",
+            "claude-sonnet-4-6",
+            None,
+            None,
+            None,
+        );
+        let wrapped_gc = &wrapped["request"]["generationConfig"];
+        let wrapped_max = wrapped_gc["maxOutputTokens"].as_u64().unwrap();
+        let wrapped_budget = wrapped_gc["thinkingConfig"]["thinkingBudget"]
+            .as_u64()
+            .unwrap();
+        assert!(wrapped_max > wrapped_budget);
+        assert_eq!(wrapped_max, 64000);
+        assert_eq!(wrapped_budget, 62976);
+    }
+
+    #[test]
+    fn test_thinking_budget_preserved_when_official_capacity_allows() {
+        use crate::proxy::config::{
+            update_thinking_budget_config, ThinkingBudgetConfig, ThinkingControlSource,
+            TEST_CONFIG_LOCK,
+        };
+        use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
+
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
+        let mut config = ThinkingBudgetConfig::default();
+        config.control_source = ThinkingControlSource::Client;
+        update_thinking_budget_config(config);
+
+        struct ResetGuard;
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                crate::proxy::config::update_thinking_budget_config(ThinkingBudgetConfig::default());
+            }
+        }
+        let _guard = ResetGuard;
+
+        // 核心场景：客户端传了较小的 maxOutputTokens (如 4096)，但指定了高思考预算 (如 16384)
+        // 目标模型是 Claude 4.6 (官方物理容量 64,000，完全可以包住 16,384)
+        let mut gc = json!({
+            "maxOutputTokens": 4096
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "claude-sonnet-4-6",
+            &mut gc,
+            ClientThinkingSwitch::Enabled,
+            None,
+            Some(16384),
+            None,
+        );
+
+        let max_tokens = gc["maxOutputTokens"].as_i64().unwrap();
+        let budget = gc["thinkingConfig"]["thinkingBudget"].as_i64().unwrap();
+
+        // 验证：用户的思考预算 16384 被 100% 完整保留，没有被粗暴砍掉！
+        assert_eq!(budget, 16384);
+        // 验证：maxOutputTokens 被智能提升，且满足 Google 协议硬约束：maxOutputTokens > thinkingBudget
+        assert!(max_tokens > budget);
+        assert!(max_tokens <= 64000);
+        assert_eq!(max_tokens, 16384 + 1024);
+
+        // 验证 Gemini Wrapper 层同样保全用户的思考预算
+        let body = json!({
+            "model": "claude-sonnet-4-6",
+            "generationConfig": {
+                "maxOutputTokens": 4096,
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 16384
+                }
+            }
+        });
+        let wrapped = crate::proxy::mappers::gemini::wrapper::wrap_request(
+            &body,
+            "test-proj",
+            "claude-sonnet-4-6",
+            None,
+            None,
+            None,
+        );
+        let wrapped_gc = &wrapped["request"]["generationConfig"];
+        let wrapped_max = wrapped_gc["maxOutputTokens"].as_u64().unwrap();
+        let wrapped_budget = wrapped_gc["thinkingConfig"]["thinkingBudget"]
+            .as_i64()
+            .unwrap();
+        assert_eq!(wrapped_budget, 16384);
+        assert!(wrapped_max > wrapped_budget as u64);
+        assert_eq!(wrapped_max, 16384 + 1024);
+    }
+
+    #[test]
+    fn test_thinking_budget_fast_intent_6x_ratio_compression() {
+        use crate::proxy::config::{
+            update_thinking_budget_config, ThinkingBudgetConfig, ThinkingControlSource,
+            TEST_CONFIG_LOCK,
+        };
+        use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
+
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
+        let mut config = ThinkingBudgetConfig::default();
+        config.control_source = ThinkingControlSource::Client;
+        update_thinking_budget_config(config);
+
+        struct ResetGuard;
+        impl Drop for ResetGuard {
+            fn drop(&mut self) {
+                crate::proxy::config::update_thinking_budget_config(ThinkingBudgetConfig::default());
+            }
+        }
+        let _guard = ResetGuard;
+
+        // 场景 1: 客户端明确传 m=1024，但思考预算 t=8192 (>= 6*m) -> 极速意图，预算压缩为 0
+        let mut gc1 = json!({
+            "maxOutputTokens": 1024
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "claude-sonnet-4-6",
+            &mut gc1,
+            ClientThinkingSwitch::Enabled,
+            None,
+            Some(8192),
+            None,
+        );
+
+        let max_tokens1 = gc1["maxOutputTokens"].as_i64().unwrap();
+        let budget1 = gc1["thinkingConfig"]["thinkingBudget"].as_i64().unwrap();
+        assert_eq!(max_tokens1, 1024);
+        assert_eq!(budget1, 0, "6倍反差且m<=1024时思考预算应压缩为0以秒回");
+
+        // 场景 2: 客户端明确传 m=1500，思考预算 t=9000 (>= 6*m) -> 预算压缩为 1500 - 1024 = 476
+        let mut gc2 = json!({
+            "maxOutputTokens": 1500
+        });
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "claude-sonnet-4-6",
+            &mut gc2,
+            ClientThinkingSwitch::Enabled,
+            None,
+            Some(9000),
+            None,
+        );
+
+        let max_tokens2 = gc2["maxOutputTokens"].as_i64().unwrap();
+        let budget2 = gc2["thinkingConfig"]["thinkingBudget"].as_i64().unwrap();
+        assert_eq!(max_tokens2, 1500);
+        assert_eq!(budget2, 476, "6倍反差且m>1024时思考预算应压缩为 m - 1024");
+        assert!(max_tokens2 > budget2);
+
+        // 场景 3: 验证 Gemini Wrapper 层同样遵守 6 倍极速压缩规则
+        let body = json!({
+            "model": "gemini-3.8-flash-high",
+            "generationConfig": {
+                "maxOutputTokens": 1024,
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingBudget": 8192
+                }
+            }
+        });
+        let wrapped = crate::proxy::mappers::gemini::wrapper::wrap_request(
+            &body,
+            "test-proj",
+            "gemini-3.8-flash-high",
+            None,
+            None,
+            None,
+        );
+        let wrapped_gc = &wrapped["request"]["generationConfig"];
+        let wrapped_max = wrapped_gc["maxOutputTokens"].as_u64().unwrap();
+        let wrapped_budget = wrapped_gc["thinkingConfig"]["thinkingBudget"]
+            .as_i64()
+            .unwrap();
+        assert_eq!(wrapped_max, 1024);
+        assert_eq!(wrapped_budget, 0);
     }
 }

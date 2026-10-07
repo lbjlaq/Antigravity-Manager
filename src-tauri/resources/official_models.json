@@ -2140,6 +2140,234 @@
       "supportsVideo": true,
       "tagTitle": "Fast",
       "tagDescription": "Limited time"
+    },
+    "claude-sonnet-5-5-medium": {
+      "displayName": "Claude Sonnet 5.5 (Medium)",
+      "supportsImages": true,
+      "supportsThinking": true,
+      "recommended": true,
+      "maxTokens": 1000000,
+      "maxOutputTokens": 128000,
+      "quotaInfo": {
+        "remainingFraction": 1,
+        "resetTime": "2026-10-03T19:16:03Z"
+      },
+      "model": "MODEL_PLACEHOLDER_M404",
+      "apiProvider": "API_PROVIDER_ANTHROPIC_VERTEX",
+      "modelProvider": "MODEL_PROVIDER_ANTHROPIC",
+      "tagTitle": "New",
+      "supportedMimeTypes": {
+        "image/webp": true,
+        "video/jpeg2000": true,
+        "video/videoframe/jpeg2000": true,
+        "image/heic": true,
+        "image/heif": true,
+        "image/jpeg": true,
+        "image/png": true
+      },
+      "thinkingLevel": 2,
+      "modelExperiments": {
+        "experiments": {
+          "CASCADE_USE_EXPERIMENT_CHECKPOINTER": {
+            "stringValue": "{\n    \"strategy\": \"CHECKPOINT_STRATEGY_SAME_MODEL\",\n    \"max_token_limit\": \"256000\",\n    \"token_threshold\": \"50000\",\n    \"max_overhead_ratio\": \"0.15\",\n    \"moving_window_size\": \"1\",\n    \"enabled\": true,\n    \"max_output_tokens\": \"16384\",\n    \"checkpoint_model\": \"MODEL_PLACEHOLDER_M50\",\n    \"use_last_planner_model\": true,\n    \"is_sync\": true,\n    \"max_user_requests\": 10,\n    \"include_last_user_message\": true,\n    \"include_conversation_log\": false,\n    \"include_running_task_snapshots\": true,\n    \"include_subagent_snapshots\": true,\n    \"include_artifact_snapshots\": true,\n    \"retry_config\": {\n        \"max_retries\": 4,\n        \"initial_sleep_duration_ms\": 1000,\n        \"exponential_multiplier\": 2,\n        \"include_error_feedback\": false\n    },\n    \"session_summary_prompt_override\": \"\"\n}"
+          },
+          "retry_model_capacity_exhausted": {
+            "boolValue": true
+          }
+        }
+      },
+      "vertexModelId": "claude-sonnet-5-5@default",
+      "supportsAdaptiveThinking": true
+    },
+    "claude-opus-5-5-low": {
+      "displayName": "Claude Opus 5.5 (Low)",
+      "supportsImages": true,
+      "supportsThinking": true,
+      "recommended": true,
+      "maxTokens": 1000000,
+      "maxOutputTokens": 128000,
+      "quotaInfo": {
+        "remainingFraction": 1,
+        "resetTime": "2026-10-03T19:16:03Z"
+      },
+      "model": "MODEL_PLACEHOLDER_M400",
+      "apiProvider": "API_PROVIDER_ANTHROPIC_VERTEX",
+      "modelProvider": "MODEL_PROVIDER_ANTHROPIC",
+      "tagTitle": "New",
+      "supportedMimeTypes": {
+        "video/videoframe/jpeg2000": true,
+        "image/heic": true,
+        "image/heif": true,
+        "image/jpeg": true,
+        "image/png": true,
+        "image/webp": true,
+        "video/jpeg2000": true
+      },
+      "thinkingLevel": 1,
+      "modelExperiments": {
+        "experiments": {
+          "retry_model_capacity_exhausted": {
+            "boolValue": true
+          },
+          "CASCADE_USE_EXPERIMENT_CHECKPOINTER": {
+            "stringValue": "{\n    \"strategy\": \"CHECKPOINT_STRATEGY_SAME_MODEL\",\n    \"max_token_limit\": \"256000\",\n    \"token_threshold\": \"50000\",\n    \"max_overhead_ratio\": \"0.15\",\n    \"moving_window_size\": \"1\",\n    \"enabled\": true,\n    \"max_output_tokens\": \"16384\",\n    \"checkpoint_model\": \"MODEL_PLACEHOLDER_M50\",\n    \"use_last_planner_model\": true,\n    \"is_sync\": true,\n    \"max_user_requests\": 10,\n    \"include_last_user_message\": true,\n    \"include_conversation_log\": false,\n    \"include_running_task_snapshots\": true,\n    \"include_subagent_snapshots\": true,\n    \"include_artifact_snapshots\": true,\n    \"retry_config\": {\n        \"max_retries\": 4,\n        \"initial_sleep_duration_ms\": 1000,\n        \"exponential_multiplier\": 2,\n        \"include_error_feedback\": false\n    },\n    \"session_summary_prompt_override\": \"\"\n}"
+          }
+        }
+      },
+      "vertexModelId": "claude-opus-5-5@default",
+      "supportsAdaptiveThinking": true
+    },
+    "claude-opus-5-5-high": {
+      "displayName": "Claude Opus 5.5 (High)",
+      "supportsImages": true,
+      "supportsThinking": true,
+      "recommended": true,
+      "maxTokens": 1000000,
+      "maxOutputTokens": 128000,
+      "quotaInfo": {
+        "remainingFraction": 1,
+        "resetTime": "2026-10-03T19:16:03Z"
+      },
+      "model": "MODEL_PLACEHOLDER_M402",
+      "apiProvider": "API_PROVIDER_ANTHROPIC_VERTEX",
+      "modelProvider": "MODEL_PROVIDER_ANTHROPIC",
+      "tagTitle": "New",
+      "supportedMimeTypes": {
+        "image/heic": true,
+        "image/heif": true,
+        "image/jpeg": true,
+        "image/png": true,
+        "image/webp": true,
+        "video/jpeg2000": true,
+        "video/videoframe/jpeg2000": true
+      },
+      "thinkingLevel": 3,
+      "modelExperiments": {
+        "experiments": {
+          "CASCADE_USE_EXPERIMENT_CHECKPOINTER": {
+            "stringValue": "{\n    \"strategy\": \"CHECKPOINT_STRATEGY_SAME_MODEL\",\n    \"max_token_limit\": \"256000\",\n    \"token_threshold\": \"50000\",\n    \"max_overhead_ratio\": \"0.15\",\n    \"moving_window_size\": \"1\",\n    \"enabled\": true,\n    \"max_output_tokens\": \"16384\",\n    \"checkpoint_model\": \"MODEL_PLACEHOLDER_M50\",\n    \"use_last_planner_model\": true,\n    \"is_sync\": true,\n    \"max_user_requests\": 10,\n    \"include_last_user_message\": true,\n    \"include_conversation_log\": false,\n    \"include_running_task_snapshots\": true,\n    \"include_subagent_snapshots\": true,\n    \"include_artifact_snapshots\": true,\n    \"retry_config\": {\n        \"max_retries\": 4,\n        \"initial_sleep_duration_ms\": 1000,\n        \"exponential_multiplier\": 2,\n        \"include_error_feedback\": false\n    },\n    \"session_summary_prompt_override\": \"\"\n}"
+          },
+          "retry_model_capacity_exhausted": {
+            "boolValue": true
+          }
+        }
+      },
+      "vertexModelId": "claude-opus-5-5@default",
+      "supportsAdaptiveThinking": true
+    },
+    "claude-sonnet-5-5-high": {
+      "displayName": "Claude Sonnet 5.5 (High)",
+      "supportsImages": true,
+      "supportsThinking": true,
+      "recommended": true,
+      "maxTokens": 1000000,
+      "maxOutputTokens": 128000,
+      "quotaInfo": {
+        "remainingFraction": 1,
+        "resetTime": "2026-10-03T19:16:03Z"
+      },
+      "model": "MODEL_PLACEHOLDER_M405",
+      "apiProvider": "API_PROVIDER_ANTHROPIC_VERTEX",
+      "modelProvider": "MODEL_PROVIDER_ANTHROPIC",
+      "tagTitle": "New",
+      "supportedMimeTypes": {
+        "image/heic": true,
+        "image/heif": true,
+        "image/jpeg": true,
+        "image/png": true,
+        "image/webp": true,
+        "video/jpeg2000": true,
+        "video/videoframe/jpeg2000": true
+      },
+      "thinkingLevel": 3,
+      "modelExperiments": {
+        "experiments": {
+          "CASCADE_USE_EXPERIMENT_CHECKPOINTER": {
+            "stringValue": "{\n    \"strategy\": \"CHECKPOINT_STRATEGY_SAME_MODEL\",\n    \"max_token_limit\": \"256000\",\n    \"token_threshold\": \"50000\",\n    \"max_overhead_ratio\": \"0.15\",\n    \"moving_window_size\": \"1\",\n    \"enabled\": true,\n    \"max_output_tokens\": \"16384\",\n    \"checkpoint_model\": \"MODEL_PLACEHOLDER_M50\",\n    \"use_last_planner_model\": true,\n    \"is_sync\": true,\n    \"max_user_requests\": 10,\n    \"include_last_user_message\": true,\n    \"include_conversation_log\": false,\n    \"include_running_task_snapshots\": true,\n    \"include_subagent_snapshots\": true,\n    \"include_artifact_snapshots\": true,\n    \"retry_config\": {\n        \"max_retries\": 4,\n        \"initial_sleep_duration_ms\": 1000,\n        \"exponential_multiplier\": 2,\n        \"include_error_feedback\": false\n    },\n    \"session_summary_prompt_override\": \"\"\n}"
+          },
+          "retry_model_capacity_exhausted": {
+            "boolValue": true
+          }
+        }
+      },
+      "vertexModelId": "claude-sonnet-5-5@default",
+      "supportsAdaptiveThinking": true
+    },
+    "claude-opus-5-5-medium": {
+      "displayName": "Claude Opus 5.5 (Medium)",
+      "supportsImages": true,
+      "supportsThinking": true,
+      "recommended": true,
+      "maxTokens": 1000000,
+      "maxOutputTokens": 128000,
+      "quotaInfo": {
+        "remainingFraction": 1,
+        "resetTime": "2026-10-03T19:16:03Z"
+      },
+      "model": "MODEL_PLACEHOLDER_M401",
+      "apiProvider": "API_PROVIDER_ANTHROPIC_VERTEX",
+      "modelProvider": "MODEL_PROVIDER_ANTHROPIC",
+      "tagTitle": "New",
+      "supportedMimeTypes": {
+        "image/jpeg": true,
+        "image/png": true,
+        "image/webp": true,
+        "video/jpeg2000": true,
+        "video/videoframe/jpeg2000": true,
+        "image/heic": true,
+        "image/heif": true
+      },
+      "thinkingLevel": 2,
+      "modelExperiments": {
+        "experiments": {
+          "CASCADE_USE_EXPERIMENT_CHECKPOINTER": {
+            "stringValue": "{\n    \"strategy\": \"CHECKPOINT_STRATEGY_SAME_MODEL\",\n    \"max_token_limit\": \"256000\",\n    \"token_threshold\": \"50000\",\n    \"max_overhead_ratio\": \"0.15\",\n    \"moving_window_size\": \"1\",\n    \"enabled\": true,\n    \"max_output_tokens\": \"16384\",\n    \"checkpoint_model\": \"MODEL_PLACEHOLDER_M50\",\n    \"use_last_planner_model\": true,\n    \"is_sync\": true,\n    \"max_user_requests\": 10,\n    \"include_last_user_message\": true,\n    \"include_conversation_log\": false,\n    \"include_running_task_snapshots\": true,\n    \"include_subagent_snapshots\": true,\n    \"include_artifact_snapshots\": true,\n    \"retry_config\": {\n        \"max_retries\": 4,\n        \"initial_sleep_duration_ms\": 1000,\n        \"exponential_multiplier\": 2,\n        \"include_error_feedback\": false\n    },\n    \"session_summary_prompt_override\": \"\"\n}"
+          },
+          "retry_model_capacity_exhausted": {
+            "boolValue": true
+          }
+        }
+      },
+      "vertexModelId": "claude-opus-5-5@default",
+      "supportsAdaptiveThinking": true
+    },
+    "claude-sonnet-5-5-low": {
+      "displayName": "Claude Sonnet 5.5 (Low)",
+      "supportsImages": true,
+      "supportsThinking": true,
+      "recommended": true,
+      "maxTokens": 1000000,
+      "maxOutputTokens": 128000,
+      "quotaInfo": {
+        "remainingFraction": 1,
+        "resetTime": "2026-10-03T19:16:03Z"
+      },
+      "model": "MODEL_PLACEHOLDER_M403",
+      "apiProvider": "API_PROVIDER_ANTHROPIC_VERTEX",
+      "modelProvider": "MODEL_PROVIDER_ANTHROPIC",
+      "tagTitle": "New",
+      "supportedMimeTypes": {
+        "image/jpeg": true,
+        "image/png": true,
+        "image/webp": true,
+        "video/jpeg2000": true,
+        "video/videoframe/jpeg2000": true,
+        "image/heic": true,
+        "image/heif": true
+      },
+      "thinkingLevel": 1,
+      "modelExperiments": {
+        "experiments": {
+          "CASCADE_USE_EXPERIMENT_CHECKPOINTER": {
+            "stringValue": "{\n    \"strategy\": \"CHECKPOINT_STRATEGY_SAME_MODEL\",\n    \"max_token_limit\": \"256000\",\n    \"token_threshold\": \"50000\",\n    \"max_overhead_ratio\": \"0.15\",\n    \"moving_window_size\": \"1\",\n    \"enabled\": true,\n    \"max_output_tokens\": \"16384\",\n    \"checkpoint_model\": \"MODEL_PLACEHOLDER_M50\",\n    \"use_last_planner_model\": true,\n    \"is_sync\": true,\n    \"max_user_requests\": 10,\n    \"include_last_user_message\": true,\n    \"include_conversation_log\": false,\n    \"include_running_task_snapshots\": true,\n    \"include_subagent_snapshots\": true,\n    \"include_artifact_snapshots\": true,\n    \"retry_config\": {\n        \"max_retries\": 4,\n        \"initial_sleep_duration_ms\": 1000,\n        \"exponential_multiplier\": 2,\n        \"include_error_feedback\": false\n    },\n    \"session_summary_prompt_override\": \"\"\n}"
+          },
+          "retry_model_capacity_exhausted": {
+            "boolValue": true
+          }
+        }
+      },
+      "vertexModelId": "claude-sonnet-5-5@default",
+      "supportsAdaptiveThinking": true
     }
   }
 }

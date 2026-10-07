@@ -81,10 +81,11 @@ impl UpstreamClassification {
         matches!(self, UpstreamClassification::RateLimited { .. })
     }
 
-    /// 这个账号不能再被当前会话粘住。401 / 403 / 429 / 529。
+    /// 这个账号不能再被当前会话粘住。401 / 403 / 404 / 429 / 529。
     pub fn abandons_sticky_account(&self) -> bool {
         match self {
             UpstreamClassification::RateLimited { .. } => true,
+            UpstreamClassification::ModelNotFound => true,
             UpstreamClassification::OtherClientError(401 | 403) => true,
             _ => false,
         }
@@ -103,5 +104,31 @@ impl UpstreamClassification {
     /// 该分类是否为网关自身内部消息
     pub fn is_internal_gateway_message(&self) -> bool {
         matches!(self, UpstreamClassification::InternalGatewayMessage)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_abandons_sticky_account_policies() {
+        // 404 ModelNotFound 必须解除粘性绑定，确保会话不会死粘在缺失该模型的账号上
+        let not_found = UpstreamClassification::classify(404, "model not found", None);
+        assert_eq!(not_found, UpstreamClassification::ModelNotFound);
+        assert!(
+            not_found.abandons_sticky_account(),
+            "ModelNotFound must abandon sticky account so session rotates away"
+        );
+
+        // 429 RateLimited 必须解除粘性绑定
+        let rate_limited = UpstreamClassification::classify(429, "rate limited", None);
+        assert!(rate_limited.abandons_sticky_account());
+
+        // 401 & 403 必须解除粘性绑定
+        let unauth = UpstreamClassification::classify(401, "unauthorized", None);
+        assert!(unauth.abandons_sticky_account());
+        let forbidden = UpstreamClassification::classify(403, "forbidden", None);
+        assert!(forbidden.abandons_sticky_account());
     }
 }

@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional Account Management & Protocol Proxy System for AI Services (v4.9.1)
+> Professional Account Management & Protocol Proxy System for AI Services (v4.9.6)
 
 <div align="center">
   <img src="public/icon.png" width="100" height="100" alt="Antigravity Tools Logo">
@@ -11,7 +11,7 @@
       <img src="https://img.shields.io/github/v/release/lbjlaq/Antigravity-Manager?color=blue&style=flat-square" alt="GitHub release">
     </a>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.9.1-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.9.6-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -478,7 +478,7 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 
 ## 📝 Changelog
 
-> Latest version **v4.9.1** (2026-10-02): Fixed `gemini-3.1-flash-lite` misrouting to the retired 2.5 family to restore healthy 200 OK passthrough, revived Layer-3 background compression, purged dead 2.5 models from advertised catalogs while routing legacy requests to `gemini-3.6-flash-medium` (Fixes #3577, thanks to @Xyloz3n); tightened downstream SSE thinking heartbeats to 3s to prevent client disconnects during deep reasoning (PR #3578, thanks to @EricZhou05).
+> Latest version **v4.9.6** (2026-10-06) — full republish of v4.9.5 (its release pipeline was cancelled by hosted runner starvation and produced no Release assets; codebase is identical): Eliminates thinking budget 32768 overwriting, enforces absolute highest priority for named model suffixes (`-low`, `-medium`, `-high`), restores default mode fallback, and decouples Claude adapter (PR #3611, Fixes #3610); lowers Cowork pruning budget to 8k deep archive reducing residual context to 40k~45k tokens (60%+ compaction ratio), merges dual compaction state machines, introduces dynamic headroom anti-thrashing, adds Claude desktop process lifecycle management with legacy patch alerts and seamless upgrade, and safeguards macOS binary signing with rollback (PR #3604, #3609, #3603); caps single-request 429 pool traversal to `min(pool_size, 2)` with tiered backoff and Layer 2 optimistic reset to eliminate false 503 circuit-breaker failures, unifies long-lived sticky session unbinding and cross-protocol success counter recovery, and normalizes unified Claude quota protection groups (PR #3608, #3606, #3602, Fixes #3506, #3517, #3509); supports `antigravity-ide` naming variants, blocks Keyring credential leakage, hardens kernel-level process detection, and isolates `state.vscdb` (PR #3608, #3600, Fixes #3598); sanitizes Gemini JSON Schema enums, propagates real-time SSE stream errors (504/503/429), injects node search paths for OpenCode, corrects agy CLI Keyring D-Bus path and aligns Web/Headless APIs (PR #3601, #3606, #3607, thanks to @cubelikeplayDaniel, @diannaaav); resolves GNOME Wayland rendering freezes with DMA-BUF injection and fixes transparent window logic under X11/Xwayland (Fixes #3605, Ref #3581, thanks to @jeikl).
 
 👉 **[View Full Changelog → CHANGELOG_EN.md](CHANGELOG_EN.md)**
 
@@ -487,6 +487,8 @@ In clients that support OpenAI protocol (e.g., Cherry Studio), you can configure
 
 <a href="https://github.com/lbjlaq"><img src="https://github.com/lbjlaq.png" width="50px" style="border-radius: 50%;" alt="lbjlaq"/></a>
 <a href="https://github.com/jeikl"><img src="https://github.com/jeikl.png" width="50px" style="border-radius: 50%;" alt="jeikl"/></a>
+<a href="https://github.com/cubelikeplayDaniel"><img src="https://github.com/cubelikeplayDaniel.png" width="50px" style="border-radius: 50%;" alt="cubelikeplayDaniel"/></a>
+<a href="https://github.com/diannaaav"><img src="https://github.com/diannaaav.png" width="50px" style="border-radius: 50%;" alt="diannaaav"/></a>
 <a href="https://github.com/XinXin622"><img src="https://github.com/XinXin622.png" width="50px" style="border-radius: 50%;" alt="XinXin622"/></a>
 <a href="https://github.com/llsenyue"><img src="https://github.com/llsenyue.png" width="50px" style="border-radius: 50%;" alt="llsenyue"/></a>
 <a href="https://github.com/salacoste"><img src="https://github.com/salacoste.png" width="50px" style="border-radius: 50%;" alt="salacoste"/></a>

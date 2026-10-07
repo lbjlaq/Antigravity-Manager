@@ -14,8 +14,8 @@ export const enterMiniMode = async (contentHeight: number, shouldCenter: boolean
         // Hide window decorations (title bar) first to ensure accurate sizing
         await win.setDecorations(false);
 
-        // Set window size: width 300, height = content height 
-        await win.setSize(new LogicalSize(300, contentHeight+2));
+        // Set window size: width 328, height = content height 
+        await win.setSize(new LogicalSize(328, contentHeight+2));
 
         await win.setAlwaysOnTop(true);
         // Enable window shadow

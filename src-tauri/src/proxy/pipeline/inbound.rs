@@ -1043,6 +1043,20 @@ impl InboundThinkingPipeline {
             return None;
         }
 
+        // 统一从官方模型结构体中读取权威默认值
+        let official_info = crate::models::OfficialModelCatalog::get(target_model);
+
+        // 如果官方模型结构体明确不支持思考（如纯图片生成模型），则不注入 thinkingConfig
+        if let Some(ref info) = official_info {
+            if info.supports_thinking == Some(false) {
+                if let Some(obj) = generation_config.as_object_mut() {
+                    obj.remove("thinkingConfig");
+                    obj.remove("thinking_config");
+                }
+                return None;
+            }
+        }
+
         let tb_config = crate::proxy::config::get_thinking_budget_config();
 
         // ════════════════════════════════════════════════════════════════════
@@ -1067,31 +1081,21 @@ impl InboundThinkingPipeline {
                             "includeThoughts": true,
                             "thinkingBudget": budget
                         });
-                        // 确保 maxOutputTokens 大于 thinkingBudget 避免 400
-                        let min_overhead = 8192;
-                        let current_max = generation_config
-                            .get("maxOutputTokens")
-                            .and_then(Value::as_i64)
-                            .unwrap_or(65536);
-                        if current_max <= budget as i64 {
-                            generation_config["maxOutputTokens"] =
-                                json!(budget as i64 + min_overhead);
-                        }
-                        return Some(budget as i64);
-                    }
-
-                    // 2.2 预算缺省，但客户端携带了思考等级（包括 low / medium / high 以及任何客户自定义的思考等级）：
-                    // 核心铁律：坚决不填预算！忠实透传等级，并且必须带上 includeThoughts: true 核心开关！
-                    if let Some(raw_effort) = client_effort.map(str::trim).filter(|s| !s.is_empty())
+                    } else if let Some(raw_effort) =
+                        client_effort.map(str::trim).filter(|s| !s.is_empty())
                     {
-                        let lower_effort = raw_effort.to_lowercase();
+                        // 2.2 预算缺省，但客户端携带了思考等级（包括 low / medium / high 以及任何客户自定义的思考等级）：
+                        // 核心铁律：坚决不填预算！忠实透传等级，并且必须带上 includeThoughts: true 核心开关！
+                        let lower_effort = raw_effort.to_lowercase().replace('_', "-");
                         if lower_effort != "default"
                             && lower_effort != "none"
                             && lower_effort != "off"
                             && lower_effort != "disabled"
                         {
                             let final_level = match lower_effort.as_str() {
-                                "low" | "extra-low" | "min" | "minimal" => "LOW".to_string(),
+                                "low" | "extra-low" | "min" | "minimal" | "lite" => {
+                                    "LOW".to_string()
+                                }
                                 "medium" | "normal" | "standard" => {
                                     if target_model.to_lowercase().contains("pro") {
                                         "HIGH".to_string()
@@ -1099,7 +1103,9 @@ impl InboundThinkingPipeline {
                                         "MEDIUM".to_string()
                                     }
                                 }
-                                "high" | "xhigh" | "max" | "extreme" => "HIGH".to_string(),
+                                "high" | "xhigh" | "x-high" | "max" | "extreme" => {
+                                    "HIGH".to_string()
+                                }
                                 // 客户带了任何自定义等级，直接忠实透传，绝不硬编码限制！
                                 _ => raw_effort.to_uppercase(),
                             };
@@ -1107,127 +1113,181 @@ impl InboundThinkingPipeline {
                                 "includeThoughts": true,
                                 "thinkingLevel": final_level
                             });
-                            return None;
                         }
-                    }
-
-                    // 2.3 等级与预算均缺省（或 default）：全部预算不传递，默认上游处理（上游自适应）
-                    // ★ 绝对不塞 4000/Medium 预算，仅带 includeThoughts: true
-                    generation_config["thinkingConfig"] = json!({
-                        "includeThoughts": true
-                    });
-                    return None;
-                }
-            }
-        }
-
-        // ════════════════════════════════════════════════════════════════════
-        // 模式分流 2: 网关权威控制模式（Gateway Authority，99% 用户）
-        // 100% 保持原有权威逻辑不变：档位锁死、flash_low/med/high 映射、防 429 注入
-        // ════════════════════════════════════════════════════════════════════
-        let resolved_budget = crate::proxy::model_specs::resolve_custom_budget(
-            target_model,
-            client_effort,
-            client_budget,
-            &tb_config,
-            token,
-        );
-
-        let is_tiered = crate::proxy::model_specs::is_tiered_flash_model(target_model)
-            || target_model.to_lowercase().contains("tiered");
-
-        let mut tc = json!({
-            "includeThoughts": true
-        });
-
-        // 统一从官方模型结构体中读取权威默认值
-        let official_info = crate::models::OfficialModelCatalog::get(target_model);
-
-        // 如果官方模型结构体明确不支持思考（如纯图片生成模型），则不注入 thinkingConfig
-        if let Some(ref info) = official_info {
-            if info.supports_thinking == Some(false) {
-                if let Some(obj) = generation_config.as_object_mut() {
-                    obj.remove("thinkingConfig");
-                    obj.remove("thinking_config");
-                }
-                return None;
-            }
-        }
-
-        // 用户核心要求：
-        // "如果我网关模式的思考预算填-1 我的策略是不填模型预算。其实是不对的
-        // 应该是如果网关模式都填了-1 应该默认走官方模型结构体的默认值"
-        let final_budget = match resolved_budget {
-            Some(b) => Some(b),
-            None => {
-                // 网关模式下未显式配置自定义预算（Default 默认模式）：
-                // 默认走官方模型结构体的默认值 (official_model.thinking_budget)；
-                // 若官方模型结构体无记录（如非官方目录或旧版别名），Claude 思考模型回落到标准限额
-                official_info
-                    .as_ref()
-                    .and_then(|info| info.thinking_budget)
-                    .or_else(|| {
-                        if target_model.to_lowercase().contains("claude") {
-                            Some(
-                                crate::proxy::model_specs::get_thinking_budget(target_model, token)
-                                    as i64,
-                            )
-                        } else {
-                            None
-                        }
-                    })
-            }
-        };
-
-        if let Some(budget) = final_budget {
-            if budget == 0 {
-                tc = json!({
-                    "thinkingBudget": 0
-                });
-            } else {
-                tc["thinkingBudget"] = json!(budget);
-
-                // 确保 maxOutputTokens 大于 thinkingBudget 避免 400 (仅当 budget > 0 时)
-                if budget > 0 {
-                    let min_overhead = 8192;
-                    let current_max = generation_config
-                        .get("maxOutputTokens")
-                        .and_then(Value::as_i64)
-                        .unwrap_or(65536);
-                    if current_max <= budget {
-                        generation_config["maxOutputTokens"] = json!(budget + min_overhead);
+                    } else {
+                        // 2.3 等级与预算均缺省（或 default）：全部预算不传递，默认上游处理（上游自适应）
+                        // ★ 绝对不塞 4000/Medium 预算，仅带 includeThoughts: true
+                        generation_config["thinkingConfig"] = json!({
+                            "includeThoughts": true
+                        });
                     }
                 }
             }
-            generation_config["thinkingConfig"] = tc;
-            return Some(budget);
-        } else if is_tiered {
-            // Tiered 模型未指定具体数字 budget 且官方结构体无 thinking_budget 时：纯自适应模式
-            tc = json!({
+        } else {
+            // ════════════════════════════════════════════════════════════════════
+            // 模式分流 2: 网关权威控制模式（Gateway Authority，99% 用户）
+            // 100% 保持原有权威逻辑不变：档位锁死、flash_low/med/high 映射、防 429 注入
+            // ════════════════════════════════════════════════════════════════════
+            let resolved_budget = crate::proxy::model_specs::resolve_custom_budget(
+                target_model,
+                client_effort,
+                client_budget,
+                &tb_config,
+                token,
+            );
+
+            let is_tiered = crate::proxy::model_specs::is_tiered_flash_model(target_model)
+                || target_model.to_lowercase().contains("tiered");
+
+            let mut tc = json!({
                 "includeThoughts": true
             });
+
+            // 用户核心要求：
+            // "如果我网关模式的思考预算填-1 我的策略是不填模型预算。其实是不对的
+            // 应该是如果网关模式都填了-1 应该默认走官方模型结构体的默认值"
+            let final_budget = match resolved_budget {
+                Some(b) => Some(b),
+                None => {
+                    // 网关模式下未显式配置自定义预算（Default 默认模式）：
+                    // 默认走官方模型结构体的默认值 (official_model.thinking_budget)；
+                    // 若官方模型结构体无记录（如非官方目录或旧版别名），Claude 思考模型回落到标准限额
+                    official_info
+                        .as_ref()
+                        .and_then(|info| info.thinking_budget)
+                        .or_else(|| {
+                            if target_model.to_lowercase().contains("claude") {
+                                Some(crate::proxy::model_specs::get_thinking_budget(
+                                    target_model,
+                                    token,
+                                ) as i64)
+                            } else {
+                                None
+                            }
+                        })
+                }
+            };
+
+            if let Some(budget) = final_budget {
+                if budget == 0 {
+                    tc = json!({
+                        "thinkingBudget": 0
+                    });
+                } else {
+                    tc["thinkingBudget"] = json!(budget);
+                }
+            } else if is_tiered {
+                // Tiered 模型未指定具体数字 budget 且官方结构体无 thinking_budget 时：纯自适应模式
+                tc = json!({
+                    "includeThoughts": true
+                });
+            }
+
             generation_config["thinkingConfig"] = tc;
-            return None;
         }
 
-        generation_config["thinkingConfig"] = tc;
+        // 终审上限保护与不变量协调状态机：
+        // 1. 获取官方模型结构体的物理最大输出硬顶 (safe_limit)
+        let safe_limit = official_info
+            .as_ref()
+            .and_then(|info| info.max_output_tokens)
+            .unwrap_or_else(|| {
+                let target_lower = target_model.to_lowercase();
+                if target_lower.contains("5-5") || target_lower.contains("5.5") {
+                    128000
+                } else if target_lower.contains("claude") {
+                    64000
+                } else if target_lower.contains("pro") {
+                    65535
+                } else {
+                    65536
+                }
+            });
 
-        // 终审上限保护
-        let target_lower = target_model.to_lowercase();
-        let safe_limit = if target_lower.contains("claude") {
-            64000
-        } else if target_lower.contains("pro") {
-            65535
-        } else {
-            65536
-        };
-        if let Some(val) = generation_config["maxOutputTokens"].as_i64() {
-            if val > safe_limit {
-                generation_config["maxOutputTokens"] = json!(safe_limit);
+        // 客户端/用户当前传入的 maxOutputTokens（若缺省则默认按官方 safe_limit 填齐）
+        let user_provided_max = generation_config
+            .get("maxOutputTokens")
+            .and_then(Value::as_i64);
+        let mut current_max = user_provided_max.unwrap_or(safe_limit);
+
+        // 如果用户传入的 max 越过了官方物理硬顶，先收敛到 safe_limit
+        if current_max > safe_limit {
+            current_max = safe_limit;
+            generation_config["maxOutputTokens"] = json!(safe_limit);
+        }
+
+        // 2. 检查 Google 协议硬约束：maxOutputTokens > thinkingBudget
+        let raw_budget = generation_config
+            .get("thinkingConfig")
+            .and_then(|tc| tc.get("thinkingBudget"))
+            .and_then(Value::as_i64);
+
+        if let Some(budget) = raw_budget {
+            if budget > 0 {
+                // 仅针对客户端/用户传了明确思考预算 (> 0) 的情况进行科学意图协商：
+                let mut final_budget = budget;
+                let mut final_max = current_max;
+
+                // 【分支 1: 6 倍反差极速意图识别】
+                // 如果用户提供了明确的总输出预算 m，且思考预算 t >= 6 * m（例如 m=1024, t=8192）：
+                // 证明用户/客户端强烈希望短平快直接回答，不希望被高思考拖慢！
+                // 此时压缩思考预算为 max(0, m - 1024)。若 m <= 1024 则预算为 0！
+                if let Some(user_m) = user_provided_max {
+                    if budget >= 6 * user_m {
+                        let fast_budget = if user_m > 1024 { user_m - 1024 } else { 0 };
+                        final_budget = fast_budget;
+                        tracing::info!(
+                            "[Pipeline-Inbound] 6x Intent detected (budget={} >= 6*max={}): compressed thinkingBudget to {} for fast response",
+                            budget, user_m, fast_budget
+                        );
+                    }
+                }
+
+                // 如果未触发 6 倍极速压缩 (或者极速压缩后仍然有非零思考预算)：
+                if final_budget > 0 {
+                    // 【分支 2: 常规深度推理 - 官方容量能包住时优先自动扩充 m】
+                    // 如果 final_budget + 1024 <= safe_limit：
+                    if final_budget + 1024 <= safe_limit {
+                        if final_max <= final_budget {
+                            final_max = final_budget + 1024;
+                            tracing::info!(
+                                "[Pipeline-Inbound] Auto-expanded maxOutputTokens from {} to {} to preserve thinkingBudget ({}) within official safe_limit ({})",
+                                current_max, final_max, final_budget, safe_limit
+                            );
+                        }
+                    } else {
+                        // 【分支 3: 官方物理天花板硬顶兜底】
+                        // 思考预算实在太大，连官方物理天花板都撑爆了 (final_budget + 1024 > safe_limit)：
+                        final_max = safe_limit;
+                        final_budget = if safe_limit > 1024 {
+                            safe_limit - 1024
+                        } else if safe_limit > 1 {
+                            safe_limit - 1
+                        } else {
+                            0
+                        };
+                        tracing::info!(
+                            "[Pipeline-Inbound] Budget exceeded official ceiling: clamped maxOutputTokens to {} and thinkingBudget to {}",
+                            final_max, final_budget
+                        );
+                    }
+                }
+
+                // 写回协商后的确定结果
+                generation_config["maxOutputTokens"] = json!(final_max);
+                if let Some(tc) = generation_config
+                    .get_mut("thinkingConfig")
+                    .and_then(Value::as_object_mut)
+                {
+                    tc.insert("thinkingBudget".to_string(), json!(final_budget));
+                }
             }
         }
 
-        resolved_budget
+        generation_config
+            .get("thinkingConfig")
+            .and_then(|t| t.get("thinkingBudget"))
+            .and_then(Value::as_i64)
     }
 
     /// 统一规范化与对齐四大协议转译后的 Google Request 内部拓扑（Pipeline First 核心归一节点）
@@ -1290,7 +1350,11 @@ impl InboundThinkingPipeline {
         // Google Gemini 3+ 规则：全会话历史与活跃轮次中的所有工具调用 (Function Calling)
         // 均被 Google AST 校验器严格强制检查 thoughtSignature。
         // 若任意历史或活跃轮次的某个 functionCall 缺少签名，出站前统一自动注入官方合法哨兵 SENTINEL_SIGNATURE，彻底杜绝上游 400！
-        if target_model.to_lowercase().contains("gemini") {
+        let is_claude_model = target_model.to_lowercase().contains("claude")
+            || crate::models::OfficialModelCatalog::get(target_model)
+                .map(|m| m.is_claude())
+                .unwrap_or(false);
+        if !is_claude_model || target_model.to_lowercase().contains("gemini") {
             if let Some(contents_arr) = canonical_contents.as_array_mut() {
                 for content in contents_arr.iter_mut() {
                     if let Some(parts) = content.get_mut("parts").and_then(|p| p.as_array_mut()) {
@@ -1600,9 +1664,12 @@ impl InboundThinkingPipeline {
         }
         if let Some(tools) = canonical_tools {
             reordered.insert("tools".to_string(), tools);
-        }
-        if let Some(tc) = canonical_tool_config {
-            reordered.insert("toolConfig".to_string(), tc);
+            // [Pipeline First] 严格保持 Gemini 上游契约一致性：
+            // 只有当存在有效 tools 声明时，才传递客户端指定的 toolConfig；
+            // 杜绝 tools 为空或不存在时发送孤立悬挂的 toolConfig 引发上游 400 INVALID_ARGUMENT 报错。
+            if let Some(tc) = canonical_tool_config {
+                reordered.insert("toolConfig".to_string(), tc);
+            }
         }
         if let Some(labels) = canonical_labels {
             reordered.insert("labels".to_string(), labels);
@@ -1678,16 +1745,38 @@ impl InboundThinkingPipeline {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let top_rid_str = request_id
-            .as_ref()
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
 
         // 7. 处理 requestType
         let mut request_type = body_obj.remove("requestType");
 
         // 8. 规范化内部 request
         if let Some(inner_req) = body_obj.get_mut("request") {
+            // [Issue / Defect 18] 若 requestId 仍未生成，根据 sessionId 与 contents 步数提前构建官方 requestId，
+            // 确保后续 align_google_request_prefix_topology_with_model 解析出的 labels.trajectory_id
+            // 与顶层 requestId 中的 trajectory_id 保持 100% 严格同步一致
+            if request_id
+                .as_ref()
+                .and_then(|v| v.as_str())
+                .map_or(true, |s| s.is_empty())
+            {
+                let sid = inner_req
+                    .get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+                let step = inner_req
+                    .get("contents")
+                    .and_then(|c| c.as_array())
+                    .map_or(0, |a| a.len() as u64);
+                request_id = Some(json!(
+                    crate::proxy::mappers::common_utils::build_official_request_id(sid, step)
+                ));
+            }
+
+            let top_rid_str = request_id
+                .as_ref()
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             Self::align_google_request_prefix_topology_with_model(
                 inner_req,
                 &model_str,
@@ -1708,18 +1797,18 @@ impl InboundThinkingPipeline {
                     request_type = Some(json!("agent"));
                 }
             }
-
-            // 若 requestId 仍未生成，根据 sessionId 与 contents 步数构建官方 requestId
+        } else {
+            // 如果顶层没有 request 包装，直接规范化 body 自身
             if request_id
                 .as_ref()
                 .and_then(|v| v.as_str())
                 .map_or(true, |s| s.is_empty())
             {
-                let sid = inner_req
+                let sid = body
                     .get("sessionId")
                     .and_then(|v| v.as_str())
                     .unwrap_or("default");
-                let step = inner_req
+                let step = body
                     .get("contents")
                     .and_then(|c| c.as_array())
                     .map_or(0, |a| a.len() as u64);
@@ -1727,8 +1816,12 @@ impl InboundThinkingPipeline {
                     crate::proxy::mappers::common_utils::build_official_request_id(sid, step)
                 ));
             }
-        } else {
-            // 如果顶层没有 request 包装，直接规范化 body 自身
+
+            let top_rid_str = request_id
+                .as_ref()
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             Self::align_google_request_prefix_topology_with_model(
                 body,
                 &model_str,
@@ -1869,7 +1962,7 @@ mod tests {
 
         InboundThinkingPipeline::process_contents(
             &mut contents,
-            "gemini-2.5-pro",
+            "claude-sonnet-4-6",
             true,
             None,
             false,
@@ -2025,9 +2118,10 @@ mod tests {
         assert_eq!(parts.len(), 1);
         assert!(parts[0].get("functionCall").is_some());
         assert!(parts[0].get("thought").is_none());
-        assert!(
-            parts[0].get("thoughtSignature").is_none(),
-            "FunctionCall must NOT fall back to rejected sentinel signature"
+        assert_eq!(
+            parts[0]["thoughtSignature"],
+            crate::proxy::thinking_store::SENTINEL_SIGNATURE,
+            "Foreign Claude signature stripped, gatekeeper injects sentinel signature for Gemini"
         );
     }
 
@@ -2365,6 +2459,23 @@ mod tests {
             ]
         })];
 
+        // 1. 测试 Claude 目标：成功提升为 thought: true 思考块并保留正文回答
+        let mut claude_contents = contents.clone();
+        InboundThinkingPipeline::process_contents(
+            &mut claude_contents,
+            "claude-sonnet-4-6",
+            true,
+            None,
+            false,
+        );
+        let c_parts = claude_contents[0]["parts"].as_array().expect("parts array");
+        assert_eq!(c_parts[0]["thought"], true);
+        assert_eq!(c_parts[0]["text"], thought_text);
+        assert!(c_parts[0].get("thoughtSignature").is_none());
+        assert_eq!(c_parts[1]["text"], visible_answer);
+        assert!(c_parts[1].get("thought").is_none());
+
+        // 2. 测试 Gemini 目标：历史模型轮次存在可见正文时依规剥离思考块，保留纯净回答
         InboundThinkingPipeline::process_contents(
             &mut contents,
             "gemini-3.8-flash-tiered",
@@ -2374,20 +2485,9 @@ mod tests {
         );
 
         let parts = contents[0]["parts"].as_array().expect("parts array");
-        // 1. 首位成功提升为 thought: true 的思考块
-        assert_eq!(parts[0]["thought"], true);
-        assert_eq!(parts[0]["text"], thought_text);
-        // 铁律 I4：Gemini 目标的思考块**绝不**携带签名。
-        // 哨兵（skip_thought_signature_validator）不属于 Antigravity 协议 ——
-        // 官方 3 份报文 23 处签名里出现 0 次。
-        assert!(
-            parts[0].get("thoughtSignature").is_none(),
-            "Gemini 目标的思考块不得携带签名（I4）"
-        );
-
-        // 2. 正文部件已干净剔除 <think>...</think> 标签与换行，仅保留真实回答
-        assert_eq!(parts[1]["text"], visible_answer);
-        assert!(parts[1].get("thought").is_none());
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["text"], visible_answer);
+        assert!(parts[0].get("thought").is_none());
     }
 
     // ============ 工具回执（functionResponse）role 归一化 ============
@@ -3315,6 +3415,149 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some(SENTINEL_SIGNATURE),
             "伪哈希 ID 在 SQLite 仍未命中时，必须兜底回填官方哨兵"
+        );
+    }
+
+    #[test]
+    fn test_align_google_request_prefix_topology_drops_orphaned_tool_config_when_tools_empty() {
+        // 当客户端请求传入了 toolConfig，但 tools 为空或未注册时：
+        // 门禁必须安全丢弃孤立悬挂的 toolConfig，杜绝上游 400 INVALID_ARGUMENT 报错 (Issue #3586)
+        let mut inner_request = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "hello without tools"}]
+                }
+            ],
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "ANY"
+                }
+            }
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_request,
+            "gemini-2.5-flash",
+            None,
+        );
+
+        assert!(
+            inner_request.get("toolConfig").is_none(),
+            "当 tools 为空或不存在时，孤立的 toolConfig 必须被完全剔除"
+        );
+        assert!(
+            inner_request.get("tools").is_none(),
+            "tools 必须保持为 None"
+        );
+
+        // 反向验证：当存在有效 tools 时，toolConfig 必须完整保留
+        let mut request_with_tools = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "hello with tools"}]
+                }
+            ],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": "search",
+                            "description": "search tool"
+                        }
+                    ]
+                }
+            ],
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "ANY"
+                }
+            }
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut request_with_tools,
+            "gemini-2.5-flash",
+            None,
+        );
+
+        assert!(request_with_tools.get("tools").is_some(), "tools 必须存在");
+        assert!(
+            request_with_tools.get("toolConfig").is_some(),
+            "当 tools 存在时，toolConfig 必须被完整保留"
+        );
+    }
+
+    #[test]
+    fn test_trajectory_id_and_top_request_id_synchronized() {
+        let mut body = json!({
+            "project": "test-project",
+            "model": "gemini-3.1-pro-high",
+            "request": {
+                "sessionId": "test-session-uuid-12345",
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": "hello"}]
+                    }
+                ]
+            }
+        });
+
+        InboundThinkingPipeline::align_official_envelope(&mut body);
+
+        let req_id = body
+            .get("requestId")
+            .and_then(|v| v.as_str())
+            .expect("requestId must exist");
+        let parts: Vec<&str> = req_id.split('/').collect();
+        assert!(
+            parts.len() >= 5,
+            "requestId must be official shape: {}",
+            req_id
+        );
+        let top_traj_uuid = parts[3];
+
+        let inner_traj_uuid = body["request"]["labels"]["trajectory_id"]
+            .as_str()
+            .expect("labels.trajectory_id must exist");
+
+        assert_eq!(
+            top_traj_uuid, inner_traj_uuid,
+            "Top-level requestId trajectory UUID must match labels.trajectory_id perfectly (Defect 18)"
+        );
+    }
+
+    #[test]
+    fn test_gatekeeper_sentinel_injected_for_custom_non_claude_model() {
+        let mut inner_req = json!({
+            "contents": [
+                {
+                    "role": "model",
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "custom_tool",
+                                "args": {}
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut inner_req,
+            "custom-unknown-model",
+            None,
+        );
+
+        let fc_part = &inner_req["contents"][0]["parts"][0];
+        assert_eq!(
+            fc_part.get("thoughtSignature").and_then(|v| v.as_str()),
+            Some(crate::proxy::thinking_store::SENTINEL_SIGNATURE),
+            "Gatekeeper must inject sentinel signature for non-Claude models (Defect 10)"
         );
     }
 }

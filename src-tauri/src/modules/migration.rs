@@ -285,30 +285,34 @@ pub async fn import_all_local_accounts(target_ide: Option<&str>) -> Result<Vec<A
     let mut imported_accounts = Vec::new();
     let mut seen_refresh_tokens = std::collections::HashSet::new();
 
-    // 1. Check System Keyring / Keychain
-    if let Ok(oauth_state) = integration::read_from_system_keyring() {
-        let refresh_token = oauth_state.refresh_token.clone();
-        if !refresh_token.is_empty() && seen_refresh_tokens.insert(refresh_token.clone()) {
-            crate::modules::logger::log_info("Discovered OAuth state in System Keyring/Keychain");
-            if let Ok(token_resp) = oauth::refresh_access_token(&refresh_token, None).await {
-                let email = match oauth::get_user_info(&token_resp.access_token, None).await {
-                    Ok(info) => info.email,
-                    Err(_) => "Unknown".to_string(),
-                };
-                let token_data = TokenData::new(
-                    token_resp.access_token,
-                    refresh_token,
-                    token_resp.expires_in,
-                    Some(email.clone()),
-                    oauth_state.project_id,
-                    None,
-                    oauth_state.is_gcp_tos,
-                    token_resp.id_token,
-                )
-                .with_oauth_client_key(token_resp.oauth_client_key);
+    // 1. Check System Keyring / Keychain (仅在未显式指定目标或为经典原生版时探测，严禁穿透至 IDE)
+    if target_ide != Some("ide") {
+        if let Ok(oauth_state) = integration::read_from_system_keyring() {
+            let refresh_token = oauth_state.refresh_token.clone();
+            if !refresh_token.is_empty() && seen_refresh_tokens.insert(refresh_token.clone()) {
+                crate::modules::logger::log_info(
+                    "Discovered OAuth state in System Keyring/Keychain",
+                );
+                if let Ok(token_resp) = oauth::refresh_access_token(&refresh_token, None).await {
+                    let email = match oauth::get_user_info(&token_resp.access_token, None).await {
+                        Ok(info) => info.email,
+                        Err(_) => "Unknown".to_string(),
+                    };
+                    let token_data = TokenData::new(
+                        token_resp.access_token,
+                        refresh_token,
+                        token_resp.expires_in,
+                        Some(email.clone()),
+                        oauth_state.project_id,
+                        None,
+                        oauth_state.is_gcp_tos,
+                        token_resp.id_token,
+                    )
+                    .with_oauth_client_key(token_resp.oauth_client_key);
 
-                if let Ok(acc) = account::upsert_account(email, None, token_data) {
-                    imported_accounts.push(acc);
+                    if let Ok(acc) = account::upsert_account(email, None, token_data) {
+                        imported_accounts.push(acc);
+                    }
                 }
             }
         }
@@ -508,8 +512,15 @@ fn extract_oauth_state_from_file(db_path: &PathBuf) -> Result<ImportedOAuthState
 pub fn get_refresh_token_from_db(target_ide: Option<&str>) -> Result<String, String> {
     use crate::modules::integration;
 
-    if let Ok(oauth_state) = integration::read_from_system_keyring() {
-        return Ok(oauth_state.refresh_token);
+    // 严禁对 IDE 目标查询系统 Keyring：
+    // 系统 Keyring（如 Keychain/Secret Service）专属于原生桌面端 (>= 2.0.0) 或 CLI (agy)，
+    // 基于 VS Code 架构的 Antigravity IDE 凭据严格存储在 state.vscdb 中。
+    // 如果 target_ide == Some("ide")，必须直接从 IDE 数据库候选路径读取，
+    // 否则后台自动同步任务会从 Keyring 读取到经典版账号，误判后逆向覆盖 IDE 的当前账号！
+    if target_ide != Some("ide") {
+        if let Ok(oauth_state) = integration::read_from_system_keyring() {
+            return Ok(oauth_state.refresh_token);
+        }
     }
 
     let candidate_paths = db::get_all_candidate_db_paths(target_ide);
@@ -522,4 +533,26 @@ pub fn get_refresh_token_from_db(target_ide: Option<&str>) -> Result<String, Str
     }
 
     Err("Login state data not found in keyring or any database format".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_refresh_token_from_db_does_not_leak_keyring_for_ide() {
+        // 当查询不存在的 IDE 数据库路径时，如果指定 target_ide = Some("ide")，
+        // 绝不能回退读取宿主机实际存在的系统 Keyring（如果有的话），而是必须返回未找到错误
+        // 从而阻断后台任务误把 Keyring 经典账号逆向覆盖到 IDE 账号
+        let result = get_refresh_token_from_db(Some("ide"));
+        // 验证返回结果：如果系统中不存在真实 IDE state.vscdb，必须明确返回 Err，而绝不能是 Keyring 的值
+        let candidate_paths = db::get_all_candidate_db_paths(Some("ide"));
+        let has_real_db = candidate_paths.iter().any(|p| p.exists());
+        if !has_real_db {
+            assert!(
+                result.is_err(),
+                "When no IDE database exists, get_refresh_token_from_db(Some(\"ide\")) must return Err instead of falling back to system keyring"
+            );
+        }
+    }
 }

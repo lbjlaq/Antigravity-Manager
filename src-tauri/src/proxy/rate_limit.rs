@@ -490,7 +490,11 @@ impl RateLimitTracker {
             && status == 429
             && reason == RateLimitReason::QuotaExhausted
             && has_explicit_quota_exhausted(body)
-            && has_explicit_retry_time;
+            && has_explicit_retry_time
+            && model
+                .as_deref()
+                .and_then(normalize_image_model_id)
+                .is_some();
 
         // 4. 处理默认值与软避让逻辑（根据限流类型设置不同默认值）
         let retry_sec = match retry_after_sec {
@@ -555,17 +559,23 @@ impl RateLimitTracker {
                         lockout
                     }
                     RateLimitReason::RateLimitExceeded => {
-                        // 速率限制 (TPM/RPM)
+                        // 速率限制 (TPM/RPM)：采用阶梯式渐进退避，杜绝单次瞬态限流即刻锁死 30 秒 (#3506)
                         let body_lower = body.to_lowercase();
-                        let lockout = if body_lower.contains("resource has been exhausted")
-                            || body_lower.contains("resource_exhausted")
-                        {
-                            30
+                        let is_resource_exhausted = body_lower
+                            .contains("resource has been exhausted")
+                            || body_lower.contains("resource_exhausted");
+                        let lockout = if is_resource_exhausted {
+                            match failure_count {
+                                1 => 5,
+                                2 => 15,
+                                _ => 30,
+                            }
                         } else {
                             5
                         };
                         tracing::debug!(
-                            "检测到速率限制 (RATE_LIMIT_EXCEEDED)，使用默认值 {}秒",
+                            "检测到速率限制 (RATE_LIMIT_EXCEEDED)，第{}次连续失败，锁定 {}秒",
+                            failure_count,
                             lockout
                         );
                         lockout
@@ -1130,6 +1140,29 @@ mod tests {
         }"#;
         let reason = tracker.parse_rate_limit_reason(body);
         assert_eq!(reason, RateLimitReason::RateLimitExceeded);
+
+        // [Issue #3506] 阶梯式渐进退避测试：初次失败 5s，二次失败 15s，三次失败 30s
+        let info1 = tracker
+            .parse_from_error("acc-tpm", 429, None, body, None, &[60, 300])
+            .unwrap();
+        assert_eq!(info1.retry_after_sec, 5, "首次遭遇瞬态流控应仅锁定 5s");
+
+        let info2 = tracker
+            .parse_from_error("acc-tpm", 429, None, body, None, &[60, 300])
+            .unwrap();
+        assert_eq!(info2.retry_after_sec, 15, "二次遭遇瞬态流控递进锁定 15s");
+
+        let info3 = tracker
+            .parse_from_error("acc-tpm", 429, None, body, None, &[60, 300])
+            .unwrap();
+        assert_eq!(info3.retry_after_sec, 30, "三次遭遇瞬态流控上限锁定 30s");
+
+        // 乐观重置策略必须能够清除非硬配额的 RateLimitExceeded
+        tracker.clear_for_optimistic_reset();
+        assert!(
+            !tracker.is_rate_limited("acc-tpm", None),
+            "乐观重置必须清空瞬态流控锁定，防止误杀全池"
+        );
     }
 
     #[test]
@@ -1137,20 +1170,20 @@ mod tests {
         let tracker = RateLimitTracker::new();
         let backoff_steps = vec![60, 300, 1800, 7200];
 
-        // 模拟连续 5 次 5xx 错误
+        // 模拟连续 5 次 529 过载错误
         for i in 1..=5 {
             let info = tracker.parse_from_error(
                 "acc1",
-                503,
+                529,
                 None,
                 "Service Unavailable",
                 None,
                 &backoff_steps,
             );
-            assert!(info.is_some(), "第 {} 次 5xx 应该返回 RateLimitInfo", i);
+            assert!(info.is_some(), "第 {} 次 529 应该返回 RateLimitInfo", i);
             let info = info.unwrap();
-            // 5xx 应该始终锁定 8 秒，不受 failure_count 影响
-            assert_eq!(info.retry_after_sec, 8, "5xx 第 {} 次应该锁定 8 秒", i);
+            // 529 应该始终锁定 8 秒，不受 failure_count 影响
+            assert_eq!(info.retry_after_sec, 8, "529 第 {} 次应该锁定 8 秒", i);
         }
 
         // 现在触发一次 429 QuotaExhausted（没有 quotaResetDelay）

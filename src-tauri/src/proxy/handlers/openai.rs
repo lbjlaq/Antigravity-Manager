@@ -2130,60 +2130,81 @@ pub async fn handle_chat_completions(
 
         // 4. 获取 Token (使用准确的 request_type)
         // 关键：在重试尝试时根据 force_rotate 决定是否轮换账号
-        let (access_token, project_id, email, account_id, _wait_ms) =
-            if let Some(credentials) = retry_credentials.take() {
-                credentials
-            } else if config.request_type == "image_gen" {
-                drop(image_permit.take());
-                match token_manager
-                    .get_image_token(
-                        force_rotate,
-                        Some(&affinity_key),
-                        &mapped_model,
-                        &image_scheduler,
-                        request_timeout,
-                    )
-                    .await
-                {
-                    Ok((access_token, project_id, email, account_id, wait_ms, permit)) => {
-                        image_permit = Some(permit);
-                        (access_token, project_id, email, account_id, wait_ms)
-                    }
-                    Err((status, message)) => {
-                        failure_statuses.record(status);
-                        last_error = message;
-                        break;
-                    }
+        let (access_token, project_id, email, account_id, _wait_ms) = if let Some(credentials) =
+            retry_credentials.take()
+        {
+            credentials
+        } else if config.request_type == "image_gen" {
+            drop(image_permit.take());
+            match token_manager
+                .get_image_token(
+                    force_rotate,
+                    Some(&affinity_key),
+                    &mapped_model,
+                    &image_scheduler,
+                    request_timeout,
+                )
+                .await
+            {
+                Ok((access_token, project_id, email, account_id, wait_ms, permit)) => {
+                    image_permit = Some(permit);
+                    (access_token, project_id, email, account_id, wait_ms)
                 }
-            } else {
-                match token_manager
-                    .get_token(
-                        &config.request_type,
-                        force_rotate,
-                        Some(&affinity_key),
-                        &mapped_model,
-                    )
-                    .await
-                {
-                    Ok(t) => t,
-                    Err(e) => {
-                        // [Issue #3414] Attach headers with Retry-After if temporary cooldown exists
-                        let headers = crate::proxy::handlers::common::build_token_error_headers(
-                            Some(mapped_model.as_str()),
-                            None,
-                            &e,
-                        );
-                        let dual_err = crate::proxy::handlers::common::build_dual_track_error(
-                            "openai",
-                            StatusCode::SERVICE_UNAVAILABLE.as_u16(),
-                            mapped_model.as_str(),
-                            &e,
-                        );
-                        return Ok((StatusCode::SERVICE_UNAVAILABLE, headers, Json(dual_err))
-                            .into_response());
-                    }
+                Err((status, message)) => {
+                    failure_statuses.record(status);
+                    last_error = message;
+                    break;
                 }
-            };
+            }
+        } else {
+            let mut token_result = token_manager
+                .get_token(
+                    &config.request_type,
+                    force_rotate,
+                    Some(&affinity_key),
+                    &mapped_model,
+                )
+                .await;
+
+            if let Err(ref e) = token_result {
+                if crate::proxy::handlers::common::is_transient_token_error(e) {
+                    tracing::warn!(
+                            "Token acquisition transient error ({}), retrying once with force_rotate...",
+                            e
+                        );
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    token_result = token_manager
+                        .get_token(
+                            &config.request_type,
+                            true,
+                            Some(&affinity_key),
+                            &mapped_model,
+                        )
+                        .await;
+                }
+            }
+
+            match token_result {
+                Ok(t) => t,
+                Err(e) => {
+                    // [Issue #3414] Attach headers with Retry-After if temporary cooldown exists
+                    let headers = crate::proxy::handlers::common::build_token_error_headers(
+                        Some(mapped_model.as_str()),
+                        None,
+                        &e,
+                    );
+                    let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+                        "openai",
+                        StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                        mapped_model.as_str(),
+                        &e,
+                    );
+                    return Ok(
+                        (StatusCode::SERVICE_UNAVAILABLE, headers, Json(dual_err)).into_response()
+                    );
+                }
+            }
+        };
 
         // [NEW v4.1.29] 获取完整 Token 对象用于动态规格查询
         let proxy_token = token_manager.get_token_by_id(&account_id);
@@ -2367,6 +2388,8 @@ pub async fn handle_chat_completions(
         let status = response.status();
         if status.is_success() {
             token_manager.commit_session(&affinity_key, &account_id);
+            // [智能限流] 请求成功，重置该账号的连续失败计数
+            token_manager.mark_account_success(&account_id);
             // 5. 处理流式 vs 非流式
             if actual_stream {
                 use axum::body::Body;
@@ -2820,8 +2843,21 @@ pub async fn handle_chat_completions(
         );
 
         if classification.is_model_not_found() {
+            // [NEW] 针对特定账号记录单模型临时熔断（例如该 PRO 账号未开通 Claude 5.5），绝不连坐其他模型
+            token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900));
+
+            // 如果账号池中还有其他未尝试的候选账号，则顺畅换号重试，而不是直接放弃报错
+            if attempt < pool_size {
+                tracing::warn!(
+                    "[{}] 上游报错模型不可用 (HTTP {})，已标记账号 {} 对模型 [{}] 临时熔断，继续换号重试 ({}/{})...",
+                    trace_id, status_code, email, mapped_model, attempt, pool_size
+                );
+                force_rotate = true;
+                continue;
+            }
+
             tracing::warn!(
-                "[{}] Pipeline: Target model [{}] not found on upstream (HTTP {}). Terminating retry loop without account lockout.",
+                "[{}] Pipeline: Target model [{}] not found on upstream (HTTP {}). Pool exhausted without account-level lockout.",
                 trace_id, mapped_model, status_code
             );
             let dual_err = crate::proxy::handlers::common::build_dual_track_error(
@@ -2850,6 +2886,30 @@ pub async fn handle_chat_completions(
                 );
                 // 1. 精准定向净化 ThinkingStore 中的异构污染签名（保留思考文本与健康签名）
                 session_scope.purge_signatures(&mapped_model);
+                // 2. 剥离消息中的 signature，将 reasoning_content 降级为 text，阻断无签名 thought 重新生成
+                for msg in openai_req.messages.iter_mut() {
+                    msg.signature = None;
+                    if let Some(tool_calls) = &mut msg.tool_calls {
+                        for tc in tool_calls {
+                            tc.signature = None;
+                        }
+                    }
+                    if let Some(rc) = msg.reasoning_content.take() {
+                        if !crate::proxy::thinking_store::is_placeholder_thought(&rc) {
+                            match &mut msg.content {
+                                Some(OpenAIContent::String(s)) => {
+                                    *s = format!("{}\n\n{}", s, rc);
+                                }
+                                Some(OpenAIContent::Array(blocks)) => {
+                                    blocks.insert(0, OpenAIContentBlock::Text { text: rc });
+                                }
+                                None => {
+                                    msg.content = Some(OpenAIContent::String(rc));
+                                }
+                            }
+                        }
+                    }
+                }
                 // 3. 保持同一账号原地重试
                 force_rotate = false;
                 continue;
@@ -3846,8 +3906,6 @@ pub async fn handle_completions(
     let mut used_attempts = 0;
 
     let clean_ms = clean_start.elapsed().as_micros() as f64 / 1000.0;
-    let mut norm_ms = 0.0f64;
-    let mut think_fill_ms = 0.0f64;
     let mut ttft_ms = 0.0f64;
 
     if debug_logger::is_enabled(&debug_cfg) {
@@ -3893,35 +3951,50 @@ pub async fn handle_completions(
 
         let session_id = Some(affinity_key.as_str());
 
-        let (access_token, project_id, email, account_id, _wait_ms) =
-            if let Some(credentials) = retry_credentials.take() {
-                credentials
-            } else {
-                match token_manager
-                    .get_token(
-                        &config.request_type,
-                        force_rotate,
-                        session_id,
-                        &mapped_model,
-                    )
-                    .await
-                {
-                    Ok(t) => t,
-                    Err(e) => {
-                        let headers = crate::proxy::handlers::common::build_token_error_headers(
-                            Some(mapped_model.as_str()),
-                            None,
-                            &e,
+        let (access_token, project_id, email, account_id, _wait_ms) = if let Some(credentials) =
+            retry_credentials.take()
+        {
+            credentials
+        } else {
+            let mut token_result = token_manager
+                .get_token(
+                    &config.request_type,
+                    force_rotate,
+                    session_id,
+                    &mapped_model,
+                )
+                .await;
+
+            if let Err(ref e) = token_result {
+                if crate::proxy::handlers::common::is_transient_token_error(e) {
+                    tracing::warn!(
+                            "Token acquisition transient error ({}), retrying once with force_rotate...",
+                            e
                         );
-                        return (
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            headers,
-                            format!("Token error: {}", e),
-                        )
-                            .into_response();
-                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    token_result = token_manager
+                        .get_token(&config.request_type, true, session_id, &mapped_model)
+                        .await;
                 }
-            };
+            }
+
+            match token_result {
+                Ok(t) => t,
+                Err(e) => {
+                    let headers = crate::proxy::handlers::common::build_token_error_headers(
+                        Some(mapped_model.as_str()),
+                        None,
+                        &e,
+                    );
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        headers,
+                        format!("Token error: {}", e),
+                    )
+                        .into_response();
+                }
+            }
+        };
 
         let mapped_model = token_manager
             .resolve_dynamic_model_for_account(&account_id, &mapped_model)
@@ -3957,8 +4030,8 @@ pub async fn handle_completions(
         let session_id = session_id_str.clone();
         let tf_micros = tf_start.elapsed().as_micros() as u64;
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
-        norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
-        think_fill_ms = tf_micros as f64 / 1000.0;
+        let norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
+        let think_fill_ms = tf_micros as f64 / 1000.0;
         let _ =
             crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
                 &mut gemini_body,
@@ -4087,7 +4160,7 @@ pub async fn handle_completions(
         if status.is_success() {
             token_manager.commit_session(&affinity_key, &account_id);
             // [智能限流] 请求成功，重置该账号的连续失败计数
-            token_manager.mark_account_success(&email);
+            token_manager.mark_account_success(&account_id);
 
             if list_response {
                 use axum::body::Body;

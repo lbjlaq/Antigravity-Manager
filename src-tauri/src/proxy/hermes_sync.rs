@@ -642,7 +642,7 @@ fn apply_clear_losslessly(source: &str, backup: Option<&str>) -> Result<(String,
 }
 
 fn apply_restore_losslessly(current: &str, backup: &str) -> Result<String, String> {
-    let current_source = current;
+    let _current_source = current;
     let mut current = parse_doc(current)?;
     let backup = parse_doc(backup)?;
     ensure_root_mapping(&mut current)?;

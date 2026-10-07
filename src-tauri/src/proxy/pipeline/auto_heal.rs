@@ -156,7 +156,6 @@ where
         let mut saw_tool_call = false;
         let mut saw_finish_reason = false;
         let mut finish_reason_val: Option<String> = None;
-        let mut auto_healed = false;
 
         let mut stream1 = stream;
         while let Some(item) = stream1.next().await {
@@ -276,9 +275,7 @@ where
         // 2. 无任何正文 (saw_content == false)
         // 3. 无任何工具调用 (saw_tool_call == false)
         // 4. 上游正常返回了结束符 (saw_finish_reason == true)
-        // 5. 尚未执行过自愈 (auto_healed == false，严格 1 次上限)
-        if saw_thought && !saw_content && !saw_tool_call && saw_finish_reason && !auto_healed {
-            auto_healed = true;
+        if saw_thought && !saw_content && !saw_tool_call && saw_finish_reason {
             tracing::warn!(
                 "[{}] [Stream-AutoHeal] 🚨 Detected empty thinking completion (thought present, 0 content, 0 tool_calls, finishReason={:?}). Triggering auto-heal continuation 1/1...",
                 ctx.trace_id, finish_reason_val

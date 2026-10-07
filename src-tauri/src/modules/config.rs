@@ -122,20 +122,56 @@ pub fn parse_and_migrate_config(content: &str) -> Result<(AppConfig, bool), Stri
             }
         }
 
-        // 3.9 及以上仍由通配规则转到对应 tiered。已有自定义目标时不覆盖。
-        if !custom_mapping.contains_key("gemini-3.x-flash") {
-            custom_mapping.insert(
-                "gemini-3.x-flash".to_string(),
-                serde_json::Value::String("3.x-flash-tiered".to_string()),
-            );
+        // 清理已废弃的旧内置规则 gemini-3.x-flash（已由纯数据驱动 DynamicTierRouter 取代）
+        if custom_mapping.contains_key("gemini-3.x-flash") {
+            custom_mapping.remove("gemini-3.x-flash");
             modified = true;
         }
 
-        // 旧出厂默认 flash_high = 16384。只在首次启动时改成官方 -1。
+        // 旧出厂默认 flash_high = 16384 或 32768。只在首次启动且模式为 default 时改成官方 -1。
         if let Some(tb) = proxy
             .get_mut("thinking_budget")
             .and_then(|t| t.as_object_mut())
         {
+            let migrated_32k = tb
+                .get("thinking_budget_32k_legacy_migrated")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !migrated_32k {
+                let flash_mode_is_default = tb
+                    .get("flash_mode")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.eq_ignore_ascii_case("default"))
+                    .unwrap_or(false);
+                let pro_mode_is_default = tb
+                    .get("pro_mode")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.eq_ignore_ascii_case("default"))
+                    .unwrap_or(false);
+
+                if flash_mode_is_default {
+                    if let Some(val) = tb.get("flash_high").and_then(|v| v.as_i64()) {
+                        if val == 16384 || val == 32768 {
+                            tb.insert("flash_high".to_string(), serde_json::Value::from(-1));
+                        }
+                    }
+                }
+
+                if pro_mode_is_default {
+                    if let Some(val) = tb.get("pro_high").and_then(|v| v.as_i64()) {
+                        if val == 32768 {
+                            tb.insert("pro_high".to_string(), serde_json::Value::from(-1));
+                        }
+                    }
+                }
+
+                tb.insert(
+                    "thinking_budget_32k_legacy_migrated".to_string(),
+                    serde_json::Value::from(true),
+                );
+                modified = true;
+            }
+
             let migrated = tb
                 .get("flash_high_legacy_migrated")
                 .and_then(|v| v.as_bool())

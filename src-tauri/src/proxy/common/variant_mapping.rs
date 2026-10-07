@@ -82,10 +82,11 @@ pub fn infer_tier(budget_tokens: Option<u32>) -> VariantTier {
 
 /// Parse a supported Anthropic SDK output effort into a Gemini variant tier.
 pub fn tier_from_effort(effort: Option<&str>) -> Option<VariantTier> {
-    match effort.map(|s| s.trim().to_lowercase()).as_deref() {
-        Some("low") | Some("extra-low") => Some(VariantTier::Low),
-        Some("medium") | Some("default") => Some(VariantTier::Medium),
-        Some("high") | Some("max") | Some("xhigh") => Some(VariantTier::High),
+    let clean = effort.map(|s| s.trim().to_lowercase().replace('_', "-"))?;
+    match clean.as_str() {
+        "low" | "extra-low" | "minimal" | "lite" => Some(VariantTier::Low),
+        "medium" | "default" | "normal" => Some(VariantTier::Medium),
+        "high" | "max" | "xhigh" | "x-high" => Some(VariantTier::High),
         _ => None,
     }
 }
@@ -240,13 +241,17 @@ pub fn resolve_with_tier(
             VariantTier::High
         };
 
-        // [NEW] 3.x Flash 裸模型依据思考档位路由为 {base}-high / -low / -medium，
-        // 而显式指定的 *-tiered 模型原样保留模型名！
+        // 3.x Flash 裸模型依据思考档位路由为 {base}-high / -low / -medium / -tiered，
+        // 未显式指定档位时遵循统一决策链（tiered 优先 -> medium 次之 -> 向上取高于 low 的最低档位 -> 保底 low）
         let resolved_id = if crate::proxy::model_specs::is_bare_gemini_v3_flash(canonical) {
-            let eff_str = match dynamic_tier {
-                VariantTier::High => Some("high"),
-                VariantTier::Low => Some("low"),
-                VariantTier::Medium => Some("medium"),
+            let eff_str = if explicit_tier.is_some() || name_tier.is_some() {
+                match dynamic_tier {
+                    VariantTier::High => Some("high"),
+                    VariantTier::Low => Some("low"),
+                    VariantTier::Medium => Some("medium"),
+                }
+            } else {
+                None
             };
             crate::proxy::model_specs::resolve_bare_flash_route(canonical, eff_str)
                 .unwrap_or_else(|| canonical.to_string())
@@ -288,6 +293,99 @@ pub fn resolve_with_tier(
         });
     }
 
+    // 4. 纯通用分档模型动态规格解析 (Dynamic RealModelSpec Factory):
+    // 针对任何具备档位后缀（-high, -medium, -low, -tiered）或可从官方目录解析为分档的任意品牌模型，
+    // 动态生成 RealModelSpec，彻底告别静态 SPEC 常量维护：
+    let has_available_tiers =
+        !crate::models::OfficialModelCatalog::collect_tiers_for_base(&lower).is_empty();
+
+    let is_tiered_model = name_tier.is_some() || explicit_tier.is_some() || has_available_tiers;
+    if is_tiered_model {
+        let dynamic_tier = if let Some(nt) = name_tier {
+            nt
+        } else if let Some(et) = explicit_tier {
+            et
+        } else {
+            // Claude 默认 Medium，其余按阶梯默认
+            if lower.contains("claude") {
+                VariantTier::Medium
+            } else {
+                VariantTier::High
+            }
+        };
+
+        // 如果是裸模型，动态解析出带档位后缀的真实 ID；未显式传档位时透传 None 走默认决策链
+        let eff_str = if explicit_tier.is_some() || name_tier.is_some() {
+            match dynamic_tier {
+                VariantTier::High => Some("high"),
+                VariantTier::Low => Some("low"),
+                VariantTier::Medium => Some("medium"),
+            }
+        } else {
+            None
+        };
+
+        let resolved_id =
+            crate::proxy::model_specs::resolve_bare_tiered_model_route(canonical, eff_str)
+                .unwrap_or_else(|| {
+                    if lower.contains("claude") {
+                        crate::proxy::common::model_mapping::canonicalize_claude_client_model_id(
+                            canonical,
+                        )
+                    } else {
+                        canonical.to_string()
+                    }
+                });
+
+        let official_info = crate::models::OfficialModelCatalog::get(&resolved_id)
+            .or_else(|| crate::models::OfficialModelCatalog::get(canonical));
+
+        let max_output_tokens = official_info
+            .as_ref()
+            .and_then(|info| info.max_output_tokens)
+            .map(|v| v as u32)
+            .unwrap_or_else(|| {
+                if lower.contains("claude") {
+                    128_000
+                } else if lower.contains("pro") {
+                    65535
+                } else {
+                    65536
+                }
+            });
+
+        let thinking_budget = official_info
+            .as_ref()
+            .and_then(|info| info.thinking_budget)
+            .map(|v| v as u32)
+            .unwrap_or_else(|| {
+                if lower.contains("claude") {
+                    1024
+                } else {
+                    match dynamic_tier {
+                        VariantTier::High => 10000,
+                        VariantTier::Medium => 4000,
+                        VariantTier::Low => 1000,
+                    }
+                }
+            });
+
+        let supports_thinking = official_info
+            .as_ref()
+            .and_then(|info| info.supports_thinking)
+            .unwrap_or(true);
+
+        let is_claude = lower.contains("claude");
+        let id: &'static str = Box::leak(resolved_id.into_boxed_str());
+        return Some(RealModelSpec {
+            id,
+            thinking_budget,
+            max_output_tokens,
+            include_thoughts: supports_thinking,
+            preserve_client_budget: is_claude,
+        });
+    }
+
     None
 }
 
@@ -300,6 +398,9 @@ pub fn resolve(canonical: &str, budget_tokens: Option<u32>) -> Option<RealModelS
 /// 请求路由不能再把它映回客户端公开名，否则上游会收到无法生成的别名。
 pub fn is_physical_upstream_id(model: &str) -> bool {
     let key = model.trim();
+    if key.ends_with("-high") || key.ends_with("-medium") || key.ends_with("-low") {
+        return true;
+    }
     GEMINI_FAMILIES.iter().any(|family| {
         family
             .tiers
@@ -704,6 +805,21 @@ mod tests {
         assert_eq!(s.id, "claude-sonnet-4-6");
         assert_eq!(s.thinking_budget, 1024);
         assert_eq!(s.max_output_tokens, 64000);
+
+        // Gemini 3.1 Pro 衍生裸模型动态解析
+        let s = resolve("gemini-3.1-pro-low", None).unwrap();
+        assert_eq!(s.id, "gemini-3.1-pro-low");
+
+        let s = resolve("gemini-3.1-pro-high", None).unwrap();
+        assert_eq!(s.id, "gemini-3.1-pro-high");
+
+        // 裸模型解析（缺省遵循决策链 -> high）
+        let s = resolve("gemini-3.1-pro", None).unwrap();
+        assert_eq!(s.id, "gemini-3.1-pro-high");
+
+        // 裸模型带显式档位解析
+        let s = resolve_with_tier("gemini-3.1-pro", Some(VariantTier::Low), None).unwrap();
+        assert_eq!(s.id, "gemini-3.1-pro-low");
     }
 
     #[test]

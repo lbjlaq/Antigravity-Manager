@@ -51,8 +51,7 @@ pub fn resolve_effective_target(
         is_ide = false;
     } else if let Some(exe_str) = ide_exe_path {
         // 原生经典版不存在，检查是否存在 IDE 可执行文件
-        let path_lower = exe_str.to_lowercase();
-        if path_lower.contains("antigravity ide") || path_lower.contains("antigravity-ide") {
+        if process::is_antigravity_ide_str(exe_str) {
             is_ide = true;
         }
     }
@@ -231,6 +230,10 @@ impl SystemIntegration for DesktopIntegration {
 
         if target_ide == Some("agy") {
             write_to_system_keyring(account)?;
+            // A successful write (or a file fallback) is not proof that the CLI
+            // will read this account from the system credential store.
+            let stored = read_from_system_keyring_only()?;
+            verify_agy_credentials(&account.token.refresh_token, &stored.refresh_token)?;
 
             if let Ok(storage_path) = device::get_storage_path(target_ide) {
                 if let Some(ref profile) = account.device_profile {
@@ -241,12 +244,12 @@ impl SystemIntegration for DesktopIntegration {
             let is_running = process::is_process_running_by_name("agy");
             let msg = if is_running {
                 format!(
-                    "Account {} activated. Agy is running, token will be picked up automatically.",
+                    "Credentials for {} saved and verified. Running agy sessions may still use and write back their previous credentials.",
                     account.email
                 )
             } else {
                 format!(
-                    "Account {} activated. Token is ready for your next CLI command.",
+                    "Credentials for {} saved and verified for the next CLI command.",
                     account.email
                 )
             };
@@ -259,7 +262,7 @@ impl SystemIntegration for DesktopIntegration {
         // 1. 智能决策：判断目标是 Antigravity IDE (VS Code 定制版) 还是 Antigravity 经典版 (原生桌面端)
         let classic_running = process::is_antigravity_running(None);
         let ide_running = process::is_antigravity_running(Some("ide"));
-        let classic_exe = process::get_antigravity_executable_path(None);
+        let classic_exe = process::get_antigravity_executable_path(Some("classic"));
         let ide_exe = process::get_antigravity_executable_path(Some("ide"));
         let ide_exe_str = ide_exe.as_ref().map(|p| p.to_string_lossy().to_string());
 
@@ -665,7 +668,10 @@ fn write_to_system_keyring(account: &crate::models::Account) -> Result<(), Strin
         };
 
         // 1. 优先尝试写入 'login' 集合（agy CLI 所需）
-        let login_res = store_to_collection(Some("login"), payload_json.as_bytes());
+        let login_res = store_to_collection(
+            Some("/org/freedesktop/secrets/collection/login"),
+            payload_json.as_bytes(),
+        );
 
         // 2. 同时写入默认集合（保证其他依赖 default collection 的系统工具也能读取）
         let default_res = store_to_collection(None, payload_json.as_bytes());
@@ -909,6 +915,28 @@ fn read_from_file_credentials() -> Result<crate::modules::migration::ImportedOAu
 
 /// 辅助方法：从宿主操作系统的 Keychain/Credentials Manager 读取 Token
 pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    read_system_credentials(true)
+}
+
+/// Read only the system store: stale fallback files must not confirm an agy switch.
+pub(crate) fn read_from_system_keyring_only(
+) -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    read_system_credentials(false)
+}
+
+fn verify_agy_credentials(expected: &str, stored: &str) -> Result<(), String> {
+    if expected.is_empty() || expected != stored {
+        return Err(
+            "Stored agy credentials do not match the selected account; the switch was not confirmed."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn read_system_credentials(
+    allow_file_fallback: bool,
+) -> Result<crate::modules::migration::ImportedOAuthState, String> {
     #[cfg(target_os = "macos")]
     {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -925,8 +953,10 @@ pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedO
             .map_err(|e| format!("Failed to execute security command: {}", e))?;
 
         if !output.status.success() {
-            if let Ok(file_state) = read_from_file_credentials() {
-                return Ok(file_state);
+            if allow_file_fallback {
+                if let Ok(file_state) = read_from_file_credentials() {
+                    return Ok(file_state);
+                }
             }
             return Err("No credential found in macOS Keychain".to_string());
         }
@@ -993,8 +1023,10 @@ pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedO
         unsafe {
             let res = CredReadW(target_wide.as_ptr(), 1, 0, &mut cred_ptr);
             if res == 0 || cred_ptr.is_null() {
-                if let Ok(file_state) = read_from_file_credentials() {
-                    return Ok(file_state);
+                if allow_file_fallback {
+                    if let Ok(file_state) = read_from_file_credentials() {
+                        return Ok(file_state);
+                    }
                 }
                 return Err("No credential found in Windows Credential Manager".to_string());
             }
@@ -1019,8 +1051,10 @@ pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedO
         {
             Ok(out) => out,
             Err(e) => {
-                if let Ok(file_state) = read_from_file_credentials() {
-                    return Ok(file_state);
+                if allow_file_fallback {
+                    if let Ok(file_state) = read_from_file_credentials() {
+                        return Ok(file_state);
+                    }
                 }
                 if e.kind() == std::io::ErrorKind::NotFound {
                     return Err(
@@ -1037,8 +1071,10 @@ pub fn read_from_system_keyring() -> Result<crate::modules::migration::ImportedO
         };
 
         if !output.status.success() {
-            if let Ok(file_state) = read_from_file_credentials() {
-                return Ok(file_state);
+            if allow_file_fallback {
+                if let Ok(file_state) = read_from_file_credentials() {
+                    return Ok(file_state);
+                }
             }
             return Err("No credential found in Linux secret-tool".to_string());
         }
@@ -1194,6 +1230,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn agy_credentials_require_an_exact_nonempty_readback() {
+        assert!(verify_agy_credentials("selected-token", "selected-token").is_ok());
+        assert!(verify_agy_credentials("", "").is_err());
+        let error = verify_agy_credentials("selected-token", "other-token").unwrap_err();
+        assert!(!error.contains("selected-token"));
+        assert!(!error.contains("other-token"));
+    }
+
+    #[test]
     fn test_parse_keyring_payload_nested_token() {
         let payload = r#"{
             "token": {
@@ -1302,6 +1347,17 @@ mod tests {
         );
         assert!(is_ide);
         assert_eq!(effective, Some("ide"));
+
+        // 测试下划线命名 antigravity_ide
+        let (is_ide_underscore, effective_underscore) = resolve_effective_target(
+            None,
+            false,
+            false,
+            false,
+            Some("/usr/local/bin/antigravity_ide"),
+        );
+        assert!(is_ide_underscore);
+        assert_eq!(effective_underscore, Some("ide"));
     }
 
     #[test]

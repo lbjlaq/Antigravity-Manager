@@ -840,24 +840,34 @@ fn find_in_path(executable: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
-fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
+fn build_opencode_version_command(opencode_path: &PathBuf) -> Command {
     let path_str = opencode_path.to_string_lossy();
-
-    // Check if it's a .cmd or .bat file that needs cmd.exe
     let is_cmd = path_str.ends_with(".cmd") || path_str.ends_with(".bat");
 
-    let output = if is_cmd {
+    let mut cmd = if is_cmd {
         let mut cmd = Command::new("cmd.exe");
         cmd.arg("/C")
             .arg(opencode_path)
             .arg("--version")
             .creation_flags(CREATE_NO_WINDOW);
-        cmd.output()
+        cmd
     } else {
         let mut cmd = Command::new(opencode_path);
         cmd.arg("--version").creation_flags(CREATE_NO_WINDOW);
-        cmd.output()
+        cmd
     };
+
+    if let Some(parent) = opencode_path.parent() {
+        let current_path = env::var("PATH").unwrap_or_default();
+        let enriched_path = format!("{};{}", parent.display(), current_path);
+        cmd.env("PATH", enriched_path);
+    }
+    cmd
+}
+
+#[cfg(target_os = "windows")]
+fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
+    let output = build_opencode_version_command(opencode_path).output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -886,8 +896,45 @@ fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+fn build_opencode_version_command(opencode_path: &PathBuf) -> Command {
+    let mut cmd = Command::new(opencode_path);
+    cmd.arg("--version");
+
+    // [FIX #1798] 当在 GUI / 桌面环境下运行时，进程 PATH 可能不包含 Node 路径，
+    // 而通过 npm/fnm/nvm 等安装的 opencode 二进制具有 `#!/usr/bin/env node` Shebang，
+    // 需要将 opencode 所在目录以及常用 node 搜索路径注入 PATH 环境变量中。
+    let mut path_dirs = Vec::new();
+    if let Some(parent) = opencode_path.parent() {
+        path_dirs.push(parent.to_path_buf());
+    }
+    if let Some(home) = dirs::home_dir() {
+        path_dirs.push(home.join(".local/bin"));
+        path_dirs.push(home.join(".bun/bin"));
+        path_dirs.push(home.join(".npm-global/bin"));
+        path_dirs.push(home.join(".volta/bin"));
+    }
+    path_dirs.push(PathBuf::from("/opt/homebrew/bin"));
+    path_dirs.push(PathBuf::from("/usr/local/bin"));
+    path_dirs.push(PathBuf::from("/usr/bin"));
+    path_dirs.push(PathBuf::from("/bin"));
+
+    let current_path = env::var("PATH").unwrap_or_default();
+    let enriched_path = format!(
+        "{}:{}",
+        path_dirs
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(":"),
+        current_path
+    );
+    cmd.env("PATH", enriched_path);
+    cmd
+}
+
+#[cfg(not(target_os = "windows"))]
 fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
-    let output = Command::new(opencode_path).arg("--version").output();
+    let output = build_opencode_version_command(opencode_path).output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -916,9 +963,20 @@ fn run_opencode_version(opencode_path: &PathBuf) -> Option<String> {
 }
 
 pub fn check_opencode_installed() -> (bool, Option<String>) {
+    check_opencode_installed_with(resolve_opencode_path, run_opencode_version)
+}
+
+fn check_opencode_installed_with<F1, F2>(
+    resolve_fn: F1,
+    run_version_fn: F2,
+) -> (bool, Option<String>)
+where
+    F1: FnOnce() -> Option<PathBuf>,
+    F2: FnOnce(&PathBuf) -> Option<String>,
+{
     tracing::debug!("Checking opencode installation...");
 
-    let opencode_path = match resolve_opencode_path() {
+    let opencode_path = match resolve_fn() {
         Some(path) => {
             tracing::debug!("Resolved opencode path: {:?}", path);
             path
@@ -929,16 +987,16 @@ pub fn check_opencode_installed() -> (bool, Option<String>) {
         }
     };
 
-    match run_opencode_version(&opencode_path) {
-        Some(version) => {
-            tracing::debug!("opencode version detected: {}", version);
-            (true, Some(version))
-        }
-        None => {
-            tracing::debug!("Failed to get opencode version");
-            (false, None)
-        }
+    let version = run_version_fn(&opencode_path);
+    if let Some(ref v) = version {
+        tracing::debug!("opencode version detected: {}", v);
+    } else {
+        tracing::debug!(
+            "Failed to get opencode version, but binary exists at: {:?}",
+            opencode_path
+        );
     }
+    (true, version)
 }
 
 fn get_provider_options<'a>(value: &'a Value, provider_name: &str) -> Option<&'a Value> {
@@ -2100,6 +2158,31 @@ mod tests {
             id: id.to_string(),
             name: Some(name.to_string()),
         }
+    }
+
+    #[test]
+    fn test_issue_1798_opencode_installed_status_decoupled_from_version() {
+        // 1. 当二进制未找到时，返回未安装
+        let (installed, version) =
+            check_opencode_installed_with(|| None, |_| Some("1.0.0".to_string()));
+        assert!(!installed);
+        assert!(version.is_none());
+
+        // 2. 当二进制找到但版本执行失败（例如环境缺少 Node）时，仍正确标记为已安装 (Issue #1798)
+        let dummy_path = PathBuf::from("/usr/local/bin/opencode");
+        let (installed, version) =
+            check_opencode_installed_with(|| Some(dummy_path.clone()), |_| None);
+        assert!(
+            installed,
+            "即使版本获取失败，只要二进制存在就应标记为已安装"
+        );
+        assert!(version.is_none());
+
+        // 3. 当二进制找到且版本获取成功时，返回已安装与版本号
+        let (installed, version) =
+            check_opencode_installed_with(|| Some(dummy_path), |_| Some("0.2.1".to_string()));
+        assert!(installed);
+        assert_eq!(version, Some("0.2.1".to_string()));
     }
 
     #[test]

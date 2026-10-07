@@ -721,7 +721,14 @@ pub fn is_compaction_request_text(text: &str) -> bool {
         || text.contains("wrap your summary")
         || text.contains("conversation history will be replaced")
         || text.contains("Summarize this coding conversation")
-        || (text.contains("<summary>") && text.contains("Summarize"))
+        || text.contains("write a concise summary")
+        || text.contains("summarize the conversation so far")
+        || text.contains("compact the conversation")
+        || text.contains("tasked with summarizing conversations")
+        || text.contains("summary of the conversation")
+        || text.contains("Reactive compact")
+        || text.contains("<summary>")
+        || text.contains("</summary>")
         || text.contains("This conversation is too long")
 }
 
@@ -731,6 +738,7 @@ pub fn is_compaction_request_text(text: &str) -> bool {
 pub fn is_post_compaction_continuation_text(text: &str) -> bool {
     text.contains("This session is being continued from a previous conversation")
         || text.contains("compact_boundary")
+        || text.contains("previous conversation that ran out of context")
         || (text.contains("<summary>") && text.contains("previous conversation"))
 }
 

@@ -572,6 +572,79 @@ pub fn wrap_request_v2(
                 gen_config.insert("maxOutputTokens".to_string(), serde_json::json!(final_cap));
             }
         }
+
+        // 确保模型限额截断后依然满足 Google v1internal 硬约束：maxOutputTokens > thinkingBudget
+        let user_provided_max = gen_config.get("maxOutputTokens").and_then(|v| v.as_u64());
+        let raw_budget = gen_config
+            .get("thinkingConfig")
+            .and_then(|tc| tc.get("thinkingBudget"))
+            .and_then(|v| v.as_i64());
+
+        if let Some(budget) = raw_budget {
+            if budget > 0 {
+                let mut final_budget = budget;
+                let mut final_max = user_provided_max.unwrap_or(final_cap);
+
+                // 【分支 1: 6 倍反差极速意图识别】
+                // 如果用户提供了明确的总输出预算 m，且思考预算 t >= 6 * m（例如 m=1024, t=8192）：
+                // 证明用户/客户端强烈希望短平快直接回答，不希望被高思考拖慢！
+                // 此时压缩思考预算为 max(0, m - 1024)。若 m <= 1024 则预算为 0！
+                if let Some(user_m) = user_provided_max {
+                    if budget as u64 >= 6 * user_m {
+                        let fast_budget = if user_m > 1024 {
+                            (user_m - 1024) as i64
+                        } else {
+                            0
+                        };
+                        final_budget = fast_budget;
+                        tracing::info!(
+                            "[Gemini-Wrap] 6x Intent detected (budget={} >= 6*max={}): compressed thinkingBudget to {} for fast response",
+                            budget, user_m, fast_budget
+                        );
+                    }
+                }
+
+                // 如果未触发 6 倍极速压缩 (或者极速压缩后仍然有非零思考预算)：
+                if final_budget > 0 {
+                    // 【分支 2: 常规深度推理 - 官方容量能包住时优先自动扩充 m】
+                    if final_budget as u64 + 1024 <= final_cap {
+                        if final_max <= final_budget as u64 {
+                            final_max = final_budget as u64 + 1024;
+                            tracing::info!(
+                                "[Gemini-Wrap] Auto-expanded maxOutputTokens to {} to preserve thinkingBudget ({}) within official final_cap ({}) for model {}",
+                                final_max, final_budget, final_cap, final_model_name
+                            );
+                        }
+                    } else {
+                        // 【分支 3: 官方物理天花板硬顶兜底】
+                        final_max = final_cap;
+                        final_budget = if final_cap > 1024 {
+                            (final_cap - 1024) as i64
+                        } else if final_cap > 1 {
+                            (final_cap - 1) as i64
+                        } else {
+                            0
+                        };
+                        tracing::info!(
+                            "[Gemini-Wrap] Budget exceeded official ceiling: clamped maxOutputTokens to {} and thinkingBudget to {}",
+                            final_max, final_budget
+                        );
+                    }
+                }
+
+                gen_config.insert("maxOutputTokens".to_string(), serde_json::json!(final_max));
+                if let Some(tc) = gen_config
+                    .get_mut("thinkingConfig")
+                    .and_then(|v| v.as_object_mut())
+                {
+                    tc.insert(
+                        "thinkingBudget".to_string(),
+                        serde_json::json!(final_budget),
+                    );
+                }
+            }
+        }
+
         if is_under_v3 {
             gen_config.remove("thinkingConfig");
         }

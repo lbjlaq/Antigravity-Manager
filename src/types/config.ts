@@ -158,6 +158,7 @@ export interface ExperimentalConfig {
     thinking_max_memory_turns?: number;
     enable_cowork_auto_compact?: boolean;
     cowork_compact_threshold?: number;
+    enable_cowork_manual_compact?: boolean;
 }
 
 export interface CircuitBreakerConfig {

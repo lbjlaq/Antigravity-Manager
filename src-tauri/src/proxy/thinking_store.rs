@@ -827,7 +827,7 @@ impl ThinkingStore {
                 .unwrap_or_else(|| store_key.to_lowercase().contains("claude"));
 
             if has_meaningful_thought {
-                let mut thought_part = json!({
+                let thought_part = json!({
                     "text": rec.thought.as_str(),
                     "thought": true,
                 });
@@ -1761,7 +1761,18 @@ pub fn finalize_gemini_contents_thinking_with_session(
             // 3. 治理思考块 (thinking_parts)
             // 思考块不挂签名。Claude 保留思考正文（Mac IDE 与 Windows 桌面端都回传）。
             // Gemini 在已有非思考 part 时丢掉思考正文，连续只靠签名。
-            if is_thinking_enabled {
+            // 【守卫法则】：对于 Claude 模型，上游 Google 严格校验签名，若本轮未能安置有效签名，
+            // 严禁送出 `thought: true` 块（否则必报 messages.N.content.0.thinking.signature: Field required 400）。
+            // 此时必须将思考正文安全降级为普通正文（包裹 <think>）以纯文本出站。
+            let claude_has_signature = is_claude_turn
+                && other_parts.iter().any(|p| {
+                    p.get("thoughtSignature")
+                        .or_else(|| p.get("thought_signature"))
+                        .and_then(|s| s.as_str())
+                        .map_or(false, |s| is_real_signature(s) && is_claude_signature(s))
+                });
+
+            if is_thinking_enabled && (!is_claude_turn || claude_has_signature) {
                 for tp in thinking_parts.iter_mut() {
                     if let Some(obj) = tp.as_object_mut() {
                         obj.remove("thoughtSignature");
@@ -1772,7 +1783,7 @@ pub fn finalize_gemini_contents_thinking_with_session(
                     parts.extend(thinking_parts);
                 }
             } else {
-                // 当思考模式为关时：
+                // 当思考模式为关，或者 Claude 缺少签名无法通过上游合法性检验时：
                 // 1. 绝不主动注入任何占位思考块（如 "..."）；
                 // 2. 若含有实质性思考内容的思考块，单次出站降级为普通文本以防丢失语义，摘除 thought: true 标记；
                 // 3. 纯占位符则直接剔除，绝不上送 thought: true 结构
@@ -2169,6 +2180,31 @@ pub fn is_likely_gemini_signature(sig: &str) -> bool {
     false
 }
 
+/// 判断字节流是否为原始 Claude 签名的负载：
+/// 1. 经典 Claude 签名：包含 ASCII b"claude"
+/// 2. 官方 Protobuf 二进制格式 (Claude 5.5)：以 0x08 0x04 0x12 开头
+#[inline]
+fn is_raw_claude_payload(bytes: &[u8]) -> bool {
+    bytes.windows(6).any(|w| w.eq_ignore_ascii_case(b"claude"))
+        || bytes.starts_with(&[0x08, 0x04, 0x12])
+}
+
+/// 判断一层 Base64 解码后的字节流是否包装了原始 Claude 签名（即发往 Google Vertex AI 的双层签名解码结果）：
+/// 第一层解出 ASCII 字符串形式的原始签名 (如以 b"CAQS" 开头，或内层解码为经典/Protobuf 格式)
+#[inline]
+fn is_wrapped_claude_payload(decoded: &[u8]) -> bool {
+    use base64::Engine;
+    if decoded.starts_with(b"CAQS") {
+        return true;
+    }
+    if let Ok(inner) = base64::engine::general_purpose::STANDARD.decode(decoded) {
+        if is_raw_claude_payload(&inner) {
+            return true;
+        }
+    }
+    false
+}
+
 /// 判断签名是否属于 Claude 家族的签名
 pub fn is_claude_signature(sig: &str) -> bool {
     let s = sig.trim();
@@ -2177,16 +2213,8 @@ pub fn is_claude_signature(sig: &str) -> bool {
     }
     use base64::Engine;
     if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(s) {
-        if decoded
-            .windows(6)
-            .any(|w| w.eq_ignore_ascii_case(b"claude"))
-        {
+        if is_raw_claude_payload(&decoded) || is_wrapped_claude_payload(&decoded) {
             return true;
-        }
-        if let Ok(inner) = base64::engine::general_purpose::STANDARD.decode(&decoded) {
-            if inner.windows(6).any(|w| w.eq_ignore_ascii_case(b"claude")) {
-                return true;
-            }
         }
     }
     false
@@ -2194,35 +2222,28 @@ pub fn is_claude_signature(sig: &str) -> bool {
 
 /// 将 Claude 签名正规化为发送给 Google Vertex AI 接口所需的格式
 /// Google 的 REST API 对 bytes 字段会自动执行 base64_decode，
-/// 因此发往 Google 的 thoughtSignature 必须是 ASCII 签名字节的 Base64 编码 (即 "RXU4..." 格式)
+/// 因此发往 Google 的 thoughtSignature 必须是 ASCII 签名字节的 Base64 编码 (即 "RXU4..." 或 "Q0FR..." 格式)
 pub fn ensure_google_claude_thought_signature(sig: &str) -> String {
     let s = sig.trim();
     if s.is_empty() || s == SENTINEL_SIGNATURE {
         return s.to_string();
     }
     use base64::Engine;
-    // 如果已经由 Base64 包装过（即 base64 decode 出来能再解出 b"claude"），无需重复包装
     if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(s) {
-        if let Ok(inner) = base64::engine::general_purpose::STANDARD.decode(&decoded) {
-            if inner.windows(6).any(|w| w.eq_ignore_ascii_case(b"claude")) {
-                return s.to_string();
-            }
+        // 如果已经由 Google Vertex AI 双层包装过，无需重复包装
+        if is_wrapped_claude_payload(&decoded) {
+            return s.to_string();
         }
-    }
-    // 只有在当前签名确实是原始 Claude 客户端签名（解码一层后包含 b"claude"）时才进行一次 Base64 包装！
-    // 严禁对非 Claude 签名或未知字符串无节制再包装，彻底阻断几何级膨胀死循环。
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(s) {
-        if decoded
-            .windows(6)
-            .any(|w| w.eq_ignore_ascii_case(b"claude"))
-        {
+        // 只有在当前签名确实是原始 Claude 客户端单层签名时，才进行一次 Base64 包装！
+        // 严禁对非 Claude 签名或未知字符串无节制再包装，彻底阻断几何级膨胀死循环。
+        if is_raw_claude_payload(&decoded) {
             return base64::engine::general_purpose::STANDARD.encode(s.as_bytes());
         }
     }
     s.to_string()
 }
 
-/// 将 Claude 签名还原为客户端（Claude Code / Anthropic SDK）期望的原生格式 (Eu8...)
+/// 将 Claude 签名还原为客户端（Claude Code / Anthropic SDK）期望的原生格式 (Eu8... 或 CAQS...)
 pub fn ensure_raw_claude_thought_signature(sig: &str) -> String {
     let s = sig.trim();
     if s.is_empty() || s == SENTINEL_SIGNATURE {
@@ -2230,11 +2251,9 @@ pub fn ensure_raw_claude_thought_signature(sig: &str) -> String {
     }
     use base64::Engine;
     if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(s) {
-        if let Ok(inner) = base64::engine::general_purpose::STANDARD.decode(&decoded) {
-            if inner.windows(6).any(|w| w.eq_ignore_ascii_case(b"claude")) {
-                if let Ok(raw_s) = String::from_utf8(decoded) {
-                    return raw_s;
-                }
+        if is_wrapped_claude_payload(&decoded) {
+            if let Ok(raw_s) = String::from_utf8(decoded) {
+                return raw_s;
             }
         }
     }
@@ -2242,15 +2261,13 @@ pub fn ensure_raw_claude_thought_signature(sig: &str) -> String {
 }
 
 /// 用于 ThinkingStore / SignatureCache 内部的比对与哈希：
-/// 统一归一化为原始客户端签名形式 (Eu8...)，使 "RXU4..." 与 "Eu8..." 判定为相同签名
+/// 统一归一化为原始客户端签名形式 (Eu8... 或 CAQS...)，使 "RXU4..." 与 "Eu8..."、"Q0FR..." 与 "CAQS..." 判定为相同签名
 pub fn normalize_signature_for_comparison(sig: &str) -> std::borrow::Cow<'_, str> {
     use base64::Engine;
     if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(sig) {
-        if let Ok(inner) = base64::engine::general_purpose::STANDARD.decode(&decoded) {
-            if inner.windows(6).any(|w| w == b"claude") {
-                if let Ok(s) = String::from_utf8(decoded) {
-                    return std::borrow::Cow::Owned(s);
-                }
+        if is_wrapped_claude_payload(&decoded) {
+            if let Ok(s) = String::from_utf8(decoded) {
+                return std::borrow::Cow::Owned(s);
             }
         }
     }
@@ -4300,11 +4317,18 @@ mod tests {
             base64::engine::general_purpose::STANDARD.encode(raw_claude_sig.as_bytes());
         assert!(is_claude_signature(&wrapped_claude_sig));
 
-        // 3. Gemini 签名绝不是 Claude 签名
+        // 3. Claude 5.5 官方真实报文签名测试（CAQS / Q0FR 开头 Protobuf 结构）
+        let claude_5_5_protobuf = "CAQSpAN01LkwMTAnAAEq";
+        let wrapped_5_5 =
+            base64::engine::general_purpose::STANDARD.encode(claude_5_5_protobuf.as_bytes());
+        assert!(is_claude_signature(claude_5_5_protobuf));
+        assert!(is_claude_signature(&wrapped_5_5));
+
+        // 4. Gemini 签名绝不是 Claude 签名
         let gemini_sig = "Ep4KCpsKAWkUfRMa5ZYMDdlPjxrQTLzVZ6MZeopI88888888888888888888888888888888";
         assert!(!is_claude_signature(gemini_sig));
 
-        // 4. 空与哨兵
+        // 5. 空与哨兵
         assert!(!is_claude_signature(""));
         assert!(!is_claude_signature(SENTINEL_SIGNATURE));
     }
@@ -4324,6 +4348,35 @@ mod tests {
         assert_eq!(
             wrapped_once, wrapped_twice,
             "Claude signature must be idempotent, no double wrapping"
+        );
+
+        // Claude 5.5 Protobuf 格式签名包装与还原测试
+        let claude_5_5_protobuf = "CAQSpAN01LkwMTAnAAEq";
+        let wrapped_5_5 = ensure_google_claude_thought_signature(claude_5_5_protobuf);
+        assert_ne!(wrapped_5_5, claude_5_5_protobuf);
+        let wrapped_5_5_twice = ensure_google_claude_thought_signature(&wrapped_5_5);
+        assert_eq!(
+            wrapped_5_5, wrapped_5_5_twice,
+            "Protobuf signature must be idempotent, no double wrapping"
+        );
+        assert_eq!(
+            ensure_raw_claude_thought_signature(&wrapped_5_5),
+            claude_5_5_protobuf,
+            "Protobuf wrapped signature must restore to raw CAQS format"
+        );
+        assert_eq!(
+            ensure_raw_claude_thought_signature(claude_5_5_protobuf),
+            claude_5_5_protobuf,
+            "Raw Protobuf signature must remain unchanged"
+        );
+        assert_eq!(
+            normalize_signature_for_comparison(&wrapped_5_5),
+            normalize_signature_for_comparison(claude_5_5_protobuf),
+            "Protobuf wrapped and raw signatures must normalize identically"
+        );
+        assert!(
+            signatures_match(claude_5_5_protobuf, &wrapped_5_5),
+            "Protobuf raw and wrapped signatures must match via signatures_match"
         );
 
         // 非 Claude 签名 (Gemini 签名)：绝不能包装！彻底杜绝几何级膨胀

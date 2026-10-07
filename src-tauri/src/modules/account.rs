@@ -27,13 +27,15 @@ fn get_account_lock(account_id: &str) -> Arc<Mutex<()>> {
 }
 
 #[cfg(test)]
+pub(crate) static SHARED_TEST_ENV_LOCK: Lazy<std::sync::Mutex<()>> =
+    Lazy::new(|| std::sync::Mutex::new(()));
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use std::sync::Mutex as StdMutex;
 
-    // Global mutex to prevent concurrent test execution
-    static TEST_MUTEX: Lazy<StdMutex<()>> = Lazy::new(|| StdMutex::new(()));
+    static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
     struct TestDataDir {
         path: PathBuf,
@@ -41,13 +43,15 @@ mod tests {
 
     impl TestDataDir {
         fn new() -> Self {
+            let seq = TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let temp_path = std::env::temp_dir().join(format!(
-                "antigravity_test_{}_{}",
+                "antigravity_test_{}_{}_{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_millis()
+                    .as_nanos(),
+                seq
             ));
             fs::create_dir_all(&temp_path).expect("Failed to create temp dir");
 
@@ -116,7 +120,9 @@ mod tests {
 
     #[test]
     fn test_migrate_data_dir_rename_and_copy() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         let previous_env = std::env::var("ABV_DATA_DIR").ok();
         let previous_pointer_env = std::env::var("ABV_DATA_DIR_POINTER_FILE").ok();
@@ -192,7 +198,9 @@ mod tests {
 
     #[test]
     fn test_load_account_index_with_bom_prefix() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
 
         // UTF-8 BOM followed by valid JSON
@@ -219,7 +227,9 @@ mod tests {
 
     #[test]
     fn test_load_account_index_with_nul_prefix() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
 
         // NUL byte prefix followed by valid JSON
@@ -246,7 +256,9 @@ mod tests {
 
     #[test]
     fn test_load_account_index_with_garbage_content() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
 
         // Non-JSON garbage content - should trigger recovery
@@ -270,7 +282,9 @@ mod tests {
 
     #[test]
     fn test_load_account_index_with_empty_file() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
 
         // Empty file
@@ -286,7 +300,9 @@ mod tests {
 
     #[test]
     fn test_load_account_index_with_whitespace_only() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
 
         // Whitespace-only file
@@ -302,7 +318,9 @@ mod tests {
 
     #[test]
     fn test_missing_index_with_existing_accounts() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
 
         // Create accounts directory with account files but NO accounts.json index
@@ -349,7 +367,9 @@ mod tests {
 
     #[test]
     fn test_save_account_index_roundtrip() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
 
         // Build an AccountIndex with 2 accounts
@@ -426,7 +446,9 @@ mod tests {
 
     #[test]
     fn test_set_current_account_id_with_target() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
         std::env::set_var("ABV_DATA_DIR", dir.path());
 
@@ -471,7 +493,9 @@ mod tests {
 
     #[test]
     fn test_backup_created_on_parse_failure() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
 
         // Create a valid account file
@@ -522,7 +546,9 @@ mod tests {
 
     #[test]
     fn test_load_account_with_trailing_characters() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
 
         create_account_file(dir.path(), "corrupt-tail-acc", "tail@example.com");
@@ -550,7 +576,9 @@ mod tests {
 
     #[test]
     fn task_quota_refresh_keeps_unexpired_live_limit() {
-        let _guard = TEST_MUTEX.lock().unwrap();
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = TestDataDir::new();
         let account_id = "live-limit-account";
         create_account_file(dir.path(), account_id, "live-limit@example.com");
@@ -629,7 +657,9 @@ pub(crate) fn lock_account_file_updates() -> Result<std::sync::MutexGuard<'stati
 }
 
 // ... existing constants ...
+#[allow(dead_code)]
 const DATA_DIR: &str = ".antigravity_tools";
+#[allow(dead_code)]
 const LOCATION_POINTER_FILE: &str = ".antigravity_tools_location";
 const ACCOUNTS_INDEX: &str = "accounts.json";
 const ACCOUNTS_DIR: &str = "accounts";
@@ -661,13 +691,30 @@ fn location_pointer_path() -> Result<PathBuf, String> {
             return Ok(normalize_data_dir_path(trimmed));
         }
     }
-    let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
-    Ok(home.join(LOCATION_POINTER_FILE))
+    #[cfg(test)]
+    {
+        return Err(
+            "location pointer reading disabled in tests without explicit ABV_DATA_DIR_POINTER_FILE"
+                .to_string(),
+        );
+    }
+    #[cfg(not(test))]
+    {
+        let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
+        Ok(home.join(LOCATION_POINTER_FILE))
+    }
 }
 
 fn default_data_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
-    Ok(home.join(DATA_DIR))
+    #[cfg(test)]
+    {
+        return Err("default_data_dir disabled in tests to protect host".to_string());
+    }
+    #[cfg(not(test))]
+    {
+        let home = dirs::home_dir().ok_or("failed_to_get_home_dir")?;
+        Ok(home.join(DATA_DIR))
+    }
 }
 
 fn ensure_dir(path: &Path) -> Result<(), String> {
@@ -866,9 +913,30 @@ pub fn get_data_dir() -> Result<PathBuf, String> {
     }
 
     // 4. Default ~/.antigravity_tools
-    let data_dir = default_data_dir()?;
-    ensure_dir(&data_dir)?;
-    Ok(data_dir)
+    #[cfg(test)]
+    {
+        // [DEFENSIVE] 在单元测试执行期间，严禁回落并写入真实宿主机的 ~/.antigravity_tools 目录！
+        // 若测试未显式设置 ABV_DATA_DIR，为整个测试进程分配唯一的临时沙盒目录，
+        // 保证跨多线程（如 thread::spawn）与多步操作（建表->读写）指向同一个沙盒，
+        // 且绝对不污染宿主机真实的 ~/.antigravity_tools 目录
+        static TEST_FALLBACK_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        let fallback_test_dir = TEST_FALLBACK_DIR
+            .get_or_init(|| {
+                std::env::temp_dir().join(format!(
+                    "antigravity_unit_test_fallback_sandbox_{}",
+                    std::process::id()
+                ))
+            })
+            .clone();
+        ensure_dir(&fallback_test_dir)?;
+        Ok(fallback_test_dir)
+    }
+    #[cfg(not(test))]
+    {
+        let data_dir = default_data_dir()?;
+        ensure_dir(&data_dir)?;
+        Ok(data_dir)
+    }
 }
 
 /// Move the data directory to `new_dir`, persist the location, and switch all runtime lookups.
@@ -1247,6 +1315,16 @@ pub fn list_accounts() -> Result<Vec<Account>, String> {
         tracing::warn!("Weekly token usage unavailable: {}", error);
     }
     Ok(accounts)
+}
+
+/// Resolve persisted CLI credentials without changing any client's login state.
+pub fn find_agy_account(accounts: Vec<Account>, refresh_token: &str) -> Result<Account, String> {
+    accounts
+        .into_iter()
+        .find(|account| !refresh_token.is_empty() && account.token.refresh_token == refresh_token)
+        .ok_or_else(|| {
+            "The agy keyring credentials do not match a managed account; import the current login before syncing.".into()
+        })
 }
 
 /// Add account

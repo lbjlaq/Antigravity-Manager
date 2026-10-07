@@ -53,6 +53,34 @@ const ALIAS_TO_CANONICAL: Record<string, { id: string; name: string; group: stri
     'gpt-oss-120b-medium': { id: 'gpt-oss-120b-medium', name: 'gpt-oss-120b-medium', group: 'Other' },
 };
 
+function isCompliantModel(key: string): boolean {
+    const m = key.toLowerCase().trim();
+    if (m.startsWith('chat_') || m.includes('internal') || m.includes('-exp')) {
+        return false;
+    }
+    // 特许放行的官方白名单模型
+    if (
+        m === 'gemini-pro-agent' ||
+        m === 'gemini-3-flash-agent' ||
+        m === 'gemini-3-flash' ||
+        m === 'tab_flash_lite_preview' ||
+        m === 'tab_jump_flash_lite_preview' ||
+        m === 'gemini-3.1-flash-lite' ||
+        m === 'gemini-3.5-flash-lite'
+    ) {
+        return true;
+    }
+    // 淘汰 2.5 系列
+    if (m.includes('2.5') || m.includes('2-5')) {
+        return false;
+    }
+    // Claude 淘汰 4.6 以下
+    if (m.includes('claude')) {
+        return m.includes('4-6') || m.includes('4.6');
+    }
+    return true;
+}
+
 export const useProxyModels = () => {
     const { accounts, fetchAccounts } = useAccountStore();
     const [canonicalFamilies, setCanonicalFamilies] = useState<CanonicalFamilyDto[]>([]);
@@ -81,6 +109,9 @@ export const useProxyModels = () => {
         for (const account of accounts) {
             for (const m of account.quota?.models ?? []) {
                 const rawKey = m.name.toLowerCase();
+                if (!isCompliantModel(rawKey)) {
+                    continue;
+                }
                 
                 // Map sub-tier and legacy aliases to the primary canonical model
                 const mapped = ALIAS_TO_CANONICAL[rawKey];
@@ -104,6 +135,35 @@ export const useProxyModels = () => {
                         icon,
                     });
                 }
+            }
+        }
+
+        // 1.5 动态档位后缀剥离与裸模型派生（与后端算法完全对齐，纯通用数据驱动）
+        const derivedBares: string[] = [];
+        for (const id of uniqueModelsMap.keys()) {
+            for (const suffix of ['-tiered', '-high', '-medium', '-low', '-extra-low']) {
+                if (id.endsWith(suffix)) {
+                    const base = id.slice(0, -suffix.length);
+                    if (base && isCompliantModel(base) && !uniqueModelsMap.has(base)) {
+                        derivedBares.push(base);
+                    }
+                }
+            }
+        }
+        for (const base of derivedBares) {
+            if (!uniqueModelsMap.has(base)) {
+                const group = inferModelGroup(base);
+                const cfgEntry = Object.entries(MODEL_CONFIG).find(
+                    ([cfgId, cfg]) => cfgId.toLowerCase() === base.toLowerCase() || cfg.protectedKey?.toLowerCase() === base.toLowerCase()
+                );
+                const CfgIcon = cfgEntry?.[1].Icon;
+                const icon = CfgIcon ? <CfgIcon size={16} /> : (group === 'Claude' ? <Sparkles size={16} className="text-purple-400" /> : <Bot size={16} className="text-blue-400" />);
+                uniqueModelsMap.set(base, {
+                    id: base,
+                    name: base,
+                    group,
+                    icon,
+                });
             }
         }
 

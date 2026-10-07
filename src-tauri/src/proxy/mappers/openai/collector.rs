@@ -28,6 +28,7 @@ where
     let mut finish_reason: Option<String> = None;
     // Tool calls aggregation: index -> (id, type, name, arguments_parts)
     let mut tool_calls_map: HashMap<u32, (String, String, String, Vec<String>)> = HashMap::new();
+    let mut line_buffer = bytes::BytesMut::new();
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result.map_err(|e| {
@@ -39,10 +40,13 @@ where
             )
             .client_message()
         })?;
-        let text = String::from_utf8_lossy(&chunk);
 
-        for line in text.lines() {
-            let line = line.trim();
+        line_buffer.extend_from_slice(&chunk);
+
+        while let Some(pos) = line_buffer.iter().position(|&b| b == b'\n') {
+            let line_raw = line_buffer.split_to(pos + 1);
+            let line_str = String::from_utf8_lossy(&line_raw);
+            let line = line_str.trim();
             if line.starts_with("data: ") {
                 let data_str = line.trim_start_matches("data: ").trim();
                 if data_str == "[DONE]" {
