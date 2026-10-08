@@ -23,42 +23,51 @@ export const HourlyTrendBarCard: React.FC<HourlyTrendBarCardProps> = ({
     const { t } = useTranslation();
     const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
-    // 格式化确保刚好 24 个小时点
-    const { buckets, peakTokens, todayTotalTokens } = useMemo(() => {
-        // 构建当前日期 0-23 点或者最近 24 小时的稳定桶
-        // 先建立已有小时的映射
+    // 构建无碰撞的过去 24 个滚动小时桶 (now - 23h 到 now)
+    const { buckets, peakTokens, past24hTotalTokens } = useMemo(() => {
         const hourMap = new Map<string, HourlyUsagePoint>();
         for (const item of hourlyData) {
-            // 获取 HH:00 或提取纯小时数字
-            const match = item.hour.match(/(\d{1,2}):00/);
-            if (match) {
-                const h = parseInt(match[1], 10);
-                hourMap.set(String(h), item);
-            }
+            if (!item || !item.hour) continue;
+            const cleanHour = item.hour.trim();
+            hourMap.set(cleanHour, item);
+            const prefix = cleanHour.slice(0, 13); // "YYYY-MM-DD HH"
+            hourMap.set(prefix, item);
         }
 
-        // 默认显示今天的 24 个自然小时 00:00 -> 23:00
-        const result: { hourNumber: number; label: string; data: HourlyUsagePoint }[] = [];
+        const now = new Date();
+        const result: { id: string; label: string; fullTime: string; data: HourlyUsagePoint }[] = [];
         let total = 0;
         let peak = 1;
 
-        for (let h = 0; h < 24; h++) {
-            const existing = hourMap.get(String(h));
+        for (let i = 23; i >= 0; i--) {
+            const d = new Date(now.getTime() - i * 3600 * 1000);
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const dd = String(d.getDate()).padStart(2, '0');
+            const hh = String(d.getHours()).padStart(2, '0');
+
+            const keyWithMin = `${yyyy}-${mm}-${dd} ${hh}:00`;
+            const keyPrefix = `${yyyy}-${mm}-${dd} ${hh}`;
+            const existing = hourMap.get(keyWithMin) || hourMap.get(keyPrefix);
+
             const point: HourlyUsagePoint = existing || {
-                hour: `${String(h).padStart(2, '0')}:00`,
+                hour: keyWithMin,
                 total_tokens: 0,
                 input_tokens: 0,
                 output_tokens: 0,
                 cached_tokens: 0,
                 request_count: 0,
             };
+
             total += point.total_tokens;
             if (point.total_tokens > peak) {
                 peak = point.total_tokens;
             }
+
             result.push({
-                hourNumber: h,
-                label: `${String(h).padStart(2, '0')}:00`,
+                id: keyWithMin,
+                label: `${hh}:00`,
+                fullTime: keyWithMin,
                 data: point,
             });
         }
@@ -66,32 +75,32 @@ export const HourlyTrendBarCard: React.FC<HourlyTrendBarCardProps> = ({
         return {
             buckets: result,
             peakTokens: peak,
-            todayTotalTokens: total,
+            past24hTotalTokens: total,
         };
     }, [hourlyData]);
 
     const hoveredBucket = hoveredIndex !== null ? buckets[hoveredIndex] : null;
 
     return (
-        <div className="bg-[#121316] dark:bg-[#121316] text-white rounded-2xl p-4 sm:p-5 border border-white/[0.08] shadow-sm flex flex-col justify-between select-none">
+        <div className="bg-white dark:bg-[#121316] text-gray-900 dark:text-white rounded-2xl p-4 sm:p-5 border border-gray-200/80 dark:border-white/[0.08] shadow-sm flex flex-col justify-between select-none">
             {/* 顶部标题栏 + 动态副标题 */}
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-amber-400 opacity-90" />
-                    <span className="text-[13px] font-semibold text-white/90 tracking-wide">
-                        {t('token_stats.hourly_activity', '24小时活动')}
+                    <Sparkles className="w-4 h-4 text-amber-500 dark:text-amber-400 opacity-90" />
+                    <span className="text-[13px] font-semibold text-gray-900 dark:text-white/90 tracking-wide">
+                        {t('token_stats.hourly_activity', '24小时活跃分布')}
                     </span>
                 </div>
 
-                {/* 动态副标题：平时显示今日汇总，悬浮时显示该小时的具体数值 */}
-                <div className="text-xs font-mono font-medium text-white/70">
+                {/* 动态副标题 */}
+                <div className="text-xs font-mono font-medium text-gray-500 dark:text-white/70">
                     {hoveredBucket ? (
-                        <span className="text-amber-400">
+                        <span className="text-amber-600 dark:text-amber-400">
                             {hoveredBucket.label} · {formatNumber(hoveredBucket.data.total_tokens)}
                         </span>
                     ) : (
                         <span>
-                            {t('token_stats.today', '今日')} · {formatNumber(todayTotalTokens)}
+                            24h · {formatNumber(past24hTotalTokens)}
                         </span>
                     )}
                 </div>
@@ -106,33 +115,34 @@ export const HourlyTrendBarCard: React.FC<HourlyTrendBarCardProps> = ({
                         ? Math.max(8, (b.data.total_tokens / peakTokens) * 100)
                         : 0;
 
-                    // 主题色彩：借鉴 Vorssaint，使用温润的琥珀橙红/灵动天蓝
                     const isClaudeHeavy = b.data.output_tokens > b.data.input_tokens * 0.1;
                     const barColor = isClaudeHeavy ? 'bg-[#d97757]' : 'bg-[#7a9aff]';
 
                     return (
                         <div
-                            key={b.hourNumber}
+                            key={b.id}
                             onMouseEnter={() => setHoveredIndex(idx)}
                             onMouseLeave={() => setHoveredIndex(null)}
                             className="flex-1 h-full flex flex-col justify-end items-center cursor-pointer group"
-                            title={`${b.label}: ${formatNumber(b.data.total_tokens)} Tokens`}
+                            title={`${b.fullTime}: ${formatNumber(b.data.total_tokens)} Tokens`}
                         >
                             {hasValue ? (
                                 <div
                                     style={{ height: `${heightPercent}%` }}
                                     className={`w-full rounded-full transition-all duration-150 ${barColor} ${
                                         isHovered
-                                            ? 'brightness-125 scale-x-110 shadow-lg shadow-white/10'
+                                            ? 'brightness-110 dark:brightness-125 scale-x-110 shadow-md'
                                             : hoveredIndex !== null
-                                            ? 'opacity-40'
+                                            ? 'opacity-30 dark:opacity-40'
                                             : 'opacity-90'
                                     }`}
                                 />
                             ) : (
                                 <div
                                     className={`w-full h-[2px] rounded-full transition-opacity ${
-                                        hoveredIndex !== null && !isHovered ? 'bg-white/[0.05]' : 'bg-white/15'
+                                        hoveredIndex !== null && !isHovered
+                                            ? 'bg-gray-100 dark:bg-white/[0.05]'
+                                            : 'bg-gray-200 dark:bg-white/15'
                                     }`}
                                 />
                             )}
@@ -141,11 +151,11 @@ export const HourlyTrendBarCard: React.FC<HourlyTrendBarCardProps> = ({
                 })}
             </div>
 
-            {/* X 轴刻度：极简 0时、12时、23时 */}
-            <div className="flex items-center justify-between text-[11px] font-mono text-white/40 pt-2 px-1 border-t border-white/[0.06] mt-2">
-                <span>0时</span>
-                <span>12时</span>
-                <span>23时</span>
+            {/* X 轴刻度：语言中立通用格式 */}
+            <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 dark:text-white/40 pt-2 px-1 border-t border-gray-100 dark:border-white/[0.06] mt-2">
+                <span>{buckets[0]?.label || '00:00'}</span>
+                <span>{buckets[12]?.label || '12:00'}</span>
+                <span>{buckets[23]?.label || '23:00'}</span>
             </div>
         </div>
     );

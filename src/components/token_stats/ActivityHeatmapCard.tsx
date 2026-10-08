@@ -111,21 +111,19 @@ export const ActivityHeatmapCard: React.FC<ActivityHeatmapCardProps> = ({
         ];
     }, [columns]);
 
-    const getCellOpacity = (tokens: number): string => {
-        if (tokens <= 0) return 'bg-white/[0.07] dark:bg-white/[0.07]';
-        if (tokens < thresholds[0]) return 'bg-white/25 text-transparent';
-        if (tokens < thresholds[1]) return 'bg-white/45 text-transparent';
-        if (tokens < thresholds[2]) return 'bg-white/70 text-transparent';
-        return 'bg-white text-transparent';
+    const getCellColorClass = (tokens: number): string => {
+        if (tokens <= 0) return 'bg-gray-200/60 dark:bg-white/[0.07]';
+        if (tokens < thresholds[0]) return 'bg-gray-900/25 dark:bg-white/25';
+        if (tokens < thresholds[1]) return 'bg-gray-900/45 dark:bg-white/45';
+        if (tokens < thresholds[2]) return 'bg-gray-900/70 dark:bg-white/70';
+        return 'bg-gray-900 dark:bg-white';
     };
 
-    // 格式化日期为友好显示
+    // 格式化日期为语言中立的友好显示 (MM-DD)
     const formatFriendlyDate = (dateStr: string) => {
         const parts = dateStr.split('-');
         if (parts.length < 3) return dateStr;
-        const month = parseInt(parts[1], 10);
-        const day = parseInt(parts[2], 10);
-        return `${month}月${day}日`;
+        return `${parts[1]}-${parts[2]}`;
     };
 
     const hoveredDayData = hoveredDate ? dateMap.get(hoveredDate) || null : null;
@@ -138,26 +136,26 @@ export const ActivityHeatmapCard: React.FC<ActivityHeatmapCardProps> = ({
     };
 
     return (
-        <div className="bg-[#121316] dark:bg-[#121316] text-white rounded-2xl p-4 sm:p-5 border border-white/[0.08] shadow-sm flex flex-col justify-between select-none">
+        <div className="bg-white dark:bg-[#121316] text-gray-900 dark:text-white rounded-2xl p-4 sm:p-5 border border-gray-200/80 dark:border-white/[0.08] shadow-sm flex flex-col justify-between select-none">
             {/* 顶部标题栏 */}
             <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                     {/* 网格四方点图标 */}
                     <div className="grid grid-cols-2 gap-0.5 w-3.5 h-3.5 opacity-80">
-                        <div className="bg-white rounded-[1px]" />
-                        <div className="bg-white rounded-[1px]" />
-                        <div className="bg-white rounded-[1px]" />
-                        <div className="bg-white rounded-[1px]" />
+                        <div className="bg-gray-800 dark:bg-white rounded-[1px]" />
+                        <div className="bg-gray-800 dark:bg-white rounded-[1px]" />
+                        <div className="bg-gray-800 dark:bg-white rounded-[1px]" />
+                        <div className="bg-gray-800 dark:bg-white rounded-[1px]" />
                     </div>
-                    <span className="text-[13px] font-semibold text-white/90 tracking-wide">
-                        {t('token_stats.activity', '活动')}
+                    <span className="text-[13px] font-semibold text-gray-900 dark:text-white/90 tracking-wide">
+                        {t('token_stats.activity', '活跃度')}
                     </span>
                 </div>
 
                 {/* 连续打卡火焰标签 */}
                 {streak > 1 && (
-                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-400 text-xs font-semibold">
-                        <Flame className="w-3.5 h-3.5 fill-orange-400 text-orange-400" />
+                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500/10 border border-orange-500/20 text-orange-500 dark:text-orange-400 text-xs font-semibold">
+                        <Flame className="w-3.5 h-3.5 fill-orange-500 dark:fill-orange-400 text-orange-500 dark:text-orange-400" />
                         <span>{streak}</span>
                     </div>
                 )}
@@ -177,14 +175,14 @@ export const ActivityHeatmapCard: React.FC<ActivityHeatmapCardProps> = ({
                                         key={day.date}
                                         onMouseEnter={() => setHoveredDate(day.date)}
                                         onMouseLeave={() => setHoveredDate(null)}
-                                        className={`w-[11px] h-[11px] rounded-[2.5px] transition-all cursor-pointer ${getCellOpacity(day.total_tokens)} ${
+                                        className={`w-[11px] h-[11px] rounded-[2.5px] transition-all cursor-pointer ${getCellColorClass(day.total_tokens)} ${
                                             isHovered
-                                                ? 'ring-2 ring-white scale-125 z-10'
+                                                ? 'ring-2 ring-gray-900 dark:ring-white scale-125 z-10'
                                                 : currentToday
-                                                ? 'ring-1 ring-white/60'
+                                                ? 'ring-1 ring-gray-900/60 dark:ring-white/60'
                                                 : ''
                                         }`}
-                                        title={`${day.date}: ${formatNumber(day.total_tokens)} Tokens (${day.request_count} 次请求)`}
+                                        title={`${day.date}: ${formatNumber(day.total_tokens)} Tokens (${t('token_stats.requests_count', { count: day.request_count, defaultValue: `${day.request_count} requests` })})`}
                                     />
                                 );
                             })}
@@ -193,38 +191,40 @@ export const ActivityHeatmapCard: React.FC<ActivityHeatmapCardProps> = ({
                 </div>
 
                 {/* 右侧核心成就数据 */}
-                <div className="flex flex-col justify-center min-w-[140px] pl-1 md:pl-3 border-l border-white/[0.06]">
+                <div className="flex flex-col justify-center min-w-[140px] pl-1 md:pl-3 border-l border-gray-200/80 dark:border-white/[0.06]">
                     {/* 总量与周期 */}
                     <div className="flex items-baseline gap-2">
-                        <span className="text-2xl font-bold font-mono tracking-tight text-white">
+                        <span className="text-2xl font-bold font-mono tracking-tight text-gray-900 dark:text-white">
                             {formatNumber(totalRangeTokens)}
                         </span>
-                        <span className="text-[11px] text-white/50 font-medium">13周</span>
+                        <span className="text-[11px] text-gray-500 dark:text-white/50 font-medium">
+                            {t('token_stats.weeks_count', { count: 13, defaultValue: '13 weeks' })}
+                        </span>
                     </div>
 
                     <div className="mt-3 space-y-1 text-xs">
                         {/* 活跃天数 */}
-                        <div className="flex items-center justify-between gap-3 text-white/60">
+                        <div className="flex items-center justify-between gap-3 text-gray-500 dark:text-white/60">
                             <span>{t('token_stats.active_days', '活跃天数')}</span>
-                            <span className="font-mono font-medium text-white/90">{activeDaysCount}</span>
+                            <span className="font-mono font-medium text-gray-900 dark:text-white/90">{activeDaysCount}</span>
                         </div>
 
-                        {/* 用量最多的一天 / 悬浮联动天 */}
+                        {/* 峰值消耗日 / 悬浮联动天 */}
                         {hoveredDayData ? (
-                            <div className="flex items-center justify-between gap-2 text-white/60 pt-0.5">
-                                <span className="text-blue-400 font-medium text-[11px] whitespace-nowrap">
+                            <div className="flex items-center justify-between gap-2 text-gray-500 dark:text-white/60 pt-0.5">
+                                <span className="text-blue-600 dark:text-blue-400 font-medium text-[11px] whitespace-nowrap">
                                     {formatFriendlyDate(hoveredDayData.date)}
                                 </span>
-                                <span className="font-mono font-medium text-blue-400">
+                                <span className="font-mono font-medium text-blue-600 dark:text-blue-400">
                                     {formatNumber(hoveredDayData.total_tokens)}
                                 </span>
                             </div>
                         ) : busiestDay ? (
-                            <div className="flex items-center justify-between gap-2 text-white/60 pt-0.5">
-                                <span className="text-white/60 text-[11px] whitespace-nowrap">
-                                    {t('token_stats.busiest_day', '用量最多的一天')}
+                            <div className="flex items-center justify-between gap-2 text-gray-500 dark:text-white/60 pt-0.5">
+                                <span className="text-gray-500 dark:text-white/60 text-[11px] whitespace-nowrap">
+                                    {t('token_stats.busiest_day', '峰值消耗日')}
                                 </span>
-                                <span className="font-mono font-medium text-white/90 whitespace-nowrap">
+                                <span className="font-mono font-medium text-gray-900 dark:text-white/90 whitespace-nowrap">
                                     {formatFriendlyDate(busiestDay.date)} · {formatNumber(busiestDay.total_tokens)}
                                 </span>
                             </div>

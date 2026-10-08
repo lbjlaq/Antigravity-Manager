@@ -46,24 +46,24 @@ export const TopModelsShareCard: React.FC<TopModelsShareCardProps> = ({
     }, [models]);
 
     return (
-        <div className="bg-[#121316] dark:bg-[#121316] text-white rounded-2xl p-4 sm:p-5 border border-white/[0.08] shadow-sm flex flex-col justify-between select-none">
+        <div className="bg-white dark:bg-[#121316] text-gray-900 dark:text-white rounded-2xl p-4 sm:p-5 border border-gray-200/80 dark:border-white/[0.08] shadow-sm flex flex-col justify-between select-none">
             {/* 顶部标题栏 */}
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-purple-400 opacity-90" />
-                    <span className="text-[13px] font-semibold text-white/90 tracking-wide">
-                        {t('token_stats.top_models', '主力模型')}
+                    <Cpu className="w-4 h-4 text-purple-600 dark:text-purple-400 opacity-90" />
+                    <span className="text-[13px] font-semibold text-gray-900 dark:text-white/90 tracking-wide">
+                        {t('token_stats.top_models', '核心模型消耗')}
                     </span>
                 </div>
-                <span className="text-xs font-mono text-white/50">
-                    {models.length} {t('token_stats.models_count', '个模型')}
+                <span className="text-xs font-mono text-gray-400 dark:text-white/50">
+                    {t('token_stats.models_count', { count: models.length, defaultValue: `${models.length} models` })}
                 </span>
             </div>
 
             {/* 模型列表 */}
             {topModels.length === 0 ? (
-                <div className="py-6 text-center text-xs text-white/40">
-                    {t('token_stats.no_activity', '暂无模型活动')}
+                <div className="py-6 text-center text-xs text-gray-400 dark:text-white/40">
+                    {t('token_stats.no_activity', '暂无活动数据')}
                 </div>
             ) : (
                 <div className="space-y-3 py-1">
@@ -84,13 +84,13 @@ export const TopModelsShareCard: React.FC<TopModelsShareCardProps> = ({
                                         className="w-1.5 h-1.5 rounded-full flex-shrink-0"
                                         style={{ backgroundColor: tint }}
                                     />
-                                    <span className="font-mono text-[11.5px] text-white/85 truncate group-hover:text-white transition-colors">
+                                    <span className="font-mono text-[11.5px] text-gray-700 dark:text-white/85 truncate group-hover:text-gray-900 dark:group-hover:text-white transition-colors">
                                         {item.model}
                                     </span>
                                 </div>
 
                                 {/* 水平胶囊指示条 */}
-                                <div className="w-14 sm:w-16 h-1.5 bg-white/[0.07] rounded-full overflow-hidden flex-shrink-0">
+                                <div className="w-14 sm:w-16 h-1.5 bg-gray-100 dark:bg-white/[0.07] rounded-full overflow-hidden flex-shrink-0">
                                     <div
                                         className="h-full rounded-full transition-all duration-300"
                                         style={{
@@ -103,10 +103,10 @@ export const TopModelsShareCard: React.FC<TopModelsShareCardProps> = ({
 
                                 {/* 数量与占比 */}
                                 <div className="flex items-center gap-1.5 flex-shrink-0 w-20 justify-end font-mono">
-                                    <span className="text-white/80 font-medium">
+                                    <span className="text-gray-800 dark:text-white/80 font-medium">
                                         {formatNumber(item.total_tokens)}
                                     </span>
-                                    <span className="text-[10px] text-white/40 min-w-[28px] text-right">
+                                    <span className="text-[10px] text-gray-400 dark:text-white/40 min-w-[28px] text-right">
                                         {percent.toFixed(0)}%
                                     </span>
                                 </div>
