@@ -489,7 +489,10 @@ mod tests {
             !full_output.contains("[initial_error]"),
             "Must NOT emit initial error when content exists"
         );
-        assert!(!error_received, "Stream must NOT propagate Err on interruption after content");
+        assert!(
+            !error_received,
+            "Stream must NOT propagate Err on interruption after content"
+        );
     }
 
     #[tokio::test]
