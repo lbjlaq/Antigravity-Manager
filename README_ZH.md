@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v4.9.4)
+> 专业级 AI 账号管理与协议代理系统 (v4.9.6)
 
 <div align="center">
   <img src="public/icon.png" width="100" height="100" alt="Antigravity Tools Logo">
@@ -11,7 +11,7 @@
       <img src="https://img.shields.io/github/v/release/lbjlaq/Antigravity-Manager?color=blue&style=flat-square" alt="GitHub release">
     </a>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-4.9.4-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-4.9.6-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -488,7 +488,7 @@ response = client.chat.completions.create(
 
 ## 📝 更新日志
 
-> 最新版本 **v4.9.4**（2026-10-04）：引入自适应思考预算协商状态机与意图识别架构，废除过早 return 旁路，从协议根源上彻底解决 `maxOutputTokens <= thinkingBudget` 引发的 Google 400 违背报错；首创 6 倍反差极速意图识别（当思考预算 `t >= 6 * m` 时自动压缩预算秒回，杜绝轻量问答被深度思考拖慢），常规深度推理在官方容量足够时优先智能扩充总输出预算以保全用户思考智商，超大预算触顶时收敛留出 1024 正文空间兜底（PR #3599，感谢 @cubelikeplayDaniel）；全面继承 4.9.3 底层 HTTP/2 稳态重构与 Chrome 123 基线回归，终结长任务自杀断流。
+> 最新版本 **v4.9.6**（2026-10-06）——完整重新发布 v4.9.5 内容（v4.9.5 发布流水线因托管 Runner 资源不足被取消、未产出任何 Release 资产，代码完全一致）：根治思考预算无差别覆盖 32768、确立具名模型后缀（`-low`, `-medium`, `-high`）绝对最高优先级并无损回退 Default 模式与解耦 Claude 适配器（PR #3611，Fixes #3610）；Cowork 活跃消息修剪预算由 35k 降至 8k 深度归档，压缩后残余上下文降至 40k~45k tokens，压缩率突破 60%，双轨并轨为全局统一压缩状态机，引入动态净空防抖保障与 Claude 桌面进程生命周期管理，支持旧版补丁琥珀色警示与无损就地升级，macOS 签名容灾回滚保全官方证书链（PR #3604, #3609, #3603）；限制单请求 429 遍历账号池上限至 `min(pool_size, 2)`、引入阶梯退避与 Layer 2 乐观重试重置彻底消除 503 假死熔断，长连接会话 404/429 统一解绑自愈与跨协议成功计数重置，统一 Claude 共享配额保护组（PR #3608, #3606, #3602，Fixes #3506, #3517, #3509）；全面兼容 `antigravity-ide` 命名变体，严格阻断 IDE 穿透查询系统 Keyring，内核级进程识别并隔离 `state.vscdb`（PR #3608, #3600，Fixes #3598）；Gemini JSON Schema 深度清洗过滤非标 enum、实时透传上游流错误（504/503/429），OpenCode 注入 node 执行环境，规范 agy CLI 钥匙环 D-Bus 路径并打通 Web/Headless API 对齐（PR #3601, #3606, #3607，感谢 @cubelikeplayDaniel, @diannaaav）；GNOME Wayland 避免强制降级 X11、自动注入 DMA-BUF 保护并修复透明窗口判定（Fixes #3605, Ref #3581，感谢 @jeikl）。
 
 👉 **[查看完整更新日志 CHANGELOG.md →](CHANGELOG.md)**
 
@@ -497,6 +497,8 @@ response = client.chat.completions.create(
 
 <a href="https://github.com/lbjlaq"><img src="https://github.com/lbjlaq.png" width="50px" style="border-radius: 50%;" alt="lbjlaq"/></a>
 <a href="https://github.com/jeikl"><img src="https://github.com/jeikl.png" width="50px" style="border-radius: 50%;" alt="jeikl"/></a>
+<a href="https://github.com/cubelikeplayDaniel"><img src="https://github.com/cubelikeplayDaniel.png" width="50px" style="border-radius: 50%;" alt="cubelikeplayDaniel"/></a>
+<a href="https://github.com/diannaaav"><img src="https://github.com/diannaaav.png" width="50px" style="border-radius: 50%;" alt="diannaaav"/></a>
 <a href="https://github.com/XinXin622"><img src="https://github.com/XinXin622.png" width="50px" style="border-radius: 50%;" alt="XinXin622"/></a>
 <a href="https://github.com/llsenyue"><img src="https://github.com/llsenyue.png" width="50px" style="border-radius: 50%;" alt="llsenyue"/></a>
 <a href="https://github.com/salacoste"><img src="https://github.com/salacoste.png" width="50px" style="border-radius: 50%;" alt="salacoste"/></a>
