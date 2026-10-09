@@ -916,15 +916,25 @@ impl TokenManager {
                 );
                 return Ok(None);
             } else {
-                // Block expired - clear it
+                // Block expired - clear it.
+                //
+                // 同时清掉 quota.is_forbidden：它是 403 缓存的「账号被封」判定，
+                // 封禁窗口一过就该失效；不清它的话刷新会一直跳过这个账号，
+                // 它永远回不来（issue #3630）。
                 account["validation_blocked"] = serde_json::json!(false);
                 account["validation_blocked_until"] = serde_json::json!(0);
                 account["validation_blocked_reason"] = serde_json::Value::Null;
+                if let Some(q) = account.get_mut("quota").and_then(|v| v.as_object_mut()) {
+                    q.insert("is_forbidden".to_string(), serde_json::json!(false));
+                }
 
                 update_account_json(path, |latest| {
                     latest["validation_blocked"] = serde_json::json!(false);
                     latest["validation_blocked_until"] = serde_json::json!(0);
                     latest["validation_blocked_reason"] = serde_json::Value::Null;
+                    if let Some(q) = latest.get_mut("quota").and_then(|v| v.as_object_mut()) {
+                        q.insert("is_forbidden".to_string(), serde_json::json!(false));
+                    }
                 })
                 .await?;
                 tracing::info!(
