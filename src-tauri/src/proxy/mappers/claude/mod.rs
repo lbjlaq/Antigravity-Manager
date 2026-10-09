@@ -139,12 +139,10 @@ impl ProtocolStreamHandler for ClaudeStreamHandler {
     }
 
     fn emit_initial_error(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes> {
-        let err_type =
-            if error_report.raw.contains("timeout") || error_report.raw.contains("overload") {
-                "overloaded_error"
-            } else {
-                "api_error"
-            };
+        // [FIX #3634 契约对齐] 严禁下发 overloaded_error。
+        // Claude Code 2.1.293 的 PU(e) 只要检测到 overloaded_error 字符串，立即触发 30 分钟冷却并在未产生内容前进入 10 次指数退避重试风暴。
+        // 首包未就绪时发生错误统一使用 Anthropic 标准的 api_error，促使客户端转入 retryWithoutStreaming 单次重试或直接暴露错误。
+        let err_type = "api_error";
         let error_json = serde_json::json!({
             "type": "error",
             "error": {
@@ -217,6 +215,12 @@ fn process_sse_line(
     trace_id: &str,
     email: &str,
 ) -> Option<Vec<Bytes>> {
+    // [FIX #3634 静默防火墙契约] 一旦 message_stop 已下发，严禁继续向客户端下发任何数据帧。
+    // Claude Code 2.1.293 收到 message_stop 后的任何数据帧均会触发 StreamMalformedEventError("closed") (TJ("closed"))。
+    if state.message_stop_sent {
+        return None;
+    }
+
     if !line.starts_with("data: ") {
         return None;
     }
