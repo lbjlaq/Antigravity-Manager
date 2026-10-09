@@ -2543,15 +2543,26 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
         .filter(|account| {
             // [MOD] Now we allow refreshing disabled and proxy_disabled accounts
             // to support forced re-sync from UI.
-            // Only strictly skip forbidden accounts if necessary, but even those
-            // might want a retry to see if they are unbanned.
+            //
+            // 只跳过「验证封禁仍在生效期内」的账号。封禁过期后必须放行刷新 —— 刷新
+            // 正是判断"还封不封"的手段；跳过它会让 quota.is_forbidden 永远是 true：
+            // 403 把它置 true、只有刷新成功才会写回 false，而刷新又在这里被跳过，
+            // 形成环形依赖，账号再也回不来（issue #3630）。
             if let Some(ref q) = account.quota {
                 if q.is_forbidden {
+                    let now = chrono::Utc::now().timestamp();
+                    let until = account.validation_blocked_until.unwrap_or(0);
+                    if account.validation_blocked && now < until {
+                        crate::modules::logger::log_info(&format!(
+                            "  - Skipping {} (Forbidden, 验证封禁中)",
+                            account.email
+                        ));
+                        return false;
+                    }
                     crate::modules::logger::log_info(&format!(
-                        "  - Skipping {} (Forbidden)",
+                        "  - Retrying {} (Forbidden 但验证封禁已过期，重新探测)",
                         account.email
                     ));
-                    return false;
                 }
             }
             true

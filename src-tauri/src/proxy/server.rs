@@ -291,6 +291,12 @@ struct AccountResponse {
     validation_blocked: bool,
     validation_blocked_until: Option<i64>,
     validation_blocked_reason: Option<String>,
+    /// 403 VALIDATION_REQUIRED 时上游下发的验证链接。
+    ///
+    /// 已经提取并持久化到账号文件（见 token_manager.rs 的 #1522 逻辑），但此前没有
+    /// 出现在响应里，前端 AccountErrorDialog 的首选分支因此恒为 undefined、只能回退去
+    /// 解析 validation_blocked_reason 里的嵌套 JSON（issue #3631）。
+    validation_url: Option<String>,
     quota: Option<QuotaResponse>,
     device_bound: bool,
     last_used: i64,
@@ -403,6 +409,7 @@ fn to_account_response(
         validation_blocked: account.validation_blocked,
         validation_blocked_until: account.validation_blocked_until,
         validation_blocked_reason: account.validation_blocked_reason.clone(),
+        validation_url: account.validation_url.clone(),
     }
 }
 
@@ -1372,6 +1379,7 @@ async fn admin_list_accounts(
                 validation_blocked: acc.validation_blocked,
                 validation_blocked_until: acc.validation_blocked_until,
                 validation_blocked_reason: acc.validation_blocked_reason,
+                validation_url: acc.validation_url,
                 quota,
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
@@ -1454,6 +1462,7 @@ async fn admin_get_current_account(
                 validation_blocked: acc.validation_blocked,
                 validation_blocked_until: acc.validation_blocked_until,
                 validation_blocked_reason: acc.validation_blocked_reason,
+                validation_url: acc.validation_url,
                 quota,
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
