@@ -2912,6 +2912,7 @@ mod tests {
             claude_mode: crate::proxy::config::ThinkingBudgetMode::Custom,
             custom_value: 0,
             effort: Some("high".to_string()),
+            claude_budget: 16384,
             claude_high: 16384,
             ..Default::default()
         };
