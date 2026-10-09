@@ -225,18 +225,24 @@ where
                                         report.client_message()
                                     );
 
-                                    // 若首包前发生异常（未产生任何正文与思考），下发协议专属的初始错误事件
-                                    if !handler.has_content() && !handler.has_thinking() {
+                                    // [优雅收尾与重试风暴切断 (回归 9 月稳态机制)]
+                                    // 若正文或思考已经输出给客户端，绝不可抛出底层网络异常导致客户端陷入漫长的指数退避重试死循环 (如 8/10 次累积 16+ 分钟)。
+                                    // 而是平稳跳出循环，由 emit_finalize 优雅完成思考块闭合、兜底收尾与状态机正常终止。
+                                    if handler.has_content() || handler.has_thinking() {
+                                        tracing::info!(
+                                            "[{}] Stream interrupted after content/thinking emitted. Gracefully completing turn to prevent retry deadlock.",
+                                            config.adapter_name
+                                        );
+                                        break;
+                                    } else {
                                         let err_chunks = handler.emit_initial_error(&report);
                                         for c in err_chunks {
                                             yield Ok(c);
                                         }
+                                        error_emitted = true;
+                                        yield Err(report.client_message());
+                                        break;
                                     }
-                                    error_emitted = true;
-                                    // 无论处于何种阶段，中途发生上游网络断开时如实作为 Err 流出，
-                                    // 严禁吞没错误伪造 end_turn 或 message_stop，交由客户端原生重试机制接管。
-                                    yield Err(report.client_message());
-                                    break;
                                 }
                             }
                         }
@@ -286,15 +292,22 @@ where
                             phase
                         );
 
-                        if !handler.has_content() && !handler.has_thinking() {
+                        if handler.has_content() || handler.has_thinking() {
+                            tracing::info!(
+                                "[{}] Idle timeout after content/thinking emitted in phase {:?}. Gracefully completing turn to prevent retry deadlock.",
+                                config.adapter_name,
+                                phase
+                            );
+                            break;
+                        } else {
                             let err_chunks = handler.emit_initial_error(&report);
                             for c in err_chunks {
                                 yield Ok(c);
                             }
+                            error_emitted = true;
+                            yield Err(report.client_message());
+                            break;
                         }
-                        error_emitted = true;
-                        yield Err(report.client_message());
-                        break;
                     }
                     yield Ok(handler.heartbeat_frame());
                 }
@@ -445,7 +458,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lifecycle_interruption_after_content_propagates_error_without_finalize() {
+    async fn test_lifecycle_interruption_after_content_gracefully_finalizes() {
         let mock_stream = async_stream::stream! {
             yield Ok::<_, String>(Bytes::from("data: partial content\n"));
             yield Err::<Bytes, _>("connection reset mid stream".to_string());
@@ -460,9 +473,8 @@ mod tests {
         while let Some(item) = stream.next().await {
             match item {
                 Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
-                Err(e) => {
+                Err(_) => {
                     error_received = true;
-                    assert!(e.contains("connection reset mid stream"));
                 }
             }
         }
@@ -470,14 +482,14 @@ mod tests {
         let full_output = output.join("");
         assert!(full_output.contains("processed:data: partial content"));
         assert!(
-            !full_output.contains("[finalized]"),
-            "Must NOT finalize when error occurs"
+            full_output.contains("[finalized]"),
+            "Must gracefully finalize when content or thinking was already emitted to prevent client retry loop"
         );
         assert!(
             !full_output.contains("[initial_error]"),
             "Must NOT emit initial error when content exists"
         );
-        assert!(error_received, "Stream must propagate Err on interruption");
+        assert!(!error_received, "Stream must NOT propagate Err on interruption after content");
     }
 
     #[tokio::test]
