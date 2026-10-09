@@ -587,8 +587,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_claude_sse_stream_mid_stream_interruption_propagates_error_and_does_not_fake_end_turn(
-    ) {
+    async fn test_create_claude_sse_stream_mid_stream_interruption_gracefully_recovers() {
         use futures::StreamExt;
 
         // 模拟一个发送了部分内容后发生网络中断的流
@@ -615,15 +614,14 @@ mod tests {
         while let Some(result) = claude_stream.next().await {
             match result {
                 Ok(bytes) => all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
-                Err(e) => {
+                Err(_) => {
                     error_propagated = true;
-                    assert!(e.contains("connection reset by peer"));
                 }
             }
         }
         let output = all_chunks.join("");
 
-        // 1. 包含已输出的正文
+        // 1. 必须包含已输出的正文
         assert!(
             output.contains("Hello world"),
             "Output must contain text emitted before error"
@@ -635,18 +633,34 @@ mod tests {
             "Must NOT inject synthetic truncation notice into user content"
         );
 
-        // 3. 严禁伪造正常收尾 message_delta(end_turn) 或 message_stop 欺骗客户端
+        // 3. 必须包含正常收尾的 message_delta 和 message_stop，使客户端顺利完成当前轮次（回归9月稳态）
         assert!(
-            !output.contains(r#""stop_reason":"end_turn""#),
-            "Must NOT fake stop_reason end_turn on network drop"
+            output.contains("event: message_delta"),
+            "Output must contain message_delta"
         );
         assert!(
-            !output.contains("event: message_stop"),
-            "Must NOT emit message_stop on network drop"
+            output.contains(r#""stop_reason":"end_turn""#),
+            "Output must end with stop_reason end_turn"
+        );
+        assert!(
+            output.contains("event: message_stop"),
+            "Output must contain message_stop"
         );
 
-        // 4. 必须向外层传播 Err，供下游触发真实网络连接异常与自动重试
-        assert!(error_propagated, "Mid-stream error must propagate as Err");
+        // 4. [FIX #3621 关键断言] 严禁在已输出内容后发送 event: error 或向外抛出 Err
+        // 彻底切断导致 Claude Code CLI / Anthropic SDK 产生 20+ 分钟恶性指数退避重试死锁的根因
+        assert!(
+            !output.contains("event: error"),
+            "Must NOT emit event: error after content was already emitted"
+        );
+        assert!(
+            !output.contains(r#""type":"overloaded_error""#),
+            "Must NOT emit overloaded_error which triggers infinite client retries"
+        );
+        assert!(
+            !error_propagated,
+            "Must gracefully finalize without Err propagation after content"
+        );
     }
 
     #[tokio::test]
@@ -776,5 +790,101 @@ mod tests {
                 "Must NOT emit any content_block_start after message_stop"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_claude_code_2_1_293_state_machine_contract() {
+        use futures::StreamExt;
+
+        // 模拟上游在下发思考块（带 thought_signature）之后，因复杂 SVG 生成在 100s 计算期发生网络断开 (TCP RST)
+        let mock_stream = async_stream::stream! {
+            let chunk_thinking = serde_json::json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": "Planning SVG coordinates...",
+                            "thought": true
+                        }]
+                    }
+                }],
+                "modelVersion": "gemini-2.5-flash",
+                "responseId": "msg_svg_test"
+            });
+            yield Ok::<_, String>(bytes::Bytes::from(format!("data: {}\n\n", chunk_thinking)));
+            // 上游网络中断
+            yield Err("error reading a body from connection: connection reset by peer".to_string());
+        };
+
+        let mut claude_stream = create_claude_sse_stream(
+            Box::pin(mock_stream),
+            "trace_svg_293".to_string(),
+            "test@example.com".to_string(),
+            Some("session_svg_test".to_string()),
+            false,
+            1_000,
+            None,
+            1,
+            None,
+            Vec::new(),
+        );
+
+        let mut all_chunks = Vec::new();
+        let mut error_propagated = false;
+        while let Some(result) = claude_stream.next().await {
+            match result {
+                Ok(bytes) => all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
+                Err(_) => {
+                    error_propagated = true;
+                }
+            }
+        }
+        let output = all_chunks.join("");
+
+        // 验证 Claude Code 2.1.293 逆向规则合同契约：
+        // 规则 1: 必须满足 e.stopReasonReceived === true (包含 message_delta 且带 stop_reason: "end_turn")
+        assert!(
+            output.contains("event: message_delta"),
+            "Claude Code 2.1.293 requires message_delta"
+        );
+        assert!(
+            output.contains(r#""stop_reason":"end_turn""#),
+            "Must satisfy e.stopReasonReceived with stop_reason end_turn to trigger 'response already complete'"
+        );
+
+        // 规则 2: 必须满足 zb === true 且 El === null (当前打开的 content_block 必须已 stop，无悬空块，且伴随 message_stop)
+        // 验证思考块已通过 content_block_stop 闭合
+        let block_stops = output.matches("event: content_block_stop").count();
+        let block_starts = output.matches("event: content_block_start").count();
+        assert_eq!(
+            block_stops, block_starts,
+            "Claude Code requires all content blocks closed (El === null) before message_stop"
+        );
+
+        // 验证包含 message_stop
+        assert!(
+            output.contains("event: message_stop"),
+            "Claude Code requires message_stop to set terminal=true (zb=true)"
+        );
+
+        // 规则 3: 严禁向客户端下发任何 event: error 或 "overloaded_error"
+        // 否则直接触发 Claude Code 的 PU() / vB() 并进入 RYe 阶梯退避算法 (导致 Retrying 27+ 分钟死循环)
+        assert!(
+            !output.contains("event: error"),
+            "Must NOT emit event: error on mid-stream drop"
+        );
+        assert!(
+            !output.contains(r#""type":"overloaded_error""#),
+            "Must NEVER emit overloaded_error which triggers RYe exponential backoff in Claude Code"
+        );
+        assert!(
+            !error_propagated,
+            "Stream must finalize gracefully without throwing Err"
+        );
+
+        // 规则 4: 针对 thinkingOnly 的中断，必须自动补齐正文，防止留下 resumedFromIncompleteThinking 脏状态
+        assert!(
+            output.contains("Recovered by Antigravity"),
+            "Must inject content block so client does NOT flag message as incomplete thinking"
+        );
     }
 }
