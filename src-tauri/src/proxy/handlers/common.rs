@@ -562,8 +562,22 @@ pub fn extract_retry_after_seconds(error_text: &str) -> Option<u64> {
     None
 }
 
-/// [Issue #3414] 统一构造带有 X-Mapped-Model、可选 X-Account-Email 以及 Retry-After 的 HeaderMap
-pub fn build_token_error_headers<'a>(
+/// [Issue #3634] 为 Claude 协议收敛 Retry-After 秒数。
+/// Claude Code 客户端对 Retry-After 设置了严格的 20,000ms (20s) 门禁：
+/// 1. 若 Retry-After >= 20s 或缺失 (null)，立即触发 10~30 分钟 (1,800,000ms) 的过载/限流冷冻与 fastMode 熔断；
+/// 2. 若 Retry-After < 20s (且非 null)，客户端执行快速原位重试循环 (Math.min(U$(...), 20000))。
+///
+/// 因此网关为 Claude 协议返回的 Retry-After 必须稳定收敛至 safe 范围 (默认 12s，兜底 8s)。
+pub fn clamp_retry_after_for_claude(sec: Option<u64>) -> u64 {
+    match sec {
+        Some(s) if s > 0 => s.clamp(1, 12),
+        _ => 8,
+    }
+}
+
+/// [Issue #3414 / #3634] 统一构造带有 X-Mapped-Model、可选 X-Account-Email 以及针对协议感知的 Retry-After HeaderMap
+pub fn build_token_error_headers_for_protocol<'a>(
+    protocol: &str,
     mapped_model: Option<&'a str>,
     account_email: Option<&'a str>,
     error_text: &str,
@@ -581,12 +595,29 @@ pub fn build_token_error_headers<'a>(
             headers.insert(HeaderName::from_static("x-account-email"), val);
         }
     }
-    if let Some(sec) = extract_retry_after_seconds(error_text) {
-        if let Ok(val) = HeaderValue::from_str(&sec.to_string()) {
+
+    let raw_sec = extract_retry_after_seconds(error_text);
+    let sec = if protocol == "claude" {
+        Some(clamp_retry_after_for_claude(raw_sec))
+    } else {
+        raw_sec
+    };
+
+    if let Some(s) = sec {
+        if let Ok(val) = HeaderValue::from_str(&s.to_string()) {
             headers.insert(axum::http::header::RETRY_AFTER, val);
         }
     }
     headers
+}
+
+/// [Issue #3414] 统一构造带有 X-Mapped-Model、可选 X-Account-Email 以及 Retry-After 的 HeaderMap (通用协议兼容)
+pub fn build_token_error_headers<'a>(
+    mapped_model: Option<&'a str>,
+    account_email: Option<&'a str>,
+    error_text: &str,
+) -> axum::http::HeaderMap {
+    build_token_error_headers_for_protocol("common", mapped_model, account_email, error_text)
 }
 
 /// 判定是否属于偶发性/瞬态 Token 获取错误（例如超时、锁争抢、系统繁忙）
@@ -895,6 +926,70 @@ mod retry_after_tests {
             extract_retry_after_seconds("All accounts failed or unhealthy."),
             None
         );
+    }
+
+    #[test]
+    fn test_clamp_retry_after_for_claude() {
+        assert_eq!(clamp_retry_after_for_claude(Some(45)), 12);
+        assert_eq!(clamp_retry_after_for_claude(Some(29)), 12);
+        assert_eq!(clamp_retry_after_for_claude(Some(1800)), 12);
+        assert_eq!(clamp_retry_after_for_claude(Some(5)), 5);
+        assert_eq!(clamp_retry_after_for_claude(Some(0)), 8);
+        assert_eq!(clamp_retry_after_for_claude(None), 8);
+    }
+
+    #[test]
+    fn test_build_token_error_headers_for_protocol_claude() {
+        let headers_clamped = build_token_error_headers_for_protocol(
+            "claude",
+            Some("claude-3-7-sonnet"),
+            Some("test@example.com"),
+            "All accounts limited. Wait 45s.",
+        );
+        assert_eq!(
+            headers_clamped
+                .get("retry-after")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "12"
+        );
+
+        let headers_fallback = build_token_error_headers_for_protocol(
+            "claude",
+            Some("claude-3-7-sonnet"),
+            None,
+            "All accounts failed or unhealthy.",
+        );
+        // Claude 协议绝对不能缺少 retry-after，必须兜底下发 safe 范围秒数 (8s)
+        assert_eq!(
+            headers_fallback
+                .get("retry-after")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "8"
+        );
+
+        let headers_gemini = build_token_error_headers_for_protocol(
+            "gemini",
+            Some("gemini-2.5-pro"),
+            None,
+            "All accounts limited. Wait 45s.",
+        );
+        // Gemini / 通用协议如实下发原始提取值
+        assert_eq!(
+            headers_gemini.get("retry-after").unwrap().to_str().unwrap(),
+            "45"
+        );
+
+        let headers_gemini_no_wait = build_token_error_headers_for_protocol(
+            "gemini",
+            Some("gemini-2.5-pro"),
+            None,
+            "All accounts failed or unhealthy.",
+        );
+        assert!(headers_gemini_no_wait.get("retry-after").is_none());
     }
 
     #[test]

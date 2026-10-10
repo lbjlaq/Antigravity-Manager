@@ -135,6 +135,10 @@ impl ProtocolStreamHandler for ClaudeStreamHandler {
                 "usage": recovery_usage,
             });
             out.push(self.state.emit("message_delta", delta));
+            out.push(Bytes::from(
+                "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+            ));
+            self.state.message_stop_sent = true;
         }
 
         // 正常收尾终结事件
@@ -258,6 +262,13 @@ fn process_sse_line(
         chunks.push(state.emit_message_start(raw_json));
     }
 
+    // 捕获 usageMetadata（无论是否携带 finishReason，均持续缓存在 state.last_usage 中）
+    if let Some(usage_val) = raw_json.get("usageMetadata") {
+        if let Ok(parsed_usage) = serde_json::from_value::<UsageMetadata>(usage_val.clone()) {
+            state.last_usage = Some(parsed_usage);
+        }
+    }
+
     // 捕获 groundingMetadata (Web Search)
     if let Some(candidate) = raw_json.get("candidates").and_then(|c| c.get(0)) {
         if let Some(grounding) = candidate.get("groundingMetadata") {
@@ -337,7 +348,8 @@ fn process_sse_line(
     if let Some(finish_reason) = finish_reason {
         let usage = raw_json
             .get("usageMetadata")
-            .and_then(|u| serde_json::from_value::<UsageMetadata>(u.clone()).ok());
+            .and_then(|u| serde_json::from_value::<UsageMetadata>(u.clone()).ok())
+            .or_else(|| state.last_usage.clone());
 
         if let Some(ref u) = usage {
             let cached_tokens = u.cached_content_token_count.unwrap_or(0);
@@ -372,7 +384,8 @@ fn process_sse_line(
 /// 发送强制结束事件
 pub fn emit_force_stop(state: &mut StreamingState) -> Vec<Bytes> {
     if !state.message_stop_sent {
-        let mut chunks = state.emit_finish(None, None);
+        let usage = state.last_usage.clone();
+        let mut chunks = state.emit_finish(None, usage.as_ref());
         if chunks.is_empty() {
             chunks.push(Bytes::from(
                 "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
@@ -952,6 +965,226 @@ mod tests {
             next_item,
             Ok(None),
             "Stream must terminate immediately upon message_stop without waiting for upstream EOF"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multichunk_token_usage_preserved_when_finish_reason_has_no_metadata() {
+        use futures::StreamExt;
+
+        // 模拟多 Chunk 流：
+        // Chunk 1: 发送内容与 usageMetadata (prompt: 20, candidates: 88)
+        // Chunk 2: 仅发送 finishReason: "STOP"，不包含 usageMetadata
+        let mock_stream = async_stream::stream! {
+            let chunk_1 = serde_json::json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "text": "Analyzing code..." }]
+                    }
+                }],
+                "modelVersion": "gemini-2.5-pro",
+                "responseId": "msg_chunk_1",
+                "usageMetadata": {
+                    "promptTokenCount": 20,
+                    "candidatesTokenCount": 88
+                }
+            });
+            yield Ok::<_, String>(bytes::Bytes::from(format!("data: {}\n\n", chunk_1)));
+
+            let chunk_2 = serde_json::json!({
+                "candidates": [{
+                    "finishReason": "STOP"
+                }],
+                "modelVersion": "gemini-2.5-pro",
+                "responseId": "msg_chunk_2"
+            });
+            yield Ok::<_, String>(bytes::Bytes::from(format!("data: {}\n\n", chunk_2)));
+        };
+
+        let mut claude_stream = create_claude_sse_stream(
+            Box::pin(mock_stream),
+            "trace_usage_cache_test".to_string(),
+            "test@example.com".to_string(),
+            None,
+            false,
+            1_000,
+            None,
+            1,
+            None,
+            Vec::new(),
+        );
+
+        let mut all_chunks = Vec::new();
+        while let Some(result) = claude_stream.next().await {
+            if let Ok(bytes) = result {
+                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            }
+        }
+        let output = all_chunks.join("");
+
+        // 验证 message_delta 中保留了 Chunk 1 的 Token 统计，而非归零
+        assert!(
+            output.contains(r#""output_tokens":88"#),
+            "Output tokens must be preserved from earlier chunk when finishReason has no usageMetadata, got: {}",
+            output
+        );
+        assert!(
+            output.contains(r#""stop_reason":"end_turn""#),
+            "Must emit stop_reason: end_turn"
+        );
+        assert!(
+            output.contains("event: message_stop"),
+            "Must emit message_stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_clean_upstream_eof_without_finish_reason_emits_valid_completion_triplet() {
+        use futures::StreamExt;
+
+        // 模拟正常生成文本后，上游连接正常 EOF (返回 None) 但未显式下发 finishReason
+        let mock_stream = async_stream::stream! {
+            let chunk = serde_json::json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "text": "Code refactored cleanly." }]
+                    }
+                }],
+                "modelVersion": "gemini-2.5-flash",
+                "responseId": "msg_eof_test",
+                "usageMetadata": {
+                    "promptTokenCount": 15,
+                    "candidatesTokenCount": 35
+                }
+            });
+            yield Ok::<_, String>(bytes::Bytes::from(format!("data: {}\n\n", chunk)));
+            // 直接结束流 (EOF)
+        };
+
+        let mut claude_stream = create_claude_sse_stream(
+            Box::pin(mock_stream),
+            "trace_eof_test".to_string(),
+            "test@example.com".to_string(),
+            None,
+            false,
+            1_000,
+            None,
+            1,
+            None,
+            Vec::new(),
+        );
+
+        let mut all_chunks = Vec::new();
+        while let Some(result) = claude_stream.next().await {
+            if let Ok(bytes) = result {
+                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            }
+        }
+        let output = all_chunks.join("");
+
+        // 验证 Claude Code 终止三元组 complete: bf !== null && Kw && fd === null
+        // 1. content_block_stop 必须发出，确保 active block 指针 fd 被重置为 null (防止 StreamTruncatedError)
+        assert!(
+            output.contains("event: content_block_stop"),
+            "Must close content block before message_stop"
+        );
+
+        // 2. message_delta 必须发出有效 stop_reason ("end_turn") 且保留 usage
+        assert!(
+            output.contains(r#""stop_reason":"end_turn""#),
+            "Must emit stop_reason end_turn on clean EOF"
+        );
+        assert!(
+            output.contains(r#""output_tokens":35"#),
+            "Must preserve usage on clean EOF"
+        );
+
+        // 3. message_stop 必须发出
+        assert!(
+            output.contains("event: message_stop"),
+            "Must emit message_stop on clean EOF"
+        );
+    }
+
+    #[test]
+    fn test_silent_firewall_drops_rogue_frames_after_message_stop() {
+        let mut state = StreamingState::new();
+
+        // 1. 模拟正常结束帧
+        let done_line = r#"data: {"candidates":[{"content":{"parts":[{"text":"Done"}]},"finishReason":"STOP"}]}"#;
+        let chunks = process_sse_line(done_line, &mut state, "trace_fw", "test@example.com");
+        assert!(chunks.is_some());
+        assert!(
+            state.message_stop_sent,
+            "State must record message_stop_sent"
+        );
+
+        // 2. 模拟上游越界下发的流尾部多余帧 (rogue frames)
+        let trailing_line =
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"Extra text"}]}}]}"#;
+        let dropped = process_sse_line(trailing_line, &mut state, "trace_fw", "test@example.com");
+        assert!(
+            dropped.is_none(),
+            "Silent firewall must drop any frames arriving after message_stop"
+        );
+
+        let trailing_done = "data: [DONE]";
+        let dropped_done =
+            process_sse_line(trailing_done, &mut state, "trace_fw", "test@example.com");
+        assert!(
+            dropped_done.is_none(),
+            "Silent firewall must drop [DONE] after message_stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_empty_response_emits_single_message_delta_and_message_stop() {
+        use futures::StreamExt;
+
+        // 模拟完全空的流（如单点健康探测或模型直接返回空包）
+        let mock_stream = async_stream::stream! {
+            if false {
+                yield Ok::<bytes::Bytes, String>(bytes::Bytes::new());
+            }
+        };
+
+        let mut claude_stream = create_claude_sse_stream(
+            Box::pin(mock_stream),
+            "trace_empty_test".to_string(),
+            "test@example.com".to_string(),
+            None,
+            false,
+            1_000,
+            None,
+            1,
+            None,
+            Vec::new(),
+        );
+
+        let mut all_chunks = Vec::new();
+        while let Some(result) = claude_stream.next().await {
+            if let Ok(bytes) = result {
+                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            }
+        }
+        let output = all_chunks.join("");
+
+        // 验证空响应恢复仅发出一次 message_delta 与一次 message_stop
+        let delta_count = output.matches("event: message_delta").count();
+        let stop_count = output.matches("event: message_stop").count();
+        assert_eq!(
+            delta_count, 1,
+            "Empty response must emit exactly one message_delta, got: {}",
+            output
+        );
+        assert_eq!(
+            stop_count, 1,
+            "Empty response must emit exactly one message_stop, got: {}",
+            output
+        );
+        assert!(
+            output.contains(r#""stop_reason":"end_turn""#),
+            "Must emit stop_reason: end_turn"
         );
     }
 }

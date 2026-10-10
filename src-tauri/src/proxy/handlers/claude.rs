@@ -843,6 +843,17 @@ fn claude_stream_chunk_has_error_event(bytes: &[u8]) -> bool {
     false
 }
 
+/// [Issue #3634] 规范化 Claude 协议的 HTTP 错误状态码。
+/// 1. HTTP 529 统一转为 HTTP 429：避免触发 Claude Code PB(an) 的过载降级状态机（强制关闭 fastMode 并进入 10~30 分钟过载冷却）；
+/// 2. HTTP 403 统一转为 HTTP 503：避免 Claude Code 客户端误判为鉴权失效并强制退出登录。
+pub(crate) fn normalize_claude_error_status(status_code: u16) -> StatusCode {
+    match status_code {
+        403 => StatusCode::SERVICE_UNAVAILABLE,
+        529 => StatusCode::TOO_MANY_REQUESTS,
+        code => StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 /// 处理 Claude messages 请求
 ///
 /// 处理 Chat 消息请求流程
@@ -1750,11 +1761,13 @@ pub async fn handle_messages(
                 } else {
                     e
                 };
-                let headers = crate::proxy::handlers::common::build_token_error_headers(
-                    Some(mapped_model.as_str()),
-                    None,
-                    &safe_message,
-                );
+                let headers =
+                    crate::proxy::handlers::common::build_token_error_headers_for_protocol(
+                        "claude",
+                        Some(mapped_model.as_str()),
+                        None,
+                        &safe_message,
+                    );
                 let dual_err = crate::proxy::handlers::common::build_dual_track_error(
                     "claude",
                     StatusCode::SERVICE_UNAVAILABLE.as_u16(),
@@ -2633,110 +2646,39 @@ pub async fn handle_messages(
                 "[{}] Non-retryable error {}: {}",
                 trace_id, status_code, error_text
             );
+            let response_status = normalize_claude_error_status(status_code);
+            let headers = crate::proxy::handlers::common::build_token_error_headers_for_protocol(
+                "claude",
+                Some(request_with_mapped.model.as_str()),
+                Some(email.as_str()),
+                &error_text,
+            );
             let dual_err = crate::proxy::handlers::common::build_dual_track_error(
                 "claude",
-                status_code,
+                response_status.as_u16(),
                 &request_with_mapped.model,
                 &error_text,
             );
-            return (
-                status,
-                [
-                    ("X-Account-Email", email.as_str()),
-                    ("X-Mapped-Model", request_with_mapped.model.as_str()),
-                ],
-                Json(dual_err),
-            )
-                .into_response();
+            return (response_status, headers, Json(dual_err)).into_response();
         }
     }
 
-    if let Some(email) = last_email {
-        // [FIX] Include X-Mapped-Model in exhaustion error
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "X-Account-Email",
-            header::HeaderValue::from_str(&email).unwrap(),
-        );
-        if let Some(ref model) = last_mapped_model {
-            if let Ok(v) = header::HeaderValue::from_str(model) {
-                headers.insert("X-Mapped-Model", v);
-            }
-        }
+    let response_status = normalize_claude_error_status(last_status.as_u16());
+    let headers = crate::proxy::handlers::common::build_token_error_headers_for_protocol(
+        "claude",
+        last_mapped_model.as_deref(),
+        last_email.as_deref(),
+        &last_error,
+    );
+    let model_str = last_mapped_model.as_deref().unwrap_or("unknown");
+    let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+        "claude",
+        response_status.as_u16(),
+        model_str,
+        &last_error,
+    );
 
-        let _error_type = match last_status.as_u16() {
-            400 => "invalid_request_error",
-            401 => "authentication_error",
-            403 => "permission_error",
-            429 => "rate_limit_error",
-            529 => "overloaded_error",
-            _ => "api_error",
-        };
-
-        // [FIX] 403 时返回 503，避免 Claude Code 客户端退出到登录页
-        let response_status = if last_status.as_u16() == 403 {
-            StatusCode::SERVICE_UNAVAILABLE
-        } else {
-            last_status
-        };
-
-        if let Some(sec) = crate::proxy::handlers::common::extract_retry_after_seconds(&last_error)
-        {
-            if let Ok(val) = header::HeaderValue::from_str(&sec.to_string()) {
-                headers.insert(axum::http::header::RETRY_AFTER, val);
-            }
-        }
-
-        let model_str = last_mapped_model.as_deref().unwrap_or("unknown");
-        let dual_err = crate::proxy::handlers::common::build_dual_track_error(
-            "claude",
-            response_status.as_u16(),
-            model_str,
-            &last_error,
-        );
-
-        (response_status, headers, Json(dual_err)).into_response()
-    } else {
-        // Fallback if no email (e.g. mapping error before token)
-        let mut headers = HeaderMap::new();
-        if let Some(ref model) = last_mapped_model {
-            if let Ok(v) = header::HeaderValue::from_str(model) {
-                headers.insert("X-Mapped-Model", v);
-            }
-        }
-        if let Some(sec) = crate::proxy::handlers::common::extract_retry_after_seconds(&last_error)
-        {
-            if let Ok(val) = header::HeaderValue::from_str(&sec.to_string()) {
-                headers.insert(axum::http::header::RETRY_AFTER, val);
-            }
-        }
-
-        let _error_type = match last_status.as_u16() {
-            400 => "invalid_request_error",
-            401 => "authentication_error",
-            403 => "permission_error",
-            429 => "rate_limit_error",
-            529 => "overloaded_error",
-            _ => "api_error",
-        };
-
-        // [FIX] 403 时返回 503，避免 Claude Code 客户端退出到登录页
-        let response_status = if last_status.as_u16() == 403 {
-            StatusCode::SERVICE_UNAVAILABLE
-        } else {
-            last_status
-        };
-
-        let model_str = last_mapped_model.as_deref().unwrap_or("unknown");
-        let dual_err = crate::proxy::handlers::common::build_dual_track_error(
-            "claude",
-            response_status.as_u16(),
-            model_str,
-            &last_error,
-        );
-
-        (response_status, headers, Json(dual_err)).into_response()
-    }
+    (response_status, headers, Json(dual_err)).into_response()
 }
 
 /// 列出可用模型
@@ -2850,6 +2792,90 @@ mod opus_variant_tests {
         };
 
         assert_eq!(request_thinking.budget_tokens, Some(1_024));
+    }
+}
+
+#[cfg(test)]
+mod claude_error_normalization_tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    #[test]
+    fn test_normalize_claude_error_status_mappings() {
+        // 529 必须映射为 429，防止触发 Claude Code PB(an) 过载降级与 10~30 分钟冷却
+        assert_eq!(
+            normalize_claude_error_status(529),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        // 403 必须映射为 503，防止 Claude Code 客户端误判为 Session 失效并弹出登录页
+        assert_eq!(
+            normalize_claude_error_status(403),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        // 其余常见状态码保持原样透传
+        assert_eq!(
+            normalize_claude_error_status(429),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(normalize_claude_error_status(400), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            normalize_claude_error_status(500),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            normalize_claude_error_status(503),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[test]
+    fn test_claude_dual_track_error_never_emits_overloaded_error() {
+        let err_json = crate::proxy::handlers::common::build_dual_track_error(
+            "claude",
+            429,
+            "claude-3-7-sonnet",
+            "Rate limit exceeded. Resource has been exhausted.",
+        );
+
+        let err_str = serde_json::to_string(&err_json).unwrap();
+        // 确保绝对不包含 "overloaded_error"，防止被 Claude Code PB(an) 正则或 message 捕获
+        assert!(!err_str.contains("overloaded_error"));
+        assert_eq!(err_json["type"], "error");
+        assert_eq!(err_json["error"]["type"], "rate_limit_error");
+    }
+
+    #[test]
+    fn test_claude_error_headers_clamp_extreme_quota_delay() {
+        // 模拟上游返回 5360s 超大重试延迟（避免客户端计算出 1h 29m 20s）
+        let headers = crate::proxy::handlers::common::build_token_error_headers_for_protocol(
+            "claude",
+            Some("claude-3-7-sonnet"),
+            Some("test@example.com"),
+            "Resource has been exhausted (e.g. check quota). Wait 5360s.",
+        );
+
+        assert_eq!(
+            headers.get("x-mapped-model").unwrap().to_str().unwrap(),
+            "claude-3-7-sonnet"
+        );
+        assert_eq!(
+            headers.get("x-account-email").unwrap().to_str().unwrap(),
+            "test@example.com"
+        );
+        // Retry-After 必须被收敛至 safe 范围 (<= 12s)
+        let retry_after = headers
+            .get(axum::http::header::RETRY_AFTER)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let retry_sec: u64 = retry_after.parse().unwrap();
+        assert!(
+            retry_sec <= 12,
+            "retry_sec must be <= 12s, got {}",
+            retry_sec
+        );
+        assert!(retry_sec >= 1, "retry_sec must be >= 1s, got {}", retry_sec);
+        assert_eq!(retry_sec, 12);
     }
 }
 
