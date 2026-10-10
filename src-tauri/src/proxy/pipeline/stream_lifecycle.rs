@@ -258,7 +258,29 @@ where
                                 }
                             }
                         }
-                        None => break, // 上游流正常到达 EOF
+                        None => {
+                            // [关键契约守卫] 若上游到达 EOF 时仅产生了思考，从未产生任何正文或工具调用：
+                            // 严禁作为正常 EOF 终结或伪造收尾帧！如实作为 Err 透传底层中断，
+                            // 促使 Claude Code 等客户端状态机捕获 ConnectionLost 并自动触发原生重试。
+                            if handler.has_thinking() && !handler.has_content() {
+                                let report = crate::proxy::mappers::error_classifier::report_stream_error(
+                                    config.adapter_name,
+                                    config.function_name,
+                                    &"upstream stream ended after thinking without content",
+                                    config.trace_info.clone(),
+                                );
+                                tracing::warn!(
+                                    "[{}] {} upstream stream reached EOF after thinking without content: {}",
+                                    config.adapter_name,
+                                    config.function_name,
+                                    report.client_message()
+                                );
+                                error_emitted = true;
+                                yield Err(report.client_message());
+                                break;
+                            }
+                            break; // 上游流正常到达 EOF
+                        }
                     }
                 }
                 _ = heartbeat_interval.tick() => {
@@ -321,6 +343,25 @@ where
 
         // 协议守卫：如果因错误退出，严格禁止追加发送终结帧，防止破坏客户端状态机
         if error_emitted {
+            handler.on_finish();
+            return;
+        }
+
+        // [关键契约守卫] 若流结束时仅产生了思考且未产生任何正文，严禁下发终结帧，如实透传 Err 触发重试
+        if handler.has_thinking() && !handler.has_content() {
+            let report = crate::proxy::mappers::error_classifier::report_stream_error(
+                config.adapter_name,
+                config.function_name,
+                &"upstream stream ended after thinking without content",
+                config.trace_info.clone(),
+            );
+            tracing::warn!(
+                "[{}] {} stream ended after thinking without content: {}",
+                config.adapter_name,
+                config.function_name,
+                report.client_message()
+            );
+            yield Err(report.client_message());
             handler.on_finish();
             return;
         }
@@ -613,6 +654,46 @@ mod tests {
             next_item,
             Ok(None),
             "Stream must terminate immediately upon handler.is_terminal() without waiting for upstream EOF"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_thinking_only_interruption_propagates_error_without_finalize() {
+        // 模拟上游只产生了思考块，随后由于网络异常或上游故障直接 EOF，未产出任何正文
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: thinking_chunk\n"));
+            yield Ok::<_, String>(Bytes::from("data: thinking_done\n"));
+            // 直接 EOF (None)
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config =
+            StreamLifecycleConfig::new("test", "test_fn", "trace_thinking_only".to_string())
+                .with_timeouts(5, 5, 5);
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        let mut error_propagated = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
+                Err(e) => {
+                    error_propagated = true;
+                    assert!(e.contains("thinking"));
+                }
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(full_output.contains("processed:data: thinking_chunk"));
+        assert!(full_output.contains("processed:data: thinking_done"));
+        assert!(
+            !full_output.contains("[finalized]"),
+            "Must NOT emit finalize when stream only had thinking"
+        );
+        assert!(
+            error_propagated,
+            "Must propagate Err on thinking-only stream EOF to trigger client native retry"
         );
     }
 }

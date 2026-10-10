@@ -62,49 +62,15 @@ impl ProtocolStreamHandler for ClaudeStreamHandler {
             return out;
         }
 
-        // [FIX #Bug3] 思考后中断恢复：若已发送思考但未产生任何正文，注入兜底避免客户端死循环
+        // [协议收敛] 思考后中断防护：若产生了思考但未产生任何正文，绝不可伪造文本或 message_stop！
+        // 伪造收尾会导致 Claude Code 等客户端状态机误判为"生成正常终结"，从而抑制原生重试循环并使会话中毒。
+        // 此处严格静默，交由 stream_lifecycle 识别思考未完成状态并如实透传 Err，促使客户端触发原生重试。
         if self.state.has_thinking && !self.state.has_content {
             tracing::warn!(
-                "[{}] Stream interrupted after thinking (No Content). Triggering recovery...",
+                "[{}] Stream finalized after thinking without content. Suppressing fake completion to allow client retry.",
                 self.trace_id
             );
-
-            // 1. 若思考块尚未关闭则强制关闭
-            if self.state.current_block_type()
-                == crate::proxy::mappers::claude::streaming::BlockType::Thinking
-            {
-                out.extend(self.state.end_block());
-            }
-
-            // 2. 注入提示文本块
-            let recovery_msg = "\n\n[System] Upstream model interrupted after thinking. (Recovered by Antigravity)";
-            out.extend(self.state.start_block(
-                crate::proxy::mappers::claude::streaming::BlockType::Text,
-                serde_json::json!({ "type": "text", "text": recovery_msg }),
-            ));
-            out.extend(self.state.end_block());
-            self.state.has_content = true;
-
-            // 3. 显式发送 message_delta + message_stop
-            if !self.state.message_stop_sent {
-                let recovery_usage = crate::proxy::mappers::claude::models::Usage {
-                    input_tokens: 0,
-                    output_tokens: 100,
-                    cache_read_input_tokens: None,
-                    cache_creation_input_tokens: None,
-                    server_tool_use: None,
-                };
-                let delta = serde_json::json!({
-                    "type": "message_delta",
-                    "delta": { "stop_reason": "end_turn", "stop_sequence": null },
-                    "usage": recovery_usage,
-                });
-                out.push(self.state.emit("message_delta", delta));
-                out.push(Bytes::from(
-                    "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-                ));
-                self.state.message_stop_sent = true;
-            }
+            return out;
         } else if !self.state.has_content && !self.state.has_thinking {
             // [FIX #3359] 空回复恢复兜底（例如健康探测单点提示词）
             if !self.state.message_start_sent {
@@ -346,32 +312,40 @@ fn process_sse_line(
         });
 
     if let Some(finish_reason) = finish_reason {
-        let usage = raw_json
-            .get("usageMetadata")
-            .and_then(|u| serde_json::from_value::<UsageMetadata>(u.clone()).ok())
-            .or_else(|| state.last_usage.clone());
-
-        if let Some(ref u) = usage {
-            let cached_tokens = u.cached_content_token_count.unwrap_or(0);
-            let cache_info = if cached_tokens > 0 {
-                format!(", Cached: {}", cached_tokens)
-            } else {
-                String::new()
-            };
-
-            tracing::info!(
-                "[{}] ✓ Stream completed | Account: {} | In: {} tokens | Out: {} tokens{}",
+        if state.has_thinking && !state.has_content {
+            tracing::warn!(
+                "[{}] Upstream emitted finishReason '{}' after thinking without content. Suppressing message_stop to allow native client retry.",
                 trace_id,
-                email,
-                u.prompt_token_count
-                    .unwrap_or(0)
-                    .saturating_sub(cached_tokens),
-                u.candidates_token_count.unwrap_or(0),
-                cache_info
+                finish_reason
             );
-        }
+        } else {
+            let usage = raw_json
+                .get("usageMetadata")
+                .and_then(|u| serde_json::from_value::<UsageMetadata>(u.clone()).ok())
+                .or_else(|| state.last_usage.clone());
 
-        chunks.extend(state.emit_finish(Some(finish_reason), usage.as_ref()));
+            if let Some(ref u) = usage {
+                let cached_tokens = u.cached_content_token_count.unwrap_or(0);
+                let cache_info = if cached_tokens > 0 {
+                    format!(", Cached: {}", cached_tokens)
+                } else {
+                    String::new()
+                };
+
+                tracing::info!(
+                    "[{}] ✓ Stream completed | Account: {} | In: {} tokens | Out: {} tokens{}",
+                    trace_id,
+                    email,
+                    u.prompt_token_count
+                        .unwrap_or(0)
+                        .saturating_sub(cached_tokens),
+                    u.candidates_token_count.unwrap_or(0),
+                    cache_info
+                );
+            }
+
+            chunks.extend(state.emit_finish(Some(finish_reason), usage.as_ref()));
+        }
     }
 
     if chunks.is_empty() {
@@ -562,12 +536,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_thinking_only_interruption_recovery() {
+    async fn test_thinking_only_interruption_propagates_error_without_fake_completion() {
         use futures::StreamExt;
 
-        // 1. 模拟一个只发送 Thinking 然后就结束的流
+        // 1. 模拟一个只发送 Thinking 然后就结束的流 (无任何正文)
         let mock_stream = async_stream::stream! {
-            // 发送 Thinking 块
             let thinking_json = serde_json::json!({
                 "candidates": [{
                     "content": {
@@ -578,7 +551,6 @@ mod tests {
                 "responseId": "msg_interrupted"
             });
             yield Ok::<_, String>(bytes::Bytes::from(format!("data: {}\n\n", thinking_json)));
-
             // 然后突然结束 (没有 Text, 没有 Usage, 直接 None)
         };
 
@@ -598,23 +570,42 @@ mod tests {
 
         // 3. 收集输出
         let mut all_chunks = Vec::new();
+        let mut error_propagated = false;
         while let Some(result) = claude_stream.next().await {
-            if let Ok(bytes) = result {
-                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            match result {
+                Ok(bytes) => all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
+                Err(e) => {
+                    error_propagated = true;
+                    assert!(e.contains("thinking"));
+                }
             }
         }
         let output = all_chunks.join("");
 
-        // 4. 验证恢复逻辑
-        // 必须包含 Thinking
+        // 4. 验证思考内容已正常输出
         assert!(output.contains("Thinking..."));
 
-        // 必须包含恢复的系统提示
-        assert!(output.contains("Recovered by Antigravity"));
+        // 5. [核心契约] 严禁注入合成提示文本欺骗客户端
+        assert!(
+            !output.contains("Recovered by Antigravity"),
+            "Must NOT inject synthetic recovery text on thinking-only cutoff"
+        );
 
-        // 必须包含模拟的 Usage
-        assert!(output.contains("\"usage\":"));
-        assert!(output.contains("\"output_tokens\":100")); // Should contain the recovery usage
+        // 6. [核心契约] 严禁发送 message_stop 或 end_turn 伪造正常终结，确保触发客户端原生重试
+        assert!(
+            !output.contains("event: message_stop"),
+            "Must NOT emit message_stop when only thinking was emitted"
+        );
+        assert!(
+            !output.contains(r#""stop_reason":"end_turn""#),
+            "Must NOT emit end_turn when only thinking was emitted"
+        );
+
+        // 7. 必须向外层透传底层错误
+        assert!(
+            error_propagated,
+            "Stream must propagate Err on thinking-only cutoff to trigger client native retry"
+        );
     }
 
     #[tokio::test]
@@ -754,10 +745,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_thinking_only_normal_completion_does_not_emit_content_after_message_stop() {
+    async fn test_thinking_only_with_finish_reason_stop_propagates_error_without_fake_message_stop()
+    {
         use futures::StreamExt;
 
-        // 模拟一个发送了 Thinking 后正常由 finishReason: "STOP" 结束的流
+        // 模拟一个发送了 Thinking 后，上游直接以 finishReason: "STOP" 结束但未产生任何正文的异常流
         let mock_stream = async_stream::stream! {
             let chunk_json = serde_json::json!({
                 "candidates": [{
@@ -790,9 +782,14 @@ mod tests {
         );
 
         let mut all_chunks = Vec::new();
+        let mut error_propagated = false;
         while let Some(result) = claude_stream.next().await {
-            if let Ok(bytes) = result {
-                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            match result {
+                Ok(bytes) => all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
+                Err(e) => {
+                    error_propagated = true;
+                    assert!(e.contains("thinking"));
+                }
             }
         }
         let output = all_chunks.join("");
@@ -800,24 +797,21 @@ mod tests {
         // 1. 验证包含了 Thinking 内容
         assert!(output.contains("Deep thinking completed."));
 
-        // 2. 验证 message_stop 之后没有再次追加 content_block_start 或截断恢复提示
+        // 2. 严禁下发 message_stop 或 end_turn 伪造正常收尾
         assert!(
-            !output.contains("Upstream model interrupted after thinking"),
-            "Normal finishReason completion must NOT trigger interruption recovery"
+            !output.contains("event: message_stop"),
+            "Must NOT emit message_stop when stream only has thinking"
+        );
+        assert!(
+            !output.contains(r#""stop_reason":"end_turn""#),
+            "Must NOT emit stop_reason end_turn when stream only has thinking"
         );
 
-        // 3. message_stop 必须且仅出现一次
-        let stop_count = output.matches("event: message_stop").count();
-        assert_eq!(stop_count, 1, "Must emit exactly one message_stop event");
-
-        // 4. message_stop 之后不能有任何 content_block_start
-        if let Some(stop_pos) = output.find("event: message_stop") {
-            let after_stop = &output[stop_pos..];
-            assert!(
-                !after_stop.contains("event: content_block_start"),
-                "Must NOT emit any content_block_start after message_stop"
-            );
-        }
+        // 3. 必须透传错误促使客户端自动重试
+        assert!(
+            error_propagated,
+            "Must propagate Err when upstream finishes after thinking without text"
+        );
     }
 
     #[tokio::test]
