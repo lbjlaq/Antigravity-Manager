@@ -62,52 +62,20 @@ impl ProtocolStreamHandler for ClaudeStreamHandler {
             return out;
         }
 
-        // [协议收敛] 思考后中断防护：若产生了思考但未产生任何正文，绝不可伪造文本或 message_stop！
+        // [协议收敛] 未产生内容中断防护：若未产生任何正文/工具调用（无论是否产生了思考），
+        // 绝不可伪造文本、伪造响应ID或伪造 message_stop！
         // 伪造收尾会导致 Claude Code 等客户端状态机误判为"生成正常终结"，从而抑制原生重试循环并使会话中毒。
-        // 此处严格静默，交由 stream_lifecycle 识别思考未完成状态并如实透传 Err，促使客户端触发原生重试。
-        if self.state.has_thinking && !self.state.has_content {
+        // 此处严格静默，交由 stream_lifecycle 统一识别未完成状态并如实透传 Err，促使客户端触发原生重试。
+        if !self.state.has_content {
             tracing::warn!(
-                "[{}] Stream finalized after thinking without content. Suppressing fake completion to allow client retry.",
-                self.trace_id
+                "[{}] Stream finalized without content (has_thinking: {}). Suppressing fake completion to allow client retry.",
+                self.trace_id,
+                self.state.has_thinking
             );
             return out;
-        } else if !self.state.has_content && !self.state.has_thinking {
-            // [FIX #3359] 空回复恢复兜底（例如健康探测单点提示词）
-            if !self.state.message_start_sent {
-                let dummy_start = serde_json::json!({
-                    "responseId": format!("msg_recovered_{}", chrono::Utc::now().timestamp_millis()),
-                    "modelVersion": "gemini-auto",
-                });
-                out.push(self.state.emit_message_start(&dummy_start));
-            }
-
-            out.extend(self.state.start_block(
-                crate::proxy::mappers::claude::streaming::BlockType::Text,
-                serde_json::json!({ "type": "text", "text": "." }),
-            ));
-            out.extend(self.state.end_block());
-            self.state.has_content = true;
-
-            let recovery_usage = crate::proxy::mappers::claude::models::Usage {
-                input_tokens: 1,
-                output_tokens: 1,
-                cache_read_input_tokens: None,
-                cache_creation_input_tokens: None,
-                server_tool_use: None,
-            };
-            let delta = serde_json::json!({
-                "type": "message_delta",
-                "delta": { "stop_reason": "end_turn", "stop_sequence": null },
-                "usage": recovery_usage,
-            });
-            out.push(self.state.emit("message_delta", delta));
-            out.push(Bytes::from(
-                "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
-            ));
-            self.state.message_stop_sent = true;
         }
 
-        // 正常收尾终结事件
+        // 正常收尾终结事件（仅在已产生有效正文/工具调用且非终止态时，关闭未封闭块并发送 message_stop）
         out.extend(emit_force_stop(&mut self.state));
         out
     }
@@ -1132,10 +1100,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_empty_response_emits_single_message_delta_and_message_stop() {
+    async fn test_empty_stream_before_content_propagates_error_without_fake_completion() {
         use futures::StreamExt;
 
-        // 模拟完全空的流（如单点健康探测或模型直接返回空包）
+        // 模拟上游在吐出任何内容前突然断开连接（0 字节空流）
         let mock_stream = async_stream::stream! {
             if false {
                 yield Ok::<bytes::Bytes, String>(bytes::Bytes::new());
@@ -1144,7 +1112,60 @@ mod tests {
 
         let mut claude_stream = create_claude_sse_stream(
             Box::pin(mock_stream),
-            "trace_empty_test".to_string(),
+            "trace_empty_abort_test".to_string(),
+            "test@example.com".to_string(),
+            None,
+            false,
+            1_000,
+            None,
+            1,
+            None,
+            Vec::new(),
+        );
+
+        let mut errors = Vec::new();
+        let mut ok_chunks = Vec::new();
+        while let Some(result) = claude_stream.next().await {
+            match result {
+                Ok(bytes) => ok_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
+                Err(err) => errors.push(err),
+            }
+        }
+        let output = ok_chunks.join("");
+
+        // 严禁伪造 msg_recovered_*、"." 文本块或伪造 message_stop
+        assert!(
+            !output.contains("msg_recovered_"),
+            "Must NOT fabricate synthetic message id msg_recovered_*"
+        );
+        assert!(
+            !output.contains(r#""text":".""#),
+            "Must NOT fabricate synthetic dot text block"
+        );
+        assert!(
+            !output.contains("event: message_stop"),
+            "Must NOT fabricate message_stop on premature empty stream"
+        );
+        // 必须如实透传错误，促使 Claude Code 捕获 ConnectionLost 触发原生重试
+        assert!(
+            !errors.is_empty(),
+            "Must propagate stream error when upstream closes prematurely before content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_clean_empty_response_with_finish_reason_stop_emits_valid_completion_triplet() {
+        use futures::StreamExt;
+
+        // 模拟上游合法返回空回复候选集（带 finishReason: STOP 与真实 usageMetadata）
+        let legit_gemini_sse = "data: {\"responseId\":\"resp_clean_empty\",\"candidates\":[{\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":12,\"candidatesTokenCount\":0}}\n\n";
+        let mock_stream = async_stream::stream! {
+            yield Ok::<bytes::Bytes, String>(bytes::Bytes::from(legit_gemini_sse));
+        };
+
+        let mut claude_stream = create_claude_sse_stream(
+            Box::pin(mock_stream),
+            "trace_clean_empty_test".to_string(),
             "test@example.com".to_string(),
             None,
             false,
@@ -1163,18 +1184,24 @@ mod tests {
         }
         let output = all_chunks.join("");
 
-        // 验证空响应恢复仅发出一次 message_delta 与一次 message_stop
+        // 验证真实合法空回复正常完成三件套终结流程
+        assert!(
+            output.contains("event: message_start"),
+            "Must emit message_start with genuine responseId"
+        );
+        assert!(
+            output.contains("resp_clean_empty"),
+            "Must contain genuine upstream response ID"
+        );
         let delta_count = output.matches("event: message_delta").count();
         let stop_count = output.matches("event: message_stop").count();
         assert_eq!(
             delta_count, 1,
-            "Empty response must emit exactly one message_delta, got: {}",
-            output
+            "Clean empty response must emit exactly one message_delta"
         );
         assert_eq!(
             stop_count, 1,
-            "Empty response must emit exactly one message_stop, got: {}",
-            output
+            "Clean empty response must emit exactly one message_stop"
         );
         assert!(
             output.contains(r#""stop_reason":"end_turn""#),

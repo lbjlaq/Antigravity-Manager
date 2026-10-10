@@ -259,20 +259,26 @@ where
                             }
                         }
                         None => {
-                            // [关键契约守卫] 若上游到达 EOF 时仅产生了思考，从未产生任何正文或工具调用：
+                            // [关键契约守卫] 若上游到达 EOF 时未处于终止态，且从未产生任何正文或工具调用（无论是否产生了思考）：
                             // 严禁作为正常 EOF 终结或伪造收尾帧！如实作为 Err 透传底层中断，
                             // 促使 Claude Code 等客户端状态机捕获 ConnectionLost 并自动触发原生重试。
-                            if handler.has_thinking() && !handler.has_content() {
+                            if !handler.is_terminal() && !handler.has_content() {
+                                let reason = if handler.has_thinking() {
+                                    "upstream stream ended after thinking without content"
+                                } else {
+                                    "upstream stream ended prematurely before emitting content"
+                                };
                                 let report = crate::proxy::mappers::error_classifier::report_stream_error(
                                     config.adapter_name,
                                     config.function_name,
-                                    &"upstream stream ended after thinking without content",
+                                    &reason,
                                     config.trace_info.clone(),
                                 );
                                 tracing::warn!(
-                                    "[{}] {} upstream stream reached EOF after thinking without content: {}",
+                                    "[{}] {} upstream stream reached EOF without content (has_thinking: {}): {}",
                                     config.adapter_name,
                                     config.function_name,
+                                    handler.has_thinking(),
                                     report.client_message()
                                 );
                                 error_emitted = true;
@@ -347,18 +353,25 @@ where
             return;
         }
 
-        // [关键契约守卫] 若流结束时仅产生了思考且未产生任何正文，严禁下发终结帧，如实透传 Err 触发重试
-        if handler.has_thinking() && !handler.has_content() {
+        // [关键契约守卫] 若流结束时未处于终止态且未产生任何正文/工具调用（无论是否产生了思考）：
+        // 严禁下发伪造终结帧，如实透传 Err 促使客户端原生重试
+        if !handler.is_terminal() && !handler.has_content() {
+            let reason = if handler.has_thinking() {
+                "upstream stream ended after thinking without content"
+            } else {
+                "upstream stream ended prematurely before emitting content"
+            };
             let report = crate::proxy::mappers::error_classifier::report_stream_error(
                 config.adapter_name,
                 config.function_name,
-                &"upstream stream ended after thinking without content",
+                &reason,
                 config.trace_info.clone(),
             );
             tracing::warn!(
-                "[{}] {} stream ended after thinking without content: {}",
+                "[{}] {} stream ended without content (has_thinking: {}): {}",
                 config.adapter_name,
                 config.function_name,
+                handler.has_thinking(),
                 report.client_message()
             );
             yield Err(report.client_message());
@@ -694,6 +707,43 @@ mod tests {
         assert!(
             error_propagated,
             "Must propagate Err on thinking-only stream EOF to trigger client native retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_premature_eof_before_content_propagates_error_without_finalize() {
+        // 模拟上游在产生任何内容或思考前直接 EOF，未处于终止态
+        let mock_stream = async_stream::stream! {
+            if false {
+                yield Ok::<Bytes, String>(Bytes::new());
+            }
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config = StreamLifecycleConfig::new("test", "test_fn", "trace_empty_eof".to_string())
+            .with_timeouts(5, 5, 5);
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        let mut error_propagated = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
+                Err(e) => {
+                    error_propagated = true;
+                    assert!(e.contains("prematurely") || e.contains("content"));
+                }
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(
+            !full_output.contains("[finalized]"),
+            "Must NOT emit finalize on premature EOF without content"
+        );
+        assert!(
+            error_propagated,
+            "Must propagate Err on premature stream EOF to trigger client native retry"
         );
     }
 }
