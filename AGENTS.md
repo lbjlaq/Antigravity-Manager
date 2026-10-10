@@ -17,7 +17,7 @@
     - `cd src-tauri && cargo fmt -- --check` (for Rust edits)
     - `cd src-tauri && cargo clippy --all-targets --all-features` (comprehensive Rust gate, already includes compilation — no separate `cargo check` needed)
     - `npm run build` (when `src/` or frontend configs changed)
-    - Rely on CI for full-app compilation (`tauri build`) and full test execution. Local pre-flight covers fmt + clippy + frontend build only.
+    - Rely on CI for full-app compilation (`tauri build`) and full test execution. Local pre-flight covers fmt + clippy + frontend build only. If the local host lacks the required dependencies or toolchains (e.g. MinGW windres on Windows, specific linkers, or platform libraries), skip the local check and delegate verification to the remote CI pipeline.
 - **Release Channels & Discipline**:
   - **Release Channel Separation**:
     - **Stable Releases**: Exclusively on `main`. Deploys official production packages, updates Docker/GitHub `latest` tags, and services automatic update channels.

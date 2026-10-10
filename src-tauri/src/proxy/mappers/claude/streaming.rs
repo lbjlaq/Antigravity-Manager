@@ -95,6 +95,8 @@ pub struct StreamingState {
     // [FIX #3379] Track whether any text_delta was emitted this turn (guard G7)
     pub text_delta_emitted_this_turn: bool,
     pub thinking_acc: crate::proxy::thinking_store::TurnAccumulator,
+    /// 缓存流式过程中接收到的最近一次使用量元数据，防止单独下发 finishReason 或无元数据收尾时 Token 统计归零
+    pub last_usage: Option<UsageMetadata>,
 }
 
 impl StreamingState {
@@ -126,6 +128,7 @@ impl StreamingState {
             registered_tool_names: Vec::new(),
             text_delta_emitted_this_turn: false,
             thinking_acc: crate::proxy::thinking_store::TurnAccumulator::new(),
+            last_usage: None,
         }
     }
 
@@ -399,7 +402,8 @@ impl StreamingState {
             "end_turn"
         };
 
-        let usage = usage_metadata
+        let effective_usage = usage_metadata.or(self.last_usage.as_ref());
+        let usage = effective_usage
             .map(|u| {
                 // [FIX] Record actual token usage for calibrator learning
                 // Now properly pairs estimated tokens from request with actual tokens from response

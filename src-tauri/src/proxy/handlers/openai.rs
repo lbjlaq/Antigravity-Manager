@@ -2454,11 +2454,11 @@ pub async fn handle_chat_completions(
 
                 // Loop to skip heartbeats during peek
                 // [FIX #3621] 采用固定截止时间点，杜绝遇到心跳重置 30s 倒计时导致长时间死等
-                let peek_timeout_secs = if config.request_type == "image_gen" {
-                    60
-                } else {
-                    30
-                };
+                let peek_timeout_secs = super::common::calculate_adaptive_peek_timeout(
+                    false,
+                    config.request_type == "image_gen",
+                    None,
+                );
                 let peek_deadline =
                     tokio::time::Instant::now() + std::time::Duration::from_secs(peek_timeout_secs);
                 loop {

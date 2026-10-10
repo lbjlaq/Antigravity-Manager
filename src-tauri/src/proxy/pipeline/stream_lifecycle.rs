@@ -34,6 +34,13 @@ pub trait ProtocolStreamHandler: Send + 'static {
         false
     }
 
+    /// 检查协议是否已进入不可逆的终结状态（例如 Claude 发送了 message_stop，或流已结束）
+    /// 一旦返回 true，生命周期驱动器必须立即退出轮询循环并断开下游连接，
+    /// 严禁继续等待上游 TCP EOF 或发送心跳，防止客户端界面持续转圈计时或报错。
+    fn is_terminal(&self) -> bool {
+        false
+    }
+
     /// 流正常结束调用，产出协议专属的终结帧
     /// （Claude 下发 message_delta(end_turn) + message_stop，OpenAI 下发 [DONE] 及可选 usage chunk）
     fn emit_finalize(&mut self) -> Vec<Bytes>;
@@ -163,6 +170,17 @@ where
                                         for out_chunk in chunks {
                                             yield Ok(out_chunk);
                                         }
+
+                                        // [关键终结状态机感知]
+                                        // 若当前处理的数据行促使协议发射了终端终结帧（如 Claude 的 message_stop），
+                                        // 立即终止解析并跳出生命周期循环，彻底断开下游响应体，阻止客户端因等待上游 TCP EOF 而悬挂计时。
+                                        if handler.is_terminal() {
+                                            break;
+                                        }
+                                    }
+
+                                    if handler.is_terminal() {
+                                        break;
                                     }
 
                                     // 状态机感知与多梯度超时刷新
@@ -240,7 +258,35 @@ where
                                 }
                             }
                         }
-                        None => break, // 上游流正常到达 EOF
+                        None => {
+                            // [关键契约守卫] 若上游到达 EOF 时未处于终止态，且从未产生任何正文或工具调用（无论是否产生了思考）：
+                            // 严禁作为正常 EOF 终结或伪造收尾帧！如实作为 Err 透传底层中断，
+                            // 促使 Claude Code 等客户端状态机捕获 ConnectionLost 并自动触发原生重试。
+                            if !handler.is_terminal() && !handler.has_content() {
+                                let reason = if handler.has_thinking() {
+                                    "upstream stream ended after thinking without content"
+                                } else {
+                                    "upstream stream ended prematurely before emitting content"
+                                };
+                                let report = crate::proxy::mappers::error_classifier::report_stream_error(
+                                    config.adapter_name,
+                                    config.function_name,
+                                    &reason,
+                                    config.trace_info.clone(),
+                                );
+                                tracing::warn!(
+                                    "[{}] {} upstream stream reached EOF without content (has_thinking: {}): {}",
+                                    config.adapter_name,
+                                    config.function_name,
+                                    handler.has_thinking(),
+                                    report.client_message()
+                                );
+                                error_emitted = true;
+                                yield Err(report.client_message());
+                                break;
+                            }
+                            break; // 上游流正常到达 EOF
+                        }
                     }
                 }
                 _ = heartbeat_interval.tick() => {
@@ -307,6 +353,39 @@ where
             return;
         }
 
+        // [关键契约守卫] 若流结束时未处于终止态且未产生任何正文/工具调用（无论是否产生了思考）：
+        // 严禁下发伪造终结帧，如实透传 Err 促使客户端原生重试
+        if !handler.is_terminal() && !handler.has_content() {
+            let reason = if handler.has_thinking() {
+                "upstream stream ended after thinking without content"
+            } else {
+                "upstream stream ended prematurely before emitting content"
+            };
+            let report = crate::proxy::mappers::error_classifier::report_stream_error(
+                config.adapter_name,
+                config.function_name,
+                &reason,
+                config.trace_info.clone(),
+            );
+            tracing::warn!(
+                "[{}] {} stream ended without content (has_thinking: {}): {}",
+                config.adapter_name,
+                config.function_name,
+                handler.has_thinking(),
+                report.client_message()
+            );
+            yield Err(report.client_message());
+            handler.on_finish();
+            return;
+        }
+
+        // 协议守卫：如果协议在流处理过程中已正常终结（例如已发送 message_stop），
+        // 严禁冲刷残留缓冲区或再次调用 emit_finalize()，防止向客户端投毒多余数据帧导致 StreamMalformedEventError
+        if handler.is_terminal() {
+            handler.on_finish();
+            return;
+        }
+
         // [FIX #1732] 尾部数据安全 Flush：防止因末尾缺少换行符产生网络分片悬挂
         if !buffer.is_empty() {
             let line_str = String::from_utf8_lossy(&buffer);
@@ -341,6 +420,7 @@ mod tests {
         is_thinking_active: bool,
         finalized: bool,
         initial_error_emitted: bool,
+        is_terminal: bool,
     }
 
     impl MockHandler {
@@ -352,6 +432,7 @@ mod tests {
                 is_thinking_active: false,
                 finalized: false,
                 initial_error_emitted: false,
+                is_terminal: false,
             }
         }
     }
@@ -365,10 +446,17 @@ mod tests {
             } else if line.contains("thinking_done") {
                 self.has_thinking = true;
                 self.is_thinking_active = false;
+            } else if line.contains("terminal_stop") {
+                self.has_content = true;
+                self.is_terminal = true;
             } else {
                 self.has_content = true;
             }
             vec![Bytes::from(format!("processed:{}\n", line))]
+        }
+
+        fn is_terminal(&self) -> bool {
+            self.is_terminal
         }
 
         fn has_content(&self) -> bool {
@@ -537,5 +625,125 @@ mod tests {
         assert!(full_output.contains("[finalized]"));
         assert!(!full_output.contains("[truncated]"));
         assert!(!full_output.contains("[initial_error]"));
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_terminates_immediately_when_handler_is_terminal_without_waiting_for_upstream_eof(
+    ) {
+        // 模拟上游在产生终端帧（terminal_stop）后，连接保持悬挂未关闭（例如长达 60s 不发送任何数据或 EOF）
+        // 验证生命周期驱动器能立刻感知 handler.is_terminal()，毫秒级跳出循环并关闭下游流，绝不等待上游 EOF 或发送心跳
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: normal_token\n"));
+            yield Ok::<_, String>(Bytes::from("data: terminal_stop\n"));
+            // 上游流保持存活但处于长时间等待中（未发送 EOF）
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            yield Ok::<_, String>(Bytes::from("data: never_reached\n"));
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config = StreamLifecycleConfig::new("test", "test_fn", "trace_term".to_string())
+            .with_timeouts(5, 5, 5);
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        // 收集已产出的帧，预期只包含 normal_token 和 terminal_stop，之后必须立即返回 None
+        while let Ok(Some(item)) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), stream.next()).await
+        {
+            if let Ok(b) = item {
+                output.push(String::from_utf8_lossy(&b).to_string());
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(full_output.contains("processed:data: normal_token"));
+        assert!(full_output.contains("processed:data: terminal_stop"));
+        assert!(!full_output.contains("never_reached"));
+
+        // 验证此时下游流已经完全关闭（直接返回 None，不会超时阻塞 500ms）
+        let next_item =
+            tokio::time::timeout(std::time::Duration::from_millis(100), stream.next()).await;
+        assert_eq!(
+            next_item,
+            Ok(None),
+            "Stream must terminate immediately upon handler.is_terminal() without waiting for upstream EOF"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_thinking_only_interruption_propagates_error_without_finalize() {
+        // 模拟上游只产生了思考块，随后由于网络异常或上游故障直接 EOF，未产出任何正文
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: thinking_chunk\n"));
+            yield Ok::<_, String>(Bytes::from("data: thinking_done\n"));
+            // 直接 EOF (None)
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config =
+            StreamLifecycleConfig::new("test", "test_fn", "trace_thinking_only".to_string())
+                .with_timeouts(5, 5, 5);
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        let mut error_propagated = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
+                Err(e) => {
+                    error_propagated = true;
+                    assert!(e.contains("thinking"));
+                }
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(full_output.contains("processed:data: thinking_chunk"));
+        assert!(full_output.contains("processed:data: thinking_done"));
+        assert!(
+            !full_output.contains("[finalized]"),
+            "Must NOT emit finalize when stream only had thinking"
+        );
+        assert!(
+            error_propagated,
+            "Must propagate Err on thinking-only stream EOF to trigger client native retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_premature_eof_before_content_propagates_error_without_finalize() {
+        // 模拟上游在产生任何内容或思考前直接 EOF，未处于终止态
+        let mock_stream = async_stream::stream! {
+            if false {
+                yield Ok::<Bytes, String>(Bytes::new());
+            }
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config = StreamLifecycleConfig::new("test", "test_fn", "trace_empty_eof".to_string())
+            .with_timeouts(5, 5, 5);
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        let mut error_propagated = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
+                Err(e) => {
+                    error_propagated = true;
+                    assert!(e.contains("prematurely") || e.contains("content"));
+                }
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(
+            !full_output.contains("[finalized]"),
+            "Must NOT emit finalize on premature EOF without content"
+        );
+        assert!(
+            error_propagated,
+            "Must propagate Err on premature stream EOF to trigger client native retry"
+        );
     }
 }
