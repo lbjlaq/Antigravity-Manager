@@ -38,6 +38,10 @@ impl ProtocolStreamHandler for ClaudeStreamHandler {
         process_sse_line(line, &mut self.state, &self.trace_id, &self.email).unwrap_or_default()
     }
 
+    fn is_terminal(&self) -> bool {
+        self.state.message_stop_sent
+    }
+
     fn has_content(&self) -> bool {
         self.state.has_content
     }
@@ -314,13 +318,23 @@ fn process_sse_line(
     }
     */
 
-    // 检查是否结束
-    if let Some(finish_reason) = raw_json
+    // 检查是否结束（兼容候选集与根级的 finishReason / finish_reason 命名）
+    let finish_reason = raw_json
         .get("candidates")
         .and_then(|c| c.get(0))
-        .and_then(|cand| cand.get("finishReason"))
+        .and_then(|cand| {
+            cand.get("finishReason")
+                .or_else(|| cand.get("finish_reason"))
+        })
         .and_then(|f| f.as_str())
-    {
+        .or_else(|| {
+            raw_json
+                .get("finishReason")
+                .or_else(|| raw_json.get("finish_reason"))
+                .and_then(|f| f.as_str())
+        });
+
+    if let Some(finish_reason) = finish_reason {
         let usage = raw_json
             .get("usageMetadata")
             .and_then(|u| serde_json::from_value::<UsageMetadata>(u.clone()).ok());
@@ -867,6 +881,77 @@ mod tests {
         assert!(
             error_propagated,
             "Stream must propagate transport Err so client triggers native auto-retry and continues output"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_claude_sse_stream_terminates_immediately_on_finish_reason_without_waiting_for_upstream_eof(
+    ) {
+        use futures::StreamExt;
+
+        // 模拟真实 Gemini 流：下发带有 finishReason: "STOP" 的最终帧，但之后上游连接维持活跃长达 60s（不发送 EOF）
+        let mock_stream = async_stream::stream! {
+            let chunk_content = serde_json::json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "text": "Task finished successfully." }]
+                    },
+                    "finishReason": "STOP"
+                }],
+                "modelVersion": "gemini-2.5-flash",
+                "responseId": "msg_term_test",
+                "usageMetadata": {
+                    "promptTokenCount": 100,
+                    "candidatesTokenCount": 50
+                }
+            });
+            yield Ok::<_, String>(bytes::Bytes::from(format!("data: {}\n\n", chunk_content)));
+            // 模拟上游 TCP 连接未关闭挂起 60 秒
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            yield Ok::<_, String>(bytes::Bytes::from("data: never_reached\n\n"));
+        };
+
+        let mut claude_stream = create_claude_sse_stream(
+            Box::pin(mock_stream),
+            "trace_term_test".to_string(),
+            "test@example.com".to_string(),
+            None,
+            false,
+            1_000,
+            None,
+            1,
+            None,
+            Vec::new(),
+        );
+
+        let mut all_chunks = Vec::new();
+        while let Ok(Some(result)) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), claude_stream.next()).await
+        {
+            if let Ok(bytes) = result {
+                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            }
+        }
+        let output = all_chunks.join("");
+
+        // 1. 验证包含终止 token 与终结事件
+        assert!(
+            output.contains(r#""stop_reason":"end_turn""#),
+            "Must emit stop_reason: end_turn"
+        );
+        assert!(
+            output.contains("event: message_stop"),
+            "Must emit message_stop"
+        );
+        assert!(!output.contains("never_reached"));
+
+        // 2. 关键断言：此时流必须已经完全结束（立刻返回 None，不阻塞等待上游 60s EOF）
+        let next_item =
+            tokio::time::timeout(std::time::Duration::from_millis(100), claude_stream.next()).await;
+        assert_eq!(
+            next_item,
+            Ok(None),
+            "Stream must terminate immediately upon message_stop without waiting for upstream EOF"
         );
     }
 }
