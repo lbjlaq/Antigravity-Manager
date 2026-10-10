@@ -153,6 +153,39 @@ pub fn calculate_max_retry_attempts(pool_size: usize) -> usize {
     }
 }
 
+/// 单次客户端请求在网关内部允许消耗的最大全局时间预算（秒，默认 240s）
+/// Claude Code 客户端原生设置了 300 秒（5分钟）的首包超时看门狗 (firstWindowMs = 300_000)。
+/// 网关内部在尝试跨账号轮换时，总耗时必须严格控制在 240 秒以内，确保在看门狗触发前向客户端返回
+/// 结构化规范化错误（504 Gateway Timeout 或 429/503），避免客户端弹出未响应警告框。
+pub const MAX_GATEWAY_REQUEST_BUDGET_SECS: u64 = 240;
+
+/// [Issue #3634] 统一自适应计算流预读（Peek）阶段的超时时间。
+/// - Compaction 摘要请求：大 Prompt 处理，默认 180s；
+/// - 图像生成请求：图像生成耗时较长，默认 60s；
+/// - 正常会话请求：根据估算 Token 数量动态自适应，避免大上下文 Prompt 预热（TTFT）超过 30s 被过早误杀导致全池轮换雪崩；
+///   * > 100k tokens: 120s
+///   * > 50k tokens: 90s
+///   * > 20k tokens: 60s
+///   * 默认: 30s
+pub fn calculate_adaptive_peek_timeout(
+    is_compaction: bool,
+    is_image_gen: bool,
+    estimated_tokens: Option<u32>,
+) -> u64 {
+    if is_compaction {
+        180
+    } else if is_image_gen {
+        60
+    } else {
+        match estimated_tokens {
+            Some(tokens) if tokens >= 100_000 => 120,
+            Some(tokens) if tokens >= 50_000 => 90,
+            Some(tokens) if tokens >= 20_000 => 60,
+            _ => 30,
+        }
+    }
+}
+
 /// 根据错误状态码和错误信息确定重试策略
 pub fn determine_retry_strategy(
     status_code: u16,
@@ -334,18 +367,18 @@ pub fn determine_retry_strategy_adaptive(
                 );
                 RetryStrategy::FixedDelay(Duration::from_millis(50))
             } else {
-                // 单账号或已遍历全池: 指数退避 (起始 5s，上限 30s)
+                // 单账号或已遍历全池: 适度温和退避 (起始 1s，上限 4s，杜绝单次重试死等 30s 阻塞网关)
                 RetryStrategy::ExponentialBackoff {
-                    base_ms: 5000,
-                    max_ms: 30000,
+                    base_ms: 1000,
+                    max_ms: 4000,
                 }
             }
         }
 
         // 500 服务器内部错误
         500 => {
-            // 线性退避：起始 3s
-            RetryStrategy::LinearBackoff { base_ms: 3000 }
+            // 线性退避：起始 1s，上限 3s
+            RetryStrategy::LinearBackoff { base_ms: 1000 }
         }
 
         // 401/403 认证/权限错误：切换账号前给予极短缓冲
@@ -936,6 +969,83 @@ mod retry_after_tests {
         assert_eq!(clamp_retry_after_for_claude(Some(5)), 5);
         assert_eq!(clamp_retry_after_for_claude(Some(0)), 8);
         assert_eq!(clamp_retry_after_for_claude(None), 8);
+    }
+
+    #[test]
+    fn test_calculate_adaptive_peek_timeout() {
+        // 1. 压缩摘要请求优先给予最宽限额 (180s)
+        assert_eq!(calculate_adaptive_peek_timeout(true, false, None), 180);
+        assert_eq!(
+            calculate_adaptive_peek_timeout(true, false, Some(10_000)),
+            180
+        );
+
+        // 2. 图像生成请求给予 60s
+        assert_eq!(calculate_adaptive_peek_timeout(false, true, None), 60);
+
+        // 3. 正常会话根据 token 规模自适应阶梯分配
+        assert_eq!(
+            calculate_adaptive_peek_timeout(false, false, Some(120_000)),
+            120
+        );
+        assert_eq!(
+            calculate_adaptive_peek_timeout(false, false, Some(100_000)),
+            120
+        );
+        assert_eq!(
+            calculate_adaptive_peek_timeout(false, false, Some(75_000)),
+            90
+        );
+        assert_eq!(
+            calculate_adaptive_peek_timeout(false, false, Some(50_000)),
+            90
+        );
+        assert_eq!(
+            calculate_adaptive_peek_timeout(false, false, Some(35_000)),
+            60
+        );
+        assert_eq!(
+            calculate_adaptive_peek_timeout(false, false, Some(20_000)),
+            60
+        );
+        assert_eq!(
+            calculate_adaptive_peek_timeout(false, false, Some(10_000)),
+            30
+        );
+        assert_eq!(calculate_adaptive_peek_timeout(false, false, None), 30);
+    }
+
+    #[test]
+    fn test_503_529_backoff_is_tightly_bounded() {
+        // 多账号第一轮 (attempt < pool_size): 快速轮换 (50ms)
+        let s1 = determine_retry_strategy_adaptive(
+            529,
+            "The model is overloaded.",
+            None,
+            false,
+            true,
+            0,
+            3,
+        );
+        assert_eq!(s1, RetryStrategy::FixedDelay(Duration::from_millis(50)));
+
+        // 多账号第二轮 (attempt >= pool_size): 指数退避必须严格限制在 1s~4s 内，绝不死等 30s 阻塞客户端
+        let s2 = determine_retry_strategy_adaptive(
+            529,
+            "The model is overloaded.",
+            None,
+            false,
+            true,
+            3,
+            3,
+        );
+        match s2 {
+            RetryStrategy::ExponentialBackoff { base_ms, max_ms } => {
+                assert_eq!(base_ms, 1000);
+                assert_eq!(max_ms, 4000);
+            }
+            other => panic!("Expected ExponentialBackoff, got {:?}", other),
+        }
     }
 
     #[test]

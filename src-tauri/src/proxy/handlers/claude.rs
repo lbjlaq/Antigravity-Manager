@@ -1685,9 +1685,47 @@ pub async fn handle_messages(
     let mut think_fill_ms: f64 = 0.0;
     let mut ttft_ms: f64 = 0.0;
 
+    let request_start = tokio::time::Instant::now();
+    let global_deadline = request_start
+        + std::time::Duration::from_secs(super::common::MAX_GATEWAY_REQUEST_BUDGET_SECS);
+
     for attempt in 0..max_attempts {
         // [Stage 2 Timing] 中转归一计时起点
         let norm_start = std::time::Instant::now();
+
+        // 检查全局请求预算：严格防止内部轮换时间逼近客户端 300s 看门狗超时
+        let now = tokio::time::Instant::now();
+        if now >= global_deadline {
+            tracing::warn!(
+                "[{}] Claude 请求全局预算耗尽（{}s，共经历 {} 次尝试），终止重试以杜绝触发客户端 5 分钟超时看门狗",
+                trace_id,
+                super::common::MAX_GATEWAY_REQUEST_BUDGET_SECS,
+                attempt
+            );
+            if last_status == StatusCode::SERVICE_UNAVAILABLE || last_status == StatusCode::OK {
+                last_status = StatusCode::GATEWAY_TIMEOUT;
+            }
+            if last_error.is_empty() {
+                last_error = format!(
+                    "Gateway global request budget exceeded ({}s)",
+                    super::common::MAX_GATEWAY_REQUEST_BUDGET_SECS
+                );
+            }
+            break;
+        }
+
+        let remaining_global_secs = (global_deadline - now).as_secs();
+        if remaining_global_secs < 5 {
+            tracing::warn!(
+                "[{}] Claude 请求全局预算剩余不足 5s ({}s left)，安全退出重试循环",
+                trace_id,
+                remaining_global_secs
+            );
+            if last_status == StatusCode::SERVICE_UNAVAILABLE || last_status == StatusCode::OK {
+                last_status = StatusCode::GATEWAY_TIMEOUT;
+            }
+            break;
+        }
 
         // 2. 模型路由解析
         let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
@@ -2059,7 +2097,18 @@ pub async fn handle_messages(
                 let mut retry_this_account = false;
 
                 // Loop to skip heartbeats during peek
-                let peek_timeout_secs = if is_compaction_request { 180 } else { 30 };
+                // [FIX #3634] 动态自适应计算 Peek 超时时间，并受全局剩余请求预算严格约束，
+                // 彻底杜绝大 Prompt 预热（TTFT > 30s）被误杀，同时杜绝累积超时触发客户端 5 分钟看门狗
+                let base_peek_secs = super::common::calculate_adaptive_peek_timeout(
+                    is_compaction_request,
+                    false,
+                    Some(raw_estimated),
+                );
+                let current_remaining_secs = global_deadline
+                    .saturating_duration_since(tokio::time::Instant::now())
+                    .as_secs();
+                let peek_timeout_secs =
+                    base_peek_secs.min(current_remaining_secs.saturating_sub(2).max(5));
                 // [FIX #3621] 采用固定截止时间点，杜绝遇到心跳 : ping 时刷新重置 30s 倒计时导致的 100s 死等死循环
                 let peek_deadline =
                     tokio::time::Instant::now() + std::time::Duration::from_secs(peek_timeout_secs);
@@ -2876,6 +2925,42 @@ mod claude_error_normalization_tests {
         );
         assert!(retry_sec >= 1, "retry_sec must be >= 1s, got {}", retry_sec);
         assert_eq!(retry_sec, 12);
+    }
+
+    #[test]
+    fn test_global_budget_bounds_peek_timeout() {
+        // 验证全局预算对单次 peek 超时进行刚性约束，杜绝突破客户端 300s 看门狗
+        let base_peek_compaction =
+            crate::proxy::handlers::common::calculate_adaptive_peek_timeout(true, false, None);
+        assert_eq!(base_peek_compaction, 180);
+
+        // 当全局预算仅剩 40s 时，单次 peek 必须被安全收敛至 38s
+        let remaining_secs = 40u64;
+        let effective_peek = base_peek_compaction.min(remaining_secs.saturating_sub(2).max(5));
+        assert_eq!(effective_peek, 38);
+
+        // 当全局预算仅剩 6s 时，单次 peek 至少保留 5s 兜底
+        let remaining_secs_low = 6u64;
+        let effective_peek_low =
+            base_peek_compaction.min(remaining_secs_low.saturating_sub(2).max(5));
+        assert_eq!(effective_peek_low, 5);
+    }
+
+    #[test]
+    fn test_normalize_claude_error_status_gateway_timeout() {
+        assert_eq!(
+            normalize_claude_error_status(504),
+            StatusCode::GATEWAY_TIMEOUT
+        );
+        let err_json = crate::proxy::handlers::common::build_dual_track_error(
+            "claude",
+            504,
+            "claude-3-7-sonnet",
+            "Gateway global request budget exceeded (240s)",
+        );
+        assert_eq!(err_json["type"], "error");
+        let err_str = serde_json::to_string(&err_json).unwrap();
+        assert!(!err_str.contains("overloaded_error"));
     }
 }
 
