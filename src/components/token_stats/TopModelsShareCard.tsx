@@ -101,11 +101,16 @@ export const TopModelsShareCard: React.FC<TopModelsShareCardProps> = ({
                                     />
                                 </div>
 
-                                {/* 数量与占比 */}
-                                <div className="flex items-center gap-1.5 flex-shrink-0 w-20 justify-end font-mono">
-                                    <span className="text-gray-800 dark:text-white/80 font-medium">
-                                        {formatNumber(item.total_tokens)}
-                                    </span>
+                                {/* 数量与占比与金额 */}
+                                <div className="flex items-center gap-2 flex-shrink-0 justify-end font-mono">
+                                    <div className="flex flex-col items-end">
+                                        <span className="text-gray-800 dark:text-white/80 font-medium leading-none">
+                                            {formatNumber(item.total_tokens)}
+                                        </span>
+                                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium mt-0.5 leading-none">
+                                            ${item.cost.toFixed(2)}
+                                        </span>
+                                    </div>
                                     <span className="text-[10px] text-gray-400 dark:text-white/40 min-w-[28px] text-right">
                                         {percent.toFixed(0)}%
                                     </span>

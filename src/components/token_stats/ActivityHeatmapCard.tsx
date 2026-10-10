@@ -19,6 +19,7 @@ interface ActivityHeatmapCardProps {
 
 export const ActivityHeatmapCard: React.FC<ActivityHeatmapCardProps> = ({
     dailyData,
+    totalEstimatedCost,
     formatNumber,
 }) => {
     const { t } = useTranslation();
@@ -163,10 +164,10 @@ export const ActivityHeatmapCard: React.FC<ActivityHeatmapCardProps> = ({
 
             {/* 内容区：左侧 13 周热力图网格 + 右侧数据概览 */}
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
-                {/* 13周 7行 方块矩阵 */}
-                <div className="flex items-center gap-[3px] overflow-x-auto py-1 max-w-full">
+                {/* 13周 7行 方块矩阵 (加大尺寸与呼吸感) */}
+                <div className="flex items-center gap-1 sm:gap-[5px] overflow-x-auto py-1 max-w-full">
                     {columns.map((col, colIdx) => (
-                        <div key={colIdx} className="flex flex-col gap-[3px]">
+                        <div key={colIdx} className="flex flex-col gap-1 sm:gap-[5px]">
                             {col.map((day) => {
                                 const currentToday = isToday(day.date);
                                 const isHovered = hoveredDate === day.date;
@@ -175,11 +176,11 @@ export const ActivityHeatmapCard: React.FC<ActivityHeatmapCardProps> = ({
                                         key={day.date}
                                         onMouseEnter={() => setHoveredDate(day.date)}
                                         onMouseLeave={() => setHoveredDate(null)}
-                                        className={`w-[11px] h-[11px] rounded-[2.5px] transition-all cursor-pointer ${getCellColorClass(day.total_tokens)} ${
+                                        className={`w-[14px] h-[14px] sm:w-[16px] sm:h-[16px] rounded-[3px] sm:rounded-[3.5px] transition-all cursor-pointer ${getCellColorClass(day.total_tokens)} ${
                                             isHovered
                                                 ? 'ring-2 ring-gray-900 dark:ring-white scale-125 z-10'
                                                 : currentToday
-                                                ? 'ring-1 ring-gray-900/60 dark:ring-white/60'
+                                                ? 'ring-1.5 ring-blue-500/80 dark:ring-blue-400/80'
                                                 : ''
                                         }`}
                                         title={`${day.date}: ${formatNumber(day.total_tokens)} Tokens (${t('token_stats.requests_count', { count: day.request_count, defaultValue: `${day.request_count} requests` })})`}
@@ -191,18 +192,25 @@ export const ActivityHeatmapCard: React.FC<ActivityHeatmapCardProps> = ({
                 </div>
 
                 {/* 右侧核心成就数据 */}
-                <div className="flex flex-col justify-center min-w-[140px] pl-1 md:pl-3 border-l border-gray-200/80 dark:border-white/[0.06]">
+                <div className="flex flex-col justify-center min-w-[145px] pl-1 md:pl-4 border-l border-gray-200/80 dark:border-white/[0.06]">
                     {/* 总量与周期 */}
-                    <div className="flex items-baseline gap-2">
-                        <span className="text-2xl font-bold font-mono tracking-tight text-gray-900 dark:text-white">
-                            {formatNumber(totalRangeTokens)}
-                        </span>
-                        <span className="text-[11px] text-gray-500 dark:text-white/50 font-medium">
-                            {t('token_stats.weeks_count', { count: 13, defaultValue: '13 weeks' })}
-                        </span>
+                    <div>
+                        <div className="flex items-baseline gap-2">
+                            <span className="text-2xl font-bold font-mono tracking-tight text-gray-900 dark:text-white">
+                                {formatNumber(totalRangeTokens)}
+                            </span>
+                            <span className="text-[11px] text-gray-500 dark:text-white/50 font-medium">
+                                {t('token_stats.weeks_count', { count: 13, defaultValue: '13 周' })}
+                            </span>
+                        </div>
+                        {totalEstimatedCost !== undefined && totalEstimatedCost > 0 && (
+                            <div className="text-xs font-mono font-medium text-emerald-600 dark:text-emerald-400 mt-0.5">
+                                ~${totalEstimatedCost.toFixed(2)}
+                            </div>
+                        )}
                     </div>
 
-                    <div className="mt-3 space-y-1 text-xs">
+                    <div className="mt-3 space-y-1.5 text-xs">
                         {/* 活跃天数 */}
                         <div className="flex items-center justify-between gap-3 text-gray-500 dark:text-white/60">
                             <span>{t('token_stats.active_days', '活跃天数')}</span>

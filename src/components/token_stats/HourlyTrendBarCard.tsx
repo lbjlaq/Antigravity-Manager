@@ -13,11 +13,13 @@ export interface HourlyUsagePoint {
 
 interface HourlyTrendBarCardProps {
     hourlyData: HourlyUsagePoint[];
+    totalEstimatedCost?: number;
     formatNumber: (n: number) => string;
 }
 
 export const HourlyTrendBarCard: React.FC<HourlyTrendBarCardProps> = ({
     hourlyData,
+    totalEstimatedCost,
     formatNumber,
 }) => {
     const { t } = useTranslation();
@@ -101,13 +103,18 @@ export const HourlyTrendBarCard: React.FC<HourlyTrendBarCardProps> = ({
                     ) : (
                         <span>
                             24h · {formatNumber(past24hTotalTokens)}
+                            {totalEstimatedCost !== undefined && totalEstimatedCost > 0 ? (
+                                <span className="text-emerald-600 dark:text-emerald-400 ml-1 font-semibold">
+                                    (~${totalEstimatedCost.toFixed(2)})
+                                </span>
+                            ) : null}
                         </span>
                     )}
                 </div>
             </div>
 
             {/* 24根圆角垂直柱条 */}
-            <div className="h-28 w-full flex items-end gap-1.5 sm:gap-2 px-1 py-1">
+            <div className="h-32 sm:h-36 w-full flex items-end gap-1.5 sm:gap-2 px-1 py-1">
                 {buckets.map((b, idx) => {
                     const isHovered = hoveredIndex === idx;
                     const hasValue = b.data.total_tokens > 0;

@@ -111,10 +111,15 @@ export const DEFAULT_PRICING: Record<string, ModelPricingRule> = {
 
 const PRICING_STORAGE_KEY = 'antigravity_model_pricing_v2026';
 const DASHBOARD_MODE_KEY = 'antigravity_token_stats_dashboard_mode';
+const TIME_RANGE_KEY = 'antigravity_token_stats_time_range';
+const VIEW_MODE_KEY = 'antigravity_token_stats_view_mode';
+const CHART_TYPE_KEY = 'antigravity_token_stats_chart_type';
+const METRIC_TYPE_KEY = 'antigravity_token_stats_metric_type';
 
 type TimeRange = 'hourly' | 'daily' | 'weekly' | 'all';
 type ViewMode = 'model' | 'account';
 type DashboardMode = 'insights' | 'classic';
+type MetricType = 'tokens' | 'cost';
 
 const TOP_COLORS = ['#d97757', '#4f85e8', '#10a37f', '#a855f7', '#f59e0b', '#71717a'];
 const PIE_COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#6366f1', '#f43f5e'];
@@ -126,11 +131,96 @@ const formatNumber = (num: number): string => {
     return num.toString();
 };
 
+const formatCurrency = (val: number): string => {
+    if (val >= 1000000) return `$${(val / 1000000).toFixed(2)}M`;
+    if (val >= 1000) return `$${(val / 1000).toFixed(1)}K`;
+    if (val >= 100) return `$${val.toFixed(1)}`;
+    if (val >= 1) return `$${val.toFixed(2)}`;
+    if (val > 0) return `$${val.toFixed(3)}`;
+    return '$0';
+};
+
+const getSqliteWeekBucket = (dateStr: string): string => {
+    const parts = dateStr.split('-');
+    if (parts.length < 3) return dateStr;
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    const d = new Date(year, month, day);
+
+    const firstDayOfYear = new Date(year, 0, 1);
+    const dayOfWeek = firstDayOfYear.getDay();
+    const daysToFirstMonday = (8 - (dayOfWeek || 7)) % 7;
+    const diffDays = Math.round((d.getTime() - firstDayOfYear.getTime()) / (24 * 3600 * 1000));
+    let week = 0;
+    if (diffDays >= daysToFirstMonday) {
+        week = Math.floor((diffDays - daysToFirstMonday) / 7) + 1;
+    }
+    return `${year}-W${String(week).padStart(2, '0')}`;
+};
+
 const TokenStats: React.FC = () => {
     const { t } = useTranslation();
-    const [timeRange, setTimeRange] = useState<TimeRange>('daily');
-    const [viewMode, setViewMode] = useState<ViewMode>('model');
-    const [chartType, setChartType] = useState<'bar' | 'area'>('bar');
+    const [timeRange, setTimeRange] = useState<TimeRange>(() => {
+        try {
+            const saved = localStorage.getItem(TIME_RANGE_KEY);
+            if (saved === 'hourly' || saved === 'daily' || saved === 'weekly' || saved === 'all') return saved;
+        } catch (e) {}
+        return 'daily';
+    });
+
+    const switchTimeRange = useCallback((range: TimeRange) => {
+        setTimeRange(range);
+        try {
+            localStorage.setItem(TIME_RANGE_KEY, range);
+        } catch (e) {}
+    }, []);
+
+    const [viewMode, setViewMode] = useState<ViewMode>(() => {
+        try {
+            const saved = localStorage.getItem(VIEW_MODE_KEY);
+            if (saved === 'model' || saved === 'account') return saved;
+        } catch (e) {}
+        return 'model';
+    });
+
+    const switchViewMode = useCallback((mode: ViewMode) => {
+        setViewMode(mode);
+        try {
+            localStorage.setItem(VIEW_MODE_KEY, mode);
+        } catch (e) {}
+    }, []);
+
+    const [chartType, setChartType] = useState<'bar' | 'area'>(() => {
+        try {
+            const saved = localStorage.getItem(CHART_TYPE_KEY);
+            if (saved === 'bar' || saved === 'area') return saved;
+        } catch (e) {}
+        return 'bar';
+    });
+
+    const switchChartType = useCallback((type: 'bar' | 'area') => {
+        setChartType(type);
+        try {
+            localStorage.setItem(CHART_TYPE_KEY, type);
+        } catch (e) {}
+    }, []);
+
+    const [metricType, setMetricType] = useState<MetricType>(() => {
+        try {
+            const saved = localStorage.getItem(METRIC_TYPE_KEY);
+            if (saved === 'tokens' || saved === 'cost') return saved;
+        } catch (e) {}
+        return 'tokens';
+    });
+
+    const switchMetricType = useCallback((metric: MetricType) => {
+        setMetricType(metric);
+        try {
+            localStorage.setItem(METRIC_TYPE_KEY, metric);
+        } catch (e) {}
+    }, []);
+
     const [dashboardMode, setDashboardMode] = useState<DashboardMode>(() => {
         try {
             const saved = localStorage.getItem(DASHBOARD_MODE_KEY);
@@ -246,19 +336,47 @@ const TokenStats: React.FC = () => {
                     classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_hourly', { hours: 24 });
                     break;
                 case 'daily':
-                    hours = 168;
-                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 7 });
-                    accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 7 });
-                    classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 7 });
+                    hours = 336; // 14 天 (2 周)
+                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 14 });
+                    accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 14 });
+                    classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 14 });
                     break;
                 case 'weekly':
-                    hours = 720;
-                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 30 });
-                    accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 30 });
-                    classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_weekly', { weeks: 4 });
+                    hours = 2016; // 12 周 (约 3 个月 = 84 天)
+                    const rawDailyModelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 84 });
+                    const rawDailyAccountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 84 });
+                    classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_weekly', { weeks: 12 });
+
+                    // 按周合并聚合 modelTrend
+                    const weeklyModelMap = new Map<string, Record<string, number>>();
+                    for (const pt of rawDailyModelTrend) {
+                        const wb = getSqliteWeekBucket(pt.period);
+                        if (!weeklyModelMap.has(wb)) weeklyModelMap.set(wb, {});
+                        const acc = weeklyModelMap.get(wb)!;
+                        for (const [m, count] of Object.entries(pt.model_data)) {
+                            acc[m] = (acc[m] || 0) + count;
+                        }
+                    }
+                    modelTrend = Array.from(weeklyModelMap.entries())
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([period, model_data]) => ({ period, model_data }));
+
+                    // 按周合并聚合 accountTrend
+                    const weeklyAccountMap = new Map<string, Record<string, number>>();
+                    for (const pt of rawDailyAccountTrend) {
+                        const wb = getSqliteWeekBucket(pt.period);
+                        if (!weeklyAccountMap.has(wb)) weeklyAccountMap.set(wb, {});
+                        const acc = weeklyAccountMap.get(wb)!;
+                        for (const [a, count] of Object.entries(pt.account_data)) {
+                            acc[a] = (acc[a] || 0) + count;
+                        }
+                    }
+                    accountTrend = Array.from(weeklyAccountMap.entries())
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([period, account_data]) => ({ period, account_data }));
                     break;
                 case 'all':
-                    hours = 0;
+                    hours = 0; // 0 表示查询全部历史
                     modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 0 });
                     accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 0 });
                     classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 0 });
@@ -374,6 +492,67 @@ const TokenStats: React.FC = () => {
         fetchData();
     }, [timeRange]);
 
+    // 计算 24 小时预估金额
+    const hourly24hEstimatedCost = useMemo(() => {
+        if (!summary || summary.total_tokens === 0) return 0;
+        const avgTokenRate = totalEstimatedCost / summary.total_tokens;
+        const past24hTokens = hourlyTrendData.reduce((sum, h) => sum + (h.total_tokens || 0), 0);
+        return past24hTokens * avgTokenRate;
+    }, [summary, totalEstimatedCost, hourlyTrendData]);
+
+    // 计算单个模型的有效单价 ($ / Token)
+    const getModelEffectiveRate = useCallback((modelName: string): number => {
+        const stats = modelData.find(m => m.model === modelName);
+        if (stats && stats.total_tokens > 0) {
+            return calculateModelCost(stats) / stats.total_tokens;
+        }
+        const p = getPricing(modelName);
+        return ((p.input + p.output) / 2) / 1_000_000;
+    }, [modelData, calculateModelCost, getPricing]);
+
+    // 计算“其他模型”的加权平均单价
+    const getOtherModelsEffectiveRate = useCallback((): number => {
+        const otherStats = modelData.filter(m => !allModels.includes(m.model) || m.model === t('token_stats.other_models', 'Other Models'));
+        const totalOtherTokens = otherStats.reduce((sum, m) => sum + m.total_tokens, 0);
+        const totalOtherCost = otherStats.reduce((sum, m) => sum + calculateModelCost(m), 0);
+        if (totalOtherTokens > 0) {
+            return totalOtherCost / totalOtherTokens;
+        }
+        return (DEFAULT_PRICING['default'].input + DEFAULT_PRICING['default'].output) / 2 / 1_000_000;
+    }, [modelData, allModels, calculateModelCost, t]);
+
+    // 动态根据 metricType ('tokens' | 'cost') 转换模型趋势数据
+    const displayModelTrendData = useMemo(() => {
+        if (metricType === 'tokens') return modelTrendData;
+        const otherModelKey = t('token_stats.other_models', 'Other Models');
+        const otherRate = getOtherModelsEffectiveRate();
+        return modelTrendData.map(row => {
+            const costRow: Record<string, any> = { period: row.period };
+            allModels.forEach(modelKey => {
+                const tokenVal = row[modelKey] || 0;
+                const rate = modelKey === otherModelKey ? otherRate : getModelEffectiveRate(modelKey);
+                costRow[modelKey] = Number((tokenVal * rate).toFixed(4));
+            });
+            return costRow;
+        });
+    }, [modelTrendData, metricType, allModels, getModelEffectiveRate, getOtherModelsEffectiveRate, t]);
+
+    // 动态根据 metricType ('tokens' | 'cost') 转换账号趋势数据
+    const displayAccountTrendData = useMemo(() => {
+        if (metricType === 'tokens') return accountTrendData;
+        const avgTokenRate = summary && summary.total_tokens > 0
+            ? totalEstimatedCost / summary.total_tokens
+            : 1.5 / 1_000_000;
+        return accountTrendData.map(row => {
+            const costRow: Record<string, any> = { period: row.period };
+            allAccounts.forEach(acc => {
+                const tokenVal = row[acc] || 0;
+                costRow[acc] = Number((tokenVal * avgTokenRate).toFixed(4));
+            });
+            return costRow;
+        });
+    }, [accountTrendData, metricType, allAccounts, summary, totalEstimatedCost]);
+
     const trendChartContainerRef = useRef<HTMLDivElement>(null);
     const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | undefined>(undefined);
 
@@ -417,7 +596,7 @@ const TokenStats: React.FC = () => {
                                     </span>
                                 </div>
                                 <span className="font-mono font-medium text-gray-800 dark:text-white/90">
-                                    {formatNumber(entry.value)}
+                                    {metricType === 'cost' ? formatCurrency(entry.value) : formatNumber(entry.value)}
                                 </span>
                             </div>
                         );
@@ -556,7 +735,7 @@ const TokenStats: React.FC = () => {
                         {/* 时间段选择药丸 */}
                         <div className="flex bg-gray-100 dark:bg-[#16181d] border border-gray-200 dark:border-white/[0.08] rounded-xl p-1 shadow-sm">
                             <button
-                                onClick={() => setTimeRange('hourly')}
+                                onClick={() => switchTimeRange('hourly')}
                                 className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                                     timeRange === 'hourly'
                                         ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -567,7 +746,7 @@ const TokenStats: React.FC = () => {
                                 {t('token_stats.hourly', '小时')}
                             </button>
                             <button
-                                onClick={() => setTimeRange('daily')}
+                                onClick={() => switchTimeRange('daily')}
                                 className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                                     timeRange === 'daily'
                                         ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -578,7 +757,7 @@ const TokenStats: React.FC = () => {
                                 {t('token_stats.daily', '日')}
                             </button>
                             <button
-                                onClick={() => setTimeRange('weekly')}
+                                onClick={() => switchTimeRange('weekly')}
                                 className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                                     timeRange === 'weekly'
                                         ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -589,7 +768,7 @@ const TokenStats: React.FC = () => {
                                 {t('token_stats.weekly', '周')}
                             </button>
                             <button
-                                onClick={() => setTimeRange('all')}
+                                onClick={() => switchTimeRange('all')}
                                 className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                                     timeRange === 'all'
                                         ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -597,7 +776,7 @@ const TokenStats: React.FC = () => {
                                 }`}
                             >
                                 <History className="w-3.5 h-3.5" />
-                                {t('token_stats.all_time', '全部')}
+                                {t('token_stats.all_time', '全部历史')}
                             </button>
                         </div>
 
@@ -712,6 +891,7 @@ const TokenStats: React.FC = () => {
                             />
                             <HourlyTrendBarCard
                                 hourlyData={hourlyTrendData}
+                                totalEstimatedCost={hourly24hEstimatedCost}
                                 formatNumber={formatNumber}
                             />
                         </div>
@@ -735,16 +915,20 @@ const TokenStats: React.FC = () => {
                                         )}
                                         <span className="text-[13px] font-semibold text-gray-900 dark:text-white/90 tracking-wide">
                                             {viewMode === 'model'
-                                                ? t('token_stats.model_trend', '使用趋势 (按模型)')
-                                                : t('token_stats.account_trend', '使用趋势 (按账号)')}
+                                                ? metricType === 'cost'
+                                                    ? t('token_stats.model_cost_trend', '分模型金额趋势')
+                                                    : t('token_stats.model_trend', '分模型使用趋势')
+                                                : metricType === 'cost'
+                                                    ? t('token_stats.account_cost_trend', '分账号金额趋势')
+                                                    : t('token_stats.account_trend', '分账号使用趋势')}
                                         </span>
                                     </div>
 
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
                                         {/* 图表形态切换器：柱状图 / 面积图 */}
                                         <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
                                             <button
-                                                onClick={() => setChartType('bar')}
+                                                onClick={() => switchChartType('bar')}
                                                 title={t('token_stats.chart_type_bar', '柱状')}
                                                 className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
                                                     chartType === 'bar'
@@ -756,7 +940,7 @@ const TokenStats: React.FC = () => {
                                                 <span>{t('token_stats.chart_type_bar', '柱状')}</span>
                                             </button>
                                             <button
-                                                onClick={() => setChartType('area')}
+                                                onClick={() => switchChartType('area')}
                                                 title={t('token_stats.chart_type_area', '面积')}
                                                 className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
                                                     chartType === 'area'
@@ -769,10 +953,36 @@ const TokenStats: React.FC = () => {
                                             </button>
                                         </div>
 
+                                        {/* Token / 金额 维度切换器 */}
+                                        <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
+                                            <button
+                                                onClick={() => switchMetricType('tokens')}
+                                                className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
+                                                    metricType === 'tokens'
+                                                        ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
+                                                        : 'text-gray-500 dark:text-white/50 hover:text-gray-900 dark:hover:text-white/80'
+                                                }`}
+                                            >
+                                                <Zap className="w-3.5 h-3.5" />
+                                                <span>{t('token_stats.metric_tokens', 'Token')}</span>
+                                            </button>
+                                            <button
+                                                onClick={() => switchMetricType('cost')}
+                                                className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
+                                                    metricType === 'cost'
+                                                        ? 'bg-white dark:bg-white/[0.12] text-emerald-600 dark:text-emerald-400 shadow-sm font-semibold'
+                                                        : 'text-gray-500 dark:text-white/50 hover:text-gray-900 dark:hover:text-white/80'
+                                                }`}
+                                            >
+                                                <DollarSign className="w-3.5 h-3.5" />
+                                                <span>{t('token_stats.metric_cost', '金额')}</span>
+                                            </button>
+                                        </div>
+
                                         {/* 模型 / 账号 维度切换器 */}
                                         <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
                                             <button
-                                                onClick={() => setViewMode('model')}
+                                                onClick={() => switchViewMode('model')}
                                                 className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
                                                     viewMode === 'model'
                                                         ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -782,7 +992,7 @@ const TokenStats: React.FC = () => {
                                                 {t('token_stats.by_model', '按模型')}
                                             </button>
                                             <button
-                                                onClick={() => setViewMode('account')}
+                                                onClick={() => switchViewMode('account')}
                                                 className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
                                                     viewMode === 'account'
                                                         ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -800,7 +1010,7 @@ const TokenStats: React.FC = () => {
                                         <ResponsiveContainer width="100%" height="100%">
                                             {chartType === 'bar' ? (
                                                 <BarChart
-                                                    data={viewMode === 'model' ? modelTrendData : accountTrendData}
+                                                    data={viewMode === 'model' ? displayModelTrendData : displayAccountTrendData}
                                                     onMouseMove={handleTrendChartMouseMove}
                                                     onMouseLeave={() => setTooltipPosition(undefined)}
                                                 >
@@ -811,6 +1021,11 @@ const TokenStats: React.FC = () => {
                                                         tickFormatter={(val) => {
                                                             if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                             if (timeRange === 'daily') return val.split('-').slice(1).join('/');
+                                                            if (timeRange === 'weekly') {
+                                                                const parts = val.split('-W');
+                                                                return parts.length > 1 ? `W${parts[1]}` : val;
+                                                            }
+                                                            if (timeRange === 'all') return val.split('-').slice(1).join('/');
                                                             return val;
                                                         }}
                                                         axisLine={false}
@@ -819,7 +1034,7 @@ const TokenStats: React.FC = () => {
                                                     />
                                                     <YAxis
                                                         tick={{ fontSize: 10, fill: '#888888', fontFamily: 'monospace' }}
-                                                        tickFormatter={(val) => formatNumber(val)}
+                                                        tickFormatter={(val) => metricType === 'cost' ? formatCurrency(val) : formatNumber(val)}
                                                         axisLine={false}
                                                         tickLine={false}
                                                     />
@@ -846,7 +1061,7 @@ const TokenStats: React.FC = () => {
                                                 </BarChart>
                                             ) : (
                                                 <AreaChart
-                                                    data={viewMode === 'model' ? modelTrendData : accountTrendData}
+                                                    data={viewMode === 'model' ? displayModelTrendData : displayAccountTrendData}
                                                     onMouseMove={handleTrendChartMouseMove}
                                                     onMouseLeave={() => setTooltipPosition(undefined)}
                                                 >
@@ -865,6 +1080,11 @@ const TokenStats: React.FC = () => {
                                                         tickFormatter={(val) => {
                                                             if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                             if (timeRange === 'daily') return val.split('-').slice(1).join('/');
+                                                            if (timeRange === 'weekly') {
+                                                                const parts = val.split('-W');
+                                                                return parts.length > 1 ? `W${parts[1]}` : val;
+                                                            }
+                                                            if (timeRange === 'all') return val.split('-').slice(1).join('/');
                                                             return val;
                                                         }}
                                                         axisLine={false}
@@ -873,7 +1093,7 @@ const TokenStats: React.FC = () => {
                                                     />
                                                     <YAxis
                                                         tick={{ fontSize: 10, fill: '#888888', fontFamily: 'monospace' }}
-                                                        tickFormatter={(val) => formatNumber(val)}
+                                                        tickFormatter={(val) => metricType === 'cost' ? formatCurrency(val) : formatNumber(val)}
                                                         axisLine={false}
                                                         tickLine={false}
                                                     />
@@ -1020,16 +1240,20 @@ const TokenStats: React.FC = () => {
                                     )}
                                     <span className="text-[13px] font-semibold text-gray-900 dark:text-white/90 tracking-wide">
                                         {viewMode === 'model'
-                                            ? t('token_stats.model_trend', '使用趋势 (按模型)')
-                                            : t('token_stats.account_trend', '使用趋势 (按账号)')}
+                                            ? metricType === 'cost'
+                                                ? t('token_stats.model_cost_trend', '分模型金额趋势')
+                                                : t('token_stats.model_trend', '使用趋势 (按模型)')
+                                            : metricType === 'cost'
+                                                ? t('token_stats.account_cost_trend', '分账号金额趋势')
+                                                : t('token_stats.account_trend', '使用趋势 (按账号)')}
                                     </span>
                                 </div>
 
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                     {/* 柱状 / 面积 切换 */}
                                     <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
                                         <button
-                                            onClick={() => setChartType('bar')}
+                                            onClick={() => switchChartType('bar')}
                                             className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
                                                 chartType === 'bar'
                                                     ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -1040,7 +1264,7 @@ const TokenStats: React.FC = () => {
                                             <span>{t('token_stats.chart_type_bar', '柱状')}</span>
                                         </button>
                                         <button
-                                            onClick={() => setChartType('area')}
+                                            onClick={() => switchChartType('area')}
                                             className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
                                                 chartType === 'area'
                                                     ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -1052,10 +1276,36 @@ const TokenStats: React.FC = () => {
                                         </button>
                                     </div>
 
+                                    {/* Token / 金额 维度切换 */}
+                                    <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
+                                        <button
+                                            onClick={() => switchMetricType('tokens')}
+                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
+                                                metricType === 'tokens'
+                                                    ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
+                                                    : 'text-gray-500 dark:text-white/50 hover:text-gray-900 dark:hover:text-white/80'
+                                            }`}
+                                        >
+                                            <Zap className="w-3.5 h-3.5" />
+                                            <span>{t('token_stats.metric_tokens', 'Token')}</span>
+                                        </button>
+                                        <button
+                                            onClick={() => switchMetricType('cost')}
+                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
+                                                metricType === 'cost'
+                                                    ? 'bg-white dark:bg-white/[0.12] text-emerald-600 dark:text-emerald-400 shadow-sm font-semibold'
+                                                    : 'text-gray-500 dark:text-white/50 hover:text-gray-900 dark:hover:text-white/80'
+                                            }`}
+                                        >
+                                            <DollarSign className="w-3.5 h-3.5" />
+                                            <span>{t('token_stats.metric_cost', '金额')}</span>
+                                        </button>
+                                    </div>
+
                                     {/* 模型 / 账号 维度切换 */}
                                     <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
                                         <button
-                                            onClick={() => setViewMode('model')}
+                                            onClick={() => switchViewMode('model')}
                                             className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
                                                 viewMode === 'model'
                                                     ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -1065,7 +1315,7 @@ const TokenStats: React.FC = () => {
                                             {t('token_stats.by_model', '按模型')}
                                         </button>
                                         <button
-                                            onClick={() => setViewMode('account')}
+                                            onClick={() => switchViewMode('account')}
                                             className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
                                                 viewMode === 'account'
                                                     ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
@@ -1083,7 +1333,7 @@ const TokenStats: React.FC = () => {
                                     <ResponsiveContainer width="100%" height="100%">
                                         {chartType === 'bar' ? (
                                             <BarChart
-                                                data={viewMode === 'model' ? modelTrendData : accountTrendData}
+                                                data={viewMode === 'model' ? displayModelTrendData : displayAccountTrendData}
                                                 onMouseMove={handleTrendChartMouseMove}
                                                 onMouseLeave={() => setTooltipPosition(undefined)}
                                             >
@@ -1094,6 +1344,10 @@ const TokenStats: React.FC = () => {
                                                     tickFormatter={(val) => {
                                                         if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                         if (timeRange === 'daily') return val.split('-').slice(1).join('/');
+                                                        if (timeRange === 'weekly') {
+                                                            const parts = val.split('-W');
+                                                            return parts.length > 1 ? `W${parts[1]}` : val;
+                                                        }
                                                         return val;
                                                     }}
                                                     axisLine={false}
@@ -1102,7 +1356,7 @@ const TokenStats: React.FC = () => {
                                                 />
                                                 <YAxis
                                                     tick={{ fontSize: 10, fill: '#888888', fontFamily: 'monospace' }}
-                                                    tickFormatter={(val) => formatNumber(val)}
+                                                    tickFormatter={(val) => (metricType === 'cost' ? formatCurrency(val) : formatNumber(val))}
                                                     axisLine={false}
                                                     tickLine={false}
                                                 />
@@ -1129,7 +1383,7 @@ const TokenStats: React.FC = () => {
                                             </BarChart>
                                         ) : (
                                             <AreaChart
-                                                data={viewMode === 'model' ? modelTrendData : accountTrendData}
+                                                data={viewMode === 'model' ? displayModelTrendData : displayAccountTrendData}
                                                 onMouseMove={handleTrendChartMouseMove}
                                                 onMouseLeave={() => setTooltipPosition(undefined)}
                                             >
@@ -1148,6 +1402,10 @@ const TokenStats: React.FC = () => {
                                                     tickFormatter={(val) => {
                                                         if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                         if (timeRange === 'daily') return val.split('-').slice(1).join('/');
+                                                        if (timeRange === 'weekly') {
+                                                            const parts = val.split('-W');
+                                                            return parts.length > 1 ? `W${parts[1]}` : val;
+                                                        }
                                                         return val;
                                                     }}
                                                     axisLine={false}
@@ -1156,7 +1414,7 @@ const TokenStats: React.FC = () => {
                                                 />
                                                 <YAxis
                                                     tick={{ fontSize: 10, fill: '#888888', fontFamily: 'monospace' }}
-                                                    tickFormatter={(val) => formatNumber(val)}
+                                                    tickFormatter={(val) => (metricType === 'cost' ? formatCurrency(val) : formatNumber(val))}
                                                     axisLine={false}
                                                     tickLine={false}
                                                 />
@@ -1221,6 +1479,10 @@ const TokenStats: React.FC = () => {
                                                     tickFormatter={(val) => {
                                                         if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                         if (timeRange === 'daily') return val.split('-').slice(1).join('/');
+                                                        if (timeRange === 'weekly') {
+                                                            const parts = val.split('-W');
+                                                            return parts.length > 1 ? `W${parts[1]}` : val;
+                                                        }
                                                         return val;
                                                     }}
                                                     axisLine={false}
