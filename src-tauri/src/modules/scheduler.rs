@@ -110,6 +110,11 @@ pub fn start_scheduler(
                 continue;
             };
 
+            // 优先执行多账号相控阵智能调度
+            if app_config.phase_scheduler.enabled {
+                run_phase_scheduler_tick(&app_config.phase_scheduler, &app_handle, &proxy_state).await;
+            }
+
             // Must be enabled by user in Settings
             if !app_config.scheduled_warmup.enabled {
                 continue;
@@ -381,6 +386,144 @@ pub async fn trigger_warmup_for_account(account: &Account) {
                     }
                 }
             }
+        }
+    }
+}
+
+/// 运行多账号相控阵错峰调度 Tick
+pub async fn run_phase_scheduler_tick(
+    phase_config: &crate::models::PhaseSchedulerConfig,
+    _app_handle: &Option<tauri::AppHandle>,
+    _proxy_state: &crate::commands::proxy::ProxyServiceState,
+) {
+    let active_ide_id = crate::modules::account::detect_and_get_active_ide_account().map(|a| a.id);
+    let Ok(accounts) = account::list_accounts() else {
+        return;
+    };
+
+    let schedulable_accounts: Vec<_> = accounts
+        .into_iter()
+        .filter(|a| !a.disabled && !a.proxy_disabled && active_ide_id.as_deref() != Some(&a.id))
+        .collect();
+
+    let n = schedulable_accounts.len();
+    if n == 0 {
+        return;
+    }
+
+    let now_local = chrono::Local::now();
+    let now_ts = chrono::Utc::now().timestamp();
+
+    if phase_config.mode == "steady" {
+        // 平稳错峰模式：5h窗口（300分钟），错峰步长 delta = 300 / n 分钟 (如 5 个账号为 60 分钟)
+        let delta_mins = 300 / (n as i64);
+
+        let parts: Vec<&str> = phase_config.work_start_time.split(':').collect();
+        let start_hour = parts.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(9);
+        let start_min = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+
+        for (i, acc) in schedulable_accounts.iter().enumerate() {
+            let offset_mins = 30 + (i as i64) * delta_mins;
+            let warmup_offset_from_start = offset_mins - 300;
+
+            if let Some(base_time) = now_local
+                .date_naive()
+                .and_hms_opt(start_hour, start_min, 0)
+                .and_then(|dt| dt.and_local_timezone(chrono::Local).single())
+            {
+                let target_warmup_time =
+                    base_time + chrono::Duration::minutes(warmup_offset_from_start);
+                let diff_secs = (now_local - target_warmup_time).num_seconds();
+
+                let history_key = format!("{}:phase_warmup", acc.email);
+                let cooldown_ok = !check_cooldown(&history_key, 18000);
+
+                if diff_secs >= -180 && diff_secs <= 360 && cooldown_ok {
+                    logger::log_info(&format!(
+                        "⚡ [PhaseScheduler] 触发平稳模式错峰预热: 账号 {} (相位 #{} / 步长 {}m), 目标于开工后 +{}m 满额刷新",
+                        acc.email, i, delta_mins, offset_mins
+                    ));
+
+                    if let Ok((token, pid)) = quota::get_valid_token_for_warmup(acc).await {
+                        let target_model = phase_config
+                            .monitored_models
+                            .first()
+                            .map(|s| s.as_str())
+                            .unwrap_or("gemini-3-flash");
+                        let res = quota::warmup_model_directly(
+                            &token,
+                            target_model,
+                            &pid,
+                            &acc.email,
+                            100,
+                            Some(&acc.id),
+                        )
+                        .await;
+                        if res {
+                            record_warmup_history(&history_key, now_ts);
+                        }
+                    }
+                }
+            }
+        }
+    } else if phase_config.mode == "burst" {
+        if phase_config.burst_mode_type == "scheduled" {
+            // 预约爆发模式：解析预约开始时间 (如 "20:00")
+            let parts: Vec<&str> = phase_config.burst_start_time.split(':').collect();
+            let burst_hour = parts.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(20);
+            let burst_min = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+
+            if let Some(burst_time) = now_local
+                .date_naive()
+                .and_hms_opt(burst_hour, burst_min, 0)
+                .and_then(|dt| dt.and_local_timezone(chrono::Local).single())
+            {
+                // 前置对齐打卡时间点 = 预约爆发时间前 5 小时 (300 分钟)
+                let pre_warmup_time = burst_time - chrono::Duration::minutes(300);
+                let diff_secs = (now_local - pre_warmup_time).num_seconds();
+
+                if diff_secs >= -180 && diff_secs <= 360 {
+                    logger::log_info(&format!(
+                        "🚀 [PhaseScheduler] 触发狂暴模式预约前置打卡 (预约于 {:02}:{:02} 爆发 {}h): 提前5小时预热对齐相位...",
+                        burst_hour, burst_min, phase_config.burst_duration_hours
+                    ));
+
+                    // 对池内前3个账号执行预热打卡埋点
+                    for acc in schedulable_accounts.iter().take(3) {
+                        let history_key = format!("{}:burst_pre_warmup", acc.email);
+                        if !check_cooldown(&history_key, 18000) {
+                            if let Ok((token, pid)) = quota::get_valid_token_for_warmup(acc).await {
+                                let target_model = phase_config
+                                    .monitored_models
+                                    .first()
+                                    .map(|s| s.as_str())
+                                    .unwrap_or("gemini-3-flash");
+                                let res = quota::warmup_model_directly(
+                                    &token,
+                                    target_model,
+                                    &pid,
+                                    &acc.email,
+                                    100,
+                                    Some(&acc.id),
+                                )
+                                .await;
+                                if res {
+                                    record_warmup_history(&history_key, now_ts);
+                                    logger::log_info(&format!(
+                                        "✓ [PhaseScheduler] 账号 {} 完成狂暴预约前置对齐预热",
+                                        acc.email
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            logger::log_info(&format!(
+                "🚀 [PhaseScheduler] 即时狂暴模式运行中 (持续 {}h)，全速并发调度最优账号",
+                phase_config.burst_duration_hours
+            ));
         }
     }
 }

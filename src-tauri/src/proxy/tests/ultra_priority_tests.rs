@@ -56,6 +56,9 @@ fn create_test_token(
         validation_url: None,
         model_quotas,
         model_limits: std::collections::HashMap::new(),
+        weekly_quota: None,
+        weekly_reset_time: None,
+        is_active_ide_account: false,
     }
 }
 

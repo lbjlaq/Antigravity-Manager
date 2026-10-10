@@ -138,6 +138,9 @@ pub struct ProxyToken {
     pub validation_url: Option<String>, // [NEW] Validation URL (#1522)
     pub model_quotas: HashMap<String, i32>, // [OPTIMIZATION] In-memory cache for model-specific quotas
     pub model_limits: HashMap<String, u64>, // [NEW] max_output_tokens per model from quota data
+    pub weekly_quota: Option<i32>,          // [NEW] 周额度剩余百分比 (0-100)
+    pub weekly_reset_time: Option<i64>,     // [NEW] 周额度刷新重置时间戳
+    pub is_active_ide_account: bool,        // [NEW] 是否为当前反重力IDE活跃主号 (最低优先级/终极兜底)
 }
 
 pub struct TokenManager {
@@ -149,6 +152,7 @@ pub struct TokenManager {
     sticky_config: Arc<tokio::sync::RwLock<StickySessionConfig>>, // 新增：调度配置
     session_accounts: Arc<DashMap<String, String>>, // 新增：会话与账号映射 (SessionID -> AccountID)
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>, // [FIX #820] 优先使用的账号ID（固定账号模式）
+    active_ide_account_id: Arc<tokio::sync::RwLock<Option<String>>>, // 智能探测到的当前反重力IDE独占主号ID
     health_scores: Arc<DashMap<String, f32>>,                       // account_id -> health_score
     circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>, // [NEW] 熔断配置缓存
 
@@ -198,6 +202,7 @@ impl TokenManager {
             sticky_config: Arc::new(tokio::sync::RwLock::new(StickySessionConfig::default())),
             session_accounts: Arc::new(DashMap::new()),
             preferred_account_id: Arc::new(tokio::sync::RwLock::new(None)), // [FIX #820]
+            active_ide_account_id: Arc::new(tokio::sync::RwLock::new(None)),
             health_scores: Arc::new(DashMap::new()),
             circuit_breaker_config: Arc::new(tokio::sync::RwLock::new(
                 crate::models::CircuitBreakerConfig::default(),
@@ -212,6 +217,11 @@ impl TokenManager {
             image_scheduler: std::sync::RwLock::new(None),
             unsupported_models: Arc::new(DashMap::new()),
         }
+    }
+
+    /// 获取当前被智能识别并隔离的反重力IDE主号ID
+    pub async fn get_active_ide_account_id(&self) -> Option<String> {
+        self.active_ide_account_id.read().await.clone()
     }
 
     pub(crate) fn register_image_scheduler(&self, scheduler: &Arc<ImageScheduler>) {
@@ -678,6 +688,19 @@ impl TokenManager {
             *last_used = None;
         }
 
+        // 自动探测反重力IDE主号并予以隔离保护
+        let detected_ide = crate::modules::account::detect_and_get_active_ide_account();
+        if let Some(ref ide_acc) = detected_ide {
+            tracing::info!(
+                "🔒 [IDE-Exclusive] 智能探测到当前正在运行的反重力IDE主号: {} ({})，已执行从API反代池自动隔离",
+                ide_acc.email,
+                ide_acc.id
+            );
+            *self.active_ide_account_id.write().await = Some(ide_acc.id.clone());
+        } else {
+            *self.active_ide_account_id.write().await = None;
+        }
+
         let entries =
             std::fs::read_dir(&accounts_dir).map_err(|e| format!("读取账号目录失败: {}", e))?;
 
@@ -998,6 +1021,21 @@ impl TokenManager {
             .ok_or("缺少 email 字段")?
             .to_string();
 
+        // 智能识别反重力IDE主号（平时最低优先级防抢占，其他账号全无额度时自动兜底出战）
+        let is_active_ide_account = if let Some(ref ide_id) = *self.active_ide_account_id.read().await {
+            let is_ide = &account_id == ide_id;
+            if is_ide {
+                tracing::info!(
+                    "🔒 [IDE-Fallback] 账号 {} ({}) 判定为反重力IDE主号，已接入 API 最低优先级（终极保底机制）",
+                    email,
+                    account_id
+                );
+            }
+            is_ide
+        } else {
+            false
+        };
+
         let token_obj = account["token"].as_object().ok_or("缺少 token 字段")?;
 
         let access_token = token_obj["access_token"]
@@ -1137,6 +1175,34 @@ impl TokenManager {
             }
         }
 
+        // [NEW] 提取周配额剩余比例及重置时间戳
+        let mut weekly_quota: Option<i32> = None;
+        let mut earliest_weekly_reset: Option<i64> = None;
+
+        if let Some(groups) = account
+            .get("quota")
+            .and_then(|q| q.get("quota_groups"))
+            .and_then(|g| g.as_array())
+        {
+            for group in groups {
+                if let Some(buckets) = group.get("buckets").and_then(|b| b.as_array()) {
+                    for bucket in buckets {
+                        let bucket_id = bucket.get("bucket_id").and_then(|v| v.as_str()).unwrap_or("");
+                        let pct = (bucket.get("remaining_fraction").and_then(|v| v.as_f64()).unwrap_or(0.0) * 100.0) as i32;
+                        if bucket_id.contains("weekly") || bucket_id.contains("week") {
+                            weekly_quota = Some(weekly_quota.map_or(pct, |c| c.min(pct)));
+                            if let Some(rt_str) = bucket.get("reset_time").and_then(|v| v.as_str()) {
+                                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(rt_str) {
+                                    let ts = dt.timestamp();
+                                    earliest_weekly_reset = Some(earliest_weekly_reset.map_or(ts, |c| c.min(ts)));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Weekly availability is mandatory; the optional switch only controls 5h locks.
         self.sync_zero_quota_circuit_breaker(&account_id, &account);
 
@@ -1174,6 +1240,9 @@ impl TokenManager {
                 .map(|s| s.to_string()),
             model_quotas,
             model_limits,
+            weekly_quota,
+            weekly_reset_time: earliest_weekly_reset,
+            is_active_ide_account,
         }))
     }
 
@@ -1793,15 +1862,35 @@ impl TokenManager {
             })
             .collect();
 
+        if available.is_empty() {
+            return None;
+        }
+
+        // [NEW] IDE 主号优先保护：若池内还有其他非 IDE 账号可用，优先保护主号供本地独占；
+        // 只有当其他账号全部耗尽/限流时，IDE 主号才作为终极兜底出战！
+        let non_ide: Vec<&ProxyToken> = available
+            .iter()
+            .filter(|t| !t.is_active_ide_account)
+            .copied()
+            .collect();
+
+        let mut pool: Vec<&ProxyToken> = if !non_ide.is_empty() {
+            non_ide
+        } else {
+            available
+        };
+
         // Keep lower-priority groups for retries; only this draw is restricted.
-        let priority = available.iter().map(|t| t.priority).min()?;
-        available.retain(|t| t.priority == priority);
-        if available.len() == 1 {
-            return Some(available[0]);
+        if let Some(priority) = pool.iter().map(|t| t.priority).min() {
+            pool.retain(|t| t.priority == priority);
+        }
+
+        if pool.len() == 1 {
+            return Some(pool[0]);
         }
 
         // P2C: 从前 min(P2C_POOL_SIZE, len) 个中随机选 2 个
-        let pool_size = available.len().min(Self::P2C_POOL_SIZE);
+        let pool_size = pool.len().min(Self::P2C_POOL_SIZE);
         let mut rng = rand::thread_rng();
 
         let pick1 = rng.gen_range(0..pool_size);
@@ -1813,8 +1902,8 @@ impl TokenManager {
             pick2
         };
 
-        let c1 = available[pick1];
-        let c2 = available[pick2];
+        let c1 = pool[pick1];
+        let c2 = pool[pick2];
 
         // 选择配额更高的
         let selected = if c1.remaining_quota.unwrap_or(0) >= c2.remaining_quota.unwrap_or(0) {
@@ -2147,7 +2236,56 @@ impl TokenManager {
             return Err("Token pool is empty".to_string());
         }
 
+        let phase_config = crate::modules::config::load_app_config()
+            .map(|c| c.phase_scheduler)
+            .unwrap_or_default();
+
         tokens_snapshot.sort_by(|a, b| {
+            // [PRIORITY -1] 反重力IDE主号兜底优先级：
+            // 其他账号有额度时，IDE 主号绝对置底保护（优先级最低）；
+            // 只有当其他账号全部耗尽/无额度时，IDE 主号才作为终极保底出战！
+            match (a.is_active_ide_account, b.is_active_ide_account) {
+                (true, false) => return std::cmp::Ordering::Greater,
+                (false, true) => return std::cmp::Ordering::Less,
+                _ => {}
+            }
+
+            // [NEW] 模式优先调度：相控阵双模式感知
+            if phase_config.enabled {
+                if phase_config.mode == "burst" {
+                    // ==========================================
+                    // 🚀 【限定时间狂暴模式】：最大化吞吐，优先消耗临期快清零的周额度账号
+                    // ==========================================
+                    // 1. 周额度重置时间 (earlier is better, 临期清零的排在最前)
+                    let w_reset_a = a.weekly_reset_time.unwrap_or(i64::MAX);
+                    let w_reset_b = b.weekly_reset_time.unwrap_or(i64::MAX);
+                    // 若两者周重置时间差异超过 1 小时 (3600s)，谁快到期清零就坚决优先调度谁！
+                    if (w_reset_a - w_reset_b).abs() >= 3600 {
+                        return w_reset_a.cmp(&w_reset_b);
+                    }
+
+                    // 2. 周额度余量 (higher is better, 趁到期前使劲烧余量多的)
+                    let w_quota_a = a.weekly_quota.unwrap_or(0);
+                    let w_quota_b = b.weekly_quota.unwrap_or(0);
+                    let w_quota_cmp = w_quota_b.cmp(&w_quota_a);
+                    if w_quota_cmp != std::cmp::Ordering::Equal {
+                        return w_quota_cmp;
+                    }
+                } else if phase_config.mode == "steady" {
+                    // ==========================================
+                    // 🛡️ 【平稳续航错峰模式】：周额度 15% 安全底仓防线，防单号被榨干暴毙
+                    // ==========================================
+                    let is_low_a = a.weekly_quota.map(|q| q < 15).unwrap_or(false);
+                    let is_low_b = b.weekly_quota.map(|q| q < 15).unwrap_or(false);
+                    // 若其中一个账号周额度低于 15%（进入濒危期），将其沉底保护，让健康账号接力
+                    match (is_low_a, is_low_b) {
+                        (true, false) => return std::cmp::Ordering::Greater,
+                        (false, true) => return std::cmp::Ordering::Less,
+                        _ => {}
+                    }
+                }
+            }
+
             let priority_cmp = a.priority.cmp(&b.priority);
             if priority_cmp != std::cmp::Ordering::Equal {
                 return priority_cmp;
@@ -3910,11 +4048,13 @@ impl TokenManager {
             .insert(session_id.to_string(), account_id.to_string());
     }
 
-    /// 解绑当前会话。不清全局 last_used，避免一个租户的失败打散别人的 60 秒窗口。
+    /// [FIX] 遭遇 429/529 等限流或过载时解绑会话并清空最近使用记录，打破粘性死锁
     pub async fn unbind_session_and_clear_last_used(&self, session_id: Option<&str>) {
         if let Some(sid) = session_id {
             self.session_accounts.remove(sid);
         }
+        let mut last_used = self.last_used_account.lock().await;
+        *last_used = None;
     }
 
     /// 获取当前 Token 池内有效账号数量
@@ -5351,6 +5491,9 @@ mod tests {
             validation_url: None,
             model_quotas: HashMap::new(),
             model_limits: HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
         }
     }
 
@@ -5742,6 +5885,9 @@ mod tests {
             validation_url: None,
             model_quotas: HashMap::new(),
             model_limits: HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
         }
     }
 

@@ -662,6 +662,7 @@ pub fn run() {
             commands::reorder_accounts,
             commands::switch_account,
             commands::export_accounts,
+            commands::get_active_ide_account,
             // Device fingerprint
             commands::get_device_profiles,
             commands::bind_device_profile,
@@ -778,6 +779,7 @@ pub fn run() {
             commands::get_token_stats_model_trend_daily,
             commands::get_token_stats_account_trend_hourly,
             commands::get_token_stats_account_trend_daily,
+            commands::get_today_usage_summary,
             proxy::cli_sync::get_cli_sync_status,
             proxy::cli_sync::execute_cli_sync,
             proxy::cli_sync::execute_cli_restore,

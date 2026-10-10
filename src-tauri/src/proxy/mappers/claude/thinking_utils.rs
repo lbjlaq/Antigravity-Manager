@@ -4,6 +4,7 @@ use tracing::{debug, info, warn};
 
 pub const MIN_SIGNATURE_LENGTH: usize = 32;
 pub const SENTINEL_SIGNATURE: &str = crate::proxy::thinking_store::SENTINEL_SIGNATURE;
+pub use crate::proxy::thinking_store::is_likely_gemini_signature;
 
 #[derive(Debug, Default)]
 pub struct ConversationState {

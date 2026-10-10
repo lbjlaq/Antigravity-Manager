@@ -41,6 +41,9 @@ mod tests {
             validation_url: None,
             model_quotas: std::collections::HashMap::new(),
             model_limits: std::collections::HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
         }
     }
 
@@ -1109,6 +1112,9 @@ mod tests {
             validation_url: None,
             model_quotas: std::collections::HashMap::new(),
             model_limits: std::collections::HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
         }
     }
 

@@ -44,12 +44,35 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gpt-4", "gemini-3.8-flash-high");
     m.insert("gpt-3.5-turbo", "gemini-3.6-flash-medium");
 
+    // Gemini 协议与 Claude 兼容映射表
+    m.insert("gemini-2.5-flash-lite", "gemini-2.5-flash");
+    m.insert("gemini-2.5-flash-thinking", "gemini-2.5-flash-thinking");
+    m.insert("gemini-2.5-flash", "gemini-2.5-flash");
+    m.insert("gemini-3-flash", "gemini-3-flash");
+
+    // Gemini 3.8 Flash 系列
+    m.insert("claude-3.8-flash-high", "gemini-3.8-flash-high");
+    m.insert("claude-3.8-flash-medium", "gemini-3.8-flash-medium");
+    m.insert("claude-3.8-flash-low", "gemini-3.8-flash-low");
+    m.insert("claude-3.8-flash", "gemini-3.8-flash-medium");
+
+    // Gemini 3.7 Flash 系列
+    m.insert("claude-3.7-flash-high", "gemini-3.7-flash-high");
+    m.insert("claude-3.7-flash-medium", "gemini-3.7-flash-medium");
+    m.insert("claude-3.7-flash-low", "gemini-3.7-flash-low");
+    m.insert("claude-3.7-flash", "gemini-3.7-flash-high");
+
+    // Gemini 3.6 Flash 系列
+    m.insert("claude-3.6-flash-high", "gemini-3.6-flash-high");
+    m.insert("claude-3.6-flash-medium", "gemini-3.6-flash-medium");
+    m.insert("claude-3.6-flash-low", "gemini-3.6-flash-low");
+    m.insert("claude-3.6-flash", "gemini-3.6-flash-medium");
+
     // ── Gemini 核心标准映射 ──
     m.insert("gemini-3.8-flash-tiered", "gemini-3.8-flash-tiered");
     m.insert("gemini-3.8-flash-high", "gemini-3.8-flash-high");
     m.insert("gemini-3.8-flash-medium", "gemini-3.8-flash-medium");
     m.insert("gemini-3.8-flash-low", "gemini-3.8-flash-low");
-
     m.insert("gemini-3.7-flash-tiered", "gemini-3.7-flash-tiered");
     m.insert("gemini-3.7-flash-high", "gemini-3.7-flash-high");
     m.insert("gemini-3.7-flash-medium", "gemini-3.7-flash-medium");
@@ -255,6 +278,131 @@ pub fn map_claude_model_to_gemini(input: &str) -> String {
         return canonical;
     }
     input.to_string()
+}
+
+/// 将任意请求模型名/虚拟路由别名解析为最终被转发和执行的真实上游模型名 (Real Upstream Target Model)
+pub fn resolve_real_forwarded_model(input: &str) -> String {
+    let raw = input.trim();
+    let lower = raw.to_lowercase();
+
+    // 1. 如果包含动态转发规则，先解析
+    if let Some(target) = DYNAMIC_MODEL_FORWARDING_RULES.get(raw) {
+        return target.clone();
+    }
+    if let Some(target) = CLAUDE_TO_GEMINI.get(raw) {
+        let mapped = target.to_string();
+        if mapped != raw {
+            return resolve_real_forwarded_model(&mapped);
+        }
+    }
+
+    // 2. 虚拟的 "claude-*-flash-*" 或带有 flash 的模型 (实为 Google Gemini Flash 转发)
+    if lower.contains("flash") {
+        if lower.contains("image") {
+            return "gemini-3.1-flash-image".to_string();
+        }
+        if lower.contains("3.8") || lower.contains("3-8") {
+            if lower.contains("high") { return "gemini-3.8-flash-high".to_string(); }
+            if lower.contains("low") { return "gemini-3.8-flash-low".to_string(); }
+            if lower.contains("tiered") { return "gemini-3.8-flash-tiered".to_string(); }
+            return "gemini-3.8-flash-medium".to_string();
+        }
+        if lower.contains("3.7") || lower.contains("3-7") {
+            if lower.contains("high") { return "gemini-3.7-flash-high".to_string(); }
+            if lower.contains("medium") { return "gemini-3.7-flash-medium".to_string(); }
+            if lower.contains("low") { return "gemini-3.7-flash-low".to_string(); }
+            if lower.contains("tiered") { return "gemini-3.7-flash-tiered".to_string(); }
+            return "gemini-3.7-flash-high".to_string();
+        }
+        if lower.contains("3.6") || lower.contains("3-6") {
+            if lower.contains("high") { return "gemini-3.6-flash-high".to_string(); }
+            if lower.contains("low") { return "gemini-3.6-flash-low".to_string(); }
+            if lower.contains("tiered") { return "gemini-3.6-flash-tiered".to_string(); }
+            return "gemini-3.6-flash-medium".to_string();
+        }
+        if lower.contains("3.5") || lower.contains("3-5") {
+            if lower.contains("extra-low") { return "gemini-3.5-flash-extra-low".to_string(); }
+            return "gemini-3.5-flash-low".to_string();
+        }
+        if lower.contains("2.5") || lower.contains("2-5") {
+            return "gemini-2.5-flash".to_string();
+        }
+        if lower.contains("2.0") || lower.contains("2-0") {
+            return "gemini-2.0-flash".to_string();
+        }
+        return "gemini-3-flash".to_string();
+    }
+
+    // 3. Pro 系列处理 (包含代理内部的 gemini-3.1-pro-high, claude-3.1-pro-high 等)
+    if lower.contains("pro") && (lower.contains("gemini") || lower.contains("claude") || lower.contains("gpt") || lower.starts_with("g-") || lower.starts_with("c-")) {
+        if lower.contains("image") {
+            return "gemini-3-pro-image".to_string();
+        }
+        if lower.contains("high") {
+            return "gemini-pro-agent".to_string();
+        }
+        if lower.contains("low") {
+            return "gemini-3.1-pro-low".to_string();
+        }
+        if lower.contains("3.1") || lower.contains("3-1") {
+            return "gemini-pro-agent".to_string();
+        }
+        if lower.contains("2.5") || lower.contains("2-5") {
+            return "gemini-2.5-pro".to_string();
+        }
+        return "gemini-pro-agent".to_string();
+    }
+
+    // 4. Claude 官方真实模型系列
+    if lower.contains("sonnet") {
+        if lower.contains("4-6") || lower.contains("4.6") {
+            return "claude-sonnet-4-6".to_string();
+        }
+        if lower.contains("3-7") || lower.contains("3.7") {
+            return "claude-sonnet-4-6-thinking".to_string();
+        }
+        if lower.contains("3-5") || lower.contains("3.5") || lower.contains("4-5") || lower.contains("4.5") {
+            return "claude-sonnet-4-6".to_string();
+        }
+        return "claude-sonnet-4-6".to_string();
+    }
+
+    if lower.contains("opus") {
+        if lower.contains("4-6") || lower.contains("4.6") {
+            return "claude-opus-4-6-thinking".to_string();
+        }
+        return "claude-opus-4-6-thinking".to_string();
+    }
+
+    if lower.contains("haiku") {
+        return "claude-sonnet-4-6".to_string();
+    }
+
+    // 5. GPT 伪模型 / 兼容别名
+    if lower.starts_with("gpt-") {
+        if lower.contains("4o-mini") {
+            return "gemini-2.5-flash".to_string();
+        }
+        if lower.contains("4o") || lower.contains("gpt-4") || lower.contains("gpt-5") {
+            return "gemini-2.5-flash".to_string();
+        }
+        return "gemini-2.5-flash".to_string();
+    }
+
+    // 6. 清理内部后缀 (如 -high, -low, -tiered, -extra-low, -agent)
+    let cleaned = raw
+        .trim_end_matches("-high")
+        .trim_end_matches("-low")
+        .trim_end_matches("-medium")
+        .trim_end_matches("-tiered")
+        .trim_end_matches("-extra-low")
+        .trim_end_matches("-agent");
+
+    if cleaned != raw && !cleaned.is_empty() {
+        return cleaned.to_string();
+    }
+
+    raw.to_string()
 }
 
 /// 解析形如 "4.6", "4-6", "3.10", "3-10", "3" 的 (major, minor) 版本元组。

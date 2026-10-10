@@ -43,30 +43,22 @@
 
 通过本应用，您可以将常见的 Web 端 Session (Google/Anthropic) 转化为标准化的 API 接口，消除不同厂商间的协议鸿沟。
 
-## 💖 赞助商 (Sponsors)
+## 🚀 自研增强特性 (Vibe-Coding专属强化版)
 
-| 赞助商 (Sponsor) | 简介 (Description) |
-| :---: | :--- |
-| <img src="docs/images/packycode_logo.png" width="200" alt="PackyCode Logo"> | 感谢 **PackyCode** 对本项目的赞助！PackyCode 是一家可靠高效的 API 中转服务商，提供 Claude Code、Codex、Gemini 等多种服务的中转。PackyCode 为本项目的用户提供了特别优惠：使用[此链接](https://www.packyapi.com/register?aff=Ctrler)注册，并在充值时输入 **“Ctrler”** 优惠码即可享受 **九折优惠**。 |
-| <img src="docs/images/APIKEYFUN.png" width="200" alt="APIKEYFUN Logo"> | 感谢 APIKEY.FUN 赞助本项目！APIKEY.FUN 是一家专业的企业级 AI 中转站，致力于为企业和个人开发者提供稳定、高效、低成本的 AI 模型 API 接入服务。平台支持 Claude、OpenAI、Gemini 等主流热门模型，价格低至官方原价的 7%。通过本项目[专属链接](https://apikey.fan/register?aff=AntManager)注册，还可享受最高 **充值永久 95 折** 专属优惠。 |
-| <img src="docs/images/claudeapilogo.png" width="200" alt="Claude API Logo"> | 感谢 **Claude API** 对本项目的支持！claudeapi.com 是一家走**官方与 AWS 渠道**接入的 **Claude API** 中转站，专注 Claude，主打高稳定、低延迟，完整支持 Claude Code。为本项目用户提供专属福利：通过[专属链接](https://console.claudeapi.com/register?source=antigravity)注册即送**免费测试额度，零门槛跑通**；充值再享 **95 折**专属优惠（联系客服）。 |
-| <img src="docs/images/AICodeMirror.jpg" width="200" alt="AICodeMirror Logo"> | 感谢 AICodeMirror 赞助了本项目！AICodeMirror 提供 Claude Code / Codex / Gemini CLI 官方高稳定中转服务，支持企业级高并发、极速开票、7×24 专属技术支持。 Claude Code / Codex / Gemini 官方渠道低至 3.8 / 0.2 / 0.9 折，充值更有折上折！AICodeMirror 为 Antigravity-Manager 的用户提供了特别福利，通过[此链接](https://aicodemirror.ai/register?invitecode=MV5XUM)注册的用户，可享受首充8折，企业客户最高可享 7.5 折！ |
+本衍生版本针对大模型重度研发与生产力调度场景，深度强化了资产洞察与网关交互体验：
 
-### ☕ 支持项目 (Support)
-
-如果您觉得本项目对您有所帮助，欢迎打赏作者！
-
-<a href="https://www.buymeacoffee.com/Ctrler" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png" alt="请我喝杯咖啡" style="height: 60px !important; width: 217px !important;"></a>
-
-| 支付宝 (Alipay) | 微信支付 (WeChat) | Buy Me a Coffee |
-| :---: | :---: | :---: |
-| ![Alipay](./docs/images/donate_alipay.png) | ![WeChat](./docs/images/donate_wechat.png) | ![Coffee](./docs/images/donate_coffee.png) |
-
-## 🚀 推荐项目 (Recommended Projects)
-
-如果您喜欢本项目，可能也会对以下项目感兴趣：
-
-*   **[Antigravity-Tools-LS](https://github.com/lbjlaq/Antigravity-Tools-LS)**: 专为 AI 协议设计的语言服务器 (LSP)，为您提供更智能的代码补全、诊断和协议调试体验。
+*   **📊 全景Token消费统计大盘 (Full-Spectrum Analytics)**：
+    *   **GitHub贡献风格活跃热力图**：支持13周时序追溯，清晰复盘每日Token调用频次与峰值用量记录。
+    *   **24小时活跃流速分布**：精细化按小时分析吞吐走势，精准定位团队或智能体的高并发负载时段。
+    *   **单价快照与价值估算核算体系**：支持自定义模型单价，实时估算消费金额与Prompt Caching缓存命中带来的直接成本节省。
+    *   **多维度模型份额占比透视**：主力模型分布柱状与堆积图表，支持按模型或按账号维度灵活透视调用结构。
+*   **⚡ 可用账号配额生产力矩阵与流速监控 (Quota Productivity Matrix & Pacing)**：
+    *   **双滑动窗口综合加权**：无缝融合5小时滚动可用度与7天周配额深度权重，真实反映多账号底座的实际交付能力。
+    *   **双选胶囊控制器 (Pill Capsule)**：支持“仅看可用账号”与“包含禁用账号”毫秒级平滑切换，兼顾运维盘点与实时调度。
+    *   **配额流速智能预警 (Pacing)**：“今日已蹬” vs “建议日用”实时流速监控，超速熔断状态与剩余重置倒计时直观透视。
+*   **🛠️ 高可用模型自适应路由与交互重构**：
+    *   **GroupedSelect智能视口翻转防溢出引擎**：彻底根除下拉菜单靠近窗口底边缘被裁切、无法滚动到底部的缺陷，视口边界自适应向上展开并动态限高。
+    *   **淘汰模型平滑兼容映射**：支持老旧模型至最新旗舰变体的平滑重定向，全量透传思维链（Thinking Effort）与高级会话签名。
 
 ## 🌟 深度功能解析 (Detailed Features)
 

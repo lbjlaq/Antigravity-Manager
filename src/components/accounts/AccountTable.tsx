@@ -379,19 +379,43 @@ function AccountRowContent({
 
     // 根据 show_all 状态决定显示哪些模型
     const uniqueLabels = new Set<string>();
+
+    const accountModels: { id: string; label: string; protectedKey: string; data: ModelQuota | undefined }[] = (account.quota?.models || []).map(m => {
+        const config = MODEL_CONFIG[m.name.toLowerCase()];
+        const label = m.display_name || (config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || m.name));
+        return {
+            id: m.name.toLowerCase(),
+            label: label,
+            protectedKey: config?.protectedKey || m.name.toLowerCase(),
+            data: m
+        };
+    });
+
+    if (account.quota?.quota_groups) {
+        account.quota.quota_groups.forEach(group => {
+            (group.buckets || []).forEach(bucket => {
+                const id = bucket.bucket_id.toLowerCase();
+                const config = MODEL_CONFIG[id];
+                if (config) {
+                    accountModels.push({
+                        id: bucket.bucket_id.toLowerCase(),
+                        label: config.shortLabel || config.label,
+                        protectedKey: config.protectedKey || bucket.bucket_id.toLowerCase(),
+                        data: {
+                            name: bucket.bucket_id,
+                            percentage: Math.round(bucket.remaining_fraction * 100),
+                            reset_time: bucket.reset_time
+                        } as any
+                    });
+                }
+            });
+        });
+    }
+
     const displayModels = sortModels(
         (showAllQuotas
-            ? (account.quota?.models || []).map(m => {
-                const config = MODEL_CONFIG[m.name.toLowerCase()];
-                const label = m.display_name || (config?.i18nKey ? t(config.i18nKey) : (config?.shortLabel || config?.label || m.name));
-                return {
-                    id: m.name.toLowerCase(),
-                    label: label,
-                    protectedKey: config?.protectedKey || m.name.toLowerCase(),
-                    data: m
-                };
-            })
-            : resolveQuotaModels(account.quota?.models, pinnedModels).map(sel => {
+            ? accountModels
+            : resolveQuotaModels(accountModels.map(a => a.data).filter(Boolean) as ModelQuota[], pinnedModels).map(sel => {
                 const selectorConfig = MODEL_CONFIG[sel.selectorId.toLowerCase()];
                 const resolvedConfig = sel.model ? MODEL_CONFIG[sel.model.name.toLowerCase()] : undefined;
                 if (!selectorConfig && !sel.model) return null;

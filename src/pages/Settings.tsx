@@ -1,5 +1,6 @@
 import { useState, useEffect, startTransition } from 'react';
-import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound } from 'lucide-react';
+import { Save, Github, User, MessageCircle, ExternalLink, RefreshCw, Heart, Coffee, LayoutDashboard, Users, Network, Activity, BarChart3, Settings as SettingsIcon, Lock, CheckCircle2, Globe, Send, KeyRound, GitCompare, Copy, Sparkles } from 'lucide-react';
+import { copyToClipboard } from '../utils/clipboard';
 import { request as invoke } from '../utils/request';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -8,13 +9,13 @@ import ModalDialog from '../components/common/ModalDialog';
 import { showToast } from '../components/common/ToastContainer';
 import QuotaProtection from '../components/settings/QuotaProtection';
 import SmartWarmup from '../components/settings/SmartWarmup';
+import PhaseScheduler from '../components/settings/PhaseScheduler';
 import PinnedQuotaModels from '../components/settings/PinnedQuotaModels';
 import { useDebugConsole } from '../stores/useDebugConsole';
 
 import { useTranslation } from 'react-i18next';
 import { isTauri } from '../utils/env';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { emit } from '@tauri-apps/api/event';
 
 import DebugConsole from '../components/debug/DebugConsole';
 import ProxyPoolSettings from '../components/settings/ProxyPoolSettings';
@@ -73,6 +74,15 @@ function Settings() {
                 account_bindings: {}
             }
         },
+        phase_scheduler: {
+            enabled: false,
+            mode: 'steady',
+            work_start_time: '09:00',
+            work_duration_hours: 12,
+            burst_duration_hours: 3,
+            auto_dark_wake: true,
+            monitored_models: ['gemini-3-flash', 'claude', 'gemini-3-pro-high']
+        },
         scheduled_warmup: {
             enabled: false,
             monitored_models: []
@@ -123,8 +133,8 @@ function Settings() {
     } | null>(null);
 
     // Homebrew Cask state
-    const [isBrewInstalled, setIsBrewInstalled] = useState(false);
-    const [isBrewUpgrading, setIsBrewUpgrading] = useState(false);
+    const [, setIsBrewInstalled] = useState(false);
+    const [, setIsBrewUpgrading] = useState(false);
     const [isBrewConfirmOpen, setIsBrewConfirmOpen] = useState(false);
     const [isBrewSuccessOpen, setIsBrewSuccessOpen] = useState(false);
     const [isUpdateConfirmOpen, setIsUpdateConfirmOpen] = useState(false);
@@ -172,6 +182,40 @@ function Settings() {
         }
 
     }, [loadConfig]);
+
+    const silentCheckUpdate = async () => {
+        try {
+            const result = await invoke<{
+                has_update: boolean;
+                latest_version: string;
+                current_version: string;
+                download_url: string;
+                source?: string;
+                channel?: 'stable' | 'beta';
+            }>('check_for_updates');
+
+            setUpdateInfo({
+                hasUpdate: result.has_update,
+                latestVersion: result.latest_version,
+                currentVersion: result.current_version,
+                downloadUrl: result.download_url,
+                source: result.source,
+                channel: result.channel,
+            });
+        } catch (error) {
+            console.debug('Silent update check failed:', error);
+        }
+    };
+
+    useEffect(() => {
+        silentCheckUpdate();
+    }, []);
+
+    useEffect(() => {
+        if (activeTab === 'about' && !updateInfo && !isCheckingUpdate) {
+            silentCheckUpdate();
+        }
+    }, [activeTab]);
 
     useEffect(() => {
         if (config) {
@@ -394,25 +438,6 @@ function Settings() {
         }
     };
 
-    const handleConfirmUpdate = async () => {
-        setIsUpdateConfirmOpen(false);
-        if (isBrewInstalled) {
-            handleBrewUpgrade();
-            return;
-        }
-        if (isTauri()) {
-            try {
-                await emit('app://trigger-update');
-            } catch (err) {
-                console.error('Failed to trigger update event:', err);
-                if (updateInfo?.downloadUrl) {
-                    window.open(updateInfo.downloadUrl, '_blank', 'noopener,noreferrer');
-                }
-            }
-        } else if (updateInfo?.downloadUrl) {
-            window.open(updateInfo.downloadUrl, '_blank', 'noopener,noreferrer');
-        }
-    };
 
     const handleBrewUpgrade = async () => {
         setIsBrewConfirmOpen(false);
@@ -523,13 +548,16 @@ function Settings() {
                             {t('settings.tabs.debug')}
                         </button>
                         <button
-                            className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${activeTab === 'about'
+                            className={`px-6 py-2 rounded-full text-sm font-medium transition-all relative ${activeTab === 'about'
                                 ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
                                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
                                 }`}
                             onClick={() => startTransition(() => setActiveTab('about'))}
                         >
-                            {t('settings.tabs.about')}
+                            <span>{t('settings.tabs.about')}</span>
+                            {updateInfo?.hasUpdate && (
+                                <span className="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-amber-500 animate-pulse shadow-sm" />
+                            )}
                         </button>
                     </div>
 
@@ -930,6 +958,26 @@ function Settings() {
                                         />
                                     </div>
                                 )}
+                            </div>
+
+                            {/* 多账号相控阵智能错峰调度中心 (Phase Scheduler) */}
+                            <div className="group bg-white dark:bg-base-100 rounded-xl p-5 border border-gray-100 dark:border-base-200 hover:border-blue-200 transition-all duration-300 shadow-sm">
+                                <PhaseScheduler
+                                    config={formData.phase_scheduler}
+                                    onChange={async (newConfig) => {
+                                        const newFormData = {
+                                            ...formData,
+                                            phase_scheduler: newConfig
+                                        };
+                                        setFormData(newFormData);
+                                        // Hot Save
+                                        try {
+                                            await saveConfig(newFormData);
+                                        } catch (error) {
+                                            showToast(`${t('common.error')}: ${error}`, 'error');
+                                        }
+                                    }}
+                                />
                             </div>
 
                             {/* 7天周配额智能预热 (Smart Warmup) */}
@@ -1539,8 +1587,19 @@ function Settings() {
 
                                     <div>
                                         <h3 className="text-3xl font-black text-gray-900 dark:text-base-content tracking-tight mb-2">{t('common.app_name', 'Antigravity Tools')}</h3>
-                                        <div className="flex items-center justify-center gap-2 text-sm">
-                                            v{appVersion}
+                                        <div className="flex items-center justify-center gap-2 text-sm flex-wrap">
+                                            <span className="font-mono">v{appVersion}</span>
+                                            {updateInfo?.hasUpdate && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setIsUpdateConfirmOpen(true)}
+                                                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 transition-all cursor-pointer shadow-sm active:scale-95"
+                                                    title="点击查看上游更新与定制版合并指引"
+                                                >
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                                                    <span>发现上游新版本 v{updateInfo.latestVersion}</span>
+                                                </button>
+                                            )}
                                             <span className="text-gray-400 dark:text-gray-600">•</span>
                                             <span className="text-gray-500 dark:text-gray-400">{t('settings.branding.subtitle')}</span>
                                         </div>
@@ -1716,53 +1775,55 @@ function Settings() {
 
                                     {/* Update Status */}
                                     {updateInfo && !isCheckingUpdate && (
-                                        <div className="text-center">
+                                        <div className="text-center w-full max-w-xl">
                                             {updateInfo.hasUpdate ? (
-                                                <div className="flex flex-col items-center gap-2">
-                                                    <div className="flex items-center gap-1.5 text-sm text-orange-600 dark:text-orange-400 font-medium">
-                                                        <span>{t('settings.about.new_version_available', { version: updateInfo.latestVersion })}</span>
+                                                <div className="flex flex-col items-center gap-3 p-4 bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/20 rounded-2xl shadow-sm">
+                                                    <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300 font-semibold flex-wrap justify-center">
+                                                        <Sparkles className="w-4 h-4 text-amber-500" />
+                                                        <span>发现上游新版本 v{updateInfo.latestVersion}（当前定制版: v{appVersion}）</span>
                                                         {updateInfo.channel === 'beta' && (
                                                             <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                                                                 Beta
                                                             </span>
                                                         )}
                                                     </div>
-                                                    <div className="flex items-center gap-2 flex-wrap justify-center">
-                                                        {isBrewInstalled ? (
-                                                            <button
-                                                                onClick={() => setIsBrewConfirmOpen(true)}
-                                                                disabled={isBrewUpgrading}
-                                                                className="px-4 py-1.5 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5 disabled:cursor-not-allowed"
-                                                            >
-                                                                {isBrewUpgrading ? (
-                                                                    <>
-                                                                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                                                        {t('settings.about.brew_upgrading')}
-                                                                    </>
-                                                                ) : (
-                                                                    t('settings.about.brew_upgrade')
-                                                                )}
-                                                            </button>
-                                                        ) : (
-                                                            isTauri() && (
-                                                                <button
-                                                                    onClick={handleConfirmUpdate}
-                                                                    className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-all shadow-sm active:scale-95 flex items-center gap-1.5"
-                                                                >
-                                                                    <RefreshCw className="w-3.5 h-3.5" />
-                                                                    {t('settings.about.upgrade_now_btn', { defaultValue: '立即自动更新' })}
-                                                                </button>
-                                                            )
-                                                        )}
+                                                    <p className="text-xs text-gray-500 dark:text-gray-400 text-center max-w-md">
+                                                        为保护您的专属定制资产与代码修改，建议在本地源码中拉取上游代码合并更新。
+                                                    </p>
+                                                    <div className="flex items-center gap-2 flex-wrap justify-center pt-1">
+                                                        {/* 查看上游 Releases */}
                                                         <a
                                                             href={updateInfo.downloadUrl}
                                                             target="_blank"
                                                             rel="noreferrer"
-                                                            className="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-base-200 dark:hover:bg-base-300 text-gray-700 dark:text-gray-200 text-sm rounded-lg transition-colors flex items-center gap-1.5 border border-gray-200 dark:border-base-300"
+                                                            className="px-3.5 py-1.5 bg-white dark:bg-base-100 hover:bg-gray-50 dark:hover:bg-base-200 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 border border-gray-200 dark:border-base-300 shadow-sm"
                                                         >
-                                                            {t('settings.about.download_update')}
-                                                            <ExternalLink className="w-3.5 h-3.5" />
+                                                            <span>查看上游Releases</span>
+                                                            <ExternalLink className="w-3 h-3 text-gray-400" />
                                                         </a>
+                                                        {/* 查看代码差异 */}
+                                                        <a
+                                                            href={`https://github.com/lbjlaq/Antigravity-Manager/compare/v${appVersion}...v${updateInfo.latestVersion}`}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="px-3.5 py-1.5 bg-white dark:bg-base-100 hover:bg-gray-50 dark:hover:bg-base-200 text-gray-700 dark:text-gray-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 border border-gray-200 dark:border-base-300 shadow-sm"
+                                                        >
+                                                            <GitCompare className="w-3 h-3 text-blue-500" />
+                                                            <span>查看代码差异</span>
+                                                        </a>
+                                                        {/* 复制 Git 合并命令 */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={async () => {
+                                                                const cmd = `git fetch upstream && git merge upstream/main`;
+                                                                await copyToClipboard(cmd);
+                                                                showToast('已复制 Git 合并命令到剪贴板', 'success');
+                                                            }}
+                                                            className="px-3.5 py-1.5 bg-blue-500 hover:bg-blue-600 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 shadow-sm active:scale-95 cursor-pointer"
+                                                        >
+                                                            <Copy className="w-3 h-3" />
+                                                            <span>复制Git合并命令</span>
+                                                        </button>
                                                     </div>
                                                 </div>
                                             ) : (
@@ -1908,31 +1969,33 @@ function Settings() {
                     </p>
                 </ModalDialog>
 
-                {/* 新版本自动更新确认弹窗 */}
+                {/* 独立定制版专用的上游更新引导弹窗 */}
                 <ModalDialog
                     isOpen={isUpdateConfirmOpen}
-                    title={t('settings.about.update_dialog_title', { defaultValue: '发现新版本可用' })}
-                    type="confirm"
-                    confirmText={t('settings.about.upgrade_now_btn', { defaultValue: '立即下载并自动更新' })}
-                    cancelText={t('common.cancel', { defaultValue: '稍后再说' })}
-                    onConfirm={handleConfirmUpdate}
+                    title="发现上游官方新版本"
+                    type="info"
+                    confirmText="查看代码差异"
+                    cancelText="关闭"
+                    onConfirm={() => {
+                        setIsUpdateConfirmOpen(false);
+                        const compareUrl = `https://github.com/lbjlaq/Antigravity-Manager/compare/v${appVersion}...v${updateInfo?.latestVersion || ''}`;
+                        window.open(compareUrl, '_blank', 'noopener,noreferrer');
+                    }}
                     onCancel={() => setIsUpdateConfirmOpen(false)}
                 >
                     <div className="space-y-3 py-1 text-sm text-gray-700 dark:text-gray-300">
                         <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
-                            {t('settings.about.update_confirm_desc', {
-                                defaultValue: '检测到最新版本，点击“立即下载并自动更新”将直接启动自动下载并在准备就绪后覆盖安装生效。',
-                            })}
+                            检测到上游官方已发布最新版本 <strong className="text-amber-600 dark:text-amber-400">v{updateInfo?.latestVersion}</strong>。当前运行的是您的专属独立定制版，建议在源码仓库中增量合并代码，避免被官方安装包覆盖定制内容。
                         </p>
                         <div className="bg-gray-50 dark:bg-base-200 p-3 rounded-lg border border-gray-200 dark:border-base-300 space-y-1.5 font-mono text-xs">
                             <div className="flex items-center justify-between">
-                                <span className="text-gray-500">{t('settings.about.current_version')}:</span>
-                                <span className="font-semibold text-gray-800 dark:text-gray-200">{updateInfo?.currentVersion || appVersion}</span>
+                                <span className="text-gray-500">当前独立定制版:</span>
+                                <span className="font-semibold text-gray-800 dark:text-gray-200">v{appVersion}</span>
                             </div>
                             <div className="flex items-center justify-between">
-                                <span className="text-gray-500">{t('settings.about.latest_version_label', { defaultValue: '最新版本' })}:</span>
+                                <span className="text-gray-500">上游最新版本:</span>
                                 <div className="flex items-center gap-1.5">
-                                    <span className="font-bold text-emerald-600 dark:text-emerald-400">{updateInfo?.latestVersion}</span>
+                                    <span className="font-bold text-amber-600 dark:text-amber-400">v{updateInfo?.latestVersion}</span>
                                     {updateInfo?.channel === 'beta' && (
                                         <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
                                             Beta
@@ -1945,6 +2008,32 @@ function Settings() {
                                     via {updateInfo.source}
                                 </div>
                             )}
+                        </div>
+                        <div className="pt-1 flex flex-col gap-2">
+                            <div className="text-xs font-semibold text-gray-600 dark:text-gray-400">定制版更新操作指引：</div>
+                            <div className="flex gap-2 flex-wrap">
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        const cmd = `git fetch upstream && git merge upstream/main`;
+                                        await copyToClipboard(cmd);
+                                        showToast('已复制 Git 合并命令到剪贴板', 'success');
+                                    }}
+                                    className="flex-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-base-300 dark:hover:bg-base-200 text-gray-800 dark:text-gray-200 text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-gray-200 dark:border-base-200 cursor-pointer shadow-sm active:scale-95"
+                                >
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>复制Git合并命令</span>
+                                </button>
+                                <a
+                                    href={updateInfo?.downloadUrl || `https://github.com/lbjlaq/Antigravity-Manager/releases/tag/v${updateInfo?.latestVersion}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="flex-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-base-300 dark:hover:bg-base-200 text-gray-800 dark:text-gray-200 text-xs rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-gray-200 dark:border-base-200 shadow-sm"
+                                >
+                                    <span>查看上游Releases</span>
+                                    <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
+                                </a>
+                            </div>
                         </div>
                     </div>
                 </ModalDialog>

@@ -1,8 +1,6 @@
 
 
 import {
-  Calendar,
-  Clock,
   Download,
   LayoutGrid,
   List,
@@ -15,6 +13,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import AccountDetailsDialog from "../components/accounts/AccountDetailsDialog";
 import AccountGrid from "../components/accounts/AccountGrid";
 import AccountTable from "../components/accounts/AccountTable";
@@ -35,7 +34,6 @@ import { useTranslation } from "react-i18next";
 
 type FilterType = "all" | "pro" | "ultra" | "free";
 type ViewMode = "list" | "grid";
-export type QuotaWindow = "5h" | "weekly";
 
 
 function Accounts() {
@@ -69,30 +67,15 @@ function Accounts() {
     return (saved === 'list' || saved === 'grid') ? saved : 'list';
   });
 
-  const [quotaWindow, setQuotaWindow] = useState<QuotaWindow>(() => {
-    const saved = localStorage.getItem('accounts_quota_window');
-    return (saved === '5h' || saved === 'weekly') ? saved : '5h';
-  });
-
   // Save view mode preference
   useEffect(() => {
     localStorage.setItem('accounts_view_mode', viewMode);
   }, [viewMode]);
-
-  // Save quota window preference
-  useEffect(() => {
-    localStorage.setItem('accounts_quota_window', quotaWindow);
-  }, [quotaWindow]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deviceAccount, setDeviceAccount] = useState<Account | null>(null);
   const [detailsAccount, setDetailsAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isBatchDelete, setIsBatchDelete] = useState(false);
-  const [toggleProxyConfirm, setToggleProxyConfirm] = useState<{
-    accountId: string;
-    enable: boolean;
-  } | null>(null);
-  const [isWarmupConfirmOpen, setIsWarmupConfirmOpen] = useState(false);
   const [isWarmuping, setIsWarmuping] = useState(false);
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
   const [errorAccountId, setErrorAccountId] = useState<string | null>(null);
@@ -127,7 +110,6 @@ function Accounts() {
   };
 
   const handleWarmupAll = async () => {
-    setIsWarmupConfirmOpen(false);
     setIsWarmuping(true);
     try {
       const isBatch = selectedIds.size > 0;
@@ -402,18 +384,13 @@ function Accounts() {
     }
   };
 
-  const handleToggleProxy = (accountId: string, currentlyDisabled: boolean) => {
-    setToggleProxyConfirm({ accountId, enable: currentlyDisabled });
-  };
-
-  const executeToggleProxy = async () => {
-    if (!toggleProxyConfirm) return;
-
+  const handleToggleProxy = async (accountId: string, currentlyDisabled: boolean) => {
+    const enable = currentlyDisabled;
     try {
       await toggleProxyStatus(
-        toggleProxyConfirm.accountId,
-        toggleProxyConfirm.enable,
-        toggleProxyConfirm.enable
+        accountId,
+        enable,
+        enable
           ? undefined
           : t("accounts.proxy_disabled_reason_manual"),
       );
@@ -421,8 +398,6 @@ function Accounts() {
     } catch (error) {
       console.error("[Accounts] Toggle proxy status failed:", error);
       showToast(`${t("common.error")}: ${error}`, "error");
-    } finally {
-      setToggleProxyConfirm(null);
     }
   };
 
@@ -452,14 +427,12 @@ function Accounts() {
   };
 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isRefreshConfirmOpen, setIsRefreshConfirmOpen] = useState(false);
 
   const handleRefreshClick = () => {
-    setIsRefreshConfirmOpen(true);
+    executeRefresh();
   };
 
   const executeRefresh = async () => {
-    setIsRefreshConfirmOpen(false);
     setIsRefreshing(true);
     try {
       const isBatch = selectedIds.size > 0;
@@ -784,36 +757,6 @@ function Accounts() {
           )}
         </div>
 
-        {/* 配额周期切换 (5H / 7天周配额) */}
-        <div className="flex gap-1 bg-gray-100 dark:bg-base-200 p-1 rounded-lg shrink-0 items-center">
-          <button
-            className={cn(
-              "px-2 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1",
-              quotaWindow === "5h"
-                ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm"
-                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content",
-            )}
-            onClick={() => setQuotaWindow("5h")}
-            title={t("accounts.quota_window_5h", "5小时滑动配额")}
-          >
-            <Clock className="w-3.5 h-3.5" />
-            <span>5H</span>
-          </button>
-          <button
-            className={cn(
-              "px-2 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1",
-              quotaWindow === "weekly"
-                ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm"
-                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content",
-            )}
-            onClick={() => setQuotaWindow("weekly")}
-            title={t("accounts.quota_window_weekly", "7天周配额")}
-          >
-            <Calendar className="w-3.5 h-3.5" />
-            <span>{t("accounts.quota_window_weekly_short", "周配额")}</span>
-          </button>
-        </div>
-
         {/* 视图切换按钮组 */}
         <div className="flex gap-1 bg-gray-100 dark:bg-base-200 p-1 rounded-lg shrink-0">
           <button
@@ -843,18 +786,25 @@ function Accounts() {
         </div>
 
         {/* 过滤按钮组 - 图标化响应式 */}
-        <div className="flex gap-0.5 bg-gray-100/80 dark:bg-base-200 p-1 rounded-xl border border-gray-200/50 dark:border-white/5 shrink-0">
+        <div className="flex gap-0.5 bg-gray-100/60 dark:bg-white/5 p-1 rounded-xl border border-gray-200/50 dark:border-white/5 shrink-0 relative">
           {/* 全部 */}
           <button
             className={cn(
-              "px-2 md:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all flex items-center gap-1 md:gap-1.5 whitespace-nowrap shrink-0",
+              "relative px-2 md:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors duration-200 flex items-center gap-1 md:gap-1.5 whitespace-nowrap shrink-0 z-10",
               filter === 'all'
-                ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-black/5"
-                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content hover:bg-white/40"
+                ? "text-blue-600 dark:text-blue-400 font-bold"
+                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
             )}
             onClick={() => setFilter('all')}
             title={`${t('accounts.all')} (${filterCounts.all})`}
           >
+            {filter === 'all' && (
+              <motion.div
+                layoutId="active-filter-tab"
+                className="absolute inset-0 bg-white dark:bg-white/10 rounded-lg shadow-sm border border-black/5 dark:border-white/5 -z-10"
+                transition={{ type: "spring", stiffness: 350, damping: 28 }}
+              />
+            )}
             <span className="hidden md:inline">{t('accounts.all')}</span>
             <span className={cn(
               "px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors",
@@ -869,14 +819,21 @@ function Accounts() {
           {/* PRO */}
           <button
             className={cn(
-              "px-2 md:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all flex items-center gap-1 md:gap-1.5 whitespace-nowrap shrink-0",
+              "relative px-2 md:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors duration-200 flex items-center gap-1 md:gap-1.5 whitespace-nowrap shrink-0 z-10",
               filter === 'pro'
-                ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-black/5"
-                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content hover:bg-white/40"
+                ? "text-blue-600 dark:text-blue-400 font-bold"
+                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
             )}
             onClick={() => setFilter('pro')}
             title={`${t('accounts.pro')} (${filterCounts.pro})`}
           >
+            {filter === 'pro' && (
+              <motion.div
+                layoutId="active-filter-tab"
+                className="absolute inset-0 bg-white dark:bg-white/10 rounded-lg shadow-sm border border-black/5 dark:border-white/5 -z-10"
+                transition={{ type: "spring", stiffness: 350, damping: 28 }}
+              />
+            )}
             <span className="hidden md:inline">{t('accounts.pro')}</span>
             <span className={cn(
               "px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors",
@@ -891,14 +848,21 @@ function Accounts() {
           {/* ULTRA */}
           <button
             className={cn(
-              "flex px-2 lg:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all items-center gap-1 lg:gap-1.5 whitespace-nowrap shrink-0",
+              "relative flex px-2 lg:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors duration-200 items-center gap-1 lg:gap-1.5 whitespace-nowrap shrink-0 z-10",
               filter === 'ultra'
-                ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-black/5"
-                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content hover:bg-white/40"
+                ? "text-blue-600 dark:text-blue-400 font-bold"
+                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
             )}
             onClick={() => setFilter('ultra')}
             title={`${t('accounts.ultra')} (${filterCounts.ultra})`}
           >
+            {filter === 'ultra' && (
+              <motion.div
+                layoutId="active-filter-tab"
+                className="absolute inset-0 bg-white dark:bg-white/10 rounded-lg shadow-sm border border-black/5 dark:border-white/5 -z-10"
+                transition={{ type: "spring", stiffness: 350, damping: 28 }}
+              />
+            )}
             <span className="hidden md:inline">{t('accounts.ultra')}</span>
             <span className={cn(
               "px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors",
@@ -913,14 +877,21 @@ function Accounts() {
           {/* FREE */}
           <button
             className={cn(
-              "flex px-2 lg:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all items-center gap-1 lg:gap-1.5 whitespace-nowrap shrink-0",
+              "relative flex px-2 lg:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors duration-200 items-center gap-1 lg:gap-1.5 whitespace-nowrap shrink-0 z-10",
               filter === 'free'
-                ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-black/5"
-                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content hover:bg-white/40"
+                ? "text-blue-600 dark:text-blue-400 font-bold"
+                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
             )}
             onClick={() => setFilter('free')}
             title={`${t('accounts.free')} (${filterCounts.free})`}
           >
+            {filter === 'free' && (
+              <motion.div
+                layoutId="active-filter-tab"
+                className="absolute inset-0 bg-white dark:bg-white/10 rounded-lg shadow-sm border border-black/5 dark:border-white/5 -z-10"
+                transition={{ type: "spring", stiffness: 350, damping: 28 }}
+              />
+            )}
             <span className="hidden md:inline">{t('accounts.free')}</span>
             <span className={cn(
               "px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors",
@@ -1008,7 +979,7 @@ function Accounts() {
 
           <button
             className={`px-2.5 py-2 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors flex items-center gap-1.5 shadow-sm ${isWarmuping ? "opacity-70 cursor-not-allowed" : ""}`}
-            onClick={() => setIsWarmupConfirmOpen(true)}
+            onClick={handleWarmupAll}
             disabled={isWarmuping}
             title={
               selectedIds.size > 0
@@ -1074,7 +1045,7 @@ function Accounts() {
       {/* 账号列表内容区域 */}
       <div className="flex-1 min-h-0 relative" ref={containerRef}>
         {viewMode === "list" ? (
-          <div className="h-full bg-white dark:bg-base-100 rounded-2xl shadow-sm border border-gray-100 dark:border-base-200 flex flex-col overflow-hidden">
+          <div className="h-full bg-white/40 dark:bg-[rgba(255,255,255,0.03)] rounded-2xl shadow-sm border border-gray-100/30 dark:border-[rgba(255,255,255,0.05)] flex flex-col overflow-hidden">
             <div className="flex-1 overflow-y-auto">
               <AccountTable
                 accounts={paginatedAccounts}
@@ -1100,7 +1071,6 @@ function Accounts() {
                 onWarmup={handleWarmup}
                 onUpdateLabel={handleUpdateLabel}
                 onViewError={(id: string) => setErrorAccountId(id)}
-                quotaWindow={quotaWindow}
               />
             </div>
           </div>
@@ -1128,7 +1098,6 @@ function Accounts() {
               onWarmup={handleWarmup}
               onUpdateLabel={handleUpdateLabel}
               onViewError={(id: string) => setErrorAccountId(id)}
-              quotaWindow={quotaWindow}
             />
           </div>
         )}
@@ -1184,70 +1153,6 @@ function Accounts() {
         }}
       />
 
-      <ModalDialog
-        isOpen={isRefreshConfirmOpen}
-        title={
-          selectedIds.size > 0
-            ? t("accounts.dialog.batch_refresh_title")
-            : t("accounts.dialog.refresh_title")
-        }
-        message={
-          selectedIds.size > 0
-            ? t("accounts.dialog.batch_refresh_msg", {
-              count: selectedIds.size,
-            })
-            : t("accounts.dialog.refresh_msg")
-        }
-        type="confirm"
-        confirmText={t("common.refresh")}
-        isDestructive={false}
-        onConfirm={executeRefresh}
-        onCancel={() => setIsRefreshConfirmOpen(false)}
-      />
-
-      {toggleProxyConfirm && (
-        <ModalDialog
-          isOpen={!!toggleProxyConfirm}
-          onCancel={() => setToggleProxyConfirm(null)}
-          onConfirm={executeToggleProxy}
-          title={
-            toggleProxyConfirm.enable
-              ? t("accounts.dialog.enable_proxy_title")
-              : t("accounts.dialog.disable_proxy_title")
-          }
-          message={
-            toggleProxyConfirm.enable
-              ? t("accounts.dialog.enable_proxy_msg")
-              : t("accounts.dialog.disable_proxy_msg")
-          }
-        />
-      )}
-
-      <ModalDialog
-        isOpen={isWarmupConfirmOpen}
-        title={
-          selectedIds.size > 0
-            ? t("accounts.dialog.batch_warmup_title", "批量手动预热")
-            : t("accounts.dialog.warmup_all_title", "全量手动预热")
-        }
-        message={
-          selectedIds.size > 0
-            ? t(
-              "accounts.dialog.batch_warmup_msg",
-              "确定要为选中的 {{count}} 个账号立即触发预热吗？",
-              { count: selectedIds.size },
-            )
-            : t(
-              "accounts.dialog.warmup_all_msg",
-              "确定要立即为所有符合条件的账号触发预热任务吗？这将向 Google 服务发送极小流量。",
-            )
-        }
-        type="confirm"
-        confirmText={t("accounts.warmup_now", "立即预热")}
-        isDestructive={false}
-        onConfirm={handleWarmupAll}
-        onCancel={() => setIsWarmupConfirmOpen(false)}
-      />
 
       {/* 账号错误详情弹窗 */}
       <AccountErrorDialog

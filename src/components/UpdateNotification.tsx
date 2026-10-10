@@ -1,11 +1,9 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { X, Sparkles, Loader2, CheckCircle, RotateCcw } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { X, Sparkles, GitCompare, Copy, ExternalLink } from 'lucide-react';
 import { request as invoke } from '../utils/request';
 import { useTranslation } from 'react-i18next';
-import { Update, check as tauriCheck } from '@tauri-apps/plugin-updater';
-import { relaunch as tauriRelaunch } from '@tauri-apps/plugin-process';
-import { isTauri } from '../utils/env';
 import { showToast } from './common/ToastContainer';
+import { copyToClipboard } from '../utils/clipboard';
 
 interface UpdateInfo {
   has_update: boolean;
@@ -18,7 +16,7 @@ interface UpdateInfo {
   updater_json_url?: string;
 }
 
-type UpdateState = 'checking' | 'downloading' | 'ready' | 'error' | 'none' | 'manual';
+type UpdateState = 'checking' | 'custom_guide' | 'none';
 
 interface UpdateNotificationProps {
   onClose: () => void;
@@ -30,8 +28,6 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
   const [isVisible, setIsVisible] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
   const [updateState, setUpdateState] = useState<UpdateState>('checking');
-  const [downloadProgress, setDownloadProgress] = useState(0);
-  const downloadStarted = useRef(false);
 
   useEffect(() => {
     checkAndDownload();
@@ -48,99 +44,13 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
 
       setUpdateInfo(info);
 
-      // 2. If not in Tauri — no auto-update possible
-      if (!isTauri()) {
-        console.warn('Auto update is only available in Tauri environment');
-        onClose();
-        return;
-      }
-
-      // Check if Linux and not AppImage (e.g. RPM or DEB packages).
-      // Tauri updater only supports AppImage on Linux.
-      if (navigator.userAgent.toLowerCase().includes('linux')) {
-        const isAppImage = await invoke<boolean>('check_appimage_installation');
-        if (!isAppImage) {
-          setUpdateState('manual');
-          setTimeout(() => setIsVisible(true), 100);
-          return;
-        }
-      }
-
-      // 3. Start background download immediately
-      if (downloadStarted.current) return;
-      downloadStarted.current = true;
-
-      setUpdateState('downloading');
+      // 独立定制版逻辑：直接进入定制版更新指引态，绝不下载官方二进制破坏本地自研资产
+      setUpdateState('custom_guide');
       setTimeout(() => setIsVisible(true), 100);
-
-      let update: Update | null = null;
-      try {
-        const metadata = await invoke<any>('check_native_update', {
-          endpoint: info.updater_json_url,
-          proxy: info.proxy_url,
-        });
-        if (metadata) {
-          update = new Update(metadata);
-        }
-      } catch (err) {
-        console.warn('Native update check via command failed, trying fallback plugin check:', err);
-        update = await tauriCheck(
-          info.proxy_url ? { proxy: info.proxy_url } : undefined
-        );
-      }
-
-      if (!update) {
-        // updater.json not ready yet or no update via native channel
-        console.warn('Native updater returned null');
-        showToast(t('update_notification.toast.not_ready'), 'info');
-        if (info.download_url) {
-          try {
-            const { openUrl } = await import('@tauri-apps/plugin-opener');
-            await openUrl(info.download_url);
-          } catch (e) {
-            console.error('Failed to open download url:', e);
-            window.open(info.download_url, '_blank', 'noopener,noreferrer');
-          }
-        }
-        handleClose();
-        return;
-      }
-
-      let downloaded = 0;
-      let contentLength = 0;
-
-      await update.downloadAndInstall((event) => {
-        switch (event.event) {
-          case 'Started':
-            contentLength = event.data.contentLength || 0;
-            break;
-          case 'Progress':
-            downloaded += event.data.chunkLength;
-            if (contentLength > 0) {
-              setDownloadProgress(Math.round((downloaded / contentLength) * 100));
-            }
-            break;
-          case 'Finished':
-            break;
-        }
-      });
-
-      // 4. Download complete — show restart prompt
-      setUpdateState('ready');
-      setDownloadProgress(100);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('Auto update failed:', errorMsg);
-      setUpdateState('error');
-      showToast(`${t('update_notification.toast.failed')}: ${errorMsg}`, 'error');
-    }
-  };
-
-  const handleRestart = async () => {
-    try {
-      await tauriRelaunch();
-    } catch (error) {
-      console.error('Relaunch failed:', error);
+      console.error('Update check failed:', errorMsg);
+      onClose();
     }
   };
 
@@ -179,17 +89,11 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-2">
               <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 shadow-sm">
-                {updateState === 'ready' ? (
-                  <CheckCircle className="w-4 h-4 text-white" />
-                ) : (
-                  <Sparkles className="w-4 h-4 text-white" />
-                )}
+                <Sparkles className="w-4 h-4 text-white" />
               </div>
               <div>
                 <h3 className="font-bold text-gray-800 dark:text-white leading-tight">
-                  {updateState === 'ready'
-                    ? t('update_notification.ready')
-                    : t('update_notification.title')}
+                  {t('update_notification.title')}
                 </h3>
                 {updateInfo && (
                   <div className="flex items-center gap-1.5 mt-0.5">
@@ -206,7 +110,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
               </div>
             </div>
 
-            {(updateState === 'error' || updateState === 'ready' || updateState === 'manual') && (
+            {updateState === 'custom_guide' && (
               <button
                 onClick={handleClose}
                 className="
@@ -225,135 +129,90 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
           {/* Status message */}
           <div className="mb-4">
             <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
-              {updateState === 'downloading' && t('update_notification.downloading')}
-              {updateState === 'ready' && t('update_notification.restart_prompt')}
-              {updateState === 'error' && `${t('update_notification.toast.failed')}`}
-              {updateState === 'manual' && (
-                navigator.language.startsWith('zh')
-                  ? '检测到您当前运行的不是 AppImage 格式，自动更新仅支持 AppImage。请点击下方按钮手动下载更新。'
-                  : 'We detected that you are not running the AppImage version. Auto-updates are only supported for AppImage. Please download the update manually.'
-              )}
+              {navigator.language.startsWith('zh')
+                ? `上游官方已发布新版本 v${updateInfo?.latest_version}（当前定制版: v${updateInfo?.current_version}），建议拉取上游代码合并更新。`
+                : `Upstream v${updateInfo?.latest_version} released (Current: v${updateInfo?.current_version}). Review diff to update.`}
             </p>
           </div>
 
-          {/* Progress bar during download */}
-          {updateState === 'downloading' && (
-            <div className="mb-4">
-              <div className="w-full bg-gray-200 dark:bg-base-200 rounded-full h-2">
-                <div
-                  className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-300"
-                  style={{ width: `${downloadProgress}%` }}
-                />
-              </div>
-              <div className="flex items-center justify-between mt-1">
-                <p className="text-xs text-gray-500">{downloadProgress}%</p>
-                <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
-              </div>
-            </div>
-          )}
-
-          {/* Restart button when ready */}
-          {updateState === 'ready' && (
-            <div className="flex gap-2">
-              <button
-                onClick={handleRestart}
-                className="
-                  flex-1 group/btn
-                  relative overflow-hidden
-                  bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500
-                  text-white font-medium
-                  py-2.5 px-4 rounded-xl
-                  shadow-lg shadow-green-500/25
-                  transition-all duration-300
-                  flex items-center justify-center gap-2
-                  active:scale-[0.98]
-                "
-              >
-                <RotateCcw className="w-4 h-4" />
-                <span>{t('update_notification.btn_restart')}</span>
-                <div className="absolute inset-0 -translate-x-full group-hover/btn:animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/20 to-transparent z-20 pointer-events-none" />
-              </button>
-              <button
-                onClick={handleClose}
-                className="
-                  px-3 py-2.5 rounded-xl
-                  text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200
-                  hover:bg-black/5 dark:hover:bg-white/10
-                  transition-all duration-200
-                  text-sm font-medium
-                "
-              >
-                {t('update_notification.btn_later')}
-              </button>
-            </div>
-          )}
-
-          {/* Manual download button */}
-          {updateState === 'manual' && (
-            <div className="flex gap-2">
-              <button
-                onClick={async () => {
-                  if (updateInfo) {
-                    try {
-                      const { openUrl } = await import('@tauri-apps/plugin-opener');
-                      await openUrl(updateInfo.download_url);
-                    } catch (e) {
-                      window.open(updateInfo.download_url, '_blank', 'noopener,noreferrer');
+          {/* Custom guide action buttons */}
+          {updateState === 'custom_guide' && (
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (updateInfo) {
+                      const diffUrl = `https://github.com/lbjlaq/Antigravity-Manager/compare/v${updateInfo.current_version}...v${updateInfo.latest_version}`;
+                      window.open(diffUrl, '_blank', 'noopener,noreferrer');
                     }
-                  }
-                }}
-                className="
-                  flex-1 group/btn
-                  relative overflow-hidden
-                  bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500
-                  text-white font-medium
-                  py-2.5 px-4 rounded-xl
-                  shadow-lg shadow-blue-500/25
-                  transition-all duration-300
-                  flex items-center justify-center gap-2
-                  active:scale-[0.98]
-                "
-              >
-                <span>{navigator.language.startsWith('zh') ? '手动下载' : 'Download Manually'}</span>
-              </button>
-              <button
-                onClick={handleClose}
-                className="
-                  px-3 py-2.5 rounded-xl
-                  text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200
-                  hover:bg-black/5 dark:hover:bg-white/10
-                  transition-all duration-200
-                  text-sm font-medium
-                "
-              >
-                {t('update_notification.btn_later')}
-              </button>
+                  }}
+                  className="
+                    flex-1
+                    bg-blue-600 hover:bg-blue-500
+                    text-white font-medium text-xs
+                    py-2 px-3 rounded-xl
+                    transition-all duration-200
+                    flex items-center justify-center gap-1.5
+                    shadow-sm active:scale-95 cursor-pointer
+                  "
+                >
+                  <GitCompare className="w-3.5 h-3.5" />
+                  <span>查看代码差异</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await copyToClipboard('git fetch upstream && git merge upstream/main');
+                    showToast('已复制 Git 合并命令到剪贴板', 'success');
+                  }}
+                  className="
+                    flex-1
+                    bg-purple-600 hover:bg-purple-500
+                    text-white font-medium text-xs
+                    py-2 px-3 rounded-xl
+                    transition-all duration-200
+                    flex items-center justify-center gap-1.5
+                    shadow-sm active:scale-95 cursor-pointer
+                  "
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>复制合并命令</span>
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <a
+                  href={updateInfo?.download_url || `https://github.com/lbjlaq/Antigravity-Manager/releases/tag/v${updateInfo?.latest_version}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="
+                    flex-1
+                    bg-gray-100 hover:bg-gray-200 dark:bg-base-200 dark:hover:bg-base-300
+                    text-gray-700 dark:text-gray-200 font-medium text-xs
+                    py-1.5 px-3 rounded-xl
+                    transition-all duration-200
+                    flex items-center justify-center gap-1.5
+                    border border-gray-200 dark:border-base-300
+                  "
+                >
+                  <span>查看Releases</span>
+                  <ExternalLink className="w-3 h-3 text-gray-400" />
+                </a>
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  className="
+                    px-3 py-1.5 rounded-xl
+                    text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200
+                    hover:bg-black/5 dark:hover:bg-white/10
+                    transition-all duration-200
+                    text-xs font-medium cursor-pointer
+                  "
+                >
+                  {t('update_notification.btn_later', { defaultValue: '稍后再说' })}
+                </button>
+              </div>
             </div>
-          )}
-
-          {/* Error state — retry button */}
-          {updateState === 'error' && (
-            <button
-              onClick={() => {
-                downloadStarted.current = false;
-                setUpdateState('checking');
-                setDownloadProgress(0);
-                checkAndDownload();
-              }}
-              className="
-                w-full
-                bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500
-                text-white font-medium
-                py-2.5 px-4 rounded-xl
-                shadow-lg shadow-blue-500/25
-                transition-all duration-300
-                flex items-center justify-center gap-2
-                active:scale-[0.98]
-              "
-            >
-              <RotateCcw className="w-4 h-4" />
-              <span>{t('common.retry')}</span>
-            </button>
           )}
         </div>
       </div>

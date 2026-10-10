@@ -43,30 +43,21 @@
 
 By leveraging this app, you can transform common Web Sessions (Google/Anthropic) into standardized API interfaces, completely eliminating the protocol gap between different providers.
 
-## 💖 Sponsors
+## 🚀 Custom Enhancements (Vibe-Coding Edition)
 
-| Sponsor | Description |
-| :---: | :--- |
-| <img src="docs/images/packycode_logo.png" width="200" alt="PackyCode Logo"> | Thanks to **PackyCode** for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relays for various services such as Claude Code, Codex, and Gemini. PackyCode provides a special offer for users of this project: Register using [this link](https://www.packyapi.com/register?aff=Ctrler) and enter the **"Ctrler"** coupon code when topping up to enjoy a **10% discount**. |
-| <img src="docs/images/APIKEYFUN.png" width="200" alt="APIKEYFUN Logo"> | Thanks to **APIKEY.FUN** for sponsoring this project! APIKEY.FUN is a professional enterprise-grade AI relay station, dedicated to providing stable, efficient, and low-cost AI model API access services for enterprise and individual developers. The platform supports mainstream popular models such as Claude, OpenAI, and Gemini, with prices as low as 7% of the official original price. Register through [this exclusive link](https://apikey.fan/register?aff=AntManager) for this project to enjoy an exclusive offer of up to **permanent 5% off on top-ups**. |
-| <img src="docs/images/claudeapilogo.png" width="200" alt="Claude API Logo"> | Thanks to **Claude API** for supporting this project! claudeapi.com is a **Claude API** relay station built on **official and AWS channels**, focused exclusively on Claude, delivering high stability and low latency with full support for Claude Code. Exclusive offer: register via this [exclusive link](https://console.claudeapi.com/register?source=antigravity) to get **free trial credits — zero setup, get started instantly**; enjoy an extra **5% off** when you top up (Contact Support). |
-| <img src="docs/images/AICodeMirror.jpg" width="200" alt="AICodeMirror Logo"> | Thanks to **AICodeMirror** for sponsoring this project! AICodeMirror provides official high-stability relay services for Claude Code / Codex / Gemini CLI, supporting enterprise-grade concurrency, fast invoicing, and 24/7 dedicated technical support. Claude Code / Codex / Gemini official channels at 38% / 2% / 9% of original price, with extra discounts on top-ups! AICodeMirror offers special benefits for Antigravity-Manager users: register via [this link](https://aicodemirror.ai/register?invitecode=MV5XUM) to enjoy 20% off your first top-up, and enterprise customers can get up to 25% off! |
+This fork is enhanced with enterprise-grade observability and scheduling modules:
 
-### ☕ Support
-
-If you find this project helpful, feel free to buy me a coffee!
-
-<a href="https://www.buymeacoffee.com/Ctrler" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png" alt="Buy Me A Coffee" style="height: 60px !important; width: 217px !important;"></a>
-
-| Alipay | WeChat Pay | Buy Me a Coffee |
-| :---: | :---: | :---: |
-| ![Alipay](./docs/images/donate_alipay.png) | ![WeChat](./docs/images/donate_wechat.png) | ![Coffee](./docs/images/donate_coffee.png) |
-
-## 🚀 Recommended Projects
-
-If you like this project, you might also be interested in:
-
-*   **[Antigravity-Tools-LS](https://github.com/lbjlaq/Antigravity-Tools-LS)**: A Language Server Protocol (LSP) designed for AI protocols, providing you with smarter code completion, diagnostics, and protocol debugging experiences.
+*   **📊 Full-Spectrum Token & Cost Analytics**:
+    *   **Activity Heatmap**: GitHub-style 13-week time-series tracking of daily consumption and peak usage dates.
+    *   **24-Hour Activity Trend**: Fine-grained hourly token throughput inspection to identify high-load workload periods.
+    *   **Pricing & Valuation Engine**: Real-time evaluation of token consumption value and financial savings from Prompt Caching.
+    *   **Multi-Tier Model Share**: Interactive stacked distributions segmented by model variant and account dimension.
+*   **⚡ Quota Productivity Matrix & Real-time Pacing**:
+    *   **Dual-Window Weighted Matrix**: Synthesizes 5-hour rolling quotas and 7-day weekly allowances into actionable productivity indicators.
+    *   **Interactive Pill Capsule Controller**: Instant toggle between "Active Only" and "Include Disabled" account views.
+    *   **Pacing & Over-speed Alarms**: Real-time velocity tracking comparing "Today's Consumption" against "Suggested Daily Pace" with circuit-breaker protection.
+*   **🛠️ Robust Viewport Adaptive Placement**:
+    *   **Smart Auto-Flip Positioning**: Solves dropdown clipping and unscrollable menus near window boundaries through automatic upward flipping and dynamic `maxHeight` constraints.
 
 ## 🌟 Detailed Feature Matrix
 

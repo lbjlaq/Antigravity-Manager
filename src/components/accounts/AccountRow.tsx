@@ -4,7 +4,6 @@ import { getQuotaColor, formatTimeRemaining, getTimeRemainingColor } from '../..
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 import { formatCompactDuration, getLiveLimitForModel, getLiveLimitState } from '../../utils/liveLimit';
-import { getModelProtectionKey, findQuotaModel, findImageQuotaModel } from '../../config/modelConfig';
 
 interface AccountRowProps {
     account: Account;
@@ -26,13 +25,23 @@ interface AccountRowProps {
 
 function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSwitching = false, onSwitch, onRefresh, onViewDetails, onExport, onDelete, onToggleProxy, onViewDevice }: AccountRowProps) {
     const { t } = useTranslation();
-    // [重构] 按优先级查找配额模型
-    const geminiProModel = findQuotaModel(account.quota?.models, 'gemini-pro');
-    const geminiFlashModel = findQuotaModel(account.quota?.models, 'gemini-flash');
+    // [重构] 按组聚合查找逻辑，优先显示组内配额最低的型号以与锁定状态（🔒）对齐
+    const geminiProModel = account.quota?.models
+        .filter(m =>
+            m.name.toLowerCase() === 'gemini-3-pro-high'
+            || m.name.toLowerCase() === 'gemini-3-pro-low'
+            || m.name.toLowerCase() === 'gemini-3.1-pro-high'
+            || m.name.toLowerCase() === 'gemini-3.1-pro-low'
+        )
+        .sort((a, b) => (a.percentage || 0) - (b.percentage || 0))[0];
 
-    const geminiImageModel = findImageQuotaModel(account.quota?.models);
-    const imageProtectionKey = getModelProtectionKey(geminiImageModel?.name || '');
-    const liveImageLimit = getLiveLimitForModel(account, geminiImageModel?.name, imageProtectionKey ?? undefined);
+    const geminiFlashModel = account.quota?.models.find(m => m.name.toLowerCase() === 'gemini-3-flash');
+
+    const geminiImageModel = account.quota?.models.find(m => {
+        const name = m.name.toLowerCase();
+        return name === 'gemini-3.1-flash-image' || name === 'gemini-3-pro-image';
+    });
+    const liveImageLimit = getLiveLimitForModel(account, geminiImageModel?.name, 'gemini-3.1-flash-image');
     const liveImageState = getLiveLimitState(liveImageLimit);
     const isImageLiveLimited = liveImageState.shouldShow;
     const imageLimitTitle = liveImageLimit
@@ -46,7 +55,13 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
         ].filter(Boolean).join(' ')
         : 'Gemini 3.1 Flash Image';
 
-    const claudeModel = findQuotaModel(account.quota?.models, 'claude');
+    const claudeGroupNames = [
+        'claude-opus-4-6-thinking',
+        'claude'
+    ];
+    const claudeModel = account.quota?.models
+        .filter(m => claudeGroupNames.includes(m.name.toLowerCase()))
+        .sort((a, b) => (a.percentage || 0) - (b.percentage || 0))[0];
     const isDisabled = Boolean(account.disabled);
 
     // 颜色映射，避免动态类名被 Tailwind purge
@@ -248,7 +263,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                             <div className="relative z-10 w-full flex items-center text-[10px] font-mono leading-none">
                                 <span className="w-[64px] text-gray-500 dark:text-gray-400 font-bold pr-1 flex items-center gap-1" title={imageLimitTitle}>
                                     {isImageLiveLimited && <Clock className={cn("w-2.5 h-2.5 shrink-0 z-10", liveImageState.isActive ? "text-rose-500" : "text-amber-500")} />}
-                                    {(imageProtectionKey && account.protected_models?.includes(imageProtectionKey)) && <Lock className="w-2.5 h-2.5 text-rose-500 shrink-0 z-10" />}
+                                    {(account.protected_models?.includes('gemini-3.1-flash-image') || account.protected_models?.includes('gemini-3-pro-image')) && <Lock className="w-2.5 h-2.5 text-rose-500 shrink-0 z-10" />}
                                     <span className="truncate">G3 Image</span>
                                 </span>
                                 <div className="flex-1 flex justify-center">

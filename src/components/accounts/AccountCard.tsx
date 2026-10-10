@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Bot, Repeat2, Terminal } from 'lucide-react';
-import { Account, ModelQuota, getAccountTier } from '../../types/account';
+import { Account, getAccountTier } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
 import { QuotaItem } from './QuotaItem';
-import { MODEL_CONFIG, sortModels, getModelProtectionKey, resolveQuotaModels, ensurePinnedImageSelector } from '../../config/modelConfig';
+import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { getModelQuotaDisplay } from '../../utils/quotaDisplay';
@@ -73,7 +73,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
 
     const displayModels = useMemo(() => {
         // Build map of friendly labels and icons from DEFAULT_MODELS
-        const iconMap = new Map(DEFAULT_MODELS.map(m => [m.id, m.Icon]));
+        const iconMap = new Map(DEFAULT_MODELS.map(m => [m.id.toLowerCase(), m.Icon]));
 
         // Get all models from account (source of truth)
         const accountModels = account.quota?.models?.map(m => {
@@ -84,11 +84,34 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
             return {
                 id: m.name,
                 label: m.display_name || fullConfig?.shortLabel || fullConfig?.label || m.name,
-                protectedKey: getModelProtectionKey(m.name) ?? fullConfig?.protectedKey ?? m.name,
-                Icon: iconMap.get(m.name) || Bot,
+                protectedKey: fullConfig?.protectedKey || m.name,
+                Icon: iconMap.get(m.name.toLowerCase()) || fullConfig?.Icon || Bot,
                 data: m
             };
         }) || [];
+
+        // Inject virtual quota group buckets if present
+        if (account.quota?.quota_groups) {
+            account.quota.quota_groups.forEach(group => {
+                (group.buckets || []).forEach(bucket => {
+                    const id = bucket.bucket_id.toLowerCase();
+                    const fullConfig = MODEL_CONFIG[id];
+                    if (fullConfig) {
+                        accountModels.push({
+                            id: bucket.bucket_id,
+                            label: fullConfig.shortLabel || fullConfig.label,
+                            protectedKey: fullConfig.protectedKey || bucket.bucket_id,
+                            Icon: fullConfig.Icon || Bot,
+                            data: {
+                                name: bucket.bucket_id,
+                                percentage: Math.round(bucket.remaining_fraction * 100),
+                                reset_time: bucket.reset_time
+                            } as any
+                        });
+                    }
+                });
+            });
+        }
 
         let models: typeof accountModels;
 
@@ -98,32 +121,12 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
             // Filter for pinned or defaults
             const pinned = config?.pinned_quota_models?.models;
             if (pinned && pinned.length > 0) {
-                const selections = resolveQuotaModels(
-                    accountModels.map(m => m.data),
-                    ensurePinnedImageSelector(pinned),
-                );
-                models = selections
-                    .map(sel => sel.model ? accountModels.find(am => am.data === sel.model) : undefined)
-                    .filter((m): m is typeof accountModels[number] => m !== undefined);
-                // 也保留无配额数据的 pinned 模型（显示 0%）
-                for (const sel of selections) {
-                    if (!sel.model) {
-                        const selectorConfig = MODEL_CONFIG[sel.selectorId.toLowerCase()];
-                        if (selectorConfig) {
-                            models = [...models, {
-                                id: sel.selectorId,
-                                label: selectorConfig.shortLabel || selectorConfig.label,
-                                protectedKey: selectorConfig.protectedKey,
-                                Icon: selectorConfig.Icon,
-                                data: { name: sel.selectorId, percentage: 0 } as ModelQuota,
-                            }];
-                        }
-                    }
-                }
+                const pinnedLower = pinned.map(p => p.toLowerCase());
+                models = accountModels.filter(m => pinnedLower.includes(m.id.toLowerCase()));
             } else {
                 // Default fallback: show known default models, plus we show all dynamic pinned models
                 // 暂时退化：如果没有 config 就不阻拦了？不，没有 pinned 就显示内置+有 display_name 的。
-                models = accountModels.filter(m => DEFAULT_MODELS.some(d => d.id === m.id) || m.data.display_name);
+                models = accountModels.filter(m => DEFAULT_MODELS.some(d => d.id === m.id.toLowerCase()) || m.data?.display_name);
             }
         }
 
@@ -153,9 +156,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                 });
         });
     }, [quotaWindow, account.quota?.quota_groups]);
-
     const isModelProtected = (key?: string) => {
-        if (!config?.quota_protection?.enabled) return false;
         if (!key) return false;
         return account.protected_models?.includes(key);
     };
@@ -164,8 +165,8 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
         <div className={cn(
             "flex flex-col p-3 rounded-xl border transition-all hover:shadow-md",
             isCurrent
-                ? "bg-blue-50/30 border-blue-200 dark:bg-blue-900/10 dark:border-blue-900/30"
-                : "bg-white dark:bg-base-100 border-gray-200 dark:border-base-300",
+                ? "bg-blue-50/20 border-blue-200/50 dark:bg-blue-900/10 dark:border-blue-900/20"
+                : "bg-white/40 dark:bg-[rgba(255,255,255,0.03)] border-gray-200/30 dark:border-[rgba(255,255,255,0.05)]",
             (isRefreshing || isDisabled) && "opacity-70"
         )}>
 
@@ -179,12 +180,24 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                     onClick={(e) => e.stopPropagation()}
                 />
                 <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-                    <h3 className={cn(
-                        "font-semibold text-sm truncate w-full",
-                        isCurrent ? "text-blue-700 dark:text-blue-400" : "text-gray-900 dark:text-base-content"
-                    )} title={account.email}>
-                        {account.email}
-                    </h3>
+                    <div className="flex items-center justify-between gap-2 min-w-0">
+                        <h3 className={cn(
+                            "font-semibold text-sm truncate",
+                            isCurrent ? "text-blue-700 dark:text-blue-400" : "text-gray-900 dark:text-base-content"
+                        )} title={account.email}>
+                            {account.email}
+                        </h3>
+                        {account.proxy_disabled && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onViewError(); }}
+                                className="px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300 hover:bg-orange-200 dark:hover:bg-orange-900/60 text-[9px] font-bold flex items-center gap-1 shadow-sm border border-orange-200/60 dark:border-orange-800/50 shrink-0 transition-all cursor-pointer"
+                                title={t('accounts.view_error')}
+                            >
+                                <Ban className="w-2.5 h-2.5" />
+                                {t('accounts.proxy_disabled').toUpperCase()}
+                            </button>
+                        )}
+                    </div>
                     <div className="flex items-center justify-between w-full gap-2">
                         <div className="flex items-center gap-1.5 flex-wrap">
                             {isCurrent && (
@@ -198,14 +211,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
                                 >
                                     <Ban className="w-2.5 h-2.5" />
                                     {t('accounts.disabled').toUpperCase()}
-                                </span>
-                            )}
-                            {account.proxy_disabled && (
-                                <span
-                                    className="px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[9px] font-bold flex items-center gap-1 shadow-sm border border-orange-200/50"
-                                >
-                                    <Ban className="w-2.5 h-2.5" />
-                                    {t('accounts.proxy_disabled').toUpperCase()}
                                 </span>
                             )}
                             {account.quota?.is_forbidden && (
@@ -267,15 +272,15 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, is
 
             {/* 配额展示 */}
             <div className="flex-1 px-2 mb-2 overflow-y-auto scrollbar-none">
-                {isDisabled || account.quota?.is_forbidden || account.proxy_disabled || account.validation_blocked ? (
+                {isDisabled || account.quota?.is_forbidden || account.validation_blocked ? (
                     <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 h-full py-4 text-center">
                         <div className={cn(
                             "flex items-center gap-1.5",
                             account.validation_blocked ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
                         )}>
-                            {account.validation_blocked ? <Clock className="w-4 h-4" /> : (isDisabled || account.proxy_disabled ? <Ban className="w-4 h-4" /> : <Lock className="w-4 h-4" />)}
+                            {account.validation_blocked ? <Clock className="w-4 h-4" /> : (isDisabled ? <Ban className="w-4 h-4" /> : <Lock className="w-4 h-4" />)}
                             <span className="text-[11px] font-bold">
-                                {account.validation_blocked ? validationBlockedLabel : (isDisabled ? t('accounts.status.disabled') : account.proxy_disabled ? t('accounts.status.proxy_disabled') : t('accounts.forbidden_msg'))}
+                                {account.validation_blocked ? validationBlockedLabel : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg'))}
                             </span>
                         </div>
                         <div className={cn(

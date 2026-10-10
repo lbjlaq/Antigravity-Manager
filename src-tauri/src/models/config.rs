@@ -27,6 +27,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub scheduled_warmup: ScheduledWarmupConfig, // [NEW] Scheduled warmup configuration
     #[serde(default)]
+    pub phase_scheduler: PhaseSchedulerConfig, // 多账号相控阵智能错峰调度配置
+    #[serde(default)]
     pub quota_protection: QuotaProtectionConfig, // [NEW] Quota protection configuration
     #[serde(default)]
     pub pinned_quota_models: PinnedQuotaModelsConfig, // [NEW] Pinned quota models list
@@ -50,15 +52,112 @@ fn default_quiet_autostart() -> bool {
     true
 }
 
+/// 多账号相控阵智能调度配置 (Phase Scheduler Configuration)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseSchedulerConfig {
+    /// 是否开启相控阵智能调度
+    pub enabled: bool,
+    /// 运行模式: "steady" (平稳续航模式) | "burst" (限定时间狂暴模式)
+    #[serde(default = "default_phase_mode")]
+    pub mode: String,
+    /// 平稳模式开工基准时间 (格式: "HH:MM", 如 "09:00")
+    #[serde(default = "default_work_start_time")]
+    pub work_start_time: String,
+    /// 平稳模式计划工作时长 (小时, 如 12)
+    #[serde(default = "default_work_duration")]
+    pub work_duration_hours: u32,
+    /// 狂暴模式持续时长 (小时, 如 3)
+    #[serde(default = "default_burst_duration")]
+    pub burst_duration_hours: u32,
+    /// 狂暴模式触发类型: "scheduled" (预约爆发) | "immediate" (立即爆发)
+    #[serde(default = "default_burst_mode_type")]
+    pub burst_mode_type: String,
+    /// 狂暴模式预约开始时间 (格式: "HH:MM", 如 "20:00")
+    #[serde(default = "default_burst_start_time")]
+    pub burst_start_time: String,
+    /// 是否启用 Mac 原生硬件定时暗唤醒 (RTC wake)
+    #[serde(default = "default_auto_dark_wake")]
+    pub auto_dark_wake: bool,
+    /// 优先监控与预热的模型清单
+    #[serde(default = "default_warmup_models")]
+    pub monitored_models: Vec<String>,
+}
+
+fn default_phase_mode() -> String {
+    "steady".to_string()
+}
+
+fn default_work_start_time() -> String {
+    "09:00".to_string()
+}
+
+fn default_work_duration() -> u32 {
+    12
+}
+
+fn default_burst_duration() -> u32 {
+    3
+}
+
+fn default_burst_mode_type() -> String {
+    "scheduled".to_string()
+}
+
+fn default_burst_start_time() -> String {
+    "20:00".to_string()
+}
+
+fn default_auto_dark_wake() -> bool {
+    true
+}
+
+impl PhaseSchedulerConfig {
+    pub fn new() -> Self {
+        Self {
+            enabled: false,
+            mode: default_phase_mode(),
+            work_start_time: default_work_start_time(),
+            work_duration_hours: default_work_duration(),
+            burst_duration_hours: default_burst_duration(),
+            burst_mode_type: default_burst_mode_type(),
+            burst_start_time: default_burst_start_time(),
+            auto_dark_wake: default_auto_dark_wake(),
+            monitored_models: default_warmup_models(),
+        }
+    }
+}
+
+impl Default for PhaseSchedulerConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Scheduled warmup configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledWarmupConfig {
     /// Whether smart warmup is enabled
     pub enabled: bool,
 
+    /// Warmup mode: "smart" (hybrid), "timer" (scheduled timer), "quota_full" (100% quota recovery)
+    #[serde(default = "default_warmup_mode")]
+    pub mode: String,
+
+    /// Warmup interval in minutes for timer/smart mode
+    #[serde(default = "default_warmup_interval")]
+    pub interval_minutes: u64,
+
     /// List of models to warmup
     #[serde(default = "default_warmup_models")]
     pub monitored_models: Vec<String>,
+}
+
+fn default_warmup_mode() -> String {
+    "smart".to_string()
+}
+
+fn default_warmup_interval() -> u64 {
+    120
 }
 
 fn default_warmup_models() -> Vec<String> {
@@ -74,6 +173,8 @@ impl ScheduledWarmupConfig {
     pub fn new() -> Self {
         Self {
             enabled: false,
+            mode: default_warmup_mode(),
+            interval_minutes: default_warmup_interval(),
             monitored_models: default_warmup_models(),
         }
     }
@@ -213,6 +314,7 @@ impl AppConfig {
             auto_launch: false,
             quiet_autostart: true,
             scheduled_warmup: ScheduledWarmupConfig::default(),
+            phase_scheduler: PhaseSchedulerConfig::default(),
             quota_protection: QuotaProtectionConfig::default(),
             pinned_quota_models: PinnedQuotaModelsConfig::default(),
             circuit_breaker: CircuitBreakerConfig::default(),

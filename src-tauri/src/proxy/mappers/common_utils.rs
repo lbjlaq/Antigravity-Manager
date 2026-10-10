@@ -1210,6 +1210,49 @@ mod tests {
     }
 
     #[test]
+    fn test_safe_truncate_str_utf8_boundaries() {
+        let text = "你好世界";
+        assert_eq!(safe_truncate_str(text, 0), "");
+        assert_eq!(safe_truncate_str(text, 1), "");
+        assert_eq!(safe_truncate_str(text, 2), "");
+        assert_eq!(safe_truncate_str(text, 3), "你");
+        assert_eq!(safe_truncate_str(text, 4), "你");
+        assert_eq!(safe_truncate_str(text, 5), "你");
+        assert_eq!(safe_truncate_str(text, 6), "你好");
+        assert_eq!(safe_truncate_str(text, 12), "你好世界");
+        assert_eq!(safe_truncate_str(text, 100), "你好世界");
+
+        let mut s3493 = "a".repeat(55);
+        s3493.push_str("中文测试");
+        assert!(!s3493.is_char_boundary(57));
+        let truncated = safe_truncate_str(&s3493, 57);
+        assert_eq!(truncated.len(), 55);
+        assert_eq!(truncated, "a".repeat(55));
+
+        let emoji = "🦀🦀";
+        assert_eq!(safe_truncate_str(emoji, 2), "");
+        assert_eq!(safe_truncate_str(emoji, 4), "🦀");
+        assert_eq!(safe_truncate_str(emoji, 6), "🦀");
+        assert_eq!(safe_truncate_str(emoji, 8), "🦀🦀");
+    }
+
+    #[test]
+    fn test_safe_truncate_chars_utf8() {
+        let text = "你好世界，Rust编程！";
+        assert_eq!(safe_truncate_chars(text, 0), "");
+        assert_eq!(safe_truncate_chars(text, 2), "你好");
+        assert_eq!(safe_truncate_chars(text, 4), "你好世界");
+        assert_eq!(safe_truncate_chars(text, 5), "你好世界，");
+        assert_eq!(safe_truncate_chars(text, 100), text);
+
+        let emoji_text = "🎉Hello世界🦀";
+        assert_eq!(safe_truncate_chars(emoji_text, 1), "🎉");
+        assert_eq!(safe_truncate_chars(emoji_text, 6), "🎉Hello");
+        assert_eq!(safe_truncate_chars(emoji_text, 8), "🎉Hello世界");
+        assert_eq!(safe_truncate_chars(emoji_text, 9), "🎉Hello世界🦀");
+    }
+
+    #[test]
     fn test_detect_mime_from_bytes() {
         assert_eq!(
             detect_mime_from_bytes(b"\x89PNG\r\n\x1a\n\0\0\0"),

@@ -18,11 +18,19 @@ import {
     type ModelCategory,
 } from '../../utils/modelCategory';
 import { getModelQuotaDisplay } from '../../utils/quotaDisplay';
-// Compile-time guard: if findImageQuotaModel is removed from the config re-export,
+import {
+    sortModels,
+    compareModelsDesc,
+    extractModelVersion,
+    QUOTA_BUCKET_ORDER,
+} from '../../utils/modelSort';
+// Compile-time guard: if findImageQuotaModel or sortModels is removed from the config re-export,
 // the type alias test below fails with TS2724 on `pnpm tsc --noEmit`.
 function __noop<T>(): void { const _x: T[] = []; void _x; }
 type _ConfigFindImageQuotaModel = typeof import('../../config/modelConfig').findImageQuotaModel;
+type _ConfigSortModels = typeof import('../../config/modelConfig').sortModels;
 __noop<_ConfigFindImageQuotaModel>();
+__noop<_ConfigSortModels>();
 
 let passed = 0;
 let failed = 0;
@@ -291,6 +299,47 @@ test('quota display: weekly exhaustion overrides raw 5h without changing protect
     assertEqual(getModelQuotaDisplay(model.name, model).percentage, 1);
 });
 
+test('quota display: virtual buckets preserve their own window percentage and reset time', () => {
+    const weeklyReset = '2026-10-06T19:27:00Z';
+    const fiveHourReset = '2026-10-01T10:28:00Z';
+    const groups = [
+        {
+            display_name: 'Gemini Models',
+            buckets: [
+                { bucket_id: 'gemini-5h', window: '5h', remaining_fraction: 0.23, reset_time: fiveHourReset },
+                { bucket_id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.82, reset_time: weeklyReset },
+            ]
+        },
+        {
+            display_name: 'Claude and GPT models',
+            buckets: [
+                { bucket_id: '3p-5h', window: '5h', remaining_fraction: 1.0, reset_time: fiveHourReset },
+                { bucket_id: '3p-weekly', window: 'weekly', remaining_fraction: 0.67, reset_time: weeklyReset },
+            ]
+        }
+    ];
+
+    // gemini-weekly 必须展示自身的 82% 与 weeklyReset，绝不能被 gemini-5h 的 23% 和 fiveHourReset 覆盖劫持
+    const geminiWeekly = getModelQuotaDisplay('gemini-weekly', undefined, groups);
+    assertEqual(geminiWeekly.percentage, 82);
+    assertEqual(geminiWeekly.resetTime, weeklyReset);
+
+    // gemini-5h 必须展示自身的 23% 与 fiveHourReset
+    const gemini5h = getModelQuotaDisplay('gemini-5h', undefined, groups);
+    assertEqual(gemini5h.percentage, 23);
+    assertEqual(gemini5h.resetTime, fiveHourReset);
+
+    // 3p-weekly 必须展示自身的 67% 与 weeklyReset
+    const p3Weekly = getModelQuotaDisplay('3p-weekly', undefined, groups);
+    assertEqual(p3Weekly.percentage, 67);
+    assertEqual(p3Weekly.resetTime, weeklyReset);
+
+    // 3p-5h 必须展示自身的 100% 与 fiveHourReset
+    const p35h = getModelQuotaDisplay('3p-5h', undefined, groups);
+    assertEqual(p35h.percentage, 100);
+    assertEqual(p35h.resetTime, fiveHourReset);
+});
+
 test('quota display: handles undefined/null buckets and groups safely without throwing', () => {
     const model = { name: 'gemini-3.1-pro-high', percentage: 75, reset_time: '2030-01-01T00:00:00Z' };
     const malformedGroups = [
@@ -304,6 +353,69 @@ test('quota display: handles undefined/null buckets and groups safely without th
 
     const display2 = getModelQuotaDisplay(model.name, model, undefined as any);
     assertEqual(display2.percentage, 75);
+});
+
+// ── Quota Buckets & Model Sorting ──────────────────────────────────────────
+
+test('extractModelVersion: quota bucket ids do not match as version numbers', () => {
+    const [maj1, min1] = extractModelVersion('gemini-5h');
+    assertEqual(maj1, 0);
+    assertEqual(min1, 0);
+
+    const [maj2, min2] = extractModelVersion('gemini-weekly');
+    assertEqual(maj2, 0);
+    assertEqual(min2, 0);
+
+    const [maj3, min3] = extractModelVersion('3p-5h');
+    assertEqual(maj3, 0);
+    assertEqual(min3, 0);
+
+    const [maj4, min4] = extractModelVersion('3p-weekly');
+    assertEqual(maj4, 0);
+    assertEqual(min4, 0);
+});
+
+test('sortModels: quota buckets ordered Gemini 5h -> Gemini Weekly -> Claude/GPT 5h -> Claude/GPT Weekly', () => {
+    // 验证 compareModelsDesc 与 QUOTA_BUCKET_ORDER
+    assertEqual(QUOTA_BUCKET_ORDER['gemini-5h'], 1);
+    assertEqual(QUOTA_BUCKET_ORDER['gemini-weekly'], 2);
+    assertEqual(QUOTA_BUCKET_ORDER['3p-5h'], 3);
+    assertEqual(QUOTA_BUCKET_ORDER['3p-weekly'], 4);
+
+    assertEqual(compareModelsDesc({ id: 'gemini-5h' }, { id: 'gemini-weekly' }) < 0, true);
+    assertEqual(compareModelsDesc({ id: 'gemini-weekly' }, { id: '3p-5h' }) < 0, true);
+    assertEqual(compareModelsDesc({ id: '3p-5h' }, { id: '3p-weekly' }) < 0, true);
+
+    // 任意乱序输入
+    const input = [
+        { id: '3p-weekly' },
+        { id: 'gemini-weekly' },
+        { id: '3p-5h' },
+        { id: 'gemini-5h' },
+    ];
+    const sorted = sortModels(input).map(m => m.id);
+    assertEqual(sorted[0], 'gemini-5h');
+    assertEqual(sorted[1], 'gemini-weekly');
+    assertEqual(sorted[2], '3p-5h');
+    assertEqual(sorted[3], '3p-weekly');
+});
+
+test('sortModels: mixed quota buckets and model list', () => {
+    const input = [
+        { id: 'claude-sonnet-4-6' },
+        { id: 'gemini-3.1-pro-high' },
+        { id: '3p-weekly' },
+        { id: 'gemini-weekly' },
+        { id: '3p-5h' },
+        { id: 'gemini-5h' },
+    ];
+    const sorted = sortModels(input).map(m => m.id);
+    assertEqual(sorted[0], 'gemini-5h');
+    assertEqual(sorted[1], 'gemini-weekly');
+    assertEqual(sorted[2], '3p-5h');
+    assertEqual(sorted[3], '3p-weekly');
+    assertEqual(sorted[4], 'gemini-3.1-pro-high');
+    assertEqual(sorted[5], 'claude-sonnet-4-6');
 });
 
 if (failed > 0) {

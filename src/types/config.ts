@@ -50,8 +50,6 @@ export interface LogRetentionConfig {
 export interface InternalErrorLogRetentionConfig {
     max_storage_mb: number;
 }
-
-
 // ============================================================================
 // Thinking Budget 配置 (控制 AI 深度思考时的 Token 预算)
 // ============================================================================
@@ -123,8 +121,21 @@ export interface StickySessionConfig {
     max_wait_seconds: number;
 }
 
+export interface PhaseSchedulerConfig {
+    enabled: boolean;
+    mode: 'steady' | 'burst';
+    work_start_time: string;
+    work_duration_hours: number;
+    burst_duration_hours: number;
+    burst_mode_type?: 'scheduled' | 'immediate';
+    burst_start_time?: string;
+    auto_dark_wake: boolean;
+    monitored_models: string[];
+}
 export interface ScheduledWarmupConfig {
     enabled: boolean;
+    mode?: 'smart' | 'timer' | 'quota_full';
+    interval_minutes?: number;
     monitored_models: string[];
 }
 
@@ -175,6 +186,7 @@ export interface AppConfig {
     update_channel?: 'stable' | 'beta'; // 更新通道：正式版 vs 预览版
     accounts_page_size?: number; // 账号列表每页显示数量,默认 0 表示自动计算
     hidden_menu_items?: string[]; // 隐藏的菜单项路径列表
+    phase_scheduler?: PhaseSchedulerConfig; // 多账号相控阵智能调度配置
     scheduled_warmup: ScheduledWarmupConfig;
     quota_protection: QuotaProtectionConfig; // [NEW] 配额保护配置
     pinned_quota_models: PinnedQuotaModelsConfig; // [NEW] 配额关注列表

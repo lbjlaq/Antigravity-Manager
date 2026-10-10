@@ -624,6 +624,11 @@ impl AxumServer {
                 post(handlers::openai::handle_completions)
                     .get(handlers::openai::handle_responses_websocket),
             ) // 兼容 Codex CLI
+            .route(
+                "/v1/responses/responses",
+                post(handlers::openai::handle_completions)
+                    .get(handlers::openai::handle_responses_websocket),
+            ) // 容错兼容客户端误拼双重 /responses
             .route("/responses", post(handlers::openai::handle_completions))
             .route(
                 "/responses/compact",

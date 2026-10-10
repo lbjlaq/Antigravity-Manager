@@ -1997,6 +1997,30 @@ pub fn get_current_account() -> Result<Option<Account>, String> {
     }
 }
 
+/// 自动探测并获取当前在反重力IDE中登录的账号
+pub fn detect_and_get_active_ide_account() -> Option<Account> {
+    let db_path = crate::modules::db::get_db_path(None).ok()?;
+    if !db_path.exists() {
+        return None;
+    }
+
+    let active_token_fragment = crate::modules::db::extract_active_refresh_token(&db_path)?;
+    let accounts = list_accounts().ok()?;
+
+    for acc in accounts {
+        if !acc.token.refresh_token.is_empty() {
+            if acc.token.refresh_token == active_token_fragment
+                || acc.token.refresh_token.contains(&active_token_fragment)
+                || active_token_fragment.contains(&acc.token.refresh_token)
+            {
+                return Some(acc);
+            }
+        }
+    }
+
+    None
+}
+
 /// Set current active account ID
 pub fn set_current_account_id(account_id: &str) -> Result<(), String> {
     set_current_account_id_with_target(account_id, None)
