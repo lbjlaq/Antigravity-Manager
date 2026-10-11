@@ -336,3 +336,49 @@ fn test_adaptive_retry_single_account_never_spins_50ms_on_hard_quota() {
         other => panic!("Single account must back off >= 3s, got {:?}", other),
     }
 }
+
+#[test]
+fn test_adaptive_retry_multi_account_round_1_micro_gap_takes_grace_retry_issue_3329() {
+    use crate::proxy::handlers::common::determine_retry_strategy_adaptive;
+    // Google Imagen 3 (gemini-3.1-flash-image) 标准 429 报错报文 (1.173612231s 重置时间)
+    let imagen_429 = r#"{
+        "error": {
+            "code": 429,
+            "message": "You have exhausted your capacity on this model. Your quota will reset after 1s.",
+            "status": "RESOURCE_EXHAUSTED",
+            "details": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "RATE_LIMIT_EXCEEDED",
+                    "metadata": {
+                        "model": "gemini-3.1-flash-image",
+                        "quotaResetDelay": "1.173612231s"
+                    }
+                },
+                {
+                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                    "retryDelay": "1.173612231s"
+                }
+            ]
+        }
+    }"#;
+
+    // 多账号 Round 1 (attempt = 0, pool_size = 6):
+    // 遇到微间隙 (<= 2500ms，此处 1174ms + 200ms buffer = 1374ms)，
+    // 绝不能在第 1 轮就 50ms 闪电切号导致 300ms 内全池 6 个账号全被打穿锁入冷却！
+    // 必须优先在当前账号执行 GraceRetry(1374ms)，精准命中 1.17s 后的配额刷新，原地满血复活！
+    let s = determine_retry_strategy_adaptive(429, imagen_429, None, false, true, 0, 6);
+    match s {
+        RetryStrategy::GraceRetry(d) => assert_eq!(d, Duration::from_millis(1374)),
+        other => panic!("Expected GraceRetry(1374ms), got {:?}", other),
+    }
+
+    // 当该账号的 GraceRetry 已被消耗 (allow_grace_retry = false)：
+    // 允许顺畅回退至第 1 轮的 50ms 闪电切号，避免死锁
+    let s_fallback = determine_retry_strategy_adaptive(429, imagen_429, None, false, false, 0, 6);
+    assert_eq!(
+        s_fallback,
+        RetryStrategy::FixedDelay(Duration::from_millis(50)),
+        "GraceRetry 已消耗时应顺畅回退至全池轮换"
+    );
+}

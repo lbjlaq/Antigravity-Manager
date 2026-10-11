@@ -1975,6 +1975,26 @@ impl TokenManager {
                         busy_accounts.insert(account_id);
                     }
                     Some(Err(selection_error)) => {
+                        // [FIX #3329, #3409] 图像队列降级与瞬态限流救援：
+                        // 如果选号错误是临时的全账号限流冷却（如 "All accounts limited. Wait 2s."），
+                        // 且距离请求截止时间 (deadline) 仍有充裕预算，则等待冷却时长后自动重选，
+                        // 绝不直接向前端或客户端抛出 503 SERVICE_UNAVAILABLE 导致生图失败！
+                        if let Some(wait_sec) =
+                            crate::proxy::handlers::common::extract_retry_after_seconds(&selection_error)
+                        {
+                            let wait_dur = std::time::Duration::from_secs(wait_sec.clamp(1, 10));
+                            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                            if remaining > wait_dur {
+                                tracing::info!(
+                                    "[ImageScheduler] All accounts in transient cooldown ({}s), waiting {}s within timeout budget to rescue image request",
+                                    wait_sec, wait_dur.as_secs()
+                                );
+                                tokio::time::sleep(wait_dur).await;
+                                busy_accounts.clear();
+                                continue;
+                            }
+                        }
+
                         if busy_accounts.is_empty() {
                             return Err((
                                 StatusCode::SERVICE_UNAVAILABLE,

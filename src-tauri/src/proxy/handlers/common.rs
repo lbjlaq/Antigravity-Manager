@@ -312,6 +312,24 @@ pub fn determine_retry_strategy_adaptive(
                 return RetryStrategy::NoRetry;
             }
 
+            // [FIX #3329, #3409] 关键防线：微间隙优先原地 GraceRetry (Micro-gap Grace Retry First)
+            // 若上游返回了明确且极短的重置延迟 (<= 2500ms，例如 Google 图像生成典型的 1.17s quotaResetDelay)
+            // 且该账号本轮尚未执行过 GraceRetry：
+            // 绝不能在第 1 轮就无脑 50ms 闪电切号！
+            // 因为 50ms 闪电切号会在 300ms 内把全池所有账号全部轮询打一遍，并将它们全部作为 RateLimitExceeded 封锁进入 RateLimitTracker，
+            // 导致所有账号在第 2 轮全部处于限流冷却中并抛出 503 "All accounts limited"（生图成功率骤降至 13% 的根因）。
+            // 优先在当前账号原地等待 actual_ms (如 1.37s) 并在上游配额刚恢复的瞬间重试，即可原地满血复活，完全避免全池被连坐封死！
+            if let Some(delay) = parsed_delay {
+                let actual_ms = delay.actual_wait_ms();
+                if actual_ms <= 2500 && allow_grace_retry {
+                    tracing::info!(
+                        "[Retry] Multi-account 429 micro-gap ({}ms <= 2500ms): applying GraceRetry on current account instead of fast-rotating to protect pool",
+                        actual_ms
+                    );
+                    return RetryStrategy::GraceRetry(Duration::from_millis(actual_ms));
+                }
+            }
+
             let is_first_round = attempt < pool_size;
             if is_first_round {
                 // Round 1 (第一轮)：全池闪电快切，毫秒级逃逸至其他健康账号
