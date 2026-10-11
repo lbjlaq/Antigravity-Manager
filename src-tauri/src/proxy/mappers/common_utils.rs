@@ -1930,8 +1930,8 @@ pub fn wrap_in_system_reminder(content: &str) -> String {
     )
 }
 
-/// [DEFENSE] 报文结构保底文本。只补一个中性短句，不引导模型进入分析或改代码。
-pub const TRANSIT_DEFENSE_FALLBACK_TEXT: &str = "ok go on";
+/// [DEFENSE] 报文结构保底文本。只补一个惰性标点，不引导模型进入分析或改代码，防止破坏 AI Agent 确认状态机 (Fixes #3629)。
+pub const TRANSIT_DEFENSE_FALLBACK_TEXT: &str = ".";
 
 /// [DEFENSE] 通用中转报文保底防御节点（协议无关性）
 /// 确保发给 Google Gemini 的报文末尾轮次严格符合规范：

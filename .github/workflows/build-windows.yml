@@ -1,0 +1,148 @@
+name: Build Windows Executable
+
+on:
+  push:
+    branches:
+      - beta
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish as a GitHub Release on this repository'
+        required: false
+        type: boolean
+        default: true
+      release_tag:
+        description: 'Release Tag (leave empty to auto-detect from package.json)'
+        required: false
+        default: ''
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-windows:
+    name: Build Windows Installer (.exe)
+    runs-on: windows-2025
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Version and Tag
+        id: version_info
+        shell: pwsh
+        run: |
+          $pkgVersion = (Get-Content package.json | ConvertFrom-Json).version
+          $inputTag = "${{ github.event.inputs.release_tag }}"
+          if (-not [string]::IsNullOrWhiteSpace($inputTag)) {
+            $tagName = $inputTag
+          } elseif ("${{ github.ref }}" -like "refs/tags/*") {
+            $tagName = "${{ github.ref_name }}"
+          } else {
+            $tagName = "v$pkgVersion"
+          }
+          Write-Host "Resolved Version: $pkgVersion"
+          Write-Host "Resolved Tag: $tagName"
+          "version=$pkgVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag_name=$tagName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+
+      - name: Node.js setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install frontend dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Disable updater artifacts without signing key
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if (-not [string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            Write-Host "Updater signing key is configured; keeping updater artifacts enabled."
+            exit 0
+          }
+          $configPath = "src-tauri/tauri.conf.json"
+          $config = Get-Content -Raw $configPath | ConvertFrom-Json
+          $config.bundle.createUpdaterArtifacts = $false
+          $config | ConvertTo-Json -Depth 32 | Set-Content -Path $configPath -Encoding UTF8
+          Write-Host "No updater signing key configured; disabled updater artifacts for unsigned build."
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Tauri Windows NSIS Installer
+        run: npm run tauri build -- --bundles nsis
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Collect and Rename Installable Executables
+        id: collect_artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-artifacts
+          $nsisExes = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis/*.exe"
+          if ($nsisExes.Count -eq 0) {
+            $nsisExes = Get-ChildItem -Path "src-tauri/target/*/release/bundle/nsis/*.exe"
+          }
+          Write-Host "Found NSIS Installers:"
+          foreach ($f in $nsisExes) {
+            Write-Host " - $($f.FullName)"
+            Copy-Item -Path $f.FullName -Destination "dist-artifacts/"
+            Copy-Item -Path $f.FullName -Destination "dist-artifacts/Antigravity-Manager-Setup.exe"
+          }
+          $files = Get-ChildItem -Path "dist-artifacts"
+          Write-Host "Staged dist-artifacts:"
+          $files | ForEach-Object { Write-Host " - $($_.Name) ($($_.Length) bytes)" }
+
+      - name: Upload Windows Executable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Antigravity-Manager-Windows-Installer
+          path: dist-artifacts/*
+          retention-days: 30
+
+      - name: Publish or Update GitHub Release
+        if: github.event.inputs.create_release != 'false'
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          tag: ${{ steps.version_info.outputs.tag_name }}
+          name: "Antigravity Tools ${{ steps.version_info.outputs.tag_name }}"
+          body: |
+            ## Automated Build (${{ steps.version_info.outputs.tag_name }})
+            
+            This release contains all consolidated upstream and custom improvements:
+            - **Cross-Model Lockout Isolation** (PR #3640 / Fixes #3627)
+            - **Imagen 3 Micro-gap Grace Retry & Queue Cooldown Rescue** (PR #3641 / Fixes #3329, #3409)
+            - **In-Session Quota Auto-Failover & Sticky Zero-Quota Handover** (PR #3642 / Fixes #3639, Ref #3509)
+            - **Google Veo 3.1 Video Generation Pipeline** (PR #3643 / Resolves #253)
+            - **Claude Cowork Deep Compact State Machine Hardening** (PR #3644 / Ref #3576)
+            - **Earliest Deadline First (EDF) Weekly Quota Reset Scheduling** (PR #3645 / Fixes #549, Ref #900)
+            
+            ### Download Windows Installer:
+            Download `Antigravity-Manager-Setup.exe` below and run to install or update directly!
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: "dist-artifacts/*"
+          artifactErrorsFailBuild: false
+          replacesArtifacts: true
+          prerelease: true
+          makeLatest: true
