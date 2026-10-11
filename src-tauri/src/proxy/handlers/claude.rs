@@ -45,7 +45,7 @@ static COMPACTION_IMMUNITY_LEASES: LazyLock<DashMap<String, CompactionImmunityLe
     LazyLock::new(DashMap::new);
 
 const COMPACTION_IMMUNITY_INITIAL_TTL_SECS: u64 = 300;
-const COMPACTION_IMMUNITY_WINDOW_SECS: u64 = 30;
+const COMPACTION_IMMUNITY_WINDOW_SECS: u64 = 60; // 调优至 60 秒，覆盖长工具调用与慢推理，杜绝 Double-400 (RFC #3576)
 
 /// 压缩模式类型：区分手动 ./compact 指令驱动与自动超限自愈门禁驱动
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,9 +116,9 @@ pub fn prune_just_compacted_cache_if_needed() {
 }
 
 /// 深度检测请求前几条消息是否包含 post-compaction continuation 接续标记
-/// 遍历前 3 条消息中所有的 Text 内容块，彻底解决 <system-reminder> 块遮挡接续标记导致漏检的问题
+/// 遍历前 5 条消息中所有的 Text 内容块，彻底解决多轮 <system-reminder> / 环境详情块遮挡接续标记导致漏检的问题
 pub fn detect_post_compaction_continuation(request: &ClaudeRequest) -> bool {
-    for m in request.messages.iter().take(3) {
+    for m in request.messages.iter().take(5) {
         match &m.content {
             crate::proxy::mappers::claude::models::MessageContent::String(s) => {
                 if crate::proxy::mappers::common_utils::is_post_compaction_continuation_text(s) {
@@ -187,7 +187,9 @@ fn is_manual_compact_command(request: &ClaudeRequest) -> bool {
                 || lower == ".\\compact"
                 || lower == "./compact."
                 || lower == "/compact"
+                || lower == "/compact."
                 || lower.starts_with("./compact ")
+                || lower.starts_with("/compact ")
             {
                 return true;
             }
@@ -4557,5 +4559,62 @@ mod warmup_tests {
         // 3. 差额足以让客户端 last_turn_tokens (~1000) 使得 Ne = gap - last_turn <= 0，
         // 从而直接跳过 CHt 倒算二分折半保护，实现深度全量压缩
         assert!(gap < 1_000);
+    }
+
+    #[test]
+    fn test_detect_post_compaction_continuation_with_preceding_reminders_and_extended_scan() {
+        // 构造包含多轮前置 system-reminder 与环境详情的接续请求 (第 4 条为包含 <summary> 的接续轮)
+        let req = ClaudeRequest {
+            messages: vec![
+                ClaudeMessage {
+                    role: "user".to_string(),
+                    content: MessageContent::String("<system-reminder>Token limit warning</system-reminder>".to_string()),
+                },
+                ClaudeMessage {
+                    role: "user".to_string(),
+                    content: MessageContent::String("<environment_details>cwd: /project</environment_details>".to_string()),
+                },
+                ClaudeMessage {
+                    role: "user".to_string(),
+                    content: MessageContent::String("Let's continue working on the task.".to_string()),
+                },
+                ClaudeMessage {
+                    role: "user".to_string(),
+                    content: MessageContent::String("Here is the summary of what we did:\n<summary>\n1. Initialized repo\n2. Fixed issue #3639\n</summary>".to_string()),
+                },
+            ],
+            ..Default::default()
+        };
+
+        // 扩展扫描深度至前 5 轮后，必须能穿透前置 reminder 成功命中接续标记
+        assert!(
+            detect_post_compaction_continuation(&req),
+            "多轮前置系统提醒遮挡下的接续请求必须能被精准识别"
+        );
+    }
+
+    #[test]
+    fn test_is_manual_compact_command_variants() {
+        for cmd in [
+            "./compact",
+            ".\\compact",
+            "./compact.",
+            "/compact",
+            "/compact.",
+            "./compact --force",
+            "/compact please",
+        ] {
+            let req = ClaudeRequest {
+                messages: vec![ClaudeMessage {
+                    role: "user".to_string(),
+                    content: MessageContent::String(cmd.to_string()),
+                }],
+                ..Default::default()
+            };
+            assert!(
+                is_manual_compact_command(&req),
+                "命令 '{cmd}' 必须被识别为手动 compact 指令"
+            );
+        }
     }
 }
