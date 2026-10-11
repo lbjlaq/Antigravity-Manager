@@ -7687,7 +7687,7 @@ pub async fn handle_videos_generations(
             &upstream_method,
             &access_token,
             payload,
-            "",
+            None,
             extra_headers,
             None,
         )
