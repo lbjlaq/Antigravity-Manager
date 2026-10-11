@@ -51,6 +51,7 @@ fn create_test_token(
         protected_models: HashSet::new(),
         health_score,
         reset_time,
+        weekly_reset_time: None,
         validation_blocked: false,
         validation_blocked_until: 0,
         validation_url: None,

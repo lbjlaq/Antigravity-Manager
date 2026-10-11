@@ -133,6 +133,7 @@ pub struct ProxyToken {
     pub protected_models: HashSet<String>, // [NEW #621]
     pub health_score: f32,                 // [NEW] 健康分数 (0.0 - 1.0)
     pub reset_time: Option<i64>,           // [NEW] 配额刷新时间戳（用于排序优化）
+    pub weekly_reset_time: Option<i64>,    // [NEW] 周配额刷新时间戳（用于临期优先调度 EDF，防止周期重置作废配额）
     pub validation_blocked: bool, // [NEW] Check for validation block (VALIDATION_REQUIRED temporary block)
     pub validation_blocked_until: i64, // [NEW] Timestamp until which the account is blocked
     pub validation_url: Option<String>, // [NEW] Validation URL (#1522)
@@ -1071,6 +1072,8 @@ impl TokenManager {
 
         // [NEW] 提取最近的配额刷新时间（用于排序优化：刷新时间越近优先级越高）
         let reset_time = self.extract_earliest_reset_time(&account);
+        // [NEW] 提取周配额刷新时间（来自 retrieveUserQuotaSummary 的 weekly/7d 窗口，用于临期优先消耗）
+        let weekly_reset_time = self.extract_weekly_reset_time(&account);
 
         // [OPTIMIZATION] 构建模型配额内存缓存，避免排序时读取磁盘
         let mut model_quotas = HashMap::new();
@@ -1175,6 +1178,7 @@ impl TokenManager {
             protected_models,
             health_score,
             reset_time,
+            weekly_reset_time,
             validation_blocked: account
                 .get("validation_blocked")
                 .and_then(|v| v.as_bool())
@@ -1842,7 +1846,7 @@ impl TokenManager {
         let c1 = available[pick1];
         let c2 = available[pick2];
 
-        // 选择目标模型配额更高者（以模型专属配额优先，其次账号综合配额）
+        // 目标模型配额提取
         let q1 = c1
             .model_quotas
             .get(normalized_target)
@@ -1854,7 +1858,28 @@ impl TokenManager {
             .copied()
             .unwrap_or_else(|| c2.remaining_quota.unwrap_or(0));
 
-        let selected = if q1 >= q2 { c1 } else { c2 };
+        // P2C 临期感知选择：若一候选账号存在临期配额 (<= 24h 重置且 q > 0)，优先抽中该临期账号防止配额作废
+        let now_ts = chrono::Utc::now().timestamp();
+        let get_imminent = |t: &ProxyToken, q: i32| -> Option<i64> {
+            if q <= 0 { return None; }
+            if let Some(w) = t.weekly_reset_time {
+                if w > now_ts && (w - now_ts) <= 86400 { return Some(w); }
+            }
+            if let Some(r) = t.reset_time {
+                if r > now_ts && (r - now_ts) <= 7200 { return Some(r); }
+            }
+            None
+        };
+
+        let imm1 = get_imminent(c1, q1);
+        let imm2 = get_imminent(c2, q2);
+
+        let selected = match (imm1, imm2) {
+            (Some(ts1), Some(ts2)) => if ts1 <= ts2 { c1 } else { c2 },
+            (Some(_), None) => c1,
+            (None, Some(_)) => c2,
+            (None, None) => if q1 >= q2 { c1 } else { c2 },
+        };
 
         tracing::debug!(
             "🎲 [P2C] Selected {} ({}%) from [{}({}%), {}({}%)]",
@@ -2231,11 +2256,56 @@ impl TokenManager {
                 return tier_cmp;
             }
 
-            // Priority 1: 目标模型的 quota (higher is better) -> 保护低配额账号
-            // 经过过滤，key 肯定存在
+            // 提取目标模型配额
             let quota_a = a.model_quotas.get(&normalized_target).copied().unwrap_or(0);
             let quota_b = b.model_quotas.get(&normalized_target).copied().unwrap_or(0);
 
+            // [NEW] Priority 0.5: 临期配额优先消耗 (Earliest Deadline First / Use-It-Or-Lose-It)
+            // 针对 Gemini / Claude 账号池的核心经济学优化：
+            // Google 对 Pro/Ultra 账号设置了周额度上限（7d 窗口）和 5h 滚动窗口。
+            // 当一个账号的周额度即将重置（例如 < 24 小时）且该账号仍有可用额度 (> 0%) 时，
+            // 若不尽快消耗该账号，未用配额将在周期重置时被彻底清零作废！
+            // 相反，重置时间还遥遥无期（如 5~7 天后）的账号即使配额多，也应当退居其后，让临期配额先行释放。
+            let now_ts = chrono::Utc::now().timestamp();
+            let get_imminent_deadline = |t: &ProxyToken, q: i32| -> Option<i64> {
+                if q <= 0 {
+                    return None; // 0% 额度的账号无剩余额度可供消耗，绝不提权
+                }
+                // 1. 周配额重置检测：24小时内重置视为临期
+                const WEEKLY_IMMINENT_HORIZON_SECS: i64 = 86400; // 24小时
+                if let Some(w_ts) = t.weekly_reset_time {
+                    if w_ts > now_ts && (w_ts - now_ts) <= WEEKLY_IMMINENT_HORIZON_SECS {
+                        return Some(w_ts);
+                    }
+                }
+                // 2. 滚动 5h 配额重置检测：2小时内重置视为临期
+                const SHORT_IMMINENT_HORIZON_SECS: i64 = 7200; // 2小时
+                if let Some(r_ts) = t.reset_time {
+                    if r_ts > now_ts && (r_ts - now_ts) <= SHORT_IMMINENT_HORIZON_SECS {
+                        return Some(r_ts);
+                    }
+                }
+                None
+            };
+
+            let imminent_a = get_imminent_deadline(a, quota_a);
+            let imminent_b = get_imminent_deadline(b, quota_b);
+
+            match (imminent_a, imminent_b) {
+                (Some(ts_a), Some(ts_b)) => {
+                    // 两者皆处于临期窗口：最早过期者优先使用 (Earliest Deadline First)
+                    let deadline_cmp = ts_a.cmp(&ts_b);
+                    if deadline_cmp != std::cmp::Ordering::Equal {
+                        return deadline_cmp;
+                    }
+                }
+                (Some(_), None) => return std::cmp::Ordering::Less, // a 临期，优先消耗 a
+                (None, Some(_)) => return std::cmp::Ordering::Greater, // b 临期，优先消耗 b
+                (None, None) => {} // 皆非临期，走正常配额比对
+            }
+
+            // Priority 1: 目标模型的 quota (higher is better) -> 保护低配额账号
+            // 经过过滤，key 肯定存在
             let quota_cmp = quota_b.cmp(&quota_a);
             if quota_cmp != std::cmp::Ordering::Equal {
                 return quota_cmp;
@@ -4273,6 +4343,48 @@ impl TokenManager {
         earliest_ts
     }
 
+    /// [NEW] 从账号配额信息中提取周配额重置时间戳 (来自 retrieveUserQuotaSummary 的 7d/week 桶)
+    /// 用于 Earliest Deadline First (EDF) 临期优先调度，防止周周期重置作废剩余配额
+    fn extract_weekly_reset_time(&self, account: &serde_json::Value) -> Option<i64> {
+        let groups = account
+            .get("quota")
+            .and_then(|q| q.get("quota_groups"))
+            .and_then(|g| g.as_array())?;
+
+        let mut earliest_weekly_ts: Option<i64> = None;
+
+        for group in groups {
+            if let Some(buckets) = group.get("buckets").and_then(|b| b.as_array()) {
+                for bucket in buckets {
+                    let window = bucket.get("window").and_then(|w| w.as_str()).unwrap_or("");
+                    let bucket_id = bucket.get("bucket_id").and_then(|b| b.as_str()).unwrap_or("");
+                    let win_lower = window.to_lowercase();
+                    let bid_lower = bucket_id.to_lowercase();
+
+                    let is_weekly = win_lower.contains("week")
+                        || bid_lower.contains("week")
+                        || win_lower.contains("7d")
+                        || bid_lower.contains("7d");
+
+                    if is_weekly {
+                        if let Some(reset_str) = bucket.get("reset_time").and_then(|r| r.as_str()) {
+                            if !reset_str.is_empty() {
+                                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(reset_str) {
+                                    let ts = dt.timestamp();
+                                    if earliest_weekly_ts.is_none() || ts < earliest_weekly_ts.unwrap() {
+                                        earliest_weekly_ts = Some(ts);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        earliest_weekly_ts
+    }
+
     /// Restore official quota windows without replacing independent upstream limits.
     fn sync_zero_quota_circuit_breaker(&self, account_id: &str, account: &serde_json::Value) {
         let lock_on_zero = if let Ok(cfg) = self.circuit_breaker_config.try_read() {
@@ -5530,6 +5642,7 @@ mod tests {
             protected_models: HashSet::new(),
             health_score,
             reset_time,
+            weekly_reset_time: None,
             validation_blocked: false,
             validation_blocked_until: 0,
             validation_url: None,
@@ -5921,6 +6034,7 @@ mod tests {
             protected_models,
             health_score: 1.0,
             reset_time: None,
+            weekly_reset_time: None,
             validation_blocked: false,
             validation_blocked_until: 0,
             validation_url: None,
@@ -6527,6 +6641,7 @@ mod tests {
             protected_models: HashSet::new(),
             health_score: 1.0,
             reset_time: None,
+            weekly_reset_time: None,
             validation_blocked: false,
             validation_blocked_until: 0,
             validation_url: None,
@@ -6554,6 +6669,7 @@ mod tests {
             protected_models: HashSet::new(),
             health_score: 1.0,
             reset_time: None,
+            weekly_reset_time: None,
             validation_blocked: false,
             validation_blocked_until: 0,
             validation_url: None,
@@ -6647,6 +6763,7 @@ mod tests {
             protected_models: HashSet::new(),
             health_score: 1.0,
             reset_time: None,
+            weekly_reset_time: None,
             validation_blocked: false,
             validation_blocked_until: 0,
             validation_url: None,
@@ -6716,6 +6833,7 @@ mod tests {
             protected_models: HashSet::new(),
             health_score: 1.0,
             reset_time: None,
+            weekly_reset_time: None,
             validation_blocked: false,
             validation_blocked_until: 0,
             validation_url: None,
@@ -6973,5 +7091,217 @@ mod tests {
 
         assert_eq!(selected_id, acc_alt_id, "必须自动选择具备额度的备选账号");
         assert_eq!(email, "alt@test.com");
+    }
+
+    #[test]
+    fn test_extract_weekly_reset_time_from_quota_groups() {
+        let manager = TokenManager::new(PathBuf::from("/tmp/test"));
+        let account_json = serde_json::json!({
+            "quota": {
+                "quota_groups": [
+                    {
+                        "displayName": "Gemini",
+                        "buckets": [
+                            {
+                                "bucketId": "gemini_5h",
+                                "window": "5h",
+                                "remainingFraction": 0.8,
+                                "resetTime": "2026-10-11T16:00:00Z"
+                            },
+                            {
+                                "bucketId": "gemini_weekly",
+                                "window": "7d",
+                                "remainingFraction": 0.95,
+                                "resetTime": "2026-10-14T03:00:00Z"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let weekly_ts = manager.extract_weekly_reset_time(&account_json);
+        assert!(weekly_ts.is_some(), "必须成功从 7d/weekly 桶中提取周配额刷新时间戳");
+        let dt = chrono::DateTime::parse_from_rfc3339("2026-10-14T03:00:00Z").unwrap();
+        assert_eq!(weekly_ts.unwrap(), dt.timestamp());
+    }
+
+    #[tokio::test]
+    async fn test_edf_sorting_prioritizes_expiring_weekly_account_over_higher_quota_distant_reset() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        let now_ts = chrono::Utc::now().timestamp();
+
+        let target_model = "gemini-3.8-flash-high";
+
+        // 账号 A: 40% 配额，周配额在 2 小时后重置 (临期，不尽快消耗该配额就会被 Google 作废清零)
+        let mut quotas_a = HashMap::new();
+        quotas_a.insert(target_model.to_string(), 40);
+        let mut token_a = create_test_token("expiring@test.com", Some("PRO"), 1.0, None, Some(40));
+        token_a.account_id = "acc_expiring".to_string();
+        token_a.model_quotas = quotas_a;
+        token_a.weekly_reset_time = Some(now_ts + 7200); // 2 小时后
+
+        // 账号 B: 95% 配额，周配额在 5 天后重置 (非临期，整周还有很多时间可用)
+        let mut quotas_b = HashMap::new();
+        quotas_b.insert(target_model.to_string(), 95);
+        let mut token_b = create_test_token("distant@test.com", Some("PRO"), 1.0, None, Some(95));
+        token_b.account_id = "acc_distant".to_string();
+        token_b.model_quotas = quotas_b;
+        token_b.weekly_reset_time = Some(now_ts + 432_000); // 5 天后
+
+        std::fs::write(temp_dir.path().join("acc_expiring.json"), r#"{"disabled":false}"#).unwrap();
+        std::fs::write(temp_dir.path().join("acc_distant.json"), r#"{"disabled":false}"#).unwrap();
+
+        token_a.account_path = temp_dir.path().join("acc_expiring.json");
+        token_b.account_path = temp_dir.path().join("acc_distant.json");
+
+        manager.tokens.insert(token_a.account_id.clone(), token_a);
+        manager.tokens.insert(token_b.account_id.clone(), token_b);
+
+        // 获取 Token 时，EDF 临期优先调度必须超越生硬的「配额越高越先用」，
+        // 优先选中 2 小时后即将重置的账号 A，最大化释放用户周期资产！
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, None, target_model, &excluded)
+            .await
+            .expect("Token acquisition should succeed");
+
+        assert_eq!(
+            selected_id, "acc_expiring",
+            "EDF 调度必须优先调度临期周配额账号，防止配额被周期重置废弃"
+        );
+        assert_eq!(email, "expiring@test.com");
+    }
+
+    #[tokio::test]
+    async fn test_edf_sorting_both_imminent_earlier_deadline_wins() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        let now_ts = chrono::Utc::now().timestamp();
+
+        let target_model = "gemini-3.8-flash-high";
+
+        // 账号 A: 40% 配额，周配额在 2 小时后重置
+        let mut quotas_a = HashMap::new();
+        quotas_a.insert(target_model.to_string(), 40);
+        let mut token_a = create_test_token("sooner@test.com", Some("PRO"), 1.0, None, Some(40));
+        token_a.account_id = "acc_sooner".to_string();
+        token_a.model_quotas = quotas_a;
+        token_a.weekly_reset_time = Some(now_ts + 7200); // 2 小时后
+
+        // 账号 B: 60% 配额，周配额在 8 小时后重置
+        let mut quotas_b = HashMap::new();
+        quotas_b.insert(target_model.to_string(), 60);
+        let mut token_b = create_test_token("later@test.com", Some("PRO"), 1.0, None, Some(60));
+        token_b.account_id = "acc_later".to_string();
+        token_b.model_quotas = quotas_b;
+        token_b.weekly_reset_time = Some(now_ts + 28800); // 8 小时后
+
+        std::fs::write(temp_dir.path().join("acc_sooner.json"), r#"{"disabled":false}"#).unwrap();
+        std::fs::write(temp_dir.path().join("acc_later.json"), r#"{"disabled":false}"#).unwrap();
+
+        token_a.account_path = temp_dir.path().join("acc_sooner.json");
+        token_b.account_path = temp_dir.path().join("acc_later.json");
+
+        manager.tokens.insert(token_a.account_id.clone(), token_a);
+        manager.tokens.insert(token_b.account_id.clone(), token_b);
+
+        // 两者都在 24 小时临期窗口内，更早过期的账号 A 必须排在前面
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, None, target_model, &excluded)
+            .await
+            .expect("Token acquisition should succeed");
+
+        assert_eq!(selected_id, "acc_sooner");
+        assert_eq!(email, "sooner@test.com");
+    }
+
+    #[tokio::test]
+    async fn test_edf_sorting_distant_resets_preserves_higher_quota_protection() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        let now_ts = chrono::Utc::now().timestamp();
+
+        let target_model = "gemini-3.8-flash-high";
+
+        // 账号 A: 40% 配额，周配额在 4 天后重置 (非临期)
+        let mut quotas_a = HashMap::new();
+        quotas_a.insert(target_model.to_string(), 40);
+        let mut token_a = create_test_token("low_distant@test.com", Some("PRO"), 1.0, None, Some(40));
+        token_a.account_id = "acc_low".to_string();
+        token_a.model_quotas = quotas_a;
+        token_a.weekly_reset_time = Some(now_ts + 345_600); // 4 天后
+
+        // 账号 B: 95% 配额，周配额在 6 天后重置 (非临期)
+        let mut quotas_b = HashMap::new();
+        quotas_b.insert(target_model.to_string(), 95);
+        let mut token_b = create_test_token("high_distant@test.com", Some("PRO"), 1.0, None, Some(95));
+        token_b.account_id = "acc_high".to_string();
+        token_b.model_quotas = quotas_b;
+        token_b.weekly_reset_time = Some(now_ts + 518_400); // 6 天后
+
+        std::fs::write(temp_dir.path().join("acc_low.json"), r#"{"disabled":false}"#).unwrap();
+        std::fs::write(temp_dir.path().join("acc_high.json"), r#"{"disabled":false}"#).unwrap();
+
+        token_a.account_path = temp_dir.path().join("acc_low.json");
+        token_b.account_path = temp_dir.path().join("acc_high.json");
+
+        manager.tokens.insert(token_a.account_id.clone(), token_a);
+        manager.tokens.insert(token_b.account_id.clone(), token_b);
+
+        // 两者皆非临期：保持 Priority 1 规则，高配额账号 B (95%) 优先于低配额账号 A (40%)，保护低配额账号
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, None, target_model, &excluded)
+            .await
+            .expect("Token acquisition should succeed");
+
+        assert_eq!(selected_id, "acc_high", "非临期时应保持高配额优先以保护低配额账号");
+        assert_eq!(email, "high_distant@test.com");
+    }
+
+    #[tokio::test]
+    async fn test_edf_zero_quota_never_elevated() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        let now_ts = chrono::Utc::now().timestamp();
+
+        let target_model = "gemini-3.8-flash-high";
+
+        // 账号 A: 0% 配额，即便 1 小时后重置，也绝不能因为临期被选出（没有额度）
+        let mut quotas_a = HashMap::new();
+        quotas_a.insert(target_model.to_string(), 0);
+        let mut token_a = create_test_token("zero_expiring@test.com", Some("PRO"), 1.0, None, Some(0));
+        token_a.account_id = "acc_zero".to_string();
+        token_a.model_quotas = quotas_a;
+        token_a.weekly_reset_time = Some(now_ts + 3600); // 1 小时后
+
+        // 账号 B: 80% 配额，周配额在 5 天后重置
+        let mut quotas_b = HashMap::new();
+        quotas_b.insert(target_model.to_string(), 80);
+        let mut token_b = create_test_token("has_quota@test.com", Some("PRO"), 1.0, None, Some(80));
+        token_b.account_id = "acc_has".to_string();
+        token_b.model_quotas = quotas_b;
+        token_b.weekly_reset_time = Some(now_ts + 432_000); // 5 天后
+
+        std::fs::write(temp_dir.path().join("acc_zero.json"), r#"{"disabled":false}"#).unwrap();
+        std::fs::write(temp_dir.path().join("acc_has.json"), r#"{"disabled":false}"#).unwrap();
+
+        token_a.account_path = temp_dir.path().join("acc_zero.json");
+        token_b.account_path = temp_dir.path().join("acc_has.json");
+
+        manager.tokens.insert(token_a.account_id.clone(), token_a);
+        manager.tokens.insert(token_b.account_id.clone(), token_b);
+
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, None, target_model, &excluded)
+            .await
+            .expect("Token acquisition should succeed");
+
+        assert_eq!(selected_id, "acc_has", "0% 配额账号即便临期也绝不得被提权选中");
+        assert_eq!(email, "has_quota@test.com");
     }
 }
