@@ -7636,3 +7636,83 @@ async fn try_compress_openai_with_summary(
     forked_request.messages = forked_messages;
     Ok(forked_request)
 }
+
+/// OpenAI Videos API: POST /v1/videos/generations 及 /v1/video/generations (Issue #253)
+/// 处理多模态 Google Veo 3.1 视频生成请求
+pub async fn handle_videos_generations(
+    State(state): State<AppState>,
+    _headers: HeaderMap,
+    Json(req): Json<crate::proxy::video::VideoGenerationRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    if req.prompt.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "Missing or empty 'prompt' field".to_string()));
+    }
+
+    let raw_model = req.model.as_deref().unwrap_or("veo-3.1");
+    let target_model = crate::proxy::video::normalize_veo_model(raw_model)
+        .unwrap_or("veo-3.1");
+
+    info!(
+        model = target_model,
+        prompt_len = req.prompt.len(),
+        aspect_ratio = req.aspect_ratio.as_deref().unwrap_or("16:9"),
+        "[Video] Received video generation request"
+    );
+
+    let payload = crate::proxy::video::build_veo_payload(&req);
+    let upstream = state.upstream.clone();
+    let token_manager = state.token_manager.clone();
+    let affinity_key = req.prompt.clone();
+
+    // 获取可用 Token 凭据
+    let (access_token, _project_id, _email, _account_id, _wait_ms) = match token_manager
+        .get_token("chat", false, Some(&affinity_key), target_model)
+        .await
+    {
+        Ok(token) => token,
+        Err(e) => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("Token acquisition error for video generation: {}", e),
+            ));
+        }
+    };
+
+    // 上游 Veo 3.1 预测端点
+    let upstream_method = format!("models/{}:predictLongRunning", target_model);
+    let extra_headers = std::collections::HashMap::new();
+
+    let call_result = upstream
+        .call_v1_internal_with_headers(
+            &upstream_method,
+            &access_token,
+            payload,
+            "",
+            extra_headers,
+            None,
+        )
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Upstream Veo request failed: {}", e)))?;
+
+    let status = call_result.response.status();
+    if !status.is_success() {
+        let err_text = call_result
+            .response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown upstream error".to_string());
+        return Err((
+            status,
+            format!("Upstream Veo error (HTTP {}): {}", status.as_u16(), err_text),
+        ));
+    }
+
+    let resp_json: Value = call_result
+        .response
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Failed to parse Veo response JSON: {}", e)))?;
+
+    let video_response = crate::proxy::video::parse_veo_response(&resp_json, target_model);
+    Ok(Json(video_response))
+}
