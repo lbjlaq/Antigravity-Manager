@@ -661,6 +661,14 @@ impl AxumServer {
                 post(handlers::openai::handle_images_edits),
             ) // 图像编辑 API
             .route(
+                "/v1/videos/generations",
+                post(handlers::openai::handle_videos_generations),
+            ) // 视频生成 API (Issue #253)
+            .route(
+                "/v1/video/generations",
+                post(handlers::openai::handle_videos_generations),
+            ) // 视频生成 API 别名
+            .route(
                 "/v1/audio/transcriptions",
                 post(handlers::audio::handle_audio_transcription),
             ) // 音频转录 API

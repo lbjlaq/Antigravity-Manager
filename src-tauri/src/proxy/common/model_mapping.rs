@@ -78,6 +78,15 @@ static CLAUDE_TO_GEMINI: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|
     m.insert("gemini-3.1-flash-image", "gemini-3.1-flash-image");
     m.insert("gemini-3-pro-image", "gemini-3-pro-image");
 
+    // ── Google Veo 视频生成系列 (Issue #253) ──
+    m.insert("veo", "veo-3.1");
+    m.insert("veo-3", "veo-3.1");
+    m.insert("veo-3.1", "veo-3.1");
+    m.insert("veo-3.1-generate", "veo-3.1");
+    m.insert("veo-2", "veo-2.0-generate-001");
+    m.insert("veo-2.0", "veo-2.0-generate-001");
+    m.insert("veo-2.0-generate-001", "veo-2.0-generate-001");
+
     // 历史淘汰模型重定向。保留旧版请求兼容性，平滑路由到新版健康模型。gemini-3-flash-agent 是 3.5 Flash high 的真实上游 id，保持透传。
     m.insert("gemini-3-flash", "gemini-3.8-flash-high");
     m.insert("gemini-1.5-pro", "gemini-pro-agent");
@@ -241,8 +250,8 @@ pub fn map_claude_model_to_gemini(input: &str) -> String {
         return target.to_string();
     }
 
-    // 3. Known prefixes (gemini-, -thinking) pass-through
-    if canonical.starts_with("gemini-") || canonical.contains("thinking") {
+    // 3. Known prefixes (gemini-, -thinking, veo-) pass-through
+    if canonical.starts_with("gemini-") || canonical.contains("thinking") || canonical.starts_with("veo-") {
         return canonical;
     }
 

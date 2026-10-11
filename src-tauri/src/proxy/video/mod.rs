@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose, Engine as _};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -153,6 +154,179 @@ fn warn_if_oversized(base64_len: usize, mime: &str) {
     }
 }
 
+// ============================================================================
+// Google Veo 3.1 视频生成支持 (Issue #253)
+// ============================================================================
+
+/// 判定是否属于 Google Veo 视频生成系列模型
+pub fn is_veo_model(model: &str) -> bool {
+    let lower = model.to_lowercase();
+    lower.starts_with("veo-") || lower == "veo" || lower.contains("veo-3") || lower.contains("veo-2")
+}
+
+/// 归一化 Veo 模型名称为官方标准 ID
+pub fn normalize_veo_model(model: &str) -> Option<&'static str> {
+    let lower = model.trim().to_lowercase();
+    match lower.as_str() {
+        "veo" | "veo-3" | "veo-3.1" | "veo-3.1-generate" | "veo-3-generate" => Some("veo-3.1"),
+        "veo-2" | "veo-2.0" | "veo-2.0-generate-001" => Some("veo-2.0-generate-001"),
+        _ if lower.starts_with("veo-3") => Some("veo-3.1"),
+        _ if lower.starts_with("veo-2") => Some("veo-2.0-generate-001"),
+        _ => None,
+    }
+}
+
+/// OpenAI 格式兼容的视频生成请求体 (POST /v1/videos/generations)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoGenerationRequest {
+    pub prompt: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub aspect_ratio: Option<String>,
+    #[serde(default)]
+    pub duration_seconds: Option<u32>,
+    #[serde(default)]
+    pub fps: Option<u32>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub response_format: Option<String>,
+}
+
+/// 视频生成响应项
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub b64_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revised_prompt: Option<String>,
+}
+
+/// OpenAI 格式兼容的视频生成响应体
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoGenerationResponse {
+    pub id: String,
+    pub object: String,
+    pub created: i64,
+    pub model: String,
+    pub data: Vec<VideoData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
+/// 构建 Google Veo 3.1 上游预测 Payload (predictLongRunning / generateVideo 契约)
+pub fn build_veo_payload(req: &VideoGenerationRequest) -> Value {
+    let aspect_ratio = req.aspect_ratio.as_deref().unwrap_or("16:9");
+    let duration = req.duration_seconds.unwrap_or(5).clamp(3, 8);
+    let fps = req.fps.unwrap_or(24);
+
+    let mut instance = json!({
+        "prompt": req.prompt,
+    });
+
+    // 如果携带图片参考（图生视频 Image-to-Video）
+    if let Some(ref img_ref) = req.image {
+        if let Some(part) = video_part_from_source(img_ref, None) {
+            instance["image"] = part;
+        }
+    }
+
+    json!({
+        "instances": [instance],
+        "parameters": {
+            "aspectRatio": aspect_ratio,
+            "durationSeconds": duration,
+            "fps": fps,
+            "sampleCount": 1
+        }
+    })
+}
+
+/// 解析上游返回的视频生成报文为 OpenAI 标准格式
+pub fn parse_veo_response(resp: &Value, model_name: &str) -> VideoGenerationResponse {
+    let now = chrono::Utc::now().timestamp();
+    let task_id = format!("video-{}", uuid::Uuid::new_v4().simple());
+
+    let mut data = Vec::new();
+
+    // 检查标准 predictions 数组结构
+    if let Some(predictions) = resp.get("predictions").and_then(|p| p.as_array()) {
+        for pred in predictions {
+            let mut item = VideoData {
+                url: None,
+                b64_json: None,
+                revised_prompt: None,
+            };
+
+            if let Some(bytes_b64) = pred.get("bytesBase64Encoded").and_then(|b| b.as_str()) {
+                item.b64_json = Some(bytes_b64.to_string());
+            } else if let Some(uri) = pred.get("gcsUri").or_else(|| pred.get("uri")).and_then(|u| u.as_str()) {
+                item.url = Some(uri.to_string());
+            } else if let Some(video_obj) = pred.get("video") {
+                if let Some(uri) = video_obj.get("uri").and_then(|u| u.as_str()) {
+                    item.url = Some(uri.to_string());
+                } else if let Some(b64) = video_obj.get("bytesBase64Encoded").and_then(|b| b.as_str()) {
+                    item.b64_json = Some(b64.to_string());
+                }
+            }
+
+            if let Some(prompt) = pred.get("revisedPrompt").and_then(|p| p.as_str()) {
+                item.revised_prompt = Some(prompt.to_string());
+            }
+
+            data.push(item);
+        }
+    }
+
+    // 检查 Gemini candidates 格式回退
+    if data.is_empty() {
+        if let Some(candidates) = resp.get("candidates").and_then(|c| c.as_array()) {
+            for cand in candidates {
+                if let Some(parts) = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+                    for part in parts {
+                        if let Some(inline) = part.get("inlineData") {
+                            if let Some(b64) = inline.get("data").and_then(|d| d.as_str()) {
+                                data.push(VideoData {
+                                    url: None,
+                                    b64_json: Some(b64.to_string()),
+                                    revised_prompt: None,
+                                });
+                            }
+                        } else if let Some(file_data) = part.get("fileData") {
+                            if let Some(uri) = file_data.get("fileUri").and_then(|u| u.as_str()) {
+                                data.push(VideoData {
+                                    url: Some(uri.to_string()),
+                                    b64_json: None,
+                                    revised_prompt: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 若依然为空且有 response 包装
+    if data.is_empty() {
+        if let Some(inner) = resp.get("response") {
+            return parse_veo_response(inner, model_name);
+        }
+    }
+
+    VideoGenerationResponse {
+        id: task_id,
+        object: "video.generation".to_string(),
+        created: now,
+        model: model_name.to_string(),
+        data,
+        status: Some("completed".to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +343,58 @@ mod tests {
         let part = video_part_from_source("https://example.com/demo.webm", None).unwrap();
         assert_eq!(part["fileData"]["fileUri"], "https://example.com/demo.webm");
         assert_eq!(part["fileData"]["mimeType"], "video/webm");
+    }
+
+    #[test]
+    fn test_is_veo_model_and_normalize() {
+        assert!(is_veo_model("veo-3.1"));
+        assert!(is_veo_model("veo-3"));
+        assert!(is_veo_model("veo"));
+        assert!(is_veo_model("veo-2.0-generate-001"));
+        assert!(!is_veo_model("gemini-3.1-flash-image"));
+        assert!(!is_veo_model("claude-sonnet-4-6"));
+
+        assert_eq!(normalize_veo_model("veo"), Some("veo-3.1"));
+        assert_eq!(normalize_veo_model("veo-3"), Some("veo-3.1"));
+        assert_eq!(normalize_veo_model("veo-3.1"), Some("veo-3.1"));
+        assert_eq!(normalize_veo_model("veo-2"), Some("veo-2.0-generate-001"));
+        assert_eq!(normalize_veo_model("gpt-4o"), None);
+    }
+
+    #[test]
+    fn test_build_veo_payload_and_parse_response() {
+        let req = VideoGenerationRequest {
+            prompt: "A neon cyberpunk car driving in rain".to_string(),
+            model: Some("veo-3.1".to_string()),
+            aspect_ratio: Some("16:9".to_string()),
+            duration_seconds: Some(5),
+            fps: Some(24),
+            image: None,
+            response_format: Some("url".to_string()),
+        };
+
+        let payload = build_veo_payload(&req);
+        assert_eq!(payload["instances"][0]["prompt"], "A neon cyberpunk car driving in rain");
+        assert_eq!(payload["parameters"]["aspectRatio"], "16:9");
+        assert_eq!(payload["parameters"]["durationSeconds"], 5);
+
+        let upstream_resp = json!({
+            "predictions": [
+                {
+                    "gcsUri": "gs://bucket/sample_video.mp4",
+                    "revisedPrompt": "A neon cyberpunk car driving in heavy rain at night"
+                }
+            ]
+        });
+
+        let parsed = parse_veo_response(&upstream_resp, "veo-3.1");
+        assert_eq!(parsed.model, "veo-3.1");
+        assert_eq!(parsed.object, "video.generation");
+        assert_eq!(parsed.data.len(), 1);
+        assert_eq!(parsed.data[0].url.as_deref(), Some("gs://bucket/sample_video.mp4"));
+        assert_eq!(
+            parsed.data[0].revised_prompt.as_deref(),
+            Some("A neon cyberpunk car driving in heavy rain at night")
+        );
     }
 }
