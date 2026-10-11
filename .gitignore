@@ -70,3 +70,6 @@ docs/CODEBASE_ALIGNMENT_ANALYSIS.md
 
 # Captured payload samples (contain real thought signatures — never push)
 testJson/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

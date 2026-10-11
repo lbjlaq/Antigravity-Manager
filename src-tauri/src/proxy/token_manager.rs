@@ -1811,6 +1811,17 @@ impl TokenManager {
         // Keep lower-priority groups for retries; only this draw is restricted.
         let priority = available.iter().map(|t| t.priority).min()?;
         available.retain(|t| t.priority == priority);
+
+        // [FIX #3639] 优先保留对目标模型具备正配额 (> 0%) 的账号，防止抽中已知 0% 额度的账号导致 429
+        let has_positive_model_quota = available
+            .iter()
+            .any(|t| t.model_quotas.get(normalized_target).copied().unwrap_or(0) > 0);
+        if has_positive_model_quota {
+            available.retain(|t| {
+                t.model_quotas.get(normalized_target).copied().unwrap_or(0) > 0
+            });
+        }
+
         if available.len() == 1 {
             return Some(available[0]);
         }
@@ -1831,12 +1842,19 @@ impl TokenManager {
         let c1 = available[pick1];
         let c2 = available[pick2];
 
-        // 选择配额更高的
-        let selected = if c1.remaining_quota.unwrap_or(0) >= c2.remaining_quota.unwrap_or(0) {
-            c1
-        } else {
-            c2
-        };
+        // 选择目标模型配额更高者（以模型专属配额优先，其次账号综合配额）
+        let q1 = c1
+            .model_quotas
+            .get(normalized_target)
+            .copied()
+            .unwrap_or_else(|| c1.remaining_quota.unwrap_or(0));
+        let q2 = c2
+            .model_quotas
+            .get(normalized_target)
+            .copied()
+            .unwrap_or_else(|| c2.remaining_quota.unwrap_or(0));
+
+        let selected = if q1 >= q2 { c1 } else { c2 };
 
         tracing::debug!(
             "🎲 [P2C] Selected {} ({}%) from [{}({}%), {}({}%)]",
@@ -2339,7 +2357,26 @@ impl TokenManager {
                                     .protected_models
                                     .contains(&normalized_target);
 
-                            if !is_rate_limited && !is_quota_protected {
+                            // [FIX #3639] 检查优先账号的目标模型配额：若已知为 0% 且池中有具备正配额的替代账号，自动逃逸切换
+                            let has_zero_quota = preferred_token
+                                .model_quotas
+                                .get(&normalized_target)
+                                .copied()
+                                .unwrap_or(100)
+                                <= 0;
+                            let has_healthy_alternative = tokens_snapshot.iter().any(|t| {
+                                t.account_id != preferred_token.account_id
+                                    && !self.rate_limit_tracker.is_rate_limited(&t.account_id, Some(&normalized_target))
+                                    && t.model_quotas.get(&normalized_target).copied().unwrap_or(0) > 0
+                            });
+
+                            if has_zero_quota && has_healthy_alternative {
+                                tracing::warn!(
+                                    "🔒 [Auto-Switch #3639] Preferred account {} has 0% quota for model {}, seamlessly falling back to available account in pool",
+                                    preferred_token.email,
+                                    normalized_target
+                                );
+                            } else if !is_rate_limited && !is_quota_protected {
                                 tracing::info!(
                                     "🔒 [FIX #820] Using preferred account: {} (fixed mode)",
                                     preferred_token.email
@@ -2453,12 +2490,33 @@ impl TokenManager {
                         let reset_sec = self
                             .rate_limit_tracker
                             .get_remaining_wait(&key, Some(&normalized_target));
+                        let bound_zero_quota = bound_token
+                            .model_quotas
+                            .get(&normalized_target)
+                            .copied()
+                            .unwrap_or(100)
+                            <= 0;
+                        let has_healthy_alternative = tokens_snapshot.iter().any(|t| {
+                            t.account_id != bound_token.account_id
+                                && !attempted.contains(&t.account_id)
+                                && !self.rate_limit_tracker.is_rate_limited(&t.account_id, Some(&normalized_target))
+                                && t.model_quotas.get(&normalized_target).copied().unwrap_or(0) > 0
+                        });
+
                         if reset_sec > 0 {
                             // 【修复 Issue #284】立即解绑并切换账号，不再阻塞等待
                             // 原因：阻塞等待会导致并发请求时客户端 socket 超时 (UND_ERR_SOCKET)
                             tracing::debug!(
                                 "Sticky Session: Bound account {} is rate-limited for {} ({}s), unbinding and switching.",
                                 bound_token.email, normalized_target, reset_sec
+                            );
+                            self.session_accounts.remove(sid);
+                        } else if bound_zero_quota && has_healthy_alternative {
+                            // [FIX #3639] 粘性绑定的账号目标模型额度已归零且号池有可用账号，无缝解绑并自动迁移至健康账号
+                            tracing::info!(
+                                "Sticky Session: Bound account {} has 0% quota for model {}, seamlessly unbinding and migrating to healthy account in pool (Fixes #3639)",
+                                bound_token.email,
+                                normalized_target
                             );
                             self.session_accounts.remove(sid);
                         } else if !attempted.contains(&bound_id)
@@ -2507,7 +2565,25 @@ impl TokenManager {
                                 tokens_snapshot.iter().find(|t| &t.account_id == account_id)
                             {
                                 // 【修复】检查限流状态和配额保护，避免复用已被锁定的账号
-                                if !self
+                                let last_zero_quota = found
+                                    .model_quotas
+                                    .get(&normalized_target)
+                                    .copied()
+                                    .unwrap_or(100)
+                                    <= 0;
+                                let has_healthy_alt = tokens_snapshot.iter().any(|t| {
+                                    &t.account_id != account_id
+                                        && !attempted.contains(&t.account_id)
+                                        && !self.rate_limit_tracker.is_rate_limited(&t.account_id, Some(&normalized_target))
+                                        && t.model_quotas.get(&normalized_target).copied().unwrap_or(0) > 0
+                                });
+
+                                if last_zero_quota && has_healthy_alt {
+                                    tracing::debug!(
+                                        "60s Window: Last account {} has 0% quota for model {}, skipping reuse (Fixes #3639)",
+                                        found.email, normalized_target
+                                    );
+                                } else if !self
                                     .is_rate_limited(&found.account_id, Some(&normalized_target))
                                     .await
                                     && !(quota_protection_enabled
@@ -6781,5 +6857,121 @@ mod tests {
             global_reset, None,
             "存在额度充足模型的账号绝不得触发全账号级长周期锁定"
         );
+    }
+
+    #[tokio::test]
+    async fn test_sticky_session_auto_failover_when_bound_account_quota_hits_zero_issue_3639() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc1_id = "acc_exhausted";
+        let acc2_id = "acc_healthy";
+
+        let acc1_path = accounts_dir.join(format!("{}.json", acc1_id));
+        let acc2_path = accounts_dir.join(format!("{}.json", acc2_id));
+
+        std::fs::write(&acc1_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&acc2_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let target_model = "claude-sonnet-4-6";
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(target_model.to_string(), 0); // 0% 额度
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(target_model.to_string(), 100); // 100% 额度
+
+        let mut token1 = create_test_token("acc1@test.com", Some("PRO"), 1.0, None, Some(0));
+        token1.account_id = acc1_id.to_string();
+        token1.account_path = acc1_path;
+        token1.model_quotas = quotas1;
+
+        let mut token2 = create_test_token("acc2@test.com", Some("PRO"), 1.0, None, Some(100));
+        token2.account_id = acc2_id.to_string();
+        token2.account_path = acc2_path;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc1_id.to_string(), token1);
+        manager.tokens.insert(acc2_id.to_string(), token2);
+
+        let session_id = "agent-coding-session-42";
+        // 初始将会话绑定至 acc1
+        manager.commit_session(session_id, acc1_id);
+        assert_eq!(
+            manager.session_accounts.get(session_id).unwrap().as_str(),
+            acc1_id
+        );
+
+        // 获取 Token：因为 acc1 的 claude-sonnet-4-6 已为 0%，而号池存在 100% 的 acc2，
+        // 必须无缝自动解绑 acc1，故障转移至 acc2，并自动将会话重新绑定至 acc2 (Fixes #3639)
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .expect("Token acquisition must seamlessly failover to healthy account");
+
+        assert_eq!(selected_id, acc2_id, "必须自动选择具备正额度的账号 acc2");
+        assert_eq!(email, "acc2@test.com");
+
+        // 验证会话已被原子重新绑定到健康的 acc2
+        assert_eq!(
+            manager.session_accounts.get(session_id).unwrap().as_str(),
+            acc2_id,
+            "会话必须被自动 commit 绑定至新健康的账号 acc2"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_preferred_account_auto_failover_when_zero_quota_issue_3639() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc_pref_id = "acc_preferred_zero";
+        let acc_alt_id = "acc_fallback_full";
+
+        let pref_path = accounts_dir.join(format!("{}.json", acc_pref_id));
+        let alt_path = accounts_dir.join(format!("{}.json", acc_alt_id));
+
+        std::fs::write(&pref_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&alt_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let target_model = "gemini-3.8-flash-high";
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(target_model.to_string(), 0); // 优先账号为 0% 额度
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(target_model.to_string(), 80); // 备选账号具备 80% 额度
+
+        let mut token1 = create_test_token("pref@test.com", Some("PRO"), 1.0, None, Some(0));
+        token1.account_id = acc_pref_id.to_string();
+        token1.account_path = pref_path;
+        token1.model_quotas = quotas1;
+
+        let mut token2 = create_test_token("alt@test.com", Some("PRO"), 1.0, None, Some(80));
+        token2.account_id = acc_alt_id.to_string();
+        token2.account_path = alt_path;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc_pref_id.to_string(), token1);
+        manager.tokens.insert(acc_alt_id.to_string(), token2);
+
+        // 设置固定优先账号为 acc_pref_id
+        manager.set_preferred_account(Some(acc_pref_id.to_string())).await;
+
+        // 获取 Token：优先账号目标模型为 0% 且存在具备 80% 的替代账号时，
+        // 绝不得死磕 0% 账号导致 429，必须无感自动回退至池中可用账号 (Fixes #3639)
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, None, target_model, &excluded)
+            .await
+            .expect("Preferred account with 0% quota must seamlessly fallback to available account");
+
+        assert_eq!(selected_id, acc_alt_id, "必须自动选择具备额度的备选账号");
+        assert_eq!(email, "alt@test.com");
     }
 }
