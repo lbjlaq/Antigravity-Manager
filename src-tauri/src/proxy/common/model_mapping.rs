@@ -768,7 +768,9 @@ pub fn resolve_model_route_with_effort(
     // 3. 系统默认映射
     // Variant 已经写出的上游真实 id 在此停住，避免公开名反向覆盖（Issue #3551）。
     if crate::proxy::common::variant_mapping::is_physical_upstream_id(original_model) {
-        return original_model.to_string();
+        // The physical-ID check also accepts tier suffixes on public aliases.
+        // Normalize those aliases without selecting a different effort tier.
+        return map_claude_model_to_gemini(original_model);
     }
 
     // [NEW] 裸模型依据客户端思考档位通用路由（覆盖 3.x Flash 与 Claude >= 5.0）：
@@ -782,7 +784,9 @@ pub fn resolve_model_route_with_effort(
             "[Router] 裸模型依据思考档位通用路由: {} (effort={:?}) -> {}",
             original_model, client_effort, routed
         ));
-        return routed;
+        // Tier selection can produce a public alias (e.g. Pro high). Apply the
+        // same upstream-ID mapping as an explicitly requested variant.
+        return map_claude_model_to_gemini(&routed);
     }
 
     let result = map_claude_model_to_gemini(original_model);
@@ -1312,13 +1316,22 @@ mod tests {
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.1-pro", &empty, Some("high")),
-            "gemini-3.1-pro-high"
+            "gemini-pro-agent"
         );
+
+        // Pro has no medium upstream variant; the nearest high tier must also
+        // resolve to the physical agent ID, not the public high alias.
+        for effort in ["medium", "xhigh", "max"] {
+            assert_eq!(
+                resolve_model_route_with_effort("gemini-3.1-pro", &empty, Some(effort)),
+                "gemini-pro-agent"
+            );
+        }
 
         // 2. 衍生裸模型 gemini-3.1-pro 缺省 effort 遵循 pick_optimal_default_tier 决策链 (取高于 low 的最低档 -> high)
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.1-pro", &empty, None),
-            "gemini-3.1-pro-high"
+            "gemini-pro-agent"
         );
 
         // 3. 衍生裸模型 gemini-3.5-flash 缺省 effort 遵循决策链 (取 low)
@@ -1327,14 +1340,37 @@ mod tests {
             "gemini-3.5-flash-low"
         );
 
-        // 4. 显式档位变体原样透传
+        // 4. 显式档位与动态选择的档位使用相同的上游 ID
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.1-pro-low", &empty, None),
             "gemini-3.1-pro-low"
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.1-pro-high", &empty, None),
-            "gemini-3.1-pro-high"
+            "gemini-pro-agent"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-3.1-pro-high", &empty, Some("low")),
+            "gemini-pro-agent"
+        );
+    }
+
+    #[test]
+    fn test_tiered_routing_preserves_custom_and_physical_model_ids() {
+        let custom = HashMap::from([(
+            "gemini-3.1-pro".to_string(),
+            "custom-upstream-model".to_string(),
+        )]);
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-3.1-pro", &custom, Some("high")),
+            "custom-upstream-model"
+        );
+
+        // A physical ID selected by a protocol's variant resolver must not be
+        // reinterpreted using a conflicting client effort.
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-pro-agent", &HashMap::new(), Some("low")),
+            "gemini-pro-agent"
         );
     }
 
