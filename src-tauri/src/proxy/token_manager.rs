@@ -3261,11 +3261,13 @@ impl TokenManager {
 
     /// 从账号文件获取配额刷新时间
     ///
-    /// 返回该账号最近的配额刷新时间字符串（ISO 8601 格式）
+    /// 若指定了 model，精准提取该模型（且 percentage <= 0）的专属 reset_time，杜绝误用其他耗尽模型的长周期刷新时间；
+    /// 若未指定 model，仅在全部可用模型均为 0% 时才返回最早的 reset_time。
     ///
     /// # 参数
     /// - `account_id`: 账号 ID（用于查找账号文件）
-    pub fn get_quota_reset_time(&self, account_id: &str) -> Option<String> {
+    /// - `model`: 可选的目标模型名称，用于模型级别配额重置时间匹配
+    pub fn get_quota_reset_time(&self, account_id: &str, model: Option<&str>) -> Option<String> {
         // 直接用 account_id 查找账号文件（文件名是 {account_id}.json）
         let account_path = self
             .data_dir
@@ -3274,20 +3276,54 @@ impl TokenManager {
 
         let content = std::fs::read_to_string(&account_path).ok()?;
         let account: serde_json::Value = serde_json::from_str(&content).ok()?;
-
-        // 获取 quota.models 中最早的 reset_time（最保守的锁定策略）
-        account
+        let models = account
             .get("quota")
             .and_then(|q| q.get("models"))
-            .and_then(|m| m.as_array())
-            .and_then(|models| {
+            .and_then(|m| m.as_array())?;
+
+        if let Some(target) = model {
+            let norm_target = crate::proxy::common::model_mapping::normalize_to_standard_id(target)
+                .unwrap_or_else(|| target.to_string());
+
+            models
+                .iter()
+                .find(|m| {
+                    let name = m.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let norm_name = crate::proxy::common::model_mapping::normalize_to_standard_id(name)
+                        .unwrap_or_else(|| name.to_string());
+                    norm_name == norm_target || name == target
+                })
+                .and_then(|m| {
+                    let pct = m.get("percentage").and_then(|v| v.as_i64()).unwrap_or(100);
+                    // 关键保护：仅在该模型配额真正耗尽 (<= 0) 时才返回其 reset_time；
+                    // 若配额尚存，说明 429 属于瞬态速率超限，严禁误读为长周期配额重置！
+                    if pct <= 0 {
+                        m.get("reset_time")
+                            .and_then(|r| r.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+        } else {
+            // 全账号级：仅当所有模型均为 0% 时才提取最早 reset_time
+            let all_zero = !models.is_empty()
+                && models.iter().all(|m| {
+                    m.get("percentage").and_then(|v| v.as_i64()).unwrap_or(100) <= 0
+                });
+
+            if all_zero {
                 models
                     .iter()
                     .filter_map(|m| m.get("reset_time").and_then(|r| r.as_str()))
                     .filter(|s| !s.is_empty())
                     .min()
                     .map(|s| s.to_string())
-            })
+            } else {
+                None
+            }
+        }
     }
 
     /// 使用配额刷新时间精确锁定账号
@@ -3316,10 +3352,11 @@ impl TokenManager {
             true
         };
 
-        if let Some(reset_time_str) = self.get_quota_reset_time(account_id) {
+        if let Some(reset_time_str) = self.get_quota_reset_time(account_id, model_to_lock.as_deref()) {
             tracing::info!(
-                "找到账号 {} 的配额刷新时间: {} (cap_to_max: {})",
+                "找到账号 {} [模型 {:?}] 的配额刷新时间: {} (cap_to_max: {})",
                 account_id,
+                model_to_lock,
                 reset_time_str,
                 cap
             );
@@ -3332,8 +3369,9 @@ impl TokenManager {
             )
         } else {
             tracing::debug!(
-                "未找到账号 {} 的配额刷新时间,将使用默认退避策略",
-                account_id
+                "未找到账号 {} [模型 {:?}] 的配额刷新时间，将使用默认退避策略",
+                account_id,
+                model_to_lock
             );
             false
         }
@@ -3383,31 +3421,62 @@ impl TokenManager {
         tracing::info!("账号 {} 正在实时刷新配额...", email);
         match crate::modules::quota::fetch_quota(&access_token, email, Some(&account_id)).await {
             Ok((quota_data, _project_id)) => {
-                // 3. 从最新配额中提取 reset_time
-                let earliest_reset = quota_data
-                    .models
-                    .iter()
-                    .filter_map(|m| {
-                        if !m.reset_time.is_empty() {
-                            Some(m.reset_time.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .min();
+                // 3. 从最新配额中提取匹配模型的 reset_time
+                let normalized_model = model.as_deref().and_then(|m| {
+                    crate::proxy::common::model_mapping::normalize_to_standard_id(m)
+                });
+                let model_to_lock = normalized_model.or(model);
 
-                if let Some(reset_time_str) = earliest_reset {
+                let matched_reset = if let Some(ref target) = model_to_lock {
+                    let norm_target = crate::proxy::common::model_mapping::normalize_to_standard_id(target)
+                        .unwrap_or_else(|| target.to_string());
+
+                    // 精准查找当前报错的模型
+                    quota_data
+                        .models
+                        .iter()
+                        .find(|m| {
+                            let norm_m = crate::proxy::common::model_mapping::normalize_to_standard_id(&m.name)
+                                .unwrap_or_else(|| m.name.clone());
+                            norm_m == norm_target || m.name == *target
+                        })
+                        .and_then(|m| {
+                            // 仅当该模型配额确实耗尽 (percentage <= 0) 时才采用其长周期 reset_time；
+                            // 若配额尚存，说明 429 属于瞬态限流，严禁锁入长周期刷新时间！
+                            if m.percentage <= 0 && !m.reset_time.is_empty() {
+                                Some(m.reset_time.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                } else {
+                    // 全账号级锁定：仅在所有模型配额均耗尽时才提取最早 reset_time
+                    let all_zero = !quota_data.models.is_empty()
+                        && quota_data.models.iter().all(|m| m.percentage <= 0);
+                    if all_zero {
+                        quota_data
+                            .models
+                            .iter()
+                            .filter_map(|m| {
+                                if !m.reset_time.is_empty() {
+                                    Some(m.reset_time.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .min()
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(reset_time_str) = matched_reset {
                     tracing::info!(
-                        "账号 {} 实时配额刷新成功,reset_time: {}",
+                        "账号 {} 实时配额刷新成功,模型 {:?} 匹配到 reset_time: {}",
                         email,
+                        model_to_lock,
                         reset_time_str
                     );
-
-                    // [FIX #2209] 统一归一化模型名称
-                    let normalized_model = model.as_deref().and_then(|m| {
-                        crate::proxy::common::model_mapping::normalize_to_standard_id(m)
-                    });
-                    let model_to_lock = normalized_model.or(model);
 
                     let cap = if let Ok(cfg) = self.circuit_breaker_config.try_read() {
                         !cfg.lock_on_zero_quota
@@ -3424,7 +3493,11 @@ impl TokenManager {
                         cap,
                     )
                 } else {
-                    tracing::warn!("账号 {} 配额刷新成功但未找到 reset_time", email);
+                    tracing::warn!(
+                        "账号 {} 配额刷新成功，但模型 {:?} 配额未耗尽或未找到专属 reset_time，将使用默认退避策略",
+                        email,
+                        model_to_lock
+                    );
                     false
                 }
             }
@@ -4229,7 +4302,7 @@ impl TokenManager {
                 .all(|m| m.get("percentage").and_then(|p| p.as_i64()).unwrap_or(100) == 0);
 
             if all_zero && !models.is_empty() {
-                if let Some(reset_time_str) = self.get_quota_reset_time(account_id) {
+                if let Some(reset_time_str) = self.get_quota_reset_time(account_id, None) {
                     if !chrono::DateTime::parse_from_rfc3339(&reset_time_str)
                         .is_ok_and(|reset| reset > chrono::Utc::now())
                     {
@@ -6619,6 +6692,74 @@ mod tests {
         assert_eq!(
             manager.session_accounts.get(session_id).unwrap().as_str(),
             acc2
+        );
+    }
+
+    #[test]
+    fn test_get_quota_reset_time_isolates_unrelated_model_reset_issue_3627() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let account_id = "acc_mixed_quota";
+        let account_json = serde_json::json!({
+            "id": account_id,
+            "email": "mixed@example.com",
+            "quota": {
+                "models": [
+                    {
+                        "name": "claude-opus-4-6-thinking",
+                        "percentage": 0,
+                        "reset_time": "2026-10-13T20:45:00Z"
+                    },
+                    {
+                        "name": "gemini-3.8-flash-high",
+                        "percentage": 100,
+                        "reset_time": ""
+                    }
+                ]
+            }
+        });
+
+        std::fs::write(
+            accounts_dir.join(format!("{}.json", account_id)),
+            serde_json::to_string_pretty(&account_json).unwrap(),
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        // 1. 请求 gemini-3.8-flash-high 时，即便 Opus 耗尽且存在 50+ 小时重置时间，
+        // 绝不得将 Opus 的 reset_time 盗用套在额度充足的 Gemini 模型上（根治 Issue #3627 误报 182805s）
+        let gemini_reset = manager.get_quota_reset_time(account_id, Some("gemini-3.8-flash-high"));
+        assert_eq!(
+            gemini_reset, None,
+            "额度充足的模型绝不得盗用其他模型的配额重置时间"
+        );
+
+        let locked = manager.set_precise_lockout(
+            account_id,
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+            Some("gemini-3.8-flash-high".to_string()),
+        );
+        assert!(
+            !locked,
+            "额度充足的模型 set_precise_lockout 必须返回 false 以便走指数退避，严禁锁入数十小时"
+        );
+
+        // 2. 真正耗尽的模型（Opus 0%）必须能精准匹配到专属的 reset_time
+        let opus_reset = manager.get_quota_reset_time(account_id, Some("claude-opus-4-6-thinking"));
+        assert_eq!(
+            opus_reset.as_deref(),
+            Some("2026-10-13T20:45:00Z"),
+            "真正耗尽的模型必须精准获得专属 reset_time"
+        );
+
+        // 3. 全账号未指定 model 时，由于 Gemini 依然有 100% 额度，绝不得连坐封锁全账号
+        let global_reset = manager.get_quota_reset_time(account_id, None);
+        assert_eq!(
+            global_reset, None,
+            "存在额度充足模型的账号绝不得触发全账号级长周期锁定"
         );
     }
 }
