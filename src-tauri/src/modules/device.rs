@@ -43,10 +43,10 @@ pub fn get_storage_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
     }
 
     let folder_names: &[&str] = if target_ide == Some("ide") {
-        &["Antigravity IDE"]
+        &["Antigravity IDE", "antigravity-ide", "AntigravityIDE"]
     } else {
         // target_ide = None 或 classic / code / cursor: 严格使用 Antigravity，严禁回退至 Antigravity IDE
-        &["Antigravity"]
+        &["Antigravity", "antigravity"]
     };
 
     // 3) Standard installation location
@@ -60,6 +60,13 @@ pub fn get_storage_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
             ));
             if path.exists() {
                 return Ok(path);
+            }
+        }
+        // 如果 globalStorage 目录或 User 目录已存在，但 storage.json 尚未生成（全新安装），返回目标路径供自动初始化
+        for folder_name in folder_names {
+            let app_support = home.join(format!("Library/Application Support/{}", folder_name));
+            if app_support.exists() {
+                return Ok(app_support.join("User/globalStorage/storage.json"));
             }
         }
     }
@@ -76,6 +83,13 @@ pub fn get_storage_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
                 return Ok(path);
             }
         }
+        // 如果 AppData 下的应用目录已存在，但 storage.json 尚未生成（全新安装），返回目标路径供自动初始化
+        for folder_name in folder_names {
+            let app_dir = PathBuf::from(&appdata).join(folder_name);
+            if app_dir.exists() {
+                return Ok(app_dir.join("User\\globalStorage\\storage.json"));
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -88,6 +102,13 @@ pub fn get_storage_path(target_ide: Option<&str>) -> Result<PathBuf, String> {
             ));
             if path.exists() {
                 return Ok(path);
+            }
+        }
+        // 如果 .config 目录下存在应用目录，但 storage.json 尚未生成，返回目标路径
+        for folder_name in folder_names {
+            let app_dir = home.join(format!(".config/{}", folder_name));
+            if app_dir.exists() {
+                return Ok(app_dir.join("User/globalStorage/storage.json"));
             }
         }
     }
@@ -161,13 +182,16 @@ pub fn read_profile(storage_path: &Path) -> Result<DeviceProfile, String> {
 
 /// Write device profile to storage.json
 pub fn write_profile(storage_path: &Path, profile: &DeviceProfile) -> Result<(), String> {
-    if !storage_path.exists() {
-        return Err(format!("storage_json_missing: {:?}", storage_path));
-    }
-
-    let content = fs::read_to_string(storage_path).map_err(|e| format!("read_failed: {}", e))?;
-    let mut json: Value =
-        serde_json::from_str(&content).map_err(|e| format!("parse_failed: {}", e))?;
+    let mut json: Value = if storage_path.exists() {
+        let content =
+            fs::read_to_string(storage_path).map_err(|e| format!("read_failed: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("parse_failed: {}", e))?
+    } else {
+        if let Some(parent) = storage_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        serde_json::json!({})
+    };
 
     // Ensure telemetry is an object
     if !json.get("telemetry").map_or(false, |v| v.is_object()) {
@@ -479,5 +503,26 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stored, "dev-device-under-test");
+    }
+
+    #[test]
+    fn write_profile_auto_creates_missing_storage_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage_path = tmp.path().join("nested").join("globalStorage").join("storage.json");
+        assert!(!storage_path.exists());
+
+        let profile = DeviceProfile {
+            machine_id: "machine-auto".to_string(),
+            mac_machine_id: "mac-auto".to_string(),
+            dev_device_id: "dev-auto".to_string(),
+            sqm_id: "sqm-auto".to_string(),
+        };
+        // 自动创建父目录与 storage.json，不再因缺少文件而报错 (Fixes #3270)
+        write_profile(&storage_path, &profile).expect("write_profile must succeed even if storage.json was missing");
+        assert!(storage_path.exists());
+
+        let read_back = read_profile(&storage_path).expect("read_profile must read auto-created profile");
+        assert_eq!(read_back.machine_id, "machine-auto");
+        assert_eq!(read_back.dev_device_id, "dev-auto");
     }
 }

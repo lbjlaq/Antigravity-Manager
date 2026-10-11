@@ -114,9 +114,20 @@ struct AccountResponse {
     id: String,
     email: String,
     name: Option<String>,
+    priority: u8,
     is_current: bool,
     disabled: bool,
+    disabled_reason: Option<String>,
+    disabled_at: Option<i64>,
+    proxy_disabled: bool,
+    proxy_disabled_reason: Option<String>,
+    proxy_disabled_at: Option<i64>,
+    protected_models: Vec<String>,
     live_limited_models: HashMap<String, crate::models::account::LiveLimitStatus>,
+    validation_blocked: bool,
+    validation_blocked_until: Option<i64>,
+    validation_blocked_reason: Option<String>,
+    validation_url: Option<String>,
     quota: Option<QuotaResponse>,
     device_bound: bool,
     last_used: i64,
@@ -262,9 +273,20 @@ async fn list_accounts() -> Result<impl IntoResponse, (StatusCode, Json<ErrorRes
                 id: acc.id,
                 email: acc.email,
                 name: acc.name,
+                priority: acc.priority,
                 is_current,
                 disabled: acc.disabled,
+                disabled_reason: acc.disabled_reason,
+                disabled_at: acc.disabled_at,
+                proxy_disabled: acc.proxy_disabled,
+                proxy_disabled_reason: acc.proxy_disabled_reason,
+                proxy_disabled_at: acc.proxy_disabled_at,
+                protected_models: acc.protected_models.into_iter().collect(),
                 live_limited_models: acc.live_limited_models,
+                validation_blocked: acc.validation_blocked,
+                validation_blocked_until: acc.validation_blocked_until,
+                validation_blocked_reason: acc.validation_blocked_reason,
+                validation_url: acc.validation_url,
                 quota,
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
@@ -306,9 +328,20 @@ async fn get_current_account() -> Result<impl IntoResponse, (StatusCode, Json<Er
             id: acc.id,
             email: acc.email,
             name: acc.name,
+            priority: acc.priority,
             is_current: true,
             disabled: acc.disabled,
+            disabled_reason: acc.disabled_reason,
+            disabled_at: acc.disabled_at,
+            proxy_disabled: acc.proxy_disabled,
+            proxy_disabled_reason: acc.proxy_disabled_reason,
+            proxy_disabled_at: acc.proxy_disabled_at,
+            protected_models: acc.protected_models.into_iter().collect(),
             live_limited_models: acc.live_limited_models,
+            validation_blocked: acc.validation_blocked,
+            validation_blocked_until: acc.validation_blocked_until,
+            validation_blocked_reason: acc.validation_blocked_reason,
+            validation_url: acc.validation_url,
             quota,
             device_bound: acc.device_profile.is_some(),
             last_used: acc.last_used,
@@ -513,4 +546,46 @@ pub fn spawn_server(port: u16, integration: crate::modules::integration::SystemM
             logger::log_error(&format!("[HTTP API] Failed to start server: {}", e));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_account_response_serializes_all_validation_and_parity_fields_issue_3631() {
+        let resp = AccountResponse {
+            id: "acc_test_1".to_string(),
+            email: "test@example.com".to_string(),
+            name: Some("Test Account".to_string()),
+            priority: 0,
+            is_current: true,
+            disabled: false,
+            disabled_reason: None,
+            disabled_at: None,
+            proxy_disabled: false,
+            proxy_disabled_reason: None,
+            proxy_disabled_at: None,
+            protected_models: vec!["claude".to_string()],
+            live_limited_models: HashMap::new(),
+            validation_blocked: true,
+            validation_blocked_until: Some(1791541969),
+            validation_blocked_reason: Some("VALIDATION_REQUIRED".to_string()),
+            validation_url: Some("https://accounts.google.com/signin/continue?flowName=GlifWebSignIn".to_string()),
+            quota: None,
+            device_bound: true,
+            last_used: 1728000000,
+        };
+
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(
+            json["validation_url"].as_str().unwrap(),
+            "https://accounts.google.com/signin/continue?flowName=GlifWebSignIn",
+            "validation_url 必须能正常在 HTTP API AccountResponse 中序列化，消除死代码 (Fixes #3631)"
+        );
+        assert_eq!(json["validation_blocked"], true);
+        assert_eq!(json["validation_blocked_until"], 1791541969);
+        assert_eq!(json["priority"], 0);
+        assert_eq!(json["is_current"], true);
+    }
 }

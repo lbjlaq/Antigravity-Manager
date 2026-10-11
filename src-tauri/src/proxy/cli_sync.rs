@@ -260,21 +260,28 @@ impl CliApp {
                 },
             ],
             CliApp::Codex => {
-                let codex_dir = if home.join(".chatgpt").exists() || !home.join(".codex").exists() {
-                    home.join(".chatgpt")
+                let mut files = Vec::new();
+                let has_chatgpt = home.join(".chatgpt").exists();
+                let has_codex = home.join(".codex").exists();
+                let dirs_to_sync = if has_chatgpt && has_codex {
+                    vec![home.join(".chatgpt"), home.join(".codex")]
+                } else if has_chatgpt {
+                    vec![home.join(".chatgpt")]
                 } else {
-                    home.join(".codex")
+                    vec![home.join(".codex")]
                 };
-                vec![
-                    CliConfigFile {
+
+                for dir in dirs_to_sync {
+                    files.push(CliConfigFile {
                         name: "auth.json".to_string(),
-                        path: codex_dir.join("auth.json"),
-                    },
-                    CliConfigFile {
+                        path: dir.join("auth.json"),
+                    });
+                    files.push(CliConfigFile {
                         name: "config.toml".to_string(),
-                        path: codex_dir.join("config.toml"),
-                    },
-                ]
+                        path: dir.join("config.toml"),
+                    });
+                }
+                files
             }
             CliApp::Gemini => vec![
                 CliConfigFile {

@@ -1710,6 +1710,8 @@ fn check_standard_locations(target_ide: Option<&str>) -> Option<std::path::PathB
                     std::path::PathBuf::from(format!("/opt/{}/{}", folder_name, exe_name)),
                     std::path::PathBuf::from(format!("/opt/{}/{}", exe_name, exe_name)),
                     std::path::PathBuf::from(format!("/usr/share/{}/{}", folder_name, exe_name)),
+                    std::path::PathBuf::from(format!("/usr/lib64/{}/{}", folder_name, exe_name)),
+                    std::path::PathBuf::from(format!("/usr/lib/{}/{}", folder_name, exe_name)),
                     std::path::PathBuf::from(format!("/var/lib/flatpak/exports/bin/{}", exe_name)),
                     std::path::PathBuf::from(format!("/snap/bin/{}", exe_name)),
                 ];

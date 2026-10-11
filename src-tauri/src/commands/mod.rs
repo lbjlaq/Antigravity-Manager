@@ -516,6 +516,40 @@ pub async fn save_config(
         tracing::debug!("已同步热更新反代服务配置");
     }
 
+    // [FIX #3280, #3285] 同步热更新管理服务 (Admin Server)，确保在仅运行管理端或服务未手动启动时配置立即生效
+    let admin_lock = proxy_state.admin_server.read().await;
+    if let Some(admin) = admin_lock.as_ref() {
+        admin.axum_server.update_mapping(&config.proxy).await;
+        admin
+            .axum_server
+            .update_only_raw_quota_models(config.proxy.only_raw_quota_models)
+            .await;
+        admin
+            .axum_server
+            .update_proxy(config.proxy.upstream_proxy.clone())
+            .await;
+        admin.axum_server.update_security(&config.proxy).await;
+        admin
+            .axum_server
+            .update_experimental(&config.proxy)
+            .await;
+        admin
+            .axum_server
+            .update_debug_logging(&config.proxy)
+            .await;
+        admin.axum_server.update_user_agent(&config.proxy).await;
+        admin
+            .axum_server
+            .update_proxy_pool(config.proxy.proxy_pool.clone())
+            .await;
+        admin
+            .axum_server
+            .token_manager
+            .update_circuit_breaker_config(config.circuit_breaker.clone())
+            .await;
+        tracing::debug!("已同步热更新管理服务器 (Admin Server) 配置");
+    }
+
     Ok(())
 }
 

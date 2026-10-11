@@ -75,9 +75,17 @@ fn should_enable_tray() -> bool {
     true
 }
 
-/// Login-item launches pass `--minimized`. Quiet startup applies only to that launch.
+/// Login-item launches or shortcut flags pass `--minimized`, `--silent`, `--hidden`, or `-s`.
+/// Quiet startup applies only to that launch.
 fn apply_login_launch_policy(app: &tauri::App) {
-    let launched_by_login = std::env::args().any(|arg| arg == "--minimized");
+    let launched_by_login = std::env::args().any(|arg| {
+        let lower = arg.to_lowercase();
+        lower == "--minimized"
+            || lower == "--silent"
+            || lower == "--hidden"
+            || lower == "-s"
+            || lower == "/minimized"
+    });
     if !launched_by_login {
         return;
     }

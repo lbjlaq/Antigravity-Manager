@@ -1803,7 +1803,11 @@ fn mark_validation_blocked(account: &mut Account, reason: &str) {
 }
 
 fn clear_validation_blocked(account: &mut Account) {
-    if !account.validation_blocked {
+    if !account.validation_blocked
+        && account.validation_blocked_until.is_none()
+        && account.validation_blocked_reason.is_none()
+        && account.validation_url.is_none()
+    {
         return;
     }
 
@@ -1811,6 +1815,9 @@ fn clear_validation_blocked(account: &mut Account) {
     account.validation_blocked_until = None;
     account.validation_blocked_reason = None;
     account.validation_url = None;
+    if let Some(ref mut q) = account.quota {
+        q.is_forbidden = false;
+    }
     if let Err(e) = save_account(account) {
         crate::modules::logger::log_warn(&format!(
             "Failed to clear validation_blocked state for {}: {}",
