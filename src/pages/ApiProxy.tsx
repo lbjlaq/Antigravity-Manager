@@ -2179,6 +2179,33 @@ print(response.choices[0].message.content)`;
                                                 </div>
                                             </div>
 
+                                            <div className="bg-gray-50/70 dark:bg-base-200 rounded-xl p-4 border border-gray-100 dark:border-base-300">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
+                                                        {t('proxy.config.scheduling.max_spillover_accounts')}
+                                                        <HelpTooltip text={t('proxy.config.scheduling.max_spillover_accounts_tooltip')} />
+                                                    </label>
+                                                    <span className="text-xs font-mono text-indigo-600 font-bold">
+                                                        {(appConfig.proxy.scheduling?.max_spillover_accounts ?? 0) === 0
+                                                            ? t('proxy.config.scheduling.spillover_unlimited')
+                                                            : t('proxy.config.scheduling.spillover_count', { count: appConfig.proxy.scheduling?.max_spillover_accounts })}
+                                                    </span>
+                                                </div>
+                                                <input
+                                                    type="range"
+                                                    min="0"
+                                                    max="10"
+                                                    step="1"
+                                                    className="range range-indigo range-xs"
+                                                    value={appConfig.proxy.scheduling?.max_spillover_accounts ?? 0}
+                                                    onChange={(e) => updateSchedulingConfig({ max_spillover_accounts: parseInt(e.target.value) || 0 })}
+                                                />
+                                                <div className="flex justify-between px-1 mt-1 text-[10px] text-gray-400 font-mono">
+                                                    <span>0 ({t('proxy.config.scheduling.spillover_unlimited')})</span>
+                                                    <span>10</span>
+                                                </div>
+                                            </div>
+
                                             <div className="p-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/20 rounded-xl">
                                                 <p className="text-[10px] text-amber-700 dark:text-amber-500 leading-relaxed">
                                                     <strong>{t('common.info')}:</strong> {t('proxy.config.scheduling.subtitle')}

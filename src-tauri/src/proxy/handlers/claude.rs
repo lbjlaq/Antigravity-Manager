@@ -1699,6 +1699,8 @@ pub async fn handle_messages(
             }
         };
 
+        let in_flight_guard = Arc::new(token_manager.acquire_in_flight(&account_id));
+
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
 
@@ -2071,7 +2073,9 @@ pub async fn handle_messages(
 
                         // [FIX #Bug1] 针对 Claude 流增加空闲超时保护，从 300s 降至 120s
                         // 300s 会导致客户端等待长达 5 分钟；120s 仍有足够容错余量
+                        let in_flight_guard_for_stream = Arc::clone(&in_flight_guard);
                         let combined_stream = async_stream::stream! {
+                            let _in_flight = in_flight_guard_for_stream;
                             let mut s = Box::pin(combined_stream);
                             loop {
                                 match tokio::time::timeout(std::time::Duration::from_secs(120), s.next()).await {

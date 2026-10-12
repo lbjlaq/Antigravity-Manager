@@ -6,6 +6,7 @@ use axum::{
 use base64::Engine as _;
 use bytes::Bytes;
 use serde_json::{json, Value};
+use std::sync::Arc;
 use tracing::{debug, error, info}; // Import Engine trait for encode method
 
 use crate::proxy::mappers::gemini::SUMMARY_REQUEST_TIMEOUT_SECS;
@@ -2206,6 +2207,8 @@ pub async fn handle_chat_completions(
             }
         };
 
+        let in_flight_guard = Arc::new(token_manager.acquire_in_flight(&account_id));
+
         // [NEW v4.1.29] 获取完整 Token 对象用于动态规格查询
         let proxy_token = token_manager.get_token_by_id(&account_id);
         let mapped_model = token_manager
@@ -2525,7 +2528,9 @@ pub async fn handle_chat_completions(
                 let image_success_manager = token_manager.clone();
                 let image_success_account = account_id.clone();
                 let image_success_model = mapped_model.clone();
+                let in_flight_guard_for_stream = Arc::clone(&in_flight_guard);
                 let combined_stream = async_stream::stream! {
+                    let _in_flight = in_flight_guard_for_stream;
                     let _image_permit = image_permit_for_stream;
                     let mut s = Box::pin(combined_stream);
                     let mut saw_image_data = false;

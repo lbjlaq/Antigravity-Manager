@@ -119,6 +119,7 @@ export type SchedulingMode = 'CacheFirst' | 'Balance' | 'PerformanceFirst';
 export interface StickySessionConfig {
     mode: SchedulingMode;
     max_wait_seconds: number;
+    max_spillover_accounts?: number;
 }
 
 export interface PhaseSchedulerConfig {

@@ -30,6 +30,7 @@ import {
     Database,
     BarChart3,
     Sparkles,
+    Timer,
 } from 'lucide-react';
 import { ActivityHeatmapCard, DayUsagePoint } from '../components/token_stats/ActivityHeatmapCard';
 import { HourlyTrendBarCard, HourlyUsagePoint } from '../components/token_stats/HourlyTrendBarCard';
@@ -115,8 +116,10 @@ const TIME_RANGE_KEY = 'antigravity_token_stats_time_range';
 const VIEW_MODE_KEY = 'antigravity_token_stats_view_mode';
 const CHART_TYPE_KEY = 'antigravity_token_stats_chart_type';
 const METRIC_TYPE_KEY = 'antigravity_token_stats_metric_type';
+const MINUTE_SPAN_KEY = 'antigravity_token_stats_minute_span';
 
-type TimeRange = 'hourly' | 'daily' | 'weekly' | 'all';
+type TimeRange = 'minute' | 'hourly' | 'daily' | 'weekly' | 'all';
+type MinuteSpan = '1h' | '24h';
 type ViewMode = 'model' | 'account';
 type DashboardMode = 'insights' | 'classic';
 type MetricType = 'tokens' | 'cost';
@@ -164,7 +167,7 @@ const TokenStats: React.FC = () => {
     const [timeRange, setTimeRange] = useState<TimeRange>(() => {
         try {
             const saved = localStorage.getItem(TIME_RANGE_KEY);
-            if (saved === 'hourly' || saved === 'daily' || saved === 'weekly' || saved === 'all') return saved;
+            if (saved === 'minute' || saved === 'hourly' || saved === 'daily' || saved === 'weekly' || saved === 'all') return saved;
         } catch (e) {}
         return 'daily';
     });
@@ -173,6 +176,21 @@ const TokenStats: React.FC = () => {
         setTimeRange(range);
         try {
             localStorage.setItem(TIME_RANGE_KEY, range);
+        } catch (e) {}
+    }, []);
+
+    const [minuteSpan, setMinuteSpan] = useState<MinuteSpan>(() => {
+        try {
+            const saved = localStorage.getItem(MINUTE_SPAN_KEY);
+            if (saved === '1h' || saved === '24h') return saved;
+        } catch (e) {}
+        return '1h';
+    });
+
+    const switchMinuteSpan = useCallback((span: MinuteSpan) => {
+        setMinuteSpan(span);
+        try {
+            localStorage.setItem(MINUTE_SPAN_KEY, span);
         } catch (e) {}
     }, []);
 
@@ -329,6 +347,19 @@ const TokenStats: React.FC = () => {
             let classicDataPromise: Promise<TokenStatsAggregated[]>;
 
             switch (timeRange) {
+                case 'minute':
+                    if (minuteSpan === '1h') {
+                        hours = 1;
+                        modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_minute', { minutes: 60, stepMinutes: 1 });
+                        accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_minute', { minutes: 60, stepMinutes: 1 });
+                        classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_minute', { minutes: 60, stepMinutes: 1 });
+                    } else {
+                        hours = 24;
+                        modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_minute', { minutes: 1440, stepMinutes: 5 });
+                        accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_minute', { minutes: 1440, stepMinutes: 5 });
+                        classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_minute', { minutes: 1440, stepMinutes: 5 });
+                    }
+                    break;
                 case 'hourly':
                     hours = 24;
                     modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_hourly', { hours: 24 });
@@ -490,7 +521,7 @@ const TokenStats: React.FC = () => {
 
     useEffect(() => {
         fetchData();
-    }, [timeRange]);
+    }, [timeRange, minuteSpan]);
 
     // 计算 24 小时预估金额
     const hourly24hEstimatedCost = useMemo(() => {
@@ -735,6 +766,17 @@ const TokenStats: React.FC = () => {
                         {/* 时间段选择药丸 */}
                         <div className="flex bg-gray-100 dark:bg-[#16181d] border border-gray-200 dark:border-white/[0.08] rounded-xl p-1 shadow-sm">
                             <button
+                                onClick={() => switchTimeRange('minute')}
+                                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                    timeRange === 'minute'
+                                        ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm'
+                                        : 'text-gray-500 dark:text-white/50 hover:text-gray-900 dark:hover:text-white/80'
+                                }`}
+                            >
+                                <Timer className="w-3.5 h-3.5" />
+                                {t('token_stats.minute', '分钟')}
+                            </button>
+                            <button
                                 onClick={() => switchTimeRange('hourly')}
                                 className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                                     timeRange === 'hourly'
@@ -925,6 +967,32 @@ const TokenStats: React.FC = () => {
                                     </div>
 
                                     <div className="flex flex-wrap items-center gap-2">
+                                        {/* 分钟级跨度细分选择器 (1h / 24h) */}
+                                        {timeRange === 'minute' && (
+                                            <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
+                                                <button
+                                                    onClick={() => switchMinuteSpan('1h')}
+                                                    className={`px-2 py-1 text-xs font-medium rounded-lg transition-all font-mono ${
+                                                        minuteSpan === '1h'
+                                                            ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm font-semibold'
+                                                            : 'text-gray-500 dark:text-white/50 hover:text-gray-900 dark:hover:text-white/80'
+                                                    }`}
+                                                >
+                                                    {t('token_stats.minute_1h', '1小时 (1m)')}
+                                                </button>
+                                                <button
+                                                    onClick={() => switchMinuteSpan('24h')}
+                                                    className={`px-2 py-1 text-xs font-medium rounded-lg transition-all font-mono ${
+                                                        minuteSpan === '24h'
+                                                            ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm font-semibold'
+                                                            : 'text-gray-500 dark:text-white/50 hover:text-gray-900 dark:hover:text-white/80'
+                                                    }`}
+                                                >
+                                                    {t('token_stats.minute_24h', '24小时 (5m)')}
+                                                </button>
+                                            </div>
+                                        )}
+
                                         {/* 图表形态切换器：柱状图 / 面积图 */}
                                         <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
                                             <button
@@ -979,7 +1047,7 @@ const TokenStats: React.FC = () => {
                                             </button>
                                         </div>
 
-                                        {/* 模型 / 账号 维度切换器 */}
+                                        {/* 模型 / 账号 维度切换 */}
                                         <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
                                             <button
                                                 onClick={() => switchViewMode('model')}
@@ -1019,6 +1087,10 @@ const TokenStats: React.FC = () => {
                                                         dataKey="period"
                                                         tick={{ fontSize: 10, fill: '#888888', fontFamily: 'monospace' }}
                                                         tickFormatter={(val) => {
+                                                            if (timeRange === 'minute') {
+                                                                const parts = val.split(' ');
+                                                                return parts.length > 1 ? parts[1] : val;
+                                                            }
                                                             if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                             if (timeRange === 'daily') return val.split('-').slice(1).join('/');
                                                             if (timeRange === 'weekly') {
@@ -1078,6 +1150,10 @@ const TokenStats: React.FC = () => {
                                                         dataKey="period"
                                                         tick={{ fontSize: 10, fill: '#888888', fontFamily: 'monospace' }}
                                                         tickFormatter={(val) => {
+                                                            if (timeRange === 'minute') {
+                                                                const parts = val.split(' ');
+                                                                return parts.length > 1 ? parts[1] : val;
+                                                            }
                                                             if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                             if (timeRange === 'daily') return val.split('-').slice(1).join('/');
                                                             if (timeRange === 'weekly') {
@@ -1250,6 +1326,32 @@ const TokenStats: React.FC = () => {
                                 </div>
 
                                 <div className="flex flex-wrap items-center gap-2">
+                                    {/* 分钟级跨度细分选择器 (1h / 24h) */}
+                                    {timeRange === 'minute' && (
+                                        <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
+                                            <button
+                                                onClick={() => switchMinuteSpan('1h')}
+                                                className={`px-2 py-1 text-xs font-medium rounded-lg transition-all font-mono ${
+                                                    minuteSpan === '1h'
+                                                        ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm font-semibold'
+                                                        : 'text-gray-500 dark:text-white/50 hover:text-gray-900 dark:hover:text-white/80'
+                                                }`}
+                                            >
+                                                {t('token_stats.minute_1h', '1小时 (1m)')}
+                                            </button>
+                                            <button
+                                                onClick={() => switchMinuteSpan('24h')}
+                                                className={`px-2 py-1 text-xs font-medium rounded-lg transition-all font-mono ${
+                                                    minuteSpan === '24h'
+                                                        ? 'bg-white dark:bg-white/[0.12] text-gray-900 dark:text-white shadow-sm font-semibold'
+                                                        : 'text-gray-500 dark:text-white/50 hover:text-gray-900 dark:hover:text-white/80'
+                                                }`}
+                                            >
+                                                {t('token_stats.minute_24h', '24小时 (5m)')}
+                                            </button>
+                                        </div>
+                                    )}
+
                                     {/* 柱状 / 面积 切换 */}
                                     <div className="flex bg-gray-100 dark:bg-[#1a1d24] border border-gray-200 dark:border-white/[0.08] rounded-xl p-0.5">
                                         <button
@@ -1342,6 +1444,10 @@ const TokenStats: React.FC = () => {
                                                     dataKey="period"
                                                     tick={{ fontSize: 10, fill: '#888888', fontFamily: 'monospace' }}
                                                     tickFormatter={(val) => {
+                                                        if (timeRange === 'minute') {
+                                                            const parts = val.split(' ');
+                                                            return parts.length > 1 ? parts[1] : val;
+                                                        }
                                                         if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                         if (timeRange === 'daily') return val.split('-').slice(1).join('/');
                                                         if (timeRange === 'weekly') {
@@ -1396,10 +1502,14 @@ const TokenStats: React.FC = () => {
                                                     ))}
                                                 </defs>
                                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(150, 150, 150, 0.15)" />
-                                                <XAxis
+                                                 <XAxis
                                                     dataKey="period"
                                                     tick={{ fontSize: 10, fill: '#888888', fontFamily: 'monospace' }}
                                                     tickFormatter={(val) => {
+                                                        if (timeRange === 'minute') {
+                                                            const parts = val.split(' ');
+                                                            return parts.length > 1 ? parts[1] : val;
+                                                        }
                                                         if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                         if (timeRange === 'daily') return val.split('-').slice(1).join('/');
                                                         if (timeRange === 'weekly') {
@@ -1477,6 +1587,10 @@ const TokenStats: React.FC = () => {
                                                     dataKey="period"
                                                     tick={{ fontSize: 10, fill: '#888888', fontFamily: 'monospace' }}
                                                     tickFormatter={(val) => {
+                                                        if (timeRange === 'minute') {
+                                                            const parts = val.split(' ');
+                                                            return parts.length > 1 ? parts[1] : val;
+                                                        }
                                                         if (timeRange === 'hourly') return val.split(' ')[1] || val;
                                                         if (timeRange === 'daily') return val.split('-').slice(1).join('/');
                                                         if (timeRange === 'weekly') {

@@ -25,6 +25,13 @@ pub struct StickySessionConfig {
     pub mode: SchedulingMode,
     /// 缓存优先模式下的最大等待时间 (秒)
     pub max_wait_seconds: u64,
+    /// 并发分流使用的账号上限 (0 表示不限制，>0 时最多分流至该数量的账号)
+    #[serde(default = "default_max_spillover_accounts")]
+    pub max_spillover_accounts: usize,
+}
+
+fn default_max_spillover_accounts() -> usize {
+    0
 }
 
 impl Default for StickySessionConfig {
@@ -32,6 +39,8 @@ impl Default for StickySessionConfig {
         Self {
             mode: SchedulingMode::Balance,
             max_wait_seconds: 60,
+            max_spillover_accounts: 0,
         }
     }
 }
+

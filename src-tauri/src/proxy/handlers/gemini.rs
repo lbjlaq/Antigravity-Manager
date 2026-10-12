@@ -7,6 +7,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{json, Value};
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS;
@@ -324,6 +325,8 @@ pub async fn handle_generate(
             }
         };
 
+        let in_flight_guard = Arc::new(token_manager.acquire_in_flight(&account_id));
+
         let mapped_model = token_manager
             .resolve_dynamic_model_for_account(&account_id, &mapped_model)
             .await;
@@ -586,7 +589,9 @@ pub async fn handle_generate(
                 let image_success_account = account_id.clone();
                 let image_success_model = mapped_model.clone();
                 let causal_anchor_clone = causal_anchor.clone();
+                let in_flight_guard_for_stream = Arc::clone(&in_flight_guard);
                 let stream = async_stream::stream! {
+                    let _in_flight = in_flight_guard_for_stream;
                     let _image_permit = image_permit_for_stream;
                     let mut first_data = first_chunk;
                     let mut meta_sent = false;

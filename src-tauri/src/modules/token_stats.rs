@@ -333,6 +333,51 @@ fn populate_weekly_usage_with_conn(
     Ok(())
 }
 
+/// Get minute-level aggregated stats for a time range
+pub fn get_minute_stats(minutes: i64, step_minutes: i64) -> Result<Vec<TokenStatsAggregated>, String> {
+    let conn = connect_db()?;
+    let step_secs = step_minutes.max(1) * 60;
+    let cutoff = if minutes <= 0 {
+        0
+    } else {
+        chrono::Local::now().timestamp() - (minutes * 60)
+    };
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT strftime('%Y-%m-%d %H:%M', datetime(timestamp - (timestamp % ?2), 'unixepoch', 'localtime')) as minute_bucket, 
+                SUM(input_tokens) as input, 
+                SUM(output_tokens) as output,
+                SUM(cached_tokens) as cached,
+                SUM(total_tokens) as total,
+                COUNT(*) as count
+         FROM token_usage 
+         WHERE timestamp >= ?1
+         GROUP BY minute_bucket
+         ORDER BY minute_bucket ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map(params![cutoff, step_secs], |row| {
+            Ok(TokenStatsAggregated {
+                period: row.get(0)?,
+                total_input_tokens: row.get(1)?,
+                total_output_tokens: row.get(2)?,
+                total_cached_tokens: row.get(3)?,
+                total_tokens: row.get(4)?,
+                request_count: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(result)
+}
+
 /// Get hourly aggregated stats for a time range
 pub fn get_hourly_stats(hours: i64) -> Result<Vec<TokenStatsAggregated>, String> {
     let conn = connect_db()?;
@@ -620,6 +665,52 @@ pub fn get_model_stats(hours: i64) -> Result<Vec<ModelTokenStats>, String> {
     Ok(result)
 }
 
+pub fn get_model_trend_minute(minutes: i64, step_minutes: i64) -> Result<Vec<ModelTrendPoint>, String> {
+    let conn = connect_db()?;
+    let step_secs = step_minutes.max(1) * 60;
+    let cutoff = if minutes <= 0 {
+        0
+    } else {
+        chrono::Local::now().timestamp() - (minutes * 60)
+    };
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT strftime('%Y-%m-%d %H:%M', datetime(timestamp - (timestamp % ?2), 'unixepoch', 'localtime')) as minute_bucket,
+                model,
+                SUM(total_tokens) as total
+         FROM token_usage
+         WHERE timestamp >= ?1
+         GROUP BY minute_bucket, model
+         ORDER BY minute_bucket ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut trend_map: std::collections::BTreeMap<String, std::collections::HashMap<String, u64>> =
+        std::collections::BTreeMap::new();
+
+    let rows = stmt
+        .query_map(params![cutoff, step_secs], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    for row in rows {
+        let (period, raw_model, total) = row.map_err(|e| e.to_string())?;
+        let real_model = crate::proxy::common::model_mapping::resolve_real_forwarded_model(&raw_model);
+        *trend_map.entry(period).or_default().entry(real_model).or_insert(0) += total;
+    }
+
+    Ok(trend_map
+        .into_iter()
+        .map(|(period, model_data)| ModelTrendPoint { period, model_data })
+        .collect())
+}
+
 pub fn get_model_trend_hourly(hours: i64) -> Result<Vec<ModelTrendPoint>, String> {
     let conn = connect_db()?;
     let cutoff = if hours <= 0 {
@@ -707,6 +798,54 @@ pub fn get_model_trend_daily(days: i64) -> Result<Vec<ModelTrendPoint>, String> 
     Ok(trend_map
         .into_iter()
         .map(|(period, model_data)| ModelTrendPoint { period, model_data })
+        .collect())
+}
+
+pub fn get_account_trend_minute(minutes: i64, step_minutes: i64) -> Result<Vec<AccountTrendPoint>, String> {
+    let conn = connect_db()?;
+    let step_secs = step_minutes.max(1) * 60;
+    let cutoff = if minutes <= 0 {
+        0
+    } else {
+        chrono::Local::now().timestamp() - (minutes * 60)
+    };
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT strftime('%Y-%m-%d %H:%M', datetime(timestamp - (timestamp % ?2), 'unixepoch', 'localtime')) as minute_bucket,
+                account_email,
+                SUM(total_tokens) as total
+         FROM token_usage
+         WHERE timestamp >= ?1
+         GROUP BY minute_bucket, account_email
+         ORDER BY minute_bucket ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut trend_map: std::collections::BTreeMap<String, std::collections::HashMap<String, u64>> =
+        std::collections::BTreeMap::new();
+
+    let rows = stmt
+        .query_map(params![cutoff, step_secs], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+
+    for row in rows {
+        let (period, account, total) = row.map_err(|e| e.to_string())?;
+        trend_map.entry(period).or_default().insert(account, total);
+    }
+
+    Ok(trend_map
+        .into_iter()
+        .map(|(period, account_data)| AccountTrendPoint {
+            period,
+            account_data,
+        })
         .collect())
 }
 

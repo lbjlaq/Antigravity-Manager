@@ -143,6 +143,25 @@ pub struct ProxyToken {
     pub is_active_ide_account: bool,        // [NEW] 是否为当前反重力IDE活跃主号 (最低优先级/终极兜底)
 }
 
+/// 活跃在途请求 RAII Guard：在请求处理或流式传输期间持有，Drop 时原子释放并发计数
+#[derive(Debug)]
+pub struct InFlightGuard {
+    pub account_id: String,
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        let prev = self.counter.fetch_sub(1, Ordering::SeqCst);
+        tracing::debug!(
+            "📉 [InFlight] Released request for account {}: {} -> {}",
+            self.account_id,
+            prev,
+            prev.saturating_sub(1)
+        );
+    }
+}
+
 pub struct TokenManager {
     tokens: Arc<DashMap<String, ProxyToken>>, // account_id -> ProxyToken
     current_index: Arc<AtomicUsize>,
@@ -178,6 +197,9 @@ pub struct TokenManager {
     /// [NEW] 模型级临时避让/熔断记录: (account_id, base_model_family) -> 冷却结束时间戳 (Unix秒)
     /// 当某账号调用高级模型（如 Claude 5.5）返回 404/403 时，仅将该特定模型打入冷却，绝不连坐其他模型
     unsupported_models: Arc<DashMap<(String, String), i64>>,
+
+    /// [NEW] 活跃在途请求跟踪器: account_id -> 实时并发计数
+    in_flight_requests: Arc<DashMap<String, Arc<AtomicUsize>>>,
 }
 
 impl TokenManager {
@@ -216,6 +238,35 @@ impl TokenManager {
             cancel_token: CancellationToken::new(),
             image_scheduler: std::sync::RwLock::new(None),
             unsupported_models: Arc::new(DashMap::new()),
+            in_flight_requests: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// 获取指定账号当前的活跃在途请求数
+    pub fn get_in_flight(&self, account_id: &str) -> usize {
+        self.in_flight_requests
+            .get(account_id)
+            .map(|c| c.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    /// 获取指定账号的在途并发许可 Guard（生命周期结束或 Drop 时自动原子释放）
+    pub fn acquire_in_flight(&self, account_id: &str) -> InFlightGuard {
+        let counter = self
+            .in_flight_requests
+            .entry(account_id.to_string())
+            .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
+            .clone();
+        let prev = counter.fetch_add(1, Ordering::SeqCst);
+        tracing::debug!(
+            "📈 [InFlight] Acquired request for account {}: {} -> {}",
+            account_id,
+            prev,
+            prev + 1
+        );
+        InFlightGuard {
+            account_id: account_id.to_string(),
+            counter,
         }
     }
 
@@ -781,6 +832,7 @@ impl TokenManager {
         self.invalid_grant_failures.remove(account_id);
         self.project_id_locks.remove(account_id);
         self.project_id_failures.remove(account_id);
+        self.in_flight_requests.remove(account_id);
         self.session_accounts.retain(|_, v| v != account_id);
         if let Ok(mut preferred) = self.preferred_account_id.try_write() {
             if preferred.as_deref() == Some(account_id) {
@@ -1854,7 +1906,7 @@ impl TokenManager {
         use rand::Rng;
 
         // 过滤可用 token
-        let mut available: Vec<&ProxyToken> = candidates
+        let available: Vec<&ProxyToken> = candidates
             .iter()
             .filter(|t| !attempted.contains(&t.account_id))
             .filter(|t| {
@@ -1880,9 +1932,99 @@ impl TokenManager {
             available
         };
 
+        // [NEW] 过滤拥有有效正配额 (quota > 0) 的健康账号集合，防止配额已耗尽 (0%) 的高优先级僵尸账号阻断 min_priority 计算
+        let has_positive_quota = pool.iter().any(|t| {
+            t.model_quotas
+                .get(normalized_target)
+                .map(|q| *q > 0)
+                .unwrap_or(t.remaining_quota.map(|q| q > 0).unwrap_or(false))
+        });
+        if has_positive_quota {
+            pool.retain(|t| {
+                t.model_quotas
+                    .get(normalized_target)
+                    .map(|q| *q > 0)
+                    .unwrap_or(t.remaining_quota.map(|q| q > 0).unwrap_or(false))
+            });
+        }
+
+        // [NEW] 分流账号上限截断 (Max Spillover Accounts Cap)
+        // 0 表示不限制；> 0 表示池中最多允许前 N 个健康账号参与并发调度/外溢
+        let max_spillover = self
+            .sticky_config
+            .try_read()
+            .map(|c| c.max_spillover_accounts)
+            .unwrap_or(0);
+
+        if max_spillover > 0 {
+            let mut distinct_account_ids: Vec<String> = Vec::new();
+            let mut sorted_pool = pool.clone();
+            // 排序规则：优先级数字越小越优先；相同优先级下，在途请求数越小越优先；最后按 account_id 稳定排序
+            sorted_pool.sort_by(|a, b| {
+                a.priority
+                    .cmp(&b.priority)
+                    .then_with(|| self.get_in_flight(&a.account_id).cmp(&self.get_in_flight(&b.account_id)))
+                    .then_with(|| a.account_id.cmp(&b.account_id))
+            });
+            for t in sorted_pool {
+                if !distinct_account_ids.contains(&t.account_id) {
+                    distinct_account_ids.push(t.account_id.clone());
+                    if distinct_account_ids.len() == max_spillover {
+                        break;
+                    }
+                }
+            }
+            let allowed_set: HashSet<String> = distinct_account_ids.into_iter().collect();
+            pool.retain(|t| allowed_set.contains(&t.account_id));
+        }
+
         // Keep lower-priority groups for retries; only this draw is restricted.
-        if let Some(priority) = pool.iter().map(|t| t.priority).min() {
-            pool.retain(|t| t.priority == priority);
+        // [NEW] 并发感知与次级分流加速 (Concurrency-Aware & Priority Spillover Acceleration)：
+        // 1. 获取当前池中最高优先级 min_priority
+        if let Some(min_priority) = pool.iter().map(|t| t.priority).min() {
+            // 检查最高优先级是否有完全空闲（在途请求数 == 0）的健康账号
+            let min_p_idle: Vec<&ProxyToken> = pool
+                .iter()
+                .filter(|t| t.priority == min_priority && self.get_in_flight(&t.account_id) == 0)
+                .copied()
+                .collect();
+
+            if !min_p_idle.is_empty() {
+                // 最高优先级拥有空闲算力，直接锁定在最高优先级的空闲账号组中
+                pool = min_p_idle;
+            } else {
+                // 最高优先级的所有账号均处于在途处理中 (in_flight > 0)！
+                // 检查更低优先级 (priority > min_priority) 中是否存在完全空闲 (in_flight == 0) 的健康账号
+                let lower_idle: Vec<&ProxyToken> = pool
+                    .iter()
+                    .filter(|t| t.priority > min_priority && self.get_in_flight(&t.account_id) == 0)
+                    .copied()
+                    .collect();
+
+                if let Some(next_min_p) = lower_idle.iter().map(|t| t.priority).min() {
+                    // 🚀 触发多会话分流加速：新会话平滑外溢到次高优先级的空闲账号组，打破单号串行排队阻塞！
+                    tracing::info!(
+                        "🚀 [Concurrency Spillover] Priority {} accounts are busy (in_flight > 0). Offloading new conversation to idle priority {} account",
+                        min_priority, next_min_p
+                    );
+                    pool = lower_idle
+                        .into_iter()
+                        .filter(|t| t.priority == next_min_p)
+                        .collect();
+                } else {
+                    // 全池账号皆处于忙碌状态，按最低在途并发度 (Least-Loaded) 筛选，防单号被压垮
+                    let min_inflight = pool
+                        .iter()
+                        .map(|t| self.get_in_flight(&t.account_id))
+                        .min()
+                        .unwrap_or(0);
+                    pool.retain(|t| self.get_in_flight(&t.account_id) == min_inflight);
+                    // 在相同最低并发度的账号中，恢复优先级优选
+                    if let Some(best_p) = pool.iter().map(|t| t.priority).min() {
+                        pool.retain(|t| t.priority == best_p);
+                    }
+                }
+            }
         }
 
         if pool.len() == 1 {
@@ -1905,20 +2047,31 @@ impl TokenManager {
         let c1 = pool[pick1];
         let c2 = pool[pick2];
 
-        // 选择配额更高的
-        let selected = if c1.remaining_quota.unwrap_or(0) >= c2.remaining_quota.unwrap_or(0) {
+        // 终审比较：在途并发更少者绝对优先；在途相同时配额更高者优先
+        let inflight1 = self.get_in_flight(&c1.account_id);
+        let inflight2 = self.get_in_flight(&c2.account_id);
+        let selected = if inflight1 != inflight2 {
+            if inflight1 < inflight2 {
+                c1
+            } else {
+                c2
+            }
+        } else if c1.remaining_quota.unwrap_or(0) >= c2.remaining_quota.unwrap_or(0) {
             c1
         } else {
             c2
         };
 
         tracing::debug!(
-            "🎲 [P2C] Selected {} ({}%) from [{}({}%), {}({}%)]",
+            "🎲 [P2C] Selected {} (in_flight={}, quota={}%) from [{}(in_flight={}, quota={}%), {}(in_flight={}, quota={}%)]",
             selected.email,
+            self.get_in_flight(&selected.account_id),
             selected.remaining_quota.unwrap_or(0),
             c1.email,
+            inflight1,
             c1.remaining_quota.unwrap_or(0),
             c2.email,
+            inflight2,
             c2.remaining_quota.unwrap_or(0)
         );
 
@@ -6494,6 +6647,9 @@ mod tests {
             validation_url: None,
             model_quotas: quotas1,
             model_limits: limits1,
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
         };
 
         // 账号 2: PRO 订阅，经定时刷新成功上报 Claude 5.5 模型配额
@@ -6521,6 +6677,9 @@ mod tests {
             validation_url: None,
             model_quotas: quotas2,
             model_limits: limits2,
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
         };
 
         // 验证辅助函数检测
@@ -6614,6 +6773,9 @@ mod tests {
             validation_url: None,
             model_quotas: quotas,
             model_limits: limits,
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
         };
 
         std::fs::write(
@@ -6683,6 +6845,9 @@ mod tests {
             validation_url: None,
             model_quotas: HashMap::new(),
             model_limits: HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
         };
 
         manager.tokens.insert(token.account_id.clone(), token);
@@ -6751,5 +6916,235 @@ mod tests {
             manager.session_accounts.get(session_id).unwrap().as_str(),
             acc2
         );
+    }
+
+    #[test]
+    fn test_in_flight_guard_lifecycle() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        let acc_id = "test_acc_1";
+
+        assert_eq!(manager.get_in_flight(acc_id), 0);
+
+        {
+            let _guard1 = manager.acquire_in_flight(acc_id);
+            assert_eq!(manager.get_in_flight(acc_id), 1);
+
+            {
+                let _guard2 = manager.acquire_in_flight(acc_id);
+                assert_eq!(manager.get_in_flight(acc_id), 2);
+            }
+
+            assert_eq!(manager.get_in_flight(acc_id), 1);
+        }
+
+        assert_eq!(manager.get_in_flight(acc_id), 0);
+    }
+
+    #[test]
+    fn test_concurrency_spillover_acceleration() {
+        use std::collections::HashSet;
+        use std::path::PathBuf;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let t1 = ProxyToken {
+            account_id: "acc_priority_0".to_string(),
+            priority: 0,
+            access_token: "tok1".to_string(),
+            refresh_token: "ref1".to_string(),
+            expires_in: 3600,
+            timestamp: 1000000,
+            email: "pri0@example.com".to_string(),
+            account_path: PathBuf::new(),
+            project_id: None,
+            subscription_tier: Some("PRO".to_string()),
+            remaining_quota: Some(90),
+            protected_models: HashSet::new(),
+            health_score: 1.0,
+            reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: HashMap::new(),
+            model_limits: HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
+        };
+
+        let t2 = ProxyToken {
+            account_id: "acc_priority_1".to_string(),
+            priority: 1,
+            access_token: "tok2".to_string(),
+            refresh_token: "ref2".to_string(),
+            expires_in: 3600,
+            timestamp: 1000000,
+            email: "pri1@example.com".to_string(),
+            account_path: PathBuf::new(),
+            project_id: None,
+            subscription_tier: Some("PRO".to_string()),
+            remaining_quota: Some(85),
+            protected_models: HashSet::new(),
+            health_score: 1.0,
+            reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: HashMap::new(),
+            model_limits: HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
+        };
+
+        let candidates = vec![t1.clone(), t2.clone()];
+        let attempted = HashSet::new();
+
+        // 场景 1: acc_priority_0 空闲 (in_flight == 0)，必须优先选 acc_priority_0
+        let sel1 = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet-4-6", false);
+        assert_eq!(sel1.unwrap().account_id, "acc_priority_0");
+
+        // 场景 2: acc_priority_0 忙碌 (in_flight > 0)，acc_priority_1 空闲 (in_flight == 0)
+        // 必须触发分流外溢加速，选中 acc_priority_1！
+        let guard_p0 = manager.acquire_in_flight("acc_priority_0");
+        assert_eq!(manager.get_in_flight("acc_priority_0"), 1);
+
+        let sel2 = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet-4-6", false);
+        assert_eq!(sel2.unwrap().account_id, "acc_priority_1");
+
+        // 场景 3: 两个账号都在忙，但 acc_priority_1 并发更高 (2)，acc_priority_0 并发为 1
+        let _guard_p1_a = manager.acquire_in_flight("acc_priority_1");
+        let _guard_p1_b = manager.acquire_in_flight("acc_priority_1");
+        assert_eq!(manager.get_in_flight("acc_priority_1"), 2);
+
+        // 此时 acc_priority_0 并发度更低 (1 < 2)，选并发度最低的 acc_priority_0
+        let sel3 = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet-4-6", false);
+        assert_eq!(sel3.unwrap().account_id, "acc_priority_0");
+
+        drop(guard_p0);
+        assert_eq!(manager.get_in_flight("acc_priority_0"), 0);
+        // acc_priority_0 重新空闲后，再次选中 acc_priority_0
+        let sel4 = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet-4-6", false);
+        assert_eq!(sel4.unwrap().account_id, "acc_priority_0");
+    }
+
+    #[tokio::test]
+    async fn test_max_spillover_accounts_cap() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let t0 = ProxyToken {
+            account_id: "acc_0".to_string(),
+            priority: 0,
+            access_token: "tok0".to_string(),
+            refresh_token: "ref0".to_string(),
+            expires_in: 3600,
+            timestamp: 1000000,
+            email: "acc0@example.com".to_string(),
+            account_path: PathBuf::new(),
+            project_id: None,
+            subscription_tier: Some("PRO".to_string()),
+            remaining_quota: Some(90),
+            protected_models: HashSet::new(),
+            health_score: 1.0,
+            reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: HashMap::new(),
+            model_limits: HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
+        };
+
+        let t1 = ProxyToken {
+            account_id: "acc_1".to_string(),
+            priority: 1,
+            access_token: "tok1".to_string(),
+            refresh_token: "ref1".to_string(),
+            expires_in: 3600,
+            timestamp: 1000000,
+            email: "acc1@example.com".to_string(),
+            account_path: PathBuf::new(),
+            project_id: None,
+            subscription_tier: Some("PRO".to_string()),
+            remaining_quota: Some(85),
+            protected_models: HashSet::new(),
+            health_score: 1.0,
+            reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: HashMap::new(),
+            model_limits: HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
+        };
+
+        let t2 = ProxyToken {
+            account_id: "acc_2".to_string(),
+            priority: 2,
+            access_token: "tok2".to_string(),
+            refresh_token: "ref2".to_string(),
+            expires_in: 3600,
+            timestamp: 1000000,
+            email: "acc2@example.com".to_string(),
+            account_path: PathBuf::new(),
+            project_id: None,
+            subscription_tier: Some("PRO".to_string()),
+            remaining_quota: Some(80),
+            protected_models: HashSet::new(),
+            health_score: 1.0,
+            reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: HashMap::new(),
+            model_limits: HashMap::new(),
+            weekly_quota: None,
+            weekly_reset_time: None,
+            is_active_ide_account: false,
+        };
+
+        let candidates = vec![t0.clone(), t1.clone(), t2.clone()];
+        let attempted = HashSet::new();
+
+        // 1. 设置分流上限为 2 个账号
+        {
+            let mut cfg = manager.get_sticky_config().await;
+            cfg.max_spillover_accounts = 2;
+            manager.update_sticky_config(cfg).await;
+        }
+
+        // 场景 1: acc_0 空闲，选中 acc_0
+        let sel1 = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet-4-6", false);
+        assert_eq!(sel1.unwrap().account_id, "acc_0");
+
+        // 场景 2: acc_0 忙碌，acc_1 空闲，此时使用的总账号数为 2 <= 上限 2，顺利外溢选中 acc_1
+        let guard0 = manager.acquire_in_flight("acc_0");
+        let sel2 = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet-4-6", false);
+        assert_eq!(sel2.unwrap().account_id, "acc_1");
+
+        // 场景 3: acc_0 忙碌，acc_1 也忙碌。虽然 acc_2 完全空闲，但因为设置了上限 2，严禁触碰第 3 个账号 acc_2！
+        let guard1 = manager.acquire_in_flight("acc_1");
+        let sel3 = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet-4-6", false);
+        // 只能在 acc_0 和 acc_1 中选 (由于并发度相同 1==1，优先选高优先级 acc_0)
+        assert_eq!(sel3.unwrap().account_id, "acc_0");
+
+        // 场景 4: 将上限调为 3 或 0 (不限制)，此时允许唤醒第 3 个空闲账号 acc_2
+        {
+            let mut cfg = manager.get_sticky_config().await;
+            cfg.max_spillover_accounts = 3;
+            manager.update_sticky_config(cfg).await;
+        }
+        let sel4 = manager.select_with_p2c(&candidates, &attempted, "claude-sonnet-4-6", false);
+        assert_eq!(sel4.unwrap().account_id, "acc_2");
+
+        drop(guard0);
+        drop(guard1);
     }
 }

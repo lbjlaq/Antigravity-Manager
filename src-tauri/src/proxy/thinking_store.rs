@@ -967,6 +967,17 @@ impl ThinkingStore {
         }
     }
 
+    /// 检查指定会话是否已记录有真实思维块签名
+    pub fn session_has_signatures(&self, store_key: &str) -> bool {
+        if store_key.is_empty() {
+            return false;
+        }
+        if let Some(entry) = self.sessions.get(store_key) {
+            return entry.turns.iter().any(|t| t.signature.is_some());
+        }
+        false
+    }
+
     /// 精准定向净化指定会话中的异构污染签名（保留思考文本与健康签名）
     pub fn purge_corrupted_signatures(&self, store_key: &str, target_model: &str) -> usize {
         if store_key.is_empty() {
