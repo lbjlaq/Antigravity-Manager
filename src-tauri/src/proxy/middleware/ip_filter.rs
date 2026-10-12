@@ -193,6 +193,28 @@ pub fn normalize_ip_str(raw: &str) -> String {
     clean.to_string()
 }
 
+/// 仅根据 TCP 对端地址判断是否为本机回环。
+///
+/// 不读取 `X-Forwarded-For` / `X-Real-IP`。这两项由客户端或反代填写，
+/// 不能用来决定 `/internal/` 是否免鉴权，否则伪造 `127.0.0.1` 即可绕过。
+/// 对端地址由 `server.rs` 的 accept 循环写入 `ConnectInfo`。
+pub fn is_direct_loopback(request: &Request) -> bool {
+    request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|info| ip_is_loopback(info.0.ip()))
+        .unwrap_or(false)
+}
+
+fn ip_is_loopback(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback(),
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
+        }
+    }
+}
+
 /// 从请求中提取客户端 IP（支持 X-Forwarded-For, X-Real-IP, ConnectInfo，并自动规范化 IPv4/IPv6）
 pub fn extract_client_ip(request: &Request) -> Option<String> {
     // 1. 优先从 X-Forwarded-For 提取 (取第一个 IP)
@@ -267,5 +289,37 @@ mod tests {
             normalize_ip_str("2409:8a55:a21:2e60:2e2:69ff:fe17:95cb"),
             "2409:8a55:a21:2e60:2e2:69ff:fe17:95cb"
         );
+    }
+
+    fn request_from(ip: std::net::IpAddr, forwarded_for: Option<&str>) -> Request {
+        let mut builder = Request::builder();
+        if let Some(xff) = forwarded_for {
+            builder = builder.header("x-forwarded-for", xff);
+        }
+        let mut request = builder.body(axum::body::Body::empty()).unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::new(
+                ip, 12345,
+            )));
+        request
+    }
+
+    #[test]
+    fn direct_loopback_uses_connect_info_only() {
+        let v4_loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let v6_loopback: std::net::IpAddr = "::1".parse().unwrap();
+        let mapped_loopback: std::net::IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        let lan: std::net::IpAddr = "192.168.1.10".parse().unwrap();
+
+        assert!(is_direct_loopback(&request_from(v4_loopback, None)));
+        assert!(is_direct_loopback(&request_from(v6_loopback, None)));
+        assert!(is_direct_loopback(&request_from(mapped_loopback, None)));
+        assert!(!is_direct_loopback(&request_from(lan, None)));
+        // 伪造转发头不能把公网连接伪装成本机
+        assert!(!is_direct_loopback(&request_from(lan, Some("127.0.0.1"))));
+
+        let missing = Request::builder().body(axum::body::Body::empty()).unwrap();
+        assert!(!is_direct_loopback(&missing));
     }
 }

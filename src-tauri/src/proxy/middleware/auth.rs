@@ -99,10 +99,19 @@ async fn auth_middleware_internal(
             return Ok(next.run(request).await);
         }
 
-        // 内部端点 (/internal/*) 豁免鉴权 - 用于 warmup 等内部功能
-        if is_internal_endpoint {
-            tracing::debug!("Internal endpoint bypassed auth: {}", path);
+        // 内部端点只对本机回环免鉴权。非回环落入下方 API Key 校验。
+        // 必须看 TCP 对端，不能看 X-Forwarded-For（可被伪造为 127.0.0.1）。
+        if is_internal_endpoint
+            && crate::proxy::middleware::ip_filter::is_direct_loopback(&request)
+        {
+            tracing::debug!("Loopback internal endpoint bypassed auth: {}", path);
             return Ok(next.run(request).await);
+        }
+        if is_internal_endpoint {
+            tracing::warn!(
+                "Non-loopback access to internal endpoint, enforcing auth: {}",
+                path
+            );
         }
     } else {
         // Management endpoints always require admin auth; only health checks stay public.

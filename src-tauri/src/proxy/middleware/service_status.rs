@@ -13,9 +13,12 @@ pub async fn service_status_middleware(
 ) -> Response {
     let path = request.uri().path();
 
-    // Always allow Admin API, internal endpoints and Auth callback
+    // 管理接口、OAuth 回调和健康检查在停服后仍要可达。
+    // /internal/ 只放行本机回环，避免停服后公网仍能打到预热端点。
+    let internal_from_loopback = path.starts_with("/internal/")
+        && crate::proxy::middleware::ip_filter::is_direct_loopback(&request);
     if path.starts_with("/api/")
-        || path.starts_with("/internal/")
+        || internal_from_loopback
         || path == "/auth/callback"
         || path == "/health"
     {
