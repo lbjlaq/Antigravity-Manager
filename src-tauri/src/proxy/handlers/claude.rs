@@ -1867,6 +1867,7 @@ pub async fn handle_messages(
                 Err(e) => {
                     let headers = [
                         ("X-Mapped-Model", request_with_mapped.model.as_str()),
+                        ("X-Upstream-Model", config.final_model.as_str()),
                         ("X-Account-Email", email.as_str()),
                     ];
                     return (
@@ -2134,6 +2135,7 @@ pub async fn handle_messages(
                         .header("X-Accel-Buffering", "no")
                         .header("X-Account-Email", &email)
                         .header("X-Mapped-Model", &request_with_mapped.model)
+                        .header("X-Upstream-Model", config.final_model.as_str())
                         .header("X-Session-Id", &client_session_id)
                         .header("X-Antigravity-Session-Id", &client_session_id)
                         .header("X-Context-Purified", "false")
@@ -2283,6 +2285,7 @@ pub async fn handle_messages(
                                     .header(header::CONTENT_TYPE, "application/json")
                                     .header("X-Account-Email", &email)
                                     .header("X-Mapped-Model", &request_with_mapped.model)
+                                    .header("X-Upstream-Model", config.final_model.as_str())
                                     .header("X-Session-Id", &client_session_id)
                                     .header("X-Antigravity-Session-Id", &client_session_id)
                                     .header("X-Context-Purified", "false")
@@ -2416,6 +2419,7 @@ pub async fn handle_messages(
                     [
                         ("X-Account-Email", email.as_str()),
                         ("X-Mapped-Model", request_with_mapped.model.as_str()),
+                        ("X-Upstream-Model", config.final_model.as_str()),
                     ],
                     Json(claude_response),
                 )
@@ -2502,6 +2506,7 @@ pub async fn handle_messages(
                 [
                     ("X-Account-Email", email.as_str()),
                     ("X-Mapped-Model", request_with_mapped.model.as_str()),
+                    ("X-Upstream-Model", config.final_model.as_str()),
                 ],
                 Json(dual_err),
             )

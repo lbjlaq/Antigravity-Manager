@@ -1642,6 +1642,7 @@
             "time": "请求时间",
             "model": "使用模型",
             "mapped_model": "映射模型",
+            "upstream_model": "上游真实模型",
             "protocol": "请求协议",
             "account_used": "使用账号",
             "id": "请求 ID",

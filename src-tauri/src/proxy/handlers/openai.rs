@@ -2643,6 +2643,7 @@ pub async fn handle_chat_completions(
                         .header("X-Accel-Buffering", "no")
                         .header("X-Account-Email", &email)
                         .header("X-Mapped-Model", &mapped_model)
+                        .header("X-Upstream-Model", config.final_model.as_str())
                         .header("X-Session-Id", &client_session_id)
                         .header("X-Antigravity-Session-Id", &client_session_id)
                         .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
@@ -2687,6 +2688,7 @@ pub async fn handle_chat_completions(
                                 .header("Content-Type", "application/json")
                                 .header("X-Account-Email", email.as_str())
                                 .header("X-Mapped-Model", mapped_model.as_str())
+                                .header("X-Upstream-Model", full_response.model.as_str())
                                 .header("X-Session-Id", client_session_id.as_str())
                                 .header("X-Antigravity-Session-Id", client_session_id.as_str())
                                 .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
@@ -2774,6 +2776,7 @@ pub async fn handle_chat_completions(
                 .header("Content-Type", "application/json")
                 .header("X-Account-Email", email.as_str())
                 .header("X-Mapped-Model", mapped_model.as_str())
+                .header("X-Upstream-Model", config.final_model.as_str())
                 .header("X-Session-Id", client_session_id.as_str())
                 .header("X-Antigravity-Session-Id", client_session_id.as_str())
                 .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
@@ -4372,6 +4375,7 @@ pub async fn handle_completions(
                         .header("Connection", "keep-alive")
                         .header("X-Account-Email", &email)
                         .header("X-Mapped-Model", &mapped_model)
+                        .header("X-Upstream-Model", config.final_model.as_str())
                         .header("X-Session-Id", &session_scope.client_id)
                         .header("X-Antigravity-Session-Id", &session_scope.client_id)
                         .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
@@ -4537,6 +4541,7 @@ pub async fn handle_completions(
                                     .header("Content-Type", "application/json")
                                     .header("X-Account-Email", email.as_str())
                                     .header("X-Mapped-Model", mapped_model.as_str())
+                                    .header("X-Upstream-Model", config.final_model.as_str())
                                     .header("X-Session-Id", session_scope.client_id.as_str())
                                     .header(
                                         "X-Antigravity-Session-Id",
@@ -4611,6 +4616,7 @@ pub async fn handle_completions(
                                 .header("Content-Type", "application/json")
                                 .header("X-Account-Email", email.as_str())
                                 .header("X-Mapped-Model", mapped_model.as_str())
+                                .header("X-Upstream-Model", config.final_model.as_str())
                                 .header("X-Session-Id", session_scope.client_id.as_str())
                                 .header(
                                     "X-Antigravity-Session-Id",
@@ -4688,6 +4694,7 @@ pub async fn handle_completions(
                     .header("Content-Type", "application/json")
                     .header("X-Account-Email", email.as_str())
                     .header("X-Mapped-Model", mapped_model.as_str())
+                    .header("X-Upstream-Model", config.final_model.as_str())
                     .header("X-Session-Id", session_scope.client_id.as_str())
                     .header("X-Antigravity-Session-Id", session_scope.client_id.as_str())
                     .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))
@@ -4745,6 +4752,7 @@ pub async fn handle_completions(
                 .header("Content-Type", "application/json")
                 .header("X-Account-Email", email.as_str())
                 .header("X-Mapped-Model", mapped_model.as_str())
+                .header("X-Upstream-Model", config.final_model.as_str())
                 .header("X-Session-Id", session_scope.client_id.as_str())
                 .header("X-Antigravity-Session-Id", session_scope.client_id.as_str())
                 .header("X-Timing-Clean-Ms", format!("{:.3}", clean_ms))

@@ -894,6 +894,13 @@ pub async fn monitor_middleware(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    // Extract upstream model from X-Upstream-Model header if present
+    let upstream_model = response
+        .headers()
+        .get("X-Upstream-Model")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     // Determine protocol from URL path
     let protocol = if uri.contains("/v1/messages") || uri.contains("/v1/models/claude") {
         Some("anthropic".to_string())
@@ -933,6 +940,7 @@ pub async fn monitor_middleware(
         duration,
         model,
         mapped_model,
+        upstream_model,
         account_email,
         client_ip,
         error: None,
@@ -1024,6 +1032,12 @@ pub async fn monitor_middleware(
                     }
 
                     if let Ok(json) = serde_json::from_str::<Value>(json_str) {
+                        if let Some(mv) = json.get("modelVersion").and_then(|v| v.as_str()) {
+                            if !mv.trim().is_empty() {
+                                log.upstream_model = Some(mv.to_string());
+                            }
+                        }
+
                         // OpenAI format: choices[0].delta.content / reasoning_content / tool_calls
                         if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
                             for choice in choices {
@@ -1402,6 +1416,14 @@ pub async fn monitor_middleware(
                             {
                                 let json_str = line.trim_start_matches("data: ").trim();
                                 if let Ok(json) = serde_json::from_str::<Value>(json_str) {
+                                    if let Some(mv) =
+                                        json.get("modelVersion").and_then(|v| v.as_str())
+                                    {
+                                        if !mv.trim().is_empty() {
+                                            log.upstream_model = Some(mv.to_string());
+                                        }
+                                    }
+
                                     if let Some(usage) = json
                                         .get("usage")
                                         .or(json.get("usageMetadata"))
@@ -1582,6 +1604,16 @@ pub async fn monitor_middleware(
             Ok(bytes) => {
                 if let Ok(s) = std::str::from_utf8(&bytes) {
                     if let Ok(json) = serde_json::from_str::<Value>(&s) {
+                        if let Some(mv) = json
+                            .get("modelVersion")
+                            .or_else(|| json.get("response").and_then(|r| r.get("modelVersion")))
+                            .and_then(|v| v.as_str())
+                        {
+                            if !mv.trim().is_empty() {
+                                log.upstream_model = Some(mv.to_string());
+                            }
+                        }
+
                         // 支持 OpenAI "usage" 或 Gemini "usageMetadata"
                         if let Some(usage) = json
                             .get("usage")

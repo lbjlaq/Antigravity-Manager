@@ -414,6 +414,10 @@ pub fn init_db() -> Result<(), String> {
         [],
     );
     let _ = conn.execute("ALTER TABLE request_logs ADD COLUMN session_id TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE request_logs ADD COLUMN upstream_model TEXT",
+        [],
+    );
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_timestamp ON request_logs (timestamp DESC)",
@@ -523,6 +527,10 @@ fn map_request_log_row(row: &rusqlite::Row) -> rusqlite::Result<ProxyRequestLog>
         upstream_request_headers: row.get(21).unwrap_or(None),
         response_headers: row.get(22).unwrap_or(None),
         session_id: row.get(23).unwrap_or(None),
+        upstream_model: row
+            .get::<_, Option<String>>("upstream_model")
+            .ok()
+            .flatten(),
     })
 }
 
@@ -1685,6 +1693,7 @@ fn save_log_with_connection(
         + [
             &log.model,
             &log.mapped_model,
+            &log.upstream_model,
             &log.account_email,
             &log.client_ip,
             &log.error,
@@ -1724,8 +1733,8 @@ fn save_log_with_connection(
     make_room(conn, budget, log_bytes)?;
 
     conn.execute(
-        "INSERT INTO request_logs (id, timestamp, method, url, status, duration, model, error, request_body, upstream_request_body, response_body, input_tokens, output_tokens, cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username, request_headers, upstream_request_headers, response_headers, session_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        "INSERT INTO request_logs (id, timestamp, method, url, status, duration, model, error, request_body, upstream_request_body, response_body, input_tokens, output_tokens, cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username, request_headers, upstream_request_headers, response_headers, session_id, upstream_model)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         params![
             log.id,
             log.timestamp,
@@ -1751,6 +1760,7 @@ fn save_log_with_connection(
             log.upstream_request_headers,
             log.response_headers,
             log.session_id,
+            log.upstream_model,
         ],
     ).map_err(|e| e.to_string())?;
 
@@ -1767,7 +1777,7 @@ pub fn get_logs_summary(limit: usize, offset: usize) -> Result<Vec<ProxyRequestL
                 NULL as request_body, NULL as upstream_request_body, NULL as response_body,
                 input_tokens, output_tokens, cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username,
                 NULL as request_headers, NULL as upstream_request_headers, NULL as response_headers,
-                session_id
+                session_id, upstream_model
          FROM request_logs 
          ORDER BY timestamp DESC 
          LIMIT ?1 OFFSET ?2",
@@ -1824,7 +1834,7 @@ pub fn get_log_detail(log_id: &str) -> Result<ProxyRequestLog, String> {
                 request_body, upstream_request_body, response_body, input_tokens, output_tokens,
                 cached_tokens, reasoning_tokens, account_email, mapped_model, protocol, client_ip, username,
                 request_headers, upstream_request_headers, response_headers,
-                session_id
+                session_id, upstream_model
          FROM request_logs
          WHERE id = ?1",
         )
@@ -2380,6 +2390,33 @@ mod retention_tests {
     }
 
     #[test]
+    fn test_proxy_db_upstream_model_roundtrip() {
+        use crate::proxy::monitor::prompt_log_tests::{sample_log, TestDataDir};
+        let _dir = TestDataDir::new();
+        init_db().unwrap();
+
+        let mut log = sample_log("upstream-test", 100);
+        log.model = Some("gpt-4o".to_string());
+        log.mapped_model = Some("gemini-2.5-pro".to_string());
+        log.upstream_model = Some("gemini-2.5-pro-preview-05-06".to_string());
+
+        save_log(log.clone()).unwrap();
+
+        let detail = get_log_detail("upstream-test").unwrap();
+        assert_eq!(
+            detail.upstream_model.as_deref(),
+            Some("gemini-2.5-pro-preview-05-06")
+        );
+
+        let summaries = get_logs(10).unwrap();
+        let found = summaries.iter().find(|l| l.id == "upstream-test").unwrap();
+        assert_eq!(
+            found.upstream_model.as_deref(),
+            Some("gemini-2.5-pro-preview-05-06")
+        );
+    }
+
+    #[test]
     fn prompt_log_legacy_headroom_rejection_preserves_history_on_retries() {
         use crate::proxy::monitor::prompt_log_tests::TestDataDir;
         let _dir = TestDataDir::new();
@@ -2621,7 +2658,7 @@ pub fn get_logs_filtered(
                 NULL as request_body, NULL as upstream_request_body, NULL as response_body,
                 input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username,
                 NULL as request_headers, NULL as upstream_request_headers, NULL as response_headers,
-                session_id
+                session_id, upstream_model
          FROM request_logs
          WHERE (status < 200 OR status >= 400)
          ORDER BY timestamp DESC
@@ -2631,7 +2668,7 @@ pub fn get_logs_filtered(
                 NULL as request_body, NULL as upstream_request_body, NULL as response_body,
                 input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username,
                 NULL as request_headers, NULL as upstream_request_headers, NULL as response_headers,
-                session_id
+                session_id, upstream_model
          FROM request_logs
          ORDER BY timestamp DESC
          LIMIT ?1 OFFSET ?2"
@@ -2640,7 +2677,7 @@ pub fn get_logs_filtered(
                 NULL as request_body, NULL as upstream_request_body, NULL as response_body,
                 input_tokens, output_tokens, cached_tokens, account_email, mapped_model, protocol, client_ip, username,
                 NULL as request_headers, NULL as upstream_request_headers, NULL as response_headers,
-                session_id
+                session_id, upstream_model
          FROM request_logs
          WHERE (url LIKE ?3 OR method LIKE ?3 OR model LIKE ?3 OR CAST(status AS TEXT) LIKE ?3 OR account_email LIKE ?3 OR client_ip LIKE ?3 OR session_id LIKE ?3)
          ORDER BY timestamp DESC
@@ -2683,7 +2720,7 @@ pub fn get_all_logs_for_export() -> Result<Vec<ProxyRequestLog>, String> {
                 request_body, upstream_request_body, response_body, input_tokens, output_tokens,
                 cached_tokens, account_email, mapped_model, protocol, client_ip, username,
                 request_headers, upstream_request_headers, response_headers,
-                session_id
+                session_id, upstream_model
          FROM request_logs
          ORDER BY timestamp DESC",
         )

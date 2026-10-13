@@ -15,7 +15,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { useConfigStore } from '../../stores/useConfigStore';
 
-interface ProxyRequestLog {
+interface ProxyLog {
     id: string;
     model?: string;
     input_tokens?: number;
@@ -24,7 +24,10 @@ interface ProxyRequestLog {
     status: number;
     duration: number;
     mapped_model?: string;
+    upstream_model?: string;
 }
+
+type ProxyRequestLog = ProxyLog;
 
 type MiniScopeMode = 'single' | 'pool';
 
@@ -556,8 +559,8 @@ export default function MiniView() {
                             className="flex items-center w-full gap-2"
                         >
                             <span title={latestLog.status.toString()} className={`w-1.5 h-1.5 rounded-full ${latestLog.status >= 200 && latestLog.status < 400 ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
-                            <span className="font-bold truncate max-w-[100px]" title={latestLog.model}>
-                                {latestLog.mapped_model || latestLog.model}
+                            <span className="font-bold truncate max-w-[100px]" title={latestLog.upstream_model || latestLog.mapped_model || latestLog.model}>
+                                {latestLog.upstream_model || latestLog.mapped_model || latestLog.model}
                             </span>
 
                             <div className="flex-1 flex items-center justify-end gap-2">

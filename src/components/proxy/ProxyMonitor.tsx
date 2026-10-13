@@ -23,6 +23,7 @@ interface ProxyRequestLog {
     duration: number;
     model?: string;
     mapped_model?: string;
+    upstream_model?: string;
     error?: string;
     request_body?: string;
     upstream_request_body?: string;
@@ -245,10 +246,12 @@ const LogTable: React.FC<LogTableProps> = ({
                             <td 
                                 className="text-sky-600 dark:text-sky-400 font-semibold truncate py-2 px-3" 
                                 style={{ width: `${colWidths.model}px`, maxWidth: `${colWidths.model}px` }}
-                                title={log.mapped_model && log.model !== log.mapped_model ? `${log.model} => ${log.mapped_model}` : (log.model || '')}
+                                title={(log.upstream_model && log.upstream_model !== log.model) || (log.mapped_model && log.model !== log.mapped_model)
+                                    ? `${log.model} => ${log.mapped_model || log.model}${log.upstream_model && log.upstream_model !== log.mapped_model ? ` (${log.upstream_model})` : ''}`
+                                    : (log.model || '')}
                             >
-                                {log.mapped_model && log.model !== log.mapped_model
-                                    ? `${log.model} => ${log.mapped_model}`
+                                {(log.upstream_model && log.upstream_model !== log.model) || (log.mapped_model && log.model !== log.mapped_model)
+                                    ? `${log.model} => ${log.upstream_model || log.mapped_model}`
                                     : (log.model || '-')}
                             </td>
                             <td style={{ width: `${colWidths.protocol}px`, maxWidth: `${colWidths.protocol}px` }} className="py-2 px-3 truncate">
@@ -1642,6 +1645,9 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                                             <span className="font-mono font-bold text-blue-600 dark:text-blue-400 truncate block text-xs" title={selectedLog.model}>{selectedLog.model || '-'}</span>
                                             {selectedLog.mapped_model && selectedLog.model !== selectedLog.mapped_model && (
                                                 <span className="font-mono text-emerald-600 dark:text-emerald-400 truncate block text-[11px]" title={selectedLog.mapped_model}>➔ {selectedLog.mapped_model}</span>
+                                            )}
+                                            {selectedLog.upstream_model && selectedLog.upstream_model !== selectedLog.mapped_model && (
+                                                <span className="font-mono text-amber-600 dark:text-amber-400 truncate block text-[11px]" title={`${t('monitor.details.upstream_model', 'Upstream Model')}: ${selectedLog.upstream_model}`}>⚡ {selectedLog.upstream_model}</span>
                                             )}
                                         </div>
                                         <div>

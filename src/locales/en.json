@@ -1648,6 +1648,7 @@
             "time": "Time",
             "model": "Model",
             "mapped_model": "Mapped Model",
+            "upstream_model": "Upstream Model",
             "protocol": "Protocol",
             "account_used": "Account Used",
             "id": "Request ID",
