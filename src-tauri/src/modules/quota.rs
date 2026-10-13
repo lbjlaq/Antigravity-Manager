@@ -140,10 +140,14 @@ async fn fetch_project_id(
 ) -> (Option<String>, Option<String>) {
     let client = create_standard_client(account_id).await;
     let meta = json!({"metadata": {"ideType": "ANTIGRAVITY"}});
+    let health_tracker = crate::proxy::upstream::client::get_global_endpoint_health();
+    let candidate_endpoints =
+        health_tracker.get_ordered_endpoints(&CLOUD_CODE_LOAD_PROJECT_ENDPOINTS);
 
-    for (ep_idx, ep_url) in CLOUD_CODE_LOAD_PROJECT_ENDPOINTS.iter().enumerate() {
+    for (ep_idx, ep_url) in candidate_endpoints.iter().enumerate() {
         let res = client
             .post(*ep_url)
+            .timeout(std::time::Duration::from_secs(5))
             .header(
                 rquest::header::AUTHORIZATION,
                 format!("Bearer {}", access_token),
@@ -159,7 +163,9 @@ async fn fetch_project_id(
 
         match res {
             Ok(res) => {
-                if res.status().is_success() {
+                let status = res.status();
+                if status.is_success() {
+                    health_tracker.mark_success(ep_url);
                     if let Ok(data) = res.json::<LoadProjectResponse>().await {
                         let project_id = data.project_id.clone();
 
@@ -210,24 +216,27 @@ async fn fetch_project_id(
 
                         if ep_idx > 0 {
                             crate::modules::logger::log_info(&format!(
-                                "loadCodeAssist fallback succeeded at endpoint #{}",
-                                ep_idx + 1
+                                "loadCodeAssist fallback succeeded at endpoint #{} ({})",
+                                ep_idx + 1,
+                                ep_url
                             ));
                         }
 
                         return (project_id, subscription_tier);
                     }
                 } else {
+                    if crate::proxy::upstream::client::should_try_next_endpoint(status) {
+                        health_tracker.mark_failure(ep_url);
+                    }
                     crate::modules::logger::log_warn(&format!(
                         "⚠️  [{}] loadCodeAssist failed at {}: Status: {}",
-                        email,
-                        ep_url,
-                        res.status()
+                        email, ep_url, status
                     ));
                     continue;
                 }
             }
             Err(e) => {
+                health_tracker.mark_failure(ep_url);
                 crate::modules::logger::log_error(&format!(
                     "❌ [{}] loadCodeAssist network error at {}: {}",
                     email, ep_url, e
@@ -290,12 +299,15 @@ pub async fn fetch_quota_with_cache(
     };
 
     let mut last_error: Option<AppError> = None;
+    let health_tracker = crate::proxy::upstream::client::get_global_endpoint_health();
+    let candidate_endpoints = health_tracker.get_ordered_endpoints(&QUOTA_API_ENDPOINTS);
 
-    for (ep_idx, ep_url) in QUOTA_API_ENDPOINTS.iter().enumerate() {
-        let has_next = ep_idx + 1 < QUOTA_API_ENDPOINTS.len();
+    for (ep_idx, ep_url) in candidate_endpoints.iter().enumerate() {
+        let has_next = ep_idx + 1 < candidate_endpoints.len();
 
         match client
             .post(*ep_url)
+            .timeout(std::time::Duration::from_secs(5))
             .bearer_auth(access_token)
             .header(
                 rquest::header::USER_AGENT,
@@ -309,6 +321,10 @@ pub async fn fetch_quota_with_cache(
                 // Convert HTTP error status to AppError
                 if let Err(_) = response.error_for_status_ref() {
                     let status = response.status();
+
+                    if crate::proxy::upstream::client::should_try_next_endpoint(status) {
+                        health_tracker.mark_failure(ep_url);
+                    }
 
                     // 403 说明该账号本身不可用（未验证 / 被限制）。
                     //
@@ -348,10 +364,13 @@ pub async fn fetch_quota_with_cache(
                     )));
                 }
 
+                health_tracker.mark_success(ep_url);
+
                 if ep_idx > 0 {
                     crate::modules::logger::log_info(&format!(
-                        "Quota API fallback succeeded at endpoint #{}",
-                        ep_idx + 1
+                        "Quota API fallback succeeded at endpoint #{} ({})",
+                        ep_idx + 1,
+                        ep_url
                     ));
                 }
 
@@ -534,9 +553,13 @@ async fn fetch_quota_summary(
         json!({})
     };
 
-    for ep_url in QUOTA_SUMMARY_ENDPOINTS.iter() {
+    let health_tracker = crate::proxy::upstream::client::get_global_endpoint_health();
+    let candidate_endpoints = health_tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS);
+
+    for (ep_idx, ep_url) in candidate_endpoints.iter().enumerate() {
         let res = client
             .post(*ep_url)
+            .timeout(std::time::Duration::from_secs(5))
             .bearer_auth(access_token)
             .header(
                 rquest::header::USER_AGENT,
@@ -550,11 +573,23 @@ async fn fetch_quota_summary(
             Ok(response) => {
                 let status = response.status();
                 if !status.is_success() {
+                    if crate::proxy::upstream::client::should_try_next_endpoint(status) {
+                        health_tracker.mark_failure(ep_url);
+                    }
                     crate::modules::logger::log_warn(&format!(
                         "QuotaSummary API {} returned {}, trying next endpoint",
                         ep_url, status
                     ));
                     continue;
+                }
+
+                health_tracker.mark_success(ep_url);
+                if ep_idx > 0 {
+                    crate::modules::logger::log_info(&format!(
+                        "QuotaSummary API fallback succeeded at endpoint #{} ({})",
+                        ep_idx + 1,
+                        ep_url
+                    ));
                 }
 
                 let summary: QuotaSummaryResponse = match response.json().await {
@@ -597,6 +632,7 @@ async fn fetch_quota_summary(
                 return Some(groups);
             }
             Err(e) => {
+                health_tracker.mark_failure(ep_url);
                 crate::modules::logger::log_warn(&format!(
                     "QuotaSummary API request failed at {}: {}",
                     ep_url, e
@@ -1006,4 +1042,64 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
         "Successfully triggered warmup for {} model series",
         warmed_count
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quota_and_load_project_endpoints_health_reordering() {
+        let tracker = crate::proxy::upstream::client::EndpointHealthTracker::new(
+            std::time::Duration::from_secs(60),
+        );
+
+        // 默认顺序为 Daily -> Sandbox -> Prod
+        assert_eq!(
+            tracker.get_ordered_endpoints(&CLOUD_CODE_LOAD_PROJECT_ENDPOINTS)[0],
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+        );
+        assert_eq!(
+            tracker.get_ordered_endpoints(&QUOTA_API_ENDPOINTS)[0],
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+        );
+        assert_eq!(
+            tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS)[0],
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+        );
+
+        // 标记 Daily 故障（如日常请求中发生超时或连接失败）
+        tracker.mark_failure("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist");
+
+        // 所有相关接口都应自动跳过 Daily，优先尝试 Sandbox
+        assert_eq!(
+            tracker.get_ordered_endpoints(&CLOUD_CODE_LOAD_PROJECT_ENDPOINTS)[0],
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist"
+        );
+        assert_eq!(
+            tracker.get_ordered_endpoints(&QUOTA_API_ENDPOINTS)[0],
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels"
+        );
+        assert_eq!(
+            tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS)[0],
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary"
+        );
+
+        // 若 Sandbox 也发生故障，所有接口自动降级到 Prod
+        tracker.mark_failure(
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
+        );
+        assert_eq!(
+            tracker.get_ordered_endpoints(&CLOUD_CODE_LOAD_PROJECT_ENDPOINTS)[0],
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+        );
+        assert_eq!(
+            tracker.get_ordered_endpoints(&QUOTA_API_ENDPOINTS)[0],
+            "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
+        );
+        assert_eq!(
+            tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS)[0],
+            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+        );
+    }
 }

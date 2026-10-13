@@ -21,11 +21,14 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     });
 
     let client = crate::utils::http::get_client();
+    let health_tracker = crate::proxy::upstream::client::get_global_endpoint_health();
+    let ordered_endpoints = health_tracker.get_ordered_endpoints(&LOAD_PROJECT_ENDPOINTS);
     let mut last_error = String::new();
 
-    for url in LOAD_PROJECT_ENDPOINTS.iter() {
+    for (idx, url) in ordered_endpoints.iter().enumerate() {
         let response = client
             .post(*url)
+            .timeout(std::time::Duration::from_millis(3000))
             .bearer_auth(access_token)
             .header("User-Agent", crate::constants::USER_AGENT.as_str())
             .header("Content-Type", "application/json")
@@ -35,7 +38,9 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
 
         match response {
             Ok(resp) => {
-                if resp.status().is_success() {
+                let status = resp.status();
+                if status.is_success() {
+                    health_tracker.mark_success(url);
                     let data: Value = resp
                         .json()
                         .await
@@ -44,18 +49,28 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
                     if let Some(project_id) =
                         data.get("cloudaicompanionProject").and_then(|v| v.as_str())
                     {
+                        if idx > 0 {
+                            tracing::info!(
+                                "loadCodeAssist fetch_project_id fallback succeeded at endpoint #{} ({})",
+                                idx + 1,
+                                url
+                            );
+                        }
                         return Ok(project_id.to_string());
                     } else {
                         return Err("账号无资格获取官方 cloudaicompanionProject".to_string());
                     }
                 } else {
-                    let status = resp.status();
+                    if crate::proxy::upstream::client::should_try_next_endpoint(status) {
+                        health_tracker.mark_failure(url);
+                    }
                     let body = resp.text().await.unwrap_or_default();
                     last_error = format!("loadCodeAssist [{}] 返回错误 {}: {}", url, status, body);
                     continue;
                 }
             }
             Err(e) => {
+                health_tracker.mark_failure(url);
                 last_error = format!("loadCodeAssist [{}] 请求失败: {}", url, e);
                 continue;
             }
@@ -67,4 +82,46 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     } else {
         last_error
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_project_endpoints_dynamic_health_ordering() {
+        let tracker = crate::proxy::upstream::client::EndpointHealthTracker::new(
+            std::time::Duration::from_secs(60),
+        );
+
+        // 默认顺序为 Daily -> Sandbox -> Prod
+        assert_eq!(
+            tracker.get_ordered_endpoints(&LOAD_PROJECT_ENDPOINTS),
+            vec![
+                "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+                "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
+                "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+            ]
+        );
+
+        // 模拟 Daily 挂掉（无论是主聊天超时还是 loadCodeAssist 发现）
+        tracker.mark_failure(
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent",
+        );
+        let ordered = tracker.get_ordered_endpoints(&LOAD_PROJECT_ENDPOINTS);
+        assert_eq!(
+            ordered[0],
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist"
+        );
+
+        // 模拟 Sandbox 也故障
+        tracker.mark_failure(
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
+        );
+        let ordered = tracker.get_ordered_endpoints(&LOAD_PROJECT_ENDPOINTS);
+        assert_eq!(
+            ordered[0],
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+        );
+    }
 }

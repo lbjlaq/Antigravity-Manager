@@ -2,6 +2,7 @@
 // 基于高性能通讯接口封装
 
 use dashmap::DashMap;
+use once_cell::sync::Lazy;
 use rquest::{header, Client, Response, StatusCode};
 use serde_json::Value;
 use std::sync::Arc;
@@ -87,52 +88,84 @@ pub const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 3] = [
     V1_INTERNAL_BASE_URL_PROD,  // 优先级 3: Prod (生产兜底，易触发 429)
 ];
 
+/// 提取端点的主机名或规范标识，使不同 API 路径（如 :loadCodeAssist、:fetchAvailableModels、v1internal）
+/// 能共享底层主机的健康度状态，避免同一死端点在不同业务模块重复超时。
+pub fn extract_endpoint_host(url_or_host: &str) -> &str {
+    let s = if let Some(stripped) = url_or_host.strip_prefix("https://") {
+        stripped
+    } else if let Some(stripped) = url_or_host.strip_prefix("http://") {
+        stripped
+    } else {
+        url_or_host
+    };
+    let host_part = s.split('/').next().unwrap_or(s);
+    host_part.split(':').next().unwrap_or(host_part)
+}
+
+/// 判断 HTTP 状态码是否属于应当尝试下一个候选端点的临时/可重试故障。
+pub fn should_try_next_endpoint(status: StatusCode) -> bool {
+    UpstreamClient::should_try_next_endpoint(status)
+}
+
 /// 端点健康追踪器：记录故障端点与冷却期，动态优化上游端点 Fallback 顺序，避免无状态重复踩坑。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EndpointHealthTracker {
-    /// 记录最近一次故障的时间戳 (url -> Instant)
-    failures: DashMap<String, std::time::Instant>,
+    /// 记录最近一次故障的时间戳 (host -> Instant)
+    failures: Arc<DashMap<String, std::time::Instant>>,
     /// 冷却观察期 (默认 60s)
     cooldown: std::time::Duration,
+}
+
+static GLOBAL_ENDPOINT_HEALTH: Lazy<EndpointHealthTracker> =
+    Lazy::new(EndpointHealthTracker::default);
+
+/// 获取全局端点健康追踪器实例（跨模块共享，包括主网关请求、项目解析 loadCodeAssist、配额查询）
+pub fn get_global_endpoint_health() -> &'static EndpointHealthTracker {
+    &GLOBAL_ENDPOINT_HEALTH
 }
 
 impl EndpointHealthTracker {
     pub fn new(cooldown: std::time::Duration) -> Self {
         Self {
-            failures: DashMap::new(),
+            failures: Arc::new(DashMap::new()),
             cooldown,
         }
     }
 
-    /// 标记端点调用失败（记录当前时间戳）
-    pub fn mark_failure(&self, base_url: &str) {
+    /// 标记端点调用失败（记录当前时间戳，以 host 聚合）
+    pub fn mark_failure(&self, endpoint: &str) {
+        let host = extract_endpoint_host(endpoint);
         let now = std::time::Instant::now();
-        self.failures.insert(base_url.to_string(), now);
+        self.failures.insert(host.to_string(), now);
         tracing::warn!(
-            endpoint = %base_url,
+            host = %host,
+            endpoint = %endpoint,
             cooldown_secs = ?self.cooldown.as_secs(),
-            "Marked upstream endpoint as unhealthy (entering cooldown)"
+            "Marked upstream endpoint host as unhealthy (entering cooldown)"
         );
     }
 
     /// 标记端点调用成功（清除故障标记，立即恢复健康）
-    pub fn mark_success(&self, base_url: &str) {
-        if self.failures.remove(base_url).is_some() {
+    pub fn mark_success(&self, endpoint: &str) {
+        let host = extract_endpoint_host(endpoint);
+        if self.failures.remove(host).is_some() {
             tracing::info!(
-                endpoint = %base_url,
-                "Upstream endpoint recovered and marked healthy"
+                host = %host,
+                endpoint = %endpoint,
+                "Upstream endpoint host recovered and marked healthy"
             );
         }
     }
 
     /// 检查指定端点当前是否健康（无故障记录，或已超出冷却期）
     #[allow(dead_code)]
-    pub fn is_healthy(&self, base_url: &str) -> bool {
-        if let Some(entry) = self.failures.get(base_url) {
+    pub fn is_healthy(&self, endpoint: &str) -> bool {
+        let host = extract_endpoint_host(endpoint);
+        if let Some(entry) = self.failures.get(host) {
             let last_fail = *entry.value();
             if last_fail.elapsed() >= self.cooldown {
                 drop(entry);
-                self.failures.remove(base_url);
+                self.failures.remove(host);
                 true
             } else {
                 false
@@ -151,11 +184,12 @@ impl EndpointHealthTracker {
         let mut unhealthy = Vec::new();
 
         for &ep in default_endpoints {
-            if let Some(entry) = self.failures.get(ep) {
+            let host = extract_endpoint_host(ep);
+            if let Some(entry) = self.failures.get(host) {
                 let last_fail = *entry.value();
                 if last_fail.elapsed() >= self.cooldown {
                     drop(entry);
-                    self.failures.remove(ep);
+                    self.failures.remove(host);
                     healthy.push(ep);
                 } else {
                     unhealthy.push((ep, last_fail));
@@ -221,7 +255,7 @@ impl UpstreamClient {
             proxy_pool,
             client_cache: DashMap::new(),
             user_agent_override: RwLock::new(None),
-            endpoint_health: EndpointHealthTracker::default(),
+            endpoint_health: get_global_endpoint_health().clone(),
         }
     }
 
@@ -402,7 +436,7 @@ impl UpstreamClient {
     }
 
     /// Determine if we should try next endpoint (fallback logic)
-    fn should_try_next_endpoint(status: StatusCode) -> bool {
+    pub fn should_try_next_endpoint(status: StatusCode) -> bool {
         status == StatusCode::REQUEST_TIMEOUT
             || status == StatusCode::NOT_FOUND
             || status.is_server_error()
@@ -940,5 +974,74 @@ mod tests {
             tracker.get_ordered_endpoints(&endpoints),
             vec!["daily", "sandbox", "prod"]
         );
+    }
+
+    #[test]
+    fn test_extract_endpoint_host() {
+        assert_eq!(
+            extract_endpoint_host("https://daily-cloudcode-pa.googleapis.com/v1internal"),
+            "daily-cloudcode-pa.googleapis.com"
+        );
+        assert_eq!(
+            extract_endpoint_host(
+                "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+            ),
+            "daily-cloudcode-pa.googleapis.com"
+        );
+        assert_eq!(
+            extract_endpoint_host(
+                "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels"
+            ),
+            "daily-cloudcode-pa.sandbox.googleapis.com"
+        );
+        assert_eq!(
+            extract_endpoint_host(
+                "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+            ),
+            "cloudcode-pa.googleapis.com"
+        );
+        assert_eq!(
+            extract_endpoint_host("daily-cloudcode-pa.googleapis.com"),
+            "daily-cloudcode-pa.googleapis.com"
+        );
+    }
+
+    #[test]
+    fn test_endpoint_health_cross_api_sharing() {
+        let tracker = EndpointHealthTracker::new(Duration::from_secs(60));
+        let base_endpoints = [
+            "https://daily-cloudcode-pa.googleapis.com/v1internal",
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal",
+            "https://cloudcode-pa.googleapis.com/v1internal",
+        ];
+        let load_project_endpoints = [
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+        ];
+
+        // 模拟 loadCodeAssist 发现 daily 和 sandbox 故障
+        tracker.mark_failure("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist");
+        tracker.mark_failure(
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
+        );
+
+        // 验证主聊天请求端点立即动态重排，优先走健康的 prod
+        let ordered_base = tracker.get_ordered_endpoints(&base_endpoints);
+        assert_eq!(
+            ordered_base[0],
+            "https://cloudcode-pa.googleapis.com/v1internal"
+        );
+
+        // 验证其他 API (如 loadCodeAssist 本身) 也同步重排
+        let ordered_load = tracker.get_ordered_endpoints(&load_project_endpoints);
+        assert_eq!(
+            ordered_load[0],
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+        );
+
+        // 模拟 prod 成功
+        tracker.mark_success("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist");
+        assert!(tracker.is_healthy("https://cloudcode-pa.googleapis.com/v1internal"));
     }
 }

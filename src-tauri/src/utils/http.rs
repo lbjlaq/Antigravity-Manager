@@ -131,6 +131,8 @@ fn apply_upstream_proxy(builder: rquest::ClientBuilder, label: &str) -> rquest::
 fn create_base_client(timeout_secs: u64) -> Client {
     let builder = Client::builder()
         .emulation(Emulation::Chrome123)
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .pool_idle_timeout(std::time::Duration::from_secs(45))
         .timeout(std::time::Duration::from_secs(timeout_secs));
     let builder = apply_upstream_proxy(builder, "HTTP shared client");
 
@@ -141,7 +143,10 @@ fn create_base_client(timeout_secs: u64) -> Client {
 /// Base client creation logic strictly WITHOUT JA3 Emulation (Pure Native)
 fn create_standard_client(timeout_secs: u64) -> Client {
     // No .emulation(Emulation::Chrome123) here!
-    let builder = Client::builder().timeout(std::time::Duration::from_secs(timeout_secs));
+    let builder = Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .pool_idle_timeout(std::time::Duration::from_secs(45))
+        .timeout(std::time::Duration::from_secs(timeout_secs));
     let builder = apply_upstream_proxy(builder, "HTTP standard client");
 
     tracing::info!("Initialized Pure Native Standard Client");
