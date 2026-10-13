@@ -101,8 +101,7 @@ async fn auth_middleware_internal(
 
         // 内部端点只对本机回环免鉴权。非回环落入下方 API Key 校验。
         // 必须看 TCP 对端，不能看 X-Forwarded-For（可被伪造为 127.0.0.1）。
-        if is_internal_endpoint
-            && crate::proxy::middleware::ip_filter::is_direct_loopback(&request)
+        if is_internal_endpoint && crate::proxy::middleware::ip_filter::is_direct_loopback(&request)
         {
             tracing::debug!("Loopback internal endpoint bypassed auth: {}", path);
             return Ok(next.run(request).await);
