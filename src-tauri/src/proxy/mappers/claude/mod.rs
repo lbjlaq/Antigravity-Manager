@@ -54,6 +54,10 @@ impl ProtocolStreamHandler for ClaudeStreamHandler {
         self.state.current_block_type() == BlockType::Thinking
     }
 
+    fn estimated_thinking_tokens(&self) -> u32 {
+        self.state.thinking_acc.thought_tokens()
+    }
+
     fn emit_finalize(&mut self) -> Vec<Bytes> {
         let mut out = Vec::new();
 
@@ -119,13 +123,47 @@ pub fn create_claude_sse_stream<S, E>(
     gemini_stream: Pin<Box<S>>,
     trace_id: String,
     email: String,
-    session_id: Option<String>, // [NEW v3.3.17] Session ID for signature caching
-    scaling_enabled: bool,      // [NEW] Flag for context usage scaling
+    session_id: Option<String>,
+    scaling_enabled: bool,
     context_limit: u32,
-    estimated_prompt_tokens: Option<u32>, // [FIX] Estimated tokens for calibrator learning
-    message_count: usize,                 // [NEW v4.0.0] Message count for rewind detection
-    client_adapter: Option<std::sync::Arc<dyn ClientAdapter>>, // [NEW] Adapter reference
-    registered_tool_names: Vec<String>,   // [FIX #MCP] Tool names for fuzzy matching
+    estimated_prompt_tokens: Option<u32>,
+    message_count: usize,
+    client_adapter: Option<std::sync::Arc<dyn ClientAdapter>>,
+    registered_tool_names: Vec<String>,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    create_claude_sse_stream_with_budget(
+        gemini_stream,
+        trace_id,
+        email,
+        session_id,
+        scaling_enabled,
+        context_limit,
+        estimated_prompt_tokens,
+        message_count,
+        client_adapter,
+        registered_tool_names,
+        None,
+    )
+}
+
+/// [NEW Issue #3648] 支持传入权威 thinkingBudget 的 Claude SSE 流创建方法
+#[allow(clippy::too_many_arguments)]
+pub fn create_claude_sse_stream_with_budget<S, E>(
+    gemini_stream: Pin<Box<S>>,
+    trace_id: String,
+    email: String,
+    session_id: Option<String>,
+    scaling_enabled: bool,
+    context_limit: u32,
+    estimated_prompt_tokens: Option<u32>,
+    message_count: usize,
+    client_adapter: Option<std::sync::Arc<dyn ClientAdapter>>,
+    registered_tool_names: Vec<String>,
+    thinking_budget: Option<u32>,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
@@ -152,7 +190,8 @@ where
         email,
     };
 
-    let config = StreamLifecycleConfig::new("claude", "create_claude_sse_stream", trace_info);
+    let config = StreamLifecycleConfig::new("claude", "create_claude_sse_stream", trace_info)
+        .with_thinking_budget(thinking_budget);
 
     run_stream_lifecycle(gemini_stream, handler, config)
 }

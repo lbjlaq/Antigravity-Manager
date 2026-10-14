@@ -16,7 +16,8 @@ use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; // [NEW] Import Adapt
 use crate::proxy::debug_logger;
 use crate::proxy::mappers::claude::{
     clean_cache_control_from_messages, create_claude_sse_stream,
-    filter_invalid_thinking_blocks_with_family, merge_consecutive_messages,
+    create_claude_sse_stream_with_budget, filter_invalid_thinking_blocks_with_family,
+    merge_consecutive_messages,
     models::{Message, MessageContent},
     transform_response, ClaudeRequest,
 };
@@ -2103,7 +2104,9 @@ pub async fn handle_messages(
                 // [FIX #530/#529/#859] Enhanced Peek logic to handle heartbeats and slow start
                 // We must pre-read until we find a MEANINGFUL content block (like message_start).
                 // If we only get heartbeats (ping) and then the stream dies, we should rotate account.
-                let mut claude_stream = create_claude_sse_stream(
+                let thinking_budget =
+                    crate::proxy::pipeline::extract_thinking_budget_from_gemini_body(&gemini_body);
+                let mut claude_stream = create_claude_sse_stream_with_budget(
                     gemini_stream,
                     trace_id.clone(),
                     email.clone(),
@@ -2114,6 +2117,7 @@ pub async fn handle_messages(
                     current_message_count, // [NEW v4.0.0] Pass message count for rewind detection
                     client_adapter.clone(), // [NEW] Pass client adapter
                     registered_tool_names, // [FIX #MCP] Pass tool names for fuzzy matching
+                    thinking_budget,
                 );
 
                 // [FIX #3634 对齐 Anthropic 官方规范并彻底杜绝网关静默超时]

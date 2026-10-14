@@ -1326,6 +1326,7 @@ pub struct TurnAccumulator {
     tool_names: Vec<String>,
     context_anchor: String,
     function_call_count: usize,
+    thought_tokens: u32,
 }
 
 impl TurnAccumulator {
@@ -1342,6 +1343,7 @@ impl TurnAccumulator {
             tool_names: Vec::new(),
             context_anchor: anchor.into(),
             function_call_count: 0,
+            thought_tokens: 0,
         }
     }
 
@@ -1353,6 +1355,8 @@ impl TurnAccumulator {
         if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
             if is_thought {
                 self.thought.push_str(text);
+                self.thought_tokens +=
+                    crate::proxy::pipeline::estimator::estimate_tokens_from_str(text);
             } else {
                 self.visible.push_str(text);
             }
@@ -1422,6 +1426,18 @@ impl TurnAccumulator {
 
     pub fn is_empty(&self) -> bool {
         self.thought.trim().is_empty() && self.signature.is_none()
+    }
+
+    pub fn thought_tokens(&self) -> u32 {
+        if self.thought_tokens == 0 && !self.thought.is_empty() {
+            crate::proxy::pipeline::estimator::estimate_tokens_from_str(&self.thought)
+        } else {
+            self.thought_tokens
+        }
+    }
+
+    pub fn thought(&self) -> &str {
+        &self.thought
     }
 
     fn should_capture(&self) -> bool {

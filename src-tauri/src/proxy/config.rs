@@ -590,6 +590,32 @@ pub struct ThinkingBudgetConfig {
     pub custom_high: i32,
     #[serde(default = "default_flash_tiered")]
     pub custom_tiered: i32,
+
+    // --- Issue #3648: 思考防失控熔断配置 ---
+    /// 思考防失控熔断开关 (默认开启)
+    #[serde(default = "default_true")]
+    pub runaway_circuit_breaker: bool,
+    /// 思考防失控倍数 (默认 4.0，超过 budget * 4.0 且超过容忍下限时触发熔断)
+    #[serde(default = "default_runaway_multiplier")]
+    pub runaway_multiplier: f32,
+    /// 思考防失控容忍下限 (默认 16,000，防止小预算误杀正常复杂推理)
+    #[serde(default = "default_runaway_floor")]
+    pub runaway_floor: u32,
+    /// 思考防失控绝对硬顶 (默认 32,768 tokens，防止自适应或超大预算导致无限死循环)
+    #[serde(default = "default_max_thought_ceiling")]
+    pub max_thought_ceiling: u32,
+}
+
+fn default_runaway_multiplier() -> f32 {
+    4.0
+}
+
+fn default_runaway_floor() -> u32 {
+    16_000
+}
+
+fn default_max_thought_ceiling() -> u32 {
+    32_768
 }
 
 fn default_control_source() -> ThinkingControlSource {
@@ -665,6 +691,11 @@ impl Default for ThinkingBudgetConfig {
             custom_medium: default_flash_medium(),
             custom_high: default_custom_high(),
             custom_tiered: default_flash_tiered(),
+
+            runaway_circuit_breaker: default_true(),
+            runaway_multiplier: default_runaway_multiplier(),
+            runaway_floor: default_runaway_floor(),
+            max_thought_ceiling: default_max_thought_ceiling(),
         }
     }
 }

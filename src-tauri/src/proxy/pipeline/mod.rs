@@ -18,7 +18,10 @@ pub mod usage;
 
 pub use auto_heal::{wrap_stream_with_empty_thinking_auto_heal, ThinkingAutoHealContext};
 pub use estimator::{estimate_tokens, PipelineTokenEstimator};
-pub use inbound::{extract_client_thinking_switch, InboundThinkingPipeline};
+pub use inbound::{
+    extract_client_thinking_switch, extract_thinking_budget_from_gemini_body,
+    InboundThinkingPipeline,
+};
 pub use policy::UpstreamClassification;
 pub use stream_lifecycle::{run_stream_lifecycle, ProtocolStreamHandler, StreamLifecycleConfig};
 pub use usage::CanonicalUsage;

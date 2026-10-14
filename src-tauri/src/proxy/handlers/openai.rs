@@ -2441,13 +2441,15 @@ pub async fn handle_chat_completions(
 
                 // [P1 FIX] Enhanced Peek logic to handle heartbeats and slow start
                 // Pre-read until we find meaningful content, skip heartbeats
-                use crate::proxy::mappers::openai::streaming::create_openai_sse_stream_with_anchor;
+                use crate::proxy::mappers::openai::streaming::create_openai_sse_stream_with_anchor_and_budget;
                 let include_usage = openai_req
                     .stream_options
                     .as_ref()
                     .map(|o| o.include_usage)
                     .unwrap_or(false);
-                let mut openai_stream = create_openai_sse_stream_with_anchor(
+                let thinking_budget =
+                    crate::proxy::pipeline::extract_thinking_budget_from_gemini_body(&gemini_body);
+                let mut openai_stream = create_openai_sse_stream_with_anchor_and_budget(
                     gemini_stream,
                     openai_req.model.clone(),
                     session_id,
@@ -2455,6 +2457,7 @@ pub async fn handle_chat_completions(
                     Some(client_tool_names.clone()),
                     include_usage,
                     Some(causal_anchor),
+                    thinking_budget,
                 );
 
                 let mut first_data_chunk = None;
@@ -4428,10 +4431,14 @@ pub async fn handle_completions(
                 } else {
                     // Forced Stream Internal -> Convert to Legacy JSON
                     // Use CHAT SSE Stream (so Collector can parse it)
-                    use crate::proxy::mappers::openai::streaming::create_openai_sse_stream_with_anchor;
+                    use crate::proxy::mappers::openai::streaming::create_openai_sse_stream_with_anchor_and_budget;
+                    let thinking_budget =
+                        crate::proxy::pipeline::extract_thinking_budget_from_gemini_body(
+                            &gemini_body,
+                        );
                     // Note: We use create_openai_sse_stream regardless of is_codex_style here,
                     // because we just want the content aggregation which chat stream does well.
-                    let mut openai_stream = create_openai_sse_stream_with_anchor(
+                    let mut openai_stream = create_openai_sse_stream_with_anchor_and_budget(
                         gemini_stream,
                         openai_req.model.clone(),
                         if is_responses_api {
@@ -4443,6 +4450,7 @@ pub async fn handle_completions(
                         Some(client_tool_names.clone()),
                         true,
                         Some(causal_anchor),
+                        thinking_budget,
                     );
 
                     // Peek Logic (Repeated for safety/correctness on this stream type)

@@ -392,6 +392,10 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
         self.is_thinking_active
     }
 
+    fn estimated_thinking_tokens(&self) -> u32 {
+        self.thinking_acc.thought_tokens()
+    }
+
     fn emit_finalize(&mut self) -> Vec<Bytes> {
         let mut chunks = Vec::new();
         if self.include_usage {
@@ -446,6 +450,32 @@ where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
     E: std::fmt::Display + Send + 'static,
 {
+    create_openai_sse_stream_with_anchor_and_budget(
+        gemini_stream,
+        model,
+        session_id,
+        message_count,
+        client_tool_names,
+        include_usage,
+        causal_anchor,
+        None,
+    )
+}
+
+pub fn create_openai_sse_stream_with_anchor_and_budget<S, E>(
+    gemini_stream: Pin<Box<S>>,
+    model: String,
+    session_id: String,
+    message_count: usize,
+    client_tool_names: Option<std::collections::HashSet<String>>,
+    include_usage: bool,
+    causal_anchor: Option<String>,
+    thinking_budget: Option<u32>,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
     let stream_id = format!("chatcmpl-{}", Uuid::new_v4());
     let created_ts = Utc::now().timestamp();
     let empty_set = std::collections::HashSet::new();
@@ -479,7 +509,8 @@ where
     };
 
     let config =
-        StreamLifecycleConfig::new("openai", "create_openai_sse_stream_with_anchor", trace_info);
+        StreamLifecycleConfig::new("openai", "create_openai_sse_stream_with_anchor", trace_info)
+            .with_thinking_budget(thinking_budget);
 
     run_stream_lifecycle(gemini_stream, handler, config)
 }

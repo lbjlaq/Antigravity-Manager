@@ -54,6 +54,11 @@ pub trait ProtocolStreamHandler: Send + 'static {
         false
     }
 
+    /// [NEW Issue #3648] 获取当前累积的思考 Token 估算值
+    fn estimated_thinking_tokens(&self) -> u32 {
+        0
+    }
+
     /// 可选钩子：心跳帧自定义渲染（缺省为标准 SSE 注释 `: ping\n\n`）
     fn heartbeat_frame(&mut self) -> Bytes {
         Bytes::from(": ping\n\n")
@@ -76,6 +81,17 @@ pub struct StreamLifecycleConfig {
     pub adapter_name: &'static str,
     pub function_name: &'static str,
     pub trace_info: String,
+
+    /// [NEW Issue #3648] 思考防失控熔断开关 (默认开启)
+    pub runaway_circuit_breaker: bool,
+    /// 思考预算（Token 数，None 表示未指定或自适应）
+    pub thinking_budget: Option<u32>,
+    /// 思考熔断上限倍数 (默认 4.0x)
+    pub runaway_multiplier: f32,
+    /// 思考熔断容忍下限 (默认 16,000，防止小预算误杀正常推理)
+    pub runaway_floor: u32,
+    /// 思考熔断绝对硬顶（Token 数，默认 32,768）
+    pub max_thought_ceiling: u32,
 }
 
 impl StreamLifecycleConfig {
@@ -85,6 +101,7 @@ impl StreamLifecycleConfig {
         trace_info: String,
     ) -> Self {
         let timeouts = crate::proxy::get_stream_timeout_config();
+        let tb_config = crate::proxy::config::get_thinking_budget_config();
         Self {
             heartbeat_secs: 3,
             initial_ttft_secs: timeouts.initial_ttft_secs,
@@ -93,6 +110,47 @@ impl StreamLifecycleConfig {
             adapter_name,
             function_name,
             trace_info,
+            runaway_circuit_breaker: tb_config.runaway_circuit_breaker,
+            thinking_budget: None,
+            runaway_multiplier: tb_config.runaway_multiplier,
+            runaway_floor: tb_config.runaway_floor,
+            max_thought_ceiling: tb_config.max_thought_ceiling,
+        }
+    }
+
+    pub fn with_thinking_budget(mut self, budget: Option<u32>) -> Self {
+        self.thinking_budget = budget;
+        self
+    }
+
+    pub fn with_runaway_circuit_breaker(
+        mut self,
+        enabled: bool,
+        multiplier: f32,
+        floor: u32,
+        ceiling: u32,
+    ) -> Self {
+        self.runaway_circuit_breaker = enabled;
+        self.runaway_multiplier = multiplier;
+        self.runaway_floor = floor;
+        self.max_thought_ceiling = ceiling;
+        self
+    }
+
+    /// [Issue #3648] 计算触发思考防失控熔断的 Token 阈值
+    /// 若指定了具体 budget：
+    ///   threshold = max(budget * multiplier, runaway_floor).min(max_thought_ceiling)
+    /// 若为自适应模式 (budget == None 或 -1)：
+    ///   threshold = max_thought_ceiling
+    pub fn runaway_thought_threshold(&self) -> u32 {
+        if let Some(budget) = self.thinking_budget {
+            if budget == 0 {
+                return 0;
+            }
+            let scaled = (budget as f32 * self.runaway_multiplier).round() as u32;
+            scaled.max(self.runaway_floor).min(self.max_thought_ceiling)
+        } else {
+            self.max_thought_ceiling
         }
     }
 
@@ -184,9 +242,51 @@ where
                                         if handler.is_terminal() {
                                             break;
                                         }
+
+                                        // [Issue #3648 思考防失控熔断守卫 (Runaway Thinking Circuit Breaker)]
+                                        // 当上游 Gemini 在复杂推理任务下完全无视 thinkingBudget 约束，
+                                        // 持续疯狂吐出思考 token（极端情况下单请求产生 8 万+思考并硬跑 5 分钟），
+                                        // 导致共享输出上限被吞食、正文截断、账号额度严重浪费与客户端界面死锁。
+                                        // 仅当正文或工具调用尚未产生 (!has_content()) 且处于思考吐字过程中时，
+                                        // 一旦累积思考 Token 估算值超越安全阈值，立即执行熔断并作为错误终止流。
+                                        if config.runaway_circuit_breaker
+                                            && !handler.has_content()
+                                            && handler.has_thinking()
+                                        {
+                                            let current_tokens = handler.estimated_thinking_tokens();
+                                            let threshold = config.runaway_thought_threshold();
+                                            if current_tokens > threshold {
+                                                let reason = format!(
+                                                    "runaway thinking circuit breaker tripped: estimated {} thought tokens exceeded safety threshold {} (budget: {:?})",
+                                                    current_tokens, threshold, config.thinking_budget
+                                                );
+                                                let report = crate::proxy::mappers::error_classifier::report_stream_error(
+                                                    config.adapter_name,
+                                                    config.function_name,
+                                                    &reason,
+                                                    config.trace_info.clone(),
+                                                );
+                                                tracing::warn!(
+                                                    "[{}] {} runaway thinking circuit breaker tripped: {} thought tokens > safety threshold {} (budget: {:?}). Aborting upstream stream to prevent 5-minute freeze and quota exhaustion.",
+                                                    config.adapter_name,
+                                                    config.function_name,
+                                                    current_tokens,
+                                                    threshold,
+                                                    config.thinking_budget
+                                                );
+
+                                                let err_chunks = handler.emit_initial_error(&report);
+                                                for c in err_chunks {
+                                                    yield Ok(c);
+                                                }
+                                                error_emitted = true;
+                                                yield Err(report.client_message());
+                                                break;
+                                            }
+                                        }
                                     }
 
-                                    if handler.is_terminal() {
+                                    if handler.is_terminal() || error_emitted {
                                         break;
                                     }
 
@@ -457,6 +557,7 @@ mod tests {
         has_content: bool,
         has_thinking: bool,
         is_thinking_active: bool,
+        estimated_thinking_tokens: u32,
         finalized: bool,
         initial_error_emitted: bool,
         is_terminal: bool,
@@ -469,6 +570,7 @@ mod tests {
                 has_content,
                 has_thinking,
                 is_thinking_active: false,
+                estimated_thinking_tokens: 0,
                 finalized: false,
                 initial_error_emitted: false,
                 is_terminal: false,
@@ -479,7 +581,17 @@ mod tests {
     impl ProtocolStreamHandler for MockHandler {
         fn process_line(&mut self, line: &str) -> Vec<Bytes> {
             self.processed_lines.push(line.to_string());
-            if line.contains("thinking_chunk") {
+            if line.contains("thinking_tokens=") {
+                if let Some(pos) = line.find("thinking_tokens=") {
+                    let rest = &line[pos + "thinking_tokens=".len()..];
+                    if let Ok(tokens) = rest.split_whitespace().next().unwrap_or("").parse::<u32>()
+                    {
+                        self.estimated_thinking_tokens = tokens;
+                        self.has_thinking = true;
+                        self.is_thinking_active = true;
+                    }
+                }
+            } else if line.contains("thinking_chunk") {
                 self.has_thinking = true;
                 self.is_thinking_active = true;
             } else if line.contains("thinking_done") {
@@ -508,6 +620,10 @@ mod tests {
 
         fn is_thinking_active(&self) -> bool {
             self.is_thinking_active
+        }
+
+        fn estimated_thinking_tokens(&self) -> u32 {
+            self.estimated_thinking_tokens
         }
 
         fn emit_finalize(&mut self) -> Vec<Bytes> {
@@ -827,5 +943,116 @@ mod tests {
             error_propagated,
             "Must propagate Err on premature stream EOF to trigger client native retry"
         );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_runaway_circuit_breaker_trips_when_exceeding_threshold() {
+        // [Issue #3648] 模拟 Google Gemini 忽略 thinkingBudget=4000 持续吐出大量思考 token。
+        // 配置 budget=4000, multiplier=4.0, floor=16000, ceiling=32768 -> 阈值=16000。
+        // 当 token 达到 18000 时，生命周期驱动器必须立即熔断流，下发错误并中止后续数据。
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: thinking_tokens=5000\n"));
+            yield Ok::<_, String>(Bytes::from("data: thinking_tokens=15000\n"));
+            yield Ok::<_, String>(Bytes::from("data: thinking_tokens=18000\n"));
+            yield Ok::<_, String>(Bytes::from("data: thinking_tokens=80000_never_reached\n"));
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config =
+            StreamLifecycleConfig::new("test", "test_fn", "trace_runaway_trip".to_string())
+                .with_timeouts(5, 5, 5)
+                .with_thinking_budget(Some(4000))
+                .with_runaway_circuit_breaker(true, 4.0, 16_000, 32_768);
+
+        assert_eq!(config.runaway_thought_threshold(), 16_000);
+
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        let mut error_propagated = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
+                Err(e) => {
+                    error_propagated = true;
+                    assert!(e.contains("runaway thinking circuit breaker tripped"));
+                }
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(full_output.contains("processed:data: thinking_tokens=5000"));
+        assert!(full_output.contains("processed:data: thinking_tokens=15000"));
+        assert!(full_output.contains("processed:data: thinking_tokens=18000"));
+        assert!(!full_output.contains("never_reached"));
+        assert!(
+            full_output.contains("[initial_error]"),
+            "Must emit initial error event when runaway breaker trips"
+        );
+        assert!(
+            !full_output.contains("[finalized]"),
+            "Must NOT emit finalized completion on runaway circuit break"
+        );
+        assert!(
+            error_propagated,
+            "Must propagate Err on runaway thinking circuit break to stop client wait"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_runaway_circuit_breaker_never_trips_when_content_already_emitted() {
+        // 验证正文或工具调用已开始输出时，绝不误杀正常生成
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: normal_token\n"));
+            yield Ok::<_, String>(Bytes::from("data: thinking_tokens=50000\n"));
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config =
+            StreamLifecycleConfig::new("test", "test_fn", "trace_runaway_content".to_string())
+                .with_timeouts(5, 5, 5)
+                .with_thinking_budget(Some(4000));
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        while let Some(item) = stream.next().await {
+            if let Ok(b) = item {
+                output.push(String::from_utf8_lossy(&b).to_string());
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(full_output.contains("processed:data: normal_token"));
+        assert!(full_output.contains("[finalized]"));
+        assert!(!full_output.contains("[initial_error]"));
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_runaway_circuit_breaker_disabled_allows_high_thought_tokens() {
+        // 验证当显式关闭熔断开关时，即便思考 token 很高也继续放行
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: thinking_tokens=50000\n"));
+            yield Ok::<_, String>(Bytes::from("data: terminal_stop\n"));
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config =
+            StreamLifecycleConfig::new("test", "test_fn", "trace_runaway_disabled".to_string())
+                .with_timeouts(5, 5, 5)
+                .with_thinking_budget(Some(4000))
+                .with_runaway_circuit_breaker(false, 4.0, 16_000, 32_768);
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        while let Some(item) = stream.next().await {
+            if let Ok(b) = item {
+                output.push(String::from_utf8_lossy(&b).to_string());
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(full_output.contains("processed:data: thinking_tokens=50000"));
+        assert!(full_output.contains("processed:data: terminal_stop"));
+        assert!(!full_output.contains("[initial_error]"));
     }
 }

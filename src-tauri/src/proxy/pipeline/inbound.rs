@@ -68,6 +68,18 @@ pub fn extract_client_thinking_switch(
     ClientThinkingSwitch::Default
 }
 
+/// [Issue #3648] 从准备发往谷歌上游的 Gemini 报文 (Payload) 中提取权威 thinkingBudget 数值
+pub fn extract_thinking_budget_from_gemini_body(body_str: &str) -> Option<u32> {
+    serde_json::from_str::<Value>(body_str).ok().and_then(|v| {
+        v.get("generationConfig")
+            .and_then(|gc| gc.get("thinkingConfig"))
+            .and_then(|tc| tc.get("thinkingBudget"))
+            .and_then(|b| b.as_i64())
+            .filter(|&b| b > 0)
+            .map(|b| b as u32)
+    })
+}
+
 /// 统一进站思考管线（InboundThinkingPipeline）
 /// 接收任何协议转译成的 Google contents 统一报文，单向流转执行：
 /// 1. 签名校验只看目标模型与签名本身，四个协议同一规则
