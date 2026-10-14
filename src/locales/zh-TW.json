@@ -1912,6 +1912,13 @@
     "open_proxy": "開啟 API 反代",
     "toggle_sidebar": "切換側邊欄",
     "network_error": "無法連線到反代服務：",
-    "empty_response": "模型傳回了空回應。"
+    "empty_response": "模型傳回了空回應。",
+    "attach": "新增圖片與檔案",
+    "drop_files": "拖放檔案以新增附件",
+    "remove_attachment": "移除",
+    "attach_unavailable": "附件已無法使用",
+    "attach_too_many": "最多可新增 {{max}} 個檔案",
+    "attach_too_large": "{{name}} 超過 {{max}}",
+    "attach_unsupported": "{{name}}：僅支援圖片、PDF 與文字檔"
   }
 }

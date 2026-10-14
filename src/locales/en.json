@@ -1925,6 +1925,13 @@
     "open_proxy": "Open API Proxy",
     "toggle_sidebar": "Toggle sidebar",
     "network_error": "Could not reach the proxy at",
-    "empty_response": "The model returned an empty response."
+    "empty_response": "The model returned an empty response.",
+    "attach": "Add photos and files",
+    "drop_files": "Drop files to attach",
+    "remove_attachment": "Remove",
+    "attach_unavailable": "Attachment is no longer available",
+    "attach_too_many": "You can attach up to {{max}} files",
+    "attach_too_large": "{{name}} is larger than {{max}}",
+    "attach_unsupported": "{{name}}: only images, PDF and text files are supported"
   }
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, PanelLeft, SlidersHorizontal } from 'lucide-react';
+import { AlertTriangle, PanelLeft, Paperclip, SlidersHorizontal } from 'lucide-react';
 import { request as invoke } from '../utils/request';
 import { cn } from '../utils/cn';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -15,6 +15,7 @@ import {
     streamChat,
     type ChatTurn,
 } from '../services/chatService';
+import { loadAttachmentData, saveAttachmentData, type LoadedAttachment } from '../services/chatAttachments';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
 import { ChatComposer, type ChatComposerHandle } from '../components/chat/ChatComposer';
 import { ChatMessageView } from '../components/chat/ChatMessageView';
@@ -42,6 +43,7 @@ function Chat() {
     const [proxyModelIds, setProxyModelIds] = useState<string[] | null>(null);
     const [modelsLoading, setModelsLoading] = useState(true);
     const [streamingId, setStreamingId] = useState<string | null>(null);
+    const [dragging, setDragging] = useState(false);
 
     const abortRef = useRef<AbortController | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -191,25 +193,50 @@ function Chat() {
         [addMessage, patchMessage, baseUrl, apiKey, t]
     );
 
-    const toHistory = (list: ChatMessage[]): ChatTurn[] =>
-        list.filter((m) => m.content && !m.pending).map((m) => ({ role: m.role, content: m.content }));
+    /** Rebuild the request history, re-attaching stored payloads; missing ones become a text note. */
+    const toHistory = async (list: ChatMessage[]): Promise<ChatTurn[]> =>
+        Promise.all(
+            list
+                .filter((m) => !m.pending && (m.content || m.attachments?.length))
+                .map(async (m) => {
+                    if (!m.attachments?.length) return { role: m.role, content: m.content };
+                    const attachments: LoadedAttachment[] = [];
+                    const missing: string[] = [];
+                    for (const a of m.attachments) {
+                        const data = await loadAttachmentData(a.id);
+                        if (data === undefined) missing.push(a.name);
+                        else attachments.push({ ...a, data });
+                    }
+                    const note = missing.map((name) => `[Attachment unavailable: ${name}]`).join('\n');
+                    return { role: m.role, content: [note, m.content].filter(Boolean).join('\n'), attachments };
+                })
+        );
 
-    const handleSend = (text: string) => {
+    const handleSend = async (text: string, files: LoadedAttachment[]) => {
         if (!settings.model) return;
         const opts = { model: settings.model, protocol: settings.protocol, systemPrompt: settings.systemPrompt, temperature: settings.temperature };
         const prior = session?.messages ?? [];
-        const sessionId = session?.id ?? createSession(text);
-        const userMessage: ChatMessage = { id: newId(), role: 'user', content: text, createdAt: Date.now() };
+        const sessionId = session?.id ?? createSession(text || files[0]?.name || '');
+        // Payloads land in the in-memory cache synchronously, so the message can render right away.
+        const saved = Promise.all(files.map((f) => saveAttachmentData(f.id, f.data)));
+        const userMessage: ChatMessage = {
+            id: newId(),
+            role: 'user',
+            content: text,
+            attachments: files.length ? files.map(({ data: _data, ...meta }) => meta) : undefined,
+            createdAt: Date.now(),
+        };
         addMessage(sessionId, userMessage);
-        runAssistant(sessionId, toHistory([...prior, userMessage]), opts);
+        await saved;
+        runAssistant(sessionId, await toHistory([...prior, userMessage]), opts);
     };
 
-    const handleRegenerate = (assistant: ChatMessage) => {
+    const handleRegenerate = async (assistant: ChatMessage) => {
         if (!session) return;
         const idx = session.messages.findIndex((m) => m.id === assistant.id);
         if (idx === -1) return;
         truncateFrom(session.id, assistant.id);
-        runAssistant(session.id, toHistory(session.messages.slice(0, idx)), {
+        runAssistant(session.id, await toHistory(session.messages.slice(0, idx)), {
             model: settings.model,
             protocol: settings.protocol,
             systemPrompt: settings.systemPrompt,
@@ -263,7 +290,29 @@ function Chat() {
                     </aside>
                 )}
 
-                <section className="flex-1 min-w-0 flex flex-col">
+                <section
+                    className="flex-1 min-w-0 flex flex-col relative"
+                    onDragOver={(e) => {
+                        if (!e.dataTransfer.types.includes('Files')) return;
+                        e.preventDefault();
+                        setDragging(true);
+                    }}
+                    onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+                    }}
+                    onDrop={(e) => {
+                        if (!e.dataTransfer.files.length) return;
+                        e.preventDefault();
+                        setDragging(false);
+                        composerRef.current?.addFiles(Array.from(e.dataTransfer.files));
+                    }}
+                >
+                    {dragging && (
+                        <div className="absolute inset-2 z-40 rounded-2xl border-2 border-dashed border-blue-400 bg-blue-50/80 dark:bg-blue-950/50 flex flex-col items-center justify-center gap-2 text-blue-600 dark:text-blue-300 pointer-events-none">
+                            <Paperclip size={28} />
+                            <span className="text-sm font-medium">{t('chat.drop_files', 'Drop files to attach')}</span>
+                        </div>
+                    )}
                     <header className="flex items-center gap-2 px-3 py-2">
                         <button
                             type="button"

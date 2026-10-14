@@ -1,5 +1,6 @@
 import { readSse } from '../utils/sse';
 import { isTauri } from '../utils/env';
+import { textFilePrompt, toDataUrl, type LoadedAttachment } from './chatAttachments';
 
 /** Client protocol used to reach the local proxy. Each one exercises a different adapter. */
 export type ChatProtocol = 'openai' | 'anthropic' | 'gemini';
@@ -13,6 +14,7 @@ export const CHAT_PROTOCOLS: { id: ChatProtocol; label: string; endpoint: string
 export interface ChatTurn {
     role: 'user' | 'assistant';
     content: string;
+    attachments?: LoadedAttachment[];
 }
 
 export interface ChatUsage {
@@ -89,6 +91,21 @@ interface ProtocolAdapter {
     handle: (payload: any, opts: StreamChatOptions, result: StreamChatResult) => void;
 }
 
+/**
+ * Build one message's content in a protocol's native shape: attachments first, then the text.
+ * Text files are sent as plain text everywhere; images and PDFs use each protocol's media block.
+ */
+function buildParts<T>(
+    turn: ChatTurn,
+    make: { text: (text: string) => T; image: (a: LoadedAttachment) => T; pdf: (a: LoadedAttachment) => T }
+): T[] {
+    const parts = (turn.attachments ?? []).map((a) =>
+        a.kind === 'image' ? make.image(a) : a.kind === 'pdf' ? make.pdf(a) : make.text(textFilePrompt(a))
+    );
+    if (turn.content) parts.push(make.text(turn.content));
+    return parts;
+}
+
 const ADAPTERS: Record<ChatProtocol, ProtocolAdapter> = {
     openai: {
         url: (o) => `${o.baseUrl}/v1/chat/completions`,
@@ -99,7 +116,16 @@ const ADAPTERS: Record<ChatProtocol, ProtocolAdapter> = {
             ...(o.temperature !== undefined && { temperature: o.temperature }),
             messages: [
                 ...(o.system ? [{ role: 'system', content: o.system }] : []),
-                ...o.messages.map((m) => ({ role: m.role, content: m.content })),
+                ...o.messages.map((m) => ({
+                    role: m.role,
+                    content: m.attachments?.length
+                        ? buildParts<Record<string, unknown>>(m, {
+                            text: (text) => ({ type: 'text', text }),
+                            image: (a) => ({ type: 'image_url', image_url: { url: toDataUrl(a) } }),
+                            pdf: (a) => ({ type: 'file', file: { filename: a.name, file_data: toDataUrl(a) } }),
+                        })
+                        : m.content,
+                })),
             ],
         }),
         handle: (p, o, r) => {
@@ -120,7 +146,16 @@ const ADAPTERS: Record<ChatProtocol, ProtocolAdapter> = {
             max_tokens: 8192,
             ...(o.temperature !== undefined && { temperature: o.temperature }),
             ...(o.system && { system: o.system }),
-            messages: o.messages.map((m) => ({ role: m.role, content: m.content })),
+            messages: o.messages.map((m) => ({
+                role: m.role,
+                content: m.attachments?.length
+                    ? buildParts<Record<string, unknown>>(m, {
+                        text: (text) => ({ type: 'text', text }),
+                        image: (a) => ({ type: 'image', source: { type: 'base64', media_type: a.mime, data: a.data } }),
+                        pdf: (a) => ({ type: 'document', source: { type: 'base64', media_type: a.mime, data: a.data } }),
+                    })
+                    : m.content,
+            })),
         }),
         handle: (p, o, r) => {
             switch (p?.type) {
@@ -150,7 +185,11 @@ const ADAPTERS: Record<ChatProtocol, ProtocolAdapter> = {
         body: (o) => ({
             contents: o.messages.map((m) => ({
                 role: m.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: m.content }],
+                parts: buildParts<Record<string, unknown>>(m, {
+                    text: (text) => ({ text }),
+                    image: (a) => ({ inlineData: { mimeType: a.mime, data: a.data } }),
+                    pdf: (a) => ({ inlineData: { mimeType: a.mime, data: a.data } }),
+                }),
             })),
             ...(o.system && { systemInstruction: { parts: [{ text: o.system }] } }),
             ...(o.temperature !== undefined && { generationConfig: { temperature: o.temperature } }),

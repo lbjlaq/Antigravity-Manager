@@ -1818,6 +1818,13 @@
     "open_proxy": "Abrir API Proxy",
     "toggle_sidebar": "Alternar barra lateral",
     "network_error": "Não foi possível acessar o proxy em",
-    "empty_response": "O modelo retornou uma resposta vazia."
+    "empty_response": "O modelo retornou uma resposta vazia.",
+    "attach": "Adicionar fotos e arquivos",
+    "drop_files": "Solte arquivos para anexar",
+    "remove_attachment": "Remover",
+    "attach_unavailable": "O anexo não está mais disponível",
+    "attach_too_many": "Você pode anexar até {{max}} arquivos",
+    "attach_too_large": "{{name}} é maior que {{max}}",
+    "attach_unsupported": "{{name}}: apenas imagens, PDF e arquivos de texto são suportados"
   }
 }

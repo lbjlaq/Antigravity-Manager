@@ -1770,6 +1770,13 @@
     "open_proxy": "API プロキシを開く",
     "toggle_sidebar": "サイドバーの切り替え",
     "network_error": "プロキシに接続できません:",
-    "empty_response": "モデルから空の応答が返されました。"
+    "empty_response": "モデルから空の応答が返されました。",
+    "attach": "写真とファイルを追加",
+    "drop_files": "ファイルをドロップして添付",
+    "remove_attachment": "削除",
+    "attach_unavailable": "添付ファイルは利用できなくなりました",
+    "attach_too_many": "添付できるファイルは最大 {{max}} 個です",
+    "attach_too_large": "{{name}} は {{max}} を超えています",
+    "attach_unsupported": "{{name}}: 画像、PDF、テキストファイルのみ対応しています"
   }
 }

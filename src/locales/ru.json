@@ -1854,6 +1854,13 @@
     "open_proxy": "Открыть API Proxy",
     "toggle_sidebar": "Показать/скрыть панель",
     "network_error": "Не удалось подключиться к прокси:",
-    "empty_response": "Модель вернула пустой ответ."
+    "empty_response": "Модель вернула пустой ответ.",
+    "attach": "Добавить фото и файлы",
+    "drop_files": "Перетащите файлы, чтобы прикрепить",
+    "remove_attachment": "Удалить",
+    "attach_unavailable": "Вложение больше недоступно",
+    "attach_too_many": "Можно прикрепить не более {{max}} файлов",
+    "attach_too_large": "{{name}} больше {{max}}",
+    "attach_unsupported": "{{name}}: поддерживаются только изображения, PDF и текстовые файлы"
   }
 }

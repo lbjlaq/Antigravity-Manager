@@ -1,11 +1,14 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware';
 import type { ChatProtocol, ChatUsage } from '../services/chatService';
+import { deleteAttachmentData, type ChatAttachment } from '../services/chatAttachments';
 
 export interface ChatMessage {
     id: string;
     role: 'user' | 'assistant';
     content: string;
+    /** Metadata only; payloads live in IndexedDB (see chatAttachments). */
+    attachments?: ChatAttachment[];
     thinking?: string;
     error?: string;
     /** True while the assistant reply is still streaming. */
@@ -116,11 +119,14 @@ export const useChatStore = create<ChatState>()(
 
             selectSession: (id) => set({ activeId: id }),
 
-            deleteSession: (id) =>
+            deleteSession: (id) => {
+                const removed = get().sessions.find((s) => s.id === id);
                 set((state) => ({
                     sessions: state.sessions.filter((s) => s.id !== id),
                     activeId: state.activeId === id ? null : state.activeId,
-                })),
+                }));
+                if (removed) deleteAttachmentData(removed.messages.flatMap((m) => m.attachments?.map((a) => a.id) ?? []));
+            },
 
             createSession: (firstMessage) => {
                 const now = Date.now();

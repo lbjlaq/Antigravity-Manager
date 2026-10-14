@@ -1797,6 +1797,13 @@
     "open_proxy": "API Proxy'yi aç",
     "toggle_sidebar": "Kenar çubuğunu aç/kapat",
     "network_error": "Proxy'ye ulaşılamadı:",
-    "empty_response": "Model boş bir yanıt döndürdü."
+    "empty_response": "Model boş bir yanıt döndürdü.",
+    "attach": "Fotoğraf ve dosya ekle",
+    "drop_files": "Eklemek için dosyaları bırakın",
+    "remove_attachment": "Kaldır",
+    "attach_unavailable": "Ek artık kullanılamıyor",
+    "attach_too_many": "En fazla {{max}} dosya ekleyebilirsiniz",
+    "attach_too_large": "{{name}}, {{max}} boyutundan büyük",
+    "attach_unsupported": "{{name}}: yalnızca görseller, PDF ve metin dosyaları desteklenir"
   }
 }

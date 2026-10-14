@@ -1770,6 +1770,13 @@
     "open_proxy": "API 프록시 열기",
     "toggle_sidebar": "사이드바 전환",
     "network_error": "프록시에 연결할 수 없습니다:",
-    "empty_response": "모델이 빈 응답을 반환했습니다."
+    "empty_response": "모델이 빈 응답을 반환했습니다.",
+    "attach": "사진 및 파일 추가",
+    "drop_files": "파일을 놓아 첨부",
+    "remove_attachment": "제거",
+    "attach_unavailable": "첨부 파일을 더 이상 사용할 수 없습니다",
+    "attach_too_many": "최대 {{max}}개의 파일을 첨부할 수 있습니다",
+    "attach_too_large": "{{name}} 파일이 {{max}}보다 큽니다",
+    "attach_unsupported": "{{name}}: 이미지, PDF, 텍스트 파일만 지원됩니다"
   }
 }

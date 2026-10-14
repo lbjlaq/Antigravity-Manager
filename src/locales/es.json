@@ -1770,6 +1770,13 @@
     "open_proxy": "Abrir API Proxy",
     "toggle_sidebar": "Mostrar/ocultar barra lateral",
     "network_error": "No se pudo conectar con el proxy en",
-    "empty_response": "El modelo devolvió una respuesta vacía."
+    "empty_response": "El modelo devolvió una respuesta vacía.",
+    "attach": "Añadir fotos y archivos",
+    "drop_files": "Suelta archivos para adjuntarlos",
+    "remove_attachment": "Quitar",
+    "attach_unavailable": "El adjunto ya no está disponible",
+    "attach_too_many": "Puedes adjuntar hasta {{max}} archivos",
+    "attach_too_large": "{{name}} supera {{max}}",
+    "attach_unsupported": "{{name}}: solo se admiten imágenes, PDF y archivos de texto"
   }
 }

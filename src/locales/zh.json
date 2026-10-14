@@ -1891,6 +1891,13 @@
     "open_proxy": "打开 API 反代",
     "toggle_sidebar": "切换侧边栏",
     "network_error": "无法连接到反代服务：",
-    "empty_response": "模型返回了空响应。"
+    "empty_response": "模型返回了空响应。",
+    "attach": "添加图片和文件",
+    "drop_files": "拖放文件以添加附件",
+    "remove_attachment": "移除",
+    "attach_unavailable": "附件已不可用",
+    "attach_too_many": "最多可添加 {{max}} 个文件",
+    "attach_too_large": "{{name}} 超过 {{max}}",
+    "attach_unsupported": "{{name}}：仅支持图片、PDF 和文本文件"
   }
 }

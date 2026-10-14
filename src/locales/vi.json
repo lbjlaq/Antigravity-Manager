@@ -1813,6 +1813,13 @@
     "open_proxy": "Mở API Proxy",
     "toggle_sidebar": "Ẩn/hiện thanh bên",
     "network_error": "Không thể kết nối tới proxy:",
-    "empty_response": "Mô hình trả về phản hồi trống."
+    "empty_response": "Mô hình trả về phản hồi trống.",
+    "attach": "Thêm ảnh và tệp",
+    "drop_files": "Thả tệp để đính kèm",
+    "remove_attachment": "Xóa",
+    "attach_unavailable": "Tệp đính kèm không còn khả dụng",
+    "attach_too_many": "Bạn có thể đính kèm tối đa {{max}} tệp",
+    "attach_too_large": "{{name}} lớn hơn {{max}}",
+    "attach_unsupported": "{{name}}: chỉ hỗ trợ hình ảnh, PDF và tệp văn bản"
   }
 }

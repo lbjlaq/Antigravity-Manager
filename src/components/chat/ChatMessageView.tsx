@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { AlertCircle, Brain, Check, ChevronRight, Copy, RotateCcw } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import type { ChatMessage } from '../../stores/useChatStore';
+import { AttachmentPreview } from './AttachmentPreview';
 
 async function copyText(text: string) {
     try {
@@ -124,10 +125,19 @@ export const ChatMessageView = memo(function ChatMessageView({ message, isLast, 
 
     if (message.role === 'user') {
         return (
-            <div className="flex justify-end">
-                <div className="max-w-[80%] rounded-3xl bg-gray-100 dark:bg-base-200 px-5 py-2.5 text-[15px] leading-7 text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
-                    {message.content}
-                </div>
+            <div className="flex flex-col items-end gap-2">
+                {message.attachments && message.attachments.length > 0 && (
+                    <div className="flex flex-wrap justify-end gap-2 max-w-[80%]">
+                        {message.attachments.map((a) => (
+                            <AttachmentPreview key={a.id} attachment={a} size="lg" />
+                        ))}
+                    </div>
+                )}
+                {message.content && (
+                    <div className="max-w-[80%] rounded-3xl bg-gray-100 dark:bg-base-200 px-5 py-2.5 text-[15px] leading-7 text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
+                        {message.content}
+                    </div>
+                )}
             </div>
         );
     }

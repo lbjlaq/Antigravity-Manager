@@ -1745,6 +1745,13 @@
     "open_proxy": "فتح وكيل API",
     "toggle_sidebar": "إظهار/إخفاء الشريط الجانبي",
     "network_error": "تعذر الوصول إلى الوكيل على",
-    "empty_response": "أعاد النموذج استجابة فارغة."
+    "empty_response": "أعاد النموذج استجابة فارغة.",
+    "attach": "إضافة صور وملفات",
+    "drop_files": "أفلت الملفات لإرفاقها",
+    "remove_attachment": "إزالة",
+    "attach_unavailable": "المرفق لم يعد متاحًا",
+    "attach_too_many": "يمكنك إرفاق {{max}} ملفات كحد أقصى",
+    "attach_too_large": "{{name}} أكبر من {{max}}",
+    "attach_unsupported": "{{name}}: الصور وملفات PDF والملفات النصية فقط مدعومة"
   }
 }

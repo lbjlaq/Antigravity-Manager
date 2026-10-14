@@ -1736,6 +1736,13 @@
     "open_proxy": "Buka API Proxy",
     "toggle_sidebar": "Togol bar sisi",
     "network_error": "Tidak dapat mencapai proksi di",
-    "empty_response": "Model memulangkan respons kosong."
+    "empty_response": "Model memulangkan respons kosong.",
+    "attach": "Tambah foto dan fail",
+    "drop_files": "Lepaskan fail untuk dilampirkan",
+    "remove_attachment": "Buang",
+    "attach_unavailable": "Lampiran tidak lagi tersedia",
+    "attach_too_many": "Anda boleh melampirkan sehingga {{max}} fail",
+    "attach_too_large": "{{name}} melebihi {{max}}",
+    "attach_unsupported": "{{name}}: hanya imej, PDF dan fail teks disokong"
   }
 }
