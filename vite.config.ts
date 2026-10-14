@@ -34,6 +34,11 @@ export default defineConfig(async () => ({
         target: "http://127.0.0.1:8045",
         changeOrigin: true,
       },
+      // AI protocol endpoints, used by the Chat page when running in a browser.
+      "^/v1(beta)?/": {
+        target: "http://127.0.0.1:8045",
+        changeOrigin: true,
+      },
     },
   },
 }));
