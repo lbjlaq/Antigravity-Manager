@@ -80,6 +80,49 @@ impl ProtocolStreamHandler for ClaudeStreamHandler {
         out
     }
 
+    fn emit_interrupted_finalize(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes> {
+        let mut out = Vec::new();
+
+        if self.state.message_stop_sent {
+            return out;
+        }
+
+        // 1. 如果处于打开的思考块中，先行优雅闭合该思考块
+        if self.state.current_block_type() == BlockType::Thinking {
+            out.extend(self.state.end_block());
+        }
+
+        // 2. 如果此前未产生任何可见正文内容（即仅产生了思考），
+        // 注入一条轻量正文提示块，保证 Assistant 消息包含合法 content 块，
+        // 杜绝客户端因空正文打上 resumedFromIncompleteThinking 脏标记并引发重试死循环
+        if !self.state.has_content {
+            out.push(self.state.emit(
+                "content_block_start",
+                serde_json::json!({
+                    "type": "content_block_start",
+                    "index": self.state.block_index,
+                    "content_block": { "type": "text", "text": "" }
+                }),
+            ));
+            out.push(self.state.emit_delta(
+                "text_delta",
+                serde_json::json!({
+                    "text": format!("\n\n[Response interrupted: {}]", error_report.client_message())
+                }),
+            ));
+            out.push(self.state.emit(
+                "content_block_stop",
+                serde_json::json!({ "type": "content_block_stop", "index": self.state.block_index }),
+            ));
+            self.state.block_index += 1;
+            self.state.has_content = true;
+        }
+
+        // 3. 发送带有 end_turn 的 message_delta 及最终 message_stop
+        out.extend(emit_force_stop(&mut self.state));
+        out
+    }
+
     fn emit_initial_error(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes> {
         // [FIX #3634 契约对齐] 严禁下发 overloaded_error。
         // Claude Code 2.1.293 的 PU(e) 只要检测到 overloaded_error 字符串，立即触发 30 分钟冷却并在未产生内容前进入 10 次指数退避重试风暴。
@@ -511,7 +554,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_thinking_only_interruption_propagates_error_without_fake_completion() {
+    async fn test_thinking_only_interruption_gracefully_finalizes_with_interruption_notice() {
         use futures::StreamExt;
 
         // 1. 模拟一个只发送 Thinking 然后就结束的流 (无任何正文)
@@ -549,9 +592,8 @@ mod tests {
         while let Some(result) = claude_stream.next().await {
             match result {
                 Ok(bytes) => all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
-                Err(e) => {
+                Err(_e) => {
                     error_propagated = true;
-                    assert!(e.contains("thinking"));
                 }
             }
         }
@@ -560,31 +602,31 @@ mod tests {
         // 4. 验证思考内容已正常输出
         assert!(output.contains("Thinking..."));
 
-        // 5. [核心契约] 严禁注入合成提示文本欺骗客户端
+        // 5. [Fix #3635 核心契约] 优雅闭合思考块并注入提示文本，保证 Assistant 消息完整
         assert!(
-            !output.contains("Recovered by Antigravity"),
-            "Must NOT inject synthetic recovery text on thinking-only cutoff"
+            output.contains("Response interrupted"),
+            "Must inject interrupted notice when stream ended after thinking without content"
         );
 
-        // 6. [核心契约] 严禁发送 message_stop 或 end_turn 伪造正常终结，确保触发客户端原生重试
+        // 6. [Fix #3635 核心契约] 发送带 end_turn 的 message_delta 和 message_stop，满足客户端完整性要求
         assert!(
-            !output.contains("event: message_stop"),
-            "Must NOT emit message_stop when only thinking was emitted"
+            output.contains("event: message_stop"),
+            "Must emit message_stop on thinking-only cutoff to satisfy complete state machine"
         );
         assert!(
-            !output.contains(r#""stop_reason":"end_turn""#),
-            "Must NOT emit end_turn when only thinking was emitted"
+            output.contains(r#""stop_reason":"end_turn""#),
+            "Must emit end_turn on thinking-only cutoff"
         );
 
-        // 7. 必须向外层透传底层错误
+        // 7. 严禁向外层透传底层错误，防止客户端将未完成消息打上 resumedFromIncompleteThinking 导致会话永久中毒
         assert!(
-            error_propagated,
-            "Stream must propagate Err on thinking-only cutoff to trigger client native retry"
+            !error_propagated,
+            "Stream must NOT propagate Err on thinking cutoff to prevent session poisoning"
         );
     }
 
     #[tokio::test]
-    async fn test_create_claude_sse_stream_mid_stream_interruption_propagates_error_and_does_not_fake_end_turn(
+    async fn test_create_claude_sse_stream_mid_stream_interruption_gracefully_finalizes_open_blocks(
     ) {
         use futures::StreamExt;
 
@@ -612,9 +654,8 @@ mod tests {
         while let Some(result) = claude_stream.next().await {
             match result {
                 Ok(bytes) => all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap()),
-                Err(e) => {
+                Err(_e) => {
                     error_propagated = true;
-                    assert!(e.contains("connection reset by peer"));
                 }
             }
         }
@@ -626,34 +667,26 @@ mod tests {
             "Output must contain text emitted before error"
         );
 
-        // 2. 严禁注入假截断系统提示
+        // 2. [Fix #3635 核心契约] 闭合未结束的块并发送 message_delta(end_turn) 与 message_stop
         assert!(
-            !output.contains("Response truncated by Antigravity"),
-            "Must NOT inject synthetic truncation notice into user content"
+            output.contains(r#""stop_reason":"end_turn""#),
+            "Must gracefully emit stop_reason end_turn on mid-stream drop"
+        );
+        assert!(
+            output.contains("event: message_stop"),
+            "Must emit message_stop on mid-stream drop"
         );
 
-        // 3. 严禁伪造正常收尾 message_delta(end_turn) 或 message_stop 欺骗客户端，确保客户端识别到断流并自动触发重试
-        assert!(
-            !output.contains(r#""stop_reason":"end_turn""#),
-            "Must NOT fake stop_reason end_turn on mid-stream drop"
-        );
-        assert!(
-            !output.contains("event: message_stop"),
-            "Must NOT emit message_stop on mid-stream drop"
-        );
-
-        // 4. 严禁在已输出内容后发送 event: error 或 overloaded_error，必须向外层传播真实 Err
-        assert!(
-            !output.contains("event: error"),
-            "Must NOT emit event: error after content was already emitted"
-        );
+        // 3. 严禁合成引发重试死循环的 overloaded_error
         assert!(
             !output.contains(r#""type":"overloaded_error""#),
             "Must NOT emit overloaded_error which triggers infinite client retries"
         );
+
+        // 4. [Fix #3635 核心契约] 严禁向底层抛出网络断开 Err，防止 Claude Code 触发 27 分钟指数退避重试风暴
         assert!(
-            error_propagated,
-            "Mid-stream network error must propagate as Err to trigger client native retry"
+            !error_propagated,
+            "Mid-stream network error after content must gracefully finalize without raw Err"
         );
     }
 

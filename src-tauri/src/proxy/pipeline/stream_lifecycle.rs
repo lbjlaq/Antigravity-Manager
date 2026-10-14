@@ -54,6 +54,14 @@ pub trait ProtocolStreamHandler: Send + 'static {
         false
     }
 
+    /// [Fix #3635 稳态收尾防御]
+    /// 中途发生上游网络中断或超时，但在下游已产生内容或思考 (has_content || has_thinking) 时调用。
+    /// 优雅封闭未结束的块（content_block_stop、message_delta(end_turn)、message_stop），
+    /// 满足客户端 complete: true 不变式，避免客户端触发 27 分钟指数退避重试死循环或会话历史中毒。
+    fn emit_interrupted_finalize(&mut self, _error_report: &StreamErrorReport) -> Vec<Bytes> {
+        self.emit_finalize()
+    }
+
     /// 可选钩子：心跳帧自定义渲染（缺省为标准 SSE 注释 `: ping\n\n`）
     fn heartbeat_frame(&mut self) -> Bytes {
         Bytes::from(": ping\n\n")
@@ -243,47 +251,87 @@ where
                                         report.client_message()
                                     );
 
-                                    // 若首包前发生异常（未产生任何正文与思考），下发协议专属的初始错误事件
-                                    if !handler.has_content() && !handler.has_thinking() {
+                                    if handler.has_content() || handler.has_thinking() {
+                                        // [Fix #3635 稳态收尾防御]
+                                        // 已经向客户端输出了部分正文或思考内容：
+                                        // 严禁中途向底层强行抛出网络断流 Err！
+                                        // 否则 Claude Code 等现代客户端将判定流损坏并启动成倍膨胀的 10 阶梯指数退避重试（如 Retrying 6/10 · 27m 24s），
+                                        // 并在未闭合的 Assistant 消息上打上 resumedFromIncompleteThinking 脏标记导致会话永久中毒。
+                                        // 此处在本地执行优雅收尾（封闭未结束块、补全 end_turn 与 message_stop），将重试决策权交还用户。
+                                        tracing::warn!(
+                                            "[{}] {} upstream chunk error after output (has_content: {}, has_thinking: {}): performing graceful terminal closure",
+                                            config.adapter_name,
+                                            config.function_name,
+                                            handler.has_content(),
+                                            handler.has_thinking()
+                                        );
+                                        let closing_chunks = handler.emit_interrupted_finalize(&report);
+                                        for c in closing_chunks {
+                                            yield Ok(c);
+                                        }
+                                        break;
+                                    } else {
+                                        // 若首包前发生异常（未产生任何正文与思考），下发协议专属的初始错误事件
                                         let err_chunks = handler.emit_initial_error(&report);
                                         for c in err_chunks {
                                             yield Ok(c);
                                         }
+                                        error_emitted = true;
+                                        yield Err(report.client_message());
+                                        break;
                                     }
-                                    error_emitted = true;
-                                    // 无论处于何种阶段，中途发生上游网络断开时如实作为 Err 流出，
-                                    // 严禁吞没错误伪造 end_turn 或 message_stop，交由客户端原生重试机制接管。
-                                    yield Err(report.client_message());
-                                    break;
                                 }
                             }
                         }
                         None => {
-                            // [关键契约守卫] 若上游到达 EOF 时未处于终止态，且从未产生任何正文或工具调用（无论是否产生了思考）：
-                            // 严禁作为正常 EOF 终结或伪造收尾帧！如实作为 Err 透传底层中断，
-                            // 促使 Claude Code 等客户端状态机捕获 ConnectionLost 并自动触发原生重试。
-                            if !handler.is_terminal() && !handler.has_content() {
-                                let reason = if handler.has_thinking() {
-                                    "upstream stream ended after thinking without content"
+                            if !handler.is_terminal() {
+                                if handler.has_content() || handler.has_thinking() {
+                                    let reason = if handler.has_thinking() && !handler.has_content() {
+                                        "upstream stream ended after thinking without content"
+                                    } else {
+                                        "upstream stream ended prematurely during content generation"
+                                    };
+                                    let report = crate::proxy::mappers::error_classifier::report_stream_error(
+                                        config.adapter_name,
+                                        config.function_name,
+                                        &reason,
+                                        config.trace_info.clone(),
+                                    );
+                                    tracing::warn!(
+                                        "[{}] {} upstream stream reached premature EOF after output (has_content: {}, has_thinking: {}): performing graceful terminal closure",
+                                        config.adapter_name,
+                                        config.function_name,
+                                        handler.has_content(),
+                                        handler.has_thinking()
+                                    );
+                                    let closing_chunks = handler.emit_interrupted_finalize(&report);
+                                    for c in closing_chunks {
+                                        yield Ok(c);
+                                    }
+                                    break;
                                 } else {
-                                    "upstream stream ended prematurely before emitting content"
-                                };
-                                let report = crate::proxy::mappers::error_classifier::report_stream_error(
-                                    config.adapter_name,
-                                    config.function_name,
-                                    &reason,
-                                    config.trace_info.clone(),
-                                );
-                                tracing::warn!(
-                                    "[{}] {} upstream stream reached EOF without content (has_thinking: {}): {}",
-                                    config.adapter_name,
-                                    config.function_name,
-                                    handler.has_thinking(),
-                                    report.client_message()
-                                );
-                                error_emitted = true;
-                                yield Err(report.client_message());
-                                break;
+                                    // 首包前空流 EOF
+                                    let reason = "upstream stream ended prematurely before emitting content or thinking";
+                                    let report = crate::proxy::mappers::error_classifier::report_stream_error(
+                                        config.adapter_name,
+                                        config.function_name,
+                                        &reason,
+                                        config.trace_info.clone(),
+                                    );
+                                    tracing::warn!(
+                                        "[{}] {} upstream stream reached EOF without content or thinking: {}",
+                                        config.adapter_name,
+                                        config.function_name,
+                                        report.client_message()
+                                    );
+                                    let err_chunks = handler.emit_initial_error(&report);
+                                    for c in err_chunks {
+                                        yield Ok(c);
+                                    }
+                                    error_emitted = true;
+                                    yield Err(report.client_message());
+                                    break;
+                                }
                             }
                             break; // 上游流正常到达 EOF
                         }
@@ -332,15 +380,26 @@ where
                             phase
                         );
 
-                        if !handler.has_content() && !handler.has_thinking() {
+                        if handler.has_content() || handler.has_thinking() {
+                            tracing::warn!(
+                                "[{}] {} stream idle timeout after output: performing graceful terminal closure to prevent client retry storm",
+                                config.adapter_name,
+                                config.function_name
+                            );
+                            let closing_chunks = handler.emit_interrupted_finalize(&report);
+                            for c in closing_chunks {
+                                yield Ok(c);
+                            }
+                            break;
+                        } else {
                             let err_chunks = handler.emit_initial_error(&report);
                             for c in err_chunks {
                                 yield Ok(c);
                             }
+                            error_emitted = true;
+                            yield Err(report.client_message());
+                            break;
                         }
-                        error_emitted = true;
-                        yield Err(report.client_message());
-                        break;
                     }
                     yield Ok(handler.heartbeat_frame());
                 }
@@ -353,14 +412,10 @@ where
             return;
         }
 
-        // [关键契约守卫] 若流结束时未处于终止态且未产生任何正文/工具调用（无论是否产生了思考）：
+        // [关键契约守卫] 若流结束时未处于终止态且未产生任何正文/工具调用且未产生思考：
         // 严禁下发伪造终结帧，如实透传 Err 促使客户端原生重试
-        if !handler.is_terminal() && !handler.has_content() {
-            let reason = if handler.has_thinking() {
-                "upstream stream ended after thinking without content"
-            } else {
-                "upstream stream ended prematurely before emitting content"
-            };
+        if !handler.is_terminal() && !handler.has_content() && !handler.has_thinking() {
+            let reason = "upstream stream ended prematurely before emitting content or thinking";
             let report = crate::proxy::mappers::error_classifier::report_stream_error(
                 config.adapter_name,
                 config.function_name,
@@ -368,10 +423,9 @@ where
                 config.trace_info.clone(),
             );
             tracing::warn!(
-                "[{}] {} stream ended without content (has_thinking: {}): {}",
+                "[{}] {} stream ended without content or thinking: {}",
                 config.adapter_name,
                 config.function_name,
-                handler.has_thinking(),
                 report.client_message()
             );
             yield Err(report.client_message());
@@ -533,7 +587,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lifecycle_interruption_after_content_propagates_error_without_finalize() {
+    async fn test_lifecycle_interruption_after_content_gracefully_finalizes() {
         let mock_stream = async_stream::stream! {
             yield Ok::<_, String>(Bytes::from("data: partial content\n"));
             yield Err::<Bytes, _>("connection reset mid stream".to_string());
@@ -548,9 +602,8 @@ mod tests {
         while let Some(item) = stream.next().await {
             match item {
                 Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
-                Err(e) => {
+                Err(_e) => {
                     error_received = true;
-                    assert!(e.contains("connection reset mid stream"));
                 }
             }
         }
@@ -558,14 +611,17 @@ mod tests {
         let full_output = output.join("");
         assert!(full_output.contains("processed:data: partial content"));
         assert!(
-            !full_output.contains("[finalized]"),
-            "Must NOT finalize when error occurs"
+            full_output.contains("[finalized]"),
+            "Must gracefully finalize when content exists to prevent 27-minute backoff loops in Claude Code"
         );
         assert!(
             !full_output.contains("[initial_error]"),
             "Must NOT emit initial error when content exists"
         );
-        assert!(error_received, "Stream must propagate Err on interruption");
+        assert!(
+            !error_received,
+            "Stream must NOT propagate raw Err when content exists"
+        );
     }
 
     #[tokio::test]
@@ -671,7 +727,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lifecycle_thinking_only_interruption_propagates_error_without_finalize() {
+    async fn test_lifecycle_thinking_only_interruption_gracefully_finalizes() {
         // 模拟上游只产生了思考块，随后由于网络异常或上游故障直接 EOF，未产出任何正文
         let mock_stream = async_stream::stream! {
             yield Ok::<_, String>(Bytes::from("data: thinking_chunk\n"));
@@ -690,9 +746,8 @@ mod tests {
         while let Some(item) = stream.next().await {
             match item {
                 Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
-                Err(e) => {
+                Err(_e) => {
                     error_propagated = true;
-                    assert!(e.contains("thinking"));
                 }
             }
         }
@@ -701,12 +756,12 @@ mod tests {
         assert!(full_output.contains("processed:data: thinking_chunk"));
         assert!(full_output.contains("processed:data: thinking_done"));
         assert!(
-            !full_output.contains("[finalized]"),
-            "Must NOT emit finalize when stream only had thinking"
+            full_output.contains("[finalized]"),
+            "Must emit finalize when thinking was emitted to prevent session poisoning"
         );
         assert!(
-            error_propagated,
-            "Must propagate Err on thinking-only stream EOF to trigger client native retry"
+            !error_propagated,
+            "Must NOT propagate raw Err on thinking stream EOF to prevent resumedFromIncompleteThinking"
         );
     }
 
