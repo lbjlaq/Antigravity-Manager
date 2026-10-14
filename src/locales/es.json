@@ -103,7 +103,8 @@
     "apikey_fun": "Estación de tránsito",
     "logout": "Cerrar sesión",
     "more": "More",
-    "mini_view": "Mini View"
+    "mini_view": "Mini View",
+    "chat": "Chat"
   },
   "dashboard": {
     "hello": "Hola, Usuario 👋",
@@ -1739,5 +1740,36 @@
     "confirm": "Borrar ahora",
     "cancel": "Cancelar",
     "success": "La caché de bloques de pensamiento se ha borrado correctamente y se reconstruirá automáticamente."
+  },
+  "chat": {
+    "new_chat": "Nuevo chat",
+    "recents": "Recientes",
+    "no_history": "Aún no hay chats",
+    "delete": "Eliminar",
+    "select_model": "Seleccionar modelo",
+    "search_model": "Buscar o escribir un ID de modelo",
+    "use_custom_model": "Usar \"{{model}}\"",
+    "no_models": "No hay modelos disponibles",
+    "protocol": "Protocolo",
+    "settings": "Ajustes del chat",
+    "system_prompt": "Prompt del sistema",
+    "system_prompt_placeholder": "Instrucciones opcionales enviadas con cada solicitud",
+    "temperature": "Temperatura",
+    "temperature_default": "Valor por defecto del modelo",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "regenerate": "Regenerar",
+    "thinking": "Razonamiento",
+    "thinking_active": "Pensando…",
+    "empty_title": "¿Qué tienes en mente hoy?",
+    "placeholder": "Pregunta lo que quieras",
+    "send": "Enviar",
+    "stop": "Detener",
+    "hint": "Las solicitudes pasan por el proxy de API local, con el modelo y protocolo seleccionados.",
+    "proxy_stopped": "El servicio de proxy de API no está en ejecución.",
+    "open_proxy": "Abrir API Proxy",
+    "toggle_sidebar": "Mostrar/ocultar barra lateral",
+    "network_error": "No se pudo conectar con el proxy en",
+    "empty_response": "El modelo devolvió una respuesta vacía."
   }
 }

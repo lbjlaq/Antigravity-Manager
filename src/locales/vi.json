@@ -102,7 +102,8 @@
     "apikey_fun": "Transit Station",
     "logout": "Logout",
     "more": "More",
-    "mini_view": "Mini View"
+    "mini_view": "Mini View",
+    "chat": "Trò chuyện"
   },
   "dashboard": {
     "hello": "Xin chào, Bạn 👋",
@@ -1782,5 +1783,36 @@
     "confirm": "Xóa ngay",
     "cancel": "Hủy bỏ",
     "success": "Đã xóa bộ nhớ đệm khối suy nghĩ thành công và sẽ tự động tạo lại."
+  },
+  "chat": {
+    "new_chat": "Cuộc trò chuyện mới",
+    "recents": "Gần đây",
+    "no_history": "Chưa có cuộc trò chuyện",
+    "delete": "Xóa",
+    "select_model": "Chọn mô hình",
+    "search_model": "Tìm hoặc nhập ID mô hình",
+    "use_custom_model": "Dùng \"{{model}}\"",
+    "no_models": "Không có mô hình khả dụng",
+    "protocol": "Giao thức",
+    "settings": "Cài đặt trò chuyện",
+    "system_prompt": "Lời nhắc hệ thống",
+    "system_prompt_placeholder": "Hướng dẫn tùy chọn gửi kèm mọi yêu cầu",
+    "temperature": "Nhiệt độ",
+    "temperature_default": "Mặc định của mô hình",
+    "copy": "Sao chép",
+    "copied": "Đã sao chép",
+    "regenerate": "Tạo lại",
+    "thinking": "Suy nghĩ",
+    "thinking_active": "Đang suy nghĩ…",
+    "empty_title": "Hôm nay bạn có kế hoạch gì?",
+    "placeholder": "Hỏi bất cứ điều gì",
+    "send": "Gửi",
+    "stop": "Dừng",
+    "hint": "Yêu cầu được gửi qua API proxy cục bộ với mô hình và giao thức đã chọn.",
+    "proxy_stopped": "Dịch vụ API proxy chưa chạy.",
+    "open_proxy": "Mở API Proxy",
+    "toggle_sidebar": "Ẩn/hiện thanh bên",
+    "network_error": "Không thể kết nối tới proxy:",
+    "empty_response": "Mô hình trả về phản hồi trống."
   }
 }

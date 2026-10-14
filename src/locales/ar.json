@@ -101,7 +101,8 @@
     "apikey_fun": "Transit Station",
     "logout": "Logout",
     "more": "More",
-    "mini_view": "Mini View"
+    "mini_view": "Mini View",
+    "chat": "الدردشة"
   },
   "dashboard": {
     "hello": "مرحبًا، المستخدم 👋",
@@ -1714,5 +1715,36 @@
     "confirm": "حذف الآن",
     "cancel": "إلغاء",
     "success": "تم حذف ذاكرة التخزين المؤقت لكتل التفكير بنجاح وسيتم إعادة بنائها تلقائيًا."
+  },
+  "chat": {
+    "new_chat": "دردشة جديدة",
+    "recents": "الأخيرة",
+    "no_history": "لا توجد محادثات بعد",
+    "delete": "حذف",
+    "select_model": "اختر النموذج",
+    "search_model": "ابحث أو اكتب معرف النموذج",
+    "use_custom_model": "استخدم \"{{model}}\"",
+    "no_models": "لا توجد نماذج متاحة",
+    "protocol": "البروتوكول",
+    "settings": "إعدادات الدردشة",
+    "system_prompt": "موجه النظام",
+    "system_prompt_placeholder": "تعليمات اختيارية تُرسل مع كل طلب",
+    "temperature": "درجة الحرارة",
+    "temperature_default": "افتراضي النموذج",
+    "copy": "نسخ",
+    "copied": "تم النسخ",
+    "regenerate": "إعادة التوليد",
+    "thinking": "الأفكار",
+    "thinking_active": "يفكر…",
+    "empty_title": "ما الذي على جدول أعمالك اليوم؟",
+    "placeholder": "اسأل عن أي شيء",
+    "send": "إرسال",
+    "stop": "إيقاف",
+    "hint": "تمر الطلبات عبر وكيل API المحلي باستخدام النموذج والبروتوكول المحددين.",
+    "proxy_stopped": "خدمة وكيل API غير قيد التشغيل.",
+    "open_proxy": "فتح وكيل API",
+    "toggle_sidebar": "إظهار/إخفاء الشريط الجانبي",
+    "network_error": "تعذر الوصول إلى الوكيل على",
+    "empty_response": "أعاد النموذج استجابة فارغة."
   }
 }

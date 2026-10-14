@@ -102,7 +102,8 @@
     "apikey_fun": "Transit Station",
     "logout": "Logout",
     "more": "更多",
-    "mini_view": "迷你懸浮窗"
+    "mini_view": "迷你懸浮窗",
+    "chat": "對話"
   },
   "dashboard": {
     "hello": "你好, 使用者 👋",
@@ -1881,5 +1882,36 @@
     "confirm": "立即刪除",
     "cancel": "暫不刪除",
     "success": "已成功刪除思考塊快取，將在後續對話中自動重建。"
+  },
+  "chat": {
+    "new_chat": "新對話",
+    "recents": "最近",
+    "no_history": "尚無對話",
+    "delete": "刪除",
+    "select_model": "選擇模型",
+    "search_model": "搜尋或輸入模型 ID",
+    "use_custom_model": "使用 \"{{model}}\"",
+    "no_models": "暫無可用模型",
+    "protocol": "協定",
+    "settings": "對話設定",
+    "system_prompt": "系統提示詞",
+    "system_prompt_placeholder": "選填，每次請求都會附帶的指令",
+    "temperature": "溫度",
+    "temperature_default": "模型預設",
+    "copy": "複製",
+    "copied": "已複製",
+    "regenerate": "重新產生",
+    "thinking": "思考過程",
+    "thinking_active": "思考中…",
+    "empty_title": "今天有什麼安排？",
+    "placeholder": "有問題，儘管問",
+    "send": "傳送",
+    "stop": "停止",
+    "hint": "請求將透過本機 API 反代服務，使用所選模型與協定傳送。",
+    "proxy_stopped": "API 反代服務未執行。",
+    "open_proxy": "開啟 API 反代",
+    "toggle_sidebar": "切換側邊欄",
+    "network_error": "無法連線到反代服務：",
+    "empty_response": "模型傳回了空回應。"
   }
 }

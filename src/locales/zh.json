@@ -101,7 +101,8 @@
     "apikey_fun": "中转站",
     "logout": "登出",
     "more": "更多",
-    "mini_view": "迷你悬浮窗"
+    "mini_view": "迷你悬浮窗",
+    "chat": "对话"
   },
   "dashboard": {
     "hello": "你好, 用户 👋",
@@ -1860,5 +1861,36 @@
     "confirm": "立即删除",
     "cancel": "暂不删除",
     "success": "已成功删除思考块缓存，将在后续对话中自动重建。"
+  },
+  "chat": {
+    "new_chat": "新对话",
+    "recents": "最近",
+    "no_history": "暂无对话",
+    "delete": "删除",
+    "select_model": "选择模型",
+    "search_model": "搜索或输入模型 ID",
+    "use_custom_model": "使用 \"{{model}}\"",
+    "no_models": "暂无可用模型",
+    "protocol": "协议",
+    "settings": "对话设置",
+    "system_prompt": "系统提示词",
+    "system_prompt_placeholder": "可选，每次请求都会附带的指令",
+    "temperature": "温度",
+    "temperature_default": "模型默认",
+    "copy": "复制",
+    "copied": "已复制",
+    "regenerate": "重新生成",
+    "thinking": "思考过程",
+    "thinking_active": "思考中…",
+    "empty_title": "今天有什么安排？",
+    "placeholder": "有问题，尽管问",
+    "send": "发送",
+    "stop": "停止",
+    "hint": "请求将通过本地 API 反代服务，使用所选模型和协议发送。",
+    "proxy_stopped": "API 反代服务未运行。",
+    "open_proxy": "打开 API 反代",
+    "toggle_sidebar": "切换侧边栏",
+    "network_error": "无法连接到反代服务：",
+    "empty_response": "模型返回了空响应。"
   }
 }

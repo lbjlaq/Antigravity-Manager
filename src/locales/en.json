@@ -103,7 +103,8 @@
     "apikey_fun": "Transit Station",
     "logout": "Logout",
     "more": "More",
-    "mini_view": "Mini View"
+    "mini_view": "Mini View",
+    "chat": "Chat"
   },
   "dashboard": {
     "hello": "Hello, User 👋",
@@ -1894,5 +1895,36 @@
     "confirm": "Clear Now",
     "cancel": "Cancel",
     "success": "Thinking block cache cleared successfully and will rebuild automatically."
+  },
+  "chat": {
+    "new_chat": "New chat",
+    "recents": "Recents",
+    "no_history": "No chats yet",
+    "delete": "Delete",
+    "select_model": "Select model",
+    "search_model": "Search or type a model ID",
+    "use_custom_model": "Use \"{{model}}\"",
+    "no_models": "No models available",
+    "protocol": "Protocol",
+    "settings": "Chat settings",
+    "system_prompt": "System prompt",
+    "system_prompt_placeholder": "Optional instructions sent with every request",
+    "temperature": "Temperature",
+    "temperature_default": "Model default",
+    "copy": "Copy",
+    "copied": "Copied",
+    "regenerate": "Regenerate",
+    "thinking": "Thoughts",
+    "thinking_active": "Thinking…",
+    "empty_title": "What's on the agenda today?",
+    "placeholder": "Ask anything",
+    "send": "Send",
+    "stop": "Stop",
+    "hint": "Requests go through the local API proxy, using the selected model and protocol.",
+    "proxy_stopped": "The API proxy service is not running.",
+    "open_proxy": "Open API Proxy",
+    "toggle_sidebar": "Toggle sidebar",
+    "network_error": "Could not reach the proxy at",
+    "empty_response": "The model returned an empty response."
   }
 }
