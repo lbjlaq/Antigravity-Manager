@@ -101,7 +101,8 @@
     "apikey_fun": "Transit Station",
     "logout": "Logout",
     "more": "More",
-    "mini_view": "Mini View"
+    "mini_view": "Mini View",
+    "chat": "Sembang"
   },
   "dashboard": {
     "hello": "Hai, Pengguna 👋",
@@ -1705,5 +1706,36 @@
     "confirm": "Padam Sekarang",
     "cancel": "Batal",
     "success": "Cache blok pemikiran berjaya dipadamkan dan akan dibina semula secara automatik."
+  },
+  "chat": {
+    "new_chat": "Sembang baharu",
+    "recents": "Terkini",
+    "no_history": "Belum ada sembang",
+    "delete": "Padam",
+    "select_model": "Pilih model",
+    "search_model": "Cari atau taip ID model",
+    "use_custom_model": "Guna \"{{model}}\"",
+    "no_models": "Tiada model tersedia",
+    "protocol": "Protokol",
+    "settings": "Tetapan sembang",
+    "system_prompt": "Prompt sistem",
+    "system_prompt_placeholder": "Arahan pilihan yang dihantar bersama setiap permintaan",
+    "temperature": "Suhu",
+    "temperature_default": "Lalai model",
+    "copy": "Salin",
+    "copied": "Disalin",
+    "regenerate": "Jana semula",
+    "thinking": "Pemikiran",
+    "thinking_active": "Sedang berfikir…",
+    "empty_title": "Apa agenda anda hari ini?",
+    "placeholder": "Tanya apa sahaja",
+    "send": "Hantar",
+    "stop": "Henti",
+    "hint": "Permintaan dihantar melalui proksi API tempatan menggunakan model dan protokol yang dipilih.",
+    "proxy_stopped": "Perkhidmatan proksi API tidak berjalan.",
+    "open_proxy": "Buka API Proxy",
+    "toggle_sidebar": "Togol bar sisi",
+    "network_error": "Tidak dapat mencapai proksi di",
+    "empty_response": "Model memulangkan respons kosong."
   }
 }

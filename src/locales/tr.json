@@ -102,7 +102,8 @@
     "apikey_fun": "Transit Station",
     "logout": "Logout",
     "more": "More",
-    "mini_view": "Mini View"
+    "mini_view": "Mini View",
+    "chat": "Sohbet"
   },
   "dashboard": {
     "hello": "Merhaba, Kullanıcı 👋",
@@ -1766,5 +1767,36 @@
     "confirm": "Şimdi Temizle",
     "cancel": "İptal",
     "success": "Düşünme bloğu önbelleği başarıyla temizlendi ve otomatik olarak yeniden oluşturulacak."
+  },
+  "chat": {
+    "new_chat": "Yeni sohbet",
+    "recents": "Son sohbetler",
+    "no_history": "Henüz sohbet yok",
+    "delete": "Sil",
+    "select_model": "Model seç",
+    "search_model": "Model ID ara veya yaz",
+    "use_custom_model": "\"{{model}}\" kullan",
+    "no_models": "Kullanılabilir model yok",
+    "protocol": "Protokol",
+    "settings": "Sohbet ayarları",
+    "system_prompt": "Sistem istemi",
+    "system_prompt_placeholder": "Her istekle gönderilen isteğe bağlı talimatlar",
+    "temperature": "Sıcaklık",
+    "temperature_default": "Model varsayılanı",
+    "copy": "Kopyala",
+    "copied": "Kopyalandı",
+    "regenerate": "Yeniden oluştur",
+    "thinking": "Düşünceler",
+    "thinking_active": "Düşünüyor…",
+    "empty_title": "Bugün gündemde ne var?",
+    "placeholder": "Herhangi bir şey sor",
+    "send": "Gönder",
+    "stop": "Durdur",
+    "hint": "İstekler, seçilen model ve protokolle yerel API proxy üzerinden gönderilir.",
+    "proxy_stopped": "API proxy hizmeti çalışmıyor.",
+    "open_proxy": "API Proxy'yi aç",
+    "toggle_sidebar": "Kenar çubuğunu aç/kapat",
+    "network_error": "Proxy'ye ulaşılamadı:",
+    "empty_response": "Model boş bir yanıt döndürdü."
   }
 }

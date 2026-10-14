@@ -103,7 +103,8 @@
     "apikey_fun": "Transit Station",
     "logout": "ログアウト",
     "more": "その他",
-    "mini_view": "ミニビュー"
+    "mini_view": "ミニビュー",
+    "chat": "チャット"
   },
   "dashboard": {
     "hello": "こんにちは 👋",
@@ -1739,5 +1740,36 @@
     "confirm": "今すぐ削除",
     "cancel": "キャンセル",
     "success": "思考ブロックのキャッシュを正常に削除しました。自動的に再構築されます。"
+  },
+  "chat": {
+    "new_chat": "新しいチャット",
+    "recents": "最近",
+    "no_history": "チャットはまだありません",
+    "delete": "削除",
+    "select_model": "モデルを選択",
+    "search_model": "モデル ID を検索または入力",
+    "use_custom_model": "\"{{model}}\" を使用",
+    "no_models": "利用可能なモデルがありません",
+    "protocol": "プロトコル",
+    "settings": "チャット設定",
+    "system_prompt": "システムプロンプト",
+    "system_prompt_placeholder": "すべてのリクエストに付与する任意の指示",
+    "temperature": "温度",
+    "temperature_default": "モデルの既定値",
+    "copy": "コピー",
+    "copied": "コピーしました",
+    "regenerate": "再生成",
+    "thinking": "思考",
+    "thinking_active": "思考中…",
+    "empty_title": "今日の予定は？",
+    "placeholder": "何でも質問してください",
+    "send": "送信",
+    "stop": "停止",
+    "hint": "リクエストはローカル API プロキシを経由し、選択したモデルとプロトコルで送信されます。",
+    "proxy_stopped": "API プロキシサービスが起動していません。",
+    "open_proxy": "API プロキシを開く",
+    "toggle_sidebar": "サイドバーの切り替え",
+    "network_error": "プロキシに接続できません:",
+    "empty_response": "モデルから空の応答が返されました。"
   }
 }

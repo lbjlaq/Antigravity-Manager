@@ -103,7 +103,8 @@
     "apikey_fun": "API 중계소",
     "logout": "로그아웃",
     "more": "더 보기",
-    "mini_view": "미니 뷰"
+    "mini_view": "미니 뷰",
+    "chat": "채팅"
   },
   "dashboard": {
     "hello": "안녕하세요, 사용자님 👋",
@@ -1739,5 +1740,36 @@
     "confirm": "지금 삭제",
     "cancel": "취소",
     "success": "생각 블록 캐시가 성공적으로 삭제되었습니다. 자동으로 재구축됩니다."
+  },
+  "chat": {
+    "new_chat": "새 채팅",
+    "recents": "최근",
+    "no_history": "채팅이 없습니다",
+    "delete": "삭제",
+    "select_model": "모델 선택",
+    "search_model": "모델 ID 검색 또는 입력",
+    "use_custom_model": "\"{{model}}\" 사용",
+    "no_models": "사용 가능한 모델이 없습니다",
+    "protocol": "프로토콜",
+    "settings": "채팅 설정",
+    "system_prompt": "시스템 프롬프트",
+    "system_prompt_placeholder": "모든 요청에 함께 전송되는 선택적 지침",
+    "temperature": "온도",
+    "temperature_default": "모델 기본값",
+    "copy": "복사",
+    "copied": "복사됨",
+    "regenerate": "다시 생성",
+    "thinking": "생각",
+    "thinking_active": "생각 중…",
+    "empty_title": "오늘은 무엇을 할까요?",
+    "placeholder": "무엇이든 물어보세요",
+    "send": "보내기",
+    "stop": "중지",
+    "hint": "요청은 선택한 모델과 프로토콜로 로컬 API 프록시를 통해 전송됩니다.",
+    "proxy_stopped": "API 프록시 서비스가 실행 중이 아닙니다.",
+    "open_proxy": "API 프록시 열기",
+    "toggle_sidebar": "사이드바 전환",
+    "network_error": "프록시에 연결할 수 없습니다:",
+    "empty_response": "모델이 빈 응답을 반환했습니다."
   }
 }
