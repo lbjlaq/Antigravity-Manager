@@ -5,6 +5,43 @@ use crate::proxy::token_manager::ProxyToken;
 
 use serde_json::{json, Value};
 
+/// Map an OpenAI `file` content block to a Gemini part.
+/// Text documents are inlined as text (Gemini `inlineData` rejects `text/*`);
+/// binary documents such as PDF go through the shared inline-data validation.
+fn file_block_to_gemini_part(file: &OpenAIFile) -> Value {
+    let name = file.filename.as_deref().unwrap_or("file");
+    let Some(raw) = file
+        .file_data
+        .as_deref()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+    else {
+        tracing::warn!(
+            "[OpenAI-Request] File block without inline file_data (file_id: {:?}) omitted",
+            file.file_id
+        );
+        return json!({ "text": format!("[File: {} omitted, only inline file_data is supported]", name) });
+    };
+
+    let (declared_mime, b64) = match raw.strip_prefix("data:").and_then(|r| r.split_once(',')) {
+        Some((meta, data)) => (meta.split(';').next().filter(|m| !m.is_empty()), data),
+        None => (None, raw),
+    };
+
+    if declared_mime.is_some_and(|m| m.starts_with("text/")) {
+        use base64::Engine as _;
+        if let Some(text) = base64::engine::general_purpose::STANDARD
+            .decode(b64.trim())
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+        {
+            return json!({ "text": format!("[File: {}]\n{}", name, text) });
+        }
+    }
+
+    crate::proxy::mappers::common_utils::create_gemini_inline_part(declared_mime, b64, "File")
+}
+
 pub(crate) fn is_tiered_flash_model(model: &str) -> bool {
     let model_id = model
         .rsplit('/')
@@ -621,6 +658,9 @@ pub fn transform_openai_request_with_session(
                                         }
                                     }
                                 }
+                                OpenAIContentBlock::File { file } => {
+                                    parts.push(file_block_to_gemini_part(file));
+                                }
                             }
                         }
                     }
@@ -773,6 +813,9 @@ pub fn transform_openai_request_with_session(
                                         Some(part) => extra_parts.push(part),
                                         None => texts.push("[video]".to_string()),
                                     }
+                                }
+                                OpenAIContentBlock::File { file } => {
+                                    extra_parts.push(file_block_to_gemini_part(file));
                                 }
                             }
                         }
@@ -1953,6 +1996,33 @@ mod tests {
             parts[1]["inlineData"]["mimeType"].as_str().unwrap(),
             "image/png"
         );
+    }
+
+    #[test]
+    fn test_transform_openai_request_file_blocks() {
+        let req: OpenAIRequest = serde_json::from_value(json!({
+            "model": "gemini-2.5-flash",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "Summarize these files" },
+                    { "type": "file", "file": { "filename": "doc.pdf", "file_data": "data:application/pdf;base64,JVBERi0xLjQKJSVFT0Y=" } },
+                    { "type": "file", "file": { "filename": "notes.txt", "file_data": "data:text/plain;base64,aGVsbG8=" } },
+                    { "type": "file", "file": { "file_id": "file-abc" } }
+                ]
+            }]
+        }))
+        .unwrap();
+
+        let (result, _sid, _msg_count, _) =
+            transform_openai_request(&req, "test-v", "gemini-2.5-flash", None);
+        let parts = result["request"]["contents"][0]["parts"]
+            .as_array()
+            .unwrap();
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[1]["inlineData"]["mimeType"], "application/pdf");
+        assert_eq!(parts[2]["text"], "[File: notes.txt]\nhello");
+        assert!(parts[3]["text"].as_str().unwrap().contains("omitted"));
     }
 
     #[test]

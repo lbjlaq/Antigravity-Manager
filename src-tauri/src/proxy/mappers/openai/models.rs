@@ -153,6 +153,21 @@ pub enum OpenAIContentBlock {
     // [NEW] 视频多模态输入: {"type":"video_url","video_url":{"url":"..."}}
     #[serde(rename = "video_url")]
     VideoUrl { video_url: OpenAIVideoUrl },
+    // Chat Completions file input: {"type":"file","file":{"filename":"a.pdf","file_data":"data:application/pdf;base64,..."}}
+    #[serde(rename = "file")]
+    File { file: OpenAIFile },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenAIFile {
+    /// data: URL or bare base64 payload
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_data: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+    /// Uploaded-file references (Files API) are not supported by the proxy
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -686,6 +686,12 @@ impl ContextManager {
                                     // Video token estimation based on media payload size
                                     total += estimate_media_tokens_from_url(&video_url.url);
                                 }
+                                crate::proxy::mappers::openai::models::OpenAIContentBlock::File { file } => {
+                                    total += file
+                                        .file_data
+                                        .as_deref()
+                                        .map_or(0, |d| estimate_inline_data_tokens("", d.len()));
+                                }
                             }
                         }
                     }
