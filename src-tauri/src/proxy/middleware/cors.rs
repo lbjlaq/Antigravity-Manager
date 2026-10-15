@@ -16,6 +16,9 @@ pub fn cors_layer() -> CorsLayer {
             Method::PATCH,
         ])
         .allow_headers(Any)
+        // Let cross-origin callers (the desktop webview's request probe) read every response
+        // header, including X-Account-Email / X-Mapped-Model.
+        .expose_headers(Any)
         .allow_credentials(false)
         .max_age(std::time::Duration::from_secs(3600))
 }
