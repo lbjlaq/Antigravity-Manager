@@ -1350,6 +1350,35 @@
     },
     "error": {
       "load_failed": "Failed to load"
+    },
+    "probe": {
+      "title": "တောင်းဆိုမှု စမ်းသပ်ကိရိယာ",
+      "protocol": "ပရိုတိုကော",
+      "body": "Body (JSON၊ ပြင်ဆင်နိုင်)",
+      "template": "နမူနာပုံစံ",
+      "send": "ပို့ရန်",
+      "stop": "ရပ်ရန်",
+      "ttft": "TTFT",
+      "total": "စုစုပေါင်း",
+      "account": "အကောင့်",
+      "mapped_model": "Mapped",
+      "response": "တုံ့ပြန်မှု",
+      "invalid_json": "JSON မမှန်ကန်ပါ၊ တောင်းဆိုမှု မပို့ပါ",
+      "test_all": "အားလုံး စမ်းသပ်ရန်",
+      "tested": "{{done}}/{{total}} စမ်းသပ်ပြီး",
+      "status": "အခြေအနေ",
+      "status_ok": "အဆင်ပြေ",
+      "status_fail": "မအောင်မြင်",
+      "status_limited": "နှုန်းကန့်သတ် သို့မဟုတ် ခွဲတမ်းကုန် (မော်ဒယ် အလုပ်လုပ်သည်)",
+      "status_skipped": "ကျော်ထားသည် (ပုံမော်ဒယ်များကို မစမ်းပါ)",
+      "filter_all": "အားလုံး",
+      "check": "စစ်ဆေးရန်",
+      "verdict_ok": "အလုပ်လုပ်သည်",
+      "verdict_fail": "အလုပ်မလုပ်ပါ",
+      "verdict_limited": "တောင်းဆိုမှု ကန့်သတ်ချက်",
+      "served_by": "{{requested}} ကို တောင်းဆိုခဲ့သည် → {{served}} က ဖြေကြားသည်",
+      "details": "တောင်းဆိုမှု အသေးစိတ်ကြည့်ရန် နှိပ်ပါ",
+      "headers": "တုံ့ပြန်မှု ခေါင်းစီးများ"
     }
   },
   "monitor": {

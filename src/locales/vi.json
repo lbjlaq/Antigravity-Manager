@@ -1407,6 +1407,35 @@
     },
     "error": {
       "load_failed": "Failed to load"
+    },
+    "probe": {
+      "title": "Thăm dò yêu cầu",
+      "protocol": "Giao thức",
+      "body": "Nội dung (JSON, có thể sửa)",
+      "template": "Mẫu",
+      "send": "Gửi",
+      "stop": "Dừng",
+      "ttft": "TTFT",
+      "total": "Tổng",
+      "account": "Tài khoản",
+      "mapped_model": "Ánh xạ",
+      "response": "Phản hồi",
+      "invalid_json": "JSON không hợp lệ, chưa gửi yêu cầu",
+      "test_all": "Kiểm tra tất cả",
+      "tested": "Đã kiểm tra {{done}}/{{total}}",
+      "status": "Trạng thái",
+      "status_ok": "OK",
+      "status_fail": "Thất bại",
+      "status_limited": "Bị giới hạn tốc độ hoặc hết hạn mức (mô hình vẫn hoạt động)",
+      "status_skipped": "Bỏ qua (không kiểm tra mô hình hình ảnh)",
+      "filter_all": "Tất cả",
+      "check": "Kiểm tra",
+      "verdict_ok": "Hoạt động",
+      "verdict_fail": "Không hoạt động",
+      "verdict_limited": "Giới hạn yêu cầu",
+      "served_by": "Yêu cầu {{requested}} → {{served}} trả lời",
+      "details": "Nhấp để xem chi tiết yêu cầu",
+      "headers": "Tiêu đề phản hồi"
     }
   },
   "monitor": {

@@ -1409,6 +1409,35 @@
     },
     "error": {
       "load_failed": "Failed to load"
+    },
+    "probe": {
+      "title": "İstek Sondası",
+      "protocol": "Protokol",
+      "body": "Gövde (JSON, düzenlenebilir)",
+      "template": "Şablon",
+      "send": "Gönder",
+      "stop": "Durdur",
+      "ttft": "TTFT",
+      "total": "Toplam",
+      "account": "Hesap",
+      "mapped_model": "Eşlenen",
+      "response": "Yanıt",
+      "invalid_json": "Geçersiz JSON, istek gönderilmedi",
+      "test_all": "Tümünü test et",
+      "tested": "{{done}}/{{total}} test edildi",
+      "status": "Durum",
+      "status_ok": "Tamam",
+      "status_fail": "Başarısız",
+      "status_limited": "Hız sınırı veya kota doldu (model çalışıyor)",
+      "status_skipped": "Atlandı (görsel modeller test edilmez)",
+      "filter_all": "Tümü",
+      "check": "Kontrol et",
+      "verdict_ok": "Çalışıyor",
+      "verdict_fail": "Çalışmıyor",
+      "verdict_limited": "İstek sınırı",
+      "served_by": "{{requested}} istendi → {{served}} yanıtladı",
+      "details": "İstek ayrıntıları için tıklayın",
+      "headers": "Yanıt başlıkları"
     }
   },
   "monitor": {

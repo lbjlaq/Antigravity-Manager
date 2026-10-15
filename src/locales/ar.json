@@ -1359,6 +1359,35 @@
     },
     "error": {
       "load_failed": "Failed to load"
+    },
+    "probe": {
+      "title": "فحص الطلب",
+      "protocol": "البروتوكول",
+      "body": "المحتوى (JSON، قابل للتعديل)",
+      "template": "القالب",
+      "send": "إرسال",
+      "stop": "إيقاف",
+      "ttft": "زمن أول رمز",
+      "total": "الإجمالي",
+      "account": "الحساب",
+      "mapped_model": "المُعيَّن",
+      "response": "الاستجابة",
+      "invalid_json": "JSON غير صالح، لم يُرسل الطلب",
+      "test_all": "اختبار الكل",
+      "tested": "تم اختبار {{done}}/{{total}}",
+      "status": "الحالة",
+      "status_ok": "يعمل",
+      "status_fail": "فشل",
+      "status_limited": "تجاوز حد المعدل أو الحصة (النموذج يعمل)",
+      "status_skipped": "تم التخطي (لا تُختبر نماذج الصور)",
+      "filter_all": "الكل",
+      "check": "فحص",
+      "verdict_ok": "يعمل",
+      "verdict_fail": "لا يعمل",
+      "verdict_limited": "تجاوز حد الطلبات",
+      "served_by": "المطلوب {{requested}} ← أجاب {{served}}",
+      "details": "انقر لعرض تفاصيل الطلب",
+      "headers": "ترويسات الاستجابة"
     }
   },
   "monitor": {

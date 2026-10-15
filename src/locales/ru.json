@@ -1424,6 +1424,35 @@
         "clear_success": "Конфигурация OpenClaw успешно удалена",
         "clear_error": "Не удалось удалить конфигурацию OpenClaw: {{error}}"
       }
+    },
+    "probe": {
+      "title": "Проба запроса",
+      "protocol": "Протокол",
+      "body": "Тело (JSON, редактируемое)",
+      "template": "Шаблон",
+      "send": "Отправить",
+      "stop": "Стоп",
+      "ttft": "TTFT",
+      "total": "Всего",
+      "account": "Аккаунт",
+      "mapped_model": "Сопоставлено",
+      "response": "Ответ",
+      "invalid_json": "Некорректный JSON, запрос не отправлен",
+      "test_all": "Проверить все",
+      "tested": "Проверено {{done}}/{{total}}",
+      "status": "Статус",
+      "status_ok": "OK",
+      "status_fail": "Ошибка",
+      "status_limited": "Лимит запросов или квота исчерпана (модель работает)",
+      "status_skipped": "Пропущено (модели изображений не проверяются)",
+      "filter_all": "Все",
+      "check": "Проверить",
+      "verdict_ok": "Работает",
+      "verdict_fail": "Не работает",
+      "verdict_limited": "Лимит запросов",
+      "served_by": "Запрошена {{requested}} → ответила {{served}}",
+      "details": "Нажмите, чтобы открыть детали запроса",
+      "headers": "Заголовки ответа"
     }
   },
   "monitor": {
