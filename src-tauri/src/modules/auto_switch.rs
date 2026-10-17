@@ -214,6 +214,10 @@ pub fn is_account_depleted(account: &Account, threshold: i32, monitored_models: 
         if !has_any {
             return true;
         }
+    } else if let Some(pct) = get_category_percentage(q, "gemini") {
+        if pct <= threshold {
+            return true;
+        }
     }
 
     false
@@ -248,11 +252,23 @@ pub fn calculate_candidate_score(account: &Account, monitored_models: &[String])
             if count > 0 {
                 score += monitored_sum / count;
             } else {
-                let max_pct = q.models.iter().map(|m| m.percentage).max().unwrap_or(0);
+                let max_pct = q
+                    .models
+                    .iter()
+                    .map(|m| m.percentage)
+                    .max()
+                    .or_else(|| get_category_percentage(q, "gemini"))
+                    .unwrap_or(0);
                 score += max_pct as i64;
             }
         } else {
-            let max_pct = q.models.iter().map(|m| m.percentage).max().unwrap_or(0);
+            let max_pct = q
+                .models
+                .iter()
+                .map(|m| m.percentage)
+                .max()
+                .or_else(|| get_category_percentage(q, "gemini"))
+                .unwrap_or(0);
             score += max_pct as i64;
         }
     }
@@ -532,5 +548,62 @@ mod tests {
             10,
             &["gemini".to_string(), "claude".to_string()]
         ));
+    }
+
+    #[test]
+    fn test_is_account_depleted_with_empty_models_quota_groups_fallback() {
+        // 当 q.models 为空时，通过 q.quota_groups 回退判定
+        let mut q = QuotaData::new();
+        q.quota_groups = Some(vec![QuotaGroup {
+            display_name: "Gemini Models".to_string(),
+            description: None,
+            buckets: vec![
+                QuotaBucket {
+                    bucket_id: "gemini-5h".to_string(),
+                    window: "5h".to_string(),
+                    remaining_fraction: 0.05, // 5% <= 10% 耗尽阈值
+                    reset_time: "".to_string(),
+                    observed_at: None,
+                    cycle_tokens: None,
+                    display_name: None,
+                    description: None,
+                },
+                QuotaBucket {
+                    bucket_id: "gemini-weekly".to_string(),
+                    window: "weekly".to_string(),
+                    remaining_fraction: 0.80,
+                    reset_time: "".to_string(),
+                    observed_at: None,
+                    cycle_tokens: None,
+                    display_name: None,
+                    description: None,
+                },
+            ],
+        }]);
+
+        let mut acc = Account::new(
+            "acc_empty_models".to_string(),
+            "empty@test.com".to_string(),
+            TokenData::new(
+                "test_access".to_string(),
+                "test_refresh".to_string(),
+                3600,
+                Some("empty@test.com".to_string()),
+                None,
+                None,
+                false,
+                None,
+            ),
+        );
+        acc.quota = Some(q);
+
+        // 默认监控空列表时使用 gemini 类别，5% <= 10% -> 耗尽
+        assert!(is_account_depleted(&acc, 10, &[]));
+
+        // 监控 gemini，5% <= 10% -> 耗尽
+        assert!(is_account_depleted(&acc, 10, &["gemini".to_string()]));
+
+        // 阈值降至 3% 时，5% > 3% -> 未耗尽
+        assert!(!is_account_depleted(&acc, 3, &["gemini".to_string()]));
     }
 }

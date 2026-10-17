@@ -3743,27 +3743,94 @@ impl TokenManager {
             .map(|cfg| cfg.quota_protection.enabled)
             .unwrap_or(false);
 
+        let normalized_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+        let target_lower = target_model.trim().to_lowercase();
+        let base_name = crate::proxy::common::model_mapping::strip_tier_suffix(&target_lower);
+        let any_loaded = self.tokens.iter().any(|t| !t.available_models.is_empty());
+
         // 遍历所有账号,检查是否有可用的
         for entry in self.tokens.iter() {
             let token = entry.value();
 
-            // 1. 检查是否被限流
-            if self.is_rate_limited(&token.account_id, None).await {
+            // 0. 验证锁定中或禁用状态
+            if token.validation_blocked {
+                let now = chrono::Utc::now().timestamp();
+                if token.validation_blocked_until == 0 || token.validation_blocked_until > now {
+                    tracing::debug!(
+                        "[Fallback Check] Account {} is validation blocked until {}, skipping",
+                        token.email,
+                        token.validation_blocked_until
+                    );
+                    continue;
+                }
+            }
+
+            // 1. 检查是否被限流（兼顾全账号级与特定模型级 QuotaExhausted）
+            if self
+                .is_rate_limited(&token.account_id, Some(&normalized_target))
+                .await
+                || (target_model != normalized_target
+                    && self
+                        .is_rate_limited(&token.account_id, Some(target_model))
+                        .await)
+            {
                 tracing::debug!(
-                    "[Fallback Check] Account {} is rate-limited, skipping",
-                    token.email
+                    "[Fallback Check] Account {} is rate-limited for model {}, skipping",
+                    token.email,
+                    target_model
                 );
                 continue;
             }
 
             // 2. 检查是否被配额保护(如果启用)
-            if quota_protection_enabled && token.protected_models.contains(target_model) {
+            if quota_protection_enabled
+                && (token.protected_models.contains(target_model)
+                    || token.protected_models.contains(&normalized_target))
+            {
                 tracing::debug!(
                     "[Fallback Check] Account {} is quota-protected for model {}, skipping",
                     token.email,
                     target_model
                 );
                 continue;
+            }
+
+            // 3. 检查模型能力支持
+            if any_loaded {
+                let has_cap = token.available_models.contains(&target_lower)
+                    || (!base_name.is_empty() && token.available_models.contains(&base_name))
+                    || token.model_quotas.contains_key(&normalized_target);
+                if !has_cap {
+                    tracing::debug!(
+                        "[Fallback Check] Account {} lacks capability for model {}, skipping",
+                        token.email,
+                        target_model
+                    );
+                    continue;
+                }
+            } else if !token.model_quotas.is_empty()
+                && !token.model_quotas.contains_key(&normalized_target)
+            {
+                tracing::debug!(
+                    "[Fallback Check] Account {} has no quota bucket for model {}, skipping",
+                    token.email,
+                    target_model
+                );
+                continue;
+            }
+
+            // 4. 检查是否已知配额归零
+            if let Some(&quota) = token.model_quotas.get(&normalized_target) {
+                if quota <= 0 {
+                    tracing::debug!(
+                        "[Fallback Check] Account {} has 0% quota for model {}, skipping",
+                        token.email,
+                        target_model
+                    );
+                    continue;
+                }
             }
 
             // 找到至少一个可用账号

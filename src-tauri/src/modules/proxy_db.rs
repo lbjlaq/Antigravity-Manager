@@ -1151,32 +1151,47 @@ pub fn lookup_latest_thinking_signature(session_id: &str) -> Option<String> {
 }
 
 /// 为 UI 展示层兜底提供：按思考内容片段模糊查找权威签名
+/// 采用逆序扫描最新思考记录并自动解压 GZIP，杜绝 SQL LIKE 对二进制压缩 BLOB 检索失配
 pub fn lookup_signature_by_thought_snippet(snippet: &str) -> Option<String> {
     let clean = snippet.trim();
     if clean.is_empty() {
         return None;
     }
     let conn = thinking_db().ok()?;
-    let pattern = format!("%{}%", clean);
-    let (id, raw_sig): (i64, String) = conn
-        .query_row(
-            "SELECT id, signature FROM thinking_records 
-         WHERE thought LIKE ?1 AND signature IS NOT NULL 
-         ORDER BY id DESC LIMIT 1",
-            rusqlite::params![pattern],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT id, thought, signature FROM thinking_records
+             WHERE signature IS NOT NULL
+             ORDER BY id DESC LIMIT 50",
         )
         .ok()?;
-    let healed = normalize_and_heal_signature(&raw_sig);
-    if let Some(ref h) = healed {
-        if h != &raw_sig {
-            let _ = conn.execute(
-                "UPDATE thinking_records SET signature = ?1 WHERE id = ?2",
-                rusqlite::params![h, id],
-            );
+
+    let rows = stmt
+        .query_map([], |r| {
+            let id: i64 = r.get(0)?;
+            let thought_raw: Vec<u8> = r.get(1)?;
+            let raw_sig: String = r.get(2)?;
+            Ok((id, thought_raw, raw_sig))
+        })
+        .ok()?;
+
+    for row in rows.flatten() {
+        let (id, thought_raw, raw_sig) = row;
+        let unpacked = unpack_thought(&thought_raw);
+        if unpacked.contains(clean) {
+            let healed = normalize_and_heal_signature(&raw_sig);
+            if let Some(ref h) = healed {
+                if h != &raw_sig {
+                    let _ = conn.execute(
+                        "UPDATE thinking_records SET signature = ?1 WHERE id = ?2",
+                        rusqlite::params![h, id],
+                    );
+                }
+            }
+            return healed;
         }
     }
-    healed
+    None
 }
 
 /// 根据 fingerprint 精准穿透点查纯文本历史思考（利用 idx_thinking_rec_fp 索引）
@@ -2337,6 +2352,39 @@ mod thinking_sqlite_tests {
             load_thinking_records("tenant_b:sess-other").unwrap().len(),
             1
         );
+    }
+
+    #[test]
+    fn test_lookup_signature_by_thought_snippet_gzip_compressed() {
+        let _dir = TestDataDir::new();
+        init_db().unwrap();
+
+        let sig = "s".repeat(60);
+        let long_thought = format!(
+            "Start of long thought. {} Here is the unique marker: needle_in_compressed_thought. {} End of thought.",
+            "A".repeat(200),
+            "B".repeat(200)
+        );
+        assert!(long_thought.len() >= MIN_GZIP_THOUGHT);
+
+        save_thinking_record(
+            "sess-gzip-test",
+            "fp_gzip",
+            &long_thought,
+            Some(&sig),
+            &[],
+            &[],
+            "visible",
+        )
+        .unwrap();
+
+        // 验证即使底层以 GZIP1 二进制压缩存储，仍能穿透解压精准定位签名
+        let found = lookup_signature_by_thought_snippet("needle_in_compressed_thought");
+        assert_eq!(found, Some(sig));
+
+        // 不存在的片段应返回 None
+        let not_found = lookup_signature_by_thought_snippet("non_existent_snippet_xyz");
+        assert_eq!(not_found, None);
     }
 }
 

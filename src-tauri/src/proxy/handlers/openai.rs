@@ -4410,7 +4410,10 @@ pub async fn handle_completions(
                                 break;
                             }
                             Err(_) => {
-                                last_error = "Timeout waiting for first data".to_string();
+                                last_error = format!(
+                                    "Timeout waiting for first data ({}s)",
+                                    peek_timeout_secs
+                                );
                                 retry_this_account = true;
                                 break;
                             }
@@ -4594,7 +4597,10 @@ pub async fn handle_completions(
                                 break;
                             }
                             Err(_) => {
-                                last_error = "Timeout peek internal".to_string();
+                                last_error = format!(
+                                    "Timeout waiting for first data ({}s)",
+                                    peek_timeout_secs
+                                );
                                 retry_this_account = true;
                                 break;
                             }

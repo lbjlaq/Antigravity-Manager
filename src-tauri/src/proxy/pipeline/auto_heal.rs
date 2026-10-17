@@ -63,6 +63,46 @@ pub fn resolve_continuation_prompt(body: &Value) -> &'static str {
     "Continue."
 }
 
+/// 向 Gemini contents 中安全注入或融合续跑提示词，严格保持角色交替
+pub fn append_or_merge_continuation(contents: &mut Vec<Value>, continuation_prompt: &str) {
+    let last_role = contents
+        .last()
+        .and_then(|c| c.get("role"))
+        .and_then(|r| r.as_str())
+        .unwrap_or("");
+
+    if last_role == "user" {
+        // [FIX #3694] Gemini API 严格要求 multi-turn 对话中角色严格交替 (user <-> model)。
+        // 若原上下文最后一轮已为 user 轮次，追加新的 user 轮次将产生连续 user [user, user]，
+        // 触发 Gemini HTTP 400 拒收报错: "Please ensure that multiturn requests alternate between user and model roles."
+        // 因此直接将续跑提示词合入该 user 轮次的 parts 末尾。
+        if let Some(last_turn) = contents.last_mut() {
+            if let Some(parts) = last_turn.get_mut("parts").and_then(|p| p.as_array_mut()) {
+                if let Some(last_part) = parts.last_mut().and_then(|p| p.as_object_mut()) {
+                    if let Some(Value::String(text)) = last_part.get_mut("text") {
+                        if !text.is_empty() {
+                            text.push_str("\n\n");
+                        }
+                        text.push_str(continuation_prompt);
+                    } else {
+                        parts.push(json!({ "text": continuation_prompt }));
+                    }
+                } else {
+                    parts.push(json!({ "text": continuation_prompt }));
+                }
+            } else {
+                last_turn["parts"] = json!([{ "text": continuation_prompt }]);
+            }
+        }
+    } else {
+        // 最后一轮为 model/assistant 或内容为空，安全追加独立的 user 轮次
+        contents.push(json!({
+            "role": "user",
+            "parts": [{ "text": continuation_prompt }]
+        }));
+    }
+}
+
 /// 构造用于自愈续跑的上游请求 Body
 pub fn create_auto_heal_continuation_body(
     original_body: &Value,
@@ -80,20 +120,15 @@ pub fn create_auto_heal_continuation_body(
         }
     }
 
-    // 2. 追加 User 续跑提示轮次
-    let user_turn = json!({
-        "role": "user",
-        "parts": [{ "text": continuation_prompt }]
-    });
-
+    // 2. 严格交替注入/融合 User 续跑提示轮次
     if let Some(contents) = new_body
         .get_mut("request")
         .and_then(|r| r.get_mut("contents"))
         .and_then(|c| c.as_array_mut())
     {
-        contents.push(user_turn);
+        append_or_merge_continuation(contents, continuation_prompt);
     } else if let Some(contents) = new_body.get_mut("contents").and_then(|c| c.as_array_mut()) {
-        contents.push(user_turn);
+        append_or_merge_continuation(contents, continuation_prompt);
     }
 
     new_body
@@ -459,9 +494,28 @@ mod tests {
         assert_eq!(healed["requestId"], "agent/1234/1_heal1");
         assert_eq!(healed["request"]["requestId"], "agent/1234/1_heal1");
         let contents = healed["request"]["contents"].as_array().unwrap();
-        assert_eq!(contents.len(), 2);
-        assert_eq!(contents[1]["role"], "user");
-        assert_eq!(contents[1]["parts"][0]["text"], "Continue.");
+        // [FIX #3694] 最后一轮已是 user 时合入该轮次，严格保持单轮或交替规则，避免 [user, user] 导致 400
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "Hello\n\nContinue.");
+    }
+
+    #[test]
+    fn test_create_auto_heal_continuation_body_when_last_turn_is_model() {
+        let original = json!({
+            "request": {
+                "contents": [
+                    { "role": "user", "parts": [{ "text": "What is 2+2?" }] },
+                    { "role": "model", "parts": [{ "text": "Let me calculate." }] }
+                ]
+            }
+        });
+        let healed = create_auto_heal_continuation_body(&original, "Continue.");
+        let contents = healed["request"]["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(contents[2]["parts"][0]["text"], "Continue.");
     }
 
     #[test]
@@ -570,9 +624,10 @@ mod tests {
         let healed = create_auto_heal_continuation_body(&original, "继续");
         assert_eq!(healed["requestId"], "req_root_123_heal1");
         let contents = healed["contents"].as_array().unwrap();
-        assert_eq!(contents.len(), 2);
-        assert_eq!(contents[1]["role"], "user");
-        assert_eq!(contents[1]["parts"][0]["text"], "继续");
+        // [FIX #3694] 最后一轮已是 user 时合入该轮次
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "Do task\n\n继续");
     }
 
     #[test]

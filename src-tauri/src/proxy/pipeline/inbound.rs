@@ -1209,32 +1209,61 @@ impl InboundThinkingPipeline {
         // [zwx-patch] 回执轮随行媒体拆出为紧随其后的 user 轮：
         // 上游不接受以携带 inlineData 的 model 轮结尾（400 "Requests ending with a model turn are not supported."），
         // 典型触发为 Codex 的 view_image 工具回执。无论是否处于末尾都拆分，保证多轮历史形态一致。
-        let mut split: Vec<Value> = Vec::with_capacity(merged.len());
-        for mut content in merged {
-            let is_model_response = content.get("role").and_then(|r| r.as_str()) == Some("model")
-                && content
-                    .get("parts")
-                    .and_then(|p| p.as_array())
-                    .map_or(false, |parts| {
-                        parts.iter().any(has_fr) && parts.iter().any(is_media)
-                    });
-            if !is_model_response {
+        // 仅在 Gemini 协议（target_role == "model"）下生效。
+        if target_role == "model" {
+            let mut split: Vec<Value> = Vec::with_capacity(merged.len());
+            let mut just_split_user_media = false;
+            for mut content in merged {
+                let is_model_response = content.get("role").and_then(|r| r.as_str())
+                    == Some("model")
+                    && content
+                        .get("parts")
+                        .and_then(|p| p.as_array())
+                        .map_or(false, |parts| {
+                            parts.iter().any(has_fr) && parts.iter().any(is_media)
+                        });
+                if !is_model_response {
+                    // [Gemini 角色轮替契约守卫]
+                    // 若前一轮为刚刚拆分出的 user(media) 轮，且当前紧随其后的亦为 user 轮（用户后续追问），
+                    // 必须原子合入同一轮 user 的 parts 中，消除相邻连续 user 轮次，
+                    // 彻底杜绝 Google 400 "Please ensure that multiturn requests alternate between user and model roles"
+                    if just_split_user_media
+                        && content.get("role").and_then(|r| r.as_str()) == Some("user")
+                    {
+                        if let Some(prev) = split.last_mut() {
+                            if prev.get("role").and_then(|r| r.as_str()) == Some("user") {
+                                if let (Some(prev_parts), Some(curr_parts)) = (
+                                    prev.get_mut("parts").and_then(|p| p.as_array_mut()),
+                                    content.get("parts").and_then(|p| p.as_array()),
+                                ) {
+                                    prev_parts.extend(curr_parts.clone());
+                                    just_split_user_media = false;
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    just_split_user_media = false;
+                    split.push(content);
+                    continue;
+                }
+                let parts = content
+                    .get_mut("parts")
+                    .and_then(|p| p.as_array_mut())
+                    .map(std::mem::take)
+                    .unwrap_or_default();
+                let (media, rest): (Vec<Value>, Vec<Value>) = parts.into_iter().partition(is_media);
+                content["parts"] = json!(rest);
                 split.push(content);
-                continue;
+                split.push(json!({ "role": "user", "parts": media }));
+                just_split_user_media = true;
+                rewritten += 1;
             }
-            let parts = content
-                .get_mut("parts")
-                .and_then(|p| p.as_array_mut())
-                .map(std::mem::take)
-                .unwrap_or_default();
-            let (media, rest): (Vec<Value>, Vec<Value>) = parts.into_iter().partition(is_media);
-            content["parts"] = json!(rest);
-            split.push(content);
-            split.push(json!({ "role": "user", "parts": media }));
-            rewritten += 1;
+            *contents = split;
+        } else {
+            *contents = merged;
         }
 
-        *contents = split;
         rewritten
     }
 
@@ -1632,7 +1661,6 @@ impl InboundThinkingPipeline {
         let canonical_tools = if let Some(tools) = req_obj.remove("tools") {
             if let Some(tools_arr) = tools.as_array() {
                 let mut expanded_tools: Vec<Value> = Vec::new();
-                let mut decls_list: Vec<Value> = Vec::new();
 
                 for tool in tools_arr {
                     if let Some(obj) = tool.as_object() {
@@ -1664,20 +1692,18 @@ impl InboundThinkingPipeline {
                                         );
                                     }
 
-                                    decls_list.push(Value::Object(decl_obj));
+                                    expanded_tools.push(json!({
+                                        "functionDeclarations": [Value::Object(decl_obj)]
+                                    }));
                                 }
                             }
                         } else {
-                            // 非 functionDeclaration 工具（如 googleSearch, codeExecution）
+                            // 非 functionDeclaration 工具（如 googleSearch, codeExecution）严格保持就地位置
                             expanded_tools.push(tool.clone());
                         }
+                    } else {
+                        expanded_tools.push(tool.clone());
                     }
-                }
-
-                for decl in decls_list {
-                    expanded_tools.push(json!({
-                        "functionDeclarations": [decl]
-                    }));
                 }
 
                 if !expanded_tools.is_empty() {
@@ -3001,6 +3027,36 @@ mod tests {
         assert_eq!(contents, snapshot);
     }
 
+    /// [Gemini 角色轮替契约测试] 当随行媒体被拆出为 user 轮次，且紧随其后就是 user 提问轮次时，
+    /// 必须原子合入同一 user 轮次，严格消除相邻连续 user 轮次，杜绝 Google 400
+    #[test]
+    fn test_fr_role_model_response_with_inline_data_split_merges_with_subsequent_user_turn() {
+        let img = json!({"inlineData": {"mimeType": "image/png", "data": "AAA"}});
+        let mut contents = vec![
+            json!({"role": "user", "parts": [{"text": "show me the picture"}]}),
+            json!({"role": "model", "parts": [fc_part("c1", "view_image")]}),
+            json!({"role": "user", "parts": [fr_part("c1", "view_image"), img.clone()]}),
+            json!({"role": "user", "parts": [{"text": "what is in this picture?"}]}),
+        ];
+
+        InboundThinkingPipeline::normalize_function_response_roles(
+            &mut contents,
+            "gemini-3.8-flash-low",
+        );
+
+        // 期望序列：user -> model -> model(fr) -> user(img + question)，绝对不可产生连续两个 user
+        assert_eq!(contents.len(), 4);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[2]["role"], "model");
+        assert_eq!(contents[3]["role"], "user");
+
+        let user_parts = contents[3]["parts"].as_array().unwrap();
+        assert_eq!(user_parts.len(), 2);
+        assert_eq!(user_parts[0]["inlineData"]["data"], "AAA");
+        assert_eq!(user_parts[1]["text"], "what is in this picture?");
+    }
+
     /// 用户发图提问 `user [inlineData, text]` **不得**被误判为回执轮。
     #[test]
     fn test_fr_role_user_image_question_is_untouched() {
@@ -3771,6 +3827,56 @@ mod tests {
             request_with_tools.get("toolConfig").is_some(),
             "当 tools 存在时，toolConfig 必须被完整保留"
         );
+    }
+
+    #[test]
+    fn test_align_google_request_prefix_topology_preserves_interleaved_tool_order() {
+        let mut request = json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": "search and edit"}]
+                }
+            ],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        { "name": "func_a", "description": "tool a" }
+                    ]
+                },
+                {
+                    "googleSearch": {}
+                },
+                {
+                    "functionDeclarations": [
+                        { "name": "func_b", "description": "tool b" }
+                    ]
+                }
+            ]
+        });
+
+        InboundThinkingPipeline::align_google_request_prefix_topology_with_model(
+            &mut request,
+            "gemini-2.5-flash",
+            None,
+        );
+
+        let tools = request["tools"].as_array().expect("tools must be array");
+        assert_eq!(tools.len(), 3, "工具数量必须保持一致");
+        assert!(
+            tools[0].get("functionDeclarations").is_some(),
+            "首位必须为 func_a"
+        );
+        assert_eq!(tools[0]["functionDeclarations"][0]["name"], "func_a");
+        assert!(
+            tools[1].get("googleSearch").is_some(),
+            "中间必须为 googleSearch，顺序不可颠倒"
+        );
+        assert!(
+            tools[2].get("functionDeclarations").is_some(),
+            "末位必须为 func_b"
+        );
+        assert_eq!(tools[2]["functionDeclarations"][0]["name"], "func_b");
     }
 
     #[test]

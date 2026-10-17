@@ -438,10 +438,14 @@ where
             buffer.clear();
         }
 
-        // 正常收尾
-        let final_chunks = handler.emit_finalize();
-        for c in final_chunks {
-            yield Ok(c);
+        // [Double-Finalization Guard]
+        // 若尾部冲刷使得 handler 已经进入终结态（例如 process_line 接收到了 [DONE] 或终结事件），
+        // 严禁二次调用 emit_finalize()，防止向客户端发射重复的 [DONE] 帧或 message_stop 事件导致客户端协议报错
+        if !handler.is_terminal() {
+            let final_chunks = handler.emit_finalize();
+            for c in final_chunks {
+                yield Ok(c);
+            }
         }
 
         handler.on_finish();
