@@ -32,16 +32,155 @@ pub fn sanitize_user_text_for_fingerprint(raw: &str) -> String {
     }
 
     // 3. 移除 [System: ...] 或 [System ...]
-    while let Some(start) = s.find("[System") {
-        if let Some(end) = s[start..].find(']') {
-            s.replace_range(start..start + end + 1, "");
-        } else {
-            s.truncate(start);
-            break;
+    let mut search_from = 0;
+    while let Some(rel_start) = s[search_from..].find("[System") {
+        let start = search_from + rel_start;
+        let after_prefix = &s[start + "[System".len()..];
+        if after_prefix.starts_with(':')
+            || after_prefix.starts_with(' ')
+            || after_prefix.starts_with(']')
+        {
+            if let Some(end) = s[start..].find(']') {
+                s.replace_range(start..start + end + 1, "");
+                continue;
+            }
         }
+        search_from = start + "[System".len();
     }
 
     s.trim().to_string()
+}
+
+/// 提取 Claude 消息内容的摘要表示（防止大尺寸 Base64 多模态数据全序列化哈希雪崩）
+fn extract_claude_content_summary(content: &MessageContent) -> String {
+    match content {
+        MessageContent::String(s) => s.clone(),
+        MessageContent::Array(blocks) => {
+            let mut parts = Vec::new();
+            for block in blocks {
+                match block {
+                    crate::proxy::mappers::claude::models::ContentBlock::Text { text } => {
+                        parts.push(text.clone());
+                    }
+                    crate::proxy::mappers::claude::models::ContentBlock::Image {
+                        source, ..
+                    } => {
+                        let mime = source.media_type.as_deref().unwrap_or("image");
+                        let len = source.data.as_ref().map(|d| d.len()).unwrap_or(0);
+                        parts.push(format!("[image:{}:{}]", mime, len));
+                    }
+                    crate::proxy::mappers::claude::models::ContentBlock::Document {
+                        source,
+                        ..
+                    } => {
+                        let mime = source.media_type.as_deref().unwrap_or("document");
+                        let len = source.data.as_ref().map(|d| d.len()).unwrap_or(0);
+                        parts.push(format!("[document:{}:{}]", mime, len));
+                    }
+                    crate::proxy::mappers::claude::models::ContentBlock::ToolResult {
+                        tool_use_id,
+                        is_error,
+                        ..
+                    } => {
+                        parts.push(format!(
+                            "[tool_result:{}:{}]",
+                            tool_use_id,
+                            is_error.unwrap_or(false)
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            parts.join(" ")
+        }
+    }
+}
+
+/// 提取 OpenAI 消息内容的摘要表示（防止大尺寸 Base64 多模态数据全序列化哈希雪崩）
+fn extract_openai_content_summary(content: &OpenAIContent) -> String {
+    match content {
+        OpenAIContent::String(s) => s.clone(),
+        OpenAIContent::Array(blocks) => {
+            let mut parts = Vec::new();
+            for block in blocks {
+                match block {
+                    crate::proxy::mappers::openai::models::OpenAIContentBlock::Text { text } => {
+                        parts.push(text.clone());
+                    }
+                    crate::proxy::mappers::openai::models::OpenAIContentBlock::ImageUrl {
+                        image_url,
+                    } => {
+                        if image_url.url.starts_with("data:") {
+                            let prefix = image_url.url.split(';').next().unwrap_or("data:image");
+                            parts.push(format!("[image:{}:{}]", prefix, image_url.url.len()));
+                        } else {
+                            parts.push(format!("[image:{}]", image_url.url));
+                        }
+                    }
+                    crate::proxy::mappers::openai::models::OpenAIContentBlock::AudioUrl {
+                        audio_url,
+                    } => {
+                        parts.push(format!("[audio:{}]", audio_url.url));
+                    }
+                    crate::proxy::mappers::openai::models::OpenAIContentBlock::InputAudio {
+                        input_audio,
+                    } => {
+                        let fmt = input_audio.format.as_deref().unwrap_or("audio");
+                        parts.push(format!("[audio:{}:{}]", fmt, input_audio.data.len()));
+                    }
+                    crate::proxy::mappers::openai::models::OpenAIContentBlock::VideoUrl {
+                        video_url,
+                    } => {
+                        parts.push(format!("[video:{}]", video_url.url));
+                    }
+                }
+            }
+            parts.join(" ")
+        }
+    }
+}
+
+/// 提取 Gemini 请求 parts 的摘要表示（防止大尺寸 Base64 多模态数据全序列化哈希雪崩）
+fn extract_gemini_parts_summary(parts: &[Value]) -> String {
+    let mut text_parts = Vec::new();
+    for part in parts {
+        if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+            text_parts.push(text.to_string());
+        } else if let Some(inline_data) = part.get("inlineData").or_else(|| part.get("inline_data"))
+        {
+            let mime = inline_data
+                .get("mimeType")
+                .or_else(|| inline_data.get("mime_type"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("image");
+            let len = inline_data
+                .get("data")
+                .and_then(|d| d.as_str())
+                .map(|d| d.len())
+                .unwrap_or(0);
+            text_parts.push(format!("[inlineData:{}:{}]", mime, len));
+        } else if let Some(file_data) = part.get("fileData").or_else(|| part.get("file_data")) {
+            let uri = file_data
+                .get("fileUri")
+                .or_else(|| file_data.get("file_uri"))
+                .and_then(|u| u.as_str())
+                .unwrap_or("file");
+            text_parts.push(format!("[fileData:{}]", uri));
+        } else if let Some(fc) = part
+            .get("functionCall")
+            .or_else(|| part.get("function_call"))
+        {
+            let name = fc.get("name").and_then(|n| n.as_str()).unwrap_or("func");
+            text_parts.push(format!("[functionCall:{}]", name));
+        } else if let Some(fr) = part
+            .get("functionResponse")
+            .or_else(|| part.get("function_response"))
+        {
+            let name = fr.get("name").and_then(|n| n.as_str()).unwrap_or("func");
+            text_parts.push(format!("[functionResponse:{}]", name));
+        }
+    }
+    text_parts.join(" ")
 }
 
 impl SessionManager {
@@ -65,22 +204,9 @@ impl SessionManager {
                 continue;
             }
 
-            let text = match &msg.content {
-                MessageContent::String(s) => s.clone(),
-                MessageContent::Array(blocks) => blocks
-                    .iter()
-                    .filter_map(|block| match block {
-                        crate::proxy::mappers::claude::models::ContentBlock::Text { text } => {
-                            Some(text.as_str())
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            };
-
+            let text = extract_claude_content_summary(&msg.content);
             let clean_text = sanitize_user_text_for_fingerprint(&text);
-            if clean_text.len() >= 2 {
+            if !clean_text.trim().is_empty() {
                 hasher.update(clean_text.as_bytes());
                 content_found = true;
                 break; // 始终锚定第一条有效用户消息
@@ -91,9 +217,9 @@ impl SessionManager {
             // 兜底方案1：尝试取第一条 user 消息的原文本（只要有内容）
             for msg in &request.messages {
                 if msg.role == "user" {
-                    let raw = format!("{:?}", msg.content);
-                    if raw.trim().len() >= 2 {
-                        hasher.update(raw.trim().as_bytes());
+                    let summary = extract_claude_content_summary(&msg.content);
+                    if !summary.trim().is_empty() {
+                        hasher.update(summary.trim().as_bytes());
                         content_found = true;
                         break;
                     }
@@ -104,7 +230,8 @@ impl SessionManager {
         if !content_found {
             // 兜底方案2：如果没找到任何 user 消息，退化为对最后一条消息进行哈希
             if let Some(last_msg) = request.messages.last() {
-                hasher.update(format!("{:?}", last_msg.content).as_bytes());
+                let summary = extract_claude_content_summary(&last_msg.content);
+                hasher.update(summary.as_bytes());
             }
         }
 
@@ -169,22 +296,9 @@ impl SessionManager {
                 continue;
             }
             if let Some(content) = &msg.content {
-                let text = match content {
-                    OpenAIContent::String(s) => s.clone(),
-                    OpenAIContent::Array(blocks) => blocks
-                        .iter()
-                        .filter_map(|block| match block {
-                            crate::proxy::mappers::openai::models::OpenAIContentBlock::Text {
-                                text,
-                            } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                };
-
+                let text = extract_openai_content_summary(content);
                 let clean_text = sanitize_user_text_for_fingerprint(&text);
-                if clean_text.len() >= 2 {
+                if !clean_text.trim().is_empty() {
                     hasher.update(clean_text.as_bytes());
                     content_found = true;
                     break;
@@ -195,11 +309,13 @@ impl SessionManager {
         if !content_found {
             for msg in &request.messages {
                 if msg.role == "user" {
-                    let raw = format!("{:?}", msg.content);
-                    if raw.trim().len() >= 2 {
-                        hasher.update(raw.trim().as_bytes());
-                        content_found = true;
-                        break;
+                    if let Some(content) = &msg.content {
+                        let summary = extract_openai_content_summary(content);
+                        if !summary.trim().is_empty() {
+                            hasher.update(summary.trim().as_bytes());
+                            content_found = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -207,7 +323,10 @@ impl SessionManager {
 
         if !content_found {
             if let Some(last_msg) = request.messages.last() {
-                hasher.update(format!("{:?}", last_msg.content).as_bytes());
+                if let Some(content) = &last_msg.content {
+                    let summary = extract_openai_content_summary(content);
+                    hasher.update(summary.trim().as_bytes());
+                }
             }
         }
 
@@ -284,16 +403,9 @@ impl SessionManager {
                 }
 
                 if let Some(parts) = content.get("parts").and_then(|v| v.as_array()) {
-                    let mut text_parts = Vec::new();
-                    for part in parts {
-                        if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                            text_parts.push(text);
-                        }
-                    }
-
-                    let combined_text = text_parts.join(" ");
+                    let combined_text = extract_gemini_parts_summary(parts);
                     let clean_text = sanitize_user_text_for_fingerprint(&combined_text);
-                    if clean_text.len() >= 2 {
+                    if !clean_text.trim().is_empty() {
                         hasher.update(clean_text.as_bytes());
                         content_found = true;
                         break;
@@ -303,8 +415,35 @@ impl SessionManager {
         }
 
         if !content_found {
-            // 兜底：对整个 Body 的首个 user part 进行摘要
-            hasher.update(request.to_string().as_bytes());
+            // 兜底方案1：尝试取首个 user 的任何 parts 摘要
+            if let Some(contents) = request.get("contents").and_then(|v| v.as_array()) {
+                for content in contents {
+                    if content.get("role").and_then(|v| v.as_str()) == Some("user") {
+                        if let Some(parts) = content.get("parts").and_then(|v| v.as_array()) {
+                            let summary = extract_gemini_parts_summary(parts);
+                            if !summary.trim().is_empty() {
+                                hasher.update(summary.trim().as_bytes());
+                                content_found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !content_found {
+            // 兜底方案2：如果完全没有有效 user 内容，取最后一条 content 的 parts 摘要
+            if let Some(last_content) = request
+                .get("contents")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.last())
+            {
+                if let Some(parts) = last_content.get("parts").and_then(|v| v.as_array()) {
+                    let summary = extract_gemini_parts_summary(parts);
+                    hasher.update(summary.as_bytes());
+                }
+            }
         }
 
         // [NEW] 融合多维环境特征 (systemInstruction 摘要 + tools 列表摘要)
@@ -314,13 +453,8 @@ impl SessionManager {
             .or_else(|| request.get("systemInstruction"))
         {
             if let Some(parts) = sys_inst.get("parts").and_then(|p| p.as_array()) {
-                let mut sys_texts = Vec::new();
-                for part in parts {
-                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                        sys_texts.push(text);
-                    }
-                }
-                let clean_sys = sanitize_user_text_for_fingerprint(&sys_texts.join(" "));
+                let clean_sys =
+                    sanitize_user_text_for_fingerprint(&extract_gemini_parts_summary(parts));
                 if !clean_sys.is_empty() {
                     hasher.update(clean_sys.as_bytes());
                 }
@@ -600,5 +734,181 @@ mod tests {
         };
         let sid_real = SessionManager::extract_session_id(&claude_user_req);
         assert!(sid_real.starts_with("sid-"));
+    }
+
+    #[test]
+    fn test_unclosed_system_tag_and_code_preserved() {
+        let unclosed = "Hello [System architecture and concurrency design";
+        assert_eq!(
+            sanitize_user_text_for_fingerprint(unclosed),
+            "Hello [System architecture and concurrency design"
+        );
+
+        let java_code = "Please inspect [System.out.println(\"test\")] behavior";
+        assert_eq!(
+            sanitize_user_text_for_fingerprint(java_code),
+            "Please inspect [System.out.println(\"test\")] behavior"
+        );
+
+        let system_tag = "Hello [System: Tool execution ok] world";
+        assert_eq!(
+            sanitize_user_text_for_fingerprint(system_tag),
+            "Hello  world"
+        );
+    }
+
+    #[test]
+    fn test_single_char_input_multi_turn_stability_all_protocols() {
+        // 1. Claude single-char input
+        let claude_turn1 = ClaudeRequest {
+            model: "claude-3-7-sonnet".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("1".to_string()),
+            }],
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+            output_config: None,
+            size: None,
+            quality: None,
+            tool_choice: None,
+        };
+        let mut claude_turn2 = claude_turn1.clone();
+        claude_turn2.messages.push(Message {
+            role: "assistant".to_string(),
+            content: MessageContent::String("You selected option 1".to_string()),
+        });
+        claude_turn2.messages.push(Message {
+            role: "user".to_string(),
+            content: MessageContent::String("Next step".to_string()),
+        });
+        assert_eq!(
+            SessionManager::extract_session_id(&claude_turn1),
+            SessionManager::extract_session_id(&claude_turn2)
+        );
+
+        // 2. Gemini single-char input
+        let gemini_turn1 = serde_json::json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{ "text": "1" }]
+                }
+            ]
+        });
+        let gemini_turn2 = serde_json::json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{ "text": "1" }]
+                },
+                {
+                    "role": "model",
+                    "parts": [{ "text": "You chose 1" }]
+                },
+                {
+                    "role": "user",
+                    "parts": [{ "text": "Continue" }]
+                }
+            ]
+        });
+        assert_eq!(
+            SessionManager::extract_gemini_session_id(&gemini_turn1, "gemini-2.5-pro"),
+            SessionManager::extract_gemini_session_id(&gemini_turn2, "gemini-2.5-pro")
+        );
+    }
+
+    #[test]
+    fn test_multimodal_image_without_text_multi_turn_stability() {
+        use crate::proxy::mappers::claude::models::{ContentBlock, ImageSource};
+
+        // Claude image without text across multiple turns
+        let claude_turn1 = ClaudeRequest {
+            model: "claude-3-7-sonnet".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::Array(vec![ContentBlock::Image {
+                    source: ImageSource {
+                        source_type: "base64".to_string(),
+                        media_type: Some("image/png".to_string()),
+                        data: Some("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".to_string()),
+                    },
+                    cache_control: None,
+                }]),
+            }],
+            system: None,
+            tools: None,
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            thinking: None,
+            metadata: None,
+            output_config: None,
+            size: None,
+            quality: None,
+            tool_choice: None,
+        };
+        let mut claude_turn2 = claude_turn1.clone();
+        claude_turn2.messages.push(Message {
+            role: "assistant".to_string(),
+            content: MessageContent::String("I see the image".to_string()),
+        });
+        claude_turn2.messages.push(Message {
+            role: "user".to_string(),
+            content: MessageContent::String("What color is it?".to_string()),
+        });
+        assert_eq!(
+            SessionManager::extract_session_id(&claude_turn1),
+            SessionManager::extract_session_id(&claude_turn2)
+        );
+
+        // Gemini image without text across multiple turns
+        let gemini_turn1 = serde_json::json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                        }
+                    }]
+                }
+            ]
+        });
+        let gemini_turn2 = serde_json::json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{
+                        "inlineData": {
+                            "mimeType": "image/png",
+                            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                        }
+                    }]
+                },
+                {
+                    "role": "model",
+                    "parts": [{ "text": "I see the red pixel" }]
+                },
+                {
+                    "role": "user",
+                    "parts": [{ "text": "Tell me more" }]
+                }
+            ]
+        });
+        assert_eq!(
+            SessionManager::extract_gemini_session_id(&gemini_turn1, "gemini-2.5-pro"),
+            SessionManager::extract_gemini_session_id(&gemini_turn2, "gemini-2.5-pro")
+        );
     }
 }
