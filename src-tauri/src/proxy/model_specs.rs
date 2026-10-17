@@ -705,7 +705,9 @@ pub fn resolve_custom_budget(
         if tb_config.claude_mode == ThinkingBudgetMode::Default {
             return None;
         }
-        let eff = client_effort.map(|s| s.trim().to_lowercase().replace('_', "-"));
+        let eff = client_effort
+            .or(tb_config.effort.as_deref())
+            .map(|s| s.trim().to_lowercase().replace('_', "-"));
         let has_explicit_suffix = lower.contains("-low")
             || lower.contains("haiku")
             || lower.contains("-med")
@@ -764,7 +766,9 @@ pub fn resolve_custom_budget(
         {
             return None;
         }
-        let eff = client_effort.map(|s| s.trim().to_lowercase().replace('_', "-"));
+        let eff = client_effort
+            .or(tb_config.effort.as_deref())
+            .map(|s| s.trim().to_lowercase().replace('_', "-"));
         let has_explicit_suffix = lower.contains("-low")
             || lower.ends_with("-low")
             || lower.contains("-high")
@@ -797,7 +801,9 @@ pub fn resolve_custom_budget(
         if is_tiered_flash_model(&std_id) || lower.contains("tiered") {
             // [TIERED-THINKING] Tiered 自适应模型：
             // 不动模型名，严格按照 tiered 模型的 low / high / medium 的预算填写
-            let client_level = client_effort.and_then(normalize_client_thinking_level);
+            let client_level = client_effort
+                .or(tb_config.effort.as_deref())
+                .and_then(normalize_client_thinking_level);
             if let Some(level) = client_level {
                 match level {
                     "LOW" => {
@@ -843,7 +849,9 @@ pub fn resolve_custom_budget(
             // 2. 根据模型自身后缀或 client_effort 匹配档位配置：
             // 模型名后缀（-low, -medium, -high）具有绝对最高优先级，仅在 bare 裸模型时才使用 client_effort 映射！
             let is_bare = is_bare_gemini_v3_flash(model);
-            let eff_level = client_effort.and_then(normalize_client_thinking_level);
+            let eff_level = client_effort
+                .or(tb_config.effort.as_deref())
+                .and_then(normalize_client_thinking_level);
 
             let is_low = lower.contains("-low")
                 || lower.ends_with("-low")
@@ -1192,6 +1200,38 @@ mod tests {
         assert_eq!(
             resolve_custom_budget("gemini-3.7-flash-high", Some("low"), None, &tb, None),
             Some(16384) // 依然保持 high 档位设置 16384，绝不被客户端 low 降级！
+        );
+    }
+
+    #[test]
+    fn test_tiered_and_bare_flash_budget_inherits_gateway_effort() {
+        let mut tb = crate::proxy::config::ThinkingBudgetConfig::default();
+        tb.flash_mode = crate::proxy::config::ThinkingBudgetMode::Custom;
+        tb.flash_low = 1024;
+        tb.flash_medium = 4096;
+        tb.flash_high = 16384;
+        tb.effort = Some("low".to_string());
+
+        // 1. Tiered Flash 在无客户端 effort 时继承网关配置的 effort ("low" -> 1024)
+        assert_eq!(
+            resolve_custom_budget("gemini-3.7-flash-tiered", None, None, &tb, None),
+            Some(1024)
+        );
+
+        // 2. Bare Flash 裸模型在无客户端 effort 时继承网关配置的 effort ("low" -> 1024)
+        assert_eq!(
+            resolve_custom_budget("gemini-3-flash", None, None, &tb, None),
+            Some(1024)
+        );
+
+        // 3. 当客户端传入自身 effort ("high") 时，优先遵循客户端 effort (16384)
+        assert_eq!(
+            resolve_custom_budget("gemini-3.7-flash-tiered", Some("high"), None, &tb, None),
+            Some(16384)
+        );
+        assert_eq!(
+            resolve_custom_budget("gemini-3-flash", Some("high"), None, &tb, None),
+            Some(16384)
         );
     }
 

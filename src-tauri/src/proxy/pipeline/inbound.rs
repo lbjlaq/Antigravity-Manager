@@ -2110,6 +2110,20 @@ impl InboundThinkingPipeline {
         *body = Value::Object(reordered);
     }
 
+    /// 统一规范化出站 countTokens 顶层信封结构
+    /// countTokens 与普通生成接口不同，Google v1internal:countTokens 顶层只允许 "request" 键，
+    /// 严禁注入 project / userAgent / model / requestId，否则上游 400 (Unknown name)
+    pub fn align_count_tokens_envelope(body: &mut Value) {
+        if let Some(inner) = body.get_mut("request") {
+            if let Some(obj) = inner.as_object_mut() {
+                obj.remove("safetySettings");
+            }
+        }
+        if let Some(obj) = body.as_object_mut() {
+            obj.retain(|k, _| k == "request");
+        }
+    }
+
     /// 剥离遗留思考块的前缀标记 (**Thinking**)
     fn strip_thinking_prefix(text: &str) -> String {
         let trimmed = text.trim_start();
@@ -3966,5 +3980,43 @@ mod tests {
         );
         let text = part["text"].as_str().expect("必须降级为文本 part");
         assert!(text.contains("something happened"));
+    }
+
+    #[test]
+    fn test_align_count_tokens_envelope() {
+        let mut body = json!({
+            "project": "aicode-consumers",
+            "userAgent": "antigravity",
+            "model": "gemini-3.8-flash-high",
+            "requestId": "req_12345",
+            "requestType": "agent",
+            "request": {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": [{"text": "count tokens please"}]
+                    }
+                ],
+                "safetySettings": [
+                    { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" }
+                ]
+            }
+        });
+
+        InboundThinkingPipeline::align_count_tokens_envelope(&mut body);
+
+        // 顶层必须仅保留 "request"，严禁携带 project / userAgent / model / requestId
+        let keys: Vec<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
+        assert_eq!(keys, vec!["request"]);
+
+        // 内部 request 必须剔除 safetySettings
+        let inner = body.get("request").unwrap();
+        assert!(inner.get("safetySettings").is_none());
+        assert!(inner.get("contents").is_some());
     }
 }

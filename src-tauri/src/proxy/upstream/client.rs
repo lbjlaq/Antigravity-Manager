@@ -544,7 +544,11 @@ impl UpstreamClient {
             );
             crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(&mut body);
         }
-        crate::proxy::pipeline::InboundThinkingPipeline::align_official_envelope(&mut body);
+        if method == "countTokens" {
+            crate::proxy::pipeline::InboundThinkingPipeline::align_count_tokens_envelope(&mut body);
+        } else {
+            crate::proxy::pipeline::InboundThinkingPipeline::align_official_envelope(&mut body);
+        }
 
         // [NEW] Get client based on account (cached in proxy pool manager)
         let client = self.get_client(account_id).await;
@@ -932,7 +936,11 @@ impl UpstreamClient {
         account_id: Option<&str>,
         timeout_secs: u64,
     ) -> Result<Value, String> {
-        crate::proxy::pipeline::InboundThinkingPipeline::align_official_envelope(&mut body);
+        if method == "countTokens" {
+            crate::proxy::pipeline::InboundThinkingPipeline::align_count_tokens_envelope(&mut body);
+        } else {
+            crate::proxy::pipeline::InboundThinkingPipeline::align_official_envelope(&mut body);
+        }
         let client = self.get_client(account_id).await;
         let mut last_error = String::new();
 
