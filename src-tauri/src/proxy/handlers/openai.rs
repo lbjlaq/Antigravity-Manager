@@ -944,6 +944,7 @@ mod stream_peek_tests {
     use super::into_history_without_inline_media;
     use super::is_codex_transcript_only_assistant_message;
     use super::is_edit_image_field;
+    use super::is_responses_api_path;
     use super::parse_generation_input_images;
     use super::response_has_inline_image_data;
     use super::responses_input_item_type;
@@ -994,6 +995,16 @@ mod stream_peek_tests {
         assert!(super::responses_store_enabled(&json!({"store": true})));
         assert!(super::responses_store_enabled(&json!({"store": null})));
         assert!(!super::responses_store_enabled(&json!({"store": false})));
+    }
+
+    #[test]
+    fn responses_api_path_matches_v1_and_root_aliases() {
+        assert!(is_responses_api_path("/v1/responses"));
+        assert!(is_responses_api_path("/responses"));
+        assert!(is_responses_api_path("/responses/compact"));
+        assert!(!is_responses_api_path("/v1/chat/completions"));
+        assert!(!is_responses_api_path("/v1/completions"));
+        assert!(!is_responses_api_path("/v1beta/models"));
     }
 
     #[test]
@@ -3192,6 +3203,11 @@ fn responses_store_enabled(body: &Value) -> bool {
     body.get("store").and_then(Value::as_bool) != Some(false)
 }
 
+#[inline]
+pub(crate) fn is_responses_api_path(path: &str) -> bool {
+    path == "/v1/responses" || path == "/responses" || path == "/responses/compact"
+}
+
 /// 处理 Legacy Completions API (/v1/completions)
 /// 将 Prompt 转换为 Chat Message 格式，复用 handle_chat_completions
 pub async fn handle_completions(
@@ -3215,7 +3231,7 @@ pub async fn handle_completions(
     let original_body = debug_logger::is_enabled(&debug_cfg).then(|| {
         crate::proxy::payload_audit::reorder_payload_fields(&debug_value_without_inline_data(&body))
     });
-    let is_responses_api = uri.path() == "/v1/responses";
+    let is_responses_api = is_responses_api_path(uri.path());
     let is_codex_style = body.get("input").is_some() || body.get("instructions").is_some();
     let store_response = responses_store_enabled(&body);
 
@@ -4085,6 +4101,8 @@ pub async fn handle_completions(
             }
         };
 
+        let in_flight_guard = Arc::new(token_manager.acquire_in_flight(&account_id));
+
         let mapped_model = token_manager
             .resolve_dynamic_model_for_account(&account_id, &mapped_model)
             .await;
@@ -4476,6 +4494,14 @@ pub async fn handle_completions(
                             }
                         });
                     }
+                    let in_flight_guard_for_stream = Arc::clone(&in_flight_guard);
+                    let combined_stream = async_stream::stream! {
+                        let _in_flight = in_flight_guard_for_stream;
+                        let mut s = Box::pin(combined_stream);
+                        while let Some(item) = s.next().await {
+                            yield item;
+                        }
+                    };
                     return Response::builder()
                         .header("Content-Type", "text/event-stream")
                         .header("Cache-Control", "no-cache")
@@ -4634,7 +4660,7 @@ pub async fn handle_completions(
                     use crate::proxy::mappers::openai::collector::collect_stream_to_json;
                     match collect_stream_to_json(combined_stream).await {
                         Ok(chat_resp) => {
-                            let is_responses_api = uri.path() == "/v1/responses";
+                            let is_responses_api = is_responses_api_path(uri.path());
 
                             if is_responses_api {
                                 let mut resp = convert_chat_response_to_responses(&chat_resp);
@@ -4830,7 +4856,7 @@ pub async fn handle_completions(
                 Some(&client_tool_names),
             );
 
-            let is_responses_api = uri.path() == "/v1/responses";
+            let is_responses_api = is_responses_api_path(uri.path());
 
             if is_responses_api {
                 let resp = convert_chat_response_to_responses(&chat_resp);
