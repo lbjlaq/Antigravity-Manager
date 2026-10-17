@@ -1327,11 +1327,11 @@ fn build_contents(
                     } => {
                         // Mark this tool ID as resolved in this turn
                         current_turn_tool_result_ids.insert(tool_use_id.clone());
-                        // 优先使用之前记录的 name，否则用 tool_use_id
+                        // 优先使用之前记录的 name，找不到时标记为 "unknown" 供 Pipeline 统筹自愈或降级（防 tool_use_id 污染导致 Vertex 400）
                         let func_name = tool_id_to_name
                             .get(tool_use_id)
                             .cloned()
-                            .unwrap_or_else(|| tool_use_id.clone());
+                            .unwrap_or_else(|| "unknown".to_string());
 
                         // Tool results should pass transparency. If images are present, map them to inlineData.
                         let mut extra_parts = Vec::new();
@@ -1424,7 +1424,10 @@ fn build_contents(
             tracing::warn!("[Elastic-Recovery] Injecting {} missing tool results into User message (IDs: {:?})", missing_ids.len(), missing_ids);
             for id in missing_ids.iter().rev() {
                 // Insert in reverse order to maintain order at index 0? No, just insert at 0.
-                let name = tool_id_to_name.get(id).cloned().unwrap_or(id.clone());
+                let name = tool_id_to_name
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
                 let synthetic_part = json!({
                     "functionResponse": {
                         "name": name,
@@ -1505,7 +1508,10 @@ fn build_google_content(
             .iter()
             .filter(|id| !existing_tool_result_ids.contains(*id)) // [FIX #632] Only inject if ID is truly missing
             .map(|id| {
-                let name = tool_id_to_name.get(id).cloned().unwrap_or(id.clone());
+                let name = tool_id_to_name
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
                 json!({
                     "functionResponse": {
                         "name": name,
@@ -3810,5 +3816,64 @@ mod tests {
         let inline_data = &media_parts[0]["inlineData"];
         assert_eq!(inline_data["mimeType"], "image/png");
         assert_eq!(inline_data["data"], fake_b64);
+    }
+
+    #[test]
+    fn test_claude_orphan_tool_result_falls_back_to_unknown_and_safe_downgrade() {
+        // [场景] 客户端发送了一个没有对应 assistant tool_use 的孤儿 tool_result
+        // 期望: 函数名称回退为 "unknown"，下游流水线自动将其降级为安全的用户文本块，而非向上游发送非法 tool_use_id 导致 400
+        let req: ClaudeRequest = serde_json::from_value(json!({
+            "model": "gemini-2.5-flash",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Perform action"
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_orphan_99999",
+                            "content": "result of unknown tool"
+                        }
+                    ]
+                }
+            ]
+        }))
+        .expect("ClaudeRequest should deserialize");
+
+        let body =
+            transform_claude_request_in(&req, "test-project", false, None, "test-session", None)
+                .expect("Request should transform");
+        let contents = body["request"]["contents"]
+            .as_array()
+            .expect("contents array");
+
+        let all_parts = contents
+            .iter()
+            .filter_map(|c| c.get("parts")?.as_array())
+            .flatten()
+            .collect::<Vec<_>>();
+
+        assert!(
+            all_parts.iter().any(|p| {
+                p.get("text")
+                    .and_then(|t| t.as_str())
+                    .map(|t| t.contains("[Tool Output]:\nresult of unknown tool"))
+                    .unwrap_or(false)
+            }),
+            "Orphan tool_result should be cleanly downgraded to tool output text block"
+        );
+        assert!(
+            all_parts.iter().all(|p| {
+                if let Some(func) = p.get("functionResponse") {
+                    func.get("name").and_then(|n| n.as_str()) != Some("toolu_orphan_99999")
+                } else {
+                    true
+                }
+            }),
+            "Raw tool_use_id must never leak as functionResponse name"
+        );
     }
 }

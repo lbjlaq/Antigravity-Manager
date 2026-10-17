@@ -684,37 +684,40 @@ impl UpstreamClient {
                     std::cmp::max(15, (body_bytes.len() as u64) / (256 * 1024) + 15)
                 };
                 let send_future = req_builder.send();
-                let response = if has_next {
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(watchdog_secs),
-                        send_future,
-                    )
-                    .await
-                    {
-                        Ok(res) => res,
-                        Err(_) => {
-                            self.endpoint_health.mark_failure(base_url);
-                            last_attempt_failed_at = Some(std::time::Instant::now());
-                            let err_msg = format!(
-                                "HTTP request timed out after {}s waiting for response headers at {} (method={}, body_len={})",
-                                watchdog_secs, base_url, method, body_bytes.len()
-                            );
+                let response = match tokio::time::timeout(
+                    std::time::Duration::from_secs(watchdog_secs),
+                    send_future,
+                )
+                .await
+                {
+                    Ok(res) => res,
+                    Err(_) => {
+                        self.endpoint_health.mark_failure(base_url);
+                        last_attempt_failed_at = Some(std::time::Instant::now());
+                        let err_msg = format!(
+                            "HTTP request timed out after {}s waiting for response headers at {} (method={}, body_len={})",
+                            watchdog_secs, base_url, method, body_bytes.len()
+                        );
+                        if has_next {
                             tracing::warn!(%err_msg, "Upstream candidate endpoint timed out, fast falling back to next endpoint");
-                            fallback_attempts.push(FallbackAttemptLog {
-                                endpoint_name: parse_endpoint_name(base_url).to_string(),
-                                endpoint_url: url.clone(),
-                                status: None,
-                                duration_s: attempt_start.elapsed().as_secs_f64(),
-                                switch_delay_s,
-                                error: err_msg.clone(),
-                                is_effective: false,
-                            });
-                            last_err = Some(err_msg);
-                            continue;
+                        } else {
+                            tracing::warn!(%err_msg, "Terminal upstream endpoint timed out");
                         }
+                        fallback_attempts.push(FallbackAttemptLog {
+                            endpoint_name: parse_endpoint_name(base_url).to_string(),
+                            endpoint_url: url.clone(),
+                            status: None,
+                            duration_s: attempt_start.elapsed().as_secs_f64(),
+                            switch_delay_s,
+                            error: err_msg.clone(),
+                            is_effective: false,
+                        });
+                        last_err = Some(err_msg);
+                        if !has_next {
+                            break;
+                        }
+                        continue;
                     }
-                } else {
-                    send_future.await
                 };
                 let duration_s = attempt_start.elapsed().as_secs_f64();
 
