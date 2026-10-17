@@ -109,6 +109,13 @@ pub async fn handle_generate(
     // [DEFENSE] 净化 Gemini 原生请求体中的所有 inlineData (过滤或降级空数据/损坏图片)
     crate::proxy::mappers::common_utils::sanitize_gemini_payload_inline_data(&mut body);
 
+    let message_count = body
+        .get("contents")
+        .and_then(|c| c.as_array())
+        .map(|a| a.len())
+        .unwrap_or(1)
+        .max(1);
+
     // [Stage Timing] 阶段耗时度量变量 (毫秒)
     let clean_micros = clean_start.elapsed().as_micros() as u64;
     let clean_ms: f64 = clean_micros as f64 / 1000.0;
@@ -606,6 +613,7 @@ pub async fn handle_generate(
                 let image_success_account = account_id.clone();
                 let image_success_model = mapped_model.clone();
                 let causal_anchor_clone = causal_anchor.clone();
+                let message_count_for_stream = message_count;
                 let in_flight_guard_for_stream = Arc::clone(&in_flight_guard);
                 let stream = async_stream::stream! {
                     let _in_flight = in_flight_guard_for_stream;
@@ -735,8 +743,8 @@ pub async fn handle_generate(
                                                                 thinking_acc.ingest_part(part);
                                                                 if let Some(sig) = part.get("thoughtSignature").and_then(|s| s.as_str()) {
                                                                     crate::proxy::SignatureCache::global()
-                                                                        .cache_session_signature(&s_id_for_stream, sig.to_string(), 1);
-                                                                    debug!("[Gemini-SSE] Cached session signature (len: {}) for session: {}", sig.len(), s_id_for_stream);
+                                                                        .cache_session_signature(&s_id_for_stream, sig.to_string(), message_count_for_stream);
+                                                                    debug!("[Gemini-SSE] Cached session signature (len: {}) for session: {} at count {}", sig.len(), s_id_for_stream, message_count_for_stream);
                                                                 }
                                                             }
                                                         }
@@ -836,11 +844,12 @@ pub async fn handle_generate(
                         .into_response());
                 } else {
                     // Collect to JSON
-                    use crate::proxy::mappers::gemini::collector::collect_stream_to_json_with_anchor;
-                    match collect_stream_to_json_with_anchor(
+                    use crate::proxy::mappers::gemini::collector::collect_stream_to_json_with_anchor_and_count;
+                    match collect_stream_to_json_with_anchor_and_count(
                         Box::pin(stream),
                         &s_id,
                         Some(&causal_anchor),
+                        message_count,
                     )
                     .await
                     {
@@ -968,9 +977,9 @@ pub async fn handle_generate(
                                     crate::proxy::SignatureCache::global().cache_session_signature(
                                         &session_id,
                                         sig.to_string(),
-                                        1,
+                                        message_count,
                                     );
-                                    debug!("[Gemini-Response] Cached session signature (len: {}) for session: {}", sig.len(), session_id);
+                                    debug!("[Gemini-Response] Cached session signature (len: {}) for session: {} at count {}", sig.len(), session_id, message_count);
                                 }
                             }
                         }

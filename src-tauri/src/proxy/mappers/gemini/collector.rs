@@ -15,13 +15,26 @@ where
     S: futures::Stream<Item = Result<Bytes, E>> + Unpin,
     E: std::fmt::Display,
 {
-    collect_stream_to_json_with_anchor(stream, session_id, None).await
+    collect_stream_to_json_with_anchor_and_count(stream, session_id, None, 1).await
 }
 
 pub async fn collect_stream_to_json_with_anchor<S, E>(
+    stream: S,
+    session_id: &str,
+    anchor: Option<&str>,
+) -> Result<Value, String>
+where
+    S: futures::Stream<Item = Result<Bytes, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    collect_stream_to_json_with_anchor_and_count(stream, session_id, anchor, 1).await
+}
+
+pub async fn collect_stream_to_json_with_anchor_and_count<S, E>(
     mut stream: S,
     session_id: &str,
     anchor: Option<&str>,
+    message_count: usize,
 ) -> Result<Value, String>
 where
     S: futures::Stream<Item = Result<Bytes, E>> + Unpin,
@@ -119,35 +132,99 @@ where
                                         SignatureCache::global().cache_session_signature(
                                             session_id,
                                             sig.to_string(),
-                                            1,
+                                            message_count.max(1),
                                         );
                                         debug!(
-                                            "[Gemini-AutoConverter] Cached signature (len: {}) for session: {}",
+                                            "[Gemini-AutoConverter] Cached signature (len: {}) for session: {} at count {}",
                                             sig.len(),
-                                            session_id
+                                            session_id,
+                                            message_count.max(1)
                                         );
                                     }
 
                                     // Collect part
                                     if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                                        let is_part_thought = part
+                                            .get("thought")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false);
+
                                         if let Some(last) = content_parts.last_mut() {
-                                            if last.get("text").is_some()
-                                                && part.get("thought").is_none()
-                                                && last.get("thought").is_none()
+                                            let is_last_thought = last
+                                                .get("thought")
+                                                .and_then(|v| v.as_bool())
+                                                .unwrap_or(false);
+
+                                            if !is_part_thought
+                                                && !is_last_thought
+                                                && last.get("text").is_some()
                                             {
-                                                // Merge text
+                                                // Merge regular text
                                                 if let Some(last_text) =
                                                     last.get_mut("text").and_then(|v| v.as_str())
                                                 {
                                                     let new_text = format!("{}{}", last_text, text);
-                                                    *last = json!({ "text": new_text });
+                                                    if let Some(obj) = last.as_object_mut() {
+                                                        obj.insert(
+                                                            "text".to_string(),
+                                                            Value::String(new_text),
+                                                        );
+                                                    } else {
+                                                        *last = json!({ "text": new_text });
+                                                    }
+                                                    continue;
+                                                }
+                                            } else if is_part_thought
+                                                && is_last_thought
+                                                && last.get("text").is_some()
+                                            {
+                                                // Merge thinking text [FIX #3697]
+                                                if let Some(last_text) =
+                                                    last.get_mut("text").and_then(|v| v.as_str())
+                                                {
+                                                    let new_text = format!("{}{}", last_text, text);
+                                                    if let Some(obj) = last.as_object_mut() {
+                                                        obj.insert(
+                                                            "text".to_string(),
+                                                            Value::String(new_text),
+                                                        );
+                                                        if let Some(sig) =
+                                                            part.get("thoughtSignature")
+                                                        {
+                                                            obj.insert(
+                                                                "thoughtSignature".to_string(),
+                                                                sig.clone(),
+                                                            );
+                                                        }
+                                                    } else {
+                                                        let mut obj = serde_json::Map::new();
+                                                        obj.insert(
+                                                            "thought".to_string(),
+                                                            Value::Bool(true),
+                                                        );
+                                                        obj.insert(
+                                                            "text".to_string(),
+                                                            Value::String(new_text),
+                                                        );
+                                                        if let Some(sig) =
+                                                            part.get("thoughtSignature").or_else(
+                                                                || last.get("thoughtSignature"),
+                                                            )
+                                                        {
+                                                            obj.insert(
+                                                                "thoughtSignature".to_string(),
+                                                                sig.clone(),
+                                                            );
+                                                        }
+                                                        *last = Value::Object(obj);
+                                                    }
                                                     continue;
                                                 }
                                             }
                                         }
                                         content_parts.push(part.clone());
                                     } else {
-                                        // Other parts (images, thoughts, function calls), just push
+                                        // Other parts (images, thoughts without text, function calls), just push
                                         content_parts.push(part.clone());
                                     }
                                 }
@@ -347,5 +424,38 @@ mod tests {
             .as_array()
             .unwrap();
         assert_eq!(parts[0]["text"], cyrillic_word);
+    }
+
+    #[tokio::test]
+    async fn test_collect_thinking_chunks_merged() {
+        let chunk1 = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Thinking part 1. \",\"thought\":true}],\"role\":\"model\"},\"index\":0}]}\n\n";
+        let chunk2 = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Thinking part 2.\",\"thought\":true,\"thoughtSignature\":\"sig_valid_1234567890\"}],\"role\":\"model\"},\"index\":0}]}\n\n";
+        let chunk3 = "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Final answer.\"}],\"role\":\"model\"},\"finishReason\":\"STOP\",\"index\":0}]}\n\n";
+
+        let chunks = vec![
+            Ok::<Bytes, io::Error>(Bytes::from(chunk1)),
+            Ok::<Bytes, io::Error>(Bytes::from(chunk2)),
+            Ok::<Bytes, io::Error>(Bytes::from(chunk3)),
+        ];
+
+        let byte_stream = stream::iter(chunks);
+        let result = collect_stream_to_json(byte_stream, "test_session_thinking_merge").await;
+        assert!(result.is_ok());
+
+        let resp = result.unwrap();
+        let parts = resp["candidates"][0]["content"]["parts"]
+            .as_array()
+            .unwrap();
+
+        assert_eq!(
+            parts.len(),
+            2,
+            "Expected 2 parts: 1 merged thinking part and 1 answer part, got: {:?}",
+            parts
+        );
+        assert_eq!(parts[0]["text"], "Thinking part 1. Thinking part 2.");
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(parts[0]["thoughtSignature"], "sig_valid_1234567890");
+        assert_eq!(parts[1]["text"], "Final answer.");
     }
 }

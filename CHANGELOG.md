@@ -23,6 +23,11 @@
             -   **全链路下行追踪对齐 (request-id)**: 在 Claude 协议处理器的流式 (SSE)、流聚合 JSON 与非流式 JSON 三大响应分支中，统一对齐注入 `request-id: req_{trace_id}` 响应头，与客户端 `x-gateway-upstream-request-id` 严格对应。(PR #3689, Thanks to @cubelikeplayDaniel)
             -   **Claude 协议规范补全与自适应思考展示控制**: 补充 `ThinkingConfig.display`（支持 `"omitted"` / `"summarized"` / `"highlights"`）以适配自适应思考模式下的展示控制属性；在 `Usage` 中补充 `cache_creation` 结构，无缝接收与传递下行缓存创建 Token 分布。(PR #3689, Thanks to @cubelikeplayDaniel)
             -   **Claude 5 模型族录入与 CLI 动态同步**: 在网关核心模型列表中全面录入 Claude 5 系列 8 个核心模型（`claude-fable-5`、`claude-opus-5-5`、`claude-sonnet-5-5`、`claude-haiku-5-5` 及其思考变体），上调上下文规格至 256k。(PR #3689, Ref #3686, Thanks to @cubelikeplayDaniel)
+        -   **[长上下文首字延迟治理、429配额瞬态误解锁消除与多协议签名加固] (Fixes #3697, Ref #3693, Ref #3506, Thanks to @cubelikeplayDaniel)**:
+            -   **配额重置倒计时与反 DDoS 标头最大值竞争裁决**: 支持提取 `Individual quota reached. Resets in 1h19m6s.` 等自然语言文本与 `quotaResetDelay` 字段；在 Retry-After 标头与响应体延时间采用 `max(header_delay, body_delay)` 竞争裁决，彻底阻断 Google 前端反 DDoS 的 8 秒短标头提前解锁已耗尽账号引发的 429 死循环。(Fixes #3697, Ref #3506)
+            -   **反应式即时置零内存配额**: 遇到 `QuotaExhausted` 错误时无条件优先将内存配额标记为 0%，防止亲和性路由与可用账号检索在后台轮询前误选已枯竭账号。
+            -   **思考存储层模糊匹配提速 75% 与无界水位线解耦淘汰**: 将思考块正规化提取至外层循环一次性计算，消除大上下文多轮迭代中重复的字符串分配开销，使思考存储水合耗时由 1200ms+ 大幅压缩；解耦会话水位标 TTL 淘汰，防止低活跃会话下内存无界累积。
+            -   **流聚合思考无缝合并与动态轮次签名索引**: SSE 流聚合自动将连续的思考块合并为一个 `thought: true` 部件，杜绝流聚合产生的碎片化多块思考；动态以当前交互轮次索引签名缓存，保证签名精准归位。
         -   **[JSON Schema 递归展开防 OOM 崩溃与全链路可靠性加固] (PR #3694, Fixes #3690, Ref #3682, Ref #3693, Thanks to @cubelikeplayDaniel)**:
             -   **循环自引用展开阻断与安全降级**: 针对包含分支因子 $b \ge 2$ 的递归数据结构（如二叉树 `left: $ref, right: $ref`），在展开路径中引入活跃引用集合 `active_refs`；一旦检测到循环引用立即安全降级为带有 `"(Cyclic $ref: ...)"` 提示的终态空对象并中止展开，彻底阻断 $2^{64}$ 指数级节点裂变爆炸，杜绝 Linux VPS/服务器遭遇物理内存耗尽触发 OOM (SIGKILL 137) 崩溃。(PR #3694, Fixes #3690, Thanks to @cubelikeplayDaniel)
             -   **工具 Schema 规范化与终态 ARRAY 守卫**: 修正具备 `properties` 与 `type: "array"` 的工具 Schema 规范化逻辑，安全剥离非法的 `properties` 并保底注入合规 `items`；增加终态铁律守卫，确保所有最终为 ARRAY 的节点必持合规 `items`，防止联合数组类型触发 Gemini Protobuf 400 INVALID_ARGUMENT 校验拦截。(PR #3694, Ref #3682, Thanks to @cubelikeplayDaniel)

@@ -138,15 +138,18 @@ impl ThinkingStore {
     }
 
     fn maybe_evict(&self, keep_key: &str) {
+        // [FIX #3697] 水位标与压缩事件 TTL 淘汰必须独立执行，严禁被 sessions.len() <= MAX_SESSIONS 提前截断导致无界内存泄漏。
+        // 会话水位线仅用于两轮之间宏观压缩检测，保留 2 小时 (7200s) 即可，无须保留数周堆积 DashMap。
+        self.watermarks
+            .retain(|_, w| w.last_seen.elapsed() < Duration::from_secs(7200));
+        self.compaction_events
+            .retain(|_, (_, t)| t.elapsed() < Duration::from_secs(60));
+
         if self.sessions.len() <= MAX_SESSIONS {
             return;
         }
         self.sessions
             .retain(|_, e| e.last_access.elapsed() < idle_ttl());
-        self.watermarks
-            .retain(|_, w| w.last_seen.elapsed() < idle_ttl());
-        self.compaction_events
-            .retain(|_, (_, t)| t.elapsed() < Duration::from_secs(60));
         if self.sessions.len() <= MAX_SESSIONS {
             return;
         }
@@ -647,10 +650,13 @@ impl ThinkingStore {
                 && t.tool_names.is_empty()
                 && !t.visible.trim().is_empty()
         });
-        let rec_norms: Vec<String> = if needs_phase3 {
-            records.iter().map(|r| normalize_ws(&r.visible)).collect()
+        let (rec_norms, rec_thought_norms): (Vec<String>, Vec<String>) = if needs_phase3 {
+            records
+                .iter()
+                .map(|r| (normalize_ws(&r.visible), normalize_ws(&r.thought)))
+                .unzip()
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         if needs_phase3 {
             for turn in model_turns.iter_mut() {
@@ -674,8 +680,9 @@ impl ThinkingStore {
                     }
                     let norm_rec = &rec_norms[rec_idx];
                     let norm_vis = &turn.norm_visible;
-                    let thought_matches_prefix = !rec.thought.trim().is_empty()
-                        && norm_vis.starts_with(&normalize_ws(&rec.thought));
+                    let norm_thought = &rec_thought_norms[rec_idx];
+                    let thought_matches_prefix =
+                        !norm_thought.is_empty() && norm_vis.starts_with(norm_thought);
                     if norm_rec == norm_vis
                         || norm_rec.starts_with(norm_vis)
                         || norm_vis.starts_with(norm_rec)
@@ -1049,6 +1056,10 @@ impl ThinkingStore {
                 entry.last_seen = Instant::now();
             }
         } else {
+            if self.watermarks.len() > MAX_SESSIONS {
+                self.watermarks
+                    .retain(|_, w| w.last_seen.elapsed() < idle_ttl());
+            }
             self.watermarks.insert(
                 clean_key.to_string(),
                 SessionWatermark {
@@ -1579,7 +1590,8 @@ pub fn capture_gemini_response_with_preceding(
 /// 快速检索 contents 数组中包含 post-compaction continuation 接续标记的轮次索引
 /// 当会话在客户端成功生成 compact_boundary 或注入历史摘要后，该轮及其之前的历史属于压缩上下文。
 pub fn find_compaction_continuation_boundary(contents: &[Value]) -> Option<usize> {
-    for (idx, content) in contents.iter().enumerate() {
+    // [FIX #3697] 采用逆序扫描 contents，确保在长会话经历多次压缩时严格锚定到最新的第二次/后续压缩边界
+    for (idx, content) in contents.iter().enumerate().rev() {
         if let Some(parts) = content.get("parts").and_then(Value::as_array) {
             for part in parts {
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
@@ -5767,6 +5779,57 @@ mod signature_placement_tests {
             find_compaction_continuation_boundary(&compacted_contents),
             Some(1)
         );
+
+        let multi_compacted_contents = vec![
+            json!({
+                "role": "user",
+                "parts": [{ "text": "Initial setup instruction" }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "text": "This session is being continued from a previous conversation that ran out of context." }]
+            }),
+            json!({
+                "role": "model",
+                "parts": [{ "text": "Working on it..." }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "text": "Next command" }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "text": "<compact_boundary>Second compaction happened</compact_boundary>" }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "text": "Final query" }]
+            }),
+        ];
+        // 关键断言：当长会话经历两次压缩时，必须反向锚定到最新的第二次压缩边界 (index 4)，而非旧的 (index 1)
+        assert_eq!(
+            find_compaction_continuation_boundary(&multi_compacted_contents),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn test_watermarks_eviction_when_sessions_empty() {
+        let store = ThinkingStore::new();
+        let two_days_ago = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(172800))
+            .unwrap_or_else(std::time::Instant::now);
+        store.watermarks.insert(
+            "expired_session".to_string(),
+            SessionWatermark {
+                chars: 1000,
+                turns: 5,
+                last_seen: two_days_ago,
+            },
+        );
+        assert_eq!(store.sessions.len(), 0);
+        store.maybe_evict("keep_key");
+        assert_eq!(store.watermarks.len(), 0);
     }
 
     #[test]

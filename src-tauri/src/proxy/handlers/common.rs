@@ -322,6 +322,7 @@ pub fn determine_retry_strategy_adaptive(
                     || lower.contains("weekly quota")
                     || lower.contains("daily quota")
                     || lower.contains("per day")
+                    || lower.contains("individual quota")
                     || (lower.contains("quota_exhausted")
                         && !lower.contains("resource has been exhausted")));
 

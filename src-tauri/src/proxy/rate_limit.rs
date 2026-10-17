@@ -481,9 +481,16 @@ impl RateLimitTracker {
                 crate::proxy::upstream::retry::parse_retry_delay(body, retry_after_header)
                     .map(|delay_ms| delay_ms.saturating_add(999) / 1000)
             }
-            RetryParserMode::Baseline => retry_after_header
-                .and_then(|value| value.parse::<u64>().ok())
-                .or_else(|| self.parse_retry_time_from_body_baseline(body)),
+            RetryParserMode::Baseline => {
+                let header_sec = retry_after_header.and_then(|value| value.parse::<u64>().ok());
+                let body_sec = self.parse_retry_time_from_body_baseline(body);
+                match (header_sec, body_sec) {
+                    (Some(h), Some(b)) => Some(std::cmp::max(h, b)),
+                    (Some(h), None) => Some(h),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                }
+            }
         };
         let has_explicit_retry_time = retry_after_sec.is_some();
         let preserve_explicit_quota = parser_mode == RetryParserMode::Current
@@ -686,6 +693,11 @@ impl RateLimitTracker {
                     .and_then(|d| d.as_array())
                 {
                     for item in details {
+                        if let Some(typ) = item.get("@type").and_then(|v| v.as_str()) {
+                            if typ.contains("QuotaFailure") {
+                                return RateLimitReason::QuotaExhausted;
+                            }
+                        }
                         if let Some(reason_str) = item.get("reason").and_then(|v| v.as_str()) {
                             match reason_str {
                                 "QUOTA_EXHAUSTED" => return RateLimitReason::QuotaExhausted,
@@ -779,17 +791,21 @@ impl RateLimitTracker {
         let trimmed = body.trim();
         if trimmed.starts_with('{') || trimmed.starts_with('[') {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                if let Some(delay) = json
+                if let Some(details) = json
                     .get("error")
                     .and_then(|error| error.get("details"))
                     .and_then(|details| details.as_array())
-                    .and_then(|details| details.first())
-                    .and_then(|detail| detail.get("metadata"))
-                    .and_then(|metadata| metadata.get("quotaResetDelay"))
-                    .and_then(|value| value.as_str())
-                    .and_then(|value| self.parse_duration_string_baseline(value))
                 {
-                    return Some(delay);
+                    for detail in details {
+                        if let Some(delay) = detail
+                            .get("metadata")
+                            .and_then(|metadata| metadata.get("quotaResetDelay"))
+                            .and_then(|value| value.as_str())
+                            .and_then(|value| self.parse_duration_string_baseline(value))
+                        {
+                            return Some(delay);
+                        }
+                    }
                 }
                 if let Some(retry) = json
                     .get("error")
@@ -797,6 +813,16 @@ impl RateLimitTracker {
                     .and_then(|value| value.as_u64())
                 {
                     return Some(retry);
+                }
+            }
+        }
+
+        if let Ok(re) = Regex::new(r"(?i)resets in ([^.,;\]\n]+)") {
+            if let Some(caps) = re.captures(body) {
+                if let Some(dur_str) = caps.get(1).map(|m| m.as_str()) {
+                    if let Some(dur) = self.parse_duration_string_baseline(dur_str) {
+                        return Some(dur);
+                    }
                 }
             }
         }
@@ -1438,6 +1464,50 @@ mod tests {
             reason,
             RateLimitReason::QuotaExhausted,
             "未扫描全部 details 导致漏判 index > 0 的 ErrorInfo"
+        );
+    }
+
+    #[test]
+    fn test_baseline_parser_multi_details_and_header_max() {
+        let tracker = RateLimitTracker::new();
+        let body = r#"{
+            "error": {
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "RATE_LIMIT_EXCEEDED"
+                    },
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "metadata": {
+                            "quotaResetDelay": "3600s"
+                        }
+                    }
+                ]
+            }
+        }"#;
+        // 1. parse_retry_time_from_body_baseline 必须遍历全部 details，不能只查 details.first()
+        let parsed = tracker.parse_retry_time_from_body_baseline(body);
+        assert_eq!(
+            parsed,
+            Some(3600),
+            "Should parse quotaResetDelay from non-first details entry"
+        );
+
+        // 2. Baseline 模式下，当有 8s 防 DDoS Header 与 3600s Body 时，必须选取 max(8, 3600) = 3600s
+        let info = tracker
+            .parse_from_error_baseline(
+                "acc-multi-detail",
+                429,
+                Some("8"),
+                body,
+                None,
+                &[60, 300, 7200],
+            )
+            .unwrap();
+        assert_eq!(
+            info.retry_after_sec, 3600,
+            "Baseline mode must prioritize max(8s, 3600s) = 3600s"
         );
     }
 }

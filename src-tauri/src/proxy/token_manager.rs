@@ -36,7 +36,9 @@ fn classify_rate_limit_reason(error_body: &str) -> crate::proxy::rate_limit::Rat
         || body.contains("quota limit")
         || body.contains("per day")
         || body.contains("daily quota")
-        || body.contains("credits");
+        || body.contains("credits")
+        || body.contains("individual quota")
+        || body.contains("resets in");
 
     if body.contains("model_capacity") {
         RateLimitReason::ModelCapacityExhausted
@@ -4333,6 +4335,11 @@ impl TokenManager {
         let account_id = self
             .email_to_account_id(email)
             .unwrap_or_else(|| email.to_string());
+        let reason = classify_rate_limit_reason(error_body);
+        if reason == crate::proxy::rate_limit::RateLimitReason::QuotaExhausted {
+            self.mark_model_quota_depleted(&account_id, model_to_track);
+        }
+
         if Self::has_explicit_retry_time(parser_mode, retry_after_header, error_body) {
             self.record_rate_limit_atomic(
                 &account_id,
@@ -4344,11 +4351,6 @@ impl TokenManager {
                 parser_mode,
             );
             return;
-        }
-
-        let reason = classify_rate_limit_reason(error_body);
-        if reason == crate::proxy::rate_limit::RateLimitReason::QuotaExhausted {
-            self.mark_model_quota_depleted(&account_id, model_to_track);
         }
         if reason != crate::proxy::rate_limit::RateLimitReason::QuotaExhausted {
             self.record_rate_limit_atomic(
