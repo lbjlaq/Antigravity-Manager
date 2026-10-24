@@ -1184,19 +1184,18 @@ pub async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
 /// 从迷你悬浮窗或其他入口原子化安全切换回主控制台窗口
 #[tauri::command]
 pub async fn switch_to_main_window(app: tauri::AppHandle) -> Result<(), String> {
-    // 1. 若迷你窗未钉在桌面，则呼出主控制台时先在后端安全收起，避免前端 await 挂起与失焦事件竞态
-    if !crate::modules::tray::is_mini_view_pinned() {
-        if let Some(mini) = app.get_webview_window("mini") {
-            let _ = mini.hide();
-        }
-        crate::modules::tray::set_mini_view_active(false);
-    }
-
-    // 2. 调度到主线程执行 exit_lightweight_mode，彻底消除跨线程窗口操作与消息泵死锁
+    // 统一调度到操作系统主线程执行窗口唤起与收起，消除跨线程 AppKit/Win32 冲突与 0-可见窗口悬空死锁 (Fixes #3744)
     let app_handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         let _ = crate::modules::lightweight::exit_lightweight_mode(&app_handle);
         let _ = app_handle.emit("tray://show-window", ());
+
+        if !crate::modules::tray::is_mini_view_pinned() {
+            if let Some(mini) = app_handle.get_webview_window("mini") {
+                let _ = mini.hide();
+            }
+            crate::modules::tray::set_mini_view_active(false);
+        }
     });
     Ok(())
 }

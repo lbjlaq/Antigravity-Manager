@@ -41,6 +41,15 @@ export function getModelQuotaDisplay(modelId: string, model: ModelQuota | undefi
             || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
         return thirdParty ? isThirdParty : name.startsWith('gemini') && !isThirdParty;
     }).flatMap(group => group?.buckets || []);
+    const hasGroups = (groups || []).length > 0;
+    if (isArgon && hasGroups && buckets.length === 0) {
+        return {
+            percentage: 0,
+            resetTime: undefined,
+            isWeeklyConstrained: false,
+            weeklyResetTime: undefined,
+        };
+    }
     const fiveHour = buckets.filter(bucket => /5h|hour/i.test(`${bucket.window} ${bucket.bucket_id}`))
         .reduce<(typeof buckets)[number] | undefined>((chosen, bucket) =>
             !chosen || bucket.remaining_fraction < chosen.remaining_fraction ? bucket : chosen, undefined);
@@ -80,6 +89,22 @@ export function getModelConstrainedQuota(
             || (group?.buckets || []).some(bucket => bucket?.bucket_id?.toLowerCase().includes('3p'));
         return thirdParty ? isThirdParty : name.startsWith('gemini') && !isThirdParty;
     }).flatMap(group => group?.buckets || []);
+
+    const hasGroups = (groups || []).length > 0;
+    if (isArgon && hasGroups && buckets.length === 0) {
+        return {
+            effectivePercentage: 0,
+            raw5h: null,
+            rawWeekly: null,
+            weighted: 0,
+            resetTime: undefined,
+            isWeeklyConstrained: false,
+            isWeeklyExhausted: false,
+            is5hCooling: false,
+            fiveHourResetTime: undefined,
+            weeklyResetTime: undefined,
+        };
+    }
 
     const fiveHourBucket = buckets.filter(bucket => /5h|hour/i.test(`${bucket?.window || ''} ${bucket?.bucket_id || ''}`))
         .reduce<(typeof buckets)[number] | undefined>((chosen, bucket) =>
@@ -355,17 +380,20 @@ export function getGroupQuotaSummaries(
             }
         }
 
+        // 若服务端返回了真实的 quota_groups，绝不能被 fallbackModels 跨组污染（特别是 Argon 仅有官方周配额，无 5H 配额）
+        const useFallback = (!groups || groups.length === 0) && key !== 'argon';
+
         // Free 账号在官方架构下只有周额度，没有 5H 额度
         const raw5h = (!isFreeTier && fiveHourBucket)
             ? Math.round(fiveHourBucket.remaining_fraction * 100)
-            : (!isFreeTier && fallback5h ? fallback5h.percentage : undefined);
+            : (!isFreeTier && useFallback && fallback5h ? fallback5h.percentage : undefined);
 
         const rawWeekly = weeklyBucket
             ? Math.round(weeklyBucket.remaining_fraction * 100)
-            : (fallbackWeekly ? fallbackWeekly.percentage : (isFreeTier && fallback5h ? fallback5h.percentage : undefined));
+            : (useFallback && fallbackWeekly ? fallbackWeekly.percentage : (isFreeTier && useFallback && fallback5h ? fallback5h.percentage : undefined));
 
-        const weeklyResetTime = weeklyBucket?.reset_time || fallbackWeekly?.resetTime || (isFreeTier ? fallback5h?.resetTime : undefined);
-        const fiveHourResetTime = isFreeTier ? undefined : (fiveHourBucket?.reset_time || fallback5h?.resetTime);
+        const weeklyResetTime = weeklyBucket?.reset_time || (useFallback ? fallbackWeekly?.resetTime : undefined) || (isFreeTier && useFallback ? fallback5h?.resetTime : undefined);
+        const fiveHourResetTime = isFreeTier ? undefined : (fiveHourBucket?.reset_time || (useFallback ? fallback5h?.resetTime : undefined));
 
         const effectiveWeekly = rawWeekly;
         const effectiveWeeklyResetTime = weeklyResetTime;
@@ -410,14 +438,19 @@ export function getGroupQuotaSummaries(
         };
     };
 
-    const hasArgon = (groups || []).some(group => {
+    const hasArgonInGroups = (groups || []).some(group => {
         const groupName = (group?.display_name || '').toLowerCase();
         return /argon/i.test(groupName)
             || (group?.buckets || []).some(b => /argon/i.test(`${b?.bucket_id || ''} ${b?.display_name || ''}`));
-    }) || fallbackModels.some(m => {
-        const n = (m?.name || '').toLowerCase();
-        return /argon/i.test(n) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
     });
+
+    // 仅在服务端返回的 quota_groups 中包含真实 Argon 分组，或（无 groups 兜底时）包含未禁用的真实 Argon 模型时展示 (Fixes #3745)
+    const hasArgon = (groups && groups.length > 0)
+        ? hasArgonInGroups
+        : (hasArgonInGroups || fallbackModels.some(m => {
+            const n = (m?.name || '').toLowerCase();
+            return /argon/i.test(n) && !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled;
+        }));
 
     const summaries: GroupQuotaSummary[] = [
         buildGroup('gemini'),

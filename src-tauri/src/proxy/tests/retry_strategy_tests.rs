@@ -289,7 +289,7 @@ fn test_adaptive_retry_explicit_hard_quota_rotates_full_pool_and_backs_off() {
     let hard_quota_429 = r#"{"error":{"code":429,"message":"You have exceeded your current quota. Please check your plan and billing details."}}"#;
 
     let pool_size = 3;
-    // Round 1 (attempt 0, 1, 2): 账号级额度枯竭，全池快切寻找有额度账号
+    // Round 1 (attempt 0, 1, 2): 账号级额度枯竭，全池快切寻找有额度账号 (50ms)
     for attempt in 0..pool_size {
         let s = determine_retry_strategy_adaptive(
             429,
@@ -302,7 +302,7 @@ fn test_adaptive_retry_explicit_hard_quota_rotates_full_pool_and_backs_off() {
         );
         assert_eq!(
             s,
-            RetryStrategy::FixedDelay(Duration::from_millis(150)),
+            RetryStrategy::FixedDelay(Duration::from_millis(50)),
             "Attempt {} should fast rotate in round 1",
             attempt
         );

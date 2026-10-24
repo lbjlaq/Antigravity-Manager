@@ -333,8 +333,8 @@ pub fn determine_retry_strategy_adaptive(
                         && (!lower.contains("resource has been exhausted")
                             || lower.contains("quotaresetdelay"))));
 
-            // 多账号环境下，账号级硬配额枯竭立即切换下一个账号（50ms 闪电切号，避免 CPU 空转并快速恢复响应）
-            if is_hard_quota_exhausted {
+            // 多账号环境下，账号级硬配额枯竭在第一轮立即切换下一个账号（50ms 闪电切号，避免 CPU 空转并快速恢复响应）
+            if is_hard_quota_exhausted && attempt < pool_size {
                 tracing::info!(
                     "[Retry] Account hard quota exhausted detected on attempt {}/{}; fast rotating to next account in pool (50ms)",
                     attempt + 1,

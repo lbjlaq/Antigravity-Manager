@@ -66,6 +66,7 @@ pub fn ensure_main_window(app: &AppHandle) -> Result<WebviewWindow, String> {
 /// 退出轻量模式：确保主窗口存在，并将其显示、聚焦
 pub fn exit_lightweight_mode(app: &AppHandle) -> Result<WebviewWindow, String> {
     crate::modules::startup_quiet::clear();
+    #[cfg(not(target_os = "macos"))]
     let already_running = app.get_webview_window("main").is_some();
     let window = ensure_main_window(app)?;
 
@@ -75,8 +76,16 @@ pub fn exit_lightweight_mode(app: &AppHandle) -> Result<WebviewWindow, String> {
             .unwrap_or(());
     }
 
-    // 若主窗口已在内存中运行，直接呼出并置顶；
-    // 若是全新动态创建的窗口，保持 visible:false，由前端在 React 首帧渲染完成后优雅展示，彻底杜绝黑屏闪现
+    // macOS 上 WKWebView 无 Win32 编译着色器导致的黑屏闪烁，但若保持隐藏会导致 WebKit 冻结事件循环且激活策略过渡异常；
+    // 因此 macOS 下始终立即呈现与置顶窗口，非 macOS（Windows）则在冷重构时等待 React 首帧渲染彻底杜绝黑屏闪现 (Fixes #3744)
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+
+    #[cfg(not(target_os = "macos"))]
     if already_running {
         let _ = window.show();
         let _ = window.unminimize();

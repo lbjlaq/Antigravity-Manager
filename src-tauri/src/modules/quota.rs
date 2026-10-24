@@ -538,52 +538,42 @@ pub async fn fetch_quota_with_cache(
                         let is_argon = name_lower.contains("argon");
                         let is_claude_or_gpt = !is_argon
                             && (name_lower.starts_with("claude") || name_lower.starts_with("gpt"));
-                        let is_gemini = !is_argon && name_lower.starts_with("gemini");
 
-                        // 查找匹配的配额组：Argon 优先专属组，未命中时回退 Gemini；Claude/GPT 找 3P；Gemini 找常规 Gemini 组
-                        let matched_group = groups
-                            .iter()
-                            .find(|g| {
-                                let gname = g.display_name.to_lowercase();
-                                let is_argon_group = gname.contains("argon")
-                                    || g.buckets.iter().any(|b| {
-                                        let bid = b.bucket_id.to_lowercase();
-                                        let bname =
-                                            b.display_name.as_deref().unwrap_or("").to_lowercase();
-                                        bid.contains("argon") || bname.contains("argon")
-                                    });
-                                if is_argon {
-                                    return is_argon_group;
-                                }
-                                if is_argon_group {
-                                    return false;
-                                }
-                                let is_claude_group = gname.contains("claude")
-                                    || gname.contains("gpt")
-                                    || gname.contains("3p");
-                                if is_claude_or_gpt {
-                                    return is_claude_group;
-                                }
-                                // standard gemini
-                                !is_claude_group
-                                    && (gname.contains("gemini")
-                                        || (!gname.contains("claude")
-                                            && !gname.contains("gpt")
-                                            && !gname.contains("3p")))
-                            })
-                            .or_else(|| {
-                                // Argon 没有独立分组时的优雅降级：回退到通用 Gemini 分组
-                                if is_argon {
-                                    groups.iter().find(|g| {
-                                        let gname = g.display_name.to_lowercase();
-                                        !gname.contains("claude")
-                                            && !gname.contains("gpt")
-                                            && !gname.contains("3p")
-                                    })
-                                } else {
-                                    None
-                                }
-                            });
+                        // 查找匹配的配额组：Argon 必须严格命中专属 Argon 配额组，绝不允许借用通用 Gemini 分组；
+                        // Claude/GPT 找 3P；Gemini 找常规 Gemini 组
+                        let matched_group = groups.iter().find(|g| {
+                            let gname = g.display_name.to_lowercase();
+                            let is_argon_group = gname.contains("argon")
+                                || g.buckets.iter().any(|b| {
+                                    let bid = b.bucket_id.to_lowercase();
+                                    let bname =
+                                        b.display_name.as_deref().unwrap_or("").to_lowercase();
+                                    bid.contains("argon") || bname.contains("argon")
+                                });
+                            if is_argon {
+                                return is_argon_group;
+                            }
+                            if is_argon_group {
+                                return false;
+                            }
+                            let is_claude_group = gname.contains("claude")
+                                || gname.contains("gpt")
+                                || gname.contains("3p");
+                            if is_claude_or_gpt {
+                                return is_claude_group;
+                            }
+                            // standard gemini
+                            !is_claude_group
+                                && (gname.contains("gemini")
+                                    || (!gname.contains("claude")
+                                        && !gname.contains("gpt")
+                                        && !gname.contains("3p")))
+                        });
+
+                        // Argon 必须依赖官方独立配额组授权；未获得灰度独立分组的账号严禁借用通用 Gemini 组注入虚假配额 (Fixes #3745)
+                        if is_argon && matched_group.is_none() {
+                            continue;
+                        }
 
                         if let Some(group) = matched_group {
                             let bucket_5h = group.buckets.iter().find(|b| {

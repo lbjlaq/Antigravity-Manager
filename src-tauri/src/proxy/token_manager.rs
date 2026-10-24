@@ -1378,6 +1378,22 @@ impl TokenManager {
                 model_limits.insert("gemini-4-argon-high".to_string(), 65536);
                 model_limits.insert("gemini-4-argon-medium".to_string(), 65536);
                 model_limits.insert("gemini-4-argon-low".to_string(), 65536);
+            } else {
+                // 配额组中明确不存在 Argon 分组，防呆清理（防止历史残存虚假配额注入调度器）
+                model_quotas.remove("gemini-4-argon");
+                model_quotas.remove("gemini-4-argon-high");
+                model_quotas.remove("gemini-4-argon-medium");
+                model_quotas.remove("gemini-4-argon-low");
+
+                available_models.remove("gemini-4-argon");
+                available_models.remove("gemini-4-argon-high");
+                available_models.remove("gemini-4-argon-medium");
+                available_models.remove("gemini-4-argon-low");
+
+                model_limits.remove("gemini-4-argon");
+                model_limits.remove("gemini-4-argon-high");
+                model_limits.remove("gemini-4-argon-medium");
+                model_limits.remove("gemini-4-argon-low");
             }
         }
 
@@ -1772,6 +1788,11 @@ impl TokenManager {
                 result.insert("gemini-4-argon-high".to_string());
                 result.insert("gemini-4-argon-medium".to_string());
                 result.insert("gemini-4-argon-low".to_string());
+            } else {
+                result.remove("gemini-4-argon");
+                result.remove("gemini-4-argon-high");
+                result.remove("gemini-4-argon-medium");
+                result.remove("gemini-4-argon-low");
             }
         }
         Some(result)
@@ -4341,6 +4362,20 @@ impl TokenManager {
                         token
                             .model_limits
                             .insert("gemini-4-argon-low".to_string(), 65536);
+                    } else {
+                        // 若刷新后无 Argon 专属分组，清理该账号在内存中的 Argon 缓存
+                        token.model_quotas.remove("gemini-4-argon");
+                        token.model_quotas.remove("gemini-4-argon-high");
+                        token.model_quotas.remove("gemini-4-argon-medium");
+                        token.model_quotas.remove("gemini-4-argon-low");
+                        token.available_models.remove("gemini-4-argon");
+                        token.available_models.remove("gemini-4-argon-high");
+                        token.available_models.remove("gemini-4-argon-medium");
+                        token.available_models.remove("gemini-4-argon-low");
+                        token.model_limits.remove("gemini-4-argon");
+                        token.model_limits.remove("gemini-4-argon-high");
+                        token.model_limits.remove("gemini-4-argon-medium");
+                        token.model_limits.remove("gemini-4-argon-low");
                     }
                 }
 
