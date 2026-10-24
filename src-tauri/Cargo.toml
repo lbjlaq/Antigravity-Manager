@@ -50,7 +50,7 @@ socket2 = { version = "0.5", features = ["all"] }
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 tower = { version = "0.4", features = ["util"] }
-tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs", "decompression-gzip"] }
 eventsource-stream = "0.2"
 dashmap = "6.1"
 anyhow = "1.0"

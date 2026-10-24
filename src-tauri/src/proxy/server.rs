@@ -719,13 +719,15 @@ impl AxumServer {
             )
             // 应用 AI 服务特定的层
             // 注意：Axum layer 执行顺序是从下往上（洋葱模型）
-            // 请求: ip_filter -> auth -> monitor -> handler
-            // 响应: handler -> monitor -> auth -> ip_filter
+            // 请求: ip_filter -> auth -> decompression -> monitor -> handler
+            // 响应: handler -> monitor -> decompression -> auth -> ip_filter
             // monitor 需要在 auth 之后执行才能获取 UserTokenIdentity
+            // decompression 置于 auth 之后可防止未鉴权的大体积解压缩炸弹攻击，同时置于 monitor 之前确保审计层获得真实解码请求文本与模型字段
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 monitor_middleware,
             ))
+            .layer(tower_http::decompression::RequestDecompressionLayer::new())
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 auth_middleware,
