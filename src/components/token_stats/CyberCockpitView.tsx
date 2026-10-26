@@ -261,7 +261,10 @@ export const CyberCockpitView: React.FC<CyberCockpitViewProps> = ({
 
         const effectivePeak = peak > 0 ? peak : 1;
         buckets.forEach(b => {
-            b.pct = peak > 0 ? Math.max(10, Math.round((b.data.total_tokens / effectivePeak) * 100)) : 10;
+            const hasValue = b.data.total_tokens > 0;
+            b.pct = hasValue && peak > 0
+                ? Math.max(8, Math.round((b.data.total_tokens / effectivePeak) * 100))
+                : 0;
         });
 
         return {
@@ -582,6 +585,7 @@ export const CyberCockpitView: React.FC<CyberCockpitViewProps> = ({
                                 {hourBuckets.map((bucket, i) => {
                                     const isPeak = bucket.data.total_tokens === maxHourTokens && maxHourTokens > 0;
                                     const isHovered = hoveredHourIdx === i;
+                                    const hasData = bucket.data.total_tokens > 0;
                                     return (
                                         <div
                                             key={i}
@@ -589,25 +593,33 @@ export const CyberCockpitView: React.FC<CyberCockpitViewProps> = ({
                                             onMouseLeave={() => setHoveredHourIdx(null)}
                                             className="flex-1 flex flex-col items-center justify-end h-full cursor-pointer group"
                                         >
-                                            <div
-                                                className={`w-1 h-1 rounded-full mb-0.5 transition-all ${
-                                                    isPeak
-                                                        ? 'bg-amber-500 dark:bg-amber-400 shadow-[0_0_6px_#f59e0b]'
-                                                        : isHovered
-                                                        ? 'bg-blue-600 dark:bg-white shadow-[0_0_6px_currentColor]'
-                                                        : 'bg-blue-300/60 dark:bg-emerald-400/60'
-                                                }`}
-                                            />
-                                            <div
-                                                className={`w-full rounded-sm transition-all ${
-                                                    isPeak
-                                                        ? 'bg-gradient-to-t from-blue-600 dark:from-emerald-600 via-amber-400 to-amber-500'
-                                                        : isHovered
-                                                        ? 'bg-gradient-to-t from-blue-400 dark:from-teal-500 to-blue-600 dark:to-emerald-300'
-                                                        : 'bg-gradient-to-t from-blue-100 dark:from-[#102a3a] to-blue-500/70 dark:to-emerald-500/80'
-                                                }`}
-                                                style={{ height: `${bucket.pct}%` }}
-                                            />
+                                            {hasData ? (
+                                                <div
+                                                    className={`w-1 h-1 rounded-full mb-0.5 transition-all ${
+                                                        isPeak
+                                                            ? 'bg-amber-500 dark:bg-amber-400 shadow-[0_0_6px_#f59e0b]'
+                                                            : isHovered
+                                                            ? 'bg-blue-600 dark:bg-white shadow-[0_0_6px_currentColor]'
+                                                            : 'bg-blue-300/60 dark:bg-emerald-400/60'
+                                                    }`}
+                                                />
+                                            ) : (
+                                                <div className="w-0.5 h-0.5 rounded-full bg-gray-200 dark:bg-white/[0.08] mb-0.5" />
+                                            )}
+                                            {hasData ? (
+                                                <div
+                                                    className={`w-full rounded-sm transition-all ${
+                                                        isPeak
+                                                            ? 'bg-gradient-to-t from-blue-600 dark:from-emerald-600 via-amber-400 to-amber-500'
+                                                            : isHovered
+                                                            ? 'bg-gradient-to-t from-blue-400 dark:from-teal-500 to-blue-600 dark:to-emerald-300'
+                                                            : 'bg-gradient-to-t from-blue-100 dark:from-[#102a3a] to-blue-500/70 dark:to-emerald-500/80'
+                                                    }`}
+                                                    style={{ height: `${bucket.pct}%` }}
+                                                />
+                                            ) : (
+                                                <div className="w-full h-[1px] bg-gray-200 dark:bg-white/[0.06]" />
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -670,7 +682,7 @@ export const CyberCockpitView: React.FC<CyberCockpitViewProps> = ({
                                         const y1 = cy + rInner * Math.sin(angle);
                                         const x2 = cx + rOuter * Math.cos(angle);
                                         const y2 = cy + rOuter * Math.sin(angle);
-                                        const isActive = (i / 40) * 100 <= Math.max(10, cacheMetrics.hitRate);
+                                        const isActive = (i / 40) * 100 <= cacheMetrics.hitRate;
 
                                         return (
                                             <line
