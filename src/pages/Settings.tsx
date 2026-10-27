@@ -22,6 +22,7 @@ import { emit } from '@tauri-apps/api/event';
 import DebugConsole from '../components/debug/DebugConsole';
 import ProxyPoolSettings from '../components/settings/ProxyPoolSettings';
 import { motion } from 'framer-motion';
+import { ZOOM_LEVELS, getStoredZoom, applyZoom } from '../utils/zoom';
 
 function normalizeDataDirDisplay(path: string): string {
     const trimmed = path.trim();
@@ -138,6 +139,22 @@ function Settings() {
     const [isBrewConfirmOpen, setIsBrewConfirmOpen] = useState(false);
     const [isBrewSuccessOpen, setIsBrewSuccessOpen] = useState(false);
     const [isUpdateConfirmOpen, setIsUpdateConfirmOpen] = useState(false);
+
+    // UI Zoom state
+    const [uiZoom, setUiZoom] = useState<number>(() => getStoredZoom());
+
+    useEffect(() => {
+        const handleZoomChange = (e: Event) => {
+            const customEvent = e as CustomEvent<number>;
+            if (customEvent.detail) {
+                setUiZoom(customEvent.detail);
+            }
+        };
+        window.addEventListener('app-ui-zoom-change', handleZoomChange);
+        return () => {
+            window.removeEventListener('app-ui-zoom-change', handleZoomChange);
+        };
+    }, []);
 
     // Official Hub fingerprint state
     const [hubFingerprint, setHubFingerprint] = useState<HubFingerprint | null>(null);
@@ -651,6 +668,36 @@ function Settings() {
                                     <option value="dark">{t('settings.general.theme_dark')}</option>
                                     <option value="system">{t('settings.general.theme_system')}</option>
                                 </select>
+                            </div>
+
+                            {/* 界面与字体缩放 */}
+                            <div>
+                                <div className="flex justify-between items-center mb-2">
+                                    <label className="block text-sm font-medium text-gray-900 dark:text-base-content">
+                                        {t('settings.general.ui_zoom', '界面与字体缩放')}
+                                    </label>
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                        Cmd / Ctrl + / - / 0
+                                    </span>
+                                </div>
+                                <select
+                                    className="w-full px-4 py-4 border border-gray-200 dark:border-base-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-base-content bg-gray-50 dark:bg-base-200"
+                                    value={uiZoom}
+                                    onChange={(e) => {
+                                        const newZoom = Number(e.target.value);
+                                        setUiZoom(newZoom);
+                                        applyZoom(newZoom);
+                                    }}
+                                >
+                                    {ZOOM_LEVELS.map((level) => (
+                                        <option key={level} value={level}>
+                                            {level}%{level === 100 ? ` (${t('settings.general.ui_zoom_default', '默认')})` : ''}{level === 120 ? ` (${t('settings.general.ui_zoom_recommended', '推荐大屏')})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                    {t('settings.general.ui_zoom_desc', '调整软件整体界面和字体大小，支持随时使用快捷键 Cmd/Ctrl + / - / 0 快速缩放')}
+                                </p>
                             </div>
 
                             {/* 开机自动启动 */}

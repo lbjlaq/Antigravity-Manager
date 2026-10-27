@@ -9,6 +9,7 @@ import Monitor from './pages/Monitor';
 import TokenStats from './pages/TokenStats';
 import Security from './pages/Security';
 import ThemeManager from './components/common/ThemeManager';
+import ZoomManager from './components/common/ZoomManager';
 import UserToken from './pages/UserToken';
 import { ApiKeyFun } from './pages/ApiKeyFun';
 import { UpdateNotification } from './components/UpdateNotification';
@@ -329,6 +330,7 @@ function App() {
   return (
     <AdminAuthGuard>
       <ThemeManager />
+      <ZoomManager />
       <DebugConsole />
       <SuggestionDeleteThinkingModal />
       {showUpdateNotification && (

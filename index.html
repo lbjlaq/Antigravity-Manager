@@ -31,6 +31,20 @@
           document.documentElement.classList.remove('dark');
           document.documentElement.setAttribute('data-theme', 'light');
         }
+        // Restore UI zoom immediately during boot
+        const savedZoom = localStorage.getItem('app-ui-zoom');
+        if (savedZoom) {
+          const num = parseInt(savedZoom, 10);
+          if (!isNaN(num) && num >= 50 && num <= 250) {
+            if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+              window.__TAURI_INTERNALS__.invoke('plugin:webview|set_webview_zoom', { value: num / 100 }).catch(function() {
+                document.documentElement.style.zoom = num + '%';
+              });
+            } else {
+              document.documentElement.style.zoom = num + '%';
+            }
+          }
+        }
       } catch (e) {
         console.error('Failed to apply theme during boot:', e);
       }

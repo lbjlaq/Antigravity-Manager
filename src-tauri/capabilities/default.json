@@ -32,6 +32,7 @@
     "autostart:allow-disable",
     "autostart:allow-is-enabled",
     "window-state:default",
+    "core:webview:allow-set-webview-zoom",
     "updater:default",
     "process:allow-restart",
     "process:allow-exit"
