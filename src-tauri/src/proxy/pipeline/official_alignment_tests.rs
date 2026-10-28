@@ -316,7 +316,7 @@ mod tests {
         };
         use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
 
-        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         update_thinking_budget_config(ThinkingBudgetConfig::default());
 
         struct ResetGuard;
@@ -464,7 +464,7 @@ mod tests {
         use crate::proxy::model_specs::resolve_custom_budget;
         use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
 
-        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut tb_default = ThinkingBudgetConfig::default();
         tb_default.control_source = ThinkingControlSource::Gateway;
@@ -635,7 +635,7 @@ mod tests {
         };
         use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
 
-        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut config = ThinkingBudgetConfig::default();
         config.control_source = ThinkingControlSource::Client;
         update_thinking_budget_config(config);
@@ -706,7 +706,7 @@ mod tests {
         };
         use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
 
-        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut config = ThinkingBudgetConfig::default();
         config.control_source = ThinkingControlSource::Client;
         update_thinking_budget_config(config);
@@ -780,7 +780,7 @@ mod tests {
         };
         use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
 
-        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut config = ThinkingBudgetConfig::default();
         config.control_source = ThinkingControlSource::Client;
         update_thinking_budget_config(config);
@@ -867,7 +867,7 @@ mod tests {
         };
         use crate::proxy::pipeline::inbound::ClientThinkingSwitch;
 
-        let _lock = TEST_CONFIG_LOCK.lock().unwrap();
+        let _lock = TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut tb = ThinkingBudgetConfig::default();
         tb.flash_mode = ThinkingBudgetMode::Custom;
         tb.flash_low = 0;
