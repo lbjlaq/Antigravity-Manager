@@ -145,6 +145,56 @@ export default function ThinkingBudget({
     const [showClaudeAdvanced, setShowClaudeAdvanced] = useState(false);
     const [isClearingThinking, setIsClearingThinking] = useState(false);
     const [showClearThinkingConfirm, setShowClearThinkingConfirm] = useState(false);
+    const [signatureCacheStats, setSignatureCacheStats] = useState<{
+        profile?: { name?: string; l1_limit?: number; read_pool_size?: number; retention_days?: number; total_memory_mb?: number; cores?: number };
+        stats?: { l1_entries?: number; l1_hits?: number; l2_hits?: number; misses?: number; saves_dropped?: number; pending_deletes?: number; batch_calls?: number };
+        thinking?: { sessions?: number; memory_turns?: number; memory_bytes?: number };
+    } | null>(null);
+    const [isClearingSignatureCache, setIsClearingSignatureCache] = useState(false);
+
+    const loadSignatureCacheStats = async () => {
+        try {
+            const res = await request<any>("get_signature_cache_stats");
+            setSignatureCacheStats(res);
+        } catch {
+            // 统计失败不影响设置页使用
+        }
+    };
+
+    useEffect(() => {
+        void loadSignatureCacheStats();
+    }, []);
+
+    const handleClearSignatureCache = async () => {
+        if (!window.confirm(t("proxy.config.thinking_budget.clear_signature_confirm", {
+            defaultValue: "确定清空工具签名缓存吗？不会影响请求日志与思考块。",
+        }))) {
+            return;
+        }
+        setIsClearingSignatureCache(true);
+        try {
+            const res = await request<number | { cleared?: number }>("clear_signature_cache");
+            const count = typeof res === "number" ? res : res?.cleared ?? 0;
+            showToast(
+                t("proxy.config.thinking_budget.clear_signature_success", {
+                    count,
+                    defaultValue: `已清空签名缓存 (${count} 条 L1 记录)`,
+                }),
+                "success"
+            );
+            await loadSignatureCacheStats();
+        } catch (err: any) {
+            showToast(
+                t("proxy.config.thinking_budget.clear_signature_error", {
+                    error: String(err),
+                    defaultValue: `清空签名缓存失败: ${String(err)}`,
+                }),
+                "error"
+            );
+        } finally {
+            setIsClearingSignatureCache(false);
+        }
+    };
 
     const handleClearThinkingStore = async () => {
         setIsClearingThinking(true);
@@ -660,6 +710,71 @@ export default function ThinkingBudget({
                                 </div>
                             </div>
                         )}
+                    </div>
+
+                    {/* 签名缓存运行状态（只读）+ 清理入口 */}
+                    <div className="p-3 rounded-lg bg-white/80 dark:bg-base-200/80 border border-blue-100 dark:border-blue-900/40 text-xs space-y-2 text-gray-600 dark:text-gray-300">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5 font-semibold text-blue-950 dark:text-blue-200">
+                                <HardDrive size={14} className="text-blue-500 shrink-0" />
+                                <span>
+                                    {t("proxy.config.thinking_budget.signature_cache_title", {
+                                        defaultValue: "工具签名缓存（自动）",
+                                    })}
+                                </span>
+                                {signatureCacheStats?.profile?.name && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60">
+                                        {signatureCacheStats.profile.name}
+                                    </span>
+                                )}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleClearSignatureCache}
+                                disabled={isClearingSignatureCache}
+                                className="btn btn-xs btn-outline btn-error gap-1.5 h-6 min-h-6 px-2.5 text-[11px] font-medium rounded-lg"
+                            >
+                                <Trash2 size={12} className={isClearingSignatureCache ? "animate-spin" : ""} />
+                                {t("proxy.config.thinking_budget.clear_signature_btn", {
+                                    defaultValue: "清空签名缓存",
+                                })}
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] pl-5">
+                            <div>
+                                <span className="text-gray-400">L1</span>{" "}
+                                {signatureCacheStats?.stats?.l1_entries ?? "-"} / {signatureCacheStats?.profile?.l1_limit ?? "-"}
+                            </div>
+                            <div>
+                                <span className="text-gray-400">命中率</span>{" "}
+                                {(() => {
+                                    const s = signatureCacheStats?.stats;
+                                    const hits = (s?.l1_hits ?? 0) + (s?.l2_hits ?? 0);
+                                    const total = hits + (s?.misses ?? 0);
+                                    return total > 0 ? `${Math.round((hits / total) * 100)}%` : "-";
+                                })()}
+                            </div>
+                            <div>
+                                <span className="text-gray-400">思考块</span>{" "}
+                                {signatureCacheStats?.thinking?.memory_turns ?? "-"} 轮 / {signatureCacheStats?.thinking?.sessions ?? "-"} 会话
+                            </div>
+                            <div>
+                                <span className="text-gray-400">丢弃</span>{" "}
+                                {signatureCacheStats?.stats?.saves_dropped ?? 0}
+                            </div>
+                            <div>
+                                <span className="text-gray-400">待删除</span>{" "}
+                                {signatureCacheStats?.stats?.pending_deletes ?? 0}
+                            </div>
+                        </div>
+                        <p className="leading-relaxed pl-5 text-[11px] text-gray-500 dark:text-gray-400">
+                            {t("proxy.config.thinking_budget.signature_cache_desc", {
+                                defaultValue: "按本机 CPU / 内存自动选择缓存档位；SQLite 仅做冷层，批量写入与压缩清理均在后台完成。",
+                            })}
+                            {signatureCacheStats?.profile?.total_memory_mb
+                                ? ` 本机 ${signatureCacheStats.profile.total_memory_mb} MB / ${signatureCacheStats.profile.cores ?? "-"} 核。`
+                                : ""}
+                        </p>
                     </div>
 
                     {/* 滑动窗口机制与服务器内存配置建议指南 */}

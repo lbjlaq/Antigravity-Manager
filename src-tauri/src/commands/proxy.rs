@@ -479,6 +479,28 @@ pub async fn clear_thinking_store() -> Result<usize, String> {
         .map_err(|e| format!("Spawn blocking failed: {}", e))?
 }
 
+/// 签名缓存统计：环境预设 + L1/L2 命中、队列丢弃、pending 删除数。
+#[tauri::command]
+pub fn get_signature_cache_stats() -> serde_json::Value {
+    serde_json::json!({
+        "profile": crate::proxy::cache_profile(),
+        "stats": crate::proxy::signature_cache::signature_cache_stats(),
+        "thinking": crate::proxy::thinking_store::thinking_store_stats(),
+    })
+}
+
+/// 仅清空签名缓存（L1 + 工具签名 SQLite），不触碰思考块与请求日志。
+#[tauri::command]
+pub async fn clear_signature_cache() -> Result<usize, String> {
+    tokio::task::spawn_blocking(|| {
+        let before = crate::proxy::signature_cache::signature_cache_stats().l1_entries;
+        crate::proxy::SignatureCache::global().clear();
+        before
+    })
+    .await
+    .map_err(|e| format!("Spawn blocking failed: {}", e))
+}
+
 /// 获取当前思考块存储的记录总数
 #[tauri::command]
 pub async fn get_thinking_store_count() -> Result<usize, String> {

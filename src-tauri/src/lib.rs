@@ -858,6 +858,8 @@ pub fn run() {
             commands::proxy::set_proxy_capture_health_logs,
             commands::proxy::clear_proxy_logs,
             commands::proxy::clear_thinking_store,
+            commands::proxy::get_signature_cache_stats,
+            commands::proxy::clear_signature_cache,
             commands::proxy::get_thinking_store_count,
             commands::proxy::get_proxy_db_disk_size,
             commands::proxy::test_model_connectivity,
@@ -1006,6 +1008,9 @@ pub fn run() {
                 // Handle app exit - cleanup background tasks and release ports
                 tauri::RunEvent::Exit => {
                     tracing::info!("Application exiting, cleaning up background tasks and releasing ports...");
+                    // 尽力把签名缓存队列刷入 SQLite，避免直接退出丢失最近写入。
+                    crate::proxy::SignatureCache::global()
+                        .flush_persist(std::time::Duration::from_secs(2));
                     if let Some(state) =
                         app_handle.try_state::<crate::commands::proxy::ProxyServiceState>()
                     {

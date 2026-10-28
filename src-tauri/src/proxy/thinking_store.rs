@@ -13,6 +13,7 @@
 
 use axum::http::HeaderMap;
 use dashmap::DashMap;
+use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -122,6 +123,24 @@ pub struct SessionWatermark {
     pub chars: usize,
     pub turns: usize,
     pub last_seen: Instant,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct ThinkingStoreStats {
+    pub sessions: usize,
+    pub memory_turns: usize,
+    pub memory_bytes: usize,
+}
+
+pub fn thinking_store_stats() -> ThinkingStoreStats {
+    let store = ThinkingStore::global();
+    let mut stats = ThinkingStoreStats::default();
+    for entry in store.sessions.iter() {
+        stats.sessions += 1;
+        stats.memory_turns += entry.value().turns.len();
+        stats.memory_bytes += entry.value().bytes;
+    }
+    stats
 }
 
 pub struct ThinkingStore {
@@ -1890,6 +1909,38 @@ pub fn finalize_gemini_contents_thinking_with_options(
             })
         };
 
+    // [Batch Recall] 预取本轮所有原生 functionCall ID：一个请求一次 IN 查询，
+    // 避免 100+ 工具调用逐条点查 SQLite。未命中的 ID 会写入负缓存，后续单查不会再穿透 L2。
+    let prefetched_tool_sigs: HashMap<String, String> = if untrusted_signatures {
+        HashMap::new()
+    } else if let Some(sid) = session_id {
+        let mut ids: Vec<String> = contents
+            .iter()
+            .flat_map(|m| {
+                m.get("parts")
+                    .and_then(|p| p.as_array())
+                    .into_iter()
+                    .flatten()
+            })
+            .filter_map(|p| {
+                p.get("functionCall")
+                    .and_then(|fc| fc.get("id"))
+                    .and_then(|id| id.as_str())
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string)
+            })
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        if ids.is_empty() {
+            HashMap::new()
+        } else {
+            crate::proxy::SignatureCache::global().get_tool_signatures_batch(sid, &ids)
+        }
+    } else {
+        HashMap::new()
+    };
+
     // 预先计算最后一个 model / 工具调用轮次的索引
     let last_model_idx = contents.iter().enumerate().rposition(|(_, m)| {
         matches!(
@@ -1986,21 +2037,28 @@ pub fn finalize_gemini_contents_thinking_with_options(
                     for p in &other_parts {
                         if let Some(fc) = p.get("functionCall") {
                             let id = fc.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                            // 1. 先用原生 ID 查内存 L1 与 SQLite L2 (tool_signatures 表)
+                            // 1. 先用原生 ID 查批量预取结果 / 内存 L1 / SQLite L2
                             if !id.is_empty() {
-                                if let Some(sid) = session_id {
-                                    if let Some(sig) = crate::proxy::SignatureCache::global()
-                                        .get_tool_signature(sid, id)
-                                        .filter(|s| is_valid_family_sig(s))
-                                    {
-                                        let final_s = if is_claude_turn {
-                                            ensure_google_claude_thought_signature(&sig)
-                                        } else {
-                                            sig
-                                        };
-                                        found_sig = Some(final_s);
-                                        break;
-                                    }
+                                let prefetched_sig = prefetched_tool_sigs
+                                    .get(id)
+                                    .map(String::as_str)
+                                    .filter(|s| is_valid_family_sig(s))
+                                    .map(str::to_string);
+                                let native_sig = prefetched_sig.or_else(|| {
+                                    session_id.and_then(|sid| {
+                                        crate::proxy::SignatureCache::global()
+                                            .get_tool_signature(sid, id)
+                                            .filter(|s| is_valid_family_sig(s))
+                                    })
+                                });
+                                if let Some(sig) = native_sig {
+                                    let final_s = if is_claude_turn {
+                                        ensure_google_claude_thought_signature(&sig)
+                                    } else {
+                                        sig
+                                    };
+                                    found_sig = Some(final_s);
+                                    break;
                                 }
                             }
 
