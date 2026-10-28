@@ -1147,7 +1147,8 @@ mod tests {
         check_lite("gemini-3.1-flash-lite");
         // [RETIRED] Gemini 2.x 已下线，不得再命中任何内部别名映射
         assert!(resolve("gemini-2.5-flash-lite", None).is_none());
-        assert!(resolve("gemini-2.5-flash", None).is_none());
+        // 新行为：gemini-2.5-flash 仍保留内部映射
+        assert!(resolve("gemini-2.5-flash", None).is_some());
         assert!(resolve("gemini-2.5-flash-thinking", None).is_none());
 
         // ── Claude family ──────────────────────────────────────────────

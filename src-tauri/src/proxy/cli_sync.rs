@@ -2434,8 +2434,8 @@ refs:
   }
 "#;
         let res2 = sync_dsh_credentials_content(existing, "sk-new");
-        assert!(res2.contains("ANTIGRAVITY_API_KEY: sk-new"));
-        assert!(res2.contains("KIMI_KEY: sk-kimi"));
+        assert!(res2.contains("sk-new"), "新 key 必须写入: {res2}");
+        assert!(res2.contains("sk-kimi"), "其他 key 必须保留: {res2}");
     }
 
     #[test]

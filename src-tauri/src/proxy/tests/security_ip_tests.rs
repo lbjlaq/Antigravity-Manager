@@ -718,6 +718,7 @@ mod performance_benchmarks {
     use std::time::Instant;
 
     /// 基准测试：黑名单查找性能
+    #[ignore = "环境相关性能基准，不在单测门禁执行"]
     #[test]
     fn benchmark_blacklist_lookup() {
         let _ = init_db();
@@ -758,6 +759,7 @@ mod performance_benchmarks {
     }
 
     /// 基准测试：CIDR 匹配性能
+    #[ignore = "环境相关性能基准，不在单测门禁执行"]
     #[test]
     fn benchmark_cidr_matching() {
         let _ = init_db();
