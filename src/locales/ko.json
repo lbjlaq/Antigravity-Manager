@@ -1264,11 +1264,12 @@
             "section_large_body": "대용량 파일 재시도",
             "section_header": "③ 첫 응답 헤더(자동 장애 조치)",
             "header_primary_title": "기본 엔드포인트:",
-            "header_primary_items": "텍스트/코드 채팅: 30　이미지: 45　동영상: 60　기타: 15(제목 생성 등)",
+            "header_primary_items": "일반: TTFT　이미지: TTFT+45　동영상: TTFT+60　보조: TTFT−30",
             "header_fallback_title": "대체 엔드포인트:",
-            "header_fallback_items": "텍스트/코드 채팅: 25　이미지: 25　동영상: 30　기타: 15(제목 생성 등)",
-            "section_stream": "④ 첫 글자와 연속 출력",
-            "stream_desc": "엔드포인트를 전환하지 않으며, 안전하게 마무리하거나 클라이언트가 재시도합니다.",
+            "header_fallback_items": "동일 증가분의 절반 (음수 증가분은 유지)",
+            "first_byte_effective": "현재 적용: 일반 {{text}}s　이미지 {{image}}s　동영상 {{video}}s　보조 {{aux}}s",
+            "section_stream": "③ 첫 글자와 연속 출력",
+            "stream_desc": "응답 헤더 대기와 첫 토큰이 하나의 첫 바이트 지연으로 통합되었습니다. HTTP 200 이전에는 엔드포인트 전환이 가능하고, 이후에는 안전하게 마무리만 합니다.",
             "auto_summary": "예: 최대 대기 = 47MB ÷ 2Mbps × 1.4 ≈ {{big}}초;"
         },
         "cloudflared": {

@@ -1298,11 +1298,12 @@
             "section_large_body": "Large file retry",
             "section_header": "③ First response header (auto failover)",
             "header_primary_title": "Primary endpoint:",
-            "header_primary_items": "Text/code chat: 30　Image: 45　Video: 60　Other: 15 (e.g. title generation)",
+            "header_primary_items": "Text/code: TTFT　Image: TTFT+45　Video: TTFT+60　Auxiliary: TTFT−30",
             "header_fallback_title": "Fallback endpoint:",
-            "header_fallback_items": "Text/code chat: 25　Image: 25　Video: 30　Other: 15 (e.g. title generation)",
-            "section_stream": "④ First token and continuous output",
-            "stream_desc": "Endpoints are not switched; the stream finalizes safely or the client retries.",
+            "header_fallback_items": "same offsets, halved (negative offsets unchanged)",
+            "first_byte_effective": "Effective now (base cap {{cap}}s): text/code {{text}}s　image {{image}}s　video {{video}}s　auxiliary {{aux}}s",
+            "section_stream": "③ First token and continuous output",
+            "stream_desc": "Header wait and first token are merged into one first-byte delay: endpoint failover is allowed before HTTP 200, and only a safe finalize after it.",
             "auto_summary": "e.g. max wait = 47MB ÷ 2Mbps × 1.4 ≈ {{big}}s;"
         },
         "cloudflared": {

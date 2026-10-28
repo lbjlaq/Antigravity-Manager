@@ -1264,11 +1264,12 @@
             "section_large_body": "Reintento de archivos grandes",
             "section_header": "③ Primera cabecera (failover automático)",
             "header_primary_title": "Endpoint principal:",
-            "header_primary_items": "Chat de texto/código: 30　Imagen: 45　Vídeo: 60　Otros: 15 (p. ej. generación de títulos)",
+            "header_primary_items": "Texto/código: TTFT　Imagen: TTFT+45　Vídeo: TTFT+60　Auxiliar: TTFT−30",
             "header_fallback_title": "Endpoint alternativo:",
-            "header_fallback_items": "Chat de texto/código: 25　Imagen: 25　Vídeo: 30　Otros: 15 (p. ej. generación de títulos)",
-            "section_stream": "④ Primer token y salida continua",
-            "stream_desc": "No se cambia de endpoint; el flujo finaliza de forma segura o el cliente reintenta.",
+            "header_fallback_items": "los mismos incrementos, a la mitad (los negativos no cambian)",
+            "first_byte_effective": "Vigente ahora: texto/código {{text}}s　imagen {{image}}s　vídeo {{video}}s　auxiliar {{aux}}s",
+            "section_stream": "③ Primer token y salida continua",
+            "stream_desc": "La espera de cabeceras y el primer token son una única latencia de primer byte: el cambio de endpoint se permite antes de HTTP 200 y después solo se finaliza de forma segura.",
             "auto_summary": "Ej.: espera máxima = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} s;"
         },
         "cloudflared": {

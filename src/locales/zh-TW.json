@@ -1307,11 +1307,12 @@
             "section_large_body": "大檔案重試",
             "section_header": "③ 首回應標頭（自動故障切換端點）",
             "header_primary_title": "首選端點：",
-            "header_primary_items": "文字程式碼聊天：30　圖片：45　影片：60　其他：15（如標題生成）",
+            "header_primary_items": "常規：TTFT　圖片：TTFT+45　影片：TTFT+60　輔助：TTFT−30",
             "header_fallback_title": "備選端點：",
-            "header_fallback_items": "文字程式碼聊天：25　圖片：25　影片：30　其他：15（如標題生成）",
-            "section_stream": "④ 首字與連續輸出",
-            "stream_desc": "不會切換端點，只安全收尾或交給用戶端重試。",
+            "header_fallback_items": "同類增量減半（負增量不減半）",
+            "first_byte_effective": "目前生效（基準上限 {{cap}}s）：常規 {{text}}s　圖片 {{image}}s　影片 {{video}}s　輔助 {{aux}}s",
+            "section_stream": "③ 首字與連續輸出",
+            "stream_desc": "首回應標頭與首個輸出 token 已合併為統一首字延遲：未收到 200 前可切換端點；收到 200 後僅安全收尾，不再切換。",
             "auto_summary": "例：最大等待時間= 47MB ÷ 2Mbps ×1.4 ≈ {{big}} 秒；"
         },
         "example": {

@@ -1313,11 +1313,12 @@
             "section_large_body": "Büyük dosya yeniden deneme",
             "section_header": "③ İlk yanıt başlığı (otomatik yedekleme)",
             "header_primary_title": "Birincil uç nokta:",
-            "header_primary_items": "Metin/kod sohbeti: 30　Görsel: 45　Video: 60　Diğer: 15 (ör. başlık üretimi)",
+            "header_primary_items": "Metin/kod: TTFT　Görsel: TTFT+45　Video: TTFT+60　Yardımcı: TTFT−30",
             "header_fallback_title": "Yedek uç nokta:",
-            "header_fallback_items": "Metin/kod sohbeti: 25　Görsel: 25　Video: 30　Diğer: 15 (ör. başlık üretimi)",
-            "section_stream": "④ İlk token ve sürekli çıktı",
-            "stream_desc": "Uç nokta değiştirilmez; akış güvenle biter veya istemci yeniden dener.",
+            "header_fallback_items": "aynı artışların yarısı (negatif artışlar değişmez)",
+            "first_byte_effective": "Şu anda geçerli: metin/kod {{text}}s　görsel {{image}}s　video {{video}}s　yardımcı {{aux}}s",
+            "section_stream": "③ İlk token ve sürekli çıktı",
+            "stream_desc": "Başlık bekleme ve ilk token tek bir ilk-bayt gecikmesinde birleştirildi: HTTP 200 öncesi uç nokta değişimi serbest, sonrasında yalnızca güvenli kapatma yapılır.",
             "auto_summary": "Örn.: maks. bekleme = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} sn;"
         },
         "example": {

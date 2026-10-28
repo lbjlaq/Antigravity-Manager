@@ -1255,11 +1255,12 @@
             "section_large_body": "ဖိုင်ကြီး ပြန်ကြိုးစားမှု",
             "section_header": "③ ပထမ တုံ့ပြန်မှု ခေါင်းစီး (အလိုအလျောက် ပြောင်းလဲ)",
             "header_primary_title": "အဓိက endpoint:",
-            "header_primary_items": "စာသား/ကုဒ် ချတ်- 30　ပုံ- 45　ဗီဒီယို- 60　အခြား- 15 (ခေါင်းစဉ်ဖန်တီးခြင်း စသည်)",
+            "header_primary_items": "Text/code: TTFT　Image: TTFT+45　Video: TTFT+60　Auxiliary: TTFT−30",
             "header_fallback_title": "အရန် endpoint:",
-            "header_fallback_items": "စာသား/ကုဒ် ချတ်- 25　ပုံ- 25　ဗီဒီယို- 30　အခြား- 15 (ခေါင်းစဉ်ဖန်တီးခြင်း စသည်)",
-            "section_stream": "④ ပထမ token နှင့် ဆက်တိုက် ထုတ်လွှတ်မှု",
-            "stream_desc": "endpoint မပြောင်းပါ။ ဘေးကင်းစွာ ပိတ်သည် သို့မဟုတ် client ပြန်ကြိုးစားသည်။",
+            "header_fallback_items": "same offsets, halved (negative offsets unchanged)",
+            "first_byte_effective": "Effective now: text/code {{text}}s　image {{image}}s　video {{video}}s　auxiliary {{aux}}s",
+            "section_stream": "③ ပထမ token နှင့် ဆက်တိုက် ထုတ်လွှတ်မှု",
+            "stream_desc": "Header wait and first token are merged into one first-byte delay: endpoint failover is allowed before HTTP 200, and only a safe finalize after it.",
             "auto_summary": "ဥပမာ- အများဆုံး စောင့်ချိန် = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} စက္ကန့်;"
         },
         "cloudflared": {

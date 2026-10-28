@@ -7,7 +7,6 @@ import {
     Check,
     Sparkles,
     UploadCloud,
-    ArrowDownToLine,
     RadioTower,
     Files,
     ServerCog,
@@ -136,6 +135,21 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
         streaming_sliding_secs: parseStream("streaming_sliding_secs"),
         ...overrides,
     });
+
+    // 统一首字延迟（TTFT）派生：媒体类型只保留相对增量，不再维护独立绝对超时表。
+    // 与后端 upstream::client 的 first_byte_offset_secs / MAX_FIRST_BYTE_* 保持一致。
+    const TTFT_BASE_CAP = 150;
+    const TTFT_CEILING = 210;
+    const ttftBaseSecs = (() => {
+        const raw = Number(streamRaw.initial_ttft_secs);
+        const value = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_STREAM.initial_ttft_secs;
+        return Math.min(Math.max(value, 15), TTFT_BASE_CAP);
+    })();
+    const clampFirstByte = (v: number) => Math.min(Math.max(v, 15), TTFT_CEILING);
+    const firstByteText = clampFirstByte(ttftBaseSecs);
+    const firstByteImage = clampFirstByte(ttftBaseSecs + 45);
+    const firstByteVideo = clampFirstByte(ttftBaseSecs + 60);
+    const firstByteAux = clampFirstByte(ttftBaseSecs - 30);
 
     const handleUploadInput = (field: UploadField, text: string) => {
         const isDecimal = field === "min_upload_mbps" || field === "extra_wait_ratio";
@@ -411,40 +425,6 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
                 </div>
             </div>
 
-            {/* ③ 首响应头（自动故障切换端点） */}
-            {sectionTitle(<ArrowDownToLine size={13} className="text-emerald-500" />, t("proxy.timeouts.section_header"))}
-            <div className="p-3.5 bg-gray-50/70 dark:bg-base-200/60 rounded-xl border border-gray-200/70 dark:border-base-300 space-y-3">
-                <div>
-                    <div className="text-xs font-bold text-gray-900 dark:text-white flex items-center gap-1.5 pb-1">
-                        <ArrowDownToLine size={14} className="text-emerald-500" />
-                        {t("proxy.upload_timeouts.header_wait_title")}
-                    </div>
-                    <div className="max-w-xs">
-                        {numberField(
-                            uploadRaw.header_wait_secs,
-                            DEFAULT_UPLOAD.header_wait_secs,
-                            seconds,
-                            (text) => handleUploadInput("header_wait_secs", text),
-                            () => handleUploadBlur("header_wait_secs"),
-                        )}
-                    </div>
-                    <p className="text-[11px] text-gray-500 dark:text-gray-400 pt-1 leading-normal">
-                        {t("proxy.upload_timeouts.header_wait_desc")}
-                    </p>
-                </div>
-
-                <div className="p-2.5 bg-emerald-50/70 dark:bg-emerald-950/30 rounded-lg text-[11px] text-emerald-900 dark:text-emerald-300 space-y-1">
-                    <div className="font-semibold">{t("proxy.timeouts.header_primary_title")}</div>
-                    <ul className="pl-4 list-disc space-y-0.5 text-gray-600 dark:text-gray-400">
-                        <li>{t("proxy.timeouts.header_primary_items")}</li>
-                    </ul>
-                    <div className="font-semibold pt-1">{t("proxy.timeouts.header_fallback_title")}</div>
-                    <ul className="pl-4 list-disc space-y-0.5 text-gray-600 dark:text-gray-400">
-                        <li>{t("proxy.timeouts.header_fallback_items")}</li>
-                    </ul>
-                </div>
-            </div>
-
             {/* ④ 首字与连续输出 */}
             {sectionTitle(<RadioTower size={13} className="text-purple-500" />, t("proxy.timeouts.section_stream"))}
             <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-normal">
@@ -487,6 +467,28 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
                         () => handleStreamBlur("streaming_sliding_secs"),
                     ),
                 )}
+            </div>
+
+            {/* 统一首字延迟：媒体类型增量（由 TTFT 派生，不再硬编码独立超时表） */}
+            <div className="p-3 bg-purple-50/70 dark:bg-purple-950/20 rounded-lg text-[11px] text-purple-900 dark:text-purple-300 space-y-1">
+                <div className="font-semibold">{t("proxy.timeouts.header_primary_title")}</div>
+                <ul className="pl-4 list-disc space-y-0.5 text-gray-600 dark:text-gray-400">
+                    <li>{t("proxy.timeouts.header_primary_items")}</li>
+                </ul>
+                <div className="font-semibold pt-1">{t("proxy.timeouts.header_fallback_title")}</div>
+                <ul className="pl-4 list-disc space-y-0.5 text-gray-600 dark:text-gray-400">
+                    <li>{t("proxy.timeouts.header_fallback_items")}</li>
+                </ul>
+                <div className="pt-1 text-gray-600 dark:text-gray-400">
+                    {t("proxy.timeouts.first_byte_effective", {
+                        text: firstByteText,
+                        image: firstByteImage,
+                        video: firstByteVideo,
+                        aux: firstByteAux,
+                        cap: TTFT_BASE_CAP,
+                        defaultValue: `text ${firstByteText}s / image ${firstByteImage}s / video ${firstByteVideo}s / aux ${firstByteAux}s`,
+                    })}
+                </div>
             </div>
 
             {/* 底部操作栏 */}

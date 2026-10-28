@@ -1311,11 +1311,12 @@
             "section_large_body": "Thử lại tệp lớn",
             "section_header": "③ Tiêu đề phản hồi đầu (tự động chuyển)",
             "header_primary_title": "Endpoint chính:",
-            "header_primary_items": "Chat văn bản/mã: 30　Hình ảnh: 45　Video: 60　Khác: 15 (ví dụ tạo tiêu đề)",
+            "header_primary_items": "Văn bản/mã: TTFT　Hình ảnh: TTFT+45　Video: TTFT+60　Phụ trợ: TTFT−30",
             "header_fallback_title": "Endpoint dự phòng:",
-            "header_fallback_items": "Chat văn bản/mã: 25　Hình ảnh: 25　Video: 30　Khác: 15 (ví dụ tạo tiêu đề)",
-            "section_stream": "④ Token đầu và xuất liên tục",
-            "stream_desc": "Không chuyển endpoint; luồng kết thúc an toàn hoặc client thử lại.",
+            "header_fallback_items": "cùng mức tăng, giảm một nửa (mức tăng âm giữ nguyên)",
+            "first_byte_effective": "Đang áp dụng: văn bản/mã {{text}}s　hình ảnh {{image}}s　video {{video}}s　phụ trợ {{aux}}s",
+            "section_stream": "③ Token đầu và xuất liên tục",
+            "stream_desc": "Chờ header và token đầu tiên đã được gộp thành một độ trễ byte đầu duy nhất: được phép chuyển endpoint trước HTTP 200, sau đó chỉ kết thúc an toàn.",
             "auto_summary": "Ví dụ: chờ tối đa = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} giây;"
         },
         "example": {

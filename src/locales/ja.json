@@ -1264,11 +1264,12 @@
             "section_large_body": "大容量ファイルの再試行",
             "section_header": "③ 初回レスポンスヘッダー（自動フェイルオーバー）",
             "header_primary_title": "優先エンドポイント：",
-            "header_primary_items": "テキスト／コードチャット：30　画像：45　動画：60　その他：15（タイトル生成など）",
+            "header_primary_items": "通常：TTFT　画像：TTFT+45　動画：TTFT+60　補助：TTFT−30",
             "header_fallback_title": "代替エンドポイント：",
-            "header_fallback_items": "テキスト／コードチャット：25　画像：25　動画：30　その他：15（タイトル生成など）",
-            "section_stream": "④ 初文字と連続出力",
-            "stream_desc": "エンドポイントは切り替えません。安全に収尾するかクライアントの再試行に委ねます。",
+            "header_fallback_items": "同じ増分を半分に（負の増分はそのまま）",
+            "first_byte_effective": "現在の適用値：通常 {{text}}s　画像 {{image}}s　動画 {{video}}s　補助 {{aux}}s",
+            "section_stream": "③ 初文字と連続出力",
+            "stream_desc": "レスポンスヘッダー待ちと最初のトークンは単一の初回バイト待ちに統合されました。HTTP 200 前はエンドポイント切替が可能、200 後は安全な終了のみ行います。",
             "auto_summary": "例：最大待機 = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} 秒;"
         },
         "cloudflared": {

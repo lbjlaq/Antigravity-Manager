@@ -1289,11 +1289,12 @@
             "section_large_body": "大文件重试",
             "section_header": "③ 首响应头（自动故障切换端点）",
             "header_primary_title": "首选端点：",
-            "header_primary_items": "文字代码聊天：30　图片：45　视频：60　其他：15（如标题生成）",
+            "header_primary_items": "常规：TTFT　图片：TTFT+45　视频：TTFT+60　辅助：TTFT−30",
             "header_fallback_title": "备选端点：",
-            "header_fallback_items": "文字代码聊天：25　图片：25　视频：30　其他：15（如标题生成）",
-            "section_stream": "④ 首字与连续输出",
-            "stream_desc": "不会切换端点，只安全收尾或交给客户端重试。",
+            "header_fallback_items": "同类增量减半（负增量不减半）",
+            "first_byte_effective": "当前生效（基准上限 {{cap}}s）：常规 {{text}}s　图片 {{image}}s　视频 {{video}}s　辅助 {{aux}}s",
+            "section_stream": "③ 首字与连续输出",
+            "stream_desc": "首响应头与首个输出 token 已合并为统一首字延迟：未收到 200 前可切换端点；收到 200 后只安全收尾，不再切换。",
             "auto_summary": "例：最大等待时间= 47MB ÷ 2Mbps ×1.4 ≈ {{big}} 秒；"
         },
         "cloudflared": {
