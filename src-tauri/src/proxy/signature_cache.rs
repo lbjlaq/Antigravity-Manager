@@ -157,6 +157,7 @@ static GLOBAL_MIN_PERSIST_SEQ: AtomicU64 = AtomicU64::new(0);
 static SESSION_MIN_PERSIST_SEQ: OnceLock<Mutex<HashMap<String, (u64, Instant)>>> = OnceLock::new();
 static TOOL_TOUCH_THROTTLE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
 static DIRTY_SAVES: OnceLock<Mutex<HashMap<String, (String, u64)>>> = OnceLock::new();
+static PERSIST_RETRY_AFTER: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 const DIRTY_SAVE_CAP: usize = 50_000;
 static PENDING_SESSION_DELETES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 struct PersistSenders {
@@ -286,6 +287,26 @@ fn is_session_delete_pending_for_scoped_key(scoped_key: &str) -> bool {
     is_session_delete_pending_for_store(store_key)
 }
 
+fn persist_backoff_active() -> bool {
+    PERSIST_RETRY_AFTER
+        .get()
+        .and_then(|slot| slot.lock().ok())
+        .and_then(|until| *until)
+        .map(|until| Instant::now() < until)
+        .unwrap_or(false)
+}
+
+fn set_persist_backoff(active: bool) {
+    let slot = PERSIST_RETRY_AFTER.get_or_init(|| Mutex::new(None));
+    if let Ok(mut until) = slot.lock() {
+        *until = if active {
+            Some(Instant::now() + Duration::from_secs(1))
+        } else {
+            None
+        };
+    }
+}
+
 fn flush_tool_sig_batch(batch: &mut HashMap<String, (String, u64)>) {
     if batch.is_empty() {
         return;
@@ -297,7 +318,10 @@ fn flush_tool_sig_batch(batch: &mut HashMap<String, (String, u64)>) {
         for (key, signature, seq) in entries {
             mark_dirty_save(key, signature, seq);
         }
+        set_persist_backoff(true);
         tracing::debug!("[SignatureCache] Background tool signature batch save deferred: {e}");
+    } else {
+        set_persist_backoff(false);
     }
 }
 
@@ -343,9 +367,11 @@ fn run_tool_sig_persist_worker(
         let first_cmd = match save_rx.recv_timeout(Duration::from_millis(5)) {
             Ok(cmd) => cmd,
             Err(RecvTimeoutError::Timeout) => {
-                drain_dirty_saves(&mut batch);
-                flush_touch_batch(&mut touch_batch);
-                flush_tool_sig_batch(&mut batch);
+                if !persist_backoff_active() {
+                    drain_dirty_saves(&mut batch);
+                    flush_touch_batch(&mut touch_batch);
+                    flush_tool_sig_batch(&mut batch);
+                }
                 continue;
             }
             Err(RecvTimeoutError::Disconnected) => break,
