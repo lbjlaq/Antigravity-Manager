@@ -157,10 +157,12 @@ static TOOL_TOUCH_THROTTLE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock
 static DIRTY_SAVES: OnceLock<Mutex<HashMap<String, (String, u64)>>> = OnceLock::new();
 const DIRTY_SAVE_CAP: usize = 50_000;
 static PENDING_SESSION_DELETES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
-static TOOL_SIG_PERSIST_TX: OnceLock<(
-    SyncSender<ToolSigPersistCmd>,
-    SyncSender<ToolSigPersistCmd>,
-)> = OnceLock::new();
+struct PersistSenders {
+    save: SyncSender<ToolSigPersistCmd>,
+    delete: SyncSender<ToolSigPersistCmd>,
+}
+
+static TOOL_SIG_PERSIST_TX: OnceLock<PersistSenders> = OnceLock::new();
 
 #[inline]
 fn next_persist_seq() -> u64 {
@@ -401,27 +403,26 @@ fn run_tool_sig_persist_worker(
     }
 }
 
-fn persist_senders() -> (
-    &'static SyncSender<ToolSigPersistCmd>,
-    &'static SyncSender<ToolSigPersistCmd>,
-) {
-    let pair = TOOL_SIG_PERSIST_TX.get_or_init(|| {
+fn persist_senders() -> &'static PersistSenders {
+    TOOL_SIG_PERSIST_TX.get_or_init(|| {
         let (save_tx, save_rx) = sync_channel(crate::proxy::cache_profile().queue_cap.max(1));
         let (delete_tx, delete_rx) = sync_channel(TOOL_DELETE_QUEUE_CAP);
         let _ = std::thread::Builder::new()
             .name("ag-tool-sig-writer".to_string())
             .spawn(move || run_tool_sig_persist_worker(save_rx, delete_rx));
-        (save_tx, delete_tx)
-    });
-    (&pair.0, &pair.1)
+        PersistSenders {
+            save: save_tx,
+            delete: delete_tx,
+        }
+    })
 }
 
 fn tool_sig_persist_sender() -> &'static SyncSender<ToolSigPersistCmd> {
-    persist_senders().0
+    &persist_senders().save
 }
 
 fn tool_sig_delete_sender() -> &'static SyncSender<ToolSigPersistCmd> {
-    persist_senders().1
+    &persist_senders().delete
 }
 
 /// Cache entry with timestamp for TTL
