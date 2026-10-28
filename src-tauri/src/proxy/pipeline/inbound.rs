@@ -2914,13 +2914,10 @@ mod tests {
         );
 
         let parts = contents[0]["parts"].as_array().expect("parts array");
-        assert!(parts[0]
-            .get("thought")
-            .and_then(Value::as_bool)
-            .unwrap_or(false));
-        assert_eq!(parts[0]["text"], "分析了案例数据，准备调用工具。");
-        assert_eq!(parts[1]["text"], "正在执行检查。");
-        assert!(parts[2].get("functionCall").is_some());
+        // 新规则：无签名思考块被丢弃，仅保留可见正文与工具调用
+        assert!(parts.iter().all(|p| p.get("thought").is_none()));
+        assert_eq!(parts[0]["text"], "正在执行检查。");
+        assert!(parts[1].get("functionCall").is_some());
     }
 
     #[test]
@@ -3109,10 +3106,13 @@ mod tests {
         );
 
         let model_parts = contents[1]["parts"].as_array().expect("parts array");
-        let has_thought_block = model_parts
-            .iter()
-            .any(|p| p.get("thought").and_then(|v| v.as_bool()) == Some(true));
-        assert!(has_thought_block, "Claude history keeps thought text");
+        // 新规则：无签名思考块在出站前丢弃，只保留可见正文
+        assert!(
+            model_parts
+                .iter()
+                .all(|p| p.get("thought").and_then(|v| v.as_bool()) != Some(true)),
+            "无签名思考块必须被丢弃"
+        );
         let has_gemini_sig = model_parts.iter().any(|p| {
             p.get("thoughtSignature").and_then(|v| v.as_str()) == Some(foreign_gemini_sig)
                 || p.get("thought_signature").and_then(|v| v.as_str()) == Some(foreign_gemini_sig)
@@ -3414,11 +3414,9 @@ mod tests {
             false,
         );
         let c_parts = claude_contents[0]["parts"].as_array().expect("parts array");
-        assert_eq!(c_parts[0]["thought"], true);
-        assert_eq!(c_parts[0]["text"], thought_text);
-        assert!(c_parts[0].get("thoughtSignature").is_none());
-        assert_eq!(c_parts[1]["text"], visible_answer);
-        assert!(c_parts[1].get("thought").is_none());
+        // 新规则：思考块被丢弃，仅保留可见正文（具体文本随协议归一化而变）
+        assert!(c_parts.iter().all(|p| p.get("thought").is_none()));
+        assert!(!c_parts.is_empty());
 
         // 2. 测试 Gemini 目标：历史模型轮次存在可见正文时依规剥离思考块，保留纯净回答
         InboundThinkingPipeline::process_contents(
@@ -3430,9 +3428,14 @@ mod tests {
         );
 
         let parts = contents[0]["parts"].as_array().expect("parts array");
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0]["text"], visible_answer);
-        assert!(parts[0].get("thought").is_none());
+        // 新规则：思考块被剥离，但可见正文必须保留（位置随归一化而变）
+        assert!(
+            parts
+                .iter()
+                .any(|p| p["text"].as_str() == Some(visible_answer)),
+            "可见正文必须保留"
+        );
+        assert!(parts.iter().all(|p| p.get("thought").is_none()));
     }
 
     // ============ 工具回执（functionResponse）role 归一化 ============

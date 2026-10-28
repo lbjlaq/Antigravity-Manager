@@ -2889,11 +2889,12 @@ mod tests {
             "thinkingConfig should be preserved for gemini-3-pro"
         );
 
-        let budget = gen_config["thinkingConfig"]["thinkingBudget"]
-            .as_u64()
-            .unwrap();
-        // In Auto mode, client's budget is ignored and bare gemini-3-pro defaults to 10001
-        assert_eq!(budget, 10001);
+        // 新规则：Pro 模型只下发 includeThoughts，不显式下发 thinkingBudget
+        assert_eq!(gen_config["thinkingConfig"]["includeThoughts"], true);
+        assert!(
+            gen_config["thinkingConfig"].get("thinkingBudget").is_none(),
+            "Pro 模型不再显式下发 thinkingBudget"
+        );
     }
 
     #[test]
@@ -3322,12 +3323,9 @@ mod tests {
             .as_array()
             .expect("Contents array");
         let assistant_parts = contents[1]["parts"].as_array().expect("Assistant parts");
-        assert_eq!(assistant_parts.len(), 2);
-        assert!(assistant_parts[0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .contains("Considering the question deeply..."));
-        assert_eq!(assistant_parts[1]["text"], "Here is my answer");
+        // 新规则：无签名思考块出站前丢弃，仅保留正文
+        assert_eq!(assistant_parts.len(), 1);
+        assert_eq!(assistant_parts[0]["text"], "Here is my answer");
     }
 
     #[test]

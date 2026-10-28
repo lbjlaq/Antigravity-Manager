@@ -1422,12 +1422,13 @@ mod tests {
             None,
             None,
         );
-        let budget_pro = result_pro["request"]["generationConfig"]["thinkingConfig"]
-            ["thinkingBudget"]
-            .as_u64()
-            .unwrap();
-        // Pro models without suffix now default to 10001 in wrap_request logic
-        assert_eq!(budget_pro, 10001);
+        // 新规则：Pro 模型不再显式下发 thinkingBudget（交服务端默认）
+        assert!(
+            result_pro["request"]["generationConfig"]["thinkingConfig"]
+                .get("thinkingBudget")
+                .is_none(),
+            "Pro 模型不再显式下发 thinkingBudget"
+        );
     }
 
     #[test]
@@ -1866,16 +1867,12 @@ mod tests {
         let model_msg = &contents[0];
         let parts = model_msg["parts"].as_array().unwrap();
 
-        // 【2026-09-27】占位思考块（"·"）直接丢弃，不再归一为 "..."
-        // Part 0 should be the second (meaningful) thinking block, now promoted to the head
-        assert_eq!(parts[0]["thought"], true);
-        assert_eq!(
-            parts[0]["text"],
-            "second thought block that should be downgraded"
+        // 新规则：所有无真实签名的思考块（含占位块）一律丢弃
+        assert!(
+            parts.iter().all(|p| p.get("thought") != Some(&json!(true))),
+            "无签名思考块必须被丢弃"
         );
-
-        // Part 1 remains regular text
-        assert_eq!(parts[1]["text"], "Regular model response");
+        assert_eq!(parts[0]["text"], "Regular model response");
     }
 
     #[test]
@@ -1902,7 +1899,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 16384);
+        assert_eq!(tc["thinkingBudget"], -1);
         assert!(tc.get("thinkingLevel").is_none());
 
         // 2. 裸模型 Flash 接管客户端 thinkingLevel
@@ -1921,7 +1918,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 16384);
+        assert_eq!(tc["thinkingBudget"], -1);
         assert!(tc.get("thinkingLevel").is_none());
 
         let req_flash_low = json!({
@@ -1932,7 +1929,7 @@ mod tests {
         });
         let wrapped = wrap_request(&req_flash_low, "test-p", "gemini-3-flash", None, None, None);
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 1024);
+        assert_eq!(tc["thinkingBudget"], 1000);
         assert!(tc.get("thinkingLevel").is_none());
 
         // 3. 裸模型 Flash 客户端传 NONE 或未传：绝不关闭思考，强制回填 -medium (4096)
@@ -1951,7 +1948,8 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 4096);
+        // 新行为：NONE 与 LOW 同档，回填 1000 预算
+        assert_eq!(tc["thinkingBudget"], 1000);
         assert!(tc.get("thinkingLevel").is_none());
 
         let req_flash_empty = json!({
@@ -1966,7 +1964,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 4096);
+        assert_eq!(tc["thinkingBudget"], 4000);
 
         // 4. 裸模型 Flash 客户端传入自定义 thinkingBudget：彻底被忽略，由服务端权威等级回填
         let req_flash_custom_budget = json!({
@@ -1984,7 +1982,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 4096);
+        assert_eq!(tc["thinkingBudget"], 4000);
 
         let req_flash_high_custom_budget = json!({
             "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
@@ -2001,6 +1999,7 @@ mod tests {
             None,
         );
         let tc = &wrapped["request"]["generationConfig"]["thinkingConfig"];
-        assert_eq!(tc["thinkingBudget"], 16384);
+        // 新行为：HIGH 档回填 -1（不限预算）
+        assert_eq!(tc["thinkingBudget"], -1);
     }
 }

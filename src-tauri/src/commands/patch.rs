@@ -1096,6 +1096,7 @@ mod tests {
         assert!(status_reverted.is_patchable);
     }
 
+    #[ignore = "需要本机已安装 Claude 实例，不在单测门禁执行"]
     #[tokio::test]
     async fn test_antigravity_tools_claude_discovery_and_patching() {
         println!(
