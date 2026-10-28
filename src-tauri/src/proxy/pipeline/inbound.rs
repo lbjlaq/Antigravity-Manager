@@ -724,10 +724,7 @@ impl InboundThinkingPipeline {
         let Some(contents) = root.get_mut("contents").and_then(Value::as_array_mut) else {
             return 0;
         };
-        for content in contents.iter_mut() {
-            let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) else {
-                continue;
-            };
+        let mut sanitize_parts = |parts: &mut Vec<Value>| {
             for part in parts.iter_mut() {
                 let Some(obj) = part.as_object_mut() else {
                     continue;
@@ -759,6 +756,23 @@ impl InboundThinkingPipeline {
                     stripped += 1;
                 }
             }
+        };
+        for content in contents.iter_mut() {
+            if let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) {
+                sanitize_parts(parts);
+            }
+        }
+        let sys_key = if root.get("systemInstruction").is_some() {
+            "systemInstruction"
+        } else {
+            "system_instruction"
+        };
+        if let Some(parts) = root
+            .get_mut(sys_key)
+            .and_then(|s| s.get_mut("parts"))
+            .and_then(Value::as_array_mut)
+        {
+            sanitize_parts(parts);
         }
 
         if stripped > 0 {
@@ -5196,6 +5210,10 @@ mod tests {
         assert_eq!(parts[5]["thoughtSignature"], SENTINEL_SIGNATURE);
         // 思考文本保留
         assert_eq!(parts[0]["text"], "t1");
+        // 幂等：第二次预过滤不应再产生任何剥离
+        let stripped_again =
+            InboundThinkingPipeline::sanitize_inbound_signatures(&mut body, "gemini-3.0-pro");
+        assert_eq!(stripped_again, 0);
 
         // Claude 目标：只保留 Claude 签名，剔除 Gemini/哨兵/过短签名
         let mut body2 = json!({"contents":[{"role":"model","parts":[
@@ -5208,6 +5226,9 @@ mod tests {
         let stripped2 =
             InboundThinkingPipeline::sanitize_inbound_signatures(&mut body2, "claude-sonnet-4-6");
         assert_eq!(stripped2, 3);
+        let stripped2_again =
+            InboundThinkingPipeline::sanitize_inbound_signatures(&mut body2, "claude-sonnet-4-6");
+        assert_eq!(stripped2_again, 0);
         let parts2 = body2["contents"][0]["parts"].as_array().unwrap();
         assert!(parts2[0].get("thoughtSignature").is_none());
         assert_eq!(parts2[1]["thoughtSignature"], claude_sig);

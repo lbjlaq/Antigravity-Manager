@@ -85,7 +85,7 @@ static SIGNATURE_CACHE_METRICS: SignatureCacheMetrics = SignatureCacheMetrics::n
 pub fn signature_cache_stats() -> SignatureCacheStats {
     let pending_deletes = PENDING_SESSION_DELETES
         .get()
-        .map(|map| map.len())
+        .map(|map| map.iter().filter(|e| *e.value() > 0).count())
         .unwrap_or(0);
     let session_floors = SESSION_MIN_PERSIST_SEQ
         .get()
@@ -180,22 +180,18 @@ fn matches_scoped_session(scoped_key: &str, session_id: &str) -> bool {
 fn mark_pending_session_delete(session_id: &str) {
     let map = PENDING_SESSION_DELETES.get_or_init(DashMap::new);
     *map.entry(session_id.to_string()).or_insert(0) += 1;
+    if map.len() > 4096 {
+        // 只清理已归零的条目；非零计数必须保留，避免与并发 mark 竞争丢计数。
+        map.retain(|_, count| *count > 0);
+    }
 }
 
 fn complete_pending_session_delete(session_id: &str) {
     if let Some(map) = PENDING_SESSION_DELETES.get() {
-        let remove = if let Some(mut count) = map.get_mut(session_id) {
-            if *count <= 1 {
-                true
-            } else {
-                *count -= 1;
-                false
-            }
-        } else {
-            false
-        };
-        if remove {
-            map.remove(session_id);
+        if let Some(mut count) = map.get_mut(session_id) {
+            // 不在这里 remove：remove 与并发 mark 之间存在丢计数窗口。
+            // 归零条目由 mark 的低频 retain 清理。
+            *count = (*count).saturating_sub(1);
         }
     }
 }
