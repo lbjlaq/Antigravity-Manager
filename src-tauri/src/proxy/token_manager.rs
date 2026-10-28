@@ -2296,7 +2296,26 @@ impl TokenManager {
         }
 
         // [QoS Guardian] 剔除处于小黑屋隔离与正在探针探测中的受限账号
+        let before_jail = available.len();
         available.retain(|t| !self.qos_guardian.is_jailed_or_probing(&t.account_id));
+        let jailed = before_jail.saturating_sub(available.len());
+        if jailed > 0 {
+            if available.is_empty() {
+                // 全池都被关小黑屋：这是“没号可用”的真正原因，必须进 error.log
+                tracing::error!(
+                    "[Scheduler] 全部 {} 个候选账号均处于 QoS 小黑屋/探测中 | model={}",
+                    jailed,
+                    normalized_target
+                );
+            } else {
+                tracing::debug!(
+                    "[Scheduler] {} 个账号因 QoS 小黑屋/探测被排除 | model={} 剩余候选={}",
+                    jailed,
+                    normalized_target,
+                    available.len()
+                );
+            }
+        }
 
         // [QoS Guardian] 优先调度纯 Healthy 账号组，避开 Suspicious（只出不进）与 HalfOpen（缓刑试探）
         let pure_healthy: Vec<&ProxyToken> = available

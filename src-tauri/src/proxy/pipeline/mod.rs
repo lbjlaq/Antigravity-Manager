@@ -8,6 +8,7 @@
 //! 出站不设统一流水线，保持协议发散的灵活性与流式稳定性。
 
 pub mod auto_heal;
+pub mod budget;
 pub mod estimator;
 pub mod image;
 pub mod inbound;
@@ -18,6 +19,12 @@ pub mod stream_lifecycle;
 pub mod usage;
 
 pub use auto_heal::{wrap_stream_with_empty_thinking_auto_heal, ThinkingAutoHealContext};
+pub use budget::{
+    clamp_budget_secs, current_deadline, deadline_now, estimated_tokens, exhausted,
+    gateway_request_budget_secs, register_upstream_call, remaining_secs, set_estimated_tokens,
+    RequestContext, DEFAULT_GATEWAY_REQUEST_BUDGET_SECS, MAX_LARGE_BODY_UPSTREAM_CALLS,
+    REPLAY_GUARD_BODY_BYTES,
+};
 pub use estimator::{estimate_tokens, PipelineTokenEstimator};
 pub use image::{
     extract_image_generation_diagnostic, response_has_inline_image_data,

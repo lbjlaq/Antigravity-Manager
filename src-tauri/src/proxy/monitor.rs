@@ -8,6 +8,9 @@ use tokio::sync::{RwLock, Semaphore};
 // Admission happens before spawn_blocking, so queued tasks cannot retain unlimited bodies.
 static LOG_WRITERS: Semaphore = Semaphore::const_new(4);
 
+/// 因写盘闸门繁忙而丢弃的请求日志计数（仅用于限流上报，不影响业务）
+static LOG_DROPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyRequestLog {
     pub id: String,
@@ -506,7 +509,16 @@ impl ProxyMonitor {
         }
 
         let Ok(permit) = LOG_WRITERS.try_acquire() else {
-            tracing::debug!("Skipping proxy log persistence: writers busy");
+            // 日志写盘繁忙时会被丢弃：这直接解释了“后台查不到这次请求”。
+            // 用计数限流上报，避免日志风暴，但保证这种“静默丢日志”可见。
+            let dropped = LOG_DROPS.fetch_add(1, Ordering::Relaxed) + 1;
+            if dropped % 100 == 1 {
+                // ERROR 级：丢弃请求日志 = 事后无法回溯，必须进 error.log
+                tracing::error!(
+                    "[Monitor] 日志落库繁忙，已丢弃 {} 条请求日志（不会出现在 proxy_logs.db）",
+                    dropped
+                );
+            }
             return;
         };
         // Save to DB (respect server-side simple/full storage mode)

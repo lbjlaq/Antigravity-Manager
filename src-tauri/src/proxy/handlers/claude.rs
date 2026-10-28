@@ -24,7 +24,7 @@ use crate::proxy::mappers::context_manager::ContextManager;
 use crate::proxy::mappers::gemini::SUMMARY_REQUEST_TIMEOUT_SECS;
 use crate::proxy::model_specs;
 use crate::proxy::server::AppState;
-use crate::proxy::upstream::client::mask_email;
+use crate::proxy::upstream::client::{mask_email, parse_endpoint_name};
 use axum::http::HeaderMap;
 use dashmap::DashMap;
 use std::sync::{Arc, LazyLock};
@@ -866,6 +866,31 @@ pub(crate) fn normalize_claude_error_status(status_code: u16) -> StatusCode {
 /// 处理 Claude messages 请求
 ///
 /// 处理 Chat 消息请求流程
+/// 判定本次请求是否启用了上游思考（供 QoS 阈值分档使用）。
+///
+/// 不能只看 Anthropic 的 `thinking` 字段：jeikcode / Codex 等客户端不发送该字段，
+/// 而是由网关按 thinking budget 配置注入 `thinkingConfig`。只按 `request.thinking`
+/// 判定，会把所有深度思考请求当成非思考请求，用 20s 阈值系统性误杀账号。
+fn request_enables_thinking(request_thinking: bool, gemini_body: &serde_json::Value) -> bool {
+    if request_thinking {
+        return true;
+    }
+    let root = gemini_body.get("request").unwrap_or(gemini_body);
+    let Some(tc) = root
+        .get("generationConfig")
+        .and_then(|g| g.get("thinkingConfig"))
+    else {
+        return false;
+    };
+    if let Some(budget) = tc.get("thinkingBudget").and_then(|v| v.as_i64()) {
+        return budget != 0;
+    }
+    if let Some(level) = tc.get("thinkingLevel").and_then(|v| v.as_str()) {
+        return !level.eq_ignore_ascii_case("off") && !level.is_empty();
+    }
+    true
+}
+
 pub async fn handle_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1731,9 +1756,12 @@ pub async fn handle_messages(
     let mut ttft_ms: f64 = 0.0;
     let mut fallback_overhead_ms: f64 = 0.0;
 
-    let request_start = tokio::time::Instant::now();
-    let global_deadline = request_start
-        + std::time::Duration::from_secs(super::common::MAX_GATEWAY_REQUEST_BUDGET_SECS);
+    // 与 Pipeline 中间件共用同一个截止时刻（四大协议一致），而非各 handler 自算
+    let gateway_budget_secs = crate::proxy::pipeline::budget::gateway_request_budget_secs();
+    let global_deadline = tokio::time::Instant::from_std(
+        crate::proxy::pipeline::budget::current_deadline()
+            .unwrap_or_else(crate::proxy::pipeline::budget::deadline_now),
+    );
 
     let image_scheduler = state.image_scheduler.clone();
     let mut image_permit = None;
@@ -1746,9 +1774,9 @@ pub async fn handle_messages(
         let now = tokio::time::Instant::now();
         if now >= global_deadline {
             tracing::warn!(
-                "[{}] Claude 请求全局预算耗尽（{}s，共经历 {} 次尝试），终止重试以杜绝触发客户端 5 分钟超时看门狗",
+                "[{}] Claude 请求全局预算耗尽（{}s，共经历 {} 次尝试），终止重试以杜绝触发客户端超时看门狗",
                 trace_id,
-                super::common::MAX_GATEWAY_REQUEST_BUDGET_SECS,
+                gateway_budget_secs,
                 attempt
             );
             if last_status == StatusCode::SERVICE_UNAVAILABLE || last_status == StatusCode::OK {
@@ -1758,7 +1786,7 @@ pub async fn handle_messages(
             if last_error.is_empty() {
                 last_error = format!(
                     "Gateway global request budget exceeded ({}s)",
-                    super::common::MAX_GATEWAY_REQUEST_BUDGET_SECS
+                    gateway_budget_secs
                 );
             }
             break;
@@ -1884,6 +1912,10 @@ pub async fn handle_messages(
                     mapped_model.as_str(),
                     &safe_message,
                 );
+                crate::proxy::stage_trace::StageTrace::alert_current_error(
+                    "gateway_local",
+                    format!("token_unavailable status=503 reason={}", safe_message),
+                );
                 return (StatusCode::SERVICE_UNAVAILABLE, headers, Json(dual_err)).into_response();
             }
         };
@@ -1892,6 +1924,16 @@ pub async fn handle_messages(
 
         last_email = Some(email.clone());
         info!("✓ Using account: {} (type: {})", email, config.request_type);
+        crate::proxy::stage_trace::StageTrace::mark_current(
+            "account",
+            format!(
+                "account={} type={} wait_ms={} in_flight={}",
+                mask_email(&email),
+                config.request_type,
+                _wait_ms,
+                token_manager.get_in_flight(&account_id)
+            ),
+        );
 
         let mapped_model = token_manager
             .resolve_dynamic_model_for_account(&account_id, &mapped_model)
@@ -1934,6 +1976,10 @@ pub async fn handle_messages(
                         (b, timing)
                     }
                     Err(e) => {
+                        crate::proxy::stage_trace::StageTrace::alert_current_error(
+                            "gateway_local",
+                            format!("transform_error account={} err={}", mask_email(&email), e),
+                        );
                         let headers = [
                             ("X-Mapped-Model", request_with_mapped.model.as_str()),
                             ("X-Upstream-Model", config.final_model.as_str()),
@@ -1960,6 +2006,29 @@ pub async fn handle_messages(
             }
             (b, timing)
         };
+
+        crate::proxy::stage_trace::StageTrace::mark_current(
+            "transform",
+            format!(
+                "model={} contents={} tools={} est_tokens={}",
+                request_with_mapped.model,
+                gemini_body
+                    .get("request")
+                    .unwrap_or(&gemini_body)
+                    .get("contents")
+                    .and_then(|c| c.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0),
+                gemini_body
+                    .get("request")
+                    .unwrap_or(&gemini_body)
+                    .get("tools")
+                    .and_then(|t| t.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0),
+                raw_estimated
+            ),
+        );
 
         // [Signature-Retry] 400 签名错误后的重试：流水线统一去签名
         if retried_without_thinking {
@@ -2072,35 +2141,101 @@ pub async fn handle_messages(
         // [Stage 4 Timing] 等待谷歌上游首包计时起点
         let upstream_req_start = std::time::Instant::now();
 
-        let call_result = match upstream
-            .call_v1_internal_with_headers(
+        crate::proxy::stage_trace::StageTrace::mark_current(
+            "upstream_call",
+            format!(
+                "attempt={}/{} model={} account={} est_tokens={}",
+                attempt + 1,
+                max_attempts,
+                request_with_mapped.model,
+                mask_email(&email),
+                raw_estimated
+            ),
+        );
+
+        // 全局预算硬约束：单次上游调用不得超过本请求剩余全局预算。
+        // 否则单次调用内部预算（上传 + 首字）可能叠加出远超全局上限的总耗时——
+        // 那样“全局预算 270s”只是限制“尝试次数”，而不是真正的总时长封顶。
+        let upstream_timeout = std::time::Duration::from_secs(remaining_global_secs.max(5));
+        let upstream_call_outcome: Result<
+            crate::proxy::upstream::client::UpstreamCallResult,
+            String,
+        > = match tokio::time::timeout(
+            upstream_timeout,
+            upstream.call_v1_internal_with_headers(
                 method,
                 &access_token,
                 gemini_body.clone(),
                 query,
                 extra_headers.clone(),
                 Some(account_id.as_str()),
-            )
-            .await
+            ),
+        )
+        .await
         {
+            Ok(inner) => inner,
+            Err(_) => Err(format!(
+                "{}Gateway global request budget ({}s) exhausted while awaiting upstream (attempt {}/{})",
+                crate::proxy::upstream::client::FIRST_BYTE_STAGE_TERMINAL_MARKER,
+                gateway_budget_secs,
+                attempt + 1,
+                max_attempts
+            )),
+        };
+        let call_result = match upstream_call_outcome {
             Ok(r) => r,
             Err(e) => {
                 last_error = e.clone();
                 failure_statuses.record(StatusCode::GATEWAY_TIMEOUT);
-                token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                // 首字节预算耗尽 = 上游排队 / 大上下文 prefill 慢，不是账号故障：
+                // 计入账号冷却只会让整池被逐一轮换，而每次重试都从头 prefill 同一份大 body。
+                let first_byte_terminal =
+                    crate::proxy::upstream::client::is_first_byte_stage_failure(&e);
+                crate::proxy::stage_trace::StageTrace::alert_current(
+                    "upstream_err",
+                    format!(
+                        "attempt={}/{} first_byte_terminal={} elapsed={:.1}s err={}",
+                        attempt + 1,
+                        max_attempts,
+                        first_byte_terminal,
+                        upstream_req_start.elapsed().as_secs_f64(),
+                        crate::proxy::upstream::client::strip_internal_markers(&e)
+                    ),
+                );
+                if !first_byte_terminal {
+                    token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                }
                 debug!(
                     "Request failed on attempt {}/{}: {}",
                     attempt + 1,
                     max_attempts,
                     e
                 );
-                // [Fixes #3763] 大体积上传阶段终止：不再跨账号重发同一大 body
-                if crate::proxy::upstream::client::is_upload_stage_failure(&e) {
-                    tracing::warn!(
-                        "Large-body upload aborted before completion; stopping account rotation to avoid re-upload amplification"
-                    );
+                // 终态重放抑制：上传被截断或首字节预算耗尽，均不再跨账号重发同一 body
+                if crate::proxy::upstream::client::is_terminal_replay_suppressed(&e) {
+                    if first_byte_terminal {
+                        tracing::warn!(
+                            account = %mask_email(&email),
+                            "First-byte budget exhausted upstream; returning 504 without account rotation (account not penalized)"
+                        );
+                    } else {
+                        tracing::warn!(
+                            "Large-body upload aborted before completion; stopping account rotation to avoid re-upload amplification"
+                        );
+                    }
                     break;
                 }
+                // 账号轮换：属于调度异常，必须被看到
+                crate::proxy::stage_trace::StageTrace::alert_current(
+                    "account_rotate",
+                    format!(
+                        "from={} attempt={}/{} reason={}",
+                        mask_email(&email),
+                        attempt + 1,
+                        max_attempts,
+                        crate::proxy::upstream::client::strip_internal_markers(&e)
+                    ),
+                );
                 continue;
             }
         };
@@ -2149,6 +2284,15 @@ pub async fn handle_messages(
 
         // 成功
         if status.is_success() {
+            crate::proxy::stage_trace::StageTrace::mark_current(
+                "upstream_ok",
+                format!(
+                    "status={} endpoint={} elapsed={:.1}s",
+                    status.as_u16(),
+                    parse_endpoint_name(&upstream_url),
+                    upstream_req_start.elapsed().as_secs_f64()
+                ),
+            );
             let track_image_success = config.request_type == "image_gen";
             if !track_image_success {
                 token_manager.commit_session(&affinity_key, &account_id);
@@ -2236,7 +2380,7 @@ pub async fn handle_messages(
                         &account_id,
                         Some(affinity_key.as_str()),
                         ttft_ms,
-                        request.thinking.is_some(),
+                        request_enables_thinking(request.thinking.is_some(), &gemini_body),
                         Some(raw_estimated as u32),
                     );
                     if let Some(effective_item) =
@@ -2386,7 +2530,7 @@ pub async fn handle_messages(
                                 &account_id,
                                 Some(affinity_key.as_str()),
                                 ttft_ms,
-                                request.thinking.is_some(),
+                                request_enables_thinking(request.thinking.is_some(), &gemini_body),
                                 Some(raw_estimated as u32),
                             );
                             if let Some(effective_item) =
@@ -2623,7 +2767,7 @@ pub async fn handle_messages(
                     &account_id,
                     Some(affinity_key.as_str()),
                     ttft_ms,
-                    request.thinking.is_some(),
+                    request_enables_thinking(request.thinking.is_some(), &gemini_body),
                     Some(raw_estimated as u32),
                 );
                 if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective)
@@ -3379,7 +3523,7 @@ mod claude_error_normalization_tests {
             "claude",
             504,
             "claude-3-7-sonnet",
-            "Gateway global request budget exceeded (240s)",
+            "Gateway global request budget exceeded (270s)",
         );
         assert_eq!(err_json["type"], "error");
         let err_str = serde_json::to_string(&err_json).unwrap();

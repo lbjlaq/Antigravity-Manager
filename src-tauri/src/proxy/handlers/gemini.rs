@@ -452,17 +452,22 @@ pub async fn handle_generate(
                 last_error = e.clone();
                 failure_statuses.record(StatusCode::BAD_GATEWAY);
                 drop(image_permit.take());
-                token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                // 首字节预算耗尽不是账号故障：不计入账号冷却，也不跨账号重放同一 body
+                let first_byte_terminal =
+                    crate::proxy::upstream::client::is_first_byte_stage_failure(&e);
+                if !first_byte_terminal {
+                    token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                }
                 debug!(
                     "Gemini Request failed on attempt {}/{}: {}",
                     attempt + 1,
                     max_attempts,
                     e
                 );
-                // [Fixes #3763] 大体积上传阶段终止：不再跨账号重发同一大 body
-                if crate::proxy::upstream::client::is_upload_stage_failure(&e) {
+                if crate::proxy::upstream::client::is_terminal_replay_suppressed(&e) {
                     tracing::warn!(
-                        "Large-body upload aborted before completion; stopping account rotation to avoid re-upload amplification"
+                        first_byte = first_byte_terminal,
+                        "Stopping account rotation to avoid re-upload/prefill amplification"
                     );
                     break;
                 }

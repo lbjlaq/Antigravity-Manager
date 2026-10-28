@@ -608,6 +608,7 @@ impl AxumServer {
             admin_auth_middleware, auth_middleware, cors_layer, ip_filter_middleware,
             monitor_middleware, service_status_middleware,
         };
+        use crate::proxy::stage_trace::stage_trace_middleware;
 
         // 1. 构建主 AI 代理路由 (遵循 auth_mode 配置)
         let proxy_routes = Router::new()
@@ -735,7 +736,10 @@ impl AxumServer {
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 ip_filter_middleware,
-            ));
+            ))
+            // 阶段时间线中间件置于最外层：确保鉴权/IP 拦截也会留下“请求到过网关”的痕迹，
+            // 且客户端中途断开时由 Drop 守卫落一条 canceled 到 error.log。
+            .layer(axum::middleware::from_fn(stage_trace_middleware));
 
         // 2. 构建管理 API (强制鉴权)
         let admin_routes = Router::new()

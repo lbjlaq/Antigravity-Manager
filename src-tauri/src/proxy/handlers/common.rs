@@ -153,11 +153,14 @@ pub fn calculate_max_retry_attempts(pool_size: usize) -> usize {
     }
 }
 
-/// 单次客户端请求在网关内部允许消耗的最大全局时间预算（秒，默认 240s）
-/// Claude Code 客户端原生设置了 300 秒（5分钟）的首包超时看门狗 (firstWindowMs = 300_000)。
-/// 网关内部在尝试跨账号轮换时，总耗时必须严格控制在 240 秒以内，确保在看门狗触发前向客户端返回
-/// 结构化规范化错误（504 Gateway Timeout 或 429/503），避免客户端弹出未响应警告框。
-pub const MAX_GATEWAY_REQUEST_BUDGET_SECS: u64 = 240;
+/// 全局请求预算已下沉到 Pipeline（`proxy::pipeline::budget`），四大协议适配器统一生效。
+///
+/// 这里仅保留兼容导出，避免既有引用点一次性大改；新代码请直接用
+/// `crate::proxy::pipeline::budget::gateway_request_budget_secs()`。
+pub use crate::proxy::pipeline::budget::{
+    gateway_request_budget_secs,
+    DEFAULT_GATEWAY_REQUEST_BUDGET_SECS as MAX_GATEWAY_REQUEST_BUDGET_SECS,
+};
 
 /// [Issue #3634, #3693] 统一自适应计算流预读（Peek）阶段的超时时间。
 /// - Compaction 摘要请求：大 Prompt 处理，默认 180s；
@@ -459,6 +462,9 @@ pub fn determine_retry_strategy_adaptive(
 }
 
 /// 上报并评估首包 TTFT 耗时到 QoS 守卫
+///
+/// 传入的 `input_tokens` 只是 handler 侧的估值；若 Pipeline 已在**转出报文**上
+/// 估过 token（四条协议口径统一），优先采用后者，避免各协议分桶标准不一致。
 pub fn report_qos_ttft(
     token_manager: &crate::proxy::token_manager::TokenManager,
     account_id: &str,
@@ -470,13 +476,14 @@ pub fn report_qos_ttft(
     let tier = token_manager
         .get_account_tier(account_id)
         .unwrap_or_else(|| "PRO".to_string());
+    let unified_tokens = crate::proxy::pipeline::budget::estimated_tokens().or(input_tokens);
     token_manager.record_qos_ttft(
         account_id,
         session_id,
         &tier,
         ttft_ms,
         is_deep_thinking,
-        input_tokens,
+        unified_tokens,
     );
 }
 

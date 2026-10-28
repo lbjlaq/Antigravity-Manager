@@ -41,6 +41,18 @@ pub struct TtftSample {
     pub timestamp: Instant,
     pub is_thinking: bool,
     pub is_cold_start: bool,
+    /// 未缓存 token 的分桶（桶宽 20K），用于同规模对比，避免拿热缓存小请求当基准
+    pub uncached_bucket: u8,
+}
+
+/// 冷启动样本分桶宽度（未缓存 token）
+const COLD_BUCKET_TOKENS: u32 = 20_000;
+
+/// 判定冷启动是否违规所需的最少同桶基线样本数（低于它只记样本、不判罚）
+const MIN_COLD_PEER_SAMPLES: usize = 3;
+
+fn cold_bucket_of(uncached_tokens: u32) -> u8 {
+    ((uncached_tokens / COLD_BUCKET_TOKENS).min(15)) as u8
 }
 
 /// 裁决动作
@@ -231,6 +243,63 @@ impl QoSGuardian {
         }
     }
 
+    /// 冷启动同桶基线均值（毫秒）
+    ///
+    /// 只采纳：同 Tier、纯 Healthy、`is_cold_start` 且未缓存桶相差 ±1 的样本。
+    /// 样本数不足 [`MIN_COLD_PEER_SAMPLES`] 时返回 None（上层据此“只采样不判罚”）。
+    fn calculate_cold_peer_avg<F>(
+        &self,
+        target_account_id: &str,
+        target_tier: &str,
+        target_bucket: u8,
+        all_accounts: &[ProxyToken],
+        is_unhealthy_or_limited: F,
+    ) -> Option<f64>
+    where
+        F: Fn(&str) -> bool,
+    {
+        let now = Instant::now();
+        let sample_ttl = Duration::from_secs(15 * 60);
+        let norm_target_tier = target_tier.trim().to_uppercase();
+        let mut values: Vec<f64> = Vec::new();
+
+        for acc in all_accounts {
+            let acc_tier = acc
+                .subscription_tier
+                .as_deref()
+                .unwrap_or("FREE")
+                .trim()
+                .to_uppercase();
+            if acc_tier != norm_target_tier || acc.account_id == target_account_id {
+                continue;
+            }
+            if is_unhealthy_or_limited(&acc.account_id) {
+                continue;
+            }
+            if let Some(state) = self.states.get(&acc.account_id) {
+                if !matches!(state.value(), AccountQoSState::Healthy) {
+                    continue;
+                }
+            }
+            if let Some(samples) = self.samples.get(&acc.account_id) {
+                for s in samples.iter() {
+                    if now.duration_since(s.timestamp) > sample_ttl
+                        || !s.is_cold_start
+                        || s.uncached_bucket.abs_diff(target_bucket) > 1
+                    {
+                        continue;
+                    }
+                    values.push(s.ttft_ms);
+                }
+            }
+        }
+
+        if values.len() < MIN_COLD_PEER_SAMPLES {
+            return None;
+        }
+        Some(values.iter().sum::<f64>() / values.len() as f64)
+    }
+
     /// 评估单次请求的 TTFT 并流转状态机
     pub fn record_and_evaluate<F>(
         &self,
@@ -282,22 +351,62 @@ impl QoSGuardian {
         }
 
         // 2. 动态预算补偿算法：
-        // - 每 100K 未缓存 Token 额外补偿 +7.0s 物理 Prefill 计算耗时
+        // - 每 100K 未缓存 Token 额外补偿 +15.0s 物理 Prefill 耗时
+        //   （实测 150K 冷启动首字 36~44s，原来的 7.0s/100K 明显低估，会把正常 prefill 判成限速）
         // - 基础阈值：非深度思考为 20.0s，深度思考上浮至 35.0s
-        let uncached_bonus_secs = (uncached_tokens as f64 / 100_000.0) * 7.0;
+        let uncached_bonus_secs = (uncached_tokens as f64 / 100_000.0) * 15.0;
         let base_threshold_secs = if is_deep_thinking { 35.0 } else { 20.0 };
         let threshold_secs = base_threshold_secs + uncached_bonus_secs;
 
         // 宽限平反阈值：基础为 18.5s，同比例支持未缓存增量补偿
         let vindicate_threshold_secs = 18.5 + uncached_bonus_secs;
 
-        // 标记是否为大 Token 冷启动 (未缓存 >= 80K)
-        let is_cold_start = uncached_tokens >= 80_000;
+        // 标记是否为大 Token 冷启动 (未缓存 >= 60K)
+        let is_cold_start = uncached_tokens >= 60_000;
+        let bucket = cold_bucket_of(uncached_tokens);
 
-        // 3. 提取纯净同侪均值 (秒)
-        let peer_avg_secs = self
-            .calculate_pure_peer_avg(account_id, tier, all_accounts, &is_unhealthy_or_limited)
-            .map(|ms| ms / 1000.0);
+        // 冷启动不搞“一刀切豁免”（真被限速也测不出来），而是**只和同桶冷启动样本比**：
+        // - 有 ≥3 个同桶基线 → 正常参与 strike 判定；
+        // - 没有基线 → 只记样本、不判罚（首次遇到该规模时绝不误杀）。
+        let cold_peer_avg = if is_cold_start {
+            self.calculate_cold_peer_avg(
+                account_id,
+                tier,
+                bucket,
+                all_accounts,
+                &is_unhealthy_or_limited,
+            )
+        } else {
+            None
+        };
+
+        if is_cold_start && cold_peer_avg.is_none() {
+            tracing::debug!(
+                "[QoS] cold-start without same-bucket baseline | account={} ttft={:.2}s uncached={} bucket={} strike_threshold={:.1}s",
+                account_id,
+                ttft_secs,
+                uncached_tokens,
+                bucket,
+                threshold_secs
+            );
+            self.push_sample_with_bucket(account_id, ttft_ms, is_deep_thinking, true, bucket);
+            return QoSAction::None;
+        }
+
+        // 3. 提取同侪均值 (秒)：冷启动对比同桶冷启动，常规对比热缓存样本
+        let peer_avg_secs = if is_cold_start {
+            cold_peer_avg
+        } else {
+            self.calculate_pure_peer_avg(account_id, tier, all_accounts, &is_unhealthy_or_limited)
+        }
+        .map(|ms| ms / 1000.0);
+
+        // 3.1 冷启动的相对阈值：有同桶基线时，拿“同桶均值的 1.5 倍”与绝对阈值取大。
+        // 否则 150K 冷启动的 42.5s 绝对线会卡在实测 36~44s 的抖动区间，依旧可能误杀。
+        let threshold_secs = match (is_cold_start, peer_avg_secs) {
+            (true, Some(peer_avg)) => threshold_secs.max(peer_avg * 1.5),
+            _ => threshold_secs,
+        };
 
         // 4. 检查全局雪崩防护：若纯净同行均值本身也 >= 20s，说明上游机房大面积拥堵，刹车不触发单号惩罚
         if let Some(peer_avg) = peer_avg_secs {
@@ -307,7 +416,13 @@ impl QoSGuardian {
                     peer_avg, threshold_secs, account_id
                 );
                 // 记录采样后退出
-                self.push_sample(account_id, ttft_ms, is_deep_thinking, is_cold_start);
+                self.push_sample_with_bucket(
+                    account_id,
+                    ttft_ms,
+                    is_deep_thinking,
+                    is_cold_start,
+                    bucket,
+                );
                 return QoSAction::None;
             }
         }
@@ -485,8 +600,8 @@ impl QoSGuardian {
             }
         };
 
-        // 记录采样 (大 Token 冷启动样本在基线计算中隔离)
-        self.push_sample(account_id, ttft_ms, is_deep_thinking, is_cold_start);
+        // 记录采样 (冷启动样本同时记入其规模桶，供后续同桶对比)
+        self.push_sample_with_bucket(account_id, ttft_ms, is_deep_thinking, is_cold_start, bucket);
 
         action
     }
@@ -516,12 +631,25 @@ impl QoSGuardian {
         is_thinking: bool,
         is_cold_start: bool,
     ) {
+        self.push_sample_with_bucket(account_id, ttft_ms, is_thinking, is_cold_start, 0);
+    }
+
+    /// 带分桶的采样入口
+    fn push_sample_with_bucket(
+        &self,
+        account_id: &str,
+        ttft_ms: f64,
+        is_thinking: bool,
+        is_cold_start: bool,
+        uncached_bucket: u8,
+    ) {
         let mut entry = self.samples.entry(account_id.to_string()).or_default();
         entry.push(TtftSample {
             ttft_ms,
             timestamp: Instant::now(),
             is_thinking,
             is_cold_start,
+            uncached_bucket,
         });
         let ttl = Duration::from_secs(15 * 60);
         entry.retain(|s| s.timestamp.elapsed() <= ttl);

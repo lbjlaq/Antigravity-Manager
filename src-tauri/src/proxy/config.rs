@@ -856,7 +856,12 @@ pub struct UploadTimeoutConfig {
     #[serde(default = "default_upload_stall_secs")]
     pub stall_secs: u64,
 
-    /// 首响应头超时（秒，默认 0 = 使用场景内置值：聊天 30/25s、图片 45/25s、视频 60/30s、其他 15/15s）
+    /// 统一首字延迟的旧版兼容下限（秒，默认 0 = 不额外抬高）
+    ///
+    /// 自本版本起「首响应头」与「首字」合并为统一首字延迟（TTFB≡TTFT），
+    /// 实际预算 = max(用户 TTFT 设置, 按 token 规模的自适应下限) + 媒体增量，
+    /// 媒体增量：常规 +0 / 图片 +45 / 视频 +60 / 辅助 −30，备用端点增量减半。
+    /// 本字段仅在非 0 时作为上述结果的**下限**，不再有 30/25s 的内置绝对表。
     #[serde(default = "default_header_wait_secs")]
     pub header_wait_secs: u64,
 

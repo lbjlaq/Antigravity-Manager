@@ -30,6 +30,7 @@ pub mod qos_guardian; // QoS 智能熔断与阶梯探针守卫
 pub mod rate_limit; // 限流跟踪
 pub mod session_manager; // 会话指纹管理
 pub mod signature_cache; // Signature Cache (v3.3.16)
+pub mod stage_trace; // 请求阶段时间线（可观测性）
 pub mod sticky_config; // 粘性调度配置
 pub mod thinking_store; // 服务端完整思考块存储
 pub mod upstream; // 上游客户端
