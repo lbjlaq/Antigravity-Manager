@@ -1,5 +1,6 @@
 use crate::proxy::config::LogRetentionConfig;
 use crate::proxy::monitor::ProxyRequestLog;
+use dashmap::DashMap;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -28,7 +29,7 @@ static TOOL_SIGNATURE_DB: OnceLock<Mutex<Option<Arc<ToolSigReadPool>>>> = OnceLo
 static TOOL_SIGNATURE_WRITE_DB: OnceLock<Mutex<Option<ToolSignatureWriteDb>>> = OnceLock::new();
 static TOOL_SIG_GLOBAL_EPOCH: AtomicU64 = AtomicU64::new(1);
 static TOOL_SIG_KEY_EPOCH_SEQ: AtomicU64 = AtomicU64::new(1);
-static TOOL_SIG_KEY_EPOCHS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+static TOOL_SIG_KEY_EPOCHS: OnceLock<DashMap<String, u64>> = OnceLock::new();
 
 const TOOL_SIG_PRUNE_WRITE_INTERVAL: usize = 128;
 const TOOL_SIG_PRUNE_TIME_INTERVAL_MS: i64 = 5 * 60 * 1000;
@@ -632,32 +633,27 @@ pub(crate) fn current_tool_sig_epochs(tool_id: &str) -> (u64, u64) {
     let norm_id = crate::proxy::common::utils::normalize_tool_id(tool_id);
     let key_epoch = TOOL_SIG_KEY_EPOCHS
         .get()
-        .and_then(|slot| slot.lock().ok())
-        .and_then(|map| map.get(norm_id.as_ref()).copied())
+        .and_then(|map| map.get(norm_id.as_ref()).map(|v| *v))
         .unwrap_or(0);
     (global_epoch, key_epoch)
 }
 
 #[inline]
 fn bump_tool_sig_global_epoch() {
-    if let Some(slot) = TOOL_SIG_KEY_EPOCHS.get() {
-        if let Ok(mut map) = slot.lock() {
-            map.clear();
-        }
+    if let Some(map) = TOOL_SIG_KEY_EPOCHS.get() {
+        map.clear();
     }
     TOOL_SIG_GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel);
 }
 
 fn bump_tool_sig_key_epoch(norm_id: &str) {
     let next_epoch = TOOL_SIG_KEY_EPOCH_SEQ.fetch_add(1, Ordering::AcqRel);
-    let slot = TOOL_SIG_KEY_EPOCHS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut map) = slot.lock() {
-        if map.len() >= MAX_TOOL_SIGNATURES_ROWS * 2 && !map.contains_key(norm_id) {
-            map.clear();
-            TOOL_SIG_GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel);
-        }
-        map.insert(norm_id.to_string(), next_epoch);
+    let map = TOOL_SIG_KEY_EPOCHS.get_or_init(DashMap::new);
+    if map.len() >= MAX_TOOL_SIGNATURES_ROWS * 2 && !map.contains_key(norm_id) {
+        map.clear();
+        TOOL_SIG_GLOBAL_EPOCH.fetch_add(1, Ordering::AcqRel);
     }
+    map.insert(norm_id.to_string(), next_epoch);
 }
 
 fn with_tool_signature_write_db<T, F>(f: F) -> Result<T, String>

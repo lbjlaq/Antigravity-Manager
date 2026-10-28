@@ -85,7 +85,6 @@ static SIGNATURE_CACHE_METRICS: SignatureCacheMetrics = SignatureCacheMetrics::n
 pub fn signature_cache_stats() -> SignatureCacheStats {
     let pending_deletes = PENDING_SESSION_DELETES
         .get()
-        .and_then(|slot| slot.lock().ok())
         .map(|map| map.len())
         .unwrap_or(0);
     let session_floors = SESSION_MIN_PERSIST_SEQ
@@ -155,11 +154,11 @@ enum ToolSigPersistCmd {
 static PERSIST_SEQ: AtomicU64 = AtomicU64::new(1);
 static GLOBAL_MIN_PERSIST_SEQ: AtomicU64 = AtomicU64::new(0);
 static SESSION_MIN_PERSIST_SEQ: OnceLock<Mutex<HashMap<String, (u64, Instant)>>> = OnceLock::new();
-static TOOL_TOUCH_THROTTLE: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+static TOOL_TOUCH_THROTTLE: OnceLock<DashMap<String, Instant>> = OnceLock::new();
 static DIRTY_SAVES: OnceLock<Mutex<HashMap<String, (String, u64)>>> = OnceLock::new();
 static PERSIST_RETRY_AFTER: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 const DIRTY_SAVE_CAP: usize = 50_000;
-static PENDING_SESSION_DELETES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+static PENDING_SESSION_DELETES: OnceLock<DashMap<String, usize>> = OnceLock::new();
 struct PersistSenders {
     save: SyncSender<ToolSigPersistCmd>,
     delete: SyncSender<ToolSigPersistCmd>,
@@ -179,31 +178,30 @@ fn matches_scoped_session(scoped_key: &str, session_id: &str) -> bool {
 }
 
 fn mark_pending_session_delete(session_id: &str) {
-    let slot = PENDING_SESSION_DELETES.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut map) = slot.lock() {
-        *map.entry(session_id.to_string()).or_insert(0) += 1;
-    }
+    let map = PENDING_SESSION_DELETES.get_or_init(DashMap::new);
+    *map.entry(session_id.to_string()).or_insert(0) += 1;
 }
 
 fn complete_pending_session_delete(session_id: &str) {
-    if let Some(slot) = PENDING_SESSION_DELETES.get() {
-        if let Ok(mut map) = slot.lock() {
-            if let Some(count) = map.get_mut(session_id) {
-                if *count <= 1 {
-                    map.remove(session_id);
-                } else {
-                    *count -= 1;
-                }
+    if let Some(map) = PENDING_SESSION_DELETES.get() {
+        let remove = if let Some(mut count) = map.get_mut(session_id) {
+            if *count <= 1 {
+                true
+            } else {
+                *count -= 1;
+                false
             }
+        } else {
+            false
+        };
+        if remove {
+            map.remove(session_id);
         }
     }
 }
 
 fn should_enqueue_touch(scoped_key: &str) -> bool {
-    let slot = TOOL_TOUCH_THROTTLE.get_or_init(|| Mutex::new(HashMap::new()));
-    let Ok(mut map) = slot.lock() else {
-        return false;
-    };
+    let map = TOOL_TOUCH_THROTTLE.get_or_init(DashMap::new);
     let now = Instant::now();
     if let Some(last) = map.get(scoped_key) {
         if last.elapsed() < TOOL_TOUCH_INTERVAL {
@@ -260,18 +258,15 @@ fn drain_dirty_saves(batch: &mut HashMap<String, (String, u64)>) {
 }
 
 fn is_session_delete_pending_for_store(store_key: &str) -> bool {
-    let Some(slot) = PENDING_SESSION_DELETES.get() else {
+    let Some(map) = PENDING_SESSION_DELETES.get() else {
         return false;
     };
-    let Ok(map) = slot.lock() else {
-        return false;
-    };
-    if map.get(store_key).copied().unwrap_or(0) > 0 {
+    if map.get(store_key).is_some_and(|v| *v > 0) {
         return true;
     }
     let mut rest = store_key;
     while let Some((_, tail)) = rest.split_once(':') {
-        if map.get(tail).copied().unwrap_or(0) > 0 {
+        if map.get(tail).is_some_and(|v| *v > 0) {
             return true;
         }
         rest = tail;
