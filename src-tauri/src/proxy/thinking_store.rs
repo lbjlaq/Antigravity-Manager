@@ -1912,6 +1912,9 @@ pub fn finalize_gemini_contents_thinking_with_options(
     // 将该轮获取到的有效签名攒在手上 (pending_thought_sig) 预留给下一轮；
     // 若下一轮有新签名返回，则丢弃旧签名采纳新签名；若下一轮无签名，则由攒着的签名补充。
     let mut pending_thought_sig: Option<String> = None;
+    let is_claude_target = target_model
+        .map(|m| m.to_lowercase().contains("claude"))
+        .unwrap_or(false);
 
     let initial_session_sig: Option<String> =
         if untrusted_signatures || compaction_boundary.is_some() {
@@ -1920,7 +1923,13 @@ pub fn finalize_gemini_contents_thinking_with_options(
             session_id.and_then(|sid| {
                 crate::proxy::SignatureCache::global()
                     .get_session_signature(sid)
-                    .filter(|s| is_likely_gemini_signature(s))
+                    .filter(|s| {
+                        if is_claude_target {
+                            is_claude_signature(s)
+                        } else {
+                            is_likely_gemini_signature(s)
+                        }
+                    })
             })
         };
 
