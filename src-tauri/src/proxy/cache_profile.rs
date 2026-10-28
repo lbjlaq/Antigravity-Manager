@@ -87,9 +87,7 @@ fn resolve_profile() -> CacheProfile {
             }
         }
 
-        let name = if deployment == "server"
-            || (total_memory_mb >= 64 * 1024 && cores >= 16)
-        {
+        let name = if deployment == "server" || (total_memory_mb >= 64 * 1024 && cores >= 16) {
             "server"
         } else if total_memory_mb >= 32 * 1024 && cores >= 16 {
             "high"
