@@ -65,35 +65,42 @@ fn resolve_profile() -> CacheProfile {
     };
 
     #[cfg(test)]
-    {
+    let profile = {
         // 测试保持单读连接，避免现有连接复用断言失效。
         let mut profile = profile_from_name("standard", total_memory_mb, cores, deployment);
         profile.read_pool_size = 1;
-        return profile;
-    }
-
-    if let Ok(raw) = std::env::var("ANTIGRAVITY_CACHE_PROFILE") {
-        match raw.to_lowercase().as_str() {
-            "low" => return profile_from_name("low", total_memory_mb, cores, deployment),
-            "standard" => {
-                return profile_from_name("standard", total_memory_mb, cores, deployment);
-            }
-            "high" => return profile_from_name("high", total_memory_mb, cores, deployment),
-            "server" => return profile_from_name("server", total_memory_mb, cores, deployment),
-            _ => {}
-        }
-    }
-
-    let name = if deployment == "server" || total_memory_mb >= 64 * 1024 && cores >= 16 {
-        "server"
-    } else if total_memory_mb >= 32 * 1024 && cores >= 16 {
-        "high"
-    } else if total_memory_mb >= 8 * 1024 && cores >= 4 {
-        "standard"
-    } else {
-        "low"
+        profile
     };
-    profile_from_name(name, total_memory_mb, cores, deployment)
+    #[cfg(not(test))]
+    let profile = {
+        if let Ok(raw) = std::env::var("ANTIGRAVITY_CACHE_PROFILE") {
+            match raw.to_lowercase().as_str() {
+                "low" => return profile_from_name("low", total_memory_mb, cores, deployment),
+                "standard" => {
+                    return profile_from_name("standard", total_memory_mb, cores, deployment);
+                }
+                "high" => return profile_from_name("high", total_memory_mb, cores, deployment),
+                "server" => {
+                    return profile_from_name("server", total_memory_mb, cores, deployment);
+                }
+                _ => {}
+            }
+        }
+
+        let name = if deployment == "server"
+            || (total_memory_mb >= 64 * 1024 && cores >= 16)
+        {
+            "server"
+        } else if total_memory_mb >= 32 * 1024 && cores >= 16 {
+            "high"
+        } else if total_memory_mb >= 8 * 1024 && cores >= 4 {
+            "standard"
+        } else {
+            "low"
+        };
+        profile_from_name(name, total_memory_mb, cores, deployment)
+    };
+    profile
 }
 
 static PROFILE: OnceLock<CacheProfile> = OnceLock::new();
