@@ -746,7 +746,11 @@ export default function ThinkingBudget({
                                 {signatureCacheStats?.stats?.l1_entries ?? "-"} / {signatureCacheStats?.profile?.l1_limit ?? "-"}
                             </div>
                             <div>
-                                <span className="text-gray-400">命中率</span>{" "}
+                                <span className="text-gray-400">
+                                    {t("proxy.config.thinking_budget.signature_cache_hit_rate", {
+                                        defaultValue: "命中率",
+                                    })}
+                                </span>{" "}
                                 {(() => {
                                     const s = signatureCacheStats?.stats;
                                     const hits = (s?.l1_hits ?? 0) + (s?.l2_hits ?? 0);
@@ -755,15 +759,31 @@ export default function ThinkingBudget({
                                 })()}
                             </div>
                             <div>
-                                <span className="text-gray-400">思考块</span>{" "}
-                                {signatureCacheStats?.thinking?.memory_turns ?? "-"} 轮 / {signatureCacheStats?.thinking?.sessions ?? "-"} 会话
+                                <span className="text-gray-400">
+                                    {t("proxy.config.thinking_budget.signature_cache_thinking", {
+                                        defaultValue: "思考块",
+                                    })}
+                                </span>{" "}
+                                {t("proxy.config.thinking_budget.signature_cache_thinking_value", {
+                                    turns: signatureCacheStats?.thinking?.memory_turns ?? "-",
+                                    sessions: signatureCacheStats?.thinking?.sessions ?? "-",
+                                    defaultValue: "{{turns}} 轮 / {{sessions}} 会话",
+                                })}
                             </div>
                             <div>
-                                <span className="text-gray-400">丢弃</span>{" "}
+                                <span className="text-gray-400">
+                                    {t("proxy.config.thinking_budget.signature_cache_dropped", {
+                                        defaultValue: "丢弃",
+                                    })}
+                                </span>{" "}
                                 {signatureCacheStats?.stats?.saves_dropped ?? 0}
                             </div>
                             <div>
-                                <span className="text-gray-400">待删除</span>{" "}
+                                <span className="text-gray-400">
+                                    {t("proxy.config.thinking_budget.signature_cache_pending", {
+                                        defaultValue: "待删除",
+                                    })}
+                                </span>{" "}
                                 {signatureCacheStats?.stats?.pending_deletes ?? 0}
                             </div>
                         </div>
@@ -771,9 +791,11 @@ export default function ThinkingBudget({
                             {t("proxy.config.thinking_budget.signature_cache_desc", {
                                 defaultValue: "按本机 CPU / 内存自动选择缓存档位；SQLite 仅做冷层，批量写入与压缩清理均在后台完成。",
                             })}
-                            {signatureCacheStats?.profile?.total_memory_mb
-                                ? ` 本机 ${signatureCacheStats.profile.total_memory_mb} MB / ${signatureCacheStats.profile.cores ?? "-"} 核。`
-                                : ""}
+                            {t("proxy.config.thinking_budget.signature_cache_machine", {
+                                mb: signatureCacheStats?.profile?.total_memory_mb ?? "-",
+                                cores: signatureCacheStats?.profile?.cores ?? "-",
+                                defaultValue: "本机 {{mb}} MB / {{cores}} 核。",
+                            })}
                         </p>
                     </div>
 
