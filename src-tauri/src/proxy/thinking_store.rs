@@ -4394,9 +4394,13 @@ mod tests {
         })];
         finalize_gemini_contents_thinking(&mut contents, true);
         let parts = contents[0]["parts"].as_array().unwrap();
-        assert_eq!(parts[0]["thought"], true);
-        assert!(parts[0].get("thoughtSignature").is_none());
-        assert_eq!(parts[1]["thoughtSignature"], real_sig);
+        // 新规则：无真实签名的思考块出站前被丢弃，不再"升级 σ 填充签名"
+        assert!(parts.iter().all(|p| p.get("thought") != Some(&json!(true))));
+        let fc = parts
+            .iter()
+            .find(|p| p.get("functionCall").is_some())
+            .expect("functionCall part");
+        assert_eq!(fc["thoughtSignature"], real_sig);
     }
 
     #[test]
@@ -5066,10 +5070,10 @@ mod tests {
         // 因此无签名的 functionCall 保持「字段缺席」，绝不发明占位符。
         let parts = contents[0]["parts"].as_array().unwrap();
         assert_eq!(parts.len(), 1);
-        assert!(
-            parts[0].get("thoughtSignature").is_none()
-                && parts[0].get("thought_signature").is_none(),
-            "Unsigned functionCall must stay unsigned when sent to Gemini — never invent a sentinel"
+        assert_eq!(
+            parts[0]["thoughtSignature"],
+            json!(SENTINEL_SIGNATURE),
+            "Unsigned functionCall 由 base64 哨兵占位（新规则）"
         );
     }
 
@@ -5109,9 +5113,10 @@ mod tests {
             .iter()
             .find(|p| p.get("functionCall").is_some())
             .unwrap();
-        assert!(
-            fc.get("thoughtSignature").is_none(),
-            "Pipeline finalize must not invent a sentinel; absence is tolerated by upstream"
+        assert_eq!(
+            fc["thoughtSignature"],
+            json!(SENTINEL_SIGNATURE),
+            "Pipeline finalize 在 functionCall 缺签名时写入 base64 哨兵占位"
         );
     }
 
@@ -5349,9 +5354,11 @@ mod tests {
         );
 
         let model_parts = gemini_contents[1]["parts"].as_array().expect("parts");
-        // 验证思考块被成功提升复活：
-        assert_eq!(model_parts[0]["thought"], true);
-        assert_eq!(model_parts[0]["text"], thought_text);
+        // 新规则：无真实签名的思考块被丢弃，不再"提升复活"
+        assert!(
+            model_parts.iter().all(|p| p.get("thought") != Some(&json!(true))),
+            "无签名思考块必须被丢弃"
+        );
 
         // 验证跨协议捕获到的真实签名被归位到锚点，而不是被替换成哨兵：
         let fc = &model_parts[1];
@@ -5899,18 +5906,11 @@ mod signature_placement_tests {
         );
 
         let parts = contents[0]["parts"].as_array().unwrap();
-        // 1. 思考块不得携带签名（不再假定它一定在 parts[0]，以当前排布为准）
-        let thought_parts: Vec<&Value> = parts
-            .iter()
-            .filter(|p| p.get("thought") == Some(&json!(true)))
-            .collect();
-        assert!(!thought_parts.is_empty(), "思考块必须存在");
-        for tp in thought_parts {
-            assert!(
-                tp.get("thoughtSignature").is_none(),
-                "思考块绝不挂载签名"
-            );
-        }
+        // 1. 新规则：无签名的 thought:true 部件在出站前被整块丢弃
+        assert!(
+            parts.iter().all(|p| p.get("thought") != Some(&json!(true))),
+            "无签名的思考块必须被丢弃，且不得挂载签名"
+        );
 
         // 2. 首个工具调用 fc 必须全局抢夺签名（parts[1] 或首个 fc）
         let fc1 = parts
