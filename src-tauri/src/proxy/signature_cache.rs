@@ -1,7 +1,9 @@
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
+use std::sync::mpsc::{
+    sync_channel, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError,
+};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -707,11 +709,14 @@ impl SignatureCache {
                     SIGNATURE_CACHE_METRICS
                         .saves_dropped
                         .fetch_add(1, Ordering::Relaxed);
+                    let cmd = match err {
+                        TrySendError::Full(cmd) | TrySendError::Disconnected(cmd) => cmd,
+                    };
                     if let ToolSigPersistCmd::Save {
                         key,
                         signature,
                         seq,
-                    } = err.into_inner()
+                    } = cmd
                     {
                         mark_dirty_save(key, signature, seq);
                     }
