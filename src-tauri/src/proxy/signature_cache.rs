@@ -766,6 +766,11 @@ impl SignatureCache {
     /// Retrieve a signature for a tool_use_id inside one session store.
     pub fn get_tool_signature(&self, store_key: &str, tool_use_id: &str) -> Option<String> {
         let started = Instant::now();
+        if self.persist_mode == PersistMode::Async && is_session_delete_pending_for_store(store_key)
+        {
+            SIGNATURE_CACHE_METRICS.record_resolve(false, false, started.elapsed());
+            return None;
+        }
         let candidate_ids = Self::candidate_tool_keys(store_key, tool_use_id);
         if candidate_ids.is_empty() {
             SIGNATURE_CACHE_METRICS.record_resolve(false, false, started.elapsed());
@@ -861,6 +866,10 @@ impl SignatureCache {
     ) -> HashMap<String, String> {
         let mut result = HashMap::new();
         if tool_ids.is_empty() {
+            return result;
+        }
+        if self.persist_mode == PersistMode::Async && is_session_delete_pending_for_store(store_key)
+        {
             return result;
         }
         let batch_started = Instant::now();
