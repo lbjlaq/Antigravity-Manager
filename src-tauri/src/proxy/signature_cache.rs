@@ -293,7 +293,11 @@ fn flush_tool_sig_batch(batch: &mut HashMap<String, (String, u64)>) {
     let entries: Vec<(String, String, u64)> =
         batch.drain().map(|(k, (sig, seq))| (k, sig, seq)).collect();
     if let Err(e) = crate::modules::proxy_db::save_tool_signatures_batch_if_current(&entries) {
-        tracing::debug!("[SignatureCache] Background tool signature batch save skipped: {e}");
+        // 写失败不能直接丢弃：回填 dirty，worker 空闲时重试。
+        for (key, signature, seq) in entries {
+            mark_dirty_save(key, signature, seq);
+        }
+        tracing::debug!("[SignatureCache] Background tool signature batch save deferred: {e}");
     }
 }
 
@@ -308,8 +312,17 @@ fn handle_delete_session(
     });
     flush_touch_batch(touch_batch);
     flush_tool_sig_batch(batch);
-    let _ = crate::modules::proxy_db::delete_tool_signatures_for_session(session_id);
-    complete_pending_session_delete(session_id);
+    match crate::modules::proxy_db::delete_tool_signatures_for_session(session_id) {
+        Ok(_) => complete_pending_session_delete(session_id),
+        Err(e) => {
+            // 删除失败时保持 pending，宁可暂时读不到，也不要让旧签名复活。
+            tracing::warn!(
+                "[SignatureCache] Session delete failed for {}: {}; keeping pending guard",
+                session_id,
+                e
+            );
+        }
+    }
 }
 
 fn run_tool_sig_persist_worker(
@@ -944,8 +957,14 @@ impl SignatureCache {
             return result;
         }
 
-        let loaded = crate::modules::proxy_db::load_tool_signatures_batch(&all_candidates)
-            .unwrap_or_default();
+        let loaded = match crate::modules::proxy_db::load_tool_signatures_batch(&all_candidates) {
+            Ok(loaded) => loaded,
+            Err(e) => {
+                // 读取失败绝不能写负缓存，否则会把“数据库暂时不可用”污染成 2 小时 miss。
+                tracing::debug!("[SignatureCache] Batch signature load failed: {e}");
+                return result;
+            }
+        };
         for (tool_id, candidates) in pending {
             let mut hit = None;
             for candidate in &candidates {
@@ -1308,9 +1327,15 @@ impl SignatureCache {
         match self.persist_mode {
             PersistMode::Async => {
                 if !delete_enqueued {
-                    let _ =
-                        crate::modules::proxy_db::delete_tool_signatures_for_session(session_id);
-                    complete_pending_session_delete(session_id);
+                    match crate::modules::proxy_db::delete_tool_signatures_for_session(session_id)
+                    {
+                        Ok(_) => complete_pending_session_delete(session_id),
+                        Err(e) => tracing::warn!(
+                            "[SignatureCache] Fallback session delete failed for {}: {}; keeping pending guard",
+                            session_id,
+                            e
+                        ),
+                    }
                 }
             }
             PersistMode::Sync => {
