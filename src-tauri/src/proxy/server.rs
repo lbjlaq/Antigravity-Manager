@@ -921,6 +921,14 @@ impl AxumServer {
                 "/proxy/thinking-store/count",
                 get(admin_get_thinking_store_count),
             )
+            .route(
+                "/proxy/signature-cache/stats",
+                get(admin_get_signature_cache_stats),
+            )
+            .route(
+                "/proxy/signature-cache/clear",
+                post(admin_clear_signature_cache),
+            )
             .route("/logs/:logId", get(admin_get_proxy_log_detail))
             // Debug Console (Log Bridge)
             .route("/debug/enable", post(admin_enable_debug_console))
@@ -2357,6 +2365,33 @@ async fn admin_get_thinking_store_count() -> impl IntoResponse {
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e })),
         ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+async fn admin_get_signature_cache_stats() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "profile": crate::proxy::cache_profile(),
+            "stats": crate::proxy::signature_cache::signature_cache_stats(),
+            "thinking": crate::proxy::thinking_store::thinking_store_stats(),
+        })),
+    )
+}
+
+async fn admin_clear_signature_cache() -> impl IntoResponse {
+    let res = tokio::task::spawn_blocking(|| {
+        let before = crate::proxy::signature_cache::signature_cache_stats().l1_entries;
+        crate::proxy::SignatureCache::global().clear();
+        before
+    })
+    .await;
+    match res {
+        Ok(before) => (StatusCode::OK, Json(json!({ "cleared": before }))),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),

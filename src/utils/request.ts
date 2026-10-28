@@ -59,6 +59,8 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'get_proxy_db_disk_size': { url: '/api/logs/disk-size', method: 'GET' },
   'clear_proxy_logs': { url: '/api/logs/clear', method: 'POST' },
   'clear_thinking_store': { url: '/api/proxy/thinking-store/clear', method: 'POST' },
+  'get_signature_cache_stats': { url: '/api/proxy/signature-cache/stats', method: 'GET' },
+  'clear_signature_cache': { url: '/api/proxy/signature-cache/clear', method: 'POST' },
   'get_thinking_store_count': { url: '/api/proxy/thinking-store/count', method: 'GET' },
   'get_proxy_log_detail': { url: '/api/logs/:logId', method: 'GET' },
 
