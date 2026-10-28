@@ -738,6 +738,7 @@ impl InboundThinkingPipeline {
                     .and_then(|v| v.as_str())
                     .map(str::to_string);
                 let Some(sig) = sig else {
+                    obj.remove("thoughtSignature");
                     obj.remove("thought_signature");
                     continue;
                 };

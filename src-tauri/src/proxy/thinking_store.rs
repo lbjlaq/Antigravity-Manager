@@ -277,7 +277,7 @@ impl ThinkingStore {
         };
 
         if let Some(saved) = persist {
-            let _ = crate::modules::proxy_db::save_thinking_record(
+            if let Err(e) = crate::modules::proxy_db::save_thinking_record(
                 store_key,
                 &saved.fingerprint,
                 &saved.thought,
@@ -285,7 +285,13 @@ impl ThinkingStore {
                 &saved.tool_ids,
                 &saved.tool_names,
                 &saved.visible,
-            );
+            ) {
+                tracing::warn!(
+                    "[ThinkingStore] Failed to persist record for {}: {}",
+                    store_key,
+                    e
+                );
+            }
         }
     }
 
@@ -322,8 +328,17 @@ impl ThinkingStore {
             }
         }
 
-        let persisted =
-            crate::modules::proxy_db::load_thinking_records(store_key).unwrap_or_default();
+        let persisted = match crate::modules::proxy_db::load_thinking_records(store_key) {
+            Ok(records) => records,
+            Err(e) => {
+                tracing::warn!(
+                    "[ThinkingStore] Failed to load L2 records for {}: {}",
+                    store_key,
+                    e
+                );
+                Vec::new()
+            }
+        };
         let loaded_len = persisted.len();
         let mut entry = self
             .sessions

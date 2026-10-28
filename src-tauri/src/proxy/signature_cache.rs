@@ -200,19 +200,22 @@ fn complete_pending_session_delete(session_id: &str) {
     }
 }
 
-fn should_enqueue_touch(scoped_key: &str) -> bool {
+fn touch_is_due(scoped_key: &str) -> bool {
+    TOOL_TOUCH_THROTTLE
+        .get()
+        .and_then(|map| {
+            map.get(scoped_key)
+                .map(|last| last.elapsed() >= TOOL_TOUCH_INTERVAL)
+        })
+        .unwrap_or(true)
+}
+
+fn mark_touch(scoped_key: &str) {
     let map = TOOL_TOUCH_THROTTLE.get_or_init(DashMap::new);
-    let now = Instant::now();
-    if let Some(last) = map.get(scoped_key) {
-        if last.elapsed() < TOOL_TOUCH_INTERVAL {
-            return false;
-        }
-    }
-    map.insert(scoped_key.to_string(), now);
+    map.insert(scoped_key.to_string(), Instant::now());
     if map.len() > crate::proxy::cache_profile().l1_limit * 2 {
         map.retain(|_, at| at.elapsed() < TOOL_TOUCH_INTERVAL);
     }
-    true
 }
 
 fn flush_touch_batch(batch: &mut HashMap<String, (u64, i64)>) {
@@ -628,28 +631,37 @@ impl SignatureCache {
     }
 
     fn enqueue_touch(&self, scoped_key: &str, seq: u64) {
-        if is_session_delete_pending_for_scoped_key(scoped_key)
+        // 先做无锁/分片节流判断，绝大多数命中不会触碰 session floor / pending 全局状态。
+        if !touch_is_due(scoped_key)
+            || is_session_delete_pending_for_scoped_key(scoped_key)
             || !Self::is_persist_entry_current(scoped_key, seq)
         {
-            return;
-        }
-        if !should_enqueue_touch(scoped_key) {
             return;
         }
         let at = chrono::Utc::now().timestamp_millis();
         match self.persist_mode {
             PersistMode::Async => {
-                let _ = tool_sig_persist_sender().try_send(ToolSigPersistCmd::Touch {
-                    key: scoped_key.to_string(),
-                    seq,
-                    at,
-                });
-                SIGNATURE_CACHE_METRICS
-                    .touches_enqueued
-                    .fetch_add(1, Ordering::Relaxed);
+                if tool_sig_persist_sender()
+                    .try_send(ToolSigPersistCmd::Touch {
+                        key: scoped_key.to_string(),
+                        seq,
+                        at,
+                    })
+                    .is_ok()
+                {
+                    mark_touch(scoped_key);
+                    SIGNATURE_CACHE_METRICS
+                        .touches_enqueued
+                        .fetch_add(1, Ordering::Relaxed);
+                }
             }
             PersistMode::Sync => {
-                let _ = crate::modules::proxy_db::touch_tool_signature(scoped_key, at);
+                if crate::modules::proxy_db::touch_tool_signature(scoped_key, at).is_ok() {
+                    mark_touch(scoped_key);
+                    SIGNATURE_CACHE_METRICS
+                        .touches_enqueued
+                        .fetch_add(1, Ordering::Relaxed);
+                }
             }
             #[cfg(test)]
             PersistMode::MemoryOnly => {}
