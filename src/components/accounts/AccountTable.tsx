@@ -53,6 +53,7 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 
 import { useConfigStore } from '../../stores/useConfigStore';
+import { useAccountStore } from '../../stores/useAccountStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
@@ -334,7 +335,10 @@ function AccountRowContent({
         try {
             await releaseAccountQoSJail(account.id);
             showToast(t('accounts.qos.release_success', '已解除该账号的小黑屋限制'), 'success');
-            onRefresh();
+            // 解除小黑屋只影响运行时 QoS 状态，与配额无关：直接重拉账号列表立即回显。
+            // 若复用 onRefresh 的配额刷新链路，上游 429/503 时 fetchAccountQuota 会抛错，
+            // 列表刷新被跳过，界面上的「限速小黑屋中」徽章就会一直残留。
+            await useAccountStore.getState().fetchAccounts();
         } catch (err: any) {
             showToast(err?.message || '解除失败', 'error');
         }
