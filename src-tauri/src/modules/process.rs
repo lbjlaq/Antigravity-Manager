@@ -229,6 +229,7 @@ pub(crate) fn is_helper_process(name: &str, args_str: &str, exe_path: &str) -> b
         || exe_lower.contains("crashpad")
         || exe_lower.contains("helper")
         || exe_lower.contains("language_server")
+        || is_language_server_process(name, exe_path)
 }
 
 /// Sanitize restart arguments to prevent internal engine/language_server arguments
@@ -944,6 +945,7 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
             let start = std::time::Instant::now();
             while start.elapsed() < Duration::from_secs(graceful_timeout) {
                 if !is_antigravity_running(target_ide) {
+                    sweep_orphan_language_servers(target_ide);
                     crate::modules::logger::log_info("All Antigravity processes gracefully closed");
                     return Ok(());
                 }
@@ -979,15 +981,18 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
 
                 // Final check
                 if !is_antigravity_running(target_ide) {
+                    sweep_orphan_language_servers(target_ide);
                     crate::modules::logger::log_info("All processes exited after forced cleanup");
                     return Ok(());
                 }
             } else {
+                sweep_orphan_language_servers(target_ide);
                 crate::modules::logger::log_info("All processes exited after SIGTERM");
                 return Ok(());
             }
         } else {
             // Only consider not running when pids is empty, don't error here as it might already be closed
+            sweep_orphan_language_servers(target_ide);
             crate::modules::logger::log_info("Antigravity not running, no need to close");
             return Ok(());
         }
@@ -1052,6 +1057,7 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
             let start = std::time::Instant::now();
             while start.elapsed() < Duration::from_secs(graceful_timeout) {
                 if !is_antigravity_running(target_ide) {
+                    sweep_orphan_language_servers(target_ide);
                     crate::modules::logger::log_info("Antigravity gracefully closed");
                     return Ok(());
                 }
@@ -1073,6 +1079,7 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
                 }
             }
         } else {
+            sweep_orphan_language_servers(target_ide);
             crate::modules::logger::log_info(
                 "No Antigravity processes found to close (possibly filtered or not running)",
             );
@@ -1085,6 +1092,7 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
 
     while final_check_start.elapsed() < final_check_timeout {
         if !is_antigravity_running(target_ide) {
+            sweep_orphan_language_servers(target_ide);
             crate::modules::logger::log_info("Antigravity closed successfully");
             return Ok(());
         }
@@ -1117,6 +1125,7 @@ pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<
         );
     }
 
+    sweep_orphan_language_servers(target_ide);
     crate::modules::logger::log_info("Antigravity closed successfully");
     Ok(())
 }
@@ -1451,6 +1460,24 @@ fn matches_target_client(
     argv0: &str,
     args_str: &str,
 ) -> bool {
+    if is_language_server_process(name, exe_path) {
+        let name_lower = name.to_lowercase();
+        let exe_lower = exe_path.to_lowercase();
+        let is_agy = name_lower == "agy"
+            || name_lower == "agy.exe"
+            || exe_lower.ends_with("/agy")
+            || exe_lower.ends_with("\\agy")
+            || exe_lower.ends_with("/agy.exe")
+            || exe_lower.ends_with("\\agy.exe");
+
+        if is_agy {
+            // agy 作为语言服务 hub 仅由 Antigravity IDE (2.6.0+) 启动（带 --hub 或 --app_data_dir=antigravity）
+            if args_str.contains("--hub") || args_str.contains("antigravity") {
+                return target_ide == Some("ide");
+            }
+        }
+    }
+
     match classify_process(name, exe_path, argv0, args_str) {
         ClientKind::Manager | ClientKind::Unrelated => false,
         ClientKind::Ide => target_ide == Some("ide"),
@@ -1961,6 +1988,40 @@ mod tests {
     }
 
     #[test]
+    fn test_matches_target_client_for_agy_language_server() {
+        assert!(matches_target_client(
+            Some("ide"),
+            "agy",
+            "/Users/me/.gemini/bin/agy",
+            "agy",
+            "--hub --hub-port=52542 --app_data_dir=antigravity"
+        ));
+        assert!(matches_target_client(
+            Some("ide"),
+            "agy.exe",
+            "C:\\Users\\me\\.gemini\\bin\\agy.exe",
+            "agy.exe",
+            "--hub --hub-port=52542 --app_data_dir=antigravity"
+        ));
+        // Classic mode should not match IDE language server agy
+        assert!(!matches_target_client(
+            None,
+            "agy",
+            "/Users/me/.gemini/bin/agy",
+            "agy",
+            "--hub --hub-port=52542 --app_data_dir=antigravity"
+        ));
+        // Standalone CLI execution without --hub / antigravity should not match IDE
+        assert!(!matches_target_client(
+            Some("ide"),
+            "agy",
+            "/Users/me/.gemini/bin/agy",
+            "agy",
+            "version"
+        ));
+    }
+
+    #[test]
     fn app_bundle_root_splits_by_component() {
         use std::path::{Path, PathBuf};
         assert_eq!(
@@ -2034,6 +2095,16 @@ mod tests {
             "crashpad_handler",
             "",
             "/Applications/Antigravity.app/Contents/Frameworks/Electron Framework.framework/Helpers/chrome_crashpad_handler"
+        ));
+        assert!(is_helper_process(
+            "agy",
+            "--hub --hub-port=52542 --app_data_dir=antigravity",
+            "/Users/me/.gemini/bin/agy"
+        ));
+        assert!(is_helper_process(
+            "agy.exe",
+            "--hub --hub-port=52542 --app_data_dir=antigravity",
+            "C:\\Users\\me\\.gemini\\bin\\agy.exe"
         ));
     }
 

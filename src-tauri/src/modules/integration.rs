@@ -84,16 +84,72 @@ fn apply_account_credentials(
 ) -> Result<(), String> {
     let mut use_keyring = false;
 
-    // 硬防护（issue #3762）：目标一旦确认为 IDE，坚决走 SQLite state.vscdb 注入。
-    // IDE（VS Code OSS 架构）的 2.6.0+ 版本号会被误判为「经典版 >= 2.0.0」而走系统 Keyring，
-    // 导致 IDE 启动后读不到凭据并提示重新登录。Keyring 仅供原生经典版 Standalone 使用。
-    // 显式的 classic 选择优先：只有未显式指定经典版时，才允许按可执行文件路径提升为 IDE。
+    // 硬防护（issue #3762、issue #3770、issue #3778）：
+    // 目标一旦确认为 IDE，执行全链路双写与权威对齐：
+    // 1. 注入 SQLite state.vscdb（供 VS Code 界面及扩展前端快速恢复会话与显示）
+    // 2. 写入系统 Keyring（服务 gemini:antigravity，供 IDE 2.6.0+ 后台核心 agy 语言服务作为首要真理源读取）
+    // 3. 同步写入文件级凭据回退 (~/.gemini/jetski-standalone-oauth-token 与 oauth_creds.json)
     let is_target_ide = is_ide
         || effective_target == Some("ide")
         || (effective_target != Some("classic")
             && active_exe_path
                 .map(process::is_antigravity_ide_path)
                 .unwrap_or(false));
+
+    if is_target_ide {
+        crate::modules::logger::log_info(
+            "[Desktop] Target is Antigravity IDE (VS Code architecture); performing dual write (SQLite state.vscdb + system Keyring + file fallback).",
+        );
+
+        // 1.1 获取存储路径并写入设备 Profile
+        if let Ok(storage_path) = device::get_storage_path(effective_target) {
+            if let Some(ref profile) = account.device_profile {
+                let _ = device::write_profile(&storage_path, profile);
+            }
+        }
+
+        // 1.2 注入 SQLite 数据库 (state.vscdb)
+        let db_path = db::get_db_path(effective_target)?;
+        if db_path.exists() {
+            let backup_path = db_path.with_extension("vscdb.backup");
+            let _ = fs::copy(&db_path, &backup_path);
+        }
+
+        db::inject_token(
+            &db_path,
+            &account.token.access_token,
+            &account.token.refresh_token,
+            account.token.expiry_timestamp,
+            &account.email,
+            account.token.is_gcp_tos,
+            account.token.project_id.as_deref(),
+            account.token.id_token.as_deref(),
+            account.token.oauth_client_key.as_deref(),
+            effective_target,
+        )?;
+
+        if let Some(ref profile) = account.device_profile {
+            let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
+        }
+
+        // 1.3 同步写入系统 Keyring (针对 IDE 2.6.0+ agy 后台语言服务鉴权真理源)
+        if let Err(keyring_err) = write_to_system_keyring(account) {
+            crate::modules::logger::log_warn(&format!(
+                "[Desktop] Warning: Failed to write system Keyring for IDE: {}",
+                keyring_err
+            ));
+        }
+
+        // 1.4 同步写入本地文件凭据回退 (~/.gemini/jetski-standalone-oauth-token 与 oauth_creds.json)
+        if let Err(file_err) = write_to_file_credentials(account, false) {
+            crate::modules::logger::log_warn(&format!(
+                "[Desktop] Warning: Failed to write file credentials for IDE: {}",
+                file_err
+            ));
+        }
+
+        return Ok(());
+    }
 
     if !is_target_ide {
         // 经典原生版：自动探测版本号（优先使用预快照路径）
@@ -139,10 +195,6 @@ fn apply_account_credentials(
                 }
             }
         }
-    } else {
-        crate::modules::logger::log_info(
-            "[Desktop] Target is Antigravity IDE (VS Code architecture); enforcing SQLite state.vscdb injection.",
-        );
     }
 
     if use_keyring {
@@ -766,7 +818,74 @@ fn write_to_file_credentials(
         }
     }
 
-    // 1. 同步写入 Antigravity CLI (agy) 原生文件凭据: ~/.gemini/antigravity-cli/antigravity-oauth-token
+    let expiry_secs = if account.token.expiry_timestamp > 10_000_000_000 {
+        account.token.expiry_timestamp / 1000
+    } else {
+        account.token.expiry_timestamp
+    };
+    let expiry_datetime =
+        chrono::DateTime::from_timestamp(expiry_secs, 0).unwrap_or_else(|| chrono::Utc::now());
+    let expiry_str = expiry_datetime.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+
+    #[derive(serde::Serialize)]
+    struct AgyTokenDetails {
+        access_token: String,
+        token_type: String,
+        refresh_token: String,
+        expiry: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expires_in: Option<i64>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct AgyOAuthTokenFile {
+        token: AgyTokenDetails,
+        auth_method: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id_token_email: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id_token: Option<String>,
+    }
+
+    let agy_token = AgyOAuthTokenFile {
+        token: AgyTokenDetails {
+            access_token: account.token.access_token.clone(),
+            token_type: "Bearer".to_string(),
+            refresh_token: account.token.refresh_token.clone(),
+            expiry: expiry_str,
+            expires_in: Some(3599),
+        },
+        auth_method: "consumer".to_string(),
+        id_token_email: Some(account.email.clone()),
+        id_token: account.token.id_token.clone(),
+    };
+
+    // 1. 同步写入 Standalone / IDE 语言服务原生降级凭据: ~/.gemini/jetski-standalone-oauth-token
+    // 当系统 Keyring 不可用或超时时，agy 语言服务以此文件作为首要回退
+    let standalone_token_path = gemini_dir.join("jetski-standalone-oauth-token");
+    if let Ok(standalone_json_str) = serde_json::to_string_pretty(&agy_token) {
+        if let Err(e) = std::fs::write(&standalone_token_path, &standalone_json_str) {
+            crate::modules::logger::log_warn(&format!(
+                "[Desktop] Failed to write jetski-standalone-oauth-token: {}",
+                e
+            ));
+        } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    &standalone_token_path,
+                    std::fs::Permissions::from_mode(0o600),
+                );
+            }
+            crate::modules::logger::log_info(&format!(
+                "[Desktop] Successfully synced fallback credentials to ~/.gemini/jetski-standalone-oauth-token for: {}",
+                account.email
+            ));
+        }
+    }
+
+    // 2. 同步写入 Antigravity CLI (agy) 原生文件凭据: ~/.gemini/antigravity-cli/antigravity-oauth-token
     // 兼容 SSH 会话、tmux、Docker 容器以及无 D-Bus 桌面环境
     // [FIX #3728] 仅在切换 agy CLI 时同步写入该专属凭证，严禁经典款切号盲目覆盖破坏多端账号隔离
     if sync_agy_cli {
@@ -779,48 +898,6 @@ fn write_to_file_credentials(
                 ));
             }
         }
-
-        let expiry_secs = if account.token.expiry_timestamp > 10_000_000_000 {
-            account.token.expiry_timestamp / 1000
-        } else {
-            account.token.expiry_timestamp
-        };
-        let expiry_datetime =
-            chrono::DateTime::from_timestamp(expiry_secs, 0).unwrap_or_else(|| chrono::Utc::now());
-        let expiry_str = expiry_datetime.to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
-
-        #[derive(serde::Serialize)]
-        struct AgyTokenDetails {
-            access_token: String,
-            token_type: String,
-            refresh_token: String,
-            expiry: String,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            expires_in: Option<i64>,
-        }
-
-        #[derive(serde::Serialize)]
-        struct AgyOAuthTokenFile {
-            token: AgyTokenDetails,
-            auth_method: String,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            id_token_email: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            id_token: Option<String>,
-        }
-
-        let agy_token = AgyOAuthTokenFile {
-            token: AgyTokenDetails {
-                access_token: account.token.access_token.clone(),
-                token_type: "Bearer".to_string(),
-                refresh_token: account.token.refresh_token.clone(),
-                expiry: expiry_str,
-                expires_in: Some(3599),
-            },
-            auth_method: "consumer".to_string(),
-            id_token_email: Some(account.email.clone()),
-            id_token: account.token.id_token.clone(),
-        };
 
         let agy_token_path = agy_cli_dir.join("antigravity-oauth-token");
         if let Ok(agy_json_str) = serde_json::to_string_pretty(&agy_token) {
@@ -926,15 +1003,19 @@ fn read_from_file_credentials() -> Result<crate::modules::migration::ImportedOAu
     let home =
         dirs::home_dir().ok_or_else(|| "Failed to resolve user home directory".to_string())?;
 
-    // 1. 优先尝试从 Antigravity CLI (agy) 原生文件凭据读取
-    let agy_token_path = home
-        .join(".gemini")
-        .join("antigravity-cli")
-        .join("antigravity-oauth-token");
-    if agy_token_path.exists() {
-        if let Ok(content) = fs::read_to_string(&agy_token_path) {
-            if let Ok(state) = parse_keyring_payload(&content) {
-                return Ok(state);
+    // 1. 优先尝试从 Antigravity CLI (agy) 原生文件凭据或 Standalone 回退凭据读取
+    let candidate_paths = [
+        home.join(".gemini")
+            .join("antigravity-cli")
+            .join("antigravity-oauth-token"),
+        home.join(".gemini").join("jetski-standalone-oauth-token"),
+    ];
+    for path in &candidate_paths {
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(path) {
+                if let Ok(state) = parse_keyring_payload(&content) {
+                    return Ok(state);
+                }
             }
         }
     }
@@ -975,6 +1056,7 @@ pub fn read_antigravity_cli_credentials() -> Vec<crate::modules::migration::Impo
         cli_dir.join("antigravity-oauth-token"),
         cli_dir.join("antigravity-oauth-token.antigravity.bak"),
         cli_dir.join("antigravity-oauth-token.bak"),
+        home.join(".gemini").join("jetski-standalone-oauth-token"),
     ];
 
     let mut seen_tokens = std::collections::HashSet::new();
