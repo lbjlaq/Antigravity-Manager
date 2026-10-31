@@ -1111,8 +1111,17 @@ pub struct ProxyConfig {
     pub auto_start: bool,
 
     /// 自定义精确模型映射表 (key: 原始模型名, value: 目标模型名)
-    #[serde(default)]
+    #[serde(default = "default_custom_mapping")]
     pub custom_mapping: std::collections::HashMap<String, String>,
+
+    /// 自定义模型对外暴露状态 (key: 原始模型名, value: 是否对外暴露)
+    /// 默认精确条目对外暴露 (true)，内置兼容暗路由规则不暴露 (false)
+    #[serde(default = "default_custom_mapping_expose")]
+    pub custom_mapping_expose: std::collections::HashMap<String, bool>,
+
+    /// 内置映射版本号，用于无感迁移与防复活保障
+    #[serde(default = "default_builtin_mapping_version")]
+    pub builtin_mapping_version: u32,
 
     /// API 请求超时时间(秒)
     #[serde(default = "default_request_timeout")]
@@ -1325,8 +1334,30 @@ pub struct UpstreamProxyConfig {
     pub url: String,
 }
 
+pub fn default_builtin_mapping_version() -> u32 {
+    1
+}
+
 pub fn default_custom_mapping() -> std::collections::HashMap<String, String> {
-    std::collections::HashMap::new()
+    let mut m = std::collections::HashMap::new();
+    m.insert("claude-fable-*".to_string(), "auto:claude-opus".to_string());
+    m.insert(
+        "claude-opus-4-7*".to_string(),
+        "auto:claude-opus-4-7".to_string(),
+    );
+    m.insert(
+        "claude-haiku-*".to_string(),
+        "auto:gemini-flash-low".to_string(),
+    );
+    m
+}
+
+pub fn default_custom_mapping_expose() -> std::collections::HashMap<String, bool> {
+    let mut m = std::collections::HashMap::new();
+    m.insert("claude-fable-*".to_string(), false);
+    m.insert("claude-opus-4-7*".to_string(), false);
+    m.insert("claude-haiku-*".to_string(), false);
+    m
 }
 
 impl Default for ProxyConfig {
@@ -1340,6 +1371,8 @@ impl Default for ProxyConfig {
             admin_password: None,
             auto_start: false,
             custom_mapping: default_custom_mapping(),
+            custom_mapping_expose: default_custom_mapping_expose(),
+            builtin_mapping_version: default_builtin_mapping_version(),
             request_timeout: default_request_timeout(),
             enable_logging: true,       // 默认开启，支持 token 统计功能
             capture_health_logs: false, // 默认关闭，过滤 GET 探活与第三方网关探测请求且不入库

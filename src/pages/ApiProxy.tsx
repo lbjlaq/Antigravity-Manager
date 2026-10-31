@@ -26,7 +26,9 @@ import {
     Timer,
     Zap,
     Square,
-    ChevronDown
+    ChevronDown,
+    Eye,
+    EyeOff
 } from 'lucide-react';
 import { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig } from '../types/config';
 import HelpTooltip from '../components/common/HelpTooltip';
@@ -596,7 +598,7 @@ export default function ApiProxy() {
     };
 
     // 专门处理模型映射的热更新 (全量)
-    const handleMappingUpdate = async (type: 'custom', key: string, value: string) => {
+    const handleMappingUpdate = async (type: 'custom', key: string, value: string, expose?: boolean) => {
         if (!appConfig) return;
 
         const trimmedKey = key.trim();
@@ -605,6 +607,17 @@ export default function ApiProxy() {
         const newConfig = { ...appConfig.proxy };
         newConfig.custom_mapping = { ...(newConfig.custom_mapping || {}), [trimmedKey]: value };
 
+        const newExpose = { ...(newConfig.custom_mapping_expose || {}) };
+        if (expose !== undefined) {
+            newExpose[trimmedKey] = expose;
+        } else if (!(trimmedKey in newExpose)) {
+            // 新增映射默认：通配符或 auto: 默认不公开 (false)，常规精确映射默认公开 (true)
+            const isAuto = value.startsWith('auto:');
+            const defaultExp = !trimmedKey.includes('*') && !isAuto;
+            newExpose[trimmedKey] = defaultExp;
+        }
+        newConfig.custom_mapping_expose = newExpose;
+
         try {
             await invoke('update_model_mapping', { config: newConfig });
             setAppConfig({ ...appConfig, proxy: newConfig });
@@ -612,6 +625,32 @@ export default function ApiProxy() {
             showToast(t('common.saved'), 'success');
         } catch (error) {
             console.error('Failed to update mapping:', error);
+            showToast(`${t('common.error')}: ${error}`, 'error');
+        }
+    };
+
+    const handleToggleExpose = async (key: string) => {
+        if (!appConfig || !appConfig.proxy.custom_mapping) return;
+        const currentExpose = appConfig.proxy.custom_mapping_expose?.[key];
+        const val = appConfig.proxy.custom_mapping[key] || '';
+        const isAuto = val.startsWith('auto:');
+        const effectiveCurrent = currentExpose !== undefined ? currentExpose : (!key.includes('*') && !isAuto);
+        const newExposeVal = !effectiveCurrent;
+
+        const newConfig = {
+            ...appConfig.proxy,
+            custom_mapping_expose: {
+                ...(appConfig.proxy.custom_mapping_expose || {}),
+                [key]: newExposeVal
+            }
+        };
+
+        try {
+            await invoke('update_model_mapping', { config: newConfig });
+            setAppConfig({ ...appConfig, proxy: newConfig });
+            showToast(t('common.saved'), 'success');
+        } catch (error) {
+            console.error('Failed to toggle expose:', error);
             showToast(`${t('common.error')}: ${error}`, 'error');
         }
     };
@@ -625,10 +664,23 @@ export default function ApiProxy() {
         if (!appConfig) return;
         setIsResetConfirmOpen(false);
 
-        // 恢复到默认预设映射值
+        // 恢复到官方自适应暗路由默认预设 (防复活且保留内置 3 条自适应规则)
+        const defaultCustomMapping: Record<string, string> = {
+            'claude-fable-*': 'auto:claude-opus',
+            'claude-opus-4-7*': 'auto:claude-opus-4-7',
+            'claude-haiku-*': 'auto:gemini-flash-low',
+        };
+        const defaultCustomMappingExpose: Record<string, boolean> = {
+            'claude-fable-*': false,
+            'claude-opus-4-7*': false,
+            'claude-haiku-*': false,
+        };
+
         const newConfig = {
             ...appConfig.proxy,
-            custom_mapping: {}
+            custom_mapping: defaultCustomMapping,
+            custom_mapping_expose: defaultCustomMappingExpose,
+            builtin_mapping_version: 1,
         };
 
         try {
@@ -815,7 +867,9 @@ export default function ApiProxy() {
         if (!appConfig || !appConfig.proxy.custom_mapping) return;
         const newCustom = { ...appConfig.proxy.custom_mapping };
         delete newCustom[key];
-        const newConfig = { ...appConfig.proxy, custom_mapping: newCustom };
+        const newExpose = { ...(appConfig.proxy.custom_mapping_expose || {}) };
+        delete newExpose[key];
+        const newConfig = { ...appConfig.proxy, custom_mapping: newCustom, custom_mapping_expose: newExpose };
         try {
             await invoke('update_model_mapping', { config: newConfig });
             setAppConfig({ ...appConfig, proxy: newConfig });
@@ -1311,6 +1365,26 @@ print(response.choices[0].message.content)`;
                                                 </div>
 
                                                 <div className="flex items-center gap-1.5 shrink-0">
+                                                    {(() => {
+                                                        const isAuto = val.startsWith('auto:');
+                                                        const isExp = appConfig.proxy.custom_mapping_expose?.[key] ?? (!key.includes('*') && !isAuto);
+                                                        return (
+                                                            <button
+                                                                type="button"
+                                                                className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-medium flex items-center gap-1 transition-colors border ${
+                                                                    isExp
+                                                                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
+                                                                        : 'bg-gray-100 dark:bg-white/5 text-gray-400 dark:text-gray-500 border-gray-200 dark:border-white/10 hover:bg-gray-200 dark:hover:bg-white/10'
+                                                                }`}
+                                                                onClick={() => handleToggleExpose(key)}
+                                                                title={isExp ? (t('proxy.router.expose_public_tip') || '对外公开') : (t('proxy.router.expose_hidden_tip') || '暗访')}
+                                                            >
+                                                                {isExp ? <Eye size={10} /> : <EyeOff size={10} />}
+                                                                <span>{isExp ? (t('proxy.router.expose_public') || '公开') : (t('proxy.router.expose_hidden') || '暗访')}</span>
+                                                            </button>
+                                                        );
+                                                    })()}
+
                                                     {editingKey === key ? (
                                                         <div className="flex items-center gap-1 bg-white dark:bg-gray-800 rounded-md border border-blue-200 dark:border-blue-800 p-0.5 shadow-sm">
                                                             <button

@@ -106,10 +106,14 @@ pub fn canonicalize_claude_client_model_id(input: &str) -> String {
         }
     }
 
-    // 兼容 Claude 5 Fable 及其反向写法 (claude-5-fable -> claude-fable-5)
-    if out == "claude-5-fable" {
+    // 兼容 Claude 5 Fable 及其反向写法与裸别名 (claude-5-fable / claude-fable -> claude-fable-5)
+    if out == "claude-5-fable" || out == "claude-fable" {
         out = "claude-fable-5".to_string();
     } else if let Some(rest) = out.strip_prefix("claude-5-fable-") {
+        if !rest.starts_with(|c: char| c.is_ascii_digit()) {
+            out = format!("claude-fable-5-{}", rest);
+        }
+    } else if let Some(rest) = out.strip_prefix("claude-fable-") {
         if !rest.starts_with(|c: char| c.is_ascii_digit()) {
             out = format!("claude-fable-5-{}", rest);
         }
@@ -220,61 +224,18 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
         return true;
     }
 
-    // 1. Claude 系列：以 4.6 为基准线（支持 4.6 与 5.5+），淘汰 4.6 以下、haiku、fable 及非法 thinking 后缀变体
+    // 1. Claude 系列：以 4.6 为基准线（支持 4.6 与 5.5+，支持 Haiku >= 4.5 与 Fable/Mythos >= 5.0），淘汰 4.6 以下旧模型与非法 thinking 后缀变体
     if m.contains("claude") {
-        if m.contains("haiku") || m.contains("fable") {
-            return false;
-        }
         // claude-sonnet 系列与 Claude 5.x 分档模型不存在 -thinking 后缀变体
         if (m.starts_with("claude-sonnet-") || m.contains("-5-5")) && m.contains("thinking") {
             return false;
         }
-        if m.contains("4-6") || m.contains("4.6") {
-            return true;
-        }
-        // 兼容 >= 4.6 版本 (如 4.7+, 5.5+)
-        if let Some(pos) = m.find("claude") {
-            let rest = &m[pos..];
-            let tokens: Vec<&str> = rest.split(|c: char| c == '-' || c == '_').collect();
-            let mut i = 0;
-            let mut detected_version: Option<(u32, u32)> = None;
-            while i < tokens.len() {
-                let token = tokens[i];
-                // 忽略纯日期快照 (如 20241022, 20250219)
-                if token.len() == 8 && (token.starts_with("202") || token.starts_with("201")) {
-                    i += 1;
-                    continue;
-                }
-                if let Ok(major) = token.parse::<u32>() {
-                    if major >= 1000 {
-                        i += 1;
-                        continue;
-                    }
-                    let mut minor = 0;
-                    if i + 1 < tokens.len() {
-                        let next_tok = tokens[i + 1];
-                        if !(next_tok.len() == 8
-                            && (next_tok.starts_with("202") || next_tok.starts_with("201")))
-                        {
-                            if let Ok(m) = next_tok.parse::<u32>() {
-                                if m < 1000 {
-                                    minor = m;
-                                    i += 1;
-                                }
-                            }
-                        }
-                    }
-                    let ver = (major, minor);
-                    detected_version = Some(detected_version.map_or(ver, |v| v.max(ver)));
-                } else if let Some(ver) = parse_version_tuple(token) {
-                    detected_version = Some(detected_version.map_or(ver, |v| v.max(ver)));
-                }
-                i += 1;
-            }
 
-            if let Some(ver) = detected_version {
-                return ver >= (4, 6);
+        if let Some(ver) = crate::proxy::model_specs::parse_claude_version_tuple(&m) {
+            if m.contains("fable") || m.contains("mythos") {
+                return ver >= (5, 0);
             }
+            return ver >= (4, 6);
         }
         return false;
     }
@@ -397,9 +358,18 @@ pub async fn get_all_dynamic_models(
 
         {
             let mapping = custom_mapping.read().await;
-            for key in mapping.keys() {
-                custom_keys.insert(key.clone());
-                model_ids.insert(key.clone());
+            let expose_map = crate::modules::config::load_app_config()
+                .map(|c| c.proxy.custom_mapping_expose)
+                .unwrap_or_default();
+            for (key, target) in mapping.iter() {
+                let exposed = expose_map
+                    .get(key)
+                    .copied()
+                    .unwrap_or_else(|| !key.contains('*') && !target.starts_with("auto:"));
+                if exposed && !key.contains('*') && !target.starts_with("auto:") {
+                    custom_keys.insert(key.clone());
+                    model_ids.insert(key.clone());
+                }
             }
         }
     }
@@ -577,9 +547,19 @@ pub async fn get_all_dynamic_models_metadata(
             }
         }
 
-        // 自定义映射模型继承目标模型的元数据
+        // 自定义映射模型继承目标模型的元数据（非暴露与内部暗路由规则不注入）
         let mapping = custom_mapping.read().await;
+        let expose_map = crate::modules::config::load_app_config()
+            .map(|c| c.proxy.custom_mapping_expose)
+            .unwrap_or_default();
         for (alias, target) in mapping.iter() {
+            let exposed = expose_map
+                .get(alias)
+                .copied()
+                .unwrap_or_else(|| !alias.contains('*') && !target.starts_with("auto:"));
+            if !exposed || alias.contains('*') || target.starts_with("auto:") {
+                continue;
+            }
             let target_lower = target.to_lowercase();
             if let Some(target_meta) = meta_map.get(&target_lower).cloned() {
                 meta_map.entry(alias.clone()).or_insert(target_meta);
@@ -604,11 +584,23 @@ pub async fn get_all_dynamic_models_metadata(
     }
 
     // 6. 最终校验：剔除已下线 / 不合格的字典残留（2.x、agent、internal、未经官方开通的条目）
-    // 用户显式配置的自定义映射键除外（自定义别名必须原样生效）。
+    // 用户显式配置且开启对外暴露的自定义映射键除外（自定义别名必须原样生效）。
     {
         let mapping = custom_mapping.read().await;
-        meta_map
-            .retain(|name, _| mapping.contains_key(name) || is_model_compliant_with_baseline(name));
+        let expose_map = crate::modules::config::load_app_config()
+            .map(|c| c.proxy.custom_mapping_expose)
+            .unwrap_or_default();
+        meta_map.retain(|name, _| {
+            if let Some(target) = mapping.get(name) {
+                let exposed = expose_map
+                    .get(name)
+                    .copied()
+                    .unwrap_or_else(|| !name.contains('*') && !target.starts_with("auto:"));
+                exposed && !name.contains('*') && !target.starts_with("auto:")
+            } else {
+                is_model_compliant_with_baseline(name)
+            }
+        });
     }
 
     meta_map
@@ -798,23 +790,145 @@ pub fn resolve_custom_model_route(
     None
 }
 
-/// 解析完整的模型路由（支持官方淘汰重定向、用户自定义映射、通配符映射、物理 ID 透传以及依据客户端思考档位进行通用裸模型解析）
+/// 解析号池自适应暗路由目标 (auto:*)
+///
+/// 规则：
+/// 1. `auto:gemini-flash-low`:
+///    优先复用 `pick_background_model_from_pool` 动态挑选非 Pro 账号共享桶中最新 `gemini-<x.x>-flash-low`；
+///    未同步或未找到时兜底返回最新官方基准轻量模型 `gemini-3.8-flash-low`。
+/// 2. `auto:claude-opus`:
+///    若号池拥有正配额的 `claude-opus-5-5`（或其档位变体），返回 `claude-opus-5-5`；
+///    否则若号池拥有正配额的 `claude-opus-4-6` / `claude-opus-4-6-thinking`，返回 `claude-opus-4-6-thinking`；
+///    若全池 Opus 耗尽，自动降级至池内其他正配额 Claude 思考模型（如 `claude-sonnet-5-5` 或 `claude-sonnet-4-6`）以防 502；
+///    兜底返回 `claude-opus-5-5`。
+/// 3. `auto:claude-opus-4-7`:
+///    原生 4-7 让路直连；混合池保持 `claude-opus-4-6-thinking` 节省 5.5 额度；
+///    纯 5.5 池或未来 4.6 下架后自动升级至 `claude-opus-5-5`；
+///    兜底返回 `claude-opus-4-6-thinking`。
+pub fn resolve_adaptive_target(
+    target: &str,
+    requested_model: &str,
+    _effort: Option<&str>,
+    token_manager: Option<&crate::proxy::token_manager::TokenManager>,
+) -> String {
+    if !target.starts_with("auto:") {
+        return target.to_string();
+    }
+
+    match target {
+        "auto:gemini-flash-low" => {
+            if let Some(tm) = token_manager {
+                if let Some(bg) =
+                    crate::proxy::common::model_gate::pick_background_model_from_pool(tm)
+                {
+                    crate::modules::logger::log_info(&format!(
+                        "[AdaptiveRoute] auto:gemini-flash-low (requested: {}) 动态挑选轻量模型: {}",
+                        requested_model, bg
+                    ));
+                    return bg;
+                }
+            }
+            "gemini-3.8-flash-low".to_string()
+        }
+        "auto:claude-opus" => {
+            if let Some(tm) = token_manager {
+                let positive_models = tm.models_with_positive_quota();
+                // 1. 优先 5.5
+                if positive_models
+                    .iter()
+                    .any(|m| m.contains("opus") && m.contains("5-5"))
+                {
+                    return "claude-opus-5-5".to_string();
+                }
+                // 2. 其次 4.6
+                if positive_models
+                    .iter()
+                    .any(|m| m.contains("opus") && m.contains("4-6"))
+                {
+                    return "claude-opus-4-6-thinking".to_string();
+                }
+                // 3. 全池 Opus 耗尽保底：寻找其他正配额 Claude 模型防 502
+                if let Some(other_claude) = positive_models
+                    .iter()
+                    .find(|m| m.contains("claude") || m.contains("sonnet"))
+                {
+                    crate::modules::logger::log_info(&format!(
+                        "[AdaptiveRoute] auto:claude-opus (requested: {}) Opus无额度，保底调度至: {}",
+                        requested_model, other_claude
+                    ));
+                    return other_claude.clone();
+                }
+            }
+            "claude-opus-5-5".to_string()
+        }
+        "auto:claude-opus-4-7" => {
+            if let Some(tm) = token_manager {
+                let positive_models = tm.models_with_positive_quota();
+                // 1. 原生 4-7 支持时直连
+                if positive_models
+                    .iter()
+                    .any(|m| m.contains("opus") && m.contains("4-7"))
+                {
+                    return "claude-opus-4-7".to_string();
+                }
+                // 2. 优先 4-6 节省 5.5 配额
+                if positive_models
+                    .iter()
+                    .any(|m| m.contains("opus") && m.contains("4-6"))
+                {
+                    return "claude-opus-4-6-thinking".to_string();
+                }
+                // 3. 纯 5.5 池或 4.6 下架时升级至 5.5
+                if positive_models
+                    .iter()
+                    .any(|m| m.contains("opus") && m.contains("5-5"))
+                {
+                    return "claude-opus-5-5".to_string();
+                }
+            }
+            "claude-opus-4-6-thinking".to_string()
+        }
+        _ => target.strip_prefix("auto:").unwrap_or(target).to_string(),
+    }
+}
+
+/// 解析完整的模型路由（支持官方淘汰重定向、用户自定义映射、通配符映射、自适应暗路由、物理 ID 透传以及依据客户端思考档位进行通用裸模型解析）
 ///
 /// # 参数
 /// * `original_model` - 原始模型名称
 /// * `custom_mapping` - 用户自定义映射表
 /// * `client_effort` - 客户端指定的思考强度/档位（如 Some("low"), Some("high") 等）
+/// * `token_manager` - 可选号池管理器指针，用于驱动 `auto:*` 自适应号池探测
 ///
 /// # 返回
 /// 映射后的目标模型名称
-pub fn resolve_model_route_with_effort(
+pub fn resolve_model_route_with_effort_and_pool(
     original_model: &str,
     custom_mapping: &std::collections::HashMap<String, String>,
     client_effort: Option<&str>,
+    token_manager: Option<&crate::proxy::token_manager::TokenManager>,
 ) -> String {
     // 0 & 1 & 2. 优先匹配淘汰重定向与自定义映射（精确、大小写、规范化、通配符）
     if let Some(custom) = resolve_custom_model_route(original_model, custom_mapping) {
-        return custom;
+        // 自适应暗路由解析 (auto:*)
+        let target = if custom.starts_with("auto:") {
+            resolve_adaptive_target(&custom, original_model, client_effort, token_manager)
+        } else {
+            custom
+        };
+
+        // 裸模型自定义映射目标继续穿透客户端思考档位（如映射至 claude-opus-5-5 且 effort=high -> claude-opus-5-5-high）
+        if let Some(routed) =
+            crate::proxy::model_specs::resolve_bare_tiered_model_route(&target, client_effort)
+        {
+            crate::modules::logger::log_info(&format!(
+                "[Router] 自定义映射目标依据思考档位路由: {} (target={}, effort={:?}) -> {}",
+                original_model, target, client_effort, routed
+            ));
+            return map_claude_model_to_gemini(&routed);
+        }
+
+        return map_claude_model_to_gemini(&target);
     }
 
     // 3. 系统默认映射
@@ -825,30 +939,42 @@ pub fn resolve_model_route_with_effort(
         return map_claude_model_to_gemini(original_model);
     }
 
-    // [NEW] 裸模型依据客户端思考档位通用路由（覆盖 3.x Flash 与 Claude >= 5.0）：
+    // 裸模型依据客户端思考档位通用路由（覆盖 3.x Flash 与 Claude >= 5.0）：
     // - 对于 Flash：默认 high，支持 low / medium
     // - 对于 Claude：默认 medium，支持 low / high
-    // 而显式指定了档位后缀的模型已被前置规则/CLAUDE_TO_GEMINI 原样保留
+    let target_model = map_claude_model_to_gemini(original_model);
+    let target_ref = if target_model != original_model {
+        target_model.as_str()
+    } else {
+        original_model
+    };
+
     if let Some(routed) =
-        crate::proxy::model_specs::resolve_bare_tiered_model_route(original_model, client_effort)
+        crate::proxy::model_specs::resolve_bare_tiered_model_route(target_ref, client_effort)
     {
         crate::modules::logger::log_info(&format!(
-            "[Router] 裸模型依据思考档位通用路由: {} (effort={:?}) -> {}",
-            original_model, client_effort, routed
+            "[Router] 裸模型依据思考档位通用路由: {} (target={}, effort={:?}) -> {}",
+            original_model, target_ref, client_effort, routed
         ));
-        // Tier selection can produce a public alias (e.g. Pro high). Apply the
-        // same upstream-ID mapping as an explicitly requested variant.
         return map_claude_model_to_gemini(&routed);
     }
 
-    let result = map_claude_model_to_gemini(original_model);
-    if result != original_model {
+    if target_model != original_model {
         crate::modules::logger::log_info(&format!(
             "[Router] 系统默认映射: {} -> {}",
-            original_model, result
+            original_model, target_model
         ));
+        return target_model;
     }
-    result
+    target_model
+}
+
+pub fn resolve_model_route_with_effort(
+    original_model: &str,
+    custom_mapping: &std::collections::HashMap<String, String>,
+    client_effort: Option<&str>,
+) -> String {
+    resolve_model_route_with_effort_and_pool(original_model, custom_mapping, client_effort, None)
 }
 
 /// Normalize any physical model name to one of the 3 standard protection IDs.
@@ -990,6 +1116,10 @@ mod tests {
         assert_eq!(
             map_claude_model_to_gemini("gpt-oss-120b"),
             "gpt-oss-120b-medium"
+        );
+        assert_eq!(
+            map_claude_model_to_gemini("internal-background-task"),
+            "gemini-3.1-flash-lite"
         );
         assert_eq!(map_claude_model_to_gemini("unknown-model"), "unknown-model");
     }
@@ -1252,14 +1382,22 @@ mod tests {
 
     #[test]
     fn test_is_model_compliant_with_baseline() {
-        // Claude: >= 4.6 passes (4.6 & 5.5), < 4.6 / haiku / fable rejected
+        // Claude: >= 4.6 passes (4.6, 4.7 & 5.5), Fable >= 5.0
         assert!(is_model_compliant_with_baseline("claude-sonnet-4-6"));
         assert!(is_model_compliant_with_baseline("claude-opus-4-6-thinking"));
         assert!(is_model_compliant_with_baseline("claude-opus-4-6"));
+        assert!(is_model_compliant_with_baseline("claude-opus-4-7"));
         assert!(is_model_compliant_with_baseline("claude-opus-5-5"));
         assert!(is_model_compliant_with_baseline("claude-opus-5-5-high"));
         assert!(is_model_compliant_with_baseline("claude-sonnet-5-5"));
         assert!(is_model_compliant_with_baseline("claude-sonnet-5-5-medium"));
+        assert!(is_model_compliant_with_baseline("claude-haiku-5-5"));
+        assert!(is_model_compliant_with_baseline("claude-fable-5"));
+        assert!(is_model_compliant_with_baseline("claude-fable-5-1"));
+        assert!(!is_model_compliant_with_baseline("claude-haiku-4-5"));
+        assert!(!is_model_compliant_with_baseline(
+            "claude-haiku-4-5-20251001"
+        ));
         assert!(!is_model_compliant_with_baseline(
             "claude-sonnet-4-6-thinking"
         ));
@@ -1269,8 +1407,9 @@ mod tests {
         assert!(!is_model_compliant_with_baseline("claude-sonnet-4-5"));
         assert!(!is_model_compliant_with_baseline("claude-3-5-sonnet"));
         assert!(!is_model_compliant_with_baseline("claude-3-7-sonnet"));
-        assert!(!is_model_compliant_with_baseline("claude-haiku-4-5"));
-        assert!(!is_model_compliant_with_baseline("claude-fable-5"));
+        assert!(!is_model_compliant_with_baseline("claude-3-5-haiku"));
+        assert!(!is_model_compliant_with_baseline("claude-3-haiku"));
+        assert!(!is_model_compliant_with_baseline("claude-fable-4"));
 
         // GPT: gpt-oss-120b-medium & derived gpt-oss-120b pass
         assert!(is_model_compliant_with_baseline("gpt-oss-120b-medium"));
@@ -1411,6 +1550,53 @@ mod tests {
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.1-pro-high", &empty, Some("low")),
             "gemini-3.1-pro-high"
+        );
+
+        // 5. Claude Code 2.1.312 自适应暗路由模型档位路由 (基于 default_custom_mapping)
+        let default_custom = crate::proxy::config::default_custom_mapping();
+        assert_eq!(
+            resolve_model_route_with_effort("claude-fable-5", &default_custom, None),
+            "claude-opus-5-5-medium"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-fable-5", &default_custom, Some("high")),
+            "claude-opus-5-5-high"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-fable-5-1", &default_custom, None),
+            "claude-opus-5-5-medium"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-haiku-4-5", &default_custom, None),
+            "gemini-3.8-flash-low"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-haiku-4-5-20251001", &default_custom, None),
+            "gemini-3.8-flash-low"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-haiku-5-5", &default_custom, None),
+            "gemini-3.8-flash-low"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("claude-opus-4-7", &default_custom, None),
+            "claude-opus-4-6-thinking"
+        );
+    }
+
+    #[test]
+    fn test_resolve_adaptive_target() {
+        assert_eq!(
+            resolve_adaptive_target("auto:gemini-flash-low", "claude-haiku-4-5", None, None),
+            "gemini-3.8-flash-low"
+        );
+        assert_eq!(
+            resolve_adaptive_target("auto:claude-opus", "claude-fable-5", None, None),
+            "claude-opus-5-5"
+        );
+        assert_eq!(
+            resolve_adaptive_target("auto:claude-opus-4-7", "claude-opus-4-7", None, None),
+            "claude-opus-4-6-thinking"
         );
     }
 

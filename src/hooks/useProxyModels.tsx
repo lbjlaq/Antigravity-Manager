@@ -102,11 +102,45 @@ function isCompliantModel(
         return false;
     }
 
-    // 4. Claude 淘汰基准线 4.6 以下旧模型与非法组合
+    // 4. Claude 系列：以 4.6 为基准线（支持 4.6 与 5.5+，支持 Haiku >= 4.5 与 Fable >= 5.0），淘汰非法 thinking 组合
     if (m.includes('claude')) {
-        if (m.includes('haiku') || m.includes('fable')) return false;
         if ((m.startsWith('claude-sonnet-') || m.includes('-5-5')) && m.includes('thinking')) return false;
-        return m.includes('4-6') || m.includes('4.6') || m.includes('5-') || m.includes('5.');
+
+        const tokens = m.split(/[-_.]/);
+        let detectedMajor: number | null = null;
+        let detectedMinor = 0;
+        let i = 0;
+        while (i < tokens.length) {
+            const tok = tokens[i];
+            if (tok.length === 8 && (tok.startsWith('202') || tok.startsWith('201'))) {
+                i++;
+                continue;
+            }
+            const major = parseInt(tok, 10);
+            if (!isNaN(major) && major < 1000) {
+                detectedMajor = major;
+                if (i + 1 < tokens.length) {
+                    const nextTok = tokens[i + 1];
+                    if (!(nextTok.length === 8 && (nextTok.startsWith('202') || nextTok.startsWith('201')))) {
+                        const minor = parseInt(nextTok, 10);
+                        if (!isNaN(minor) && minor < 1000) {
+                            detectedMinor = minor;
+                            i++;
+                        }
+                    }
+                }
+                break;
+            }
+            i++;
+        }
+
+        if (detectedMajor !== null) {
+            if (m.includes('fable') || m.includes('mythos')) {
+                return detectedMajor >= 5;
+            }
+            return detectedMajor > 4 || (detectedMajor === 4 && detectedMinor >= 6);
+        }
+        return false;
     }
 
     // 5. 针对 Gemini 3 Flash 系列思考/推理模型剪枝：

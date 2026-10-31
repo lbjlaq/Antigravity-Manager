@@ -2227,6 +2227,7 @@ async fn admin_update_model_mapping(
     })?;
 
     app_config.proxy.custom_mapping = config.custom_mapping;
+    app_config.proxy.custom_mapping_expose = config.custom_mapping_expose;
 
     crate::modules::config::save_app_config(&app_config).map_err(|e| {
         (

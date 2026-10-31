@@ -128,6 +128,55 @@ pub fn parse_and_migrate_config(content: &str) -> Result<(AppConfig, bool), Stri
             modified = true;
         }
 
+        // 检查 builtin_mapping_version 并进行内置自适应暗路由规则版本迁移 (防复活保障)
+        let builtin_version = proxy
+            .get("builtin_mapping_version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+
+        let mut custom_mapping_expose = match proxy.get("custom_mapping_expose") {
+            Some(m) if m.is_object() => m.as_object().unwrap().clone(),
+            _ => serde_json::Map::new(),
+        };
+
+        if builtin_version < 1 {
+            // 首次升级至版本 1：注入 3 条自适应暗路由规则（默认 expose: false）
+            let builtins = [
+                ("claude-fable-*", "auto:claude-opus", false),
+                ("claude-opus-4-7*", "auto:claude-opus-4-7", false),
+                ("claude-haiku-*", "auto:gemini-flash-low", false),
+            ];
+            for (pattern, target, expose) in builtins {
+                if !custom_mapping.contains_key(pattern) {
+                    custom_mapping.insert(
+                        pattern.to_string(),
+                        serde_json::Value::String(target.to_string()),
+                    );
+                }
+                if !custom_mapping_expose.contains_key(pattern) {
+                    custom_mapping_expose
+                        .insert(pattern.to_string(), serde_json::Value::Bool(expose));
+                }
+            }
+            // 存量自定义映射如果未显式声明 expose，通配与自适应规则默认 false，精确自定义规则默认 true
+            for (k, v) in custom_mapping.iter() {
+                if !custom_mapping_expose.contains_key(k) {
+                    let is_auto = v.as_str().map_or(false, |s| s.starts_with("auto:"));
+                    let default_exp = !k.contains('*') && !is_auto;
+                    custom_mapping_expose.insert(k.clone(), serde_json::Value::Bool(default_exp));
+                }
+            }
+            proxy.as_object_mut().unwrap().insert(
+                "builtin_mapping_version".to_string(),
+                serde_json::Value::Number(1.into()),
+            );
+            proxy.as_object_mut().unwrap().insert(
+                "custom_mapping_expose".to_string(),
+                serde_json::Value::Object(custom_mapping_expose.clone()),
+            );
+            modified = true;
+        }
+
         // 旧出厂默认 flash_high = 16384 或 32768。只在首次启动且模式为 default 时改成官方 -1。
         if let Some(tb) = proxy
             .get_mut("thinking_budget")

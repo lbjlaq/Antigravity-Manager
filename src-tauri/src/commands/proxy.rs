@@ -635,6 +635,7 @@ pub async fn update_model_mapping(
     // 2. 无论是否运行，都保存到全局配置持久化
     let mut app_config = crate::modules::config::load_app_config().map_err(|e| e)?;
     app_config.proxy.custom_mapping = config.custom_mapping;
+    app_config.proxy.custom_mapping_expose = config.custom_mapping_expose;
     crate::modules::config::save_app_config(&app_config).map_err(|e| e)?;
 
     Ok(())

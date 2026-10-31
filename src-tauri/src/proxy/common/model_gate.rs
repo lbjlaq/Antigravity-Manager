@@ -89,52 +89,19 @@ pub fn is_retired_model_id(model: &str) -> bool {
     }
 
     if id.contains("claude") {
-        if let Some(version) = claude_version_tuple(id) {
+        if id.contains("fable") || id.contains("mythos") {
+            if let Some(version) = crate::proxy::model_specs::parse_claude_version_tuple(id) {
+                return version < (5, 0);
+            }
+            return false;
+        }
+        if let Some(version) = crate::proxy::model_specs::parse_claude_version_tuple(id) {
             return version < (4, 6);
         }
         return id.contains("claude-3") || id.contains("claude-2");
     }
 
     false
-}
-
-/// 从 Claude 模型 ID 中提取 (major, minor)，自动跳过 8 位日期快照与家族名。
-fn claude_version_tuple(id: &str) -> Option<(u32, u32)> {
-    let tokens: Vec<&str> = id
-        .split(|c: char| c == '-' || c == '_' || c == '.')
-        .collect();
-    let mut detected: Option<(u32, u32)> = None;
-    let mut i = 0;
-    while i < tokens.len() {
-        let token = tokens[i];
-        let is_date = |s: &str| s.len() == 8 && (s.starts_with("202") || s.starts_with("201"));
-        if is_date(token) {
-            i += 1;
-            continue;
-        }
-        if let Ok(major) = token.parse::<u32>() {
-            if major >= 1000 {
-                i += 1;
-                continue;
-            }
-            let mut minor = 0;
-            if i + 1 < tokens.len() {
-                let next = tokens[i + 1];
-                if !is_date(next) {
-                    if let Ok(m) = next.parse::<u32>() {
-                        if m < 1000 {
-                            minor = m;
-                            i += 1;
-                        }
-                    }
-                }
-            }
-            let v = (major, minor);
-            detected = Some(detected.map_or(v, |cur| cur.max(v)));
-        }
-        i += 1;
-    }
-    detected
 }
 
 /// 生图模型族变体归一化（唯一实现位于 `model_mapping`，此处保留同名入口供门禁调用）。
@@ -227,6 +194,10 @@ pub async fn downstream_exposed_models(
     {
         let mapping = custom_mapping.read().await;
         for (key, target) in mapping.iter() {
+            // 自适应协议目标不对外暴露为具体模型 ID
+            if target.starts_with("auto:") {
+                continue;
+            }
             // 已下线模型族不得因自定义映射而重新出现
             if is_retired_model_id(key) || is_retired_model_id(target) {
                 continue;
@@ -282,11 +253,14 @@ pub async fn gate_inbound_model(
         return ModelGate::NotFound;
     }
 
-    // 自定义映射优先：用户显式声明的别名必须原样生效
-    let final_model = {
+    // 自定义映射与号池自适应暗路由前置解析：
+    // 用户显式声明的别名与 auto: 自适应协议目标优先转换为目标物理/逻辑模型
+    let raw_target = {
         let mapping = custom_mapping.read().await;
         resolve_requested_model(requested, &mapping)
     };
+    let final_model =
+        model_mapping::resolve_adaptive_target(&raw_target, requested, None, Some(token_manager));
 
     // 已下线模型族硬门禁：检查 **映射后的真实出站模型**，
     // 允许用户把已下线的旧名作为别名键映射到合规模型。
@@ -388,10 +362,12 @@ pub async fn gate_inbound_model_exists(
         return ModelGate::NotFound;
     }
 
-    let final_model = {
+    let raw_target = {
         let mapping = custom_mapping.read().await;
         resolve_requested_model(requested, &mapping)
     };
+    let final_model =
+        model_mapping::resolve_adaptive_target(&raw_target, requested, None, Some(token_manager));
 
     // 检查映射后的真实出站模型，允许旧名作为自定义别名键。
     if is_retired_model_id(&final_model) {
@@ -645,10 +621,15 @@ mod tests {
             "claude-3-opus",
             "claude-sonnet-4-5",
             "claude-opus-4-5-thinking",
+            "claude-3-5-haiku-20241022",
+            "claude-3-haiku",
+            "claude-haiku-4-5",
+            "claude-haiku-4-5-20251001",
+            "claude-fable-4",
         ] {
             assert!(
                 is_retired_model_id(model),
-                "{model} 应判定为已下线 Claude <4.6"
+                "{model} 应判定为已下线 Claude 模型 (< 4.6)"
             );
         }
 
@@ -660,9 +641,23 @@ mod tests {
             "claude-opus-4-6-thinking",
             "claude-opus-5-5-high",
             "gpt-oss-120b-medium",
+            "claude-fable-5",
+            "claude-fable-5-1",
+            "claude-haiku-5-5",
+            "claude-opus-4-7",
         ] {
             assert!(!is_retired_model_id(model), "{model} 不应被误杀");
         }
+    }
+
+    #[test]
+    fn test_adaptive_dark_routing_bypasses_retired_check() {
+        let default_custom = crate::proxy::config::default_custom_mapping();
+        let raw_target = resolve_requested_model("claude-haiku-4-5", &default_custom);
+        let final_model =
+            model_mapping::resolve_adaptive_target(&raw_target, "claude-haiku-4-5", None, None);
+        assert_eq!(final_model, "gemini-3.8-flash-low");
+        assert!(!is_retired_model_id(&final_model));
     }
 
     #[test]

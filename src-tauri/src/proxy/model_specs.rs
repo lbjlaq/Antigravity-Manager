@@ -270,29 +270,61 @@ pub fn is_gemini_v4_or_above(model: &str) -> bool {
     false
 }
 
-/// 检查是否为 Claude >= 5.0 版本模型（含裸模型与档位变体）
-pub fn is_claude_v5_or_above(model: &str) -> bool {
+/// 从 Claude 模型 ID 或名称中提取 (major, minor) 版本元组。
+/// 自动跳过 8 位日期快照 (如 20251001, 20241022) 与非版本标识，
+/// 支持单数字大版本（如 `claude-5-opus` -> (5, 0)）、双数字版本（`claude-opus-4-6` -> (4, 6)）以及点号/下划线分隔。
+pub fn parse_claude_version_tuple(model: &str) -> Option<(u32, u32)> {
     let lower = model.to_lowercase();
-    if !lower.contains("claude") {
-        return false;
-    }
-    if let Some(pos) = lower.find("claude") {
-        let rest = &lower[pos..];
-        let tokens: Vec<&str> = rest
-            .split(|c: char| c == '-' || c == '_' || c == '.')
-            .collect();
-        for window in tokens.windows(2) {
-            if let (Ok(major), Ok(minor)) = (window[0].parse::<u32>(), window[1].parse::<u32>()) {
-                if major < 1000 && minor < 1000 {
-                    return (major, minor) >= (5, 0);
+    let pos = lower.find("claude")?;
+    let rest = &lower[pos..];
+    let tokens: Vec<&str> = rest
+        .split(|c: char| c == '-' || c == '_' || c == '.')
+        .collect();
+    let mut detected: Option<(u32, u32)> = None;
+    let mut i = 0;
+    while i < tokens.len() {
+        let token = tokens[i];
+        if token.len() == 8 && (token.starts_with("202") || token.starts_with("201")) {
+            i += 1;
+            continue;
+        }
+        if let Ok(major) = token.parse::<u32>() {
+            if major >= 1000 {
+                i += 1;
+                continue;
+            }
+            let mut minor = 0;
+            if i + 1 < tokens.len() {
+                let next_tok = tokens[i + 1];
+                if !(next_tok.len() == 8
+                    && (next_tok.starts_with("202") || next_tok.starts_with("201")))
+                {
+                    if let Ok(m) = next_tok.parse::<u32>() {
+                        if m < 1000 {
+                            minor = m;
+                            i += 1;
+                        }
+                    }
                 }
             }
+            let v = (major, minor);
+            detected = Some(detected.map_or(v, |cur| cur.max(v)));
+        } else if let Some(v) = crate::proxy::common::model_mapping::parse_version_tuple(token) {
+            detected = Some(detected.map_or(v, |cur| cur.max(v)));
         }
+        i += 1;
+    }
+    if detected.is_none() {
         if let Some(ver) = crate::proxy::common::model_mapping::parse_version_tuple(rest) {
-            return ver >= (5, 0);
+            detected = Some(ver);
         }
     }
-    false
+    detected
+}
+
+/// 检查是否为 Claude >= 5.0 版本模型（含裸模型与档位变体）
+pub fn is_claude_v5_or_above(model: &str) -> bool {
+    parse_claude_version_tuple(model).map_or(false, |ver| ver >= (5, 0))
 }
 
 /// 检查是否为 Claude >= 5.0 的裸模型（无 -low, -medium, -high 等档位或特性后缀）
@@ -756,5 +788,49 @@ mod tests {
             resolve_bare_tiered_model_route("gemini-3.1-pro", Some("x_high")),
             Some("gemini-3.1-pro-high".to_string())
         );
+    }
+
+    #[test]
+    fn test_claude_v5_detection() {
+        assert!(is_claude_v5_or_above("claude-fable-5"));
+        assert!(is_claude_v5_or_above("claude-fable-5-1"));
+        assert!(is_claude_v5_or_above("claude-opus-5-5"));
+        assert!(is_claude_v5_or_above("claude-opus-5-5-high"));
+        assert!(is_claude_v5_or_above("claude-haiku-5-5"));
+        assert!(is_claude_v5_or_above("claude-5-opus"));
+        assert!(!is_claude_v5_or_above("claude-opus-4-6"));
+        assert!(!is_claude_v5_or_above("claude-haiku-4-5"));
+        assert!(!is_claude_v5_or_above("claude-3-5-sonnet"));
+
+        assert!(is_bare_claude_tiered_model("claude-fable-5"));
+        assert!(is_bare_claude_tiered_model("claude-fable-5-1"));
+        assert!(is_bare_claude_tiered_model("claude-opus-5-5"));
+        assert!(!is_bare_claude_tiered_model("claude-opus-5-5-high"));
+        assert!(!is_bare_claude_tiered_model("claude-opus-4-6"));
+    }
+
+    #[test]
+    fn test_parse_claude_version_tuple() {
+        assert_eq!(parse_claude_version_tuple("claude-fable-5"), Some((5, 0)));
+        assert_eq!(parse_claude_version_tuple("claude-fable-5-1"), Some((5, 1)));
+        assert_eq!(parse_claude_version_tuple("claude-opus-5-5"), Some((5, 5)));
+        assert_eq!(
+            parse_claude_version_tuple("claude-opus-5-5-high"),
+            Some((5, 5))
+        );
+        assert_eq!(
+            parse_claude_version_tuple("claude-haiku-4-5-20251001"),
+            Some((4, 5))
+        );
+        assert_eq!(
+            parse_claude_version_tuple("claude-opus-4-6-thinking"),
+            Some((4, 6))
+        );
+        assert_eq!(parse_claude_version_tuple("claude-opus-4-7"), Some((4, 7)));
+        assert_eq!(
+            parse_claude_version_tuple("claude-3-5-sonnet-20241022"),
+            Some((3, 5))
+        );
+        assert_eq!(parse_claude_version_tuple("gemini-3.8-flash"), None);
     }
 }

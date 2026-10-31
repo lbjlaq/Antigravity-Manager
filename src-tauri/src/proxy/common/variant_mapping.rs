@@ -633,7 +633,7 @@ mod tests {
             SPEC_CLAUDE_OPUS_46.effective_thinking_budget(Some(32_768)),
             32_768
         );
-        assert_eq!(SPEC_CLAUDE_OPUS_46.effective_thinking_budget(None), 1_024);
+        assert_eq!(SPEC_CLAUDE_OPUS_46.effective_thinking_budget(None), 0);
     }
 
     #[test]

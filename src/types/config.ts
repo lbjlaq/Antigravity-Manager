@@ -12,6 +12,8 @@ export interface ProxyConfig {
     admin_password?: string;
     auto_start: boolean;
     custom_mapping?: Record<string, string>;
+    custom_mapping_expose?: Record<string, boolean>;
+    builtin_mapping_version?: number;
     request_timeout: number;
     enable_logging: boolean;
     capture_health_logs?: boolean;
