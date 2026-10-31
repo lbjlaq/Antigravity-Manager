@@ -93,7 +93,7 @@ impl ProtocolStreamHandler for ClaudeStreamHandler {
             return out;
         }
 
-        // 异常收尾终结事件：修复未闭合代码块、注入告警 Banner 并下发 stop_reason: max_tokens
+        // 异常收尾终结事件：纯净收尾，绝不篡改模型正文；工具调用优先 tool_use，纯文本断流标记 stop_reason: max_tokens
         out.extend(emit_abnormal_force_stop(&mut self.state, error_report));
         out
     }

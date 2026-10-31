@@ -120,7 +120,9 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
             .unwrap_or_default();
 
         for cand in &parts_snapshot {
-            if cand.get("finishReason").is_some() || cand.get("finish_reason").is_some() {
+            if cand.get("finishReason").and_then(|v| v.as_str()).is_some()
+                || cand.get("finish_reason").and_then(|v| v.as_str()).is_some()
+            {
                 self.saw_finish_reason = true;
             }
             if let Some(parts) = cand
@@ -185,10 +187,6 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
 
     fn has_thinking(&self) -> bool {
         self.has_thinking
-    }
-
-    fn is_terminal(&self) -> bool {
-        self.saw_finish_reason
     }
 
     fn emit_finalize(&mut self) -> Vec<Bytes> {
@@ -446,6 +444,63 @@ mod tests {
         let output = all_chunks.join("");
 
         // 已正常下发 STOP 的流，严禁再次触发 emit_abnormal_finalize 附加 MAX_TOKENS
+        assert!(output.contains(r#""finishReason":"STOP""#));
+        assert!(!output.contains("MAX_TOKENS"));
+    }
+
+    #[tokio::test]
+    async fn test_gemini_stream_normal_eof_reaches_emit_finalize() {
+        let completed_json = serde_json::json!({
+            "response": {
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "text": "Normal completion" }]
+                    },
+                    "finishReason": "STOP",
+                    "index": 0
+                }]
+            }
+        });
+
+        // 正常流：上游正常以 EOF (None) 终结，而非 Err 中断
+        let items: Vec<Result<Bytes, String>> = vec![Ok(Bytes::from(format!(
+            "data: {}\n\n",
+            serde_json::to_string(&completed_json).unwrap()
+        )))];
+
+        let handler = GeminiStreamHandler::new(
+            Some("trace_gemini_eof".to_string()),
+            "session_gemini_eof".to_string(),
+            "gemini-2.5-pro".to_string(),
+            1,
+            "anchor".to_string(),
+            false,
+            None,
+            "acc@example.com".to_string(),
+            "gemini-2.5-pro".to_string(),
+        );
+
+        let lifecycle_cfg = crate::proxy::pipeline::StreamLifecycleConfig::new(
+            "gemini",
+            "test_gemini_eof",
+            "test".to_string(),
+        );
+
+        let mut stream = crate::proxy::pipeline::run_stream_lifecycle(
+            Box::pin(futures::stream::iter(items)),
+            handler,
+            lifecycle_cfg,
+        );
+
+        let mut all_chunks = Vec::new();
+        while let Some(result) = stream.next().await {
+            if let Ok(bytes) = result {
+                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            }
+        }
+        let output = all_chunks.join("");
+
+        assert!(output.contains("Normal completion"));
         assert!(output.contains(r#""finishReason":"STOP""#));
         assert!(!output.contains("MAX_TOKENS"));
     }

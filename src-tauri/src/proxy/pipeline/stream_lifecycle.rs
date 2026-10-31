@@ -47,10 +47,10 @@ pub trait ProtocolStreamHandler: Send + 'static {
 
     /// [黄金三元组异常截断收尾契约] 上游异常中断/超时且已有正文/工具调用输出（has_content == true）时调用：
     /// 此时为了避免客户端抛出 StreamTruncatedError 丢弃已生成的成千上万 token，必须优雅收尾；
-    /// 但与正常 EOF (emit_finalize) 不同，异常收尾必须：
-    /// 1. 修复未闭合的 markdown 代码块；
-    /// 2. 追加显式的中英文网关警示 banner（提示用户网络中断及可回复“继续”）；
-    /// 3. 设置截断型终止原因（Claude 下发 max_tokens，OpenAI 下发 length，Gemini 下发 MAX_TOKENS）。
+    /// 但与正常 EOF (emit_finalize) 不同，异常收尾遵循零正文篡改原则：
+    /// 1. 绝不向模型正文注入任何假横幅或篡改已有文本；
+    /// 2. 若存在工具调用，严格优先保持 tool_use (Claude) / tool_calls (OpenAI) / STOP (Gemini)；
+    /// 3. 仅当纯文本生成中途断流时，设置截断型终止原因（Claude 下发 max_tokens，OpenAI 下发 length，Gemini 下发 MAX_TOKENS）。
     ///
     /// 默认实现回退至普通 emit_finalize()。
     fn emit_abnormal_finalize(&mut self, _error_report: &StreamErrorReport) -> Vec<Bytes> {
@@ -272,8 +272,7 @@ where
                                     // 透传底层 Err 会导致客户端未闭合块抛出 StreamTruncatedError，
                                     // 丢弃所有已生成的成千上万 token 并反复无限重思考重置当前 turn。
                                     // 此时应优雅跳出循环，记录异常原因并交由尾部逻辑冲刷缓冲区后调用 emit_abnormal_finalize()，
-                                    // 闭合未闭合的代码块、追加网关告警 Banner 并产出 stop_reason: max_tokens 终结帧，
-                                    // 促使 Claude Code 等客户端保全已生成内容并明确提示用户。
+                                    // 纯净收尾，绝不篡改模型正文，产出优雅终结帧保全已生成内容。
                                     if handler.has_content() {
                                         tracing::warn!(
                                             "[{}] {} upstream stream chunk error after content emitted, gracefully finalizing: {}",
@@ -378,7 +377,7 @@ where
                         // [黄金三元组收尾契约] 若已有正文/工具调用输出（has_content == true）：
                         // 发生空闲静默超时时，严禁透传底层 Err 截断连接导致客户端丢弃全部内容重置！
                         // 记录超时错误报告并优雅跳出循环，由尾部执行异常收尾与 emit_abnormal_finalize()，
-                        // 保全已有生成内容并注入超时提示与 max_tokens 终止标记。
+                        // 零正文篡改保全已有生成内容并标记截断终止原因。
                         if handler.has_content() {
                             tracing::warn!(
                                 "[{}] {} stream idle timeout after {}s in phase {:?} after content emitted, gracefully finalizing",

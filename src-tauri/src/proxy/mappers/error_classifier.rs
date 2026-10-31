@@ -114,45 +114,6 @@ impl StreamErrorReport {
             self.raw
         )
     }
-
-    /// 构建醒目的中英文双语网关异常中断告警 Banner，在异常截断保全内容时下发给客户端
-    pub fn abnormal_notice(&self) -> String {
-        let (reason_zh, reason_en) = match self.classified {
-            ClassifiedStreamError::TIMEOUT => ("空闲响应超时", "stream idle timeout"),
-            ClassifiedStreamError::CONNECTION => ("网络连接断开", "connection closed"),
-            ClassifiedStreamError::STREAM => ("网络传输中断", "network stream interrupted"),
-            ClassifiedStreamError::DECODE => ("数据传输异常", "network data decode error"),
-            _ => ("网络连接异常", "network connection error"),
-        };
-        format!(
-            "\n\n> ⚠️ **[网关提示 / Gateway Notice] 上游流式传输异常中断（{}），已保全前序已生成内容。可回复“继续”完成后续回答。 / Upstream stream interrupted ({}), preceding generated content preserved. You may reply \"continue\" to proceed.**\n",
-            reason_zh, reason_en
-        )
-    }
-}
-
-/// 检查并修复未闭合的 Markdown 代码块（``` 或 ~~~），确保告警 Banner 及后续渲染不破损
-pub fn repair_unclosed_code_fence(visible: &str) -> Option<String> {
-    let unclosed_backticks = visible.matches("```").count() % 2 == 1;
-    let unclosed_tildes = visible.matches("~~~").count() % 2 == 1;
-
-    if unclosed_backticks {
-        let mut s = String::new();
-        if !visible.ends_with('\n') {
-            s.push('\n');
-        }
-        s.push_str("```\n");
-        Some(s)
-    } else if unclosed_tildes {
-        let mut s = String::new();
-        if !visible.ends_with('\n') {
-            s.push('\n');
-        }
-        s.push_str("~~~\n");
-        Some(s)
-    } else {
-        None
-    }
 }
 
 /// 记录并返回带定位的流错误。`#[track_caller]` 把调用点钉在适配器里那一行。
@@ -360,68 +321,5 @@ mod tests {
             );
             assert!(!classified.message.is_empty());
         }
-    }
-
-    #[test]
-    fn repair_unclosed_code_fence_handles_even_and_odd_fences() {
-        // 无代码块或已配对闭合的代码块 -> None
-        assert_eq!(repair_unclosed_code_fence(""), None);
-        assert_eq!(
-            repair_unclosed_code_fence("plain text without code fence"),
-            None
-        );
-        assert_eq!(
-            repair_unclosed_code_fence("```bash\necho hello\n```\n"),
-            None
-        );
-        assert_eq!(
-            repair_unclosed_code_fence("```python\nprint(1)\n```\nSome text\n```bash\nls\n```"),
-            None
-        );
-
-        // 未闭合的代码块（末尾无换行符）
-        assert_eq!(
-            repair_unclosed_code_fence("```bash\npython3 script.py --param 123"),
-            Some("\n```\n".to_string())
-        );
-
-        // 未闭合的代码块（末尾已有换行符）
-        assert_eq!(
-            repair_unclosed_code_fence("```bash\npython3 script.py\n"),
-            Some("```\n".to_string())
-        );
-
-        // 波浪线代码块
-        assert_eq!(
-            repair_unclosed_code_fence("~~~json\n{\"foo\": \"bar\"}"),
-            Some("\n~~~\n".to_string())
-        );
-    }
-
-    #[test]
-    fn abnormal_notice_contains_bilingual_reason_and_continue_guidance() {
-        let stream_report = report_stream_error(
-            "claude",
-            "process_sse_line",
-            &"error reading a body from connection",
-            "trace=123",
-        );
-        let notice = stream_report.abnormal_notice();
-        assert!(notice.contains("⚠️"));
-        assert!(notice.contains("网关提示"));
-        assert!(notice.contains("网络传输中断"));
-        assert!(notice.contains("network stream interrupted"));
-        assert!(notice.contains("继续"));
-        assert!(notice.contains("continue"));
-
-        let timeout_report = report_stream_error(
-            "claude",
-            "stream_lifecycle",
-            &"stream idle timeout",
-            "timeout=120",
-        );
-        let timeout_notice = timeout_report.abnormal_notice();
-        assert!(timeout_notice.contains("空闲响应超时"));
-        assert!(timeout_notice.contains("stream idle timeout"));
     }
 }
