@@ -2375,5 +2375,17 @@
         "confirm": "Clear Now",
         "cancel": "Cancel",
         "success": "Thinking block cache cleared successfully and will rebuild automatically."
+    },
+    "pedal": {
+        "notice_title": "{{model}} Weekly Quota Resetting Soon!",
+        "notice_desc": "The following accounts have weekly quota resetting within 24 hours. Activate Pedal Quota Mode to prioritize burning them before expiration:",
+        "mode_explanation": "Activating will temporarily suspend other accounts to exhaust these accounts. Once all target quotas reach 0% or reset, suspended accounts will be restored automatically.",
+        "suppress_button": "Do not prompt again for {{model}}",
+        "activate_button": "Activate Pedal Quota Mode",
+        "banner_running": "🚴 Pedal Quota Mode Running ({{model}})",
+        "banner_suspended_count": "{{count}} accounts suspended",
+        "banner_active_count": "{{count}} accounts to exhaust",
+        "banner_subtext": "Prioritizing imminent accounts. Suspended accounts will be restored automatically once all target quotas reach 0% or reset.",
+        "exit_button": "Manual Exit & Restore"
     }
 }

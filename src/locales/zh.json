@@ -2341,5 +2341,17 @@
         "confirm": "立即删除",
         "cancel": "暂不删除",
         "success": "已成功删除思考块缓存，将在后续对话中自动重建。"
+    },
+    "pedal": {
+        "notice_title": "发现即将重置的 {{model}} 周配额！",
+        "notice_desc": "以下账号的周配额在 24 小时内即将重置清零，可启动“蹬额度模式”全力消耗，避免额度作废：",
+        "mode_explanation": "启动后将临时挂起其他账号，优先消耗以上账号。待额度全部用完 (0%) 或官方重置后，系统将自动恢复其他账号。",
+        "suppress_button": "不再提示 {{model}} 模型",
+        "activate_button": "启动蹬额度模式",
+        "banner_running": "🚴 蹬额度模式运行中 ({{model}})",
+        "banner_suspended_count": "已挂起 {{count}} 个账号",
+        "banner_active_count": "{{count}} 个待消耗",
+        "banner_subtext": "正在全力消耗临期配额，当目标账号配额全部降至 0% 或到达重置时间后，系统将自动恢复其他账号。",
+        "exit_button": "手动退出并恢复"
     }
 }
