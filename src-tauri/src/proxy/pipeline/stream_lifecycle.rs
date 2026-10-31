@@ -45,6 +45,18 @@ pub trait ProtocolStreamHandler: Send + 'static {
     /// （Claude 下发 message_delta(end_turn) + message_stop，OpenAI 下发 [DONE] 及可选 usage chunk）
     fn emit_finalize(&mut self) -> Vec<Bytes>;
 
+    /// [黄金三元组异常截断收尾契约] 上游异常中断/超时且已有正文/工具调用输出（has_content == true）时调用：
+    /// 此时为了避免客户端抛出 StreamTruncatedError 丢弃已生成的成千上万 token，必须优雅收尾；
+    /// 但与正常 EOF (emit_finalize) 不同，异常收尾必须：
+    /// 1. 修复未闭合的 markdown 代码块；
+    /// 2. 追加显式的中英文网关警示 banner（提示用户网络中断及可回复“继续”）；
+    /// 3. 设置截断型终止原因（Claude 下发 max_tokens，OpenAI 下发 length，Gemini 下发 MAX_TOKENS）。
+    ///
+    /// 默认实现回退至普通 emit_finalize()。
+    fn emit_abnormal_finalize(&mut self, _error_report: &StreamErrorReport) -> Vec<Bytes> {
+        self.emit_finalize()
+    }
+
     /// 首包发生致命错误/超时且 has_content() == false && has_thinking() == false 时调用
     /// 返回协议专属的非重试终端错误帧（Claude 下发 api_error，OpenAI 下发 error frame）
     fn emit_initial_error(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes>;
@@ -166,6 +178,7 @@ where
         let mut phase = StreamPhase::InitialTtft;
         let mut last_activity = tokio::time::Instant::now();
         let mut error_emitted = false;
+        let mut abnormal_error_report: Option<crate::proxy::mappers::error_classifier::StreamErrorReport> = None;
 
         loop {
             tokio::select! {
@@ -258,9 +271,9 @@ where
                                     // 发生上游网络断开（如 TCP RST、连接重置或中断）时，严禁透传底层 Err 截断连接！
                                     // 透传底层 Err 会导致客户端未闭合块抛出 StreamTruncatedError，
                                     // 丢弃所有已生成的成千上万 token 并反复无限重思考重置当前 turn。
-                                    // 此时应优雅跳出循环，交由尾部逻辑冲刷缓冲区并调用 emit_finalize()，
-                                    // 产出合法的 content_block_stop + message_delta(stop_reason: end_turn) + message_stop，
-                                    // 促使 Claude Code 等客户端命中 keepPartial 豁免模型，保全已生成内容。
+                                    // 此时应优雅跳出循环，记录异常原因并交由尾部逻辑冲刷缓冲区后调用 emit_abnormal_finalize()，
+                                    // 闭合未闭合的代码块、追加网关告警 Banner 并产出 stop_reason: max_tokens 终结帧，
+                                    // 促使 Claude Code 等客户端保全已生成内容并明确提示用户。
                                     if handler.has_content() {
                                         tracing::warn!(
                                             "[{}] {} upstream stream chunk error after content emitted, gracefully finalizing: {}",
@@ -268,6 +281,7 @@ where
                                             config.function_name,
                                             report.client_message()
                                         );
+                                        abnormal_error_report = Some(report);
                                         break;
                                     }
 
@@ -363,7 +377,8 @@ where
 
                         // [黄金三元组收尾契约] 若已有正文/工具调用输出（has_content == true）：
                         // 发生空闲静默超时时，严禁透传底层 Err 截断连接导致客户端丢弃全部内容重置！
-                        // 优雅跳出循环执行尾部收尾与 emit_finalize()，保全已有生成内容并满足客户端三元组闭合契约。
+                        // 记录超时错误报告并优雅跳出循环，由尾部执行异常收尾与 emit_abnormal_finalize()，
+                        // 保全已有生成内容并注入超时提示与 max_tokens 终止标记。
                         if handler.has_content() {
                             tracing::warn!(
                                 "[{}] {} stream idle timeout after {}s in phase {:?} after content emitted, gracefully finalizing",
@@ -372,6 +387,7 @@ where
                                 phase_timeout_secs,
                                 phase
                             );
+                            abnormal_error_report = Some(report);
                             break;
                         }
 
@@ -453,9 +469,13 @@ where
 
         // [Double-Finalization Guard]
         // 若尾部冲刷使得 handler 已经进入终结态（例如 process_line 接收到了 [DONE] 或终结事件），
-        // 严禁二次调用 emit_finalize()，防止向客户端发射重复的 [DONE] 帧或 message_stop 事件导致客户端协议报错
+        // 严禁二次调用 finalize，防止向客户端发射重复的 [DONE] 帧或 message_stop 事件导致客户端协议报错
         if !handler.is_terminal() {
-            let final_chunks = handler.emit_finalize();
+            let final_chunks = if let Some(ref report) = abnormal_error_report {
+                handler.emit_abnormal_finalize(report)
+            } else {
+                handler.emit_finalize()
+            };
             for c in final_chunks {
                 yield Ok(c);
             }
@@ -475,6 +495,7 @@ mod tests {
         has_thinking: bool,
         is_thinking_active: bool,
         finalized: bool,
+        abnormal_finalized: bool,
         initial_error_emitted: bool,
         is_terminal: bool,
     }
@@ -487,6 +508,7 @@ mod tests {
                 has_thinking,
                 is_thinking_active: false,
                 finalized: false,
+                abnormal_finalized: false,
                 initial_error_emitted: false,
                 is_terminal: false,
             }
@@ -530,6 +552,11 @@ mod tests {
         fn emit_finalize(&mut self) -> Vec<Bytes> {
             self.finalized = true;
             vec![Bytes::from("[finalized]\n")]
+        }
+
+        fn emit_abnormal_finalize(&mut self, _report: &StreamErrorReport) -> Vec<Bytes> {
+            self.abnormal_finalized = true;
+            vec![Bytes::from("[abnormal_finalized]\n")]
         }
 
         fn emit_initial_error(&mut self, _report: &StreamErrorReport) -> Vec<Bytes> {
@@ -614,8 +641,12 @@ mod tests {
         let full_output = output.join("");
         assert!(full_output.contains("processed:data: partial content"));
         assert!(
-            full_output.contains("[finalized]"),
-            "Must finalize when error occurs after content emitted to fulfill terminal triad contract"
+            full_output.contains("[abnormal_finalized]"),
+            "Must abnormal_finalize when error occurs after content emitted to fulfill terminal triad contract"
+        );
+        assert!(
+            !full_output.contains("[finalized]"),
+            "Must NOT call regular finalize on abnormal error"
         );
         assert!(
             !full_output.contains("[initial_error]"),
@@ -657,8 +688,12 @@ mod tests {
         let full_output = output.join("");
         assert!(full_output.contains("processed:data: partial content"));
         assert!(
-            full_output.contains("[finalized]"),
-            "Must finalize when idle timeout occurs after content emitted"
+            full_output.contains("[abnormal_finalized]"),
+            "Must abnormal_finalize when idle timeout occurs after content emitted"
+        );
+        assert!(
+            !full_output.contains("[finalized]"),
+            "Must NOT call regular finalize on idle timeout"
         );
         assert!(
             !error_received,

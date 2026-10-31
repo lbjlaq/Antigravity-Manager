@@ -393,7 +393,7 @@ impl StreamingState {
             }
         }
 
-        // 确定 stop_reason
+        // 确定 stop_reason：若触发工具调用，必须严格优先保持 tool_use；若触发最大长度或截断异常收尾，标记 max_tokens
         let stop_reason = if self.used_tool {
             "tool_use"
         } else if finish_reason == Some("MAX_TOKENS") {

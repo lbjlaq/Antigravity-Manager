@@ -80,6 +80,24 @@ impl ProtocolStreamHandler for ClaudeStreamHandler {
         out
     }
 
+    fn emit_abnormal_finalize(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes> {
+        let mut out = Vec::new();
+
+        // 协议守卫：若 message_stop 已发送，严禁追加任何事件帧，防止破坏客户端状态机
+        if self.state.message_stop_sent {
+            return out;
+        }
+
+        // 未产生内容中断防护：若未产生任何正文/工具调用，绝不可伪造收尾
+        if !self.state.has_content {
+            return out;
+        }
+
+        // 异常收尾终结事件：修复未闭合代码块、注入告警 Banner 并下发 stop_reason: max_tokens
+        out.extend(emit_abnormal_force_stop(&mut self.state, error_report));
+        out
+    }
+
     fn emit_initial_error(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes> {
         // [FIX #3634 契约对齐] 严禁下发 overloaded_error。
         // Claude Code 2.1.293 的 PU(e) 只要检测到 overloaded_error 字符串，立即触发 30 分钟冷却并在未产生内容前进入 10 次指数退避重试风暴。
@@ -344,6 +362,35 @@ pub fn emit_force_stop(state: &mut StreamingState) -> Vec<Bytes> {
         return chunks;
     }
     vec![]
+}
+
+/// 发送异常中断强制结束事件：纯净收尾，绝不篡改模型正文；保护工具调用契约
+pub fn emit_abnormal_force_stop(
+    state: &mut StreamingState,
+    _error_report: &StreamErrorReport,
+) -> Vec<Bytes> {
+    if state.message_stop_sent {
+        return vec![];
+    }
+
+    let mut chunks = Vec::new();
+
+    // 若当前仍有未闭合的 content_block，下发 content_block_stop 优雅闭合
+    if state.current_block_type() != BlockType::None {
+        chunks.extend(state.end_block());
+    }
+
+    let usage = state.last_usage.clone();
+    // emit_finish 内部按优先级判定 stop_reason：若 self.used_tool == true，严格保持 "tool_use"；
+    // 仅当纯文本生成断流时，才标记为截断语义 "max_tokens"
+    chunks.extend(state.emit_finish(Some("MAX_TOKENS"), usage.as_ref()));
+    if !state.message_stop_sent {
+        chunks.push(Bytes::from(
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        ));
+        state.message_stop_sent = true;
+    }
+    chunks
 }
 
 /// Process grounding metadata from Gemini's googleSearch and emit as Claude web_search blocks
@@ -626,21 +673,25 @@ mod tests {
             "Output must contain text emitted before error"
         );
 
-        // 2. 严禁注入假截断系统提示
+        // 2. 契约守卫：绝不篡改模型正文，严禁注入虚假网关告警或破坏结构化数据
         assert!(
-            !output.contains("Response truncated by Antigravity"),
-            "Must NOT inject synthetic truncation notice into user content"
+            !output.contains("网关提示"),
+            "Must NOT inject gateway notice into output text"
+        );
+        assert!(
+            !output.contains("Gateway Notice"),
+            "Must NOT inject bilingual gateway notice"
         );
 
-        // 3. [黄金三元组契约] 必须优雅闭合 content_block 并下发 message_delta(end_turn) + message_stop，
+        // 3. [黄金三元组契约] 必须优雅闭合 content_block 并下发 message_delta(max_tokens) + message_stop，
         // 满足 qu !== null && zb && El === null，激活客户端 keepPartial 豁免逻辑，杜绝丢弃已生成 Token 与重思死循环
         assert!(
             output.contains("content_block_stop"),
             "Must close open content block with content_block_stop"
         );
         assert!(
-            output.contains(r#""stop_reason":"end_turn""#),
-            "Must emit stop_reason end_turn to satisfy terminal triad"
+            output.contains(r#""stop_reason":"max_tokens""#),
+            "Must emit stop_reason max_tokens to align with length/interruption semantics"
         );
         assert!(
             output.contains("event: message_stop"),
@@ -660,6 +711,51 @@ mod tests {
             !error_propagated,
             "Mid-stream network error must NOT propagate as raw Err after content emitted"
         );
+    }
+
+    #[tokio::test]
+    async fn test_create_claude_sse_stream_tool_call_interruption_preserves_tool_use_stop_reason() {
+        use futures::StreamExt;
+
+        // 模拟一个发送了工具调用后发生网络中断的流
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(bytes::Bytes::from("data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"bash\",\"args\":{\"command\":\"ls\"}}}]}}]}\n\n"));
+            yield Err("error reading a body from connection: connection reset by peer".to_string());
+        };
+
+        let mut claude_stream = create_claude_sse_stream(
+            Box::pin(mock_stream),
+            "trace_tool_interruption_test".to_string(),
+            "test@example.com".to_string(),
+            None,
+            false,
+            1_000,
+            None,
+            1,
+            None,
+            vec!["bash".to_string()],
+        );
+
+        let mut all_chunks = Vec::new();
+        while let Some(result) = claude_stream.next().await {
+            if let Ok(bytes) = result {
+                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            }
+        }
+        let output = all_chunks.join("");
+
+        // 核心契约保护：已有工具调用时，必须严格保持 stop_reason: tool_use，绝不可覆盖为 max_tokens
+        assert!(output.contains(r#""name":"bash""#));
+        assert!(
+            output.contains(r#""stop_reason":"tool_use""#),
+            "Tool call interruption must strictly preserve stop_reason: tool_use, got: {}",
+            output
+        );
+        assert!(
+            !output.contains(r#""stop_reason":"max_tokens""#),
+            "Tool call interruption must NOT be overwritten by max_tokens"
+        );
+        assert!(output.contains("event: message_stop"));
     }
 
     #[tokio::test]

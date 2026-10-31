@@ -1544,6 +1544,10 @@ impl TurnAccumulator {
         self.thought.trim().is_empty() && self.signature.is_none()
     }
 
+    pub fn visible(&self) -> &str {
+        &self.visible
+    }
+
     fn should_capture(&self) -> bool {
         !self.is_empty() && is_capturable_thought(&self.thought, self.signature.as_deref())
     }
