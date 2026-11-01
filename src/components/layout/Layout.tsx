@@ -4,6 +4,10 @@ import Navbar from '../navbar/Navbar';
 import BackgroundTaskRunner from '../common/BackgroundTaskRunner';
 import ToastContainer from '../common/ToastContainer';
 import { useViewStore } from '../../stores/useViewStore';
+import { useAccountStore } from '../../stores/useAccountStore';
+import { usePedalModeStore } from '../../stores/usePedalModeStore';
+import { PedalNoticeModal } from '../pedal/PedalNoticeModal';
+import { PedalBanner } from '../pedal/PedalBanner';
 import MiniView from './MiniView';
 import { useEffect } from 'react';
 import { isTauri } from '../../utils/env';
@@ -11,6 +15,33 @@ import { ensureFullViewState } from '../../utils/windowManager';
 
 function Layout() {
     const { isMiniView } = useViewStore();
+    const { accounts, toggleProxyStatus } = useAccountStore();
+    const { active, checkCandidates, checkAndAutoRecover } = usePedalModeStore();
+
+    // 蹬额度模式：账号状态变化或配额刷新时自动检测
+    useEffect(() => {
+        if (!accounts || accounts.length === 0) return;
+        if (active) {
+            checkAndAutoRecover(accounts, toggleProxyStatus);
+        } else {
+            checkCandidates(accounts);
+        }
+    }, [accounts, active, checkCandidates, checkAndAutoRecover, toggleProxyStatus]);
+
+    // 蹬额度模式：每 60 秒定期心跳校验临期与重置倒计时
+    useEffect(() => {
+        const timer = setInterval(() => {
+            const currentAccounts = useAccountStore.getState().accounts;
+            if (!currentAccounts || currentAccounts.length === 0) return;
+            const pedal = usePedalModeStore.getState();
+            if (pedal.active) {
+                pedal.checkAndAutoRecover(currentAccounts, toggleProxyStatus);
+            } else {
+                pedal.checkCandidates(currentAccounts);
+            }
+        }, 60000);
+        return () => clearInterval(timer);
+    }, [toggleProxyStatus]);
 
     // Ensure correct window state when in Full View (not Mini View)
     // This handles the case where the app was closed in Mini View (small size, no decorations)
@@ -26,6 +57,7 @@ function Layout() {
             <>
                 <BackgroundTaskRunner />
                 <ToastContainer />
+                <PedalNoticeModal />
                 <MiniView />
             </>
         );
@@ -50,7 +82,9 @@ function Layout() {
             />
             <BackgroundTaskRunner />
             <ToastContainer />
+            <PedalNoticeModal />
             <Navbar />
+            <PedalBanner />
             <main className="flex-1 overflow-hidden flex flex-col relative">
                 <Outlet />
             </main>
