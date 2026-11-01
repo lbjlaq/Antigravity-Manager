@@ -2364,6 +2364,7 @@
     "apiKeyFun": {
         "title": "APIKEY.FUN Hub",
         "eyebrow": "Hub",
+        "double11Badge": "Double 11 Promo",
         "description": "The official Antigravity Tools API Hub, providing stable, open, and cost-effective large model API services. Supports mainstream models like Claude, OpenAI, and Gemini. Ideal for unified configuration in Codex, Gemini CLI, Claude Code, and other development tools.",
         "viewNow": "View Now",
         "usage": {

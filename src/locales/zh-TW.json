@@ -2321,6 +2321,7 @@
     "apiKeyFun": {
         "title": "APIKEY.FUN 中轉站",
         "eyebrow": "中轉站",
+        "double11Badge": "雙 11 特惠中",
         "description": "Antigravity Tools 官方合作中轉站，提供穩定、開放、高性價比的大模型 API 服務。支援 Claude、OpenAI、Gemini 等主流模型。透過專屬連結註冊，可享最高充值永久 95 折優惠。",
         "viewNow": "立即查看",
         "usage": {
