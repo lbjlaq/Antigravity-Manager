@@ -57,6 +57,7 @@
     3. User-defined co-creators (e.g., `Co-Authored-By: JeikCode <code@jeikcode.top>`).
     Never emit indiscriminate, unverified, or irrelevant thanks/attributions to arbitrary third parties.
 - **Contributor Respect & Attribution**:
+  - **Merge From the Original PR First**: Integrate a contributor's original remote PR properly *before* applying any local modifications, then comment on that PR with the acceptance/merge points and any extra changes — never pull it locally, process it privately, and close the remote PR on your own; keep contribution credit and contributor goodwill intact.
   - Preserve authorship by preferring the contributor's own PR for squash commits, or attaching explicit `Co-authored-by:` trailers on merge commits and proxy PRs.
   - Disclose costs before merging: highlight affected existing behaviors and unverified paths alongside improvements.
   - Own tooling and documentation gaps directly rather than attributing downstream frictions to contributors.
