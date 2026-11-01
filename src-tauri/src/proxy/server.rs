@@ -1817,6 +1817,14 @@ async fn admin_submit_oauth_code(
         .submit_oauth_code(payload.code, payload.state)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?;
+
+    if let Err(e) = state.token_manager.load_accounts().await {
+        logger::log_error(&format!(
+            "[API] Failed to reload accounts after manual OAuth code submission: {}",
+            e
+        ));
+    }
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({ "account": account })),
@@ -3930,11 +3938,13 @@ async fn admin_get_cli_config_content(
 
 #[derive(Deserialize)]
 struct OAuthParams {
-    code: String,
+    code: Option<String>,
     #[allow(dead_code)]
     state: Option<String>,
     #[allow(dead_code)]
     scope: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
 }
 
 async fn handle_oauth_callback(
@@ -3942,23 +3952,60 @@ async fn handle_oauth_callback(
     headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Result<Html<String>, StatusCode> {
-    let code = params.code;
+    if let Some(err) = params.error {
+        let desc = params.error_description.unwrap_or_else(|| err.clone());
+        error!("OAuth callback received error from provider: {}", desc);
+        crate::modules::oauth_server::cancel_oauth_flow();
+        return Ok(Html(format!(
+            r#"<html><body style="font-family:sans-serif;text-align:center;padding:50px;"><h1 style="color:red;">❌ Authorization Failed</h1><p>Provider returned error: {}</p></body></html>"#,
+            desc
+        )));
+    }
 
-    // Exchange token
+    let code = match params.code {
+        Some(c) if !c.trim().is_empty() => c,
+        _ => {
+            return Ok(Html(
+                r#"<html><body style="font-family:sans-serif;text-align:center;padding:50px;"><h1 style="color:red;">❌ Authorization Failed</h1><p>Missing authorization code in callback.</p></body></html>"#
+                    .to_string(),
+            ));
+        }
+    };
+
     let port = state.security.read().await.port;
     let host = headers.get("host").and_then(|h| h.to_str().ok());
     let proto = headers
         .get("x-forwarded-proto")
         .and_then(|h| h.to_str().ok());
-    let redirect_uri = get_oauth_redirect_uri(port, host, proto);
 
-    let client_key =
-        crate::modules::oauth_server::get_active_flow_client_key(params.state.as_deref());
+    let (redirect_uri, preferred_client_key) = if let Some((
+        flow_redirect_uri,
+        expected_state,
+        flow_client_key,
+    )) =
+        crate::modules::oauth_server::get_active_oauth_flow_context()
+    {
+        if params.state.as_deref() != Some(&expected_state) {
+            error!("OAuth callback state mismatch (CSRF protection)");
+            return Ok(Html(
+                r#"<html><body style="font-family:sans-serif;text-align:center;padding:50px;"><h1 style="color:red;">❌ Authorization Failed</h1><p>Error: OAuth state mismatch (CSRF protection)</p></body></html>"#
+                    .to_string(),
+            ));
+        }
+        (flow_redirect_uri, Some(flow_client_key))
+    } else {
+        let client_key =
+            crate::modules::oauth_server::get_active_flow_client_key(params.state.as_deref());
+        (
+            get_oauth_redirect_uri(port, host, proto, client_key.as_deref()),
+            client_key,
+        )
+    };
 
     match crate::modules::oauth::exchange_code_with_client(
         &code,
         &redirect_uri,
-        client_key.as_deref(),
+        preferred_client_key.as_deref(),
     )
     .await
     {
@@ -3988,6 +4035,12 @@ async fn handle_oauth_callback(
                 return Ok(Html(
                     r#"<html><body><h1>Authorization Failed</h1><p>No refresh token returned</p></body></html>"#.to_string()
                 ));
+            }
+
+            crate::modules::oauth_server::cancel_oauth_flow();
+
+            if let Err(e) = state.token_manager.load_accounts().await {
+                error!("Failed to reload accounts after OAuth callback: {}", e);
             }
 
             // Success HTML
@@ -4081,7 +4134,8 @@ async fn admin_prepare_oauth_url_web(
     let proto = headers
         .get("x-forwarded-proto")
         .and_then(|h| h.to_str().ok());
-    let redirect_uri = get_oauth_redirect_uri(port, host, proto);
+    let redirect_uri =
+        get_oauth_redirect_uri(port, host, proto, client_query.oauth_client_key.as_deref());
 
     let auth_url = crate::modules::oauth_server::prepare_oauth_flow_manually(
         redirect_uri,
@@ -4099,16 +4153,76 @@ async fn admin_prepare_oauth_url_web(
     })))
 }
 
+fn is_loopback_url(raw_url: &str) -> bool {
+    if let Ok(parsed) = url::Url::parse(raw_url.trim()) {
+        if let Some(host) = parsed.host_str() {
+            let h = host.trim_matches(|c| c == '[' || c == ']');
+            return h.eq_ignore_ascii_case("localhost") || h == "127.0.0.1" || h == "::1";
+        }
+    }
+    false
+}
+
+fn resolve_oauth_redirect_uri(
+    port: u16,
+    public_url_override: Option<&str>,
+    is_builtin_client: bool,
+) -> String {
+    if let Some(raw_public_url) = public_url_override {
+        let base = raw_public_url.trim().trim_end_matches('/');
+        if !base.is_empty() {
+            if !is_builtin_client || is_loopback_url(base) {
+                return format!("{}/auth/callback", base);
+            }
+            crate::modules::logger::log_warn(&format!(
+                "Ignored non-loopback ABV_PUBLIC_URL '{}' for built-in Google OAuth client (loopback required); falling back to http://localhost:{}/auth/callback",
+                base, port
+            ));
+        }
+    }
+    format!("http://localhost:{}/auth/callback", port)
+}
+
 /// 辅助函数：获取 OAuth 重定向 URI
-/// 强制使用 localhost，以绕过 Google 2.0 政策对 IP 地址和非 HTTPS 环境的拦截。
-/// 只有在显式设置了 ABV_PUBLIC_URL (例如用户配置了 HTTPS 域名) 时才会使用外部地址。
-fn get_oauth_redirect_uri(port: u16, _host: Option<&str>, _proto: Option<&str>) -> String {
-    if let Ok(public_url) = std::env::var("ABV_PUBLIC_URL") {
-        let base = public_url.trim_end_matches('/');
-        format!("{}/auth/callback", base)
-    } else {
-        // 强制返回 localhost。远程部署时，用户可通过回填功能完成授权。
-        format!("http://localhost:{}/auth/callback", port)
+/// 内置 Google OAuth Client 仅支持 Loopback 回调地址（localhost / 127.0.0.1 / [::1]）。
+/// 仅当使用自定义 Web OAuth Client 或 ABV_PUBLIC_URL 本身为 Loopback 地址时才采用 ABV_PUBLIC_URL。
+fn get_oauth_redirect_uri(
+    port: u16,
+    _host: Option<&str>,
+    _proto: Option<&str>,
+    oauth_client_key: Option<&str>,
+) -> String {
+    let public_url = std::env::var("ABV_PUBLIC_URL").ok();
+    let is_builtin = crate::modules::oauth::is_builtin_oauth_client(oauth_client_key);
+    resolve_oauth_redirect_uri(port, public_url.as_deref(), is_builtin)
+}
+
+#[cfg(test)]
+mod oauth_redirect_uri_tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_oauth_redirect_uri_guards_builtin_client() {
+        assert_eq!(
+            resolve_oauth_redirect_uri(8045, None, true),
+            "http://localhost:8045/auth/callback"
+        );
+        assert_eq!(
+            resolve_oauth_redirect_uri(8045, Some("https://my-domain.example.com/"), true),
+            "http://localhost:8045/auth/callback"
+        );
+        assert_eq!(
+            resolve_oauth_redirect_uri(8045, Some("http://192.168.1.100:8045"), true),
+            "http://localhost:8045/auth/callback"
+        );
+        assert_eq!(
+            resolve_oauth_redirect_uri(8045, Some("http://localhost:18045/"), true),
+            "http://localhost:18045/auth/callback"
+        );
+        assert_eq!(
+            resolve_oauth_redirect_uri(8045, Some("https://my-domain.example.com/"), false),
+            "https://my-domain.example.com/auth/callback"
+        );
     }
 }
 
