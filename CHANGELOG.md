@@ -3,6 +3,13 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.2-beta.6 (2026-11-01)**:
+        -   **[账号删除一致性修复：已删除账号不再被反代调度，加载路径零副作用] (Fixes #3806, PR #3807, Thanks to @cubelikeplayDaniel, @dnmdngcsb)**:
+            -   **调度池以索引为准入白名单**: 反代加载账号池时以 `accounts.json` 为唯一准入清单，索引外的残留凭据文件只记录警告并跳过，彻底杜绝已删除账号（幽灵账号）被重新载入轮询、向失效账号派发请求导致 503 或大请求体下触发 `Cross-account replay cap reached` 的问题。(Fixes #3806, PR #3807, Thanks to @cubelikeplayDaniel, @dnmdngcsb)
+            -   **加载路径零副作用，杜绝凭据误删**: 孤儿文件不再在加载路径被物理删除，规避批量导入「文件已落盘、索引尚未提交」窗口期、以及仅从备份恢复 `accounts/` 目录时误删 refresh token 的不可逆风险；孤儿判定同时兼容文件 stem 与文件内 `id`，避免 `stem != id` 的历史文件被误判。(PR #3807, Thanks to @cubelikeplayDaniel, @dnmdngcsb)
+            -   **热重载与删除流程收敛**: `reload_account()` 对已不在索引中的账号仅从内存池卸载并返回成功，避免启用/禁用与配额刷新时向界面透传误报；`delete_account()` 改为失败点前置（索引先落盘、成功后再删除凭据文件，删除失败向上抛错），同时保留索引外孤儿文件的兜底清理能力；批量删除后立即热重载代理池，保证 Web/CLI 与桌面端行为一致。(PR #3807, Thanks to @cubelikeplayDaniel, @dnmdngcsb)
+            -   **回归测试覆盖**: 新增与调整账号删除、调度池加载单测，分别覆盖「孤儿文件保留在磁盘但不进入调度池」与「索引外残留文件仍可通过显式删除接口兜底清理」两种终态。(PR #3807, Thanks to @cubelikeplayDaniel, @dnmdngcsb)
+
     *   **v5.0.2-beta.5 (2026-11-01)**:
         -   **[Web/Docker 模式 OAuth 链路修复、状态防撕裂与回填同步闭环] (Fixes #3802, PR #3803, PR #3805, Thanks to @dandelion-promise520, @cubelikeplayDaniel)**:
             -   **消除前端重复 Prepare 与状态撕裂**: 优化 `AddAccountDialog` 中 `handleOAuthWeb` 逻辑，优先复用已生成的授权 URL，禁止点击「开始授权」时二次触发 `prepare_oauth_url`；后端 `prepare_oauth_flow_manually` 增加状态幂等复用检查（同 client 与 redirect_uri 直接返回现有 URL），彻底解决双重请求导致后台全局 Flow 状态被重置覆盖、回调 code 掉入废弃通道的硬伤。(Fixes #3802, PR #3803, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
