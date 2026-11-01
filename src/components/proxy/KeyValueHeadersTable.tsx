@@ -262,10 +262,10 @@ export const KeyValueHeadersTable: React.FC<KeyValueHeadersTableProps> = ({
                         <thead>
                             <tr className="bg-gray-100/70 dark:bg-base-200/80 text-[10px] uppercase font-bold text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-base-300 tracking-wider sticky top-0 z-10 backdrop-blur-xs">
                                 <th className="py-1.5 px-3 w-1/3">
-                                    {isQueryParams ? 'Param Key' : 'Header Key'}
+                                    {isQueryParams ? t('monitor.details.param_key', 'Param Key') : t('monitor.details.header_key', 'Header Key')}
                                 </th>
                                 <th className="py-1.5 px-3">
-                                    {isQueryParams ? 'Param Value' : 'Header Value'}
+                                    {isQueryParams ? t('monitor.details.param_value', 'Param Value') : t('monitor.details.header_value', 'Header Value')}
                                 </th>
                                 <th className="py-1.5 px-3 w-20 text-right">{t('common.actions', '操作')}</th>
                             </tr>

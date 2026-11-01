@@ -15,26 +15,30 @@ export default function CircuitBreaker({
 }: CircuitBreakerProps) {
     const { t } = useTranslation();
 
+    const currentSteps = Array.isArray(config?.backoff_steps) && config.backoff_steps.length > 0
+        ? config.backoff_steps
+        : [30, 60, 120, 300, 600];
+
     const handleLevelChange = (index: number, val: string) => {
         let num = parseInt(val, 10);
         if (isNaN(num)) num = 0;
 
-        const newSteps = [...config.backoff_steps];
+        const newSteps = [...currentSteps];
         newSteps[index] = Math.max(0, num);
         onChange({ ...config, backoff_steps: newSteps });
     };
 
     const addLevel = () => {
-        const lastVal = config.backoff_steps[config.backoff_steps.length - 1] || 60;
+        const lastVal = currentSteps[currentSteps.length - 1] || 60;
         onChange({
             ...config,
-            backoff_steps: [...config.backoff_steps, lastVal * 2],
+            backoff_steps: [...currentSteps, lastVal * 2],
         });
     };
 
     const removeLevel = (index: number) => {
-        if (config.backoff_steps.length <= 1) return;
-        const newSteps = config.backoff_steps.filter((_, i) => i !== index);
+        if (currentSteps.length <= 1) return;
+        const newSteps = currentSteps.filter((_, i) => i !== index);
         onChange({ ...config, backoff_steps: newSteps });
     };
 
@@ -100,7 +104,7 @@ export default function CircuitBreaker({
                 </div>
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {config.backoff_steps.map((seconds, idx) => (
+                    {currentSteps.map((seconds, idx) => (
                         <div
                             key={idx}
                             className={`p-3 rounded-xl border transition-all hover:shadow-sm group relative ${getStepColorCls(idx)}`}
@@ -110,7 +114,7 @@ export default function CircuitBreaker({
                                     <span className="text-xs font-bold uppercase tracking-wider opacity-70">
                                         {t("proxy.config.circuit_breaker.level", { level: idx + 1, defaultValue: `Lv ${idx + 1}` })}
                                     </span>
-                                    {config.backoff_steps.length > 1 && (
+                                    {currentSteps.length > 1 && (
                                         <button
                                             onClick={(e) => { e.stopPropagation(); removeLevel(idx); }}
                                             className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-rose-500 transition-opacity"

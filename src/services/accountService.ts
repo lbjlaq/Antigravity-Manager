@@ -24,8 +24,10 @@ export async function listAccounts(): Promise<Account[]> {
     if (response && typeof response === 'object' && Array.isArray(response.accounts)) {
         return response.accounts;
     }
-    // 否则直接返回响应内容（假设为数组）
-    return response || [];
+    if (Array.isArray(response)) {
+        return response;
+    }
+    return [];
 }
 
 export async function getCurrentAccount(): Promise<Account | null> {

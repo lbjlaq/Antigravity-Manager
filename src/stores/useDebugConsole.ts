@@ -123,7 +123,7 @@ export const useDebugConsole = create<DebugConsoleState>((set, get) => ({
             } else {
                 logs = await request<LogEntry[]>('get_debug_console_logs');
             }
-            set({ logs });
+            set({ logs: Array.isArray(logs) ? logs : [] });
         } catch (error) {
             console.error('Failed to load logs:', error);
         }

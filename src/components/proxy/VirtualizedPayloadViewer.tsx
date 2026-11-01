@@ -779,7 +779,7 @@ export const VirtualizedPayloadViewer: React.FC<VirtualizedPayloadViewerProps> =
                             type="button"
                             onClick={() => setSearchTerm('')}
                             className="absolute right-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-0.5"
-                            title="清除搜索"
+                            title={t('monitor.details.clear_search', '清除搜索')}
                         >
                             <X size={12} />
                         </button>
@@ -795,7 +795,7 @@ export const VirtualizedPayloadViewer: React.FC<VirtualizedPayloadViewerProps> =
                             ? 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900/40 dark:text-blue-300 dark:border-blue-800'
                             : 'bg-white dark:bg-base-100 text-gray-400 border-gray-200 dark:border-base-300 hover:text-gray-600 dark:hover:text-gray-300'
                     }`}
-                    title={caseSensitive ? '已开启区分大小写' : '点击开启区分大小写'}
+                    title={caseSensitive ? t('monitor.details.case_sensitive_on', '已开启区分大小写') : t('monitor.details.case_sensitive_off', '点击开启区分大小写')}
                 >
                     <CaseSensitive size={13} />
                 </button>
@@ -809,10 +809,10 @@ export const VirtualizedPayloadViewer: React.FC<VirtualizedPayloadViewerProps> =
                             ? 'bg-gray-200/80 text-gray-800 border-gray-300 dark:bg-base-200 dark:text-gray-200 dark:border-base-300'
                             : 'bg-white dark:bg-base-100 text-gray-400 border-gray-200 dark:border-base-300 hover:text-gray-600 dark:hover:text-gray-300'
                     }`}
-                    title={isWrap ? '当前：自动折行 (点击切换为单行)' : '当前：单行横向滚动 (点击切换为自动折行)'}
+                    title={isWrap ? t('monitor.details.wrap_on_title', '当前：自动折行 (点击切换为单行)') : t('monitor.details.wrap_off_title', '当前：单行横向滚动 (点击切换为自动折行)')}
                 >
                     <WrapText size={12} />
-                    <span className="hidden sm:inline text-[9px]">{isWrap ? '折行' : '单行'}</span>
+                    <span className="hidden sm:inline text-[9px]">{isWrap ? t('monitor.details.wrap', '折行') : t('monitor.details.no_wrap', '单行')}</span>
                 </button>
 
                 {/* Match Counter & Prev/Next Controls */}
@@ -823,7 +823,7 @@ export const VirtualizedPayloadViewer: React.FC<VirtualizedPayloadViewerProps> =
                                 ? 'text-amber-600 dark:text-amber-400'
                                 : 'text-gray-400'
                         }`}>
-                            {matchesCount > 0 ? `${currentMatchIndex + 1}/${matchesCount}` : '无匹配'}
+                            {matchesCount > 0 ? `${currentMatchIndex + 1}/${matchesCount}` : t('monitor.details.no_match', '无匹配')}
                         </span>
                         <div className="flex items-center">
                             <button
@@ -831,7 +831,7 @@ export const VirtualizedPayloadViewer: React.FC<VirtualizedPayloadViewerProps> =
                                 onClick={handlePrev}
                                 disabled={matchesCount <= 1}
                                 className="btn btn-ghost btn-xs p-0.5 h-5 min-h-0 text-gray-500 dark:text-gray-400 disabled:opacity-30"
-                                title="上一处 (Shift+Enter)"
+                                title={t('monitor.details.prev_match', '上一处 (Shift+Enter)')}
                             >
                                 <ChevronUp size={12} />
                             </button>
@@ -840,7 +840,7 @@ export const VirtualizedPayloadViewer: React.FC<VirtualizedPayloadViewerProps> =
                                 onClick={handleNext}
                                 disabled={matchesCount <= 1}
                                 className="btn btn-ghost btn-xs p-0.5 h-5 min-h-0 text-gray-500 dark:text-gray-400 disabled:opacity-30"
-                                title="下一处 (Enter)"
+                                title={t('monitor.details.next_match', '下一处 (Enter)')}
                             >
                                 <ChevronDown size={12} />
                             </button>
@@ -864,7 +864,7 @@ export const VirtualizedPayloadViewer: React.FC<VirtualizedPayloadViewerProps> =
                                     {resolvedHeaderTitle}
                                 </span>
                                 <span className="text-[9px] font-mono text-gray-400 dark:text-gray-500">
-                                    ({prettyHeaders.split('\n').length} 行)
+                                    ({prettyHeaders.split('\n').length} {t('monitor.details.lines_count', '行')})
                                 </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -875,13 +875,13 @@ export const VirtualizedPayloadViewer: React.FC<VirtualizedPayloadViewerProps> =
                                     title={t('common.copy', '复制')}
                                 >
                                     {isHeadersCopied ? <CheckCircle size={11} className="text-green-500" /> : <Copy size={11} />}
-                                    <span>{isHeadersCopied ? (t('common.copied') || '已复制') : (t('common.copy') || '复制')}</span>
+                                    <span>{isHeadersCopied ? t('common.copied', '已复制') : t('common.copy', '复制')}</span>
                                 </button>
                                 <button
                                     type="button"
                                     className="text-[10px] text-blue-600 dark:text-blue-400 font-medium flex items-center gap-0.5"
                                 >
-                                    <span>{isHeadersExpanded ? '收起' : '展开'}</span>
+                                    <span>{isHeadersExpanded ? t('monitor.details.collapse', '收起') : t('monitor.details.expand', '展开')}</span>
                                     <ChevronDown size={12} className={`transition-transform duration-200 ${isHeadersExpanded ? 'rotate-180' : ''}`} />
                                 </button>
                             </div>
