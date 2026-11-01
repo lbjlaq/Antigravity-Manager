@@ -3184,6 +3184,7 @@ struct BulkDeleteRequest {
 }
 
 async fn admin_delete_accounts(
+    State(state): State<AppState>,
     Json(payload): Json<BulkDeleteRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     crate::modules::account::delete_accounts(&payload.account_ids).map_err(|e| {
@@ -3192,6 +3193,12 @@ async fn admin_delete_accounts(
             Json(ErrorResponse { error: e }),
         )
     })?;
+
+    // [FIX #3806] 批量删除后立即重新加载 TokenManager
+    if let Err(e) = state.token_manager.load_accounts().await {
+        tracing::warn!("[API] Failed to reload accounts after bulk deletion: {}", e);
+    }
+
     Ok(StatusCode::OK)
 }
 

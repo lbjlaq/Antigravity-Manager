@@ -761,42 +761,43 @@ impl TokenManager {
 
         // 读取 accounts.json 索引，过滤掉用户在索引中标记为 disabled 或 proxy_disabled 的账号，防止实体文件残留导致已停用账号渗入代理池
         let index_file = self.resolved_data_dir().join("accounts.json");
-        let disabled_in_index: std::collections::HashSet<String> = if index_file.exists() {
+        let (valid_in_index, disabled_in_index): (
+            Option<std::collections::HashSet<String>>,
+            std::collections::HashSet<String>,
+        ) = if index_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&index_file) {
                 if let Ok(index_val) = serde_json::from_str::<serde_json::Value>(&content) {
-                    index_val
-                        .get("accounts")
-                        .and_then(|a| a.as_array())
-                        .map(|accs| {
-                            accs.iter()
-                                .filter_map(|acc| {
-                                    let is_disabled = acc
-                                        .get("disabled")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false);
-                                    let is_proxy_disabled = acc
-                                        .get("proxy_disabled")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false);
-                                    if is_disabled || is_proxy_disabled {
-                                        acc.get("id")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default()
+                    if let Some(accs) = index_val.get("accounts").and_then(|a| a.as_array()) {
+                        let mut all_ids = std::collections::HashSet::new();
+                        let mut disabled_ids = std::collections::HashSet::new();
+                        for acc in accs {
+                            if let Some(id) = acc.get("id").and_then(|v| v.as_str()) {
+                                all_ids.insert(id.to_string());
+                                let is_disabled = acc
+                                    .get("disabled")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let is_proxy_disabled = acc
+                                    .get("proxy_disabled")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                if is_disabled || is_proxy_disabled {
+                                    disabled_ids.insert(id.to_string());
+                                }
+                            }
+                        }
+                        (Some(all_ids), disabled_ids)
+                    } else {
+                        (None, std::collections::HashSet::new())
+                    }
                 } else {
-                    std::collections::HashSet::new()
+                    (None, std::collections::HashSet::new())
                 }
             } else {
-                std::collections::HashSet::new()
+                (None, std::collections::HashSet::new())
             }
         } else {
-            std::collections::HashSet::new()
+            (None, std::collections::HashSet::new())
         };
 
         let entries =
@@ -817,6 +818,37 @@ impl TokenManager {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or_default();
+
+            // [FIX #3806, #3808] 若 accounts.json 索引存在且有效，仅加载注册表中的合法账号。
+            // 孤儿账号（已在界面删除但磁盘残留的 *.json 文件）拒绝载入代理调度池，仅记录 warning 跳过，
+            // 严禁在此主动删除文件，避免并发导入或未提交窗口期误删 refresh token。
+            if let Some(ref valid_ids) = valid_in_index {
+                let is_valid = if valid_ids.contains(stem) {
+                    true
+                } else if let Ok(content) = std::fs::read_to_string(&path) {
+                    // 兼容 stem != id 的情况，解析内部 id
+                    serde_json::from_str::<serde_json::Value>(&content)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("id")
+                                .and_then(|id| id.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .map(|internal_id| valid_ids.contains(&internal_id))
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                if !is_valid {
+                    tracing::warn!(
+                        "[Proxy] Skipping orphan account file {:?} from proxy pool (not present in accounts.json index)",
+                        path
+                    );
+                    continue;
+                }
+            }
+
             if disabled_in_index.contains(stem) {
                 // 实体文件是账号状态的真实权威来源。先检查实体文件，若实体文件本身未停用（索引数据陈旧），以实体文件为准；
                 // 仅当实体文件确实标记为停用或不可读时才跳过。
@@ -909,6 +941,21 @@ impl TokenManager {
         if index_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&index_file) {
                 if let Ok(index_val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(accs) = index_val.get("accounts").and_then(|a| a.as_array()) {
+                        let in_index = accs
+                            .iter()
+                            .any(|acc| acc.get("id").and_then(|v| v.as_str()) == Some(account_id));
+                        // [FIX #3806, #3808] 若 accounts.json 存在但该账号已被删除，仅从内存调度池卸载，不删物理文件，并返回 Ok(())
+                        if !in_index {
+                            self.remove_account(account_id);
+                            tracing::info!(
+                                "[Proxy] Account {} is not in accounts.json index, removed from proxy pool",
+                                account_id
+                            );
+                            return Ok(());
+                        }
+                    }
+
                     let is_disabled = index_val
                         .get("accounts")
                         .and_then(|a| a.as_array())
@@ -9497,5 +9544,58 @@ mod tests {
         assert!(!third.contains("model-a"));
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn test_load_accounts_skips_and_cleans_orphan_files_not_in_index() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_orphan_accounts_{}", uuid::Uuid::new_v4()));
+        let accounts_dir = temp_dir.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        let mut acc_valid = weekly_quota_account(now);
+        acc_valid["id"] = serde_json::json!("acc-valid-1");
+        acc_valid["email"] = serde_json::json!("valid@example.com");
+        std::fs::write(accounts_dir.join("acc-valid-1.json"), acc_valid.to_string()).unwrap();
+
+        let mut acc_orphan = weekly_quota_account(now);
+        acc_orphan["id"] = serde_json::json!("acc-orphan-ghost");
+        acc_orphan["email"] = serde_json::json!("orphan@example.com");
+        std::fs::write(
+            accounts_dir.join("acc-orphan-ghost.json"),
+            acc_orphan.to_string(),
+        )
+        .unwrap();
+
+        // 写入 accounts.json 索引，只包含 acc-valid-1，不包含 acc-orphan-ghost
+        let index_json = serde_json::json!({
+            "version": "2.0",
+            "accounts": [
+                {
+                    "id": "acc-valid-1",
+                    "email": "valid@example.com",
+                    "name": null,
+                    "disabled": false,
+                    "proxy_disabled": false,
+                    "created_at": now,
+                    "last_used": now
+                }
+            ],
+            "current_account_id": "acc-valid-1"
+        });
+        std::fs::write(temp_dir.join("accounts.json"), index_json.to_string()).unwrap();
+
+        let manager = TokenManager::new(temp_dir.clone());
+        let count = manager.load_accounts().await.unwrap();
+
+        // [FIX #3806, #3808] 仅有效账号载入，孤儿账号被跳过载入调度池，但保留物理文件零副作用
+        assert_eq!(count, 1);
+        assert!(manager.tokens.contains_key("acc-valid-1"));
+        assert!(!manager.tokens.contains_key("acc-orphan-ghost"));
+        assert!(accounts_dir.join("acc-valid-1.json").exists());
+        assert!(accounts_dir.join("acc-orphan-ghost.json").exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
