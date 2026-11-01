@@ -5941,7 +5941,27 @@ impl TokenManager {
                                 "gemini-4-argon-low",
                             ]
                         } else if third_party {
-                            vec!["claude", "claude-sonnet-4-6", "gpt-oss-120b-medium"]
+                            let has_3p = quota
+                                .get("models")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter().any(|m| {
+                                        let n = m
+                                            .get("name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_lowercase();
+                                        !n.contains("-disabled")
+                                            && !n.ends_with("_disabled")
+                                            && (n.starts_with("claude") || n.starts_with("gpt"))
+                                    })
+                                })
+                                .unwrap_or(false);
+                            if has_3p {
+                                vec!["claude"]
+                            } else {
+                                Vec::new()
+                            }
                         } else if gemini {
                             vec![
                                 "gemini-3-flash",

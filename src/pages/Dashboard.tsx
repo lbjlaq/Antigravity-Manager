@@ -140,6 +140,13 @@ function Dashboard() {
         // 2. 单账号配额提取辅助函数
         const get5hQuota = (a: Account, modelKey: 'gemini-pro' | 'gemini-image' | 'claude'): number | null => {
             const isClaude = modelKey === 'claude';
+            if (isClaude) {
+                const hasClaude = a.quota?.models?.some(m => {
+                    const n = m.name.toLowerCase();
+                    return !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any).disabled && (n.startsWith('claude') || n.startsWith('gpt'));
+                });
+                if (!hasClaude) return null;
+            }
             // 优先从 quota_groups 提取原生 5H 滚动配额桶
             if (a.quota?.quota_groups) {
                 for (const group of a.quota.quota_groups) {
@@ -169,6 +176,13 @@ function Dashboard() {
 
         const getWeeklyQuota = (a: Account, modelKey: 'gemini-pro' | 'gemini-image' | 'claude'): number | null => {
             const isClaude = modelKey === 'claude';
+            if (isClaude) {
+                const hasClaude = a.quota?.models?.some(m => {
+                    const n = m.name.toLowerCase();
+                    return !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any).disabled && (n.startsWith('claude') || n.startsWith('gpt'));
+                });
+                if (!hasClaude) return null;
+            }
             if (a.quota?.quota_groups) {
                 for (const group of a.quota.quota_groups) {
                     const gname = group.display_name.toLowerCase();
@@ -217,6 +231,10 @@ function Dashboard() {
             for (const a of pool) {
                 const q5h = get5hQuota(a, modelKey);
                 const qWeekly = getWeeklyQuota(a, modelKey);
+
+                if (q5h === null && qWeekly === null) {
+                    continue;
+                }
 
                 if (q5h !== null && q5h >= 0) {
                     sum5h += q5h;
@@ -269,6 +287,7 @@ function Dashboard() {
                 constrainedAvg5h: countConstrained5h > 0 ? Math.round(sumConstrained5h / countConstrained5h) : 0,
                 avgWeekly: countWeekly > 0 ? Math.round(sumWeekly / countWeekly) : 0,
                 weightedEffective: totalWeight > 0 ? Math.round(sumWeighted / totalWeight) : 0,
+                hasActivePool: count5h > 0 || countWeekly > 0,
                 zeroWeeklyCount,
                 coolingCount,
                 cappedCount,
@@ -306,11 +325,14 @@ function Dashboard() {
             ? t('dashboard.view_mode_weekly', '7天周配额均值')
             : t('dashboard.view_mode_weighted', '综合加权可用');
 
-    const claudeQuotaValue = quotaView === '5h'
-        ? stats.claude.avg5h
-        : quotaView === 'weekly'
-            ? stats.claude.avgWeekly
-            : stats.claude.weightedEffective;
+    const hasClaudePool = stats.claude.hasActivePool;
+    const claudeQuotaValue = !hasClaudePool
+        ? null
+        : quotaView === '5h'
+            ? stats.claude.avg5h
+            : quotaView === 'weekly'
+                ? stats.claude.avgWeekly
+                : stats.claude.weightedEffective;
     const claudeQuotaLabel = quotaView === '5h'
         ? t('dashboard.view_mode_5h', '5小时滚动可用')
         : quotaView === 'weekly'
@@ -719,11 +741,13 @@ function Dashboard() {
                                             </span>
                                         </div>
                                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                            claudeQuotaValue >= 50
-                                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border dark:border-emerald-500/30'
-                                                : 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300 dark:border dark:border-amber-500/30'
+                                            claudeQuotaValue === null
+                                                ? 'bg-gray-100 text-gray-500 dark:bg-white/10 dark:text-zinc-400'
+                                                : claudeQuotaValue >= 50
+                                                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border dark:border-emerald-500/30'
+                                                    : 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300 dark:border dark:border-amber-500/30'
                                         }`}>
-                                            {claudeQuotaValue >= 50 ? t('dashboard.quota_sufficient_short', '充足') : t('dashboard.quota_tight_short', '偏紧')}
+                                            {claudeQuotaValue === null ? '-' : (claudeQuotaValue >= 50 ? t('dashboard.quota_sufficient_short', '充足') : t('dashboard.quota_tight_short', '偏紧'))}
                                         </span>
                                     </div>
 
@@ -731,7 +755,7 @@ function Dashboard() {
                                     <div className="flex items-baseline justify-between">
                                         <div>
                                             <span className="text-3xl font-black font-mono tracking-tight text-gray-900 dark:text-white">
-                                                {claudeQuotaValue}%
+                                                {claudeQuotaValue !== null ? `${claudeQuotaValue}%` : '-'}
                                             </span>
                                             <span className="text-[11px] text-gray-400 dark:text-zinc-400 block mt-0.5">
                                                 {claudeQuotaLabel}
@@ -757,13 +781,13 @@ function Dashboard() {
                                                         {t('dashboard.view_mode_5h', '5H 滚动')}
                                                     </span>
                                                     <span className={`font-mono text-xs font-bold ${quotaView === '5h' ? 'text-cyan-700 dark:text-cyan-300' : 'text-gray-700 dark:text-zinc-200'}`}>
-                                                        {stats.claude.avg5h}%
+                                                        {hasClaudePool ? `${stats.claude.avg5h}%` : '-'}
                                                     </span>
                                                 </div>
                                                 <div className="h-1.5 w-full bg-gray-200/80 dark:bg-white/10 rounded-full overflow-hidden">
                                                     <div
                                                         className="h-full bg-gradient-to-r from-cyan-500 to-sky-400 rounded-full transition-all duration-300 shadow-[0_0_6px_rgba(6,182,212,0.5)]"
-                                                        style={{ width: `${Math.min(stats.claude.avg5h, 100)}%` }}
+                                                        style={{ width: `${hasClaudePool ? Math.min(stats.claude.avg5h, 100) : 0}%` }}
                                                     />
                                                 </div>
                                             </button>
@@ -783,13 +807,13 @@ function Dashboard() {
                                                         {t('dashboard.view_mode_weekly', '7天周配额')}
                                                     </span>
                                                     <span className={`font-mono text-xs font-bold ${quotaView === 'weekly' ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-zinc-200'}`}>
-                                                        {stats.claude.avgWeekly}%
+                                                        {hasClaudePool ? `${stats.claude.avgWeekly}%` : '-'}
                                                     </span>
                                                 </div>
                                                 <div className="h-1.5 w-full bg-gray-200/80 dark:bg-white/10 rounded-full overflow-hidden">
                                                     <div
                                                         className="h-full bg-gradient-to-r from-indigo-500 to-purple-400 rounded-full transition-all duration-300 shadow-[0_0_6px_rgba(99,102,241,0.5)]"
-                                                        style={{ width: `${Math.min(stats.claude.avgWeekly, 100)}%` }}
+                                                        style={{ width: `${hasClaudePool ? Math.min(stats.claude.avgWeekly, 100) : 0}%` }}
                                                     />
                                                 </div>
                                             </button>
