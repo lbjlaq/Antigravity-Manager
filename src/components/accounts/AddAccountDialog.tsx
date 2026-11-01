@@ -376,7 +376,18 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         setMessage(t('accounts.add.oauth.manual_submitting', '認可コードを送信中...'));
 
         try {
-            await invoke('submit_oauth_code', { code: manualCode.trim(), state: null });
+            // 从预生成的 oauthUrl 中提取 state 参数作为兜底 CSRF 校验，防止用户只回填 bare code 时丢失 state 导致状态未比对
+            let fallbackState: string | null = null;
+            if (oauthUrl) {
+                try {
+                    const parsedUrl = new URL(oauthUrl);
+                    fallbackState = parsedUrl.searchParams.get('state');
+                } catch {
+                    // ignore URL parse failure
+                }
+            }
+
+            await invoke('submit_oauth_code', { code: manualCode.trim(), state: fallbackState });
 
             // 兑换并保存成功后，先刷新账号列表，再提示成功并关闭弹窗
             await fetchAccounts();
@@ -391,6 +402,8 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             }, 1500);
         } catch (error) {
             console.error('Manual OAuth Code submission error:', error);
+            // 提交失败后清空失效的 URL 缓存，方便用户点击重试时重新生成全新的可用授权 URL
+            setOauthUrl('');
             let errStr = String(error);
             if (errStr.includes("No active OAuth flow")) {
                 setMessage(t('accounts.add.oauth.error_no_flow'));
