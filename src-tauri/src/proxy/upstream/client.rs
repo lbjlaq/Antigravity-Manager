@@ -795,6 +795,11 @@ impl UpstreamClient {
         tracing::debug!("UpstreamClient User-Agent override updated: {:?}", lock);
     }
 
+    /// Get current raw User-Agent override string if set
+    pub async fn get_user_agent_override(&self) -> Option<String> {
+        self.user_agent_override.read().await.clone()
+    }
+
     /// Get current User-Agent (sanitized with safety floor >= 4.3.0)
     pub async fn get_user_agent(&self) -> String {
         let ua_override = self.user_agent_override.read().await;

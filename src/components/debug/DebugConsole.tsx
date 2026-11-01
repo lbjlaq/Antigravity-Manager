@@ -131,7 +131,8 @@ const DebugConsole: React.FC<DebugConsoleProps> = ({ embedded = false }) => {
         }
     };
 
-    const filteredLogs = logs.filter(log => {
+    const logsList = Array.isArray(logs) ? logs : [];
+    const filteredLogs = logsList.filter(log => {
         if (!filter.includes(log.level as LogLevel)) return false;
         if (searchTerm && !log.message.toLowerCase().includes(searchTerm.toLowerCase()) &&
             !log.target.toLowerCase().includes(searchTerm.toLowerCase())) return false;

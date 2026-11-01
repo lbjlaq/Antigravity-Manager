@@ -457,7 +457,7 @@ export const TimingDiagnosticsCard: React.FC<TimingDiagnosticsCardProps> = ({ ti
                         type="button"
                         onClick={() => setIsExpanded((prev) => !prev)}
                         className="btn btn-ghost btn-xs p-1 h-6 min-h-0 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/15"
-                        title={isExpanded ? '收起耗时诊断' : '展开耗时诊断'}
+                        title={isExpanded ? t('monitor.timing.collapse', '收起耗时诊断') : t('monitor.timing.expand', '展开耗时诊断')}
                     >
                         <ChevronDown size={14} className={`transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`} />
                     </button>
@@ -559,13 +559,13 @@ export const TimingDiagnosticsCard: React.FC<TimingDiagnosticsCardProps> = ({ ti
                                                             <span className="font-black">{formatSeconds(att.duration_s)}</span>
                                                         </div>
                                                         <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate mt-0.5" title={att.endpoint_url}>
-                                                            端点: {att.endpoint_url}
+                                                            {t('monitor.timing.endpoint_label', '端点')}: {att.endpoint_url}
                                                         </div>
                                                         <div className="text-[10px] mt-1 text-gray-600 dark:text-gray-300 space-y-1">
                                                             <div>
-                                                                <span className="font-medium">状态: </span>
+                                                                <span className="font-medium">{t('monitor.timing.status_label', '状态')}: </span>
                                                                 <span className="font-bold">
-                                                                    {att.status ? `${att.status}` : '网络超时/异常'}
+                                                                    {att.status ? `${att.status}` : t('monitor.timing.network_timeout_or_error', '网络超时/异常')}
                                                                     {att.is_effective ? ' OK' : ''}
                                                                     {!att.is_effective && (
                                                                         <span className="font-normal opacity-85 ml-1">
