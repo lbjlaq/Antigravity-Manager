@@ -395,6 +395,7 @@
                 "copied": "コピーしました",
                 "link_label": "認証URL",
                 "link_click_to_copy": "クリックしてコピー",
+                "remote_hint": "💡 Docker / リモートサーバーのヒント：Google 認証完了後にブラウザが localhost にリダイレクトされ接続拒否が表示されるのは正常なセキュリティ制限です。ブラウザのアドレスバーから完全な URL（code を含む）をコピーして以下に貼り付けて送信してください。",
                 "manual_hint": "ブラウザがリダイレクトされませんでしたか？ここにコールバックURLまたはコードを貼り付けてください：",
                 "manual_placeholder": "コールバックURLまたはコードを貼り付け...",
                 "error_no_flow": "まず「OAuth認証を開始」をクリックしてください",

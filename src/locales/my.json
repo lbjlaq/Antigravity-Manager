@@ -372,6 +372,7 @@
                 "copied": "Disalin",
                 "link_label": "URL Kebenaran",
                 "link_click_to_copy": "Klik untuk salin",
+                "remote_hint": "💡 Petua Docker / Pelayan Jauh: adalah normal untuk pelayar memaparkan sambungan ditolak apabila mengubah hala ke localhost selepas kebenaran Google. Cuma salin URL penuh (mengandungi kod) dari bar alamat pelayar anda dan tampal di bawah.",
                 "manual_hint": "Pelayar tidak dialihkan? Tampal URL panggil balik penuh atau Kod mentah di sini:",
                 "manual_placeholder": "Tampal URL panggil balik atau kod...",
                 "error_no_flow": "Sila klik 'Mula OAuth' dahulu",

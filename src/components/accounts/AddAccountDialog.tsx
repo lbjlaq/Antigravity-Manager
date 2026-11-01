@@ -279,15 +279,17 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             setStatus('loading');
             setMessage(t('accounts.add.oauth.btn_start') + '...');
 
-            // 1. 获取 URL (指向 /auth/callback)
-            const res = await invoke<any>('prepare_oauth_url');
-            const url = typeof res === 'string' ? res : res.url;
-
+            // 1. 获取 URL (复用已有 URL，避免重复触发 prepare_oauth_url 导致后端 Flow 状态被覆盖重置)
+            let url = oauthUrl;
             if (!url) {
-                throw new Error(t('accounts.add.oauth.error_no_url', 'OAuth URLを取得できませんでした'));
-            }
+                const res = await invoke<any>('prepare_oauth_url');
+                url = typeof res === 'string' ? res : res.url;
 
-            setOauthUrl(url); // 确保链接在 UI 中可见，方便用户手动复制
+                if (!url) {
+                    throw new Error(t('accounts.add.oauth.error_no_url', 'OAuth URLを取得できませんでした'));
+                }
+                setOauthUrl(url); // 确保链接在 UI 中可见，方便用户手动复制
+            }
 
             // 2. 打开新标签页 (响应用户反馈：Web 端直接使用新标签体验更好)
             const popup = window.open(url, '_blank');
@@ -376,21 +378,19 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         try {
             await invoke('submit_oauth_code', { code: manualCode.trim(), state: null });
 
-            // 提交成功反馈
-            setStatus('success');
-            setMessage(t('accounts.add.oauth.manual_submitted', '認可コードを送信しました。バックエンドで処理中です...'));
+            // 兑换并保存成功后，先刷新账号列表，再提示成功并关闭弹窗
+            await fetchAccounts();
 
+            setStatus('success');
+            setMessage(t('accounts.add.oauth_success') || t('common.success'));
             setManualCode('');
 
-            // 对齐 Web 模式下的刷新逻辑
-            if (!isTauri()) {
-                setTimeout(async () => {
-                    await fetchAccounts();
-                    setIsOpen(false);
-                    resetState();
-                }, 2000);
-            }
+            setTimeout(() => {
+                setIsOpen(false);
+                resetState();
+            }, 1500);
         } catch (error) {
+            console.error('Manual OAuth Code submission error:', error);
             let errStr = String(error);
             if (errStr.includes("No active OAuth flow")) {
                 setMessage(t('accounts.add.oauth.error_no_flow'));
@@ -594,6 +594,11 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
 
                                         {/* Manual Code Entry - Always enabled to rescue stuck flows */}
                                         <div className="pt-4 mt-2 border-t border-gray-100 dark:border-base-200">
+                                            {!isTauri() && (
+                                                <div className="mb-2.5 p-2.5 bg-blue-50/60 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30 rounded-xl text-[11px] text-blue-700 dark:text-blue-300 leading-relaxed text-left">
+                                                    {t('accounts.add.oauth.remote_hint')}
+                                                </div>
+                                            )}
                                             <div className="text-[11px] font-medium text-gray-400 dark:text-gray-500 mb-2 uppercase tracking-wider">
                                                 {t('accounts.add.oauth.manual_hint')}
                                             </div>

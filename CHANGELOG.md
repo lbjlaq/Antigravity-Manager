@@ -3,6 +3,13 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.2-beta.5 (2026-11-01)**:
+        -   **[Web/Docker 模式 OAuth 链路修复、状态防撕裂与回填同步闭环] (Fixes #3802, Thanks to @dandelion-promise520, @cubelikeplayDaniel)**:
+            -   **消除前端重复 Prepare 与状态撕裂**: 优化 `AddAccountDialog` 中 `handleOAuthWeb` 逻辑，优先复用已生成的授权 URL，禁止点击「开始授权」时二次触发 `prepare_oauth_url`；后端 `prepare_oauth_flow_manually` 增加状态幂等复用检查（同 client 与 redirect_uri 直接返回现有 URL），彻底解决双重请求导致后台全局 Flow 状态被重置覆盖、回调 code 掉入废弃通道的硬伤。(Fixes #3802, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
+            -   **Web 兑换透传客户端凭据**: 移除原 Web 模式后台游离且丢弃了 client 的 `tokio::spawn` 异步任务；手动提交以及 Web 回调统一通过 flow 绑定的 `client_key` 调用 `exchange_code_with_client` 进行兑换，彻底消除因客户端不匹配导致 Google 上游报 `invalid_grant: Bad Request` 的缺陷。(Fixes #3802, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
+            -   **手动回填同步兑换与异常透传闭环**: 将 `POST /api/accounts/oauth/submit-code` 重构为同步换取 Token 并持久化账号，支持自动解析完整回调 URL 中的 code 与 state 参数（带 CSRF 校验）；兑换成功后前端刷新账号列表并优雅关窗，若遇 Google 拦截或 Code 过期则保持弹窗打开并直接标红展示具体错误原因，彻底杜绝静默吞异常。(Fixes #3802, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
+            -   **无头/Docker 远程部署交互指引**: 在 Web 模式手动回填输入框上方新增上下文提示，明确解释因 Google Desktop OAuth 规范限制，授权后跳转至 `localhost` 显示连接拒绝属正常安全行为，引导用户直接复制地址栏完整 URL 粘贴提交。(Fixes #3802, Thanks to @dandelion-promise520)
+
     *   **v5.0.2-beta.4 (2026-11-01)**:
         -   **[User-Agent 官方 Hub 指纹升级、多语种门禁诊断与设置保存修复] (Fixes #3797, Ref #3750, PR #3800, Thanks to @cubelikeplayDaniel)**:
             -   **现代官方 Hub 指纹升级**: 将设置页默认 User-Agent 示例升级为标准 Hub 格式 `antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)`，彻底消除复制旧版示例导致丢失 Hub 签名、引发上游 404 与全池 503 保护性熔断的风险；开启覆盖开关时提供高亮警示并动态注入应用探测到的最新 Hub 版本。(Fixes #3797, Ref #3750, PR #3800, Thanks to @cubelikeplayDaniel)

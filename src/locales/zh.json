@@ -427,6 +427,7 @@
                 "copied": "已复制",
                 "link_label": "授权链接",
                 "link_click_to_copy": "点击复制",
+                "remote_hint": "💡 Docker / 远程服务器提示：Google 授权完成后浏览器跳转到 localhost 显示拒绝连接属正常安全限制。请直接从浏览器地址栏复制完整 URL（包含 code）粘贴到下方提交即可。",
                 "manual_hint": "浏览器没有自动跳转？请在此处粘贴回调链接或 Authorization Code：",
                 "manual_placeholder": "粘贴回调链接或 Code...",
                 "error_no_flow": "请先点击“开始 OAuth 授权”",

@@ -364,6 +364,7 @@
                 "copied": "Kopyalandı",
                 "link_label": "Yetkilendirme URL'si",
                 "link_click_to_copy": "Kopyalamak için tıklayın",
+                "remote_hint": "💡 Docker / Uzak Sunucu İpucu: Google yetkilendirmesinden sonra tarayıcının localhost'a yönlendirilirken bağlantı reddedildi hatası vermesi normal bir güvenlik sınırlamasıdır. Tarayıcınızın adres çubuğundaki tam URL'yi (kod dahil) kopyalayıp aşağıya yapıştırmanız yeterlidir.",
                 "manual_hint": "Tarayıcı otomatik olarak yönlendirilmedi mi? Lütfen geri dönüş bağlantısını veya Yetkilendirme Kodunu buraya yapıştırın:",
                 "manual_placeholder": "Bağlantıyı veya kodu buraya yapıştırın...",
                 "error_no_flow": "Aktif kimlik doğrulama akışı bulunamadı. Lütfen OAuth'u yeniden başlatın.",

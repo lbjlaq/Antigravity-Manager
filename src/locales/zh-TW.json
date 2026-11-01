@@ -381,6 +381,7 @@
                 "copied": "已複製",
                 "link_label": "授權連結",
                 "link_click_to_copy": "點選複製",
+                "remote_hint": "💡 Docker / 遠端伺服器提示：Google 授權完成後瀏覽器跳轉到 localhost 顯示拒絕連線屬正常安全限制。請直接從瀏覽器網址列複製完整 URL（包含 code）貼到下方提交即可。",
                 "manual_hint": "瀏覽器沒有自動跳轉？請在此處貼上回調連結或 Authorization Code：",
                 "manual_placeholder": "在此處貼上連結或代碼...",
                 "error_no_flow": "未找到活躍的授權流程，請重新開始 OAuth 授權。",

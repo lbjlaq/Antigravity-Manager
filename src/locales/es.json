@@ -395,6 +395,7 @@
                 "copied": "Copiado",
                 "link_label": "URL de Autorización",
                 "link_click_to_copy": "Clic para copiar",
+                "remote_hint": "💡 Sugerencia para Docker / Servidor remoto: es normal que el navegador muestre conexión rechazada al redirigir a localhost después de la autorización de Google. Simplemente copie la URL completa (que contiene el código) de la barra de direcciones de su navegador y péguela a continuación.",
                 "manual_hint": "¿El navegador no redirigió? Pegue la URL de callback completa o el código aquí:",
                 "manual_placeholder": "Pegar URL de callback o código...",
                 "error_no_flow": "Por favor haga clic en 'Iniciar OAuth' primero",

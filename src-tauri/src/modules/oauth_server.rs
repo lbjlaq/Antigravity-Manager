@@ -468,71 +468,124 @@ pub async fn complete_oauth_flow(
     oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await
 }
 
+/// Parse code and optional state from raw code input or full callback URL
+pub fn parse_code_and_state(input: &str) -> (String, Option<String>) {
+    let trimmed = input.trim();
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        if let Ok(url) = Url::parse(trimmed) {
+            let mut code = None;
+            let mut state = None;
+            for (k, v) in url.query_pairs() {
+                if k == "code" {
+                    code = Some(v.to_string());
+                } else if k == "state" {
+                    state = Some(v.to_string());
+                }
+            }
+            if let Some(c) = code {
+                return (c, state);
+            }
+        }
+    }
+    (trimmed.to_string(), None)
+}
+
 /// Manually submit an OAuth code to complete the flow.
-/// This is used when the user manually copies the code/URL from the browser
-/// because the localhost callback couldn't be reached (e.g. in Docker/remote).
+/// Synchronously exchanges the code using the prepared flow's redirect_uri and client_key.
 pub async fn submit_oauth_code(
     code_input: String,
     state_input: Option<String>,
-) -> Result<(), String> {
-    let tx = {
+) -> Result<oauth::TokenResponse, String> {
+    let (code, parsed_state) = parse_code_and_state(&code_input);
+    let state_to_check = state_input.or(parsed_state);
+
+    let (redirect_uri, client_key, code_tx) = {
         let lock = get_oauth_flow_state().lock().map_err(|e| e.to_string())?;
         if let Some(state) = lock.as_ref() {
-            // Verify state if provided
-            if let Some(provided_state) = state_input {
-                if provided_state != state.state {
+            // Verify state if provided or parsed from callback URL
+            if let Some(ref st) = state_to_check {
+                if st != &state.state {
                     return Err("OAuth state mismatch (CSRF protection)".to_string());
                 }
             }
-            state.code_tx.clone()
+            (
+                state.redirect_uri.clone(),
+                state.client_key.clone(),
+                state.code_tx.clone(),
+            )
         } else {
-            return Err("No active OAuth flow found".to_string());
+            return Err(
+                "No active OAuth flow found. Please click 'Start OAuth' first.".to_string(),
+            );
         }
     };
 
-    // Extract code if it's a URL
-    let code = if code_input.starts_with("http") {
-        if let Ok(url) = Url::parse(&code_input) {
-            url.query_pairs()
-                .find(|(k, _)| k == "code")
-                .map(|(_, v)| v.to_string())
-                .unwrap_or(code_input)
-        } else {
-            code_input
-        }
-    } else {
-        code_input
-    };
+    crate::modules::logger::log_info(&format!(
+        "Exchanging manual OAuth code with redirect_uri: {}, client_key: {}",
+        redirect_uri, client_key
+    ));
 
-    crate::modules::logger::log_info("Received manual OAuth code submission");
+    // Exchange with the exact redirect_uri and client_key stored in the flow
+    let token_res =
+        oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await?;
 
-    // Send to the channel
-    tx.send(Ok(code))
-        .await
-        .map_err(|_| "Failed to send code to OAuth flow (receiver dropped)".to_string())?;
+    // Also notify code_tx in case a background listener (e.g. Desktop flow) is awaiting code_rx
+    let _ = code_tx.try_send(Ok(code));
 
-    Ok(())
+    // Clean up flow state
+    if let Ok(mut lock) = get_oauth_flow_state().lock() {
+        *lock = None;
+    }
+
+    Ok(token_res)
 }
+
+/// Get the active flow's client_key for callback matching
+pub fn get_active_flow_client_key(state_param: Option<&str>) -> Option<String> {
+    if let Ok(lock) = get_oauth_flow_state().lock() {
+        if let Some(s) = lock.as_ref() {
+            if let Some(expected_state) = state_param {
+                if s.state == expected_state {
+                    return Some(s.client_key.clone());
+                }
+            } else {
+                return Some(s.client_key.clone());
+            }
+        }
+    }
+    None
+}
+
 /// Manually prepare an OAuth flow without starting listeners.
 /// Useful for Web/Docker environments where we only need manual code submission.
 pub fn prepare_oauth_flow_manually(
     redirect_uri: String,
-    state_str: String,
     oauth_client_key: Option<String>,
-) -> Result<(String, mpsc::Receiver<Result<String, String>>), String> {
-    let (auth_url, resolved_client_key) =
-        oauth::get_auth_url_with_client(&redirect_uri, &state_str, oauth_client_key.as_deref())?;
+) -> Result<String, String> {
+    // 1. Check if we can reuse existing flow state
+    if let Ok(lock) = get_oauth_flow_state().lock() {
+        if let Some(s) = lock.as_ref() {
+            let same_client = match oauth_client_key.as_ref() {
+                Some(key) => s.client_key == key.to_ascii_lowercase(),
+                None => true,
+            };
+            if same_client && s.redirect_uri == redirect_uri {
+                return Ok(s.auth_url.clone());
+            }
+        }
+    }
 
-    // Check if we can reuse existing state
+    // 2. Clear old state if different or fresh flow requested
     if let Ok(mut lock) = get_oauth_flow_state().lock() {
         if let Some(s) = lock.as_mut() {
-            // If we already have a code_rx, we can't easily "steal" it again because it's already returned.
-            // But if this is a NEW request (different state), we should overwrite.
-            // For now, let's just clear and restart to be safe.
             let _ = s.cancel_tx.send(true);
             *lock = None;
         }
     }
+
+    let state_str = uuid::Uuid::new_v4().to_string();
+    let (auth_url, resolved_client_key) =
+        oauth::get_auth_url_with_client(&redirect_uri, &state_str, oauth_client_key.as_deref())?;
 
     let (cancel_tx, _cancel_rx) = watch::channel(false);
     let (code_tx, code_rx) = mpsc::channel(1);
@@ -540,14 +593,53 @@ pub fn prepare_oauth_flow_manually(
     if let Ok(mut state) = get_oauth_flow_state().lock() {
         *state = Some(OAuthFlowState {
             auth_url: auth_url.clone(),
-            redirect_uri: redirect_uri.clone(),
+            redirect_uri,
             state: state_str,
             client_key: resolved_client_key,
             cancel_tx,
             code_tx,
-            code_rx: None, // We return it directly
+            code_rx: Some(code_rx),
         });
     }
 
-    Ok((auth_url, code_rx))
+    Ok(auth_url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_code_and_state() {
+        // Raw code
+        let (code, state) = parse_code_and_state("4/0AY0e-g...");
+        assert_eq!(code, "4/0AY0e-g...");
+        assert_eq!(state, None);
+
+        // Full URL with code and state
+        let url = "http://localhost:8045/auth/callback?code=4%2F0Abc123&state=test-uuid-state&scope=openid";
+        let (code, state) = parse_code_and_state(url);
+        assert_eq!(code, "4/0Abc123");
+        assert_eq!(state, Some("test-uuid-state".to_string()));
+
+        // HTTPS URL
+        let url = "https://example.com/callback?code=mycode&state=mystate";
+        let (code, state) = parse_code_and_state(url);
+        assert_eq!(code, "mycode");
+        assert_eq!(state, Some("mystate".to_string()));
+    }
+
+    #[test]
+    fn test_prepare_oauth_flow_manually_reuse() {
+        let redirect_uri = "http://localhost:8045/auth/callback".to_string();
+        let url1 = prepare_oauth_flow_manually(redirect_uri.clone(), None)
+            .expect("First prepare should succeed");
+        let url2 = prepare_oauth_flow_manually(redirect_uri.clone(), None)
+            .expect("Second prepare should succeed");
+
+        assert_eq!(
+            url1, url2,
+            "Subsequent calls with same parameters should reuse the active flow URL"
+        );
+    }
 }

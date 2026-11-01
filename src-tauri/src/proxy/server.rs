@@ -1812,17 +1812,15 @@ async fn admin_submit_oauth_code(
     State(state): State<AppState>,
     Json(payload): Json<SubmitCodeRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    state
+    let account = state
         .account_service
         .submit_oauth_code(payload.code, payload.state)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
-        })?;
-    Ok(StatusCode::OK)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?;
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "account": account })),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -3954,34 +3952,42 @@ async fn handle_oauth_callback(
         .and_then(|h| h.to_str().ok());
     let redirect_uri = get_oauth_redirect_uri(port, host, proto);
 
-    match state
-        .token_manager
-        .exchange_code(&code, &redirect_uri)
-        .await
+    let client_key =
+        crate::modules::oauth_server::get_active_flow_client_key(params.state.as_deref());
+
+    match crate::modules::oauth::exchange_code_with_client(
+        &code,
+        &redirect_uri,
+        client_key.as_deref(),
+    )
+    .await
     {
-        Ok(refresh_token) => {
-            match state.token_manager.get_user_info(&refresh_token).await {
-                Ok(user_info) => {
-                    let email = user_info.email;
-                    if let Err(e) = state
-                        .token_manager
-                        .add_account(&email, &refresh_token)
-                        .await
-                    {
-                        error!("Failed to add account: {}", e);
+        Ok(token_resp) => {
+            if let Some(refresh_token) = &token_resp.refresh_token {
+                match state.token_manager.get_user_info(refresh_token).await {
+                    Ok(user_info) => {
+                        let email = user_info.email;
+                        if let Err(e) = state.token_manager.add_account(&email, refresh_token).await
+                        {
+                            error!("Failed to add account: {}", e);
+                            return Ok(Html(format!(
+                                r#"<html><body><h1>Authorization Failed</h1><p>Failed to save account: {}</p></body></html>"#,
+                                e
+                            )));
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to get user info: {}", e);
                         return Ok(Html(format!(
-                            r#"<html><body><h1>Authorization Failed</h1><p>Failed to save account: {}</p></body></html>"#,
+                            r#"<html><body><h1>Authorization Failed</h1><p>Failed to get user info: {}</p></body></html>"#,
                             e
                         )));
                     }
                 }
-                Err(e) => {
-                    error!("Failed to get user info: {}", e);
-                    return Ok(Html(format!(
-                        r#"<html><body><h1>Authorization Failed</h1><p>Failed to get user info: {}</p></body></html>"#,
-                        e
-                    )));
-                }
+            } else {
+                return Ok(Html(
+                    r#"<html><body><h1>Authorization Failed</h1><p>No refresh token returned</p></body></html>"#.to_string()
+                ));
             }
 
             // Success HTML
@@ -4077,12 +4083,8 @@ async fn admin_prepare_oauth_url_web(
         .and_then(|h| h.to_str().ok());
     let redirect_uri = get_oauth_redirect_uri(port, host, proto);
 
-    let state_str = uuid::Uuid::new_v4().to_string();
-
-    // 初始化授权流状态，以及后台处理器
-    let (auth_url, mut code_rx) = crate::modules::oauth_server::prepare_oauth_flow_manually(
-        redirect_uri.clone(),
-        state_str.clone(),
+    let auth_url = crate::modules::oauth_server::prepare_oauth_flow_manually(
+        redirect_uri,
         client_query.oauth_client_key,
     )
     .map_err(|e| {
@@ -4092,70 +4094,8 @@ async fn admin_prepare_oauth_url_web(
         )
     })?;
 
-    // 启动后台任务处理回调/手动提交的代码
-    let token_manager = state.token_manager.clone();
-    let redirect_uri_clone = redirect_uri.clone();
-    tokio::spawn(async move {
-        match code_rx.recv().await {
-            Some(Ok(code)) => {
-                crate::modules::logger::log_info(
-                    "Consuming manually submitted OAuth code in background",
-                );
-                // 为 Web 回调提供简化的后端处理流程
-                match crate::modules::oauth::exchange_code(&code, &redirect_uri_clone).await {
-                    Ok(token_resp) => {
-                        // Success! Now add/upsert account
-                        if let Some(refresh_token) = &token_resp.refresh_token {
-                            match token_manager.get_user_info(refresh_token).await {
-                                Ok(user_info) => {
-                                    if let Err(e) = token_manager
-                                        .add_account(&user_info.email, refresh_token)
-                                        .await
-                                    {
-                                        crate::modules::logger::log_error(&format!(
-                                            "Failed to save account in background OAuth: {}",
-                                            e
-                                        ));
-                                    } else {
-                                        crate::modules::logger::log_info(&format!(
-                                            "Successfully added account {} via background OAuth",
-                                            user_info.email
-                                        ));
-                                    }
-                                }
-                                Err(e) => {
-                                    crate::modules::logger::log_error(&format!(
-                                        "Failed to fetch user info in background OAuth: {}",
-                                        e
-                                    ));
-                                }
-                            }
-                        } else {
-                            crate::modules::logger::log_error(
-                                "Background OAuth error: Google did not return a refresh_token.",
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        crate::modules::logger::log_error(&format!(
-                            "Background OAuth exchange failed: {}",
-                            e
-                        ));
-                    }
-                }
-            }
-            Some(Err(e)) => {
-                crate::modules::logger::log_error(&format!("Background OAuth flow error: {}", e));
-            }
-            None => {
-                crate::modules::logger::log_info("Background OAuth flow channel closed");
-            }
-        }
-    });
-
     Ok(Json(serde_json::json!({
         "url": auth_url,
-        "state": state_str
     })))
 }
 

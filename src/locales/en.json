@@ -429,6 +429,7 @@
                 "copied": "Copied",
                 "link_label": "Authorization URL",
                 "link_click_to_copy": "Click to copy",
+                "remote_hint": "💡 Docker / Remote Server Tip: It is normal for the browser to show connection refused when redirecting to localhost after Google authorization. Simply copy the full URL (containing the code) from your browser address bar and paste it below.",
                 "manual_hint": "Browser didn't redirect? Paste the full callback URL or raw Code here:",
                 "manual_placeholder": "Paste callback URL or code...",
                 "error_no_flow": "Please click 'Start OAuth' first",

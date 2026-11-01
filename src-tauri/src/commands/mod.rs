@@ -737,9 +737,16 @@ pub async fn cancel_oauth_login() -> Result<(), String> {
 
 /// 手动提交 OAuth Code (用于 Docker/远程环境无法自动回调时)
 #[tauri::command]
-pub async fn submit_oauth_code(code: String, state: Option<String>) -> Result<(), String> {
+pub async fn submit_oauth_code(
+    app_handle: tauri::AppHandle,
+    code: String,
+    state: Option<String>,
+) -> Result<crate::models::Account, String> {
     modules::logger::log_info("收到手动提交 OAuth Code 请求");
-    modules::oauth_server::submit_oauth_code(code, state).await
+    let service = modules::account_service::AccountService::new(
+        crate::modules::integration::SystemManager::Desktop(app_handle),
+    );
+    service.submit_oauth_code(code, state).await
 }
 
 #[tauri::command]

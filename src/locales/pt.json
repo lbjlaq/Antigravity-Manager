@@ -399,6 +399,7 @@
                 "copied": "Copiado",
                 "link_label": "URL de Autorização",
                 "link_click_to_copy": "Clique para copiar",
+                "remote_hint": "💡 Dica para Docker / Servidor Remoto: é normal que o navegador mostre conexão recusada ao redirecionar para localhost após a autorização do Google. Basta copiar a URL completa (contendo o código) da barra de endereços do seu navegador e colá-la abaixo.",
                 "manual_hint": "O navegador não redirecionou automaticamente? Cole o link de retorno ou o Código de Autorização aqui:",
                 "manual_placeholder": "Cole o link ou o código aqui...",
                 "error_no_flow": "Nenhum fluxo de autenticação ativo encontrado. Por favor, reinicie o OAuth.",
