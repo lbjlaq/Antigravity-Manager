@@ -468,26 +468,90 @@ pub async fn complete_oauth_flow(
     oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await
 }
 
-/// Parse code and optional state from raw code input or full callback URL
-pub fn parse_code_and_state(input: &str) -> (String, Option<String>) {
-    let trimmed = input.trim();
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        if let Ok(url) = Url::parse(trimmed) {
-            let mut code = None;
-            let mut state = None;
-            for (k, v) in url.query_pairs() {
-                if k == "code" {
-                    code = Some(v.to_string());
-                } else if k == "state" {
-                    state = Some(v.to_string());
-                }
+/// Snapshot active OAuth flow context `(redirect_uri, state, client_key)` if present.
+pub fn get_active_oauth_flow_context() -> Option<(String, String, String)> {
+    let lock = get_oauth_flow_state().lock().ok()?;
+    let state = lock.as_ref()?;
+    Some((
+        state.redirect_uri.clone(),
+        state.state.clone(),
+        state.client_key.clone(),
+    ))
+}
+
+/// Parse manual OAuth input (full callback URL, schemeless callback URL, query string, or raw code).
+/// Returns `(decoded_code, extracted_state)`.
+pub fn parse_manual_oauth_input(raw_input: &str) -> Result<(String, Option<String>), String> {
+    let trimmed = raw_input.trim();
+    if trimmed.is_empty() {
+        return Err("Authorization code cannot be empty".to_string());
+    }
+
+    let extract_from_url = |url: &Url| -> Result<Option<(String, Option<String>)>, String> {
+        let mut code = None;
+        let mut state = None;
+        let mut oauth_error = None;
+        for (k, v) in url.query_pairs() {
+            match k.as_ref() {
+                "code" if !v.trim().is_empty() => code = Some(v.trim().to_string()),
+                "state" if !v.trim().is_empty() => state = Some(v.trim().to_string()),
+                "error" if !v.trim().is_empty() => oauth_error = Some(v.trim().to_string()),
+                _ => {}
             }
-            if let Some(c) = code {
-                return (c, state);
+        }
+        if let Some(err) = oauth_error {
+            return Err(format!("OAuth callback returned error: {}", err));
+        }
+        Ok(code.map(|c| (c, state)))
+    };
+
+    // 1. Standard URL starting with http:// or https://
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        let url = Url::parse(trimmed).map_err(|e| format!("Invalid callback URL: {}", e))?;
+        if let Some(res) = extract_from_url(&url)? {
+            return Ok(res);
+        }
+        return Err("Callback URL does not contain a 'code' query parameter".to_string());
+    }
+
+    // 2. Schemeless localhost/127.0.0.1/[::1] URL or query fragment containing "code=" or "error="
+    if trimmed.starts_with("localhost:")
+        || trimmed.starts_with("127.0.0.1:")
+        || trimmed.starts_with("[::1]:")
+        || trimmed.contains("code=")
+        || trimmed.contains("error=")
+    {
+        let candidate = if trimmed.starts_with('?') || trimmed.starts_with('/') {
+            format!("http://localhost{}", trimmed)
+        } else if trimmed.contains("://") {
+            trimmed.to_string()
+        } else if trimmed.starts_with("localhost")
+            || trimmed.starts_with("127.0.0.1")
+            || trimmed.starts_with("[::1]")
+        {
+            format!("http://{}", trimmed)
+        } else {
+            format!("http://localhost/?{}", trimmed.trim_start_matches('&'))
+        };
+
+        if let Ok(url) = Url::parse(&candidate) {
+            if let Some(res) = extract_from_url(&url)? {
+                return Ok(res);
             }
         }
     }
-    (trimmed.to_string(), None)
+
+    // 3. Raw authorization code (possibly URL-encoded like "4%2F0A...")
+    let dummy_url = Url::parse(&format!("http://localhost/?code={}", trimmed))
+        .map_err(|_| "Invalid authorization code format".to_string())?;
+    let decoded_code = dummy_url
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "Authorization code cannot be empty".to_string())?;
+
+    Ok((decoded_code, None))
 }
 
 /// Manually submit an OAuth code to complete the flow.
@@ -496,15 +560,16 @@ pub async fn submit_oauth_code(
     code_input: String,
     state_input: Option<String>,
 ) -> Result<oauth::TokenResponse, String> {
-    let (code, parsed_state) = parse_code_and_state(&code_input);
-    let state_to_check = state_input.or(parsed_state);
+    let (code, extracted_state) = parse_manual_oauth_input(&code_input)?;
+    let effective_state = state_input
+        .filter(|s| !s.trim().is_empty())
+        .or(extracted_state);
 
     let (redirect_uri, client_key, code_tx) = {
         let lock = get_oauth_flow_state().lock().map_err(|e| e.to_string())?;
         if let Some(state) = lock.as_ref() {
-            // Verify state if provided or parsed from callback URL
-            if let Some(ref st) = state_to_check {
-                if st != &state.state {
+            if let Some(ref provided_state) = effective_state {
+                if provided_state != &state.state {
                     return Err("OAuth state mismatch (CSRF protection)".to_string());
                 }
             }
@@ -533,9 +598,7 @@ pub async fn submit_oauth_code(
     let _ = code_tx.try_send(Ok(code));
 
     // Clean up flow state
-    if let Ok(mut lock) = get_oauth_flow_state().lock() {
-        *lock = None;
-    }
+    cancel_oauth_flow();
 
     Ok(token_res)
 }
@@ -610,23 +673,45 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_code_and_state() {
-        // Raw code
-        let (code, state) = parse_code_and_state("4/0AY0e-g...");
-        assert_eq!(code, "4/0AY0e-g...");
-        assert_eq!(state, None);
+    fn test_parse_manual_oauth_input_full_url() {
+        let input = "http://localhost:8045/auth/callback?state=state-123&code=4%2F0AeanS0_test_code&scope=email+profile";
+        let (code, state) =
+            parse_manual_oauth_input(input).expect("should parse full callback url");
+        assert_eq!(code, "4/0AeanS0_test_code");
+        assert_eq!(state.as_deref(), Some("state-123"));
+    }
 
-        // Full URL with code and state
-        let url = "http://localhost:8045/auth/callback?code=4%2F0Abc123&state=test-uuid-state&scope=openid";
-        let (code, state) = parse_code_and_state(url);
-        assert_eq!(code, "4/0Abc123");
-        assert_eq!(state, Some("test-uuid-state".to_string()));
+    #[test]
+    fn test_parse_manual_oauth_input_schemeless_localhost_url() {
+        let input = "localhost:8045/auth/callback?code=4%2F0AeanS0_schemeless&state=st-999";
+        let (code, state) =
+            parse_manual_oauth_input(input).expect("should parse schemeless callback url");
+        assert_eq!(code, "4/0AeanS0_schemeless");
+        assert_eq!(state.as_deref(), Some("st-999"));
+    }
 
-        // HTTPS URL
-        let url = "https://example.com/callback?code=mycode&state=mystate";
-        let (code, state) = parse_code_and_state(url);
-        assert_eq!(code, "mycode");
-        assert_eq!(state, Some("mystate".to_string()));
+    #[test]
+    fn test_parse_manual_oauth_input_raw_encoded_and_decoded_code() {
+        let (code1, state1) =
+            parse_manual_oauth_input("  4%2F0AeanS0_encoded_raw  ").expect("should decode raw %2F");
+        assert_eq!(code1, "4/0AeanS0_encoded_raw");
+        assert!(state1.is_none());
+
+        let (code2, state2) =
+            parse_manual_oauth_input("4/0AeanS0_plain_raw").expect("should keep plain raw code");
+        assert_eq!(code2, "4/0AeanS0_plain_raw");
+        assert!(state2.is_none());
+    }
+
+    #[test]
+    fn test_parse_manual_oauth_input_rejects_error_callback_and_empty() {
+        let err = parse_manual_oauth_input(
+            "http://localhost:8045/auth/callback?error=access_denied&state=s1",
+        )
+        .unwrap_err();
+        assert!(err.contains("access_denied"));
+
+        assert!(parse_manual_oauth_input("   ").is_err());
     }
 
     #[test]

@@ -580,15 +580,17 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                                                     </span>
                                                 </button>
 
-                                                <button
-                                                    type="button"
-                                                    className="w-full px-4 py-2 bg-white dark:bg-base-100 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-xl border border-gray-200 dark:border-base-300 hover:bg-gray-50 dark:hover:bg-base-200 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-                                                    onClick={handleCompleteOAuth}
-                                                    disabled={status === 'loading' || status === 'success'}
-                                                >
-                                                    <CheckCircle2 className="w-4 h-4" />
-                                                    {t('accounts.add.oauth.btn_finish')}
-                                                </button>
+                                                {isTauri() && (
+                                                    <button
+                                                        type="button"
+                                                        className="w-full px-4 py-2 bg-white dark:bg-base-100 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-xl border border-gray-200 dark:border-base-300 hover:bg-gray-50 dark:hover:bg-base-200 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                                                        onClick={handleCompleteOAuth}
+                                                        disabled={status === 'loading' || status === 'success'}
+                                                    >
+                                                        <CheckCircle2 className="w-4 h-4" />
+                                                        {t('accounts.add.oauth.btn_finish')}
+                                                    </button>
+                                                )}
                                             </div>
                                         )}
 

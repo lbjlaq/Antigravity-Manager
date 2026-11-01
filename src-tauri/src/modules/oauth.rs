@@ -324,6 +324,13 @@ pub fn set_active_oauth_client_key(client_key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Check whether the resolved OAuth client for `client_key` (or active client when `None`) is the built-in client.
+pub fn is_builtin_oauth_client(client_key: Option<&str>) -> bool {
+    select_auth_client(client_key)
+        .map(|c| c.is_builtin)
+        .unwrap_or(true)
+}
+
 /// Generate OAuth authorization URL with optional client selection.
 /// Returns (auth_url, resolved_client_key).
 pub fn get_auth_url_with_client(
@@ -757,5 +764,12 @@ mod tests {
         assert!(url.contains("state=test-state-123456"));
         assert!(url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A8080%2Fcallback"));
         assert!(url.contains("response_type=code"));
+    }
+
+    #[test]
+    fn test_is_builtin_oauth_client_default() {
+        assert!(is_builtin_oauth_client(None));
+        assert!(is_builtin_oauth_client(Some("antigravity_enterprise")));
+        assert!(is_builtin_oauth_client(Some("unknown_non_existent_key")));
     }
 }

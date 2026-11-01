@@ -156,7 +156,7 @@ impl AccountService {
         self.process_oauth_token(token_res).await
     }
 
-    async fn process_oauth_token(
+    pub async fn process_oauth_token(
         &self,
         token_res: modules::oauth::TokenResponse,
     ) -> Result<Account, String> {
