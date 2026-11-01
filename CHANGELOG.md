@@ -3,6 +3,27 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.2-beta.5 (2026-11-01)**:
+        -   **[Web/Docker 模式 OAuth 链路修复、状态防撕裂与回填同步闭环] (Fixes #3802, PR #3803, PR #3805, Thanks to @dandelion-promise520, @cubelikeplayDaniel)**:
+            -   **消除前端重复 Prepare 与状态撕裂**: 优化 `AddAccountDialog` 中 `handleOAuthWeb` 逻辑，优先复用已生成的授权 URL，禁止点击「开始授权」时二次触发 `prepare_oauth_url`；后端 `prepare_oauth_flow_manually` 增加状态幂等复用检查（同 client 与 redirect_uri 直接返回现有 URL），彻底解决双重请求导致后台全局 Flow 状态被重置覆盖、回调 code 掉入废弃通道的硬伤。(Fixes #3802, PR #3803, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
+            -   **内置客户端防重定向失配拦截 (PR #3803)**: 在 `resolve_oauth_redirect_uri` 中增加 `is_builtin_oauth_client` 环回回退防御，当使用默认内置 Google OAuth 凭据时，即使用户配置了 `ABV_PUBLIC_URL` 也强制使用 `http://localhost:<port>/auth/callback`，彻底规避因公网/局域网域名未在上游控制台注册而触发的 Google 400 `redirect_uri_mismatch` 阻断。(PR #3803, Thanks to @cubelikeplayDaniel)
+            -   **换码失败主动清理脏状态闭环 (PR #3805)**: 在手动换码 `submit_oauth_code` 及 HTTP 回调 `handle_oauth_callback` 的兑换异常分支中补充主动调用 `cancel_oauth_flow()`，当 Google 报 `invalid_grant` 或 Code 过期时立即释放全局单例 Flow 状态；前端提交失败时自动清空本地 `oauthUrl` 缓存，彻底杜绝脏状态残留导致用户重试时因状态复用死锁。(PR #3805, Thanks to @cubelikeplayDaniel)
+            -   **手动回填 CSRF 双向核对与弹性解析 (PR #3803, PR #3805)**: 前端提交手动回填时，自动从预生成的 `oauthUrl` 中解析原始 `state` 作为 `fallbackState` 传给后端，避免仅回填裸 Code 时因丢失 state 导致 CSRF 防护被跳过；升级 `parse_manual_oauth_input` 智能解析引擎，全面兼容完整 URL、无 scheme 域名（`localhost:8045/...`）、已编码 `%2F` 与裸 Code，并拦截上游 `error=access_denied` 等拒绝响应。(Fixes #3802, PR #3803, PR #3805, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
+            -   **Web 兑换透传客户端凭据与号池实时同步**: 移除原 Web 模式后台游离且丢弃了 client 的 `tokio::spawn` 异步任务；手动提交以及 Web 回调统一通过 flow 绑定的 `client_key` 调用 `exchange_code_with_client` 进行兑换，并在回调成功后主动调用 `token_manager.load_accounts()` 刷新内存与文件，彻底消除因客户端不匹配导致 Google 上游报 `invalid_grant: Bad Request` 的缺陷。(Fixes #3802, PR #3803, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
+            -   **无头/Docker 远程部署交互与按键守护**: 在 Web 模式手动回填输入框上方新增上下文提示，明确解释因 Google Desktop OAuth 规范限制，授权后跳转至 `localhost` 显示连接拒绝属正常安全行为，引导用户直接复制地址栏完整 URL 粘贴提交；限制「我已授权，继续」按键仅在桌面端可用，避免 Web 模式下点击造成混淆。(Fixes #3802, PR #3803, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
+
+    *   **v5.0.2-beta.4 (2026-11-01)**:
+        -   **[User-Agent 官方 Hub 指纹升级、多语种门禁诊断与设置保存修复] (Fixes #3797, Ref #3750, PR #3800, Thanks to @cubelikeplayDaniel)**:
+            -   **现代官方 Hub 指纹升级**: 将设置页默认 User-Agent 示例升级为标准 Hub 格式 `antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)`，彻底消除复制旧版示例导致丢失 Hub 签名、引发上游 404 与全池 503 保护性熔断的风险；开启覆盖开关时提供高亮警示并动态注入应用探测到的最新 Hub 版本。(Fixes #3797, Ref #3750, PR #3800, Thanks to @cubelikeplayDaniel)
+            -   **配置保存可靠性修复**: 修复保存配置时因状态重载导致 User-Agent 覆盖开关意外关闭或重置清空的生命周期问题，并移除保存时的阻断弹窗。(PR #3800, Thanks to @cubelikeplayDaniel)
+            -   **全量 12 语种网关诊断体系**: 构建覆盖全部 12 种系统语言的网关错误诊断字典，基于返回报文精准识别缺少 Hub 签名、指纹门禁拦截、全池账号挂起熔断以及上游连接超时中断，提供结构化 `gateway_error` 与排查指引。(PR #3800, Thanks to @cubelikeplayDaniel)
+            -   **日志详情面板全量国际化**: 补全三栏对比、Postman 风格视图切换、单行/折行切换、复制选项及请求头参数在 12 种语言下的翻译词条。(PR #3800, Thanks to @cubelikeplayDaniel)
+        -   **[Web/Docker 模式官方 Hub 指纹探测与更新感知对齐] (Ref #3797)**:
+            -   **Web 端 Hub 指纹与更新检测路由补齐**: 在后端 Axum 路由中补齐 `/api/system/hub/fingerprint`、`/api/system/hub/check-update`、`/api/system/hub/detect-fingerprint` 与 `/api/system/timeouts/effective-first-byte` 端点实现，解决 Web 模式无法读取指纹与首包延迟的缺陷；
+            -   **前端请求层映射对齐**: 规范修正 `src/utils/request.ts` 的 `COMMAND_MAPPING` 字典，使 Web 端在启动时能够及时收到官方 Hub 新版本提示 Toast，并在设置面板中完整支持出站指纹查看与主动探测。(Ref #3797)
+        -   **[Web/Docker 模式批量导入账号 HTTP 422 修复] (Fixes #3801, Thanks to @dandelion-promise520)**:
+            -   **双重请求体形态自适应**: 后端 `BatchImportPayload` 引入 `#[serde(untagged)]` 弹性适配，同时兼容前端 `invoke('batch_import_accounts', { entries })` 发送的对象包裹形态 `{"entries": [...]}` 与原生 API 的裸数组形态 `[...]`，彻底解决 Web/Docker 远程模式下导入账号 JSON 文件反序列化失败报 422 的缺陷，并配套自动化单元测试覆盖。(Fixes #3801, Thanks to @dandelion-promise520)
+
     *   **v5.0.2-beta.3 (2026-11-01)**:
         -   **[账号周配额临期「蹬额度模式」与自动熔断恢复] (Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)**:
             -   **临期智能识别与提醒**: 独立监测账号池中 Gemini 与 Claude 的周配额状态，当剩余配额 > 5% 且距官方重置不足 24 小时主动弹出提醒窗口；支持按模型家族持久化「不再提示 Gemini / Claude」，点击「暂不启动」后进入 2 小时静默冷却，避免高频打扰。(Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)

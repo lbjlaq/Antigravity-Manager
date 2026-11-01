@@ -381,6 +381,129 @@ fn map_status_code_to_gemini_status(status_code: u16) -> &'static str {
     }
 }
 
+/// 检测是否存在因自定义 User-Agent 过时或未采用官方 Hub 格式导致上游拒绝访问的特征
+pub fn check_outdated_user_agent_issue(
+    model: &str,
+    status_code: u16,
+    error_text: &str,
+    custom_ua: Option<&str>,
+) -> Option<(String, String, String, &'static str, &'static str)> {
+    let lang = crate::modules::config::load_app_config()
+        .ok()
+        .map(|c| c.language)
+        .unwrap_or_else(|| "zh".to_string());
+    check_outdated_user_agent_issue_with_lang(
+        model,
+        status_code,
+        error_text,
+        custom_ua,
+        Some(&lang),
+    )
+}
+
+/// 支持指定语言环境的 User-Agent 门禁与熔断特征检测
+pub fn check_outdated_user_agent_issue_with_lang(
+    model: &str,
+    status_code: u16,
+    error_text: &str,
+    custom_ua: Option<&str>,
+    lang: Option<&str>,
+) -> Option<(String, String, String, &'static str, &'static str)> {
+    let lower_err = error_text.to_lowercase();
+    let is_suspended_pool = lower_err.contains("temporarily suspended for model");
+    let is_not_found = is_model_not_found_error(status_code, error_text) || is_suspended_pool;
+    let is_forbidden = status_code == 403
+        || lower_err.contains("permission_denied")
+        || lower_err.contains("forbidden");
+
+    if !(is_not_found || is_forbidden) {
+        return None;
+    }
+
+    let i18n_err = crate::modules::i18n::get_gateway_error_strings(lang.unwrap_or("zh"));
+
+    if let Some(ua) = custom_ua {
+        let trimmed_ua = ua.trim();
+        if !trimmed_ua.is_empty() {
+            // 获取当前动态解析的官方 Hub 客户端指纹基线（来自官方远程 releases 探测或稳态基准）
+            let active_fp = crate::modules::hub_version::get_current_hub_fingerprint();
+            let active_baseline_ver = active_fp.version.as_str();
+
+            // 判定是否缺少官方 Hub 签名，或 Hub 版本低于当前官方最新基准
+            let is_hub = trimmed_ua.starts_with("antigravity/hub/");
+            let (is_risk, reason) = if is_hub {
+                if let Some(caps) = crate::constants::parse_antigravity_version(trimmed_ua) {
+                    if crate::constants::compare_semver(&caps, active_baseline_ver)
+                        == std::cmp::Ordering::Less
+                    {
+                        (true, "outdated_version")
+                    } else {
+                        (false, "ok")
+                    }
+                } else {
+                    (false, "ok")
+                }
+            } else {
+                (true, "missing_hub_signature") // 纯 IDE 格式 (如 antigravity/4.3.0) 缺少 Hub 签名
+            };
+
+            if is_risk {
+                let current_upstream_ua = crate::modules::hub_version::get_current_hub_user_agent();
+                let (title, diagnosis, suggestion) = if reason == "missing_hub_signature" {
+                    (
+                        format!("{} [{}]", i18n_err.outdated_ua_missing_sig_title, model),
+                        i18n_err
+                            .outdated_ua_missing_sig_diag
+                            .replace("{model}", model)
+                            .replace("{status}", &status_code.to_string())
+                            .replace("{ua}", trimmed_ua),
+                        i18n_err
+                            .outdated_ua_missing_sig_sug
+                            .replace("{recommended_ua}", &current_upstream_ua),
+                    )
+                } else {
+                    let user_ver = crate::constants::parse_antigravity_version(trimmed_ua)
+                        .unwrap_or_else(|| "未知".to_string());
+                    (
+                        format!("{} [{}]", i18n_err.outdated_ua_low_ver_title, model),
+                        i18n_err
+                            .outdated_ua_low_ver_diag
+                            .replace("{model}", model)
+                            .replace("{status}", &status_code.to_string())
+                            .replace("{ua}", trimmed_ua)
+                            .replace("{user_version}", &user_ver)
+                            .replace("{baseline_version}", active_baseline_ver),
+                        i18n_err
+                            .outdated_ua_low_ver_sug
+                            .replace("{recommended_ua}", &current_upstream_ua)
+                            .replace("{baseline_version}", active_baseline_ver),
+                    )
+                };
+
+                return Some((
+                    title,
+                    diagnosis,
+                    suggestion,
+                    "invalid_request_error",
+                    "outdated_user_agent",
+                ));
+            }
+        }
+    }
+
+    if is_suspended_pool {
+        return Some((
+            format!("{} [{}]", i18n_err.model_pool_suspended_title, model),
+            i18n_err.model_pool_suspended_diag.replace("{model}", model),
+            i18n_err.model_pool_suspended_sug.to_string(),
+            "rate_limit_error",
+            "model_pool_suspended",
+        ));
+    }
+
+    None
+}
+
 /// 格式化双轨制错误报文（四大标准协议原始字段散开 + 顶层/UI层不阉割双轨诊断）
 pub fn build_dual_track_error(
     protocol: &str, // "claude", "openai", "responses", or "gemini"
@@ -388,6 +511,59 @@ pub fn build_dual_track_error(
     model: &str,
     error_text: &str,
 ) -> serde_json::Value {
+    // 动态提取当前生效的自定义 User-Agent 覆盖与语言环境
+    let cfg = crate::modules::config::load_app_config().ok();
+    let active_ua_override = cfg
+        .as_ref()
+        .and_then(|c| c.proxy.user_agent_override.clone());
+    let lang = cfg
+        .as_ref()
+        .map(|c| c.language.clone())
+        .unwrap_or_else(|| "zh".to_string());
+    build_dual_track_error_with_ua_and_lang(
+        protocol,
+        status_code,
+        model,
+        error_text,
+        active_ua_override.as_deref(),
+        Some(&lang),
+    )
+}
+
+/// 格式化双轨制错误报文（可显式注入 custom_ua 用于单元测试或环境注入）
+pub fn build_dual_track_error_with_ua(
+    protocol: &str,
+    status_code: u16,
+    model: &str,
+    error_text: &str,
+    custom_ua: Option<&str>,
+) -> serde_json::Value {
+    let lang = crate::modules::config::load_app_config()
+        .ok()
+        .map(|c| c.language)
+        .unwrap_or_else(|| "zh".to_string());
+    build_dual_track_error_with_ua_and_lang(
+        protocol,
+        status_code,
+        model,
+        error_text,
+        custom_ua,
+        Some(&lang),
+    )
+}
+
+/// 格式化双轨制错误报文（支持显式注入自定义 UA 及当前会话语言环境）
+pub fn build_dual_track_error_with_ua_and_lang(
+    protocol: &str,
+    status_code: u16,
+    model: &str,
+    error_text: &str,
+    custom_ua: Option<&str>,
+    lang: Option<&str>,
+) -> serde_json::Value {
+    let effective_lang = lang.unwrap_or("zh");
+    let i18n_err = crate::modules::i18n::get_gateway_error_strings(effective_lang);
+
     // [Fixes #3763] 剔除内部链路控制标记，避免大体积上传终态标记泄漏到客户端报文
     let sanitized_error_text = crate::proxy::upstream::client::strip_internal_markers(error_text);
     let error_text = sanitized_error_text.as_str();
@@ -411,64 +587,80 @@ pub fn build_dual_track_error(
         // [Fixes #3763] 分阶段上传诊断归入网络类故障，保留真实阶段语义
         || lower.contains("upload stalled")
         || lower.contains("upload budget exhausted")
-        || lower.contains("upstream send failed");
+        || lower.contains("upstream send failed")
+        || lower.contains("no response")
+        || lower.contains("未收到请求回报");
 
     let is_not_found = is_model_not_found_error(status_code, error_text);
 
     // 1. 深度解析并反转义上游错误
     let (raw_upstream_msg, parsed_upstream) = parse_raw_upstream_error(error_text);
 
-    let (readable_prefix, diagnosis, suggestion, err_type, err_code) = if is_internal_limited {
+    let (readable_prefix, diagnosis, suggestion, err_type, err_code) = if let Some(ua_diag) =
+        check_outdated_user_agent_issue_with_lang(
+            model,
+            status_code,
+            error_text,
+            custom_ua,
+            Some(effective_lang),
+        ) {
+        ua_diag
+    } else if is_internal_limited {
         (
-            "【网关调度受限】".to_string(),
-            format!(
-                "网关本地账号池当前暂无可用账号或全部可用账号处于限流冷却中。调度详情: {}",
-                error_text
-            ),
-            "请等待冷却结束（参考等待秒数），或在网关中添加更多正常账号。".to_string(),
+            i18n_err.all_accounts_limited_title.to_string(),
+            i18n_err
+                .all_accounts_limited_diag
+                .replace("{error}", error_text),
+            i18n_err.all_accounts_limited_sug.to_string(),
             "rate_limit_error",
             "all_accounts_limited",
         )
     } else if is_network_error {
         (
-            "【网络请求异常（非服务端故障）】".to_string(),
-            format!(
-                "请求上游接口时网络连接失败（非网关服务端故障，请排查网络或代理）：{}",
-                error_text
-            ),
-            "请检查系统代理、上游节点连通性或本地网络设置，确保能正常连接上游服务。".to_string(),
+            i18n_err.upstream_network_error_title.to_string(),
+            i18n_err
+                .upstream_network_error_diag
+                .replace("{error}", error_text),
+            i18n_err.upstream_network_error_sug.to_string(),
             "network_error",
             "upstream_network_error",
         )
     } else if is_not_found {
         (
-            format!("【模型不存在】[{}]", model),
-            format!("模型 [{}] 在上游端点不存在，或当前绑定的账号暂未开通该模型的访问权限。", model),
-            "请核对模型名称，或在网关配置中的「自定义模型映射」将其重定向至可用模型（如 gemini-2.5-flash）。".to_string(),
+            i18n_err.model_not_found_title.replace("{model}", model),
+            i18n_err.model_not_found_diag.replace("{model}", model),
+            i18n_err.model_not_found_sug.to_string(),
             "invalid_request_error",
             "model_not_found",
         )
     } else if status_code == 429 || status_code == 529 {
         (
-            format!("【上游限流 HTTP {}】", status_code),
-            format!("模型 [{}] 触发上游配额耗尽或频率限制。", model),
-            "请稍候自动恢复，或添加更多账号以分散并发请求。".to_string(),
+            i18n_err
+                .rate_limit_title
+                .replace("{status}", &status_code.to_string()),
+            i18n_err.rate_limit_diag.replace("{model}", model),
+            i18n_err.rate_limit_sug.to_string(),
             "rate_limit_error",
             "rate_limit_exceeded",
         )
     } else {
         (
-            format!("【上游错误 HTTP {}】", status_code),
-            format!("调用上游模型 [{}] 发生错误 (HTTP {})。", model, status_code),
-            "请参考 upstream_error 中的详细字段排查原因。".to_string(),
+            i18n_err
+                .upstream_error_title
+                .replace("{status}", &status_code.to_string()),
+            i18n_err
+                .upstream_error_diag
+                .replace("{model}", model)
+                .replace("{status}", &status_code.to_string()),
+            i18n_err.upstream_error_sug.to_string(),
             "api_error",
             "upstream_error",
         )
     };
 
     let readable_message = format!(
-        "{} 网关诊断: {} 建议: {}",
-        readable_prefix, diagnosis, suggestion
+        "{} {} {} {} {}",
+        readable_prefix, i18n_err.label_diagnosis, diagnosis, i18n_err.label_suggestion, suggestion
     );
 
     // 2. 确定散开到各自协议标准 message 字段的内容：
@@ -960,5 +1152,121 @@ mod retry_after_tests {
             }
             other => panic!("Expected FixedDelay(50ms), got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_check_outdated_user_agent_issue_detects_legacy_ide_ua() {
+        let legacy_ua = "antigravity/4.3.0 darwin/arm64";
+        let raw_404 = r#"HTTP 404: {"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}"#;
+
+        // 场景 1: 上游直接 404 (中文测试)
+        let res_zh = build_dual_track_error_with_ua_and_lang(
+            "openai",
+            404,
+            "gemini-4-argon-low",
+            raw_404,
+            Some(legacy_ua),
+            Some("zh"),
+        );
+        assert_eq!(res_zh["error"]["code"], "outdated_user_agent");
+        let diag_zh = res_zh["error"]["gateway_error"]["diagnosis"]
+            .as_str()
+            .unwrap();
+        assert!(diag_zh.contains("缺少官方 Hub 签名"));
+        assert!(diag_zh.contains("antigravity/4.3.0 darwin/arm64"));
+        assert_eq!(
+            res_zh["error"]["gateway_error"]["error_code"],
+            "outdated_user_agent"
+        );
+
+        // 场景 1b: 英文测试
+        let res_en = build_dual_track_error_with_ua_and_lang(
+            "openai",
+            404,
+            "gemini-4-argon-low",
+            raw_404,
+            Some(legacy_ua),
+            Some("en"),
+        );
+        assert_eq!(res_en["error"]["code"], "outdated_user_agent");
+        let diag_en = res_en["error"]["gateway_error"]["diagnosis"]
+            .as_str()
+            .unwrap();
+        assert!(diag_en.contains("lacks the official Hub signature"));
+
+        // 场景 2: 因所有账号 404 导致全池挂起熔断 (HTTP 503)
+        let suspended_err =
+            "All candidate accounts temporarily suspended for model: gemini-4-argon-low";
+        let res_503 = build_dual_track_error_with_ua_and_lang(
+            "openai",
+            503,
+            "gemini-4-argon-low",
+            suspended_err,
+            Some(legacy_ua),
+            Some("zh"),
+        );
+        assert_eq!(res_503["error"]["code"], "outdated_user_agent");
+        assert!(res_503["error"]["gateway_error"]["readable_summary"]
+            .as_str()
+            .unwrap()
+            .contains("【上游指纹门禁异常】"));
+    }
+
+    #[test]
+    fn test_check_outdated_user_agent_issue_detects_low_version_hub_ua() {
+        // 具有官方 Hub 签名，但版本号 (2.11.0) 低于当前推荐默认基准 (OFFICIAL_HUB_VERSION 2.28.0)
+        let low_hub_ua =
+            "antigravity/hub/2.11.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)";
+        let raw_404 = r#"HTTP 404: {"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}"#;
+
+        let res = build_dual_track_error_with_ua_and_lang(
+            "claude",
+            404,
+            "gemini-4-argon",
+            raw_404,
+            Some(low_hub_ua),
+            Some("zh"),
+        );
+        assert_eq!(res["error"]["code"], "outdated_user_agent");
+        let diag = res["error"]["gateway_error"]["diagnosis"].as_str().unwrap();
+        assert!(diag.contains("2.11.0"));
+        assert!(diag.contains("低于当前官方推荐默认基准"));
+    }
+
+    #[test]
+    fn test_check_outdated_user_agent_issue_passes_modern_hub_ua() {
+        let modern_ua =
+            "antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)";
+        let raw_404 = r#"HTTP 404: {"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}"#;
+
+        let res = build_dual_track_error_with_ua(
+            "claude",
+            404,
+            "gemini-non-existent",
+            raw_404,
+            Some(modern_ua),
+        );
+        // 现代 Hub UA 不应误判为 outdated_user_agent，正常走 model_not_found
+        assert_eq!(res["error"]["code"], "model_not_found");
+    }
+
+    #[test]
+    fn test_check_outdated_user_agent_issue_detects_suspended_pool_without_custom_ua() {
+        let suspended_err =
+            "All candidate accounts temporarily suspended for model: gemini-4-argon-low";
+        let res = build_dual_track_error_with_ua_and_lang(
+            "openai",
+            503,
+            "gemini-4-argon-low",
+            suspended_err,
+            None,
+            Some("zh"),
+        );
+        // 无自定义 UA 时，全池临时熔断给出清晰的 model_pool_suspended 诊断
+        assert_eq!(res["error"]["code"], "model_pool_suspended");
+        assert!(res["error"]["gateway_error"]["readable_summary"]
+            .as_str()
+            .unwrap()
+            .contains("【模型全池临时熔断】"));
     }
 }

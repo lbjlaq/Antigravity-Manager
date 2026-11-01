@@ -151,11 +151,12 @@ impl AccountService {
         &self,
         code: String,
         state: Option<String>,
-    ) -> Result<(), String> {
-        modules::oauth_server::submit_oauth_code(code, state).await
+    ) -> Result<Account, String> {
+        let token_res = modules::oauth_server::submit_oauth_code(code, state).await?;
+        self.process_oauth_token(token_res).await
     }
 
-    async fn process_oauth_token(
+    pub async fn process_oauth_token(
         &self,
         token_res: modules::oauth::TokenResponse,
     ) -> Result<Account, String> {

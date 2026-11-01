@@ -279,15 +279,17 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             setStatus('loading');
             setMessage(t('accounts.add.oauth.btn_start') + '...');
 
-            // 1. 获取 URL (指向 /auth/callback)
-            const res = await invoke<any>('prepare_oauth_url');
-            const url = typeof res === 'string' ? res : res.url;
-
+            // 1. 获取 URL (复用已有 URL，避免重复触发 prepare_oauth_url 导致后端 Flow 状态被覆盖重置)
+            let url = oauthUrl;
             if (!url) {
-                throw new Error(t('accounts.add.oauth.error_no_url', 'OAuth URLを取得できませんでした'));
-            }
+                const res = await invoke<any>('prepare_oauth_url');
+                url = typeof res === 'string' ? res : res.url;
 
-            setOauthUrl(url); // 确保链接在 UI 中可见，方便用户手动复制
+                if (!url) {
+                    throw new Error(t('accounts.add.oauth.error_no_url', 'OAuth URLを取得できませんでした'));
+                }
+                setOauthUrl(url); // 确保链接在 UI 中可见，方便用户手动复制
+            }
 
             // 2. 打开新标签页 (响应用户反馈：Web 端直接使用新标签体验更好)
             const popup = window.open(url, '_blank');
@@ -374,23 +376,34 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
         setMessage(t('accounts.add.oauth.manual_submitting', '認可コードを送信中...'));
 
         try {
-            await invoke('submit_oauth_code', { code: manualCode.trim(), state: null });
+            // 从预生成的 oauthUrl 中提取 state 参数作为兜底 CSRF 校验，防止用户只回填 bare code 时丢失 state 导致状态未比对
+            let fallbackState: string | null = null;
+            if (oauthUrl) {
+                try {
+                    const parsedUrl = new URL(oauthUrl);
+                    fallbackState = parsedUrl.searchParams.get('state');
+                } catch {
+                    // ignore URL parse failure
+                }
+            }
 
-            // 提交成功反馈
+            await invoke('submit_oauth_code', { code: manualCode.trim(), state: fallbackState });
+
+            // 兑换并保存成功后，先刷新账号列表，再提示成功并关闭弹窗
+            await fetchAccounts();
+
             setStatus('success');
-            setMessage(t('accounts.add.oauth.manual_submitted', '認可コードを送信しました。バックエンドで処理中です...'));
-
+            setMessage(t('accounts.add.oauth_success') || t('common.success'));
             setManualCode('');
 
-            // 对齐 Web 模式下的刷新逻辑
-            if (!isTauri()) {
-                setTimeout(async () => {
-                    await fetchAccounts();
-                    setIsOpen(false);
-                    resetState();
-                }, 2000);
-            }
+            setTimeout(() => {
+                setIsOpen(false);
+                resetState();
+            }, 1500);
         } catch (error) {
+            console.error('Manual OAuth Code submission error:', error);
+            // 提交失败后清空失效的 URL 缓存，方便用户点击重试时重新生成全新的可用授权 URL
+            setOauthUrl('');
             let errStr = String(error);
             if (errStr.includes("No active OAuth flow")) {
                 setMessage(t('accounts.add.oauth.error_no_flow'));
@@ -580,20 +593,27 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                                                     </span>
                                                 </button>
 
-                                                <button
-                                                    type="button"
-                                                    className="w-full px-4 py-2 bg-white dark:bg-base-100 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-xl border border-gray-200 dark:border-base-300 hover:bg-gray-50 dark:hover:bg-base-200 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-                                                    onClick={handleCompleteOAuth}
-                                                    disabled={status === 'loading' || status === 'success'}
-                                                >
-                                                    <CheckCircle2 className="w-4 h-4" />
-                                                    {t('accounts.add.oauth.btn_finish')}
-                                                </button>
+                                                {isTauri() && (
+                                                    <button
+                                                        type="button"
+                                                        className="w-full px-4 py-2 bg-white dark:bg-base-100 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-xl border border-gray-200 dark:border-base-300 hover:bg-gray-50 dark:hover:bg-base-200 transition-all flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                                                        onClick={handleCompleteOAuth}
+                                                        disabled={status === 'loading' || status === 'success'}
+                                                    >
+                                                        <CheckCircle2 className="w-4 h-4" />
+                                                        {t('accounts.add.oauth.btn_finish')}
+                                                    </button>
+                                                )}
                                             </div>
                                         )}
 
                                         {/* Manual Code Entry - Always enabled to rescue stuck flows */}
                                         <div className="pt-4 mt-2 border-t border-gray-100 dark:border-base-200">
+                                            {!isTauri() && (
+                                                <div className="mb-2.5 p-2.5 bg-blue-50/60 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30 rounded-xl text-[11px] text-blue-700 dark:text-blue-300 leading-relaxed text-left">
+                                                    {t('accounts.add.oauth.remote_hint')}
+                                                </div>
+                                            )}
                                             <div className="text-[11px] font-medium text-gray-400 dark:text-gray-500 mb-2 uppercase tracking-wider">
                                                 {t('accounts.add.oauth.manual_hint')}
                                             </div>

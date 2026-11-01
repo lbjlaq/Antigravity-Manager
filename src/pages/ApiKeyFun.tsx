@@ -57,6 +57,11 @@ interface UsageSummary {
     isValid: boolean;
 }
 
+// [TEMPORARY_EVENT: DOUBLE11_2026] (Expires: 2026-11-11 23:59:59 +08:00)
+// 双11活动专属标签。活动到期后由 bump-version 脚本自动提示在下一次发版时物理移除此标记块及关联代码。
+const DOUBLE11_2026_END_TIME = new Date('2026-11-11T23:59:59+08:00').getTime();
+const isDouble11Active = () => Date.now() <= DOUBLE11_2026_END_TIME;
+
 const STORAGE_KEY = 'apikey_fun_managed_keys_local';
 const DEFAULT_ENDPOINT = 'https://api.apikey.fan/v1';
 
@@ -491,13 +496,22 @@ export const ApiKeyFun: React.FC = () => {
 
                     {/* Info */}
                     <div className="flex flex-col gap-1.5 max-w-4xl">
-                        <div className="flex flex-col md:flex-row items-center md:items-end gap-3">
+                        <div className="flex flex-col md:flex-row items-center md:items-end gap-3 flex-wrap">
                             <h1 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white tracking-wide leading-none">
                                 {t('apiKeyFun.title', { defaultValue: 'APIKEY.FUN 中转站' })}
                             </h1>
-                            <span className="bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 border border-blue-200 dark:border-blue-800/40 px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase">
-                                {t('apiKeyFun.eyebrow', { defaultValue: '中转站' })}
-                            </span>
+                            <div className="flex items-center gap-2">
+                                <span className="bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 border border-blue-200 dark:border-blue-800/40 px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase">
+                                    {t('apiKeyFun.eyebrow', { defaultValue: '中转站' })}
+                                </span>
+                                {/* [TEMPORARY_EVENT: DOUBLE11_2026] 仅展示标签，不改变点击与跳转链接 */}
+                                {isDouble11Active() && (
+                                    <span className="inline-flex items-center gap-1 bg-gradient-to-r from-rose-500/15 via-orange-500/15 to-amber-500/15 text-rose-600 dark:text-rose-400 border border-rose-300/60 dark:border-rose-700/60 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wide select-none animate-in fade-in duration-300 shadow-sm shadow-rose-500/5">
+                                        <Flame size={11} className="text-rose-500 fill-rose-500 animate-pulse" />
+                                        <span>{t('apiKeyFun.double11Badge', { defaultValue: '双 11 特惠中' })}</span>
+                                    </span>
+                                )}
+                            </div>
                         </div>
                         <p className="text-xs md:text-sm text-gray-600 dark:text-gray-300/90 leading-relaxed font-normal mt-1">
                             {t('apiKeyFun.description', { defaultValue: 'Antigravity Tools 官方合作中转站，为用户提供稳定、开放、高性价比的大模型 API 接入服务。支持 Claude、OpenAI、Gemini 等主流模型，适合在 Codex、Gemini CLI、Claude Code 及其他开发工具中统一配置使用。通过 Antigravity Tools 专属链接注册，可享受最高充值永久 95 折优惠。' })}

@@ -139,6 +139,10 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'should_check_updates': { url: '/api/system/updates/check-status', method: 'GET' },
   'check_for_updates': { url: '/api/system/updates/check', method: 'POST' },
   'update_last_check_time': { url: '/api/system/updates/touch', method: 'POST' },
+  'check_hub_update': { url: '/api/system/hub/check-update', method: 'GET' },
+  'get_hub_fingerprint': { url: '/api/system/hub/fingerprint', method: 'GET' },
+  'detect_remote_hub_fingerprint': { url: '/api/system/hub/detect-fingerprint', method: 'POST' },
+  'get_effective_first_byte_timeouts': { url: '/api/system/timeouts/effective-first-byte', method: 'GET' },
 
   // OAuth
   'prepare_oauth_url': { url: '/api/auth/url', method: 'GET' },

@@ -388,6 +388,45 @@ if (!isDryRun && fs.existsSync(path.join(ROOT_DIR, 'src-tauri/Cargo.toml'))) {
 
 log(`全部 ${updatedCount} 处版本配置已完成原子化同步！`);
 
+// 7.1 临时营销活动到期自动检测与物理剔除提醒 (例如双11活动)
+function checkExpiredTemporaryEvents() {
+    const events = [
+        {
+            id: 'DOUBLE11_2026',
+            name: 'APIKEY.FUN 双 11 特惠活动标签',
+            expiresAt: new Date('2026-11-11T23:59:59+08:00').getTime(),
+            files: ['src/pages/ApiKeyFun.tsx', 'src/locales/zh.json', 'src/locales/en.json', 'src/locales/zh-TW.json'],
+        },
+    ];
+
+    const now = Date.now();
+    for (const evt of events) {
+        if (now > evt.expiresAt) {
+            let found = false;
+            for (const f of evt.files) {
+                const fp = path.join(ROOT_DIR, f);
+                if (fs.existsSync(fp)) {
+                    const content = fs.readFileSync(fp, 'utf8');
+                    if (content.includes(`[TEMPORARY_EVENT: ${evt.id}]`) || content.includes('double11Badge')) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (found) {
+                warn(`\n========================================================================`);
+                warn(`🔔【活动到期自动提醒】检测到 "${evt.name}" 已于 2026-11-11 23:59:59 到期！`);
+                warn(`请在本次或后续发版时，清理以下文件中的 [TEMPORARY_EVENT: ${evt.id}] 标记代码与文案:`);
+                for (const f of evt.files) {
+                    warn(`  - ${f}`);
+                }
+                warn(`========================================================================\n`);
+            }
+        }
+    }
+}
+checkExpiredTemporaryEvents();
+
 // 8. 自动化 Commit 辅助支持 (使用 execFileSync 避免 Windows cmd.exe 换行崩溃)
 if (!isDryRun && autoCommit) {
     log('执行自动 Git Commit...');

@@ -17,9 +17,10 @@ pub const KNOWN_STABLE_CHROME: &str = "132.0.6834.160";
 static VERSION_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Invalid version regex"));
 
-/// Pre-compiled regex specifically matching version following antigravity (e.g. `antigravity/1.5`, `Antigravity/1.5.0`, `antigravity/4.3.0`)
+/// Pre-compiled regex specifically matching version following antigravity or antigravity/hub (e.g. `antigravity/1.5`, `Antigravity/1.5.0`, `antigravity/4.3.0`, `antigravity/hub/2.28.0`)
 static ANTIGRAVITY_VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)antigravity[/v\s]+(\d+(?:\.\d+)+)").expect("Invalid antigravity version regex")
+    Regex::new(r"(?i)antigravity(?:/hub)?[/v\s]+(\d+(?:\.\d+)+)")
+        .expect("Invalid antigravity version regex")
 });
 
 /// Parse version from response text using pre-compiled regex

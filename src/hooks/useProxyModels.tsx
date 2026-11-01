@@ -198,7 +198,8 @@ export const useProxyModels = () => {
         // 0.1 探测当前账号池中 Gemini 3 Flash 家族最高活跃小版本 (如 3.8)，以便自动收敛淘汰已被替代的过渡小版本
         let maxGemini3FlashMinor = 8; // 默认以当前 3.8 为基准
         for (const account of accounts) {
-            for (const m of account.quota?.models ?? []) {
+            const modelsList = Array.isArray(account.quota?.models) ? account.quota.models : [];
+            for (const m of modelsList) {
                 const nameLower = m.name.toLowerCase().trim();
                 const match = nameLower.match(/gemini-3\.(\d+)-flash/);
                 if (match) {
@@ -212,7 +213,8 @@ export const useProxyModels = () => {
 
         // 1. 以真实账号上报的动态模型为第一权威真理源 (Single Source of Truth)
         for (const account of accounts) {
-            for (const m of account.quota?.models ?? []) {
+            const modelsList = Array.isArray(account.quota?.models) ? account.quota.models : [];
+            for (const m of modelsList) {
                 const rawKey = m.name.toLowerCase().trim();
                 if (!isCompliantModel(rawKey, deprecatedSet, maxGemini3FlashMinor)) {
                     continue;
