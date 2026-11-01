@@ -590,9 +590,20 @@ pub async fn submit_oauth_code(
         redirect_uri, client_key
     ));
 
-    // Exchange with the exact redirect_uri and client_key stored in the flow
+    // Exchange with the exact redirect_uri and client_key stored in the flow.
+    // If exchange fails, cancel flow to ensure corrupted/expired state is not reused.
     let token_res =
-        oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await?;
+        match oauth::exchange_code_with_client(&code, &redirect_uri, Some(&client_key)).await {
+            Ok(res) => res,
+            Err(e) => {
+                crate::modules::logger::log_warn(&format!(
+                    "OAuth exchange failed during manual submission, cleaning up flow state: {}",
+                    e
+                ));
+                cancel_oauth_flow();
+                return Err(e);
+            }
+        };
 
     // Also notify code_tx in case a background listener (e.g. Desktop flow) is awaiting code_rx
     let _ = code_tx.try_send(Ok(code));
@@ -726,5 +737,22 @@ mod tests {
             url1, url2,
             "Subsequent calls with same parameters should reuse the active flow URL"
         );
+    }
+
+    #[tokio::test]
+    async fn test_submit_oauth_code_state_mismatch_and_cleanup() {
+        let redirect_uri = "http://localhost:8045/auth/callback".to_string();
+        let _ = prepare_oauth_flow_manually(redirect_uri.clone(), None)
+            .expect("prepare should succeed");
+
+        // Submit with deliberately mismatched state
+        let err = submit_oauth_code("test_code".to_string(), Some("wrong-state".to_string()))
+            .await
+            .unwrap_err();
+        assert!(err.contains("CSRF protection"));
+
+        // Clean up
+        cancel_oauth_flow();
+        assert!(get_active_oauth_flow_context().is_none());
     }
 }

@@ -4,11 +4,12 @@
 
 *   **版本演进**:
     *   **v5.0.2-beta.5 (2026-11-01)**:
-        -   **[Web/Docker 模式 OAuth 链路修复、状态防撕裂与回填同步闭环] (Fixes #3802, PR #3803, Thanks to @dandelion-promise520, @cubelikeplayDaniel)**:
+        -   **[Web/Docker 模式 OAuth 链路修复、状态防撕裂与回填同步闭环] (Fixes #3802, PR #3803, PR #3805, Thanks to @dandelion-promise520, @cubelikeplayDaniel)**:
             -   **消除前端重复 Prepare 与状态撕裂**: 优化 `AddAccountDialog` 中 `handleOAuthWeb` 逻辑，优先复用已生成的授权 URL，禁止点击「开始授权」时二次触发 `prepare_oauth_url`；后端 `prepare_oauth_flow_manually` 增加状态幂等复用检查（同 client 与 redirect_uri 直接返回现有 URL），彻底解决双重请求导致后台全局 Flow 状态被重置覆盖、回调 code 掉入废弃通道的硬伤。(Fixes #3802, PR #3803, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
             -   **内置客户端防重定向失配拦截 (PR #3803)**: 在 `resolve_oauth_redirect_uri` 中增加 `is_builtin_oauth_client` 环回回退防御，当使用默认内置 Google OAuth 凭据时，即使用户配置了 `ABV_PUBLIC_URL` 也强制使用 `http://localhost:<port>/auth/callback`，彻底规避因公网/局域网域名未在上游控制台注册而触发的 Google 400 `redirect_uri_mismatch` 阻断。(PR #3803, Thanks to @cubelikeplayDaniel)
+            -   **换码失败主动清理脏状态闭环 (PR #3805)**: 在手动换码 `submit_oauth_code` 及 HTTP 回调 `handle_oauth_callback` 的兑换异常分支中补充主动调用 `cancel_oauth_flow()`，当 Google 报 `invalid_grant` 或 Code 过期时立即释放全局单例 Flow 状态；前端提交失败时自动清空本地 `oauthUrl` 缓存，彻底杜绝脏状态残留导致用户重试时因状态复用死锁。(PR #3805, Thanks to @cubelikeplayDaniel)
+            -   **手动回填 CSRF 双向核对与弹性解析 (PR #3803, PR #3805)**: 前端提交手动回填时，自动从预生成的 `oauthUrl` 中解析原始 `state` 作为 `fallbackState` 传给后端，避免仅回填裸 Code 时因丢失 state 导致 CSRF 防护被跳过；升级 `parse_manual_oauth_input` 智能解析引擎，全面兼容完整 URL、无 scheme 域名（`localhost:8045/...`）、已编码 `%2F` 与裸 Code，并拦截上游 `error=access_denied` 等拒绝响应。(Fixes #3802, PR #3803, PR #3805, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
             -   **Web 兑换透传客户端凭据与号池实时同步**: 移除原 Web 模式后台游离且丢弃了 client 的 `tokio::spawn` 异步任务；手动提交以及 Web 回调统一通过 flow 绑定的 `client_key` 调用 `exchange_code_with_client` 进行兑换，并在回调成功后主动调用 `token_manager.load_accounts()` 刷新内存与文件，彻底消除因客户端不匹配导致 Google 上游报 `invalid_grant: Bad Request` 的缺陷。(Fixes #3802, PR #3803, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
-            -   **手动回填弹性解析与异常透传闭环 (PR #3803)**: 将 `POST /api/accounts/oauth/submit-code` 重构为同步换取 Token 并持久化账号；升级 `parse_manual_oauth_input` 智能解析引擎，全面兼容完整 URL、无 scheme 域名（`localhost:8045/...`）、已编码 `%2F` 与裸 Code，并对上游 `error=access_denied` 等拒绝响应进行明确拦截与人类友好提示；兑换成功后前端刷新账号列表并优雅关窗，若遇 Google 拦截或 Code 过期则保持弹窗打开并直接标红展示具体错误原因，彻底杜绝静默吞异常。(Fixes #3802, PR #3803, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
             -   **无头/Docker 远程部署交互与按键守护**: 在 Web 模式手动回填输入框上方新增上下文提示，明确解释因 Google Desktop OAuth 规范限制，授权后跳转至 `localhost` 显示连接拒绝属正常安全行为，引导用户直接复制地址栏完整 URL 粘贴提交；限制「我已授权，继续」按键仅在桌面端可用，避免 Web 模式下点击造成混淆。(Fixes #3802, PR #3803, Thanks to @dandelion-promise520, @cubelikeplayDaniel)
 
     *   **v5.0.2-beta.4 (2026-11-01)**:

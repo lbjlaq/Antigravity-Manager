@@ -4080,6 +4080,7 @@ async fn handle_oauth_callback(
         }
         Err(e) => {
             error!("OAuth exchange failed: {}", e);
+            crate::modules::oauth_server::cancel_oauth_flow();
             Ok(Html(format!(
                 r#"<html><body><h1>Authorization Failed</h1><p>Error: {}</p></body></html>"#,
                 e
