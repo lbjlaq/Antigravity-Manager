@@ -3,6 +3,18 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.2-beta.4 (2026-11-01)**:
+        -   **[Official Hub User-Agent Egress Upgrade, Multi-Locale Diagnostics, and Settings Save Fix] (Fixes #3797, Ref #3750, PR #3800, Thanks to @cubelikeplayDaniel)**:
+            -   **Official Hub Egress Fingerprint Modernization**: Upgraded the default User-Agent example in ApiProxy settings to the modern Hub format `antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)`, eliminating the risk of losing official Hub signatures that trigger upstream 404 and 503 circuit-breaker quarantines; added contextual warning banners with dynamic interpolation of the latest detected Hub version. (Fixes #3797, Ref #3750, PR #3800, Thanks to @cubelikeplayDaniel)
+            -   **Settings Save Persistence & Lifecycle Fix**: Fixed a lifecycle issue where saving proxy settings unexpectedly toggled off or reset User-Agent overrides during state reload, and removed blocking confirmation dialogs during save. (PR #3800, Thanks to @cubelikeplayDaniel)
+            -   **Full 12-Locale Gateway Error Diagnostics**: Built comprehensive multi-language diagnostic dictionaries across all 12 supported locales, accurately identifying missing Hub signatures, outdated fingerprint rejections, account-pool circuit-breaker locks, and upstream network drops with structured `gateway_error` details and actionable suggestions. (PR #3800, Thanks to @cubelikeplayDaniel)
+            -   **Log Details Panel Full Localization**: Completed multi-language translations for 3-column diff, Postman view switching, soft-wrap toggles, copy actions, and header/query tables across all 12 supported languages. (PR #3800, Thanks to @cubelikeplayDaniel)
+        -   **[Official Hub Fingerprint and Update Detection Parity in Web/Docker Mode] (Ref #3797)**:
+            -   **Web Mode Hub Fingerprint & Update Endpoints**: Implemented backend Axum web endpoints `/api/system/hub/fingerprint`, `/api/system/hub/check-update`, `/api/system/hub/detect-fingerprint`, and `/api/system/timeouts/effective-first-byte`, resolving missing route errors in headless/Docker deployments;
+            -   **Frontend Command Mapping Parity**: Aligned route mappings in `src/utils/request.ts` (`COMMAND_MAPPING`), ensuring Web UI users receive official Hub update notifications upon launch and can actively inspect and detect Hub fingerprints in the Settings panel. (Ref #3797)
+        -   **[Batch Import Account HTTP 422 Fix in Web/Docker Mode] (Fixes #3801, Thanks to @dandelion-promise520)**:
+            -   **Dual Payload Shape Adaptation**: Introduced `#[serde(untagged)]` on `BatchImportPayload` to seamlessly accept both the wrapped object `{ "entries": [...] }` emitted by frontend `invoke('batch_import_accounts', { entries })` in Web mode and the bare JSON array `[...]` from direct API calls, eliminating HTTP 422 deserialization failures when importing accounts via the Web UI with automated unit test coverage. (Fixes #3801, Thanks to @dandelion-promise520)
+
     *   **v5.0.2-beta.3 (2026-11-01)**:
         -   **[Weekly Quota "Pedal Mode" with Auto Circuit-Breaker Recovery] (Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)**:
             -   **Expiring Quota Detection & Prompt**: Independently monitors weekly quotas for Gemini and Claude in the account pool, prompting a reminder dialog when remaining quota exceeds 5% with less than 24 hours until the official reset; supports a persistent "Don't remind me again" choice per model family, plus a 2-hour silent cooldown after "Not now" to avoid repeated interruptions. (Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)

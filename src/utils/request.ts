@@ -32,7 +32,6 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'restore_device_version': { url: '/api/accounts/:accountId/device-versions/:versionId/restore', method: 'POST' },
   'delete_device_version': { url: '/api/accounts/:accountId/device-versions/:versionId', method: 'DELETE' },
   'open_device_folder': { url: '/api/system/open-folder', method: 'POST' },
-  'get_active_clients_status': { url: '/api/accounts/active-clients', method: 'GET' },
 
   // Proxy Control & Status
   'get_proxy_status': { url: '/api/proxy/status', method: 'GET' },
@@ -53,11 +52,8 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'set_proxy_monitor_enabled': { url: '/api/proxy/monitor/toggle', method: 'POST' },
   'set_proxy_capture_health_logs': { url: '/api/proxy/monitor/health-logs/toggle', method: 'POST' },
   'test_model_connectivity': { url: '/api/proxy/test-model', method: 'POST' },
-  'get_hub_fingerprint': { url: '/api/proxy/hub-fingerprint', method: 'GET' },
-  'check_hub_update': { url: '/api/proxy/hub-update', method: 'GET' },
 
   // Logs & Monitoring
-  'get_proxy_logs_paginated': { url: '/api/logs', method: 'GET' },
   'get_proxy_logs_filtered': { url: '/api/logs', method: 'GET' },
   'get_proxy_logs_count_filtered': { url: '/api/logs/count', method: 'GET' },
   'get_proxy_db_disk_size': { url: '/api/logs/disk-size', method: 'GET' },
@@ -143,6 +139,10 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'should_check_updates': { url: '/api/system/updates/check-status', method: 'GET' },
   'check_for_updates': { url: '/api/system/updates/check', method: 'POST' },
   'update_last_check_time': { url: '/api/system/updates/touch', method: 'POST' },
+  'check_hub_update': { url: '/api/system/hub/check-update', method: 'GET' },
+  'get_hub_fingerprint': { url: '/api/system/hub/fingerprint', method: 'GET' },
+  'detect_remote_hub_fingerprint': { url: '/api/system/hub/detect-fingerprint', method: 'POST' },
+  'get_effective_first_byte_timeouts': { url: '/api/system/timeouts/effective-first-byte', method: 'GET' },
 
   // OAuth
   'prepare_oauth_url': { url: '/api/auth/url', method: 'GET' },

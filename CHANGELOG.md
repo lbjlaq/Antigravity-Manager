@@ -3,6 +3,18 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.2-beta.4 (2026-11-01)**:
+        -   **[User-Agent 官方 Hub 指纹升级、多语种门禁诊断与设置保存修复] (Fixes #3797, Ref #3750, PR #3800, Thanks to @cubelikeplayDaniel)**:
+            -   **现代官方 Hub 指纹升级**: 将设置页默认 User-Agent 示例升级为标准 Hub 格式 `antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)`，彻底消除复制旧版示例导致丢失 Hub 签名、引发上游 404 与全池 503 保护性熔断的风险；开启覆盖开关时提供高亮警示并动态注入应用探测到的最新 Hub 版本。(Fixes #3797, Ref #3750, PR #3800, Thanks to @cubelikeplayDaniel)
+            -   **配置保存可靠性修复**: 修复保存配置时因状态重载导致 User-Agent 覆盖开关意外关闭或重置清空的生命周期问题，并移除保存时的阻断弹窗。(PR #3800, Thanks to @cubelikeplayDaniel)
+            -   **全量 12 语种网关诊断体系**: 构建覆盖全部 12 种系统语言的网关错误诊断字典，基于返回报文精准识别缺少 Hub 签名、指纹门禁拦截、全池账号挂起熔断以及上游连接超时中断，提供结构化 `gateway_error` 与排查指引。(PR #3800, Thanks to @cubelikeplayDaniel)
+            -   **日志详情面板全量国际化**: 补全三栏对比、Postman 风格视图切换、单行/折行切换、复制选项及请求头参数在 12 种语言下的翻译词条。(PR #3800, Thanks to @cubelikeplayDaniel)
+        -   **[Web/Docker 模式官方 Hub 指纹探测与更新感知对齐] (Ref #3797)**:
+            -   **Web 端 Hub 指纹与更新检测路由补齐**: 在后端 Axum 路由中补齐 `/api/system/hub/fingerprint`、`/api/system/hub/check-update`、`/api/system/hub/detect-fingerprint` 与 `/api/system/timeouts/effective-first-byte` 端点实现，解决 Web 模式无法读取指纹与首包延迟的缺陷；
+            -   **前端请求层映射对齐**: 规范修正 `src/utils/request.ts` 的 `COMMAND_MAPPING` 字典，使 Web 端在启动时能够及时收到官方 Hub 新版本提示 Toast，并在设置面板中完整支持出站指纹查看与主动探测。(Ref #3797)
+        -   **[Web/Docker 模式批量导入账号 HTTP 422 修复] (Fixes #3801, Thanks to @dandelion-promise520)**:
+            -   **双重请求体形态自适应**: 后端 `BatchImportPayload` 引入 `#[serde(untagged)]` 弹性适配，同时兼容前端 `invoke('batch_import_accounts', { entries })` 发送的对象包裹形态 `{"entries": [...]}` 与原生 API 的裸数组形态 `[...]`，彻底解决 Web/Docker 远程模式下导入账号 JSON 文件反序列化失败报 422 的缺陷，并配套自动化单元测试覆盖。(Fixes #3801, Thanks to @dandelion-promise520)
+
     *   **v5.0.2-beta.3 (2026-11-01)**:
         -   **[账号周配额临期「蹬额度模式」与自动熔断恢复] (Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)**:
             -   **临期智能识别与提醒**: 独立监测账号池中 Gemini 与 Claude 的周配额状态，当剩余配额 > 5% 且距官方重置不足 24 小时主动弹出提醒窗口；支持按模型家族持久化「不再提示 Gemini / Claude」，点击「暂不启动」后进入 2 小时静默冷却，避免高频打扰。(Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)

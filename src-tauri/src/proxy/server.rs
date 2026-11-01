@@ -1006,6 +1006,16 @@ impl AxumServer {
             .route("/system/updates/check", post(admin_check_for_updates))
             .route("/system/updates/touch", post(admin_update_last_check_time))
             .route("/system/updates/save", post(admin_save_update_settings))
+            .route("/system/hub/fingerprint", get(admin_get_hub_fingerprint))
+            .route("/system/hub/check-update", get(admin_check_hub_update))
+            .route(
+                "/system/hub/detect-fingerprint",
+                post(admin_detect_remote_hub_fingerprint),
+            )
+            .route(
+                "/system/timeouts/effective-first-byte",
+                get(admin_get_effective_first_byte_timeouts),
+            )
             .route(
                 "/system/autostart/status",
                 get(admin_is_auto_launch_enabled),
@@ -3106,6 +3116,50 @@ async fn admin_is_auto_launch_enabled() -> impl IntoResponse {
     Json(false)
 }
 
+async fn admin_get_hub_fingerprint() -> impl IntoResponse {
+    Json(crate::modules::hub_version::get_current_hub_fingerprint())
+}
+
+async fn admin_check_hub_update() -> impl IntoResponse {
+    let current = crate::constants::OFFICIAL_HUB_VERSION.to_string();
+    let latest = crate::modules::hub_version::fetch_remote_hub_release()
+        .await
+        .map(|release| release.version);
+    let update_available = latest
+        .as_deref()
+        .map_or(false, crate::modules::hub_version::is_update_available);
+
+    Json(crate::commands::proxy::HubUpdateStatus {
+        current,
+        latest,
+        update_available,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct DetectHubFingerprintPayload {
+    #[serde(rename = "customVersion", alias = "custom_version")]
+    custom_version: Option<String>,
+    #[serde(rename = "customCl", alias = "custom_cl")]
+    custom_cl: Option<String>,
+}
+
+async fn admin_detect_remote_hub_fingerprint(
+    Json(payload): Json<DetectHubFingerprintPayload>,
+) -> impl IntoResponse {
+    let fp = crate::modules::hub_version::detect_and_update_hub_fingerprint_with(
+        payload.custom_version.as_deref(),
+        payload.custom_cl.as_deref(),
+        true,
+    )
+    .await;
+    Json(fp)
+}
+
+async fn admin_get_effective_first_byte_timeouts() -> impl IntoResponse {
+    Json(crate::commands::proxy::get_effective_first_byte_timeouts())
+}
+
 async fn admin_toggle_auto_launch(Json(_payload): Json<serde_json::Value>) -> impl IntoResponse {
     // Note: Autostart requires tauri::AppHandle.
     StatusCode::NOT_IMPLEMENTED
@@ -3135,11 +3189,30 @@ async fn admin_delete_accounts(
     Ok(StatusCode::OK)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BatchImportPayload {
+    Wrapped {
+        entries: Vec<crate::models::ImportAccountEntry>,
+    },
+    Bare(Vec<crate::models::ImportAccountEntry>),
+}
+
+impl BatchImportPayload {
+    fn into_entries(self) -> Vec<crate::models::ImportAccountEntry> {
+        match self {
+            Self::Wrapped { entries } => entries,
+            Self::Bare(entries) => entries,
+        }
+    }
+}
+
 async fn admin_batch_import_accounts(
     State(state): State<AppState>,
-    Json(payload): Json<Vec<crate::models::ImportAccountEntry>>,
+    Json(payload): Json<BatchImportPayload>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let result = crate::modules::account::batch_import_accounts_logic(None, payload)
+    let entries = payload.into_entries();
+    let result = crate::modules::account::batch_import_accounts_logic(None, entries)
         .await
         .map_err(|e| {
             (
@@ -5164,5 +5237,29 @@ mod save_update_settings_payload_tests {
         let payload: SaveUpdateSettingsPayload =
             serde_json::from_value(serde_json::json!({ "unknown": 1 })).unwrap();
         assert!(payload.into_patch().is_empty());
+    }
+
+    #[test]
+    fn batch_import_payload_accepts_wrapped_and_bare() {
+        use super::BatchImportPayload;
+        // 1. 验证 Web 模式下 invoke("batch_import_accounts", { entries }) 发出的 {"entries": [...]}
+        let wrapped: BatchImportPayload = serde_json::from_value(serde_json::json!({
+            "entries": [
+                { "email": "test@example.com", "refresh_token": "1//test_rt" }
+            ]
+        }))
+        .expect("wrapped payload should deserialize");
+        let entries = wrapped.into_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].email.as_deref(), Some("test@example.com"));
+
+        // 2. 验证原生 API POST 的裸数组 [...]
+        let bare: BatchImportPayload = serde_json::from_value(serde_json::json!([
+            { "email": "bare@example.com", "refresh_token": "1//bare_rt" }
+        ]))
+        .expect("bare payload should deserialize");
+        let entries = bare.into_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].email.as_deref(), Some("bare@example.com"));
     }
 }
