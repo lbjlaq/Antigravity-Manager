@@ -3,6 +3,23 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.2-beta.3 (2026-11-01)**:
+        -   **[账号周配额临期「蹬额度模式」与自动熔断恢复] (Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)**:
+            -   **临期智能识别与提醒**: 独立监测账号池中 Gemini 与 Claude 的周配额状态，当剩余配额 > 5% 且距官方重置不足 24 小时主动弹出提醒窗口；支持按模型家族持久化「不再提示 Gemini / Claude」，点击「暂不启动」后进入 2 小时静默冷却，避免高频打扰。(Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)
+            -   **快照式挂起与精准恢复**: 启动蹬额度模式时自动创建前置状态快照，临时挂起其余非目标账号（`pedal_mode_locked`）将流量全力集中至临期账号；退出时仅恢复本次挂起的账号，严格保留用户原本主动禁用的账号，杜绝号池状态错乱。(Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)
+            -   **全量耗尽安全退出与边界防死锁**: 当且仅当全部目标账号配额降至 0% 或到达官方重置时间刷新后才自动退出；修复到达重置时间后负倒计时判定导致无法退出的死锁，并排除已被主动禁用账号被误选为目标、目标账号被删除时兜底恢复挂起账号，配额加载波动时保守防穿透避免误判提前退出。(Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)
+            -   **顶部运行横条与手动退出**: 主界面顶部新增微交互状态 Banner，实时展示当前运行模型、已挂起账号数与待消耗账号数，并支持随时手动退出并恢复；配套中英双语 i18n 与 9 项边界场景自动化单测全覆盖。(Fixes #3795, PR #3796, Thanks to @cubelikeplayDaniel)
+        -   **[Claude Code 2.1.312 新一代模型映射与号池自适应暗路由] (Fixes #2065, Ref #1724, Ref #3731, Ref #3751, PR #3787, Thanks to @cubelikeplayDaniel)**:
+            -   **移除静态硬编码映射**: 删除 `CLAUDE_TO_GEMINI` 静态硬编码映射，彻底消除目标模型下线或改名导致整条 Claude 链路瘫痪的死锁风险。(Fixes #2065, PR #3787, Thanks to @cubelikeplayDaniel)
+            -   **自适应暗路由 (`auto:*`)**: 新增 `auto:gemini-flash-low`、`auto:claude-opus` 与 `auto:claude-opus-4-7` 号池自适应目标，依据实时正配额在 Opus 5.5 / 4.6 / 4.7 及池内其他 Claude 思考模型间自动择优与降级，防止全池耗尽后直接 502；`claude-haiku-*` 复用 `pick_background_model_from_pool` 动态挑选轻量共享池，零 Claude 编程配额损耗。(Ref #1724, Ref #3731, PR #3787, Thanks to @cubelikeplayDaniel)
+            -   **公开/暗访双态与防复活迁移**: 解耦 `custom_mapping` 与 `custom_mapping_expose`，内置三条兼容规则默认不对外暴露；引入 `builtin_mapping_version` 无感迁移，保障内置规则不被一键重置抹除；前端映射面板新增公开/暗访状态切换与一键重置恢复内置自适应映射。(Fixes #2065, PR #3787, Thanks to @cubelikeplayDaniel)
+            -   **门禁基准与思考档位穿透**: 抽取通用 `parse_claude_version_tuple` 消除脆弱重复版本解析，Claude 硬防线维持 4.6（Fable / Mythos 需 ≥ 5.0、Haiku ≥ 4.5），门禁前置阶段先解析自适应目标避免暗路由被已下线判定误杀；路由层支持自定义映射目标为裸模型时继续按客户端思考档位穿透。(Ref #3751, PR #3787, Thanks to @cubelikeplayDaniel)
+        -   **[流式异常断流优雅收尾与零正文篡改保全] (PR #3794, Thanks to @cubelikeplayDaniel)**:
+            -   **中途断流不丢已生成内容**: 重构通用 `stream_lifecycle` 状态机，精准区分「已产生正文/工具调用后中断」与「首包或纯思维链失败」；上游网络抖动、连接重置或空闲超时时执行优雅收尾并下发协议专属截断终态（Claude `max_tokens` / OpenAI `length` / Gemini `MAX_TOKENS`），彻底避免客户端抛出 `StreamTruncatedError` 丢弃已生成的上万 token 并反复重思考重置当前轮次。(PR #3794, Thanks to @cubelikeplayDaniel)
+            -   **零正文篡改与工具调用优先**: 剔除伪造 Markdown 提示横幅与未闭合代码围栏注入，保持模型原样输出，根除非流式响应与思维库污染；工具调用语义优先级全局最高，断流收尾严格保持 `tool_use` / `tool_calls`，杜绝篡改为截断语义导致下一轮 400 死锁。(PR #3794, Thanks to @cubelikeplayDaniel)
+            -   **终态与空内容防护**: 纯思维链或未产生任何正文/工具调用的中断严格保持错误向下透传，绝不伪造假收尾与空回答；为各协议补齐 `has_emitted_done` 等终态感知，防止二次终结帧向客户端投毒多余数据帧。(PR #3794, Thanks to @cubelikeplayDaniel)
+            -   **Gemini 正常流与上游空值修正**: 移除 `GeminiStreamHandler::is_terminal` 覆写，避免正常 EOF 流因提前终结跳过图片生成成功统计与模型限流清理；增强 `finishReason` 非空判定，防止上游偶发 `null` 字段导致误判，并补充正常 EOF 到达 `emit_finalize` 的单元测试。(Ref #3794, Thanks to @cubelikeplayDaniel)
+
     *   **v5.0.2-beta.2 (2026-10-31)**:
         -   **[多智能体根会话归一化与凭据级强粘性调度] (Fixes #3789, Thanks to @Ran-Xing)**:
             -   **根会话派生后缀自动归一化**: 针对 AutoGPT、Cindy 群聊军团等多智能体协同框架在分工接力（Plan Step）中频繁派生瞬态 Session UUID 导致 Prompt Cache 击穿的痛点，在 `SessionScope::resolve` 中新增 `extract_root_session_id`，自动识别并裁剪 `:step:N`、`:subtask:...`、`:agent:...`、`:talk:...`、`--step-N` 等派生后缀；调度粘性键（`affinity_key`）自动归拢至根会话以锁定同一上游账号，彻底消除 Prompt Cache 击穿并恢复秒级首字响应；诊断与思维库存储键（`store_key`）依然保留完整子会话 ID，保障子任务上下文隔离。(Fixes #3789, Thanks to @Ran-Xing)
