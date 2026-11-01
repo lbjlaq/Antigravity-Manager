@@ -1836,8 +1836,19 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
     // Remove from index
     let original_len = index.accounts.len();
     index.accounts.retain(|s| s.id != account_id);
+    let removed_from_index = index.accounts.len() < original_len;
 
-    if index.accounts.len() == original_len {
+    // Delete account file (always attempt even if not in index, to clean up orphan files)
+    let accounts_dir = get_accounts_dir()?;
+    let account_path = accounts_dir.join(format!("{}.json", account_id));
+    let file_existed = account_path.exists();
+
+    if file_existed {
+        fs::remove_file(&account_path)
+            .map_err(|e| format!("failed_to_delete_account_file: {}", e))?;
+    }
+
+    if !removed_from_index && !file_existed {
         return Err(format!("Account ID not found: {}", account_id));
     }
 
@@ -1846,15 +1857,8 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
         index.current_account_id = index.accounts.first().map(|s| s.id.clone());
     }
 
-    save_account_index(&index)?;
-
-    // Delete account file
-    let accounts_dir = get_accounts_dir()?;
-    let account_path = accounts_dir.join(format!("{}.json", account_id));
-
-    if account_path.exists() {
-        fs::remove_file(&account_path)
-            .map_err(|e| format!("failed_to_delete_account_file: {}", e))?;
+    if removed_from_index {
+        save_account_index(&index)?;
     }
 
     // [FIX #1477] Trigger TokenManager cache cleanup signal

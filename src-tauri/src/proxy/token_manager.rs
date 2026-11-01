@@ -738,42 +738,43 @@ impl TokenManager {
 
         // 读取 accounts.json 索引，过滤掉用户在索引中标记为 disabled 或 proxy_disabled 的账号，防止实体文件残留导致已停用账号渗入代理池
         let index_file = self.resolved_data_dir().join("accounts.json");
-        let disabled_in_index: std::collections::HashSet<String> = if index_file.exists() {
+        let (known_in_index, disabled_in_index): (
+            Option<std::collections::HashSet<String>>,
+            std::collections::HashSet<String>,
+        ) = if index_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&index_file) {
                 if let Ok(index_val) = serde_json::from_str::<serde_json::Value>(&content) {
-                    index_val
-                        .get("accounts")
-                        .and_then(|a| a.as_array())
-                        .map(|accs| {
-                            accs.iter()
-                                .filter_map(|acc| {
-                                    let is_disabled = acc
-                                        .get("disabled")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false);
-                                    let is_proxy_disabled = acc
-                                        .get("proxy_disabled")
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false);
-                                    if is_disabled || is_proxy_disabled {
-                                        acc.get("id")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default()
+                    if let Some(accs) = index_val.get("accounts").and_then(|a| a.as_array()) {
+                        let mut known = std::collections::HashSet::new();
+                        let mut disabled = std::collections::HashSet::new();
+                        for acc in accs {
+                            if let Some(id) = acc.get("id").and_then(|v| v.as_str()) {
+                                known.insert(id.to_string());
+                                let is_disabled = acc
+                                    .get("disabled")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let is_proxy_disabled = acc
+                                    .get("proxy_disabled")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                if is_disabled || is_proxy_disabled {
+                                    disabled.insert(id.to_string());
+                                }
+                            }
+                        }
+                        (Some(known), disabled)
+                    } else {
+                        (None, std::collections::HashSet::new())
+                    }
                 } else {
-                    std::collections::HashSet::new()
+                    (None, std::collections::HashSet::new())
                 }
             } else {
-                std::collections::HashSet::new()
+                (None, std::collections::HashSet::new())
             }
         } else {
-            std::collections::HashSet::new()
+            (None, std::collections::HashSet::new())
         };
 
         let entries =
@@ -794,6 +795,18 @@ impl TokenManager {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or_default();
+
+            // 若 accounts.json 存在且已解析，但实体文件不在索引列表中，说明账号已被删除，属于孤儿凭据，严禁渗入代理池
+            if let Some(ref known) = known_in_index {
+                if !known.contains(stem) {
+                    tracing::warn!(
+                        "[Proxy] Account {} file exists in accounts/ directory but is missing from accounts.json index (deleted/orphan account), skipping from proxy pool",
+                        stem
+                    );
+                    continue;
+                }
+            }
+
             if disabled_in_index.contains(stem) {
                 // 实体文件是账号状态的真实权威来源。先检查实体文件，若实体文件本身未停用（索引数据陈旧），以实体文件为准；
                 // 仅当实体文件确实标记为停用或不可读时才跳过。
@@ -886,29 +899,38 @@ impl TokenManager {
         if index_file.exists() {
             if let Ok(content) = std::fs::read_to_string(&index_file) {
                 if let Ok(index_val) = serde_json::from_str::<serde_json::Value>(&content) {
-                    let is_disabled = index_val
-                        .get("accounts")
-                        .and_then(|a| a.as_array())
-                        .map(|accs| {
-                            accs.iter().any(|acc| {
-                                acc.get("id").and_then(|v| v.as_str()) == Some(account_id)
-                                    && (acc
-                                        .get("disabled")
+                    if let Some(accs) = index_val.get("accounts").and_then(|a| a.as_array()) {
+                        let exists_in_index = accs.iter().any(|acc| {
+                            acc.get("id").and_then(|v| v.as_str()) == Some(account_id)
+                        });
+                        if !exists_in_index {
+                            // 若账号已被从 accounts.json 索引中移除，从代理池彻底卸载
+                            tracing::warn!(
+                                "[Proxy] Account {} is missing from accounts.json index (deleted), removing from proxy pool",
+                                account_id
+                            );
+                            self.remove_account(account_id);
+                            return Ok(());
+                        }
+
+                        let is_disabled = accs.iter().any(|acc| {
+                            acc.get("id").and_then(|v| v.as_str()) == Some(account_id)
+                                && (acc
+                                    .get("disabled")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false)
+                                    || acc
+                                        .get("proxy_disabled")
                                         .and_then(|v| v.as_bool())
-                                        .unwrap_or(false)
-                                        || acc
-                                            .get("proxy_disabled")
-                                            .and_then(|v| v.as_bool())
-                                            .unwrap_or(false))
-                            })
-                        })
-                        .unwrap_or(false);
-                    if is_disabled
-                        && Self::get_account_state_on_disk(&path).await
-                            == OnDiskAccountState::Disabled
-                    {
-                        self.remove_account(account_id);
-                        return Ok(());
+                                        .unwrap_or(false))
+                        });
+                        if is_disabled
+                            && Self::get_account_state_on_disk(&path).await
+                                == OnDiskAccountState::Disabled
+                        {
+                            self.remove_account(account_id);
+                            return Ok(());
+                        }
                     }
                 }
             }
