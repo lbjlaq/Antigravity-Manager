@@ -3,6 +3,12 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.2-beta.9 (2026-11-03)**:
+        -   **[Codex / Responses 流式过渡断崖自适应跃迁与首字超时预算扩容] (Fixes #3816, PR #3817, Thanks to @mclinyeshi, @cubelikeplayDaniel)**:
+            -   **过渡断崖自适应跃迁与心跳保活**: 修复 Codex Desktop 调用 `gemini-4-argon-high` 等深思考模型在输出思考块后，上游整包缓冲巨型 `functionCall`（如复杂代码或思维导图文件）引发长静默时，网关单方面在 120 秒稳态超时截断连接导致 HTTP 200 无输出并触发客户端频繁重连的硬伤；为 `create_codex_sse_stream` 与 `create_legacy_sse_stream` 引入状态机阶段追踪，在检测到思考或前导文本后的长静默时自动跃迁至 `Transition` 阶段，赋予独立的 `transition_secs` (180s) 宽限期并持续发送 `: ping\n\n` 保活连接，给予上游充足时间完成巨型工具调用的整包生成。(Fixes #3816, PR #3817, Thanks to @mclinyeshi, @cubelikeplayDaniel)
+            -   **首字节预算硬上限扩容**: 将上游首字节等待预算基准硬上限 `MAX_FIRST_BYTE_BUDGET_SECS` 由 150 秒提升至 180 秒，避免超大上下文 Prefill 且首选端点排队时过早耗尽首字预算触发多端点重传放大并在最后抛出 504 Gateway Timeout。(Fixes #3816, PR #3817, Thanks to @mclinyeshi, @cubelikeplayDaniel)
+            -   **回归测试覆盖**: 补齐 `test_codex_stream_survives_transition_cliff_after_thinking` 单元测试，模拟思考后上游长静默整包下发工具调用场景，确保流式驱动器成功跃迁并完整交付 `response.completed`。(PR #3817, Thanks to @cubelikeplayDaniel)
+
     *   **v5.0.2-beta.8 (2026-11-02)**:
         -   **[3P 配额解耦与无授权留空，杜绝虚假满额与幽灵配额] (Fixes #3809, Ref #3811, PR #3812, Thanks to @cubelikeplayDaniel)**:
             -   **前端能力准入留空**: 在 `getGroupQuotaSummaries` 中增加实际授权模型校验，账号在 Claude / 3P 分组下无任何可用模型时返回空值，驱动配额卡片统一渲染占位符 `-`，消除上游空转配额组造成的虚假 100% 满额；大盘均值、短板提取与 5H 最优账号推荐同步跳过无 3P 能力账号，全池无可用账号时安全展示 `-` 而非报错。(Fixes #3809, PR #3812, Thanks to @cubelikeplayDaniel)
