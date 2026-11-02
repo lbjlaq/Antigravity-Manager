@@ -190,6 +190,22 @@ impl Account {
             }
         }
         quota.ensure_subscription_tier();
+
+        // 如果账号当前模型列表中无任何 Claude 或 GPT 模型（例如不支持 Opus 5.5 且 4.6 / GPT 均已下线），
+        // 彻底清理历史保留的虚假 3P 配额分组，杜绝幽灵配额复活并留空展示
+        let has_claude_or_gpt = quota.models.iter().any(|m| {
+            let n = m.name.to_lowercase();
+            n.starts_with("claude") || n.starts_with("gpt")
+        });
+        if !has_claude_or_gpt {
+            if let Some(ref mut groups) = quota.quota_groups {
+                groups.retain(|g| {
+                    let gname = g.display_name.to_lowercase();
+                    !gname.contains("claude") && !gname.contains("gpt") && !gname.contains("3p")
+                });
+            }
+        }
+
         self.quota = Some(quota);
     }
 }
@@ -375,5 +391,103 @@ mod tests {
                 .unwrap_err()
                 .contains("priority")
         );
+    }
+
+    #[test]
+    fn test_update_quota_purges_phantom_3p_groups_when_no_claude_or_gpt_models() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+
+        // 先给账号注入包含 Claude 分组与模型的数据
+        let mut initial_quota = QuotaData::new();
+        initial_quota.models = vec![crate::models::quota::ModelQuota {
+            name: "claude-sonnet-4-6".to_string(),
+            percentage: 100,
+            reset_time: "2026-11-08T00:00:00Z".to_string(),
+            display_name: None,
+            supports_images: None,
+            supports_thinking: None,
+            thinking_budget: None,
+            recommended: None,
+            max_tokens: None,
+            max_output_tokens: None,
+            model: None,
+            supported_mime_types: None,
+        }];
+        initial_quota.quota_groups = Some(vec![
+            crate::models::quota::QuotaGroup {
+                display_name: "Gemini Models".to_string(),
+                description: None,
+                buckets: vec![],
+            },
+            crate::models::quota::QuotaGroup {
+                display_name: "Claude and GPT models".to_string(),
+                description: None,
+                buckets: vec![],
+            },
+        ]);
+        account.update_quota(initial_quota);
+        assert_eq!(
+            account
+                .quota
+                .as_ref()
+                .unwrap()
+                .quota_groups
+                .as_ref()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        // 现在模拟新一轮上游数据：Claude 4.6 下线，账号中仅剩 Gemini 模型
+        let mut updated_quota = QuotaData::new();
+        updated_quota.models = vec![crate::models::quota::ModelQuota {
+            name: "gemini-3.8-flash-high".to_string(),
+            percentage: 80,
+            reset_time: "2026-11-05T00:00:00Z".to_string(),
+            display_name: None,
+            supports_images: None,
+            supports_thinking: None,
+            thinking_budget: None,
+            recommended: None,
+            max_tokens: None,
+            max_output_tokens: None,
+            model: None,
+            supported_mime_types: None,
+        }];
+        updated_quota.quota_groups = Some(vec![
+            crate::models::quota::QuotaGroup {
+                display_name: "Gemini Models".to_string(),
+                description: None,
+                buckets: vec![],
+            },
+            crate::models::quota::QuotaGroup {
+                display_name: "Claude and GPT models".to_string(),
+                description: None,
+                buckets: vec![],
+            },
+        ]);
+
+        account.update_quota(updated_quota);
+
+        let final_groups = account
+            .quota
+            .as_ref()
+            .unwrap()
+            .quota_groups
+            .as_ref()
+            .unwrap();
+        // 3P 分组必须被彻底剥离留空，不得残留任何 Claude and GPT models 分组
+        assert_eq!(final_groups.len(), 1);
+        assert_eq!(final_groups[0].display_name, "Gemini Models");
     }
 }

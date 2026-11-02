@@ -490,7 +490,7 @@ pub async fn fetch_quota_with_cache(
                 // Best-effort: 先行获取分组配额摘要 (weekly + 5h windows)。
                 // 这样在解析模型列表时，对于上游不再返回 quotaInfo 的 Gemini/Argon 系模型，
                 // 可以直接提取并绑定其所属分组的真实配额，杜绝模型被误丢弃导致调度器 503 (Issue #3737)。
-                let quota_groups =
+                let mut quota_groups =
                     fetch_quota_summary(access_token, email, project_id.as_deref(), account_id)
                         .await;
 
@@ -750,6 +750,23 @@ pub async fn fetch_quota_with_cache(
                                 supported_mime_types: None,
                             });
                         }
+                    }
+                }
+
+                // [3P ISOLATION] 若账号实际可用模型中没有任何 Claude 或 GPT 模型（如不支持 Opus 5.5 且 4.6/GPT 已下线），
+                // 剔除 upstream 统一返回的虚假 3P 配额分组，防止号池与展示层误判
+                if let Some(ref mut groups) = quota_groups {
+                    let has_claude_or_gpt = quota_data.models.iter().any(|m| {
+                        let n = m.name.to_lowercase();
+                        n.starts_with("claude") || n.starts_with("gpt")
+                    });
+                    if !has_claude_or_gpt {
+                        groups.retain(|g| {
+                            let gname = g.display_name.to_lowercase();
+                            !gname.contains("claude")
+                                && !gname.contains("gpt")
+                                && !gname.contains("3p")
+                        });
                     }
                 }
 

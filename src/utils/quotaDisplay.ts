@@ -459,6 +459,22 @@ export function getGroupQuotaSummaries(
         });
         const { dynamicLabel, supportedModels } = summarizeSupportedModels(matchedForSummary, key);
 
+        // [3P MODEL ZERO DEFENSE] 若账号在该模型组下无任何实际未禁用的支持模型（如不支持 Opus 5.5 且 4.6/GPT 不存在），
+        // 严格留空 (fiveHour: undefined, weekly: undefined)，杜绝因上游返回通用 3P 桶而展示虚假满额
+        if (key === 'claude' && matchedForSummary.length === 0) {
+            return {
+                key,
+                labelKey,
+                defaultLabel,
+                dynamicLabel,
+                supportedModels,
+                fiveHour: undefined,
+                weekly: undefined,
+                isWeeklyConstrained: false,
+                isWeeklyExhausted: false,
+            };
+        }
+
         return {
             key,
             labelKey,

@@ -52,6 +52,14 @@ function get5HourQuota(
     category: 'gemini' | 'claude',
     account: Account
 ): number {
+    if (category === 'claude') {
+        const hasClaude = account.quota?.models?.some(m => {
+            const n = (m?.name || '').toLowerCase();
+            return !n.includes('-disabled') && !n.endsWith('_disabled') && !(m as any)?.disabled && (n.startsWith('claude') || n.startsWith('gpt'));
+        });
+        if (!hasClaude) return 0;
+    }
+
     const weeklyGroup = getBucketPercentage(account.quota?.quota_groups, category, 'weekly');
     // 周额度耗尽熔断保护
     if (weeklyGroup !== null && weeklyGroup <= 5) {
