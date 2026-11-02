@@ -626,7 +626,16 @@ where
         let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(3));
         heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_activity = tokio::time::Instant::now();
-        let idle_timeout_secs = crate::proxy::get_stream_timeout_config().streaming_sliding_secs;
+        let stream_timeout_cfg = crate::proxy::get_stream_timeout_config();
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum LegacyStreamPhase {
+            InitialTtft,
+            Thinking,
+            Transition,
+            Streaming,
+        }
+        let mut phase = LegacyStreamPhase::InitialTtft;
 
         loop {
             tokio::select! {
@@ -658,8 +667,12 @@ where
                                                                 if is_thought {
                                                                     let clean_text = text.replace("<think>\n", "").replace("<think>", "").replace("\n</think>", "").replace("</think>", "");
                                                                     content_out.push_str(&clean_text);
+                                                                    if phase == LegacyStreamPhase::InitialTtft || phase == LegacyStreamPhase::Transition {
+                                                                        phase = LegacyStreamPhase::Thinking;
+                                                                    }
                                                                 } else {
                                                                     content_out.push_str(text);
+                                                                    phase = LegacyStreamPhase::Streaming;
                                                                 }
                                                             }
                                                             if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
@@ -726,22 +739,46 @@ where
                     }
                 }
                 _ = heartbeat_interval.tick() => {
-                    if last_activity.elapsed() >= std::time::Duration::from_secs(idle_timeout_secs) {
+                    let phase_timeout_secs = match phase {
+                        LegacyStreamPhase::InitialTtft => stream_timeout_cfg.initial_ttft_secs,
+                        LegacyStreamPhase::Transition => stream_timeout_cfg.transition_secs,
+                        LegacyStreamPhase::Thinking | LegacyStreamPhase::Streaming => {
+                            stream_timeout_cfg.streaming_sliding_secs
+                        }
+                    };
+
+                    if last_activity.elapsed() >= std::time::Duration::from_secs(phase_timeout_secs) {
+                        if matches!(phase, LegacyStreamPhase::Thinking | LegacyStreamPhase::Streaming) {
+                            tracing::info!(
+                                "[OpenAI-Legacy] {:?} 流静默已达 {}s，检测到过渡断崖 (Transition Cliff)，自动跃迁至 Transition 状态并开启 {}s 宽限期 (model={})",
+                                phase,
+                                phase_timeout_secs,
+                                stream_timeout_cfg.transition_secs,
+                                model
+                            );
+                            phase = LegacyStreamPhase::Transition;
+                            last_activity = tokio::time::Instant::now();
+                            yield Ok::<Bytes, String>(Bytes::from(": ping\n\n"));
+                            continue;
+                        }
+
                         let report = report_stream_error(
                             "openai-legacy",
                             "create_legacy_sse_stream",
                             &"stream idle timeout",
                             format!(
-                                "model={} session={} messages={} idle_secs={}",
+                                "model={} session={} messages={} phase={:?} timeout_secs={}",
                                 model,
                                 session_id,
                                 message_count,
-                                idle_timeout_secs
+                                phase,
+                                phase_timeout_secs
                             ),
                         );
                         tracing::warn!(
-                            "[OpenAI-Legacy] Stream idle timeout after {}s (model={})",
-                            idle_timeout_secs,
+                            "[OpenAI-Legacy] Stream idle timeout after {}s in phase {:?} (model={})",
+                            phase_timeout_secs,
+                            phase,
                             model
                         );
                         yield Ok::<Bytes, String>(Bytes::from(openai_chat_error_frame(
@@ -924,7 +961,16 @@ where
         let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(3));
         heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut last_activity = tokio::time::Instant::now();
-        let idle_timeout_secs = crate::proxy::get_stream_timeout_config().streaming_sliding_secs;
+        let stream_timeout_cfg = crate::proxy::get_stream_timeout_config();
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum CodexStreamPhase {
+            InitialTtft,
+            Thinking,
+            Transition,
+            Streaming,
+        }
+        let mut phase = CodexStreamPhase::InitialTtft;
 
         loop {
             tokio::select! {
@@ -964,6 +1010,12 @@ where
                                                         // Close the reasoning summary before opening normal text
                                                         // or a tool item so output item lifecycles never overlap.
                                                         let is_text_or_tool = part.get("text").is_some() || part.get("functionCall").is_some() || part.get("inlineData").is_some();
+                                                        if is_text_or_tool && !is_thought {
+                                                            phase = CodexStreamPhase::Streaming;
+                                                        } else if is_thought && (phase == CodexStreamPhase::InitialTtft || phase == CodexStreamPhase::Transition) {
+                                                            phase = CodexStreamPhase::Thinking;
+                                                        }
+
                                                         if is_text_or_tool && !is_thought && reasoning_open {
                                                             let text_done = json!({
                                                                 "type": "response.reasoning_summary_text.done",
@@ -1300,22 +1352,53 @@ where
                     }
                 }
                 _ = heartbeat_interval.tick() => {
-                    if last_activity.elapsed() >= std::time::Duration::from_secs(idle_timeout_secs) {
+                    let phase_timeout_secs = match phase {
+                        CodexStreamPhase::InitialTtft => stream_timeout_cfg.initial_ttft_secs,
+                        CodexStreamPhase::Transition => stream_timeout_cfg.transition_secs,
+                        CodexStreamPhase::Thinking | CodexStreamPhase::Streaming => {
+                            stream_timeout_cfg.streaming_sliding_secs
+                        }
+                    };
+
+                    if last_activity.elapsed() >= std::time::Duration::from_secs(phase_timeout_secs) {
+                        // [关键自适应跃迁：思考/引导文本至巨型工具调用过渡断崖检测]
+                        // 无论当前处于思考期 (Thinking) 还是已输出简短引导文本的正文期 (Streaming)，
+                        // 当静默时间首次达到稳态滑动超时 (streaming_sliding_secs) 时，
+                        // 上游可能正处于 Google v1internal 整包缓冲巨型 functionCall JSON 或深层状态切换的计算静默期（过渡断崖 Transition Cliff）。
+                        // 此时绝不可直接在半句话处超时截断并报错，而应自动跃迁至 Transition 状态，重置时间基准点，
+                        // 赋予独立的 transition_secs (180s) 宽限期，并继续下发心跳保活；
+                        // 若在 Transition 宽限期内仍无任何 chunk 到达，则因 phase 已是 Transition，将在下一轮超时中正常走错误终态。
+                        if matches!(phase, CodexStreamPhase::Thinking | CodexStreamPhase::Streaming) {
+                            tracing::info!(
+                                "[Codex-SSE] {:?} 流静默已达 {}s，检测到过渡断崖 (Transition Cliff)，自动跃迁至 Transition 状态并开启 {}s 宽限期 (model={})",
+                                phase,
+                                phase_timeout_secs,
+                                stream_timeout_cfg.transition_secs,
+                                model
+                            );
+                            phase = CodexStreamPhase::Transition;
+                            last_activity = tokio::time::Instant::now();
+                            yield Ok::<Bytes, String>(Bytes::from(": ping\n\n"));
+                            continue;
+                        }
+
                         let report = report_stream_error(
                             "openai-codex",
                             "create_openai_codex_stream",
                             &"stream idle timeout",
                             format!(
-                                "model={} session={} messages={} idle_secs={}",
+                                "model={} session={} messages={} phase={:?} timeout_secs={}",
                                 model,
                                 session_id,
                                 message_count,
-                                idle_timeout_secs
+                                phase,
+                                phase_timeout_secs
                             ),
                         );
                         tracing::warn!(
-                            "[Codex-SSE] Stream idle timeout after {}s (model={})",
-                            idle_timeout_secs,
+                            "[Codex-SSE] Stream idle timeout after {}s in phase {:?} (model={})",
+                            phase_timeout_secs,
+                            phase,
                             model
                         );
                         let err_ev = json!({
@@ -2065,6 +2148,59 @@ mod tests {
         assert_eq!(terminal["type"], "response.incomplete");
         assert_eq!(terminal["response"]["status"], "incomplete");
         assert_eq!(terminal["response"]["error"]["code"], "empty_response");
+    }
+
+    #[tokio::test]
+    async fn test_codex_stream_survives_transition_cliff_after_thinking() {
+        // 模拟 Issue #3816: 模型输出思考块后，上游整包缓冲巨型 functionCall JSON，
+        // 经历长静默。流式驱动器绝不在稳态超时后直接误判超时掐断，
+        // 而是自动跃迁至 Transition 状态赋予宽限期并持续发送 : ping\n\n 保活，
+        // 最终成功交付工具调用帧与 response.completed！
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from(
+                "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Thinking about approach...\"}]}}]}}\n\n"
+            ));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            yield Ok::<_, String>(Bytes::from(
+                "data: {\"response\":{\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"exec_command\",\"args\":{\"cmd\":\"dir\"}}}]}}]}}\n\n"
+            ));
+        };
+        let mut stream = create_codex_sse_stream(
+            Box::pin(mock_stream),
+            "gemini-4-argon-high".to_string(),
+            "test-codex-cliff-session".to_string(),
+            0,
+            0,
+            "resp-test-cliff".to_string(),
+            None,
+            true,
+        );
+
+        let mut events = Vec::new();
+        while let Some(item) = stream.next().await {
+            if let Ok(b) = item {
+                let s = String::from_utf8_lossy(&b);
+                for line in s.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if let Ok(v) = serde_json::from_str::<Value>(data) {
+                            events.push(v);
+                        }
+                    }
+                }
+            }
+        }
+
+        let completed = events
+            .iter()
+            .find(|e| e["type"] == "response.completed")
+            .expect("response.completed must be emitted");
+        assert_eq!(completed["response"]["status"], "completed");
+        let outputs = completed["response"]["output"]
+            .as_array()
+            .expect("output array");
+        assert!(outputs
+            .iter()
+            .any(|item| item["type"] == "function_call" && item["name"] == "exec_command"));
     }
 
     #[tokio::test]
