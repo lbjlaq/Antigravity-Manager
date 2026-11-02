@@ -1,5 +1,5 @@
 cask "antigravity-tools" do
-  version "5.0.2-beta.7"
+  version "5.0.2-beta.8"
   sha256 :no_check
 
   name "Antigravity Tools"

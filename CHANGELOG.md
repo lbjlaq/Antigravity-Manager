@@ -3,6 +3,17 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.2-beta.8 (2026-11-02)**:
+        -   **[3P 配额解耦与无授权留空，杜绝虚假满额与幽灵配额] (Fixes #3809, Ref #3811, PR #3812, Thanks to @cubelikeplayDaniel)**:
+            -   **前端能力准入留空**: 在 `getGroupQuotaSummaries` 中增加实际授权模型校验，账号在 Claude / 3P 分组下无任何可用模型时返回空值，驱动配额卡片统一渲染占位符 `-`，消除上游空转配额组造成的虚假 100% 满额；大盘均值、短板提取与 5H 最优账号推荐同步跳过无 3P 能力账号，全池无可用账号时安全展示 `-` 而非报错。(Fixes #3809, PR #3812, Thanks to @cubelikeplayDaniel)
+            -   **后端幽灵配额隔离**: `fetch_quota_with_cache` 在账号实际可用模型不含任何 Claude / GPT 模型时主动剥离通用 3P 配额组；`Account::update_quota` 增加历史防御清理，避免旧数据反序列化复活虚假配额；`token_manager` 配额桶事件同步校验真实授权，杜绝幽灵数据向下游广播。(Fixes #3809, Ref #3811, PR #3812, Thanks to @cubelikeplayDaniel)
+            -   **回归测试覆盖**: 新增前端 `claudeQuotaSanitize` 测试与 Rust `test_update_quota_purges_phantom_3p_groups_when_no_claude_or_gpt_models`，覆盖无 3P 模型留空、正常模型展示与纯禁用模型隔离。(PR #3812, Thanks to @cubelikeplayDaniel)
+        -   **[配额自动刷新默认间隔收敛至 10 分钟] (Fixes #3809, PR #3814, Thanks to @cubelikeplayDaniel)**:
+            -   **前后端默认值原子对齐**: 将全局 `AppConfig::new()` 与设置页表单状态的 `refresh_interval` 默认值由 15 分钟调整为 10 分钟，缩短配额消耗与窗口重置后的本地状态同步延迟。(Fixes #3809, PR #3814, Thanks to @cubelikeplayDaniel)
+        -   **[入站模型门禁文档口径更正与顺序回归测试] (Ref #3815)**:
+            -   **厘清已下线判定对象**: 更正 `is_retired_model_id` 文档——硬门禁作用于映射后的最终出站模型，已下线旧名允许作为入站别名键指向合规模型；同步补充 `downstream_exposed_models` 说明，别名经映射解析后即可放行，无需登记进门禁放行集合。(Ref #3815)
+            -   **锁定先映射后判定顺序**: 新增回归测试覆盖精确 / 点号规范化 / 通配符三条自定义别名路径，防止后续重构把已下线判定重新前置而误杀用户别名。(Ref #3815)
+
     *   **v5.0.2-beta.7 (2026-11-02)**:
         -   **[Gemini 原生流中断真实原因透传与异常 EOF 诊断完善] (Fixes #3813)**:
             -   **透传官方标准 finishMessage 诊断**: 解决此前 Gemini 原生流在输出部分内容后发生连接中断（如 `error reading a body from connection` 或超时）时，合成收尾帧直接写死 `MAX_TOKENS`、掩盖真实错误导致下游客户端与用户误判为达到模型输出上限的问题；在接入错误报告后，在候选帧中注入 Google 官方标准字段 `finishMessage` 及结构化 `gatewayError` / `gatewayInterrupted: true`，在遵守零正文篡改契约、保全截断前生成内容的同时，如实告知中断类型与错误原文。(Fixes #3813)
