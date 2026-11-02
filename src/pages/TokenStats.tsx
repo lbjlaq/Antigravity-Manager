@@ -69,6 +69,7 @@ export interface ModelTokenStats {
     total_reasoning_tokens?: number;
     total_tokens: number;
     request_count: number;
+    avg_ttft_ms?: number;
 }
 
 export interface ModelTrendPoint {
@@ -89,6 +90,7 @@ export interface TokenStatsSummary {
     total_tokens: number;
     total_requests: number;
     unique_accounts: number;
+    avg_ttft_ms?: number;
 }
 
 export interface ModelPricingRule {
@@ -133,12 +135,14 @@ const DASHBOARD_MODE_KEY = 'antigravity_token_stats_dashboard_mode';
 const TIME_RANGE_KEY = 'antigravity_token_stats_time_range';
 const MINUTE_SPAN_KEY = 'antigravity_token_stats_minute_span';
 const VIEW_MODE_KEY = 'antigravity_token_stats_view_mode';
+const MODEL_PERSPECTIVE_KEY = 'antigravity_token_stats_model_perspective';
 const CHART_TYPE_KEY = 'antigravity_token_stats_chart_type';
 const METRIC_TYPE_KEY = 'antigravity_token_stats_metric_type';
 
 type MinuteSpan = '1h' | '24h';
 type TimeRange = 'minute' | 'hourly' | 'daily' | 'weekly' | 'all';
 type ViewMode = 'model' | 'account';
+type ModelPerspective = 'routed' | 'requested';
 type DashboardMode = 'cockpit' | 'insights' | 'classic';
 type MetricType = 'tokens' | 'cost';
 
@@ -200,7 +204,7 @@ const TokenStats: React.FC = () => {
         try {
             const saved = localStorage.getItem(TIME_RANGE_KEY);
             if (saved === 'minute' || saved === 'hourly' || saved === 'daily' || saved === 'weekly' || saved === 'all') return saved;
-        } catch (e) {}
+        } catch (e) { }
         return 'daily';
     });
 
@@ -208,7 +212,7 @@ const TokenStats: React.FC = () => {
         try {
             const saved = localStorage.getItem(MINUTE_SPAN_KEY);
             if (saved === '1h' || saved === '24h') return saved;
-        } catch (e) {}
+        } catch (e) { }
         return '1h';
     });
 
@@ -216,14 +220,14 @@ const TokenStats: React.FC = () => {
         setTimeRange(range);
         try {
             localStorage.setItem(TIME_RANGE_KEY, range);
-        } catch (e) {}
+        } catch (e) { }
     }, []);
 
     const switchMinuteSpan = useCallback((span: MinuteSpan) => {
         setMinuteSpan(span);
         try {
             localStorage.setItem(MINUTE_SPAN_KEY, span);
-        } catch (e) {}
+        } catch (e) { }
     }, []);
 
     const formatPeriodAxisTick = useCallback(
@@ -252,7 +256,7 @@ const TokenStats: React.FC = () => {
         try {
             const saved = localStorage.getItem(VIEW_MODE_KEY);
             if (saved === 'model' || saved === 'account') return saved;
-        } catch (e) {}
+        } catch (e) { }
         return 'model';
     });
 
@@ -260,14 +264,29 @@ const TokenStats: React.FC = () => {
         setViewMode(mode);
         try {
             localStorage.setItem(VIEW_MODE_KEY, mode);
-        } catch (e) {}
+        } catch (e) { }
+    }, []);
+
+    const [modelPerspective, setModelPerspective] = useState<ModelPerspective>(() => {
+        try {
+            const saved = localStorage.getItem(MODEL_PERSPECTIVE_KEY);
+            if (saved === 'routed' || saved === 'requested') return saved;
+        } catch (e) { }
+        return 'routed';
+    });
+
+    const switchModelPerspective = useCallback((perspective: ModelPerspective) => {
+        setModelPerspective(perspective);
+        try {
+            localStorage.setItem(MODEL_PERSPECTIVE_KEY, perspective);
+        } catch (e) { }
     }, []);
 
     const [chartType, setChartType] = useState<'bar' | 'area'>(() => {
         try {
             const saved = localStorage.getItem(CHART_TYPE_KEY);
             if (saved === 'bar' || saved === 'area') return saved;
-        } catch (e) {}
+        } catch (e) { }
         return 'bar';
     });
 
@@ -275,14 +294,14 @@ const TokenStats: React.FC = () => {
         setChartType(type);
         try {
             localStorage.setItem(CHART_TYPE_KEY, type);
-        } catch (e) {}
+        } catch (e) { }
     }, []);
 
     const [metricType, setMetricType] = useState<MetricType>(() => {
         try {
             const saved = localStorage.getItem(METRIC_TYPE_KEY);
             if (saved === 'tokens' || saved === 'cost') return saved;
-        } catch (e) {}
+        } catch (e) { }
         return 'tokens';
     });
 
@@ -290,7 +309,7 @@ const TokenStats: React.FC = () => {
         setMetricType(metric);
         try {
             localStorage.setItem(METRIC_TYPE_KEY, metric);
-        } catch (e) {}
+        } catch (e) { }
     }, []);
 
     const [dashboardMode, setDashboardMode] = useState<DashboardMode>(() => {
@@ -298,7 +317,7 @@ const TokenStats: React.FC = () => {
             const saved = localStorage.getItem(DASHBOARD_MODE_KEY);
             if (saved === 'cockpit' || saved === 'insights' || saved === 'classic') return saved;
             if (saved === 'apple') return 'insights';
-        } catch (e) {}
+        } catch (e) { }
         return 'cockpit';
     });
 
@@ -306,7 +325,7 @@ const TokenStats: React.FC = () => {
         setDashboardMode(mode);
         try {
             localStorage.setItem(DASHBOARD_MODE_KEY, mode);
-        } catch (e) {}
+        } catch (e) { }
     }, []);
 
     const [accountData, setAccountData] = useState<AccountTokenStats[]>([]);
@@ -330,7 +349,7 @@ const TokenStats: React.FC = () => {
         try {
             const saved = localStorage.getItem(PRICING_STORAGE_KEY);
             if (saved) return JSON.parse(saved);
-        } catch (e) {}
+        } catch (e) { }
         return DEFAULT_PRICING;
     });
     const [showPricingModal, setShowPricingModal] = useState(false);
@@ -384,6 +403,7 @@ const TokenStats: React.FC = () => {
             total_output_tokens: m.total_output_tokens,
             total_cached_tokens: m.total_cached_tokens,
             cost: calculateModelCost(m),
+            avg_ttft_ms: m.avg_ttft_ms,
         }));
     }, [modelData, calculateModelCost]);
 
@@ -421,25 +441,25 @@ const TokenStats: React.FC = () => {
                     const minutes = minuteSpan === '1h' ? 60 : 1440;
                     const stepMinutes = minuteSpan === '1h' ? 1 : 5;
                     hours = minuteSpan === '1h' ? 1 : 24;
-                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_minute', { minutes, stepMinutes });
+                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_minute', { minutes, stepMinutes, viewMode: modelPerspective });
                     accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_minute', { minutes, stepMinutes });
                     classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_minute', { minutes, stepMinutes });
                     break;
                 case 'hourly':
                     hours = 24;
-                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_hourly', { hours: 24 });
+                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_hourly', { hours: 24, viewMode: modelPerspective });
                     accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_hourly', { hours: 24 });
                     classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_hourly', { hours: 24 });
                     break;
                 case 'daily':
-                    hours = 336; // 14 天 (2 周)
-                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 14 });
-                    accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 14 });
-                    classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 14 });
+                    hours = 24; // 聚焦当天/近 1 日统计
+                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 1, viewMode: modelPerspective });
+                    accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 1 });
+                    classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 1 });
                     break;
                 case 'weekly':
                     hours = 2016; // 12 周 (约 3 个月 = 84 天)
-                    const rawDailyModelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 84 });
+                    const rawDailyModelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 84, viewMode: modelPerspective });
                     const rawDailyAccountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 84 });
                     classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_weekly', { weeks: 12 });
 
@@ -473,7 +493,7 @@ const TokenStats: React.FC = () => {
                     break;
                 case 'all':
                     hours = 0; // 0 表示查询全部历史
-                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 0 });
+                    modelTrend = await invoke<ModelTrendPoint[]>('get_token_stats_model_trend_daily', { days: 0, viewMode: modelPerspective });
                     accountTrend = await invoke<AccountTrendPoint[]>('get_token_stats_account_trend_daily', { days: 0 });
                     classicDataPromise = invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 0 });
                     break;
@@ -534,7 +554,7 @@ const TokenStats: React.FC = () => {
             // 并行拉取账户统计、模型统计、全局概览、经典看板堆叠数据，以及洞察看板的 91 天热力图与 24 小时柱状图
             const [accounts, models_stats, summaryData, classicData, raw91Days, raw24Hours] = await Promise.all([
                 invoke<AccountTokenStats[]>('get_token_stats_by_account', { hours }),
-                invoke<ModelTokenStats[]>('get_token_stats_by_model', { hours }),
+                invoke<ModelTokenStats[]>('get_token_stats_by_model', { hours, viewMode: modelPerspective }),
                 invoke<TokenStatsSummary>('get_token_stats_summary', { hours }),
                 classicDataPromise,
                 invoke<TokenStatsAggregated[]>('get_token_stats_daily', { days: 91 }),
@@ -586,7 +606,7 @@ const TokenStats: React.FC = () => {
 
     useEffect(() => {
         fetchData();
-    }, [timeRange, minuteSpan]);
+    }, [timeRange, minuteSpan, modelPerspective]);
 
     // 计算单个模型的有效单价 ($ / Token)
     const getModelEffectiveRate = useCallback((modelName: string): number => {
@@ -775,176 +795,200 @@ const TokenStats: React.FC = () => {
     };
 
     return (
-        <div className={`h-full w-full text-gray-800 dark:text-base-content [scrollbar-gutter:stable] ${
-            dashboardMode === 'cockpit' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
-        }`}>
+        <div className={`h-full w-full text-gray-800 dark:text-base-content [scrollbar-gutter:stable] ${dashboardMode === 'cockpit' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
+            }`}>
             <motion.div
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
                 style={{ willChange: 'opacity, transform' }}
-                className={`w-full max-w-7xl mx-auto p-4 sm:p-5 ${
-                    dashboardMode === 'cockpit'
+                className={`w-full max-w-7xl mx-auto p-4 sm:p-5 ${dashboardMode === 'cockpit'
                         ? 'h-full flex flex-col gap-3 overflow-hidden'
                         : 'space-y-4'
-                }`}
+                    }`}
             >
-                {/* 顶部标题与多功能工具栏 */}
-                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-500 dark:text-blue-400">
-                            <Zap className="w-5 h-5" />
-                        </div>
-                        <div>
-                            <h1 className="text-xl font-bold tracking-tight text-gray-900 dark:text-white flex items-center gap-2">
-                                {t('token_stats.title', 'Token 消费统计')}
-                            </h1>
-                            <p className="text-xs text-gray-500 dark:text-white/40 mt-0.5">
-                                {t('token_stats.subtitle', '全局 Token 消耗流向、模型定价与活跃全景')}
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2.5">
+                {/* 顶部多功能紧凑控制栏 (已精简冗余大标题，留出更多垂直空间) */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 py-0.5">
+                    {/* 左侧组：三看板模式切换器 + 模型视角切换器 */}
+                    <div className="flex flex-wrap items-center gap-2">
                         {/* 三看板模式切换器 (Pill Toggle: 赛博大盘 / 深度洞察 / 经典看板) */}
-                        <div className="flex bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-xl p-1 shadow-sm">
+                        <div className="flex bg-gray-100/90 dark:bg-base-200/90 border border-gray-200/80 dark:border-base-300/80 rounded-xl p-0.5 shadow-xs">
                             <button
                                 onClick={() => switchDashboardMode('cockpit')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                                     dashboardMode === 'cockpit'
                                         ? 'bg-white dark:bg-base-100 text-emerald-600 dark:text-emerald-400 shadow-sm font-semibold'
                                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
                                 }`}
                             >
                                 <Terminal className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
-                                {t('token_stats.mode_cockpit', '总览看板')}
+                                <span>{t('token_stats.mode_cockpit', '总览看板')}</span>
                             </button>
                             <button
                                 onClick={() => switchDashboardMode('insights')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                                     dashboardMode === 'insights'
                                         ? 'bg-white dark:bg-base-100 text-amber-600 dark:text-amber-400 shadow-sm font-semibold'
                                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
                                 }`}
                             >
                                 <Sparkles className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
-                                {t('token_stats.mode_insights', '深度洞察')}
+                                <span>{t('token_stats.mode_insights', '深度洞察')}</span>
                             </button>
                             <button
                                 onClick={() => switchDashboardMode('classic')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
                                     dashboardMode === 'classic'
                                         ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm font-semibold'
                                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
                                 }`}
                             >
                                 <BarChart3 className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
-                                {t('token_stats.mode_classic', '经典看板')}
+                                <span>{t('token_stats.mode_classic', '经典看板')}</span>
                             </button>
                         </div>
 
-                        {/* 时间段选择药丸 */}
-                        <div className="flex bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-xl p-1 shadow-sm">
+                        {/* 模型视角切换 (实际路由 / 请求模型) */}
+                        <div className="flex bg-gray-100/90 dark:bg-base-200/90 border border-gray-200/80 dark:border-base-300/80 rounded-xl p-0.5 shadow-xs">
                             <button
-                                onClick={() => switchTimeRange('minute')}
-                                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-                                    timeRange === 'minute'
-                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
+                                onClick={() => switchModelPerspective('routed')}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                    modelPerspective === 'routed'
+                                        ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-sm font-semibold'
                                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
                                 }`}
+                                title={t('token_stats.perspective_routed_tip', '按实际路由与转发生效的模型统计消耗')}
                             >
-                                <Zap className="w-3.5 h-3.5" />
-                                {t('token_stats.minute', '分钟')}
+                                <Cpu className="w-3.5 h-3.5" />
+                                <span>{t('token_stats.perspective_routed', '实际路由')}</span>
                             </button>
                             <button
-                                onClick={() => switchTimeRange('hourly')}
-                                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
-                                    timeRange === 'hourly'
-                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
+                                onClick={() => switchModelPerspective('requested')}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                    modelPerspective === 'requested'
+                                        ? 'bg-white dark:bg-base-100 text-purple-600 dark:text-purple-400 shadow-sm font-semibold'
+                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
+                                }`}
+                                title={t('token_stats.perspective_requested_tip', '按客户端发起请求时填写的原始模型统计')}
+                            >
+                                <Zap className="w-3.5 h-3.5" />
+                                <span>{t('token_stats.perspective_requested', '请求模型')}</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 右侧组：时间段选择药丸 + 单价配置与刷新操作组 */}
+                    <div className="flex items-center gap-2">
+                        {/* 时间段选择药丸（内联分钟细分） */}
+                        <div className="flex items-center bg-gray-100/90 dark:bg-base-200/90 border border-gray-200/80 dark:border-base-300/80 rounded-xl p-0.5 shadow-xs">
+                            <button
+                                onClick={() => switchTimeRange('minute')}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
+                                    timeRange === 'minute'
+                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm font-semibold'
                                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
                                 }`}
                             >
-                                <Clock className="w-3.5 h-3.5" />
-                                {t('token_stats.hourly', '小时')}
+                                <Zap className="w-3.5 h-3.5 text-amber-500" />
+                                <span>{t('token_stats.minute', '分钟')}</span>
+                            </button>
+
+                            {/* 分钟选中时直接内联无缝嵌入 1h/24h 细分子切项 */}
+                            {timeRange === 'minute' && (
+                                <div className="flex items-center mx-0.5 bg-gray-200/80 dark:bg-base-300 rounded-md p-0.5 animate-in fade-in duration-150">
+                                    <button
+                                        onClick={() => switchMinuteSpan('1h')}
+                                        className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-medium transition-all ${
+                                            minuteSpan === '1h'
+                                                ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-xs font-bold'
+                                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                        }`}
+                                        title={t('token_stats.minute_1h', '1小时 (1m)')}
+                                    >
+                                        1h
+                                    </button>
+                                    <button
+                                        onClick={() => switchMinuteSpan('24h')}
+                                        className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-medium transition-all ${
+                                            minuteSpan === '24h'
+                                                ? 'bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-xs font-bold'
+                                                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                        }`}
+                                        title={t('token_stats.minute_24h', '24小时 (5m)')}
+                                    >
+                                        24h
+                                    </button>
+                                </div>
+                            )}
+
+                            <button
+                                onClick={() => switchTimeRange('hourly')}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
+                                    timeRange === 'hourly'
+                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm font-semibold'
+                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
+                                }`}
+                                title={t('token_stats.hourly_tip', '按小时汇总 (近 24 小时)')}
+                            >
+                                <Clock className="w-3.5 h-3.5 text-blue-500" />
+                                <span>{t('token_stats.hourly', '小时')}</span>
                             </button>
                             <button
                                 onClick={() => switchTimeRange('daily')}
-                                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
                                     timeRange === 'daily'
-                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
+                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm font-semibold'
                                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
                                 }`}
+                                title={t('token_stats.daily_tip', '按日汇总 (近 24 小时 / 今日)')}
                             >
-                                <Calendar className="w-3.5 h-3.5" />
-                                {t('token_stats.daily', '日')}
+                                <Calendar className="w-3.5 h-3.5 text-emerald-500" />
+                                <span>{t('token_stats.daily', '日')}</span>
                             </button>
                             <button
                                 onClick={() => switchTimeRange('weekly')}
-                                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
                                     timeRange === 'weekly'
-                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
+                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm font-semibold'
                                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
                                 }`}
+                                title={t('token_stats.weekly_tip', '按周汇总 (近 12 周)')}
                             >
-                                <CalendarDays className="w-3.5 h-3.5" />
-                                {t('token_stats.weekly', '周')}
+                                <CalendarDays className="w-3.5 h-3.5 text-purple-500" />
+                                <span>{t('token_stats.weekly', '周')}</span>
                             </button>
                             <button
                                 onClick={() => switchTimeRange('all')}
-                                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1 ${
                                     timeRange === 'all'
-                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
+                                        ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm font-semibold'
                                         : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
                                 }`}
+                                title={t('token_stats.all_time_tip', '历史所有记录统计')}
                             >
-                                <History className="w-3.5 h-3.5" />
-                                {t('token_stats.all_time', '全部历史')}
+                                <History className="w-3.5 h-3.5 text-cyan-500" />
+                                <span>{t('token_stats.all_time', '全部历史')}</span>
                             </button>
                         </div>
 
-                        {/* 分钟级跨度细分选择器 (1h / 24h) */}
-                        {timeRange === 'minute' && (
-                            <div className="flex bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-xl p-1 shadow-sm">
-                                <button
-                                    onClick={() => switchMinuteSpan('1h')}
-                                    className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
-                                        minuteSpan === '1h'
-                                            ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm font-semibold'
-                                            : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
-                                    }`}
-                                >
-                                    {t('token_stats.minute_1h', '1小时 (1m)')}
-                                </button>
-                                <button
-                                    onClick={() => switchMinuteSpan('24h')}
-                                    className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-medium transition-all ${
-                                        minuteSpan === '24h'
-                                            ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm font-semibold'
-                                            : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
-                                    }`}
-                                >
-                                    {t('token_stats.minute_24h', '24小时 (5m)')}
-                                </button>
-                            </div>
-                        )}
-
-                        {/* 单价配置按钮 */}
-                        <button
-                            onClick={() => setShowPricingModal(true)}
-                            title={t('token_stats.custom_pricing', '自定义单价')}
-                            className="p-2 rounded-xl bg-white dark:bg-base-200 border border-gray-200 dark:border-base-300 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-base-100 transition-colors shadow-sm"
-                        >
-                            <Settings2 className="w-4 h-4" />
-                        </button>
-
-                        {/* 刷新按钮 */}
-                        <button
-                            onClick={fetchData}
-                            disabled={loading}
-                            className="p-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white transition-colors disabled:opacity-50 shadow-sm shadow-blue-500/20"
-                        >
-                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                        </button>
+                        {/* 单价配置与刷新操作组 */}
+                        <div className="flex items-center gap-1 bg-gray-100/90 dark:bg-base-200/90 border border-gray-200/80 dark:border-base-300/80 rounded-xl p-0.5 shadow-xs">
+                            <button
+                                onClick={() => setShowPricingModal(true)}
+                                title={t('token_stats.custom_pricing', '自定义单价')}
+                                className="p-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white hover:bg-white dark:hover:bg-base-100 transition-all shadow-none hover:shadow-xs"
+                            >
+                                <Settings2 className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={fetchData}
+                                disabled={loading}
+                                title={t('common.refresh', '刷新数据')}
+                                className="p-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-all disabled:opacity-50 shadow-xs"
+                            >
+                                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -999,83 +1043,100 @@ const TokenStats: React.FC = () => {
                 {/* ==================== 3. 经典看板模式 (Classic View) ==================== */}
                 {dashboardMode === 'classic' && (
                     <>
-                        {/* 6 个经典独立指标卡片 */}
+                        {/* 经典独立指标卡片 */}
                         {summary && (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
                                 {/* 总 Token */}
-                                <div className="bg-white dark:bg-base-100 rounded-2xl p-4 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
+                                <div className="bg-white dark:bg-base-100 rounded-2xl p-3.5 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
                                     <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-xs mb-2">
                                         <div className="p-1.5 rounded-lg bg-gray-100 dark:bg-base-200">
                                             <Zap className="w-3.5 h-3.5 text-gray-600 dark:text-gray-300" />
                                         </div>
                                         <span>{t('token_stats.total_tokens', '总 Token')}</span>
                                     </div>
-                                    <div className="text-2xl font-bold font-mono tracking-tight text-gray-900 dark:text-base-content">
+                                    <div className="text-xl font-bold font-mono tracking-tight text-gray-900 dark:text-base-content">
                                         {formatNumber(summary.total_tokens)}
                                     </div>
                                 </div>
 
                                 {/* 输入 Token */}
-                                <div className="bg-white dark:bg-base-100 rounded-2xl p-4 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
+                                <div className="bg-white dark:bg-base-100 rounded-2xl p-3.5 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
                                     <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 text-xs mb-2">
                                         <div className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-500/10">
                                             <TrendingUp className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                                         </div>
                                         <span>{t('token_stats.input_tokens', '输入 Token')}</span>
                                     </div>
-                                    <div className="text-2xl font-bold font-mono tracking-tight text-blue-600 dark:text-blue-400">
+                                    <div className="text-xl font-bold font-mono tracking-tight text-blue-600 dark:text-blue-400">
                                         {formatNumber(summary.total_input_tokens)}
                                     </div>
                                 </div>
 
                                 {/* 输出 Token */}
-                                <div className="bg-white dark:bg-base-100 rounded-2xl p-4 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
+                                <div className="bg-white dark:bg-base-100 rounded-2xl p-3.5 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
                                     <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400 text-xs mb-2">
                                         <div className="p-1.5 rounded-lg bg-purple-50 dark:bg-purple-500/10">
                                             <TrendingUp className="w-3.5 h-3.5 rotate-180 text-purple-600 dark:text-purple-400" />
                                         </div>
                                         <span>{t('token_stats.output_tokens', '输出 Token')}</span>
                                     </div>
-                                    <div className="text-2xl font-bold font-mono tracking-tight text-purple-600 dark:text-purple-400">
+                                    <div className="text-xl font-bold font-mono tracking-tight text-purple-600 dark:text-purple-400">
                                         {formatNumber(summary.total_output_tokens)}
                                     </div>
                                 </div>
 
                                 {/* 缓存命中 */}
-                                <div className="bg-white dark:bg-base-100 rounded-2xl p-4 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
+                                <div className="bg-white dark:bg-base-100 rounded-2xl p-3.5 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
                                     <div className="flex items-center gap-2 text-sky-600 dark:text-sky-400 text-xs mb-2">
                                         <div className="p-1.5 rounded-lg bg-sky-50 dark:bg-sky-500/10">
                                             <Database className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
                                         </div>
                                         <span>{t('token_stats.cached_token', '缓存命中')}</span>
                                     </div>
-                                    <div className="text-2xl font-bold font-mono tracking-tight text-sky-600 dark:text-sky-400">
+                                    <div className="text-xl font-bold font-mono tracking-tight text-sky-600 dark:text-sky-400">
                                         {formatNumber(summary.total_cached_tokens)}
                                     </div>
                                 </div>
 
+                                {/* 平均首字延迟 */}
+                                <div className="bg-white dark:bg-base-100 rounded-2xl p-3.5 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
+                                    <div className="flex items-center gap-2 text-teal-600 dark:text-teal-400 text-xs mb-2">
+                                        <div className="p-1.5 rounded-lg bg-teal-50 dark:bg-teal-500/10">
+                                            <Clock className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                                        </div>
+                                        <span title={t('token_stats.avg_ttft_tip', '全局平均首字延迟')}>{t('token_stats.avg_ttft', '首字延迟')}</span>
+                                    </div>
+                                    <div className="text-xl font-bold font-mono tracking-tight text-teal-600 dark:text-teal-400">
+                                        {summary.avg_ttft_ms && summary.avg_ttft_ms > 0
+                                            ? summary.avg_ttft_ms < 1000
+                                                ? `${summary.avg_ttft_ms.toFixed(0)} ms`
+                                                : `${(summary.avg_ttft_ms / 1000).toFixed(2)} s`
+                                            : '-'}
+                                    </div>
+                                </div>
+
                                 {/* 活跃账号 */}
-                                <div className="bg-white dark:bg-base-100 rounded-2xl p-4 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
+                                <div className="bg-white dark:bg-base-100 rounded-2xl p-3.5 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
                                     <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 text-xs mb-2">
                                         <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-500/10">
                                             <Users className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                                         </div>
                                         <span>{t('token_stats.accounts_used', '活跃账号')}</span>
                                     </div>
-                                    <div className="text-2xl font-bold font-mono tracking-tight text-emerald-600 dark:text-emerald-400">
+                                    <div className="text-xl font-bold font-mono tracking-tight text-emerald-600 dark:text-emerald-400">
                                         {summary.unique_accounts}
                                     </div>
                                 </div>
 
                                 {/* 使用模型 */}
-                                <div className="bg-white dark:bg-base-100 rounded-2xl p-4 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
+                                <div className="bg-white dark:bg-base-100 rounded-2xl p-3.5 shadow-sm border border-gray-200/80 dark:border-base-200 flex flex-col justify-between">
                                     <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 text-xs mb-2">
                                         <div className="p-1.5 rounded-lg bg-amber-50 dark:bg-amber-500/10">
                                             <Cpu className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                                         </div>
                                         <span>{t('token_stats.models_used', '使用模型')}</span>
                                     </div>
-                                    <div className="text-2xl font-bold font-mono tracking-tight text-amber-600 dark:text-amber-400">
+                                    <div className="text-xl font-bold font-mono tracking-tight text-amber-600 dark:text-amber-400">
                                         {modelData.length}
                                     </div>
                                 </div>
@@ -1107,22 +1168,20 @@ const TokenStats: React.FC = () => {
                                     <div className="flex bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-xl p-0.5">
                                         <button
                                             onClick={() => switchChartType('bar')}
-                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
-                                                chartType === 'bar'
+                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${chartType === 'bar'
                                                     ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
                                                     : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
-                                            }`}
+                                                }`}
                                         >
                                             <BarChart3 className="w-3.5 h-3.5" />
                                             <span>{t('token_stats.chart_type_bar', '柱状')}</span>
                                         </button>
                                         <button
                                             onClick={() => switchChartType('area')}
-                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
-                                                chartType === 'area'
+                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${chartType === 'area'
                                                     ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
                                                     : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
-                                            }`}
+                                                }`}
                                         >
                                             <TrendingUp className="w-3.5 h-3.5" />
                                             <span>{t('token_stats.chart_type_area', '面积')}</span>
@@ -1133,22 +1192,20 @@ const TokenStats: React.FC = () => {
                                     <div className="flex bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-xl p-0.5">
                                         <button
                                             onClick={() => switchMetricType('tokens')}
-                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
-                                                metricType === 'tokens'
+                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${metricType === 'tokens'
                                                     ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
                                                     : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
-                                            }`}
+                                                }`}
                                         >
                                             <Zap className="w-3.5 h-3.5" />
                                             <span>{t('token_stats.metric_tokens', 'Token')}</span>
                                         </button>
                                         <button
                                             onClick={() => switchMetricType('cost')}
-                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${
-                                                metricType === 'cost'
+                                            className={`px-2 py-1 text-xs font-medium rounded-lg transition-all flex items-center gap-1 ${metricType === 'cost'
                                                     ? 'bg-white dark:bg-base-100 text-emerald-600 dark:text-emerald-400 shadow-sm font-semibold'
                                                     : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
-                                            }`}
+                                                }`}
                                         >
                                             <DollarSign className="w-3.5 h-3.5" />
                                             <span>{t('token_stats.metric_cost', '金额')}</span>
@@ -1159,21 +1216,19 @@ const TokenStats: React.FC = () => {
                                     <div className="flex bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-xl p-0.5">
                                         <button
                                             onClick={() => switchViewMode('model')}
-                                            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
-                                                viewMode === 'model'
+                                            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${viewMode === 'model'
                                                     ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
                                                     : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
-                                            }`}
+                                                }`}
                                         >
                                             {t('token_stats.by_model', '按模型')}
                                         </button>
                                         <button
                                             onClick={() => switchViewMode('account')}
-                                            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
-                                                viewMode === 'account'
+                                            className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${viewMode === 'account'
                                                     ? 'bg-white dark:bg-base-100 text-gray-900 dark:text-base-content shadow-sm'
                                                     : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content'
-                                            }`}
+                                                }`}
                                         >
                                             {t('token_stats.by_account_view', '按账号')}
                                         </button>
@@ -1433,6 +1488,11 @@ const TokenStats: React.FC = () => {
                             <h2 className="text-[13px] font-semibold text-gray-900 dark:text-base-content flex items-center gap-2">
                                 <Cpu className="w-4 h-4 text-blue-500" />
                                 {t('token_stats.model_details', '分模型详细统计')}
+                                <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-gray-100 dark:bg-base-200 text-gray-500 dark:text-gray-400">
+                                    {modelPerspective === 'routed'
+                                        ? t('token_stats.perspective_routed', '实际路由')
+                                        : t('token_stats.perspective_requested', '请求模型')}
+                                </span>
                             </h2>
                             <span className="text-xs text-gray-400 dark:text-gray-400 font-mono">
                                 {t('token_stats.pricing_snapshot_note', '按照单价快照核算')}
@@ -1448,6 +1508,7 @@ const TokenStats: React.FC = () => {
                                         <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.output', '输出')}</th>
                                         <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.cached_token', '缓存命中')}</th>
                                         <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.total', '合计')}</th>
+                                        <th className="text-right py-2.5 px-3 font-medium" title={t('token_stats.avg_ttft_tip', '平均首字响应耗时')}>{t('token_stats.ttft', '首字耗时')}</th>
                                         <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.percentage', '占比')}</th>
                                         <th className="text-right py-2.5 px-3 font-medium">{t('token_stats.model_cost', '估算费用')}</th>
                                     </tr>
@@ -1483,6 +1544,13 @@ const TokenStats: React.FC = () => {
                                                 </td>
                                                 <td className="py-2.5 px-3 text-right font-mono font-semibold text-gray-900 dark:text-base-content">
                                                     {formatNumber(model.total_tokens)}
+                                                </td>
+                                                <td className="py-2.5 px-3 text-right font-mono text-teal-600 dark:text-teal-400">
+                                                    {model.avg_ttft_ms && model.avg_ttft_ms > 0
+                                                        ? model.avg_ttft_ms < 1000
+                                                            ? `${model.avg_ttft_ms.toFixed(0)} ms`
+                                                            : `${(model.avg_ttft_ms / 1000).toFixed(2)} s`
+                                                        : '-'}
                                                 </td>
                                                 <td className="py-2.5 px-3 text-right font-mono text-gray-500 dark:text-gray-400">
                                                     {percentage}%
@@ -1557,7 +1625,7 @@ const TokenStats: React.FC = () => {
                         setPricing(newRules);
                         try {
                             localStorage.setItem(PRICING_STORAGE_KEY, JSON.stringify(newRules));
-                        } catch (e) {}
+                        } catch (e) { }
                         setShowPricingModal(false);
                     }}
                 />

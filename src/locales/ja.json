@@ -1906,6 +1906,10 @@
         "by_account": "アカウント別",
         "by_model": "モデル別",
         "by_account_view": "アカウント別",
+        "perspective_routed": "ルーティング先",
+        "perspective_requested": "リクエスト元",
+        "perspective_routed_tip": "実際にルーティング・転送されたモデルで集計",
+        "perspective_requested_tip": "クライアントが要求した元のモデル名で集計",
         "model_details": "モデル別詳細統計",
         "account_details": "アカウント別詳細統計",
         "model": "モデル",
@@ -2050,7 +2054,10 @@
         "cockpit_view_detail": "詳細",
         "cockpit_tab_accounts": "アカウント",
         "cockpit_tab_models": "モデル",
-        "cockpit_tab_users": "ユーザー"
+        "cockpit_tab_users": "ユーザー",
+        "avg_ttft": "初字遅延",
+        "ttft": "初字所要時間",
+        "avg_ttft_tip": "平均初回トークン遅延時間 (TTFT)"
     },
     "errors": {
         "stream": {

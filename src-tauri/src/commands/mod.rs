@@ -1647,30 +1647,34 @@ pub async fn get_token_stats_summary(hours: i64) -> Result<TokenStatsSummary, St
 #[tauri::command]
 pub async fn get_token_stats_by_model(
     hours: i64,
+    view_mode: Option<String>,
 ) -> Result<Vec<crate::modules::token_stats::ModelTokenStats>, String> {
-    crate::modules::token_stats::get_model_stats(hours)
+    crate::modules::token_stats::get_model_stats(hours, view_mode.as_deref())
 }
 
 #[tauri::command]
 pub async fn get_token_stats_model_trend_minute(
     minutes: i64,
     step_minutes: i64,
+    view_mode: Option<String>,
 ) -> Result<Vec<crate::modules::token_stats::ModelTrendPoint>, String> {
-    crate::modules::token_stats::get_model_trend_minute(minutes, step_minutes)
+    crate::modules::token_stats::get_model_trend_minute(minutes, step_minutes, view_mode.as_deref())
 }
 
 #[tauri::command]
 pub async fn get_token_stats_model_trend_hourly(
     hours: i64,
+    view_mode: Option<String>,
 ) -> Result<Vec<crate::modules::token_stats::ModelTrendPoint>, String> {
-    crate::modules::token_stats::get_model_trend_hourly(hours)
+    crate::modules::token_stats::get_model_trend_hourly(hours, view_mode.as_deref())
 }
 
 #[tauri::command]
 pub async fn get_token_stats_model_trend_daily(
     days: i64,
+    view_mode: Option<String>,
 ) -> Result<Vec<crate::modules::token_stats::ModelTrendPoint>, String> {
-    crate::modules::token_stats::get_model_trend_daily(days)
+    crate::modules::token_stats::get_model_trend_daily(days, view_mode.as_deref())
 }
 
 #[tauri::command]

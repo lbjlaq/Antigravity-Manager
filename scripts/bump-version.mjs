@@ -395,7 +395,15 @@ function checkExpiredTemporaryEvents() {
             id: 'DOUBLE11_2026',
             name: 'APIKEY.FUN 双 11 特惠活动标签',
             expiresAt: new Date('2026-11-11T23:59:59+08:00').getTime(),
-            files: ['src/pages/ApiKeyFun.tsx', 'src/locales/zh.json', 'src/locales/en.json', 'src/locales/zh-TW.json'],
+            files: [
+                'src/pages/ApiKeyFun.tsx',
+                'src/components/navbar/constants.ts',
+                'src/components/navbar/NavMenu.tsx',
+                'src/components/navbar/NavDropdowns.tsx',
+                'src/locales/zh.json',
+                'src/locales/en.json',
+                'src/locales/zh-TW.json'
+            ],
         },
     ];
 

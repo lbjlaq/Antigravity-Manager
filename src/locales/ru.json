@@ -1974,6 +1974,10 @@
         "by_account": "По аккаунтам",
         "by_model": "По моделям",
         "by_account_view": "По аккаунтам",
+        "perspective_routed": "Маршрут",
+        "perspective_requested": "Запрос",
+        "perspective_routed_tip": "Агрегация статистики по фактически вызванной модели",
+        "perspective_requested_tip": "Агрегация статистики по исходной модели из запроса клиента",
         "model_details": "Детали по моделям",
         "account_details": "Детали по аккаунтам",
         "model": "Модель",
@@ -2118,7 +2122,10 @@
         "cockpit_view_detail": "Подробнее",
         "cockpit_tab_accounts": "Аккаунты",
         "cockpit_tab_models": "Модели",
-        "cockpit_tab_users": "Пользователи"
+        "cockpit_tab_users": "Пользователи",
+        "avg_ttft": "Задержка TTFT",
+        "ttft": "Время TTFT",
+        "avg_ttft_tip": "Среднее время до первого токена (TTFT)"
     },
     "errors": {
         "stream": {

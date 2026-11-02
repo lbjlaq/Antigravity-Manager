@@ -1872,6 +1872,10 @@
         "by_account": "Mengikut Akaun",
         "by_model": "Mengikut Model",
         "by_account_view": "Mengikut Akaun",
+        "perspective_routed": "Model Dihalakan",
+        "perspective_requested": "Model Diminta",
+        "perspective_routed_tip": "Kumpulkan statistik mengikut model yang sebenarnya dilaksanakan/dihalakan",
+        "perspective_requested_tip": "Kumpulkan statistik mengikut model asal yang diminta oleh pelanggan",
         "model_details": "Pecahan Model",
         "account_details": "Pecahan Akaun",
         "model": "Model",
@@ -2016,7 +2020,10 @@
         "cockpit_view_detail": "အသေးစိတ်",
         "cockpit_tab_accounts": "အကောင့်များ",
         "cockpit_tab_models": "မော်ဒယ်များ",
-        "cockpit_tab_users": "အသုံးပြုသူများ"
+        "cockpit_tab_users": "အသုံးပြုသူများ",
+        "avg_ttft": "Kependaman TTFT",
+        "ttft": "Masa TTFT",
+        "avg_ttft_tip": "Purata masa untuk token pertama (TTFT)"
     },
     "errors": {
         "stream": {

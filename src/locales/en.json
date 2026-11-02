@@ -2052,6 +2052,10 @@
         "by_account": "By Account",
         "by_model": "By Model",
         "by_account_view": "By Account",
+        "perspective_routed": "Routed Model",
+        "perspective_requested": "Requested Model",
+        "perspective_routed_tip": "Aggregate stats by actually executed/routed model",
+        "perspective_requested_tip": "Aggregate stats by original client requested model",
         "model_details": "Model Breakdown",
         "account_details": "Account Breakdown",
         "model": "Model",
@@ -2198,7 +2202,10 @@
         "cockpit_view_detail": "Details",
         "cockpit_tab_accounts": "Accounts",
         "cockpit_tab_models": "Models",
-        "cockpit_tab_users": "Users"
+        "cockpit_tab_users": "Users",
+        "avg_ttft": "TTFT",
+        "ttft": "TTFT",
+        "avg_ttft_tip": "Average Time To First Token"
     },
     "errors": {
         "stream": {

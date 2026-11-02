@@ -8,6 +8,11 @@ export interface NavItem {
     priority: 'high' | 'medium' | 'low';
 }
 
+// [TEMPORARY_EVENT: DOUBLE11_2026] (Expires: 2026-11-11 23:59:59 +08:00)
+// 双11活动专属标签。活动到期后由 bump-version 脚本自动提示在下一次发版时物理移除此标记块及关联代码。
+export const DOUBLE11_2026_END_TIME = new Date('2026-11-11T23:59:59+08:00').getTime();
+export const isDouble11Active = () => Date.now() <= DOUBLE11_2026_END_TIME;
+
 export interface Language {
     code: string;
     label: string;

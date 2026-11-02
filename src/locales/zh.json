@@ -2018,6 +2018,10 @@
         "by_account": "分账号统计",
         "by_model": "按模型",
         "by_account_view": "按账号",
+        "perspective_routed": "实际路由",
+        "perspective_requested": "请求模型",
+        "perspective_routed_tip": "按实际路由与转发生效的模型统计消耗",
+        "perspective_requested_tip": "按客户端发起请求时填写的原始模型统计",
         "model_details": "分模型详细统计",
         "account_details": "账号详细统计",
         "model": "模型",
@@ -2164,7 +2168,10 @@
         "cockpit_view_detail": "详情",
         "cockpit_tab_accounts": "账号",
         "cockpit_tab_models": "模型",
-        "cockpit_tab_users": "用户"
+        "cockpit_tab_users": "用户",
+        "avg_ttft": "首字延迟",
+        "ttft": "首字耗时",
+        "avg_ttft_tip": "平均首字响应耗时"
     },
     "errors": {
         "stream": {

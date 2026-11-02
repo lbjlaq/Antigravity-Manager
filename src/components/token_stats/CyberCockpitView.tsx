@@ -23,6 +23,7 @@ interface TokenStatsSummary {
     total_tokens: number;
     total_requests: number;
     unique_accounts: number;
+    avg_ttft_ms?: number;
 }
 
 interface CyberCockpitViewProps {
@@ -322,6 +323,7 @@ export const CyberCockpitView: React.FC<CyberCockpitViewProps> = ({
                 relativePct,
                 color: MODEL_NEON_COLORS[idx % MODEL_NEON_COLORS.length],
                 approxCost: (m.total_tokens * 2.5) / 1000000,
+                avg_ttft_ms: m.avg_ttft_ms,
             };
         });
     }, [modelShareItems, summary]);
@@ -655,10 +657,19 @@ export const CyberCockpitView: React.FC<CyberCockpitViewProps> = ({
                                             ~{formatNumber(deepMetrics.avgReasoningPerReq)} {t('token_stats.reasoning_short', '思')} / req
                                         </span>
                                     )}
-                                    <span className="font-mono text-[11px] text-teal-600 dark:text-teal-400 font-semibold flex items-center gap-1">
-                                        <Zap className="w-3 h-3" />
-                                        {t('token_stats.zero_latency', '0 延时吞吐')}
-                                    </span>
+                                    {summary?.avg_ttft_ms && summary.avg_ttft_ms > 0 ? (
+                                        <span className="font-mono text-[11px] text-teal-600 dark:text-teal-400 font-semibold flex items-center gap-1" title={t('token_stats.avg_ttft_tip', '全局平均首字延迟')}>
+                                            <Zap className="w-3 h-3" />
+                                            {summary.avg_ttft_ms < 1000
+                                                ? `${summary.avg_ttft_ms.toFixed(0)}ms TTFT`
+                                                : `${(summary.avg_ttft_ms / 1000).toFixed(2)}s TTFT`}
+                                        </span>
+                                    ) : (
+                                        <span className="font-mono text-[11px] text-teal-600 dark:text-teal-400 font-semibold flex items-center gap-1">
+                                            <Zap className="w-3 h-3" />
+                                            {t('token_stats.zero_latency', '0 延时吞吐')}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
 
@@ -877,7 +888,14 @@ export const CyberCockpitView: React.FC<CyberCockpitViewProps> = ({
 
                                         <div className="flex items-center justify-between text-[10px] font-mono text-gray-500 dark:text-gray-400">
                                             <span>{t('token_stats.percentage', '占比')}: {m.sharePct}% ({m.requests} {t('token_stats.times', '次')})</span>
-                                            <span>~${m.approxCost.toFixed(2)}</span>
+                                            <div className="flex items-center gap-1.5">
+                                                {m.avg_ttft_ms && m.avg_ttft_ms > 0 ? (
+                                                    <span className="text-teal-600 dark:text-teal-400 font-semibold" title={t('token_stats.avg_ttft_tip', '平均首字响应耗时')}>
+                                                        ⚡ {m.avg_ttft_ms < 1000 ? `${m.avg_ttft_ms.toFixed(0)}ms` : `${(m.avg_ttft_ms / 1000).toFixed(2)}s`}
+                                                    </span>
+                                                ) : null}
+                                                <span>~${m.approxCost.toFixed(2)}</span>
+                                            </div>
                                         </div>
                                     </div>
                                 ))

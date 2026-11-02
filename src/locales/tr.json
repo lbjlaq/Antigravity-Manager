@@ -1933,6 +1933,10 @@
         "by_account": "Hesaba Göre",
         "by_model": "Modele Göre",
         "by_account_view": "Hesaba Göre",
+        "perspective_routed": "Yönlendirilen Model",
+        "perspective_requested": "İstenen Model",
+        "perspective_routed_tip": "İstatistikleri fiilen yönlendirilen ve çalıştırılan modele göre toplayın",
+        "perspective_requested_tip": "İstatistikleri istemci tarafından talep edilen orijinal modele göre toplayın",
         "model_details": "Model Detayları",
         "account_details": "Hesap Detayları",
         "model": "Model",
@@ -2077,7 +2081,10 @@
         "cockpit_view_detail": "Ayrıntılar",
         "cockpit_tab_accounts": "Hesaplar",
         "cockpit_tab_models": "Modeller",
-        "cockpit_tab_users": "Kullanıcılar"
+        "cockpit_tab_users": "Kullanıcılar",
+        "avg_ttft": "İlk Yanıt (TTFT)",
+        "ttft": "TTFT Süresi",
+        "avg_ttft_tip": "Ortalama İlk Belirteç Yanıt Süresi (TTFT)"
     },
     "security": {
         "title": "Güvenlik İzleme",

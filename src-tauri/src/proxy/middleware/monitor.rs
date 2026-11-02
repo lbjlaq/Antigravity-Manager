@@ -513,7 +513,7 @@ fn record_user_token_usage(
         let _ = crate::modules::user_token_db::record_token_usage_and_ip(
             &identity.token_id,
             log.client_ip.as_deref().unwrap_or("127.0.0.1"),
-            log.model.as_deref().unwrap_or("unknown"),
+            log.effective_model(),
             log.input_tokens.unwrap_or(0) as i32,
             log.output_tokens.unwrap_or(0) as i32,
             log.status as u16,
@@ -1954,6 +1954,10 @@ pub async fn monitor_middleware(
 
         headers_map.insert(
             "x-timing-total-ms".to_string(),
+            serde_json::json!(format!("{:.3}", total_ms)),
+        );
+        headers_map.insert(
+            "x-timing-ttft-ms".to_string(),
             serde_json::json!(format!("{:.3}", total_ms)),
         );
         log.response_headers = serde_json::to_string(&Value::Object(headers_map.clone())).ok();

@@ -1906,6 +1906,10 @@
         "by_account": "Por Cuenta",
         "by_model": "Por Modelo",
         "by_account_view": "Por Cuenta",
+        "perspective_routed": "Modelo Enrutado",
+        "perspective_requested": "Modelo Solicitado",
+        "perspective_routed_tip": "Agregar estadísticas por el modelo enrutado y ejecutado realmente",
+        "perspective_requested_tip": "Agregar estadísticas por el modelo original solicitado por el cliente",
         "model_details": "Desglose de Modelos",
         "account_details": "Desglose de Cuentas",
         "model": "Modelo",
@@ -2050,7 +2054,10 @@
         "cockpit_view_detail": "Detalles",
         "cockpit_tab_accounts": "Cuentas",
         "cockpit_tab_models": "Modelos",
-        "cockpit_tab_users": "Usuarios"
+        "cockpit_tab_users": "Usuarios",
+        "avg_ttft": "Latencia TTFT",
+        "ttft": "Tiempo TTFT",
+        "avg_ttft_tip": "Tiempo promedio hasta el primer token (TTFT)"
     },
     "errors": {
         "stream": {

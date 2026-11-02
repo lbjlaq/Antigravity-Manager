@@ -30,9 +30,11 @@ interface TokenStatsSummary {
     total_input_tokens: number;
     total_output_tokens: number;
     total_cached_tokens: number;
+    total_reasoning_tokens?: number;
     total_tokens: number;
     total_requests: number;
     unique_accounts: number;
+    avg_ttft_ms?: number;
 }
 
 interface AppleBentoViewProps {
@@ -561,7 +563,13 @@ export const AppleBentoView: React.FC<AppleBentoViewProps> = ({
 
                         <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 dark:text-gray-500 pt-2 border-t border-black/[0.04] dark:border-base-200">
                             <span>{t('token_stats.context_reuse', '智能上下文复用')}</span>
-                            <span className="text-[#30b0c7] font-medium">{t('token_stats.zero_latency', '0 延时吞吐')}</span>
+                            {summary?.avg_ttft_ms && summary.avg_ttft_ms > 0 ? (
+                                <span className="text-[#30b0c7] font-medium" title={t('token_stats.avg_ttft_tip', '全局平均首字延迟')}>
+                                    ⚡ {summary.avg_ttft_ms < 1000 ? `${summary.avg_ttft_ms.toFixed(0)}ms` : `${(summary.avg_ttft_ms / 1000).toFixed(2)}s`} TTFT
+                                </span>
+                            ) : (
+                                <span className="text-[#30b0c7] font-medium">{t('token_stats.zero_latency', '0 延时吞吐')}</span>
+                            )}
                         </div>
                     </div>
 
@@ -871,9 +879,14 @@ export const AppleBentoView: React.FC<AppleBentoViewProps> = ({
                                     <div key={item.model} className="flex items-center justify-between gap-3 text-xs">
                                         <div className="flex items-center gap-2 min-w-0 flex-1">
                                             <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                                            <span className="font-mono text-gray-800 dark:text-gray-200 truncate text-[11.5px] font-medium">
+                                            <span className="font-mono text-gray-800 dark:text-gray-200 truncate text-[11.5px] font-medium" title={item.model}>
                                                 {item.model}
                                             </span>
+                                            {item.avg_ttft_ms && item.avg_ttft_ms > 0 ? (
+                                                <span className="text-[10px] font-mono text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/40 px-1 py-0.2 rounded shrink-0" title={t('token_stats.avg_ttft_tip', '平均首字响应耗时')}>
+                                                    {item.avg_ttft_ms < 1000 ? `${item.avg_ttft_ms.toFixed(0)}ms` : `${(item.avg_ttft_ms / 1000).toFixed(2)}s`}
+                                                </span>
+                                            ) : null}
                                         </div>
                                         <div className="w-28 sm:w-36 h-2 bg-gray-100 dark:bg-base-200 rounded-full overflow-hidden flex-shrink-0">
                                             <motion.div

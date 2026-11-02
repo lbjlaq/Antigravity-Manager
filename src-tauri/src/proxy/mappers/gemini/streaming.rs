@@ -200,11 +200,37 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
                 );
             }
         }
-        // Gemini 正常 EOF 不额外下发 [DONE]，保持既有行为
+
+        // [Fixes #3813] 情形 B 异常收尾：上游输出了正文但未下发任何 finishReason 即遭遇未预期 EOF
+        // 必须提供明确的合成终态与 finishMessage 诊断，标明流在正常完成前被提前截断，杜绝下游误判为正常结束
+        if self.has_content && !self.saw_finish_reason {
+            self.saw_finish_reason = true;
+            let finish_reason = if self.saw_function_call {
+                "STOP"
+            } else {
+                "MAX_TOKENS"
+            };
+
+            let recovery_json = serde_json::json!({
+                "candidates": [{
+                    "finishReason": finish_reason,
+                    "finishMessage": "Stream closed prematurely (EOF without finishReason) by upstream. Preceding content preserved by gateway.",
+                    "gatewayInterrupted": true,
+                    "index": 0
+                }]
+            });
+
+            return vec![Bytes::from(format!(
+                "data: {}\n\n",
+                serde_json::to_string(&recovery_json).unwrap_or_default()
+            ))];
+        }
+
+        // 正常流（已含 finishReason）：Gemini 正常 EOF 不额外下发 [DONE]，保持既有行为
         Vec::new()
     }
 
-    fn emit_abnormal_finalize(&mut self, _error_report: &StreamErrorReport) -> Vec<Bytes> {
+    fn emit_abnormal_finalize(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes> {
         let mut chunks = Vec::new();
 
         // 终态与内容防护：若上游已下发 finishReason 或从未产生任何正文/工具调用，绝不可伪造收尾
@@ -220,9 +246,25 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
             "MAX_TOKENS"
         };
 
+        // [Fixes #3813] 诊断信息如实传达：通过官方标准 finishMessage 及流内诊断字段透传真实中断原因，
+        // 既保全已生成的成千上万 token 与客户端兼容性，又彻底避免下游将连接中断/超时误诊为模型自然输出上限
+        let error_msg = error_report.client_message();
+        let finish_message = format!(
+            "Stream interrupted before completion ({}): {}. Preceding content preserved by gateway.",
+            error_report.classified.error_type,
+            error_report.raw
+        );
+
         let recovery_json = serde_json::json!({
             "candidates": [{
                 "finishReason": finish_reason,
+                "finishMessage": finish_message,
+                "gatewayInterrupted": true,
+                "gatewayError": {
+                    "type": error_report.classified.error_type,
+                    "message": error_msg,
+                    "raw": error_report.raw
+                },
                 "index": 0
             }]
         });
@@ -325,6 +367,67 @@ mod tests {
         assert!(!output.contains("网关提示"));
         assert!(!output.contains("Gateway Notice"));
         assert!(output.contains("MAX_TOKENS"));
+        // [Fixes #3813] 断流异常必须包含真实错误类型与诊断 finishMessage
+        assert!(output.contains("finishMessage"));
+        assert!(output.contains("gatewayInterrupted"));
+        assert!(output.contains("connection reset by peer"));
+    }
+
+    #[tokio::test]
+    async fn test_gemini_stream_eof_without_finish_reason_emits_premature_diagnostic() {
+        let chunk_without_finish = serde_json::json!({
+            "response": {
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "text": "Incomplete answer before EOF" }]
+                    },
+                    "index": 0
+                }]
+            }
+        });
+
+        // 模拟情形 B：产生了正文，但上游未经下发 finishReason 直接静默 EOF 退出
+        let items: Vec<Result<Bytes, String>> = vec![Ok(Bytes::from(format!(
+            "data: {}\n\n",
+            serde_json::to_string(&chunk_without_finish).unwrap()
+        )))];
+
+        let handler = GeminiStreamHandler::new(
+            Some("trace_gemini_premature_eof".to_string()),
+            "session_gemini_premature_eof".to_string(),
+            "gemini-2.5-pro".to_string(),
+            1,
+            "anchor".to_string(),
+            false,
+            None,
+            "acc@example.com".to_string(),
+            "gemini-2.5-pro".to_string(),
+        );
+
+        let lifecycle_cfg = crate::proxy::pipeline::StreamLifecycleConfig::new(
+            "gemini",
+            "test_gemini_premature_eof",
+            "test".to_string(),
+        );
+
+        let mut stream = crate::proxy::pipeline::run_stream_lifecycle(
+            Box::pin(futures::stream::iter(items)),
+            handler,
+            lifecycle_cfg,
+        );
+
+        let mut all_chunks = Vec::new();
+        while let Some(result) = stream.next().await {
+            if let Ok(bytes) = result {
+                all_chunks.push(String::from_utf8(bytes.to_vec()).unwrap());
+            }
+        }
+        let output = all_chunks.join("");
+
+        assert!(output.contains("Incomplete answer before EOF"));
+        assert!(output.contains("MAX_TOKENS"));
+        assert!(output.contains("gatewayInterrupted"));
+        assert!(output.contains("Stream closed prematurely"));
     }
 
     #[tokio::test]

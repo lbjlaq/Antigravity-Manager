@@ -1881,6 +1881,10 @@
         "by_account": "حسب الحساب",
         "by_model": "حسب النموذج",
         "by_account_view": "حسب الحساب",
+        "perspective_routed": "النموذج المُوجَّه",
+        "perspective_requested": "النموذج المطلوب",
+        "perspective_routed_tip": "تجميع الإحصائيات حسب النموذج المنفذ/الموجه فعليًا",
+        "perspective_requested_tip": "تجميع الإحصائيات حسب النموذج الأصلي المطلوب من العميل",
         "model_details": "تفصيل النموذج",
         "account_details": "تفصيل الحساب",
         "model": "النموذج",
@@ -2025,7 +2029,10 @@
         "cockpit_view_detail": "التفاصيل",
         "cockpit_tab_accounts": "الحسابات",
         "cockpit_tab_models": "النماذج",
-        "cockpit_tab_users": "المستخدمون"
+        "cockpit_tab_users": "المستخدمون",
+        "avg_ttft": "استجابة الحرف الأول",
+        "ttft": "زمن أول حرف",
+        "avg_ttft_tip": "متوسط وقت الوصول إلى أول رمز (TTFT)"
     },
     "errors": {
         "stream": {

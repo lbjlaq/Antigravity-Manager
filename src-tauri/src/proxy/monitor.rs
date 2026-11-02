@@ -45,6 +45,30 @@ pub struct ProxyRequestLog {
     pub session_id: Option<String>, // 会话标识 (如 sess-xxx)
 }
 
+impl ProxyRequestLog {
+    /// 获取从响应头或显式字段提取的首字延迟 (毫秒)
+    pub fn ttft_ms(&self) -> Option<f64> {
+        self.response_headers
+            .as_deref()
+            .and_then(|h| serde_json::from_str::<serde_json::Value>(h).ok())
+            .and_then(|val| {
+                val.get("x-timing-ttft-ms")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .filter(|&n| n > 0.0)
+            })
+    }
+
+    /// 获取实际消耗配额/生效的模型名称（优先实际路由/上游模型，退化至原始请求模型）
+    pub fn effective_model(&self) -> &str {
+        self.mapped_model
+            .as_deref()
+            .or(self.upstream_model.as_deref())
+            .or(self.model.as_deref())
+            .unwrap_or("unknown")
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod prompt_log_tests {
     use super::*;
@@ -466,13 +490,22 @@ impl ProxyMonitor {
         if let (Some(account), Some(input), Some(output)) =
             (&log.account_email, log.input_tokens, log.output_tokens)
         {
-            let model = log.model.clone().unwrap_or_else(|| "unknown".to_string());
+            let model = log.effective_model().to_string();
+            let requested_model = log.model.clone();
             let account = account.clone();
             let cached = log.cached_tokens.unwrap_or(0);
             let reasoning = log.reasoning_tokens.unwrap_or(0);
+            let ttft_ms = log.ttft_ms();
             tokio::task::spawn_blocking(move || {
                 if let Err(e) = crate::modules::token_stats::record_usage(
-                    &account, &model, input, output, cached, reasoning,
+                    &account,
+                    &model,
+                    requested_model.as_deref(),
+                    input,
+                    output,
+                    cached,
+                    reasoning,
+                    ttft_ms,
                 ) {
                     tracing::debug!("Failed to record token stats: {}", e);
                 }

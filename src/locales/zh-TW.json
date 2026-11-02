@@ -2020,6 +2020,10 @@
         "by_account": "分帳號統計",
         "by_model": "按模型",
         "by_account_view": "按帳號",
+        "perspective_routed": "實際路由",
+        "perspective_requested": "請求模型",
+        "perspective_routed_tip": "按實際路由與轉發生效的模型統計消耗",
+        "perspective_requested_tip": "按客戶端發起請求時填寫的原始模型統計",
         "model_details": "分模型詳細統計",
         "account_details": "帳號詳細統計",
         "model": "模型",
@@ -2164,7 +2168,10 @@
         "cockpit_view_detail": "詳情",
         "cockpit_tab_accounts": "帳號",
         "cockpit_tab_models": "模型",
-        "cockpit_tab_users": "用戶"
+        "cockpit_tab_users": "用戶",
+        "avg_ttft": "首字延遲",
+        "ttft": "首字耗時",
+        "avg_ttft_tip": "平均首字響應耗時"
     },
     "security": {
         "title": "安全監控",

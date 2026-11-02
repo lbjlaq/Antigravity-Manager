@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, MoreVertical, Sun, Moon, LogOut, Minimize2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { NavItem, Language } from './constants';
+import { isDouble11Active, type NavItem, type Language } from './constants';
 import { isTauri } from '../../utils/env';
 import { invoke } from '@tauri-apps/api/core';
 import { useViewStore } from '../../stores/useViewStore';
@@ -152,21 +152,34 @@ export function NavigationDropdown({
             {/* 下拉菜单 */}
             {isOpen && (
                 <div className="absolute left-1/2 -translate-x-1/2 mt-2 w-48 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border-2 border-gray-200 dark:border-gray-700 py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top">
-                    {navItems.map((item) => (
-                        <Link
-                            key={item.path}
-                            to={item.path}
-                            draggable="false"
-                            onClick={handleNavItemClick}
-                            className={`w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-base-100 transition-colors ${isActive(item.path)
-                                ? 'text-blue-500 font-medium bg-blue-50 dark:bg-blue-900/10'
-                                : 'text-gray-700 dark:text-gray-300'
-                                }`}
-                        >
-                            <item.icon className="w-4 h-4" />
-                            <span>{item.label}</span>
-                        </Link>
-                    ))}
+                    {navItems.map((item) => {
+                        const isApiKeyFun = item.path === '/apikey-fun';
+                        const showEventBadge = isApiKeyFun && isDouble11Active();
+
+                        return (
+                            <Link
+                                key={item.path}
+                                to={item.path}
+                                draggable="false"
+                                onClick={handleNavItemClick}
+                                className={`w-full px-4 py-2.5 text-left text-sm flex items-center justify-between hover:bg-gray-50 dark:hover:bg-base-100 transition-colors ${isActive(item.path)
+                                    ? 'text-blue-500 font-medium bg-blue-50 dark:bg-blue-900/10'
+                                    : 'text-gray-700 dark:text-gray-300'
+                                    }`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <item.icon className="w-4 h-4" />
+                                    <span>{item.label}</span>
+                                </div>
+                                {/* [TEMPORARY_EVENT: DOUBLE11_2026] 菜单栏微型活动标签 */}
+                                {showEventBadge && (
+                                    <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold rounded-md bg-[#ffe8cc] text-[#b45309] dark:bg-[#fff2cc] dark:text-[#934800] leading-none select-none tracking-tight shadow-[0_1px_2px_rgba(0,0,0,0.06)] border border-[#fed7aa]/70 dark:border-[#fde68a]/80">
+                                        双11
+                                    </span>
+                                )}
+                            </Link>
+                        );
+                    })}
                 </div>
             )}
         </div>

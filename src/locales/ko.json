@@ -1906,6 +1906,10 @@
         "by_account": "계정별",
         "by_model": "모델별",
         "by_account_view": "계정별",
+        "perspective_routed": "라우팅된 모델",
+        "perspective_requested": "요청된 모델",
+        "perspective_routed_tip": "실제 라우팅 및 호출된 모델 기준으로 통계 집계",
+        "perspective_requested_tip": "클라이언트가 요청한 원본 모델명 기준으로 통계 집계",
         "model_details": "모델 분석",
         "account_details": "계정 분석",
         "model": "모델",
@@ -2050,7 +2054,10 @@
         "cockpit_view_detail": "세부정보",
         "cockpit_tab_accounts": "계정",
         "cockpit_tab_models": "모델",
-        "cockpit_tab_users": "사용자"
+        "cockpit_tab_users": "사용자",
+        "avg_ttft": "첫 글자 지연",
+        "ttft": "첫 글자 소요",
+        "avg_ttft_tip": "평균 첫 번째 토큰 응답 시간 (TTFT)"
     },
     "errors": {
         "stream": {

@@ -1949,6 +1949,10 @@
         "by_account": "Theo tài khoản",
         "by_model": "Theo mô hình",
         "by_account_view": "Theo tài khoản",
+        "perspective_routed": "Mô hình định tuyến",
+        "perspective_requested": "Mô hình yêu cầu",
+        "perspective_routed_tip": "Thống kê theo mô hình thực tế được định tuyến và thực thi",
+        "perspective_requested_tip": "Thống kê theo mô hình gốc do client gửi yêu cầu",
         "model_details": "Chi tiết theo Model",
         "account_details": "Chi tiết theo tài khoản",
         "model": "Model",
@@ -2093,7 +2097,10 @@
         "cockpit_view_detail": "Chi tiết",
         "cockpit_tab_accounts": "Tài khoản",
         "cockpit_tab_models": "Mô hình",
-        "cockpit_tab_users": "Người dùng"
+        "cockpit_tab_users": "Người dùng",
+        "avg_ttft": "Độ trễ TTFT",
+        "ttft": "Thời gian TTFT",
+        "avg_ttft_tip": "Thời gian phản hồi token đầu tiên trung bình (TTFT)"
     },
     "security": {
         "title": "Giám sát An ninh",
