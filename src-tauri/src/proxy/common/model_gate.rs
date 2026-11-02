@@ -63,13 +63,14 @@ pub fn resolve_requested_model(
         .unwrap_or_else(|| requested.to_string())
 }
 
-/// 已下线模型族硬门禁（优先于一切内部映射与自定义映射）。
+/// 已下线模型族硬门禁（作用于**映射后的最终出站模型 ID**，而非客户端原始请求名）。
 ///
 /// - **Claude**：全部 3.x 及任何 < 4.6 的版本（含 4.5 / 4-5 系列）
 /// - **Gemini**：全部 2.x 及更低大版本（2.5-pro / 2.5-flash / 2.0-flash …）
 ///
-/// 这些 ID 一律返回 404 `model not exist`，即使内部曾存在“旧名→新模型”的兼容映射，
-/// 也不允许它们把已下线模型“洗白”后绕过闸门。
+/// 调用方必须先应用自定义映射 / 自适应暗路由再判定：已下线的旧名允许作为**入站别名键**
+/// 指向合规模型（别名本身不参与判定），但映射后的目标自身仍属已下线族时一律返回
+/// 404 `model not exist`；内部“旧名→新模型”的兼容映射同样不得把已下线模型“洗白”后绕过闸门。
 pub fn is_retired_model_id(model: &str) -> bool {
     let raw = model.trim().to_lowercase();
     let id = raw.strip_prefix("models/").unwrap_or(raw.as_str()).trim();
@@ -166,6 +167,9 @@ fn is_image_family_allowed(requested: &str, allowed: &HashSet<String>) -> bool {
 /// 2. 官方基准目录
 /// 3. agent 工具一键配置的旗舰模型列表
 /// 4. 自定义映射的键与目标值（客户端可显式调用别名）
+///
+/// 注：已下线族别名不登记进本集合——入站请求会先经自定义映射解析为合规目标再判定，
+/// 因此别名无需出现在放行集合中即可正常放行。
 pub async fn downstream_exposed_models(
     custom_mapping: &tokio::sync::RwLock<HashMap<String, String>>,
     token_manager: &TokenManager,
@@ -658,6 +662,44 @@ mod tests {
             model_mapping::resolve_adaptive_target(&raw_target, "claude-haiku-4-5", None, None);
         assert_eq!(final_model, "gemini-3.8-flash-low");
         assert!(!is_retired_model_id(&final_model));
+    }
+
+    #[test]
+    fn issue_3815_custom_aliases_resolve_before_retired_check() {
+        // 复现 Issue #3815：别名键自带 "claude-<低版本>" 形态时，必须先把映射解析成
+        // 真实出站模型再判定下线，否则任何自定义别名都会被硬门禁直接误杀。
+        let mut mapping = HashMap::new();
+        mapping.insert(
+            "claude-4-argon-fast".to_string(),
+            "gemini-4-argon-medium".to_string(),
+        );
+        mapping.insert(
+            "claude-3.5-flash-high".to_string(),
+            "gemini-3.8-flash-high".to_string(),
+        );
+        mapping.insert(
+            "claude-3-5-sonnet-*".to_string(),
+            "claude-sonnet-4-6".to_string(),
+        );
+
+        assert!(
+            is_retired_model_id("claude-4-argon-fast"),
+            "前提：未映射的别名键本身会被已下线判定命中"
+        );
+
+        // 精确 / 点号规范化对齐 / 通配符三条路径都必须先解析，再对目标做下线判定
+        for (alias, expected) in [
+            ("claude-4-argon-fast", "gemini-4-argon-medium"),
+            ("claude-3.5-flash-high", "gemini-3.8-flash-high"),
+            ("claude-3-5-sonnet-20241022", "claude-sonnet-4-6"),
+        ] {
+            let resolved = resolve_requested_model(alias, &mapping);
+            assert_eq!(resolved, expected, "{alias} 应解析为映射目标");
+            assert!(
+                !is_retired_model_id(&resolved),
+                "{alias} 的目标 {resolved} 不应被判为已下线"
+            );
+        }
     }
 
     #[test]
