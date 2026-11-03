@@ -3,6 +3,15 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.3-beta.1 (2026-11-04)**:
+        -   **[网关超时全链路预算安全截断与终态会话粘性解绑] (Fixes #3821, Thanks to @jeikl, @cubelikeplayDaniel)**:
+            -   **客户端安全超时绝对硬顶**: 引入 `MAX_CLIENT_SAFE_TOTAL_BUDGET_SECS = 160s` 全链路安全硬上限；解决此前长文本结合多模态增量与多端点重试时总预算累加膨胀至 190s~256s 击穿下游客户端（如 JeikCode）180s 内置看门狗导致连接被强行切断为 canceled 孤儿请求的问题，为客户端看门狗预留出至少 20s 的安全缓冲，确保网关永远早于客户端吐出标准的结构化 504 响应。(Fixes #3821, Thanks to @jeikl, @cubelikeplayDaniel)
+            -   **首字预算基准与媒体上限压制**: 将上游首字节等待预算基准 `MAX_FIRST_BYTE_BUDGET_SECS` 压制至 135s，媒体增量上限 `MAX_FIRST_BYTE_CEILING_SECS` 压制至 145s；200k+ 超大上下文自适应 TTFT 下限同步对齐至 135s。(Fixes #3821, Thanks to @jeikl)
+            -   **主端点首字节宽限免预留扣减**: 修正 `reserve_for_fallback` 逻辑，仅在备用端点（`idx > 0`）尝试时预扣 1/3 预算，首选主端点（`idx == 0`）享有完整的首字节生成时间，兑现长上下文与深度思考模型的生成宽限初衷。(Fixes #3821, Thanks to @jeikl)
+            -   **终态全量解绑会话粘性**: 扩展 `pipeline::terminal::TerminalDisposition`，将 `FirstByte`、`Upload` 与 `GlobalBudget` 终态全部纳入 `abandon_sticky_account`；上游排队超时或上传网络停滞中断时，立即解除当前会话对该账号的强绑定，使客户端下一次重试自动切换到号池中的健康账号，彻底消除卡在同一慢账号死循环等满多轮 3 分钟的死锁。(Fixes #3821, Thanks to @jeikl, @cubelikeplayDaniel)
+            -   **阶段耗尽口径纠正与流式静默夹持**: 修正 `send_with_phased_budget` 中的超时判定，上传完成后的超时精准归类为 `stage=await_first_byte`；`StreamLifecycleConfig` 中的 `transition_secs` 与 `streaming_sliding_secs` 同样受限于全局请求剩余预算，杜绝流内静默越界。(Fixes #3821, Thanks to @jeikl)
+            -   **单元测试与验证全绿**: 补齐并更新 terminal 粘性解绑断言与 client 预算包线单测，`terminal::tests` 6/6 通过，`client::tests` 17/17 全部通过。(Fixes #3821)
+
     *   **v5.0.3-beta.0 (2026-11-03)**:
         -   **[四协议流式生命周期统一：Codex/Legacy 接入流水线，Gemini 补齐思考阶段] (Ref #3816, PR #3817, Thanks to @cubelikeplayDaniel)**:
             -   **Codex / Legacy 收敛至统一生命周期**: 将 `create_codex_sse_stream` 与 `create_legacy_sse_stream` 由手写 `select!` 驱动改为 `ProtocolStreamHandler` 适配器，统一交由 `run_stream_lifecycle` 接管 3s 心跳、首字宽限、思考/正文阶段跃迁、稳态滑动超时与异常收尾；删除两套重复的 phase 状态机与超时分支，保留 Responses 事件流、`text_completion` 帧、工具调用缓存、grounding 引文与会话落盘 ack 语义。(Ref #3816, PR #3817, Thanks to @cubelikeplayDaniel)
