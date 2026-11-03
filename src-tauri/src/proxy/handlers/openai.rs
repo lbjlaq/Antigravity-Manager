@@ -2637,6 +2637,15 @@ pub async fn handle_chat_completions(
                         handling.terminal.as_str(),
                         crate::proxy::upstream::client::strip_internal_markers(&e)
                     );
+                    if handling.disposition.abandon_sticky_account {
+                        token_manager.abandon_session(&affinity_key, &account_id);
+                        tracing::debug!(
+                            "[OpenAI] Unbound session {} from account {} due to terminal {}",
+                            affinity_key,
+                            email,
+                            handling.terminal.as_str()
+                        );
+                    }
                     if handling.disposition.stop_rotation {
                         break;
                     }
@@ -4657,6 +4666,15 @@ pub async fn handle_completions(
                         handling.terminal.as_str(),
                         crate::proxy::upstream::client::strip_internal_markers(&e)
                     );
+                    if handling.disposition.abandon_sticky_account {
+                        token_manager.abandon_session(&affinity_key, &account_id);
+                        tracing::debug!(
+                            "[Codex] Unbound session {} from account {} due to terminal {}",
+                            affinity_key,
+                            email,
+                            handling.terminal.as_str()
+                        );
+                    }
                     if handling.disposition.stop_rotation {
                         break;
                     }

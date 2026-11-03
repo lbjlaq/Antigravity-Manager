@@ -2032,6 +2032,16 @@ pub async fn handle_messages(
                     upstream_req_start.elapsed().as_secs_f64(),
                     |err| token_manager.mark_account_transient_failure(&account_id, 30, err),
                 ) {
+                    if handling.disposition.abandon_sticky_account {
+                        token_manager.abandon_session(&affinity_key, &account_id);
+                        tracing::debug!(
+                            "[{}] Unbound session {} from account {} due to terminal {}",
+                            trace_id,
+                            affinity_key,
+                            email,
+                            handling.terminal.as_str()
+                        );
+                    }
                     if handling.disposition.stop_rotation {
                         break;
                     }

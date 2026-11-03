@@ -128,14 +128,20 @@ impl StreamLifecycleConfig {
             15,
             crate::proxy::upstream::client::MAX_FIRST_BYTE_CEILING_SECS,
         );
+        let mut transition_secs = timeouts.transition_secs;
+        let mut streaming_sliding_secs = timeouts.streaming_sliding_secs;
+
         if let Some(remaining) = crate::proxy::pipeline::budget::remaining_secs() {
-            initial_ttft_secs = initial_ttft_secs.min(remaining.max(3));
+            let rem = remaining.max(3);
+            initial_ttft_secs = initial_ttft_secs.min(rem);
+            transition_secs = transition_secs.min(rem);
+            streaming_sliding_secs = streaming_sliding_secs.min(rem);
         }
         Self {
             heartbeat_secs: 3,
             initial_ttft_secs,
-            transition_secs: timeouts.transition_secs,
-            streaming_sliding_secs: timeouts.streaming_sliding_secs,
+            transition_secs,
+            streaming_sliding_secs,
             adapter_name,
             function_name,
             trace_info,

@@ -174,8 +174,10 @@ impl UpstreamCallResult {
 
 /// 首字预算基准硬上限（秒）
 ///
-/// 文字基准允许充分发挥初始宽限 (180s)，在超大上下文与高阶思考场景下给予首选端点充分时间生成首字。
-pub const MAX_FIRST_BYTE_BUDGET_SECS: u64 = 180;
+/// 必须显著小于下游客户端的首包看门狗（jeikcode 为 180s），
+/// 否则客户端先断开，网关白等一轮并留下一个“无日志的孤儿请求”。
+/// 预留 30s 给建连 + 上传 + 端点切换，故文字基准取 150s。
+pub const MAX_FIRST_BYTE_BUDGET_SECS: u64 = 150;
 
 /// 叠加媒体增量后的最终上限（图片 +45 / 视频 +60）
 ///
@@ -1120,21 +1122,30 @@ impl UpstreamClient {
 
                     // 3. 全链总预算硬截止（优先保障用户可感知的上限）
                     if now >= hard_deadline {
-                        let stage = if upload_done_at.is_some() {
-                            SendStage::AwaitFirstByte
-                        } else {
-                            SendStage::Upload
-                        };
+                        let upload_elapsed = upload_done_at.map(|t| t.duration_since(attempt_start));
+                        if let Some(done_at) = upload_done_at {
+                            let waited_secs = now.duration_since(done_at).as_secs();
+                            return PhasedSendOutcome {
+                                result: Err(format!(
+                                    "First byte budget exhausted after {}s (upload completed: {}s, {} bytes, stage=await_first_byte)",
+                                    waited_secs,
+                                    upload_elapsed.map(|d| d.as_secs_f64()).unwrap_or_default(),
+                                    sent
+                                )),
+                                stage: SendStage::AwaitFirstByte,
+                                bytes_sent: sent,
+                                upload_elapsed,
+                            };
+                        }
                         return PhasedSendOutcome {
                             result: Err(format!(
-                                "Total upstream budget exhausted (sent {}/{} bytes, stage={})",
+                                "Total upstream budget exhausted (sent {}/{} bytes, stage=upload)",
                                 sent,
-                                body_len,
-                                stage.as_str()
+                                body_len
                             )),
-                            stage,
+                            stage: SendStage::Upload,
                             bytes_sent: sent,
-                            upload_elapsed: upload_done_at.map(|t| t.duration_since(attempt_start)),
+                            upload_elapsed: None,
                         };
                     }
                 }
@@ -1584,9 +1595,9 @@ impl UpstreamClient {
 
                 // [WATCHDOG] 分阶段超时：上传阶段受体积/速度自适应预算与停滞检测约束，
                 // 上传完成后进入统一首字延迟（TTFB≡TTFT），不再用固定的 30/25s 提前截断大上下文 prefill。
-                // 预算在端点之间共享：首个端点先给后续端点预留 1/3，
-                // 避免主端点吃满预算后备用端点只剩残羹（也避免逐端点相乘的笛卡尔积）。
-                let reserve_for_fallback = if has_next_for_send_stage {
+                // 首选端点 (idx == 0) 应享有完整的首字节等待预算（初衷是给首选端点充分时间生成首字），
+                // 绝不在首选端点身上预扣 1/3 导致提前掐断；只有备用端点才按降级比例受限。
+                let reserve_for_fallback = if has_next_for_send_stage && idx > 0 {
                     timeout_plan.first_byte_total_secs / 3
                 } else {
                     0
