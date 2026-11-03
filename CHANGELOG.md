@@ -3,6 +3,13 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.3-beta.0 (2026-11-03)**:
+        -   **[四协议流式生命周期统一：Codex/Legacy 接入流水线，Gemini 补齐思考阶段] (Ref #3816, PR #3817, Thanks to @cubelikeplayDaniel)**:
+            -   **Codex / Legacy 收敛至统一生命周期**: 将 `create_codex_sse_stream` 与 `create_legacy_sse_stream` 由手写 `select!` 驱动改为 `ProtocolStreamHandler` 适配器，统一交由 `run_stream_lifecycle` 接管 3s 心跳、首字宽限、思考/正文阶段跃迁、稳态滑动超时与异常收尾；删除两套重复的 phase 状态机与超时分支，保留 Responses 事件流、`text_completion` 帧、工具调用缓存、grounding 引文与会话落盘 ack 语义。(Ref #3816, PR #3817, Thanks to @cubelikeplayDaniel)
+            -   **流水线通用终止钩子**: 新增 `emit_error_finalize`、`finalize_without_content` 与 `finalize_barrier` 三个可选钩子，使 Codex 的 `error + response.failed`、Legacy 的错误帧 + 单次 `[DONE]`、思考-only EOF 的 `response.incomplete` 以及落盘成功后再下发 `response.completed` 等协议契约在接入流水线后保持完全一致。(Ref #3816, PR #3817)
+            -   **Gemini 思考阶段补齐**: 为 `GeminiStreamHandler` 增加 `is_thinking_active` 状态，思考块、正文、工具调用与 `finishReason` 可正确驱动 `InitialTtft → Thinking → Streaming/Transition` 阶段机，避免思考期被误判为过渡断崖。(Ref #3816, PR #3817)
+            -   **回归测试覆盖**: 新增 Legacy 正常收尾/异常中断单次 `[DONE]` 用例与 Gemini 思考阶段迁移用例；OpenAI 22 项、Gemini 6 项、流水线生命周期 10 项定向测试全部通过。(Ref #3816, PR #3817)
+
     *   **v5.0.2-beta.9 (2026-11-03)**:
         -   **[Codex / Responses 流式过渡断崖自适应跃迁与首字超时预算扩容] (Fixes #3816, PR #3817, Thanks to @mclinyeshi, @cubelikeplayDaniel)**:
             -   **过渡断崖自适应跃迁与心跳保活**: 修复 Codex Desktop 调用 `gemini-4-argon-high` 等深思考模型在输出思考块后，上游整包缓冲巨型 `functionCall`（如复杂代码或思维导图文件）引发长静默时，网关单方面在 120 秒稳态超时截断连接导致 HTTP 200 无输出并触发客户端频繁重连的硬伤；为 `create_codex_sse_stream` 与 `create_legacy_sse_stream` 引入状态机阶段追踪，在检测到思考或前导文本后的长静默时自动跃迁至 `Transition` 阶段，赋予独立的 `transition_secs` (180s) 宽限期并持续发送 `: ping\n\n` 保活连接，给予上游充足时间完成巨型工具调用的整包生成。(Fixes #3816, PR #3817, Thanks to @mclinyeshi, @cubelikeplayDaniel)
