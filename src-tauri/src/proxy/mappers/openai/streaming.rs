@@ -1,5 +1,5 @@
 // OpenAI 流式转换
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use chrono::Utc;
 use futures::{Stream, StreamExt};
 use rand::Rng;
@@ -597,8 +597,197 @@ where
     run_stream_lifecycle(gemini_stream, handler, config)
 }
 
+/// Legacy Completions（`text_completion`）流渲染器。
+///
+/// 心跳、首字宽限、过渡断崖跃迁、稳态滑动超时与错误终态全部由
+/// `pipeline::stream_lifecycle::run_stream_lifecycle` 统一驱动；
+/// 此处仅保留 Gemini SSE → OpenAI `text_completion` 的协议差异。
+pub struct LegacyCompletionStreamHandler {
+    stream_id: String,
+    created_ts: i64,
+    model: String,
+    session_id: String,
+    message_count: usize,
+    final_usage: Option<super::models::OpenAIUsage>,
+    thinking_acc: crate::proxy::thinking_store::TurnAccumulator,
+    has_content: bool,
+    has_thinking: bool,
+    is_thinking_active: bool,
+    thinking_committed: bool,
+}
+
+impl ProtocolStreamHandler for LegacyCompletionStreamHandler {
+    fn process_line(&mut self, line: &str) -> Vec<Bytes> {
+        let mut frames = Vec::new();
+        if !line.starts_with("data: ") {
+            return frames;
+        }
+        let json_part = line.trim_start_matches("data: ").trim();
+        if json_part.is_empty() || json_part == "[DONE]" {
+            return frames;
+        }
+
+        let mut json = match serde_json::from_str::<Value>(json_part) {
+            Ok(json) => json,
+            Err(_) => {
+                report_sse_json_parse(
+                    "openai-legacy",
+                    "create_legacy_sse_stream",
+                    json_part,
+                    format!(
+                        "model={} session={} messages={}",
+                        self.model, self.session_id, self.message_count
+                    ),
+                );
+                return frames;
+            }
+        };
+
+        let actual_data = if let Some(inner) = json.get_mut("response").map(|v| v.take()) {
+            inner
+        } else {
+            json
+        };
+        if let Some(u) = actual_data.get("usageMetadata") {
+            self.final_usage = extract_usage_metadata(u);
+        }
+
+        let mut content_out = String::new();
+        if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
+            if let Some(candidate) = candidates.first() {
+                if let Some(parts) = candidate
+                    .get("content")
+                    .and_then(|c| c.get("parts"))
+                    .and_then(|p| p.as_array())
+                {
+                    for part in parts {
+                        self.thinking_acc.ingest_part(part);
+                        let is_thought = part
+                            .get("thought")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                            if is_thought {
+                                let clean_text = text
+                                    .replace(" thinking\n", "")
+                                    .replace(" thinking", "")
+                                    .replace("\n response", "")
+                                    .replace(" response", "");
+                                if !clean_text.is_empty() {
+                                    self.has_thinking = true;
+                                    self.has_content = true;
+                                    self.is_thinking_active = true;
+                                }
+                                content_out.push_str(&clean_text);
+                            } else {
+                                if !text.is_empty() {
+                                    self.has_content = true;
+                                    self.is_thinking_active = false;
+                                }
+                                content_out.push_str(text);
+                            }
+                        }
+                        if let Some(sig) = part
+                            .get("thoughtSignature")
+                            .or(part.get("thought_signature"))
+                            .and_then(|s| s.as_str())
+                        {
+                            store_thought_signature(sig, &self.session_id, self.message_count);
+                        }
+                    }
+                }
+            }
+        }
+
+        let finish_reason = actual_data
+            .get("candidates")
+            .and_then(|c| c.as_array())
+            .and_then(|c| c.first())
+            .and_then(|c| c.get("finishReason"))
+            .and_then(|f| f.as_str())
+            .map(|f| match f {
+                "STOP" => "stop",
+                "MAX_TOKENS" => "length",
+                "SAFETY" => "content_filter",
+                "RECITATION" => "content_filter",
+                _ => "stop",
+            });
+
+        let mut legacy_chunk = json!({
+            "id": &self.stream_id,
+            "object": "text_completion",
+            "created": self.created_ts,
+            "model": &self.model,
+            "choices": [{ "text": content_out, "index": 0, "logprobs": null, "finish_reason": finish_reason }]
+        });
+        if let Some(ref usage) = self.final_usage {
+            legacy_chunk["usage"] = serde_json::to_value(usage).unwrap();
+        }
+        if finish_reason.is_some() {
+            self.final_usage = None;
+        }
+        frames.push(Bytes::from(format!(
+            "data: {}\n\n",
+            serde_json::to_string(&legacy_chunk).unwrap_or_default()
+        )));
+        frames
+    }
+
+    fn has_content(&self) -> bool {
+        self.has_content
+    }
+
+    fn has_thinking(&self) -> bool {
+        self.has_thinking
+    }
+
+    fn is_thinking_active(&self) -> bool {
+        self.is_thinking_active
+    }
+
+    fn finalize_without_content(&self) -> bool {
+        // 空 text_completion 仍以 [DONE] 表达流正常结束，保持历史行为。
+        true
+    }
+
+    fn emit_finalize(&mut self) -> Vec<Bytes> {
+        vec![Bytes::from("data: [DONE]\n\n")]
+    }
+
+    fn emit_abnormal_finalize(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes> {
+        vec![
+            Bytes::from(openai_chat_error_frame(
+                &self.stream_id,
+                self.created_ts,
+                &self.model,
+                "text_completion",
+                error_report,
+            )),
+            Bytes::from("data: [DONE]\n\n"),
+        ]
+    }
+
+    fn emit_initial_error(&mut self, _error_report: &StreamErrorReport) -> Vec<Bytes> {
+        // 统一由 emit_error_finalize 下发协议终结错误，避免重复错误帧。
+        Vec::new()
+    }
+
+    fn emit_error_finalize(&mut self, error_report: &StreamErrorReport) -> (Vec<Bytes>, bool) {
+        (self.emit_abnormal_finalize(error_report), true)
+    }
+
+    fn on_finish(&mut self) {
+        if self.thinking_committed {
+            return;
+        }
+        self.thinking_committed = true;
+        let acc = std::mem::take(&mut self.thinking_acc);
+        acc.commit(&self.session_id);
+    }
+}
+
 pub fn create_legacy_sse_stream<S, E>(
-    mut gemini_stream: Pin<Box<S>>,
+    gemini_stream: Pin<Box<S>>,
     model: String,
     session_id: String,
     message_count: usize,
@@ -607,7 +796,6 @@ where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
     E: std::fmt::Display + Send + 'static,
 {
-    let mut buffer = BytesMut::new();
     let charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let mut rng = rand::thread_rng();
     let random_str: String = (0..28)
@@ -616,192 +804,27 @@ where
             charset.chars().nth(idx).unwrap()
         })
         .collect();
-    let stream_id = format!("cmpl-{}", random_str);
-    let created_ts = Utc::now().timestamp();
 
-    let stream = async_stream::stream! {
-        let mut final_usage: Option<super::models::OpenAIUsage> = None;
-        let mut error_occurred = false;
-        let mut thinking_acc = crate::proxy::thinking_store::TurnAccumulator::new();
-        let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(3));
-        heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut last_activity = tokio::time::Instant::now();
-        let stream_timeout_cfg = crate::proxy::get_stream_timeout_config();
-
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        enum LegacyStreamPhase {
-            InitialTtft,
-            Thinking,
-            Transition,
-            Streaming,
-        }
-        let mut phase = LegacyStreamPhase::InitialTtft;
-
-        loop {
-            tokio::select! {
-                item = gemini_stream.next() => {
-                    match item {
-                        Some(Ok(bytes)) => {
-                            last_activity = tokio::time::Instant::now();
-                            buffer.extend_from_slice(&bytes);
-                            while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
-                                let line_raw = buffer.split_to(pos + 1);
-                                let line_str = String::from_utf8_lossy(&line_raw);
-                                let line = line_str.trim();
-                                if line.is_empty() { continue; }
-                                    if line.starts_with("data: ") {
-                                        let json_part = line.trim_start_matches("data: ").trim();
-                                        if json_part == "[DONE]" { continue; }
-                                        if let Ok(mut json) = serde_json::from_str::<Value>(json_part) {
-                                            let actual_data = if let Some(inner) = json.get_mut("response").map(|v| v.take()) { inner } else { json };
-                                            if let Some(u) = actual_data.get("usageMetadata") { final_usage = extract_usage_metadata(u); }
-
-                                            let mut content_out = String::new();
-                                            if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
-                                                if let Some(candidate) = candidates.first() {
-                                                    if let Some(parts) = candidate.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
-                                                        for part in parts {
-                                                            thinking_acc.ingest_part(part);
-                                                            let is_thought = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false);
-                                                            if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                                                                if is_thought {
-                                                                    let clean_text = text.replace("<think>\n", "").replace("<think>", "").replace("\n</think>", "").replace("</think>", "");
-                                                                    content_out.push_str(&clean_text);
-                                                                    if phase == LegacyStreamPhase::InitialTtft || phase == LegacyStreamPhase::Transition {
-                                                                        phase = LegacyStreamPhase::Thinking;
-                                                                    }
-                                                                } else {
-                                                                    content_out.push_str(text);
-                                                                    phase = LegacyStreamPhase::Streaming;
-                                                                }
-                                                            }
-                                                            if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
-                                                                store_thought_signature(sig, &session_id, message_count);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            let finish_reason = actual_data.get("candidates").and_then(|c| c.as_array()).and_then(|c| c.first()).and_then(|c| c.get("finishReason")).and_then(|f| f.as_str()).map(|f| match f {
-                                                "STOP" => "stop", "MAX_TOKENS" => "length", "SAFETY" => "content_filter", "RECITATION" => "content_filter", _ => "stop",
-                                            });
-
-                                            let mut legacy_chunk = json!({
-                                                "id": &stream_id, "object": "text_completion", "created": created_ts, "model": &model,
-                                                "choices": [{ "text": content_out, "index": 0, "logprobs": null, "finish_reason": finish_reason }]
-                                            });
-                                            if let Some(ref usage) = final_usage { legacy_chunk["usage"] = serde_json::to_value(usage).unwrap(); }
-                                            if finish_reason.is_some() { final_usage = None; }
-                                            yield Ok::<Bytes, String>(Bytes::from(format!("data: {}\n\n", serde_json::to_string(&legacy_chunk).unwrap_or_default())));
-                                        } else {
-                                            report_sse_json_parse(
-                                                "openai-legacy",
-                                                "create_legacy_sse_stream",
-                                                json_part,
-                                                format!(
-                                                    "model={} session={} messages={} buffer_bytes={}",
-                                                    model,
-                                                    session_id,
-                                                    message_count,
-                                                    buffer.len()
-                                                ),
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        Some(Err(e)) => {
-                            let report = report_stream_error(
-                                "openai-legacy",
-                                "create_legacy_sse_stream",
-                                &e,
-                                format!(
-                                    "model={} session={} messages={} buffer_bytes={}",
-                                    model,
-                                    session_id,
-                                    message_count,
-                                    buffer.len()
-                                ),
-                            );
-                            yield Ok::<Bytes, String>(Bytes::from(openai_chat_error_frame(
-                                &stream_id,
-                                created_ts,
-                                &model,
-                                "text_completion",
-                                &report,
-                            )));
-                            yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
-                            error_occurred = true;
-                            break;
-                        }
-                        None => break,
-                    }
-                }
-                _ = heartbeat_interval.tick() => {
-                    let phase_timeout_secs = match phase {
-                        LegacyStreamPhase::InitialTtft => stream_timeout_cfg.initial_ttft_secs,
-                        LegacyStreamPhase::Transition => stream_timeout_cfg.transition_secs,
-                        LegacyStreamPhase::Thinking | LegacyStreamPhase::Streaming => {
-                            stream_timeout_cfg.streaming_sliding_secs
-                        }
-                    };
-
-                    if last_activity.elapsed() >= std::time::Duration::from_secs(phase_timeout_secs) {
-                        if matches!(phase, LegacyStreamPhase::Thinking | LegacyStreamPhase::Streaming) {
-                            tracing::info!(
-                                "[OpenAI-Legacy] {:?} 流静默已达 {}s，检测到过渡断崖 (Transition Cliff)，自动跃迁至 Transition 状态并开启 {}s 宽限期 (model={})",
-                                phase,
-                                phase_timeout_secs,
-                                stream_timeout_cfg.transition_secs,
-                                model
-                            );
-                            phase = LegacyStreamPhase::Transition;
-                            last_activity = tokio::time::Instant::now();
-                            yield Ok::<Bytes, String>(Bytes::from(": ping\n\n"));
-                            continue;
-                        }
-
-                        let report = report_stream_error(
-                            "openai-legacy",
-                            "create_legacy_sse_stream",
-                            &"stream idle timeout",
-                            format!(
-                                "model={} session={} messages={} phase={:?} timeout_secs={}",
-                                model,
-                                session_id,
-                                message_count,
-                                phase,
-                                phase_timeout_secs
-                            ),
-                        );
-                        tracing::warn!(
-                            "[OpenAI-Legacy] Stream idle timeout after {}s in phase {:?} (model={})",
-                            phase_timeout_secs,
-                            phase,
-                            model
-                        );
-                        yield Ok::<Bytes, String>(Bytes::from(openai_chat_error_frame(
-                            &stream_id,
-                            created_ts,
-                            &model,
-                            "text_completion",
-                            &report,
-                        )));
-                        yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
-                        error_occurred = true;
-                        break;
-                    }
-                    yield Ok::<Bytes, String>(Bytes::from(": ping\n\n"));
-                }
-            }
-        }
-        thinking_acc.commit(&session_id);
-        if !error_occurred {
-            yield Ok::<Bytes, String>(Bytes::from("data: [DONE]\n\n"));
-        }
+    let trace_info = format!(
+        "model={} session={} messages={}",
+        model, session_id, message_count
+    );
+    let handler = LegacyCompletionStreamHandler {
+        stream_id: format!("cmpl-{}", random_str),
+        created_ts: Utc::now().timestamp(),
+        model,
+        session_id,
+        message_count,
+        final_usage: None,
+        thinking_acc: crate::proxy::thinking_store::TurnAccumulator::new(),
+        has_content: false,
+        has_thinking: false,
+        is_thinking_active: false,
+        thinking_committed: false,
     };
-    Box::pin(stream)
+    let config =
+        StreamLifecycleConfig::new("openai-legacy", "create_legacy_sse_stream", trace_info);
+    run_stream_lifecycle(gemini_stream, handler, config)
 }
 
 #[track_caller]
@@ -893,651 +916,557 @@ fn codex_sse_frame(event: &Value) -> Bytes {
     Bytes::from(format!("event: {event_name}\ndata: {payload}\n\n"))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn create_codex_sse_stream<S, E>(
-    mut gemini_stream: Pin<Box<S>>,
+/// Codex / Responses SSE 流渲染器。
+///
+/// 心跳、首字宽限、过渡断崖跃迁、稳态滑动超时、异常优雅收尾与首包错误契约
+/// 全部由 `pipeline::stream_lifecycle::run_stream_lifecycle` 统一驱动；
+/// 此处仅保留 Gemini SSE → Responses API 事件流（reasoning / message / tool /
+/// grounding / 终态）的协议差异。
+pub struct CodexResponsesStreamHandler {
     model: String,
     session_id: String,
     message_count: usize,
-    _assistant_turn_index: usize,
     response_id: String,
-    completion_tx: Option<
-        tokio::sync::oneshot::Sender<(Vec<Value>, tokio::sync::oneshot::Sender<()>)>,
-    >,
     cache_tool_calls: bool,
-) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
-where
-    S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
-    E: std::fmt::Display + Send + 'static,
-{
-    let mut buffer = BytesMut::new();
-    let item_id_prefix = uuid::Uuid::new_v4().simple().to_string();
-    let message_item_id = format!("msg_{}_0", &item_id_prefix[..16]);
-    let created_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let mut completion_tx = completion_tx;
-    let stream = async_stream::stream! {
-        let mut sequence_number: u64 = 0;
+    completion_tx:
+        Option<tokio::sync::oneshot::Sender<(Vec<Value>, tokio::sync::oneshot::Sender<()>)>>,
+    ack_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+    ack_failed: bool,
+    created_at: u64,
+    item_id_prefix: String,
+    message_item_id: String,
+    sequence_number: u64,
+    message_item_emitted: bool,
+    reasoning_open: bool,
+    reasoning_item_seq: u32,
+    active_reasoning_item_id: String,
+    emitted_tool_calls: std::collections::HashSet<String>,
+    accumulated_text: String,
+    accumulated_thinking: String,
+    thinking_acc: crate::proxy::thinking_store::TurnAccumulator,
+    has_thinking: bool,
+    has_seen_tool_calls: bool,
+    final_finish_reason: Option<String>,
+    final_outputs_map: std::collections::BTreeMap<u32, Value>,
+    next_output_index: u32,
+    message_output_index: u32,
+    reasoning_output_index: u32,
+    final_usage: Option<super::models::OpenAIUsage>,
+    thinking_committed: bool,
+}
 
-        // Native Responses lifecycle: created must be followed by in_progress.
-        let lifecycle_response = json!({
-            "id": &response_id,
-            "object": "response",
-            "created_at": created_at,
-            "status": "in_progress",
-            "model": &model,
-            "output": [],
-            "error": null,
-            "incomplete_details": null,
-            "usage": null
-        });
-        let created_ev = json!({ "type": "response.created", "response": lifecycle_response.clone() });
-        let created_ev = inject_seq(created_ev, &mut sequence_number);
-        yield Ok::<Bytes, String>(codex_sse_frame(&created_ev));
-        let in_progress_ev = json!({ "type": "response.in_progress", "response": lifecycle_response });
-        let in_progress_ev = inject_seq(in_progress_ev, &mut sequence_number);
-        yield Ok::<Bytes, String>(codex_sse_frame(&in_progress_ev));
-
-        let mut message_item_emitted = false;
-        let mut reasoning_open = false;
-        let mut reasoning_item_seq: u32 = 0;
-        let mut active_reasoning_item_id = String::new();
-
-        let mut emitted_tool_calls = std::collections::HashSet::new();
-        let mut accumulated_text = String::new();
-        let mut accumulated_thinking = String::new();
-        let mut thinking_acc = crate::proxy::thinking_store::TurnAccumulator::new();
-        let mut has_seen_tool_calls = false;
-        let mut final_finish_reason: Option<String> = None;
-
-        let mut final_outputs_map: std::collections::BTreeMap<u32, serde_json::Value> = std::collections::BTreeMap::new();
-        let mut next_output_index: u32 = 0;
-        let mut message_output_index: u32 = 0;
-        let mut reasoning_output_index: u32 = 0;
-        let mut final_usage: Option<super::models::OpenAIUsage> = None;
-        let mut classified_stream_error: Option<StreamErrorReport> = None;
-        let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(3));
-        heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut last_activity = tokio::time::Instant::now();
-        let stream_timeout_cfg = crate::proxy::get_stream_timeout_config();
-
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        enum CodexStreamPhase {
-            InitialTtft,
-            Thinking,
-            Transition,
-            Streaming,
+impl CodexResponsesStreamHandler {
+    fn new(
+        model: String,
+        session_id: String,
+        message_count: usize,
+        response_id: String,
+        completion_tx: Option<
+            tokio::sync::oneshot::Sender<(Vec<Value>, tokio::sync::oneshot::Sender<()>)>,
+        >,
+        cache_tool_calls: bool,
+    ) -> Self {
+        let item_id_prefix = uuid::Uuid::new_v4().simple().to_string();
+        let message_item_id = format!("msg_{}_0", &item_id_prefix[..16]);
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Self {
+            model,
+            session_id,
+            message_count,
+            response_id,
+            cache_tool_calls,
+            completion_tx,
+            ack_rx: None,
+            ack_failed: false,
+            created_at,
+            item_id_prefix,
+            message_item_id,
+            sequence_number: 0,
+            message_item_emitted: false,
+            reasoning_open: false,
+            reasoning_item_seq: 0,
+            active_reasoning_item_id: String::new(),
+            emitted_tool_calls: std::collections::HashSet::new(),
+            accumulated_text: String::new(),
+            accumulated_thinking: String::new(),
+            thinking_acc: crate::proxy::thinking_store::TurnAccumulator::new(),
+            has_thinking: false,
+            has_seen_tool_calls: false,
+            final_finish_reason: None,
+            final_outputs_map: std::collections::BTreeMap::new(),
+            next_output_index: 0,
+            message_output_index: 0,
+            reasoning_output_index: 0,
+            final_usage: None,
+            thinking_committed: false,
         }
-        let mut phase = CodexStreamPhase::InitialTtft;
+    }
 
-        loop {
-            tokio::select! {
-                item = gemini_stream.next() => {
-                    match item {
-                        Some(Ok(bytes)) => {
-                            last_activity = tokio::time::Instant::now();
-                            buffer.extend_from_slice(&bytes);
-                            while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
-                                let line_raw = buffer.split_to(pos + 1);
-                                let line_str = String::from_utf8_lossy(&line_raw);
-                                let line = line_str.trim();
-                                if line.is_empty() || !line.starts_with("data: ") { continue; }
-                                let json_part = line.trim_start_matches("data: ").trim();
-                                if json_part == "[DONE]" { continue; }
+    fn push_event(&mut self, frames: &mut Vec<Bytes>, event: Value) {
+        let event = inject_seq(event, &mut self.sequence_number);
+        frames.push(codex_sse_frame(&event));
+    }
 
-                                    if let Ok(mut json) = serde_json::from_str::<Value>(json_part) {
-                                        let actual_data = if let Some(inner) = json.get_mut("response").map(|v| v.take()) { inner } else { json };
+    fn push_error_event(&mut self, frames: &mut Vec<Bytes>, error_report: &StreamErrorReport) {
+        let err_ev = json!({
+            "type": "error",
+            "code": error_report.classified.error_type,
+            "message": error_report.client_message(),
+            "function": error_report.function,
+            "call_site": error_report.call_site(),
+            "params": error_report.params,
+        });
+        self.push_event(frames, err_ev);
+    }
 
-                                        if let Some(u) = actual_data.get("usageMetadata") {
-                                            final_usage = extract_usage_metadata(u);
-                                        }
+    /// 关闭仍打开的 reasoning summary，保证输出项生命周期不重叠。
+    fn close_reasoning(&mut self, frames: &mut Vec<Bytes>) {
+        if !self.reasoning_open {
+            return;
+        }
+        let text_done = json!({
+            "type": "response.reasoning_summary_text.done",
+            "item_id": &self.active_reasoning_item_id,
+            "output_index": self.reasoning_output_index,
+            "summary_index": 0,
+            "text": &self.accumulated_thinking
+        });
+        self.push_event(frames, text_done);
 
-                                        if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
-                                            if !candidates.is_empty() {
-                                                tracing::debug!("[Codex-Stream-Debug] Raw Candidate: {:?}", candidates[0]);
-                                            }
-                                            if let Some(candidate) = candidates.first() {
-                                                if let Some(reason) = candidate.get("finishReason").and_then(Value::as_str) {
-                                                    final_finish_reason = Some(reason.to_string());
-                                                }
-                                                if let Some(parts) = candidate.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
-                                                    for part in parts {
-                                                        thinking_acc.ingest_part(part);
-                                                        let is_thought = part.get("thought").and_then(|v| v.as_bool()).unwrap_or(false);
+        let summary_part_done = json!({
+            "type": "response.reasoning_summary_part.done",
+            "item_id": &self.active_reasoning_item_id,
+            "output_index": self.reasoning_output_index,
+            "summary_index": 0,
+            "part": {
+                "type": "summary_text",
+                "text": &self.accumulated_thinking
+            }
+        });
+        self.push_event(frames, summary_part_done);
 
-                                                        // Close the reasoning summary before opening normal text
-                                                        // or a tool item so output item lifecycles never overlap.
-                                                        let is_text_or_tool = part.get("text").is_some() || part.get("functionCall").is_some() || part.get("inlineData").is_some();
-                                                        if is_text_or_tool && !is_thought {
-                                                            phase = CodexStreamPhase::Streaming;
-                                                        } else if is_thought && (phase == CodexStreamPhase::InitialTtft || phase == CodexStreamPhase::Transition) {
-                                                            phase = CodexStreamPhase::Thinking;
-                                                        }
+        let reasoning_item = json!({
+            "id": &self.active_reasoning_item_id,
+            "type": "reasoning",
+            "status": "completed",
+            "summary": [{
+                "type": "summary_text",
+                "text": &self.accumulated_thinking
+            }]
+        });
 
-                                                        if is_text_or_tool && !is_thought && reasoning_open {
-                                                            let text_done = json!({
-                                                                "type": "response.reasoning_summary_text.done",
-                                                                "item_id": &active_reasoning_item_id,
-                                                                "output_index": reasoning_output_index,
-                                                                "summary_index": 0,
-                                                                "text": &accumulated_thinking
-                                                            });
-                                                            let text_done = inject_seq(text_done, &mut sequence_number);
-                                                            yield Ok::<Bytes, String>(codex_sse_frame(&text_done));
+        let done_ev = json!({
+            "type": "response.output_item.done",
+            "output_index": self.reasoning_output_index,
+            "item": &reasoning_item
+        });
+        self.push_event(frames, done_ev);
 
-                                                            let summary_part_done = json!({
-                                                                "type": "response.reasoning_summary_part.done",
-                                                                "item_id": &active_reasoning_item_id,
-                                                                "output_index": reasoning_output_index,
-                                                                "summary_index": 0,
-                                                                "part": {
-                                                                    "type": "summary_text",
-                                                                    "text": &accumulated_thinking
-                                                                }
-                                                            });
-                                                            let summary_part_done = inject_seq(summary_part_done, &mut sequence_number);
-                                                            yield Ok::<Bytes, String>(codex_sse_frame(&summary_part_done));
+        self.final_outputs_map
+            .insert(self.reasoning_output_index, reasoning_item);
+        self.reasoning_open = false;
+    }
 
-                                                            let reasoning_item = json!({
-                                                                "id": &active_reasoning_item_id,
-                                                                "type": "reasoning",
-                                                                "status": "completed",
-                                                                "summary": [{
-                                                                    "type": "summary_text",
-                                                                    "text": &accumulated_thinking
-                                                                }]
-                                                            });
+    /// 惰性打开 assistant message 输出项（正文/grounding 首次到达时）。
+    fn open_message(&mut self, frames: &mut Vec<Bytes>) {
+        if self.message_item_emitted {
+            return;
+        }
+        self.message_item_emitted = true;
+        self.message_output_index = self.next_output_index;
+        self.next_output_index += 1;
 
-                                                            let done_ev = json!({
-                                                                "type": "response.output_item.done",
-                                                                "output_index": reasoning_output_index,
-                                                                "item": &reasoning_item
-                                                            });
-                                                            let done_ev = inject_seq(done_ev, &mut sequence_number);
-                                                            yield Ok::<Bytes, String>(codex_sse_frame(&done_ev));
+        let output_item_added = json!({
+            "type": "response.output_item.added",
+            "output_index": self.message_output_index,
+            "item": {
+                "id": &self.message_item_id,
+                "type": "message",
+                "role": "assistant",
+                "phase": "commentary",
+                "status": "in_progress",
+                "content": []
+            }
+        });
+        self.push_event(frames, output_item_added);
 
-                                                            final_outputs_map.insert(reasoning_output_index, reasoning_item);
-                                                            reasoning_open = false;
-                                                        }
+        let content_part_added = json!({
+            "type": "response.content_part.added",
+            "item_id": &self.message_item_id,
+            "output_index": self.message_output_index,
+            "content_index": 0,
+            "part": { "type": "output_text", "text": "", "annotations": [] }
+        });
+        self.push_event(frames, content_part_added);
+    }
 
-                                                        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                                                            let clean_text = if is_thought {
-                                                                text.replace("<think>\n", "").replace("<think>", "").replace("\n</think>", "").replace("</think>", "")
-                                                            } else {
-                                                                text.to_string()
-                                                            };
-                                                            if !clean_text.is_empty() {
-                                                                if is_thought && message_item_emitted {
-                                                                    // Once ordinary assistant text has started, it is the
-                                                                    // authoritative result for this response. A late thought
-                                                                    // delta must not be appended to it or open an overlapping
-                                                                    // reasoning item.
-                                                                    tracing::warn!("[Codex-Stream] Dropping late thought delta after assistant text started");
-                                                                } else if is_thought {
-                                                                    if !reasoning_open {
-                                                                        reasoning_output_index = next_output_index;
-                                                                        next_output_index += 1;
-                                                                        active_reasoning_item_id = format!(
-                                                                            "rs_{}_{}",
-                                                                            &item_id_prefix[..16],
-                                                                            reasoning_item_seq
-                                                                        );
-                                                                        reasoning_item_seq += 1;
-                                                                        accumulated_thinking.clear();
+    fn handle_part(&mut self, part: &Value, frames: &mut Vec<Bytes>) {
+        self.thinking_acc.ingest_part(part);
+        let is_thought = part
+            .get("thought")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let is_text_or_tool = part.get("text").is_some()
+            || part.get("functionCall").is_some()
+            || part.get("inlineData").is_some();
 
-                                                                        let output_item_added = json!({"type": "response.output_item.added", "output_index": reasoning_output_index, "item": {"id": &active_reasoning_item_id, "type": "reasoning", "status": "in_progress", "summary": []}});
-                                                                        let output_item_added = inject_seq(output_item_added, &mut sequence_number);
-                                                                        yield Ok::<Bytes, String>(codex_sse_frame(&output_item_added));
+        // 正文或工具项开始前先关闭 reasoning，避免输出项生命周期重叠。
+        if is_text_or_tool && !is_thought {
+            self.close_reasoning(frames);
+        }
 
-                                                                        let part_added = json!({"type": "response.reasoning_summary_part.added", "item_id": &active_reasoning_item_id, "output_index": reasoning_output_index, "summary_index": 0, "part": {"type": "summary_text", "text": ""}});
-                                                                        let part_added = inject_seq(part_added, &mut sequence_number);
-                                                                        yield Ok::<Bytes, String>(codex_sse_frame(&part_added));
+        if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+            let clean_text = if is_thought {
+                text.replace(" thinking\n", "")
+                    .replace(" thinking", "")
+                    .replace("\n response", "")
+                    .replace(" response", "")
+            } else {
+                text.to_string()
+            };
+            if !clean_text.is_empty() {
+                if is_thought && self.message_item_emitted {
+                    // 正文一旦开始，它就是本次响应的权威结果；迟到的思考增量
+                    // 不得混入正文，也不得再打开重叠的 reasoning 输出项。
+                    tracing::warn!(
+                        "[Codex-Stream] Dropping late thought delta after assistant text started"
+                    );
+                } else if is_thought {
+                    if !self.reasoning_open {
+                        self.reasoning_output_index = self.next_output_index;
+                        self.next_output_index += 1;
+                        self.active_reasoning_item_id = format!(
+                            "rs_{}_{}",
+                            &self.item_id_prefix[..16],
+                            self.reasoning_item_seq
+                        );
+                        self.reasoning_item_seq += 1;
+                        self.accumulated_thinking.clear();
 
-                                                                        reasoning_open = true;
-                                                                    }
-
-                                                                    accumulated_thinking.push_str(&clean_text);
-                                                                    let delta_ev = json!({
-                                                                        "type": "response.reasoning_summary_text.delta",
-                                                                        "item_id": &active_reasoning_item_id,
-                                                                        "output_index": reasoning_output_index,
-                                                                        "summary_index": 0,
-                                                                        "delta": clean_text
-                                                                    });
-                                                                    let delta_ev = inject_seq(delta_ev, &mut sequence_number);
-                                                                    yield Ok::<Bytes, String>(codex_sse_frame(&delta_ev));
-                                                                } else {
-                                                                    if !message_item_emitted {
-                                                                        message_item_emitted = true;
-                                                                        message_output_index = next_output_index;
-                                                                        next_output_index += 1;
-                                                                        let output_item_added = json!({"type": "response.output_item.added", "output_index": message_output_index, "item": {"id": &message_item_id, "type": "message", "role": "assistant", "phase": "commentary", "status": "in_progress", "content": []}});
-                                                                        let output_item_added = inject_seq(output_item_added, &mut sequence_number);
-                                                                        yield Ok::<Bytes, String>(codex_sse_frame(&output_item_added));
-                                                                        let content_part_added = json!({"type": "response.content_part.added", "item_id": &message_item_id, "output_index": message_output_index, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}});
-                                                                        let content_part_added = inject_seq(content_part_added, &mut sequence_number);
-                                                                        yield Ok::<Bytes, String>(codex_sse_frame(&content_part_added));
-                                                                    }
-
-                                                                    accumulated_text.push_str(&clean_text);
-                                                                    let delta_ev = json!({
-                                                                        "type": "response.output_text.delta",
-                                                                        "item_id": &message_item_id,
-                                                                        "output_index": message_output_index,
-                                                                        "content_index": 0,
-                                                                        "delta": clean_text
-                                                                    });
-                                                                    let delta_ev = inject_seq(delta_ev, &mut sequence_number);
-                                                                    yield Ok::<Bytes, String>(codex_sse_frame(&delta_ev));
-                                                                }
-                                                            }
-                                                        }
-                                                        if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
-                                                            store_thought_signature(sig, &session_id, message_count);
-                                                        }
-                                                        if let Some(func_call) = part.get("functionCall") {
-                                                            let call_key = serde_json::to_string(func_call).unwrap_or_default();
-                                                            if !emitted_tool_calls.contains(&call_key) {
-                                                                emitted_tool_calls.insert(call_key.clone());
-
-                                                                let name = func_call.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                                                let mut args = func_call.get("args").unwrap_or(&json!({})).clone();
-
-                                                                // [FIX #1575 & #3430] 标准化并清洗 shell / PowerShell 等工具参数名称与必填字段
-                                                                super::response::normalize_and_sanitize_tool_args(name, &mut args);
-
-                                                                let args_str = serde_json::to_string(&args).unwrap_or_default();
-
-                                                                let call_id = func_call
-                                                                    .get("id")
-                                                                    .and_then(|v| v.as_str())
-                                                                    .map(|s| s.to_string())
-                                                                    .unwrap_or_else(|| {
-                                                                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                                                                        use std::hash::{Hash, Hasher};
-                                                                        call_key.hash(&mut hasher);
-                                                                        sequence_number.hash(&mut hasher);
-                                                                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos().hash(&mut hasher);
-                                                                        format!("call_{:x}", hasher.finish())
-                                                                    });
-
-                                                                if let Some(sig) = part.get("thoughtSignature").or(part.get("thought_signature")).and_then(|s| s.as_str()) {
-                                                                    crate::proxy::SignatureCache::global().cache_tool_signature(&session_id, &call_id, sig.to_string());
-                                                                }
-                                                                thinking_acc.record_tool_id(name, &call_id);
-
-                                                                let (actual_name, namespace) = split_namespace_tool_name(name);
-                                                                let tool_item_id = format!("item-{}", &Uuid::new_v4().to_string()[..16]);
-                                                                let is_custom_tool = actual_name == "apply_patch" || actual_name == "apply_patch_v2" || actual_name == "shell";
-
-                                                                let final_args_str = args_str.clone();
-
-                                                                let mut item_obj = json!({
-                                                                    "id": &tool_item_id,
-                                                                    "type": if is_custom_tool { "custom_tool_call" } else { "function_call" },
-                                                                    "status": "completed",
-                                                                    "name": actual_name,
-                                                                    "call_id": &call_id,
-                                                                });
-                                                                if is_custom_tool {
-                                                                    item_obj["input"] = json!(&final_args_str);
-                                                                } else {
-                                                                    item_obj["arguments"] = json!(&final_args_str);
-                                                                }
-                                                                if let Some(ns) = namespace {
-                                                                    item_obj["namespace"] = json!(ns);
-                                                                }
-
-                                                                let tool_output_index = next_output_index;
-                                                                next_output_index += 1;
-
-                                                                has_seen_tool_calls = true;
-
-                                                                let mut added_item = item_obj.clone();
-                                                                added_item["status"] = json!("in_progress");
-                                                                if is_custom_tool {
-                                                                    added_item["input"] = json!("");
-                                                                } else {
-                                                                    added_item["arguments"] = json!("");
-                                                                }
-                                                                let added_ev = json!({
-                                                                    "type": "response.output_item.added",
-                                                                    "output_index": tool_output_index,
-                                                                    "item": added_item
-                                                                });
-                                                                let added_ev = inject_seq(added_ev, &mut sequence_number);
-                                                                yield Ok::<Bytes, String>(codex_sse_frame(&added_ev));
-
-                                                                let mut delta_ev = json!({
-                                                                    "type": if is_custom_tool { "response.custom_tool_call_input.delta" } else { "response.function_call_arguments.delta" },
-                                                                    "item_id": &tool_item_id,
-                                                                    "output_index": tool_output_index,
-                                                                    "delta": &final_args_str
-                                                                });
-                                                                if is_custom_tool {
-                                                                    delta_ev["call_id"] = json!(&call_id);
-                                                                }
-                                                                let delta_ev = inject_seq(delta_ev, &mut sequence_number);
-                                                                yield Ok::<Bytes, String>(codex_sse_frame(&delta_ev));
-
-                                                                let mut args_done_ev = json!({
-                                                                    "type": if is_custom_tool { "response.custom_tool_call_input.done" } else { "response.function_call_arguments.done" },
-                                                                    "item_id": &tool_item_id,
-                                                                    "output_index": tool_output_index,
-                                                                });
-                                                                if is_custom_tool {
-                                                                    args_done_ev["call_id"] = json!(&call_id);
-                                                                    args_done_ev["input"] = json!(&final_args_str);
-                                                                } else {
-                                                                    args_done_ev["arguments"] = json!(&final_args_str);
-                                                                }
-                                                                let args_done_ev = inject_seq(args_done_ev, &mut sequence_number);
-                                                                yield Ok::<Bytes, String>(codex_sse_frame(&args_done_ev));
-
-                                                                let done_ev = json!({
-                                                                    "type": "response.output_item.done",
-                                                                    "output_index": tool_output_index,
-                                                                    "item": item_obj
-                                                                });
-                                                                let done_ev = inject_seq(done_ev, &mut sequence_number);
-                                                                yield Ok::<Bytes, String>(codex_sse_frame(&done_ev));
-
-                                                                let tc_val = item_obj.clone();
-                                                                if cache_tool_calls {
-                                                                    crate::proxy::handlers::openai::insert_cached_tool_call(call_id.clone(), tc_val.clone());
-                                                                }
-                                                                final_outputs_map.insert(tool_output_index, tc_val);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                // 处理 groundingMetadata (搜索引文)
-                                                if let Some(grounding) = candidate.get("groundingMetadata") {
-                                                    let mut grounding_text = String::new();
-                                                    if let Some(queries) = grounding.get("webSearchQueries").and_then(|q| q.as_array()) {
-                                                        let query_list: Vec<&str> = queries.iter().filter_map(|v| v.as_str()).collect();
-                                                        if !query_list.is_empty() {
-                                                            grounding_text.push_str("\n\n---\n**🔍 已为您搜索：** ");
-                                                            grounding_text.push_str(&query_list.join(", "));
-                                                        }
-                                                    }
-                                                    if let Some(chunks) = grounding.get("groundingChunks").and_then(|c| c.as_array()) {
-                                                        let mut links = Vec::new();
-                                                        for (i, chunk) in chunks.iter().enumerate() {
-                                                            if let Some(web) = chunk.get("web") {
-                                                                let title = web.get("title").and_then(|v| v.as_str()).unwrap_or("网页来源");
-                                                                let uri = web.get("uri").and_then(|v| v.as_str()).unwrap_or("#");
-                                                                links.push(format!("[{}] [{}]({})", i + 1, title, uri));
-                                                            }
-                                                        }
-                                                        if !links.is_empty() {
-                                                            grounding_text.push_str("\n\n**🌐 来源引文：**\n");
-                                                            grounding_text.push_str(&links.join("\n"));
-                                                        }
-                                                    }
-                                                    if !grounding_text.is_empty() {
-                                                        if !message_item_emitted {
-                                                            message_item_emitted = true;
-                                                            message_output_index = next_output_index;
-                                                            next_output_index += 1;
-                                                            let output_item_added = json!({"type": "response.output_item.added", "output_index": message_output_index, "item": {"id": &message_item_id, "type": "message", "role": "assistant", "phase": "commentary", "status": "in_progress", "content": []}});
-                                                            let output_item_added = inject_seq(output_item_added, &mut sequence_number);
-                                                            yield Ok::<Bytes, String>(codex_sse_frame(&output_item_added));
-                                                            let content_part_added = json!({"type": "response.content_part.added", "item_id": &message_item_id, "output_index": message_output_index, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}});
-                                                            let content_part_added = inject_seq(content_part_added, &mut sequence_number);
-                                                            yield Ok::<Bytes, String>(codex_sse_frame(&content_part_added));
-                                                        }
-                                                        accumulated_text.push_str(&grounding_text);
-                                                        let delta_ev = json!({
-                                                            "type": "response.output_text.delta",
-                                                            "item_id": &message_item_id,
-                                                            "output_index": message_output_index,
-                                                            "content_index": 0,
-                                                            "delta": grounding_text
-                                                        });
-                                                        let delta_ev = inject_seq(delta_ev, &mut sequence_number);
-                                                        yield Ok::<Bytes, String>(codex_sse_frame(&delta_ev));
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            report_sse_json_parse(
-                                                "openai-responses",
-                                                "create_codex_sse_stream",
-                                                json_part,
-                                                format!(
-                                                    "model={} session={} response_id={} messages={} buffer_bytes={}",
-                                                    model,
-                                                    session_id,
-                                                    response_id,
-                                                    message_count,
-                                                    buffer.len()
-                                                ),
-                                            );
-                                    }
-                                }
+                        let output_item_added = json!({
+                            "type": "response.output_item.added",
+                            "output_index": self.reasoning_output_index,
+                            "item": {
+                                "id": &self.active_reasoning_item_id,
+                                "type": "reasoning",
+                                "status": "in_progress",
+                                "summary": []
                             }
-                        }
-                        Some(Err(e)) => {
-                            let report = report_stream_error(
-                                "openai-responses",
-                                "create_codex_sse_stream",
-                                &e,
-                                format!(
-                                    "model={} session={} response_id={} messages={} buffer_bytes={}",
-                                    model,
-                                    session_id,
-                                    response_id,
-                                    message_count,
-                                    buffer.len()
-                                ),
-                            );
-                            let err_ev = json!({
-                                "type": "error",
-                                "code": report.classified.error_type,
-                                "message": report.client_message(),
-                                "function": report.function,
-                                "call_site": report.call_site(),
-                                "params": report.params,
-                            });
-                            classified_stream_error = Some(report);
-                            let err_ev = inject_seq(err_ev, &mut sequence_number);
-                            yield Ok::<Bytes, String>(codex_sse_frame(&err_ev));
-                            break;
-                        }
-                        None => break,
-                    }
-                }
-                _ = heartbeat_interval.tick() => {
-                    let phase_timeout_secs = match phase {
-                        CodexStreamPhase::InitialTtft => stream_timeout_cfg.initial_ttft_secs,
-                        CodexStreamPhase::Transition => stream_timeout_cfg.transition_secs,
-                        CodexStreamPhase::Thinking | CodexStreamPhase::Streaming => {
-                            stream_timeout_cfg.streaming_sliding_secs
-                        }
-                    };
-
-                    if last_activity.elapsed() >= std::time::Duration::from_secs(phase_timeout_secs) {
-                        // [关键自适应跃迁：思考/引导文本至巨型工具调用过渡断崖检测]
-                        // 无论当前处于思考期 (Thinking) 还是已输出简短引导文本的正文期 (Streaming)，
-                        // 当静默时间首次达到稳态滑动超时 (streaming_sliding_secs) 时，
-                        // 上游可能正处于 Google v1internal 整包缓冲巨型 functionCall JSON 或深层状态切换的计算静默期（过渡断崖 Transition Cliff）。
-                        // 此时绝不可直接在半句话处超时截断并报错，而应自动跃迁至 Transition 状态，重置时间基准点，
-                        // 赋予独立的 transition_secs (180s) 宽限期，并继续下发心跳保活；
-                        // 若在 Transition 宽限期内仍无任何 chunk 到达，则因 phase 已是 Transition，将在下一轮超时中正常走错误终态。
-                        if matches!(phase, CodexStreamPhase::Thinking | CodexStreamPhase::Streaming) {
-                            tracing::info!(
-                                "[Codex-SSE] {:?} 流静默已达 {}s，检测到过渡断崖 (Transition Cliff)，自动跃迁至 Transition 状态并开启 {}s 宽限期 (model={})",
-                                phase,
-                                phase_timeout_secs,
-                                stream_timeout_cfg.transition_secs,
-                                model
-                            );
-                            phase = CodexStreamPhase::Transition;
-                            last_activity = tokio::time::Instant::now();
-                            yield Ok::<Bytes, String>(Bytes::from(": ping\n\n"));
-                            continue;
-                        }
-
-                        let report = report_stream_error(
-                            "openai-codex",
-                            "create_openai_codex_stream",
-                            &"stream idle timeout",
-                            format!(
-                                "model={} session={} messages={} phase={:?} timeout_secs={}",
-                                model,
-                                session_id,
-                                message_count,
-                                phase,
-                                phase_timeout_secs
-                            ),
-                        );
-                        tracing::warn!(
-                            "[Codex-SSE] Stream idle timeout after {}s in phase {:?} (model={})",
-                            phase_timeout_secs,
-                            phase,
-                            model
-                        );
-                        let err_ev = json!({
-                            "type": "error",
-                            "code": report.classified.error_type,
-                            "message": report.client_message(),
-                            "function": report.function,
-                            "call_site": report.call_site(),
-                            "params": report.params,
                         });
-                        classified_stream_error = Some(report);
-                        let err_ev = inject_seq(err_ev, &mut sequence_number);
-                        yield Ok::<Bytes, String>(codex_sse_frame(&err_ev));
-                        break;
+                        self.push_event(frames, output_item_added);
+
+                        let part_added = json!({
+                            "type": "response.reasoning_summary_part.added",
+                            "item_id": &self.active_reasoning_item_id,
+                            "output_index": self.reasoning_output_index,
+                            "summary_index": 0,
+                            "part": { "type": "summary_text", "text": "" }
+                        });
+                        self.push_event(frames, part_added);
+
+                        self.reasoning_open = true;
                     }
-                    yield Ok::<Bytes, String>(Bytes::from(": ping\n\n"));
+
+                    self.accumulated_thinking.push_str(&clean_text);
+                    self.has_thinking = true;
+                    let delta_ev = json!({
+                        "type": "response.reasoning_summary_text.delta",
+                        "item_id": &self.active_reasoning_item_id,
+                        "output_index": self.reasoning_output_index,
+                        "summary_index": 0,
+                        "delta": clean_text
+                    });
+                    self.push_event(frames, delta_ev);
+                } else {
+                    self.open_message(frames);
+                    self.accumulated_text.push_str(&clean_text);
+                    let delta_ev = json!({
+                        "type": "response.output_text.delta",
+                        "item_id": &self.message_item_id,
+                        "output_index": self.message_output_index,
+                        "content_index": 0,
+                        "delta": clean_text
+                    });
+                    self.push_event(frames, delta_ev);
                 }
             }
         }
 
-        // Finalize any reasoning summary still open when the upstream stream ends.
-        if reasoning_open {
-            let text_done = json!({
-                "type": "response.reasoning_summary_text.done",
-                "item_id": &active_reasoning_item_id,
-                "output_index": reasoning_output_index,
-                "summary_index": 0,
-                "text": &accumulated_thinking
-            });
-            let text_done = inject_seq(text_done, &mut sequence_number);
-            yield Ok::<Bytes, String>(codex_sse_frame(&text_done));
+        if let Some(sig) = part
+            .get("thoughtSignature")
+            .or(part.get("thought_signature"))
+            .and_then(|s| s.as_str())
+        {
+            store_thought_signature(sig, &self.session_id, self.message_count);
+        }
 
-            let summary_part_done = json!({
-                "type": "response.reasoning_summary_part.done",
-                "item_id": &active_reasoning_item_id,
-                "output_index": reasoning_output_index,
-                "summary_index": 0,
-                "part": {
-                    "type": "summary_text",
-                    "text": &accumulated_thinking
+        if let Some(func_call) = part.get("functionCall") {
+            self.handle_tool_call(func_call, part, frames);
+        }
+    }
+
+    fn handle_tool_call(&mut self, func_call: &Value, part: &Value, frames: &mut Vec<Bytes>) {
+        let call_key = serde_json::to_string(func_call).unwrap_or_default();
+        if self.emitted_tool_calls.contains(&call_key) {
+            return;
+        }
+        self.emitted_tool_calls.insert(call_key.clone());
+
+        let name = func_call
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let mut args = func_call.get("args").unwrap_or(&json!({})).clone();
+
+        // [FIX #1575 & #3430] 标准化并清洗 shell / PowerShell 等工具参数名称与必填字段
+        super::response::normalize_and_sanitize_tool_args(name, &mut args);
+
+        let args_str = serde_json::to_string(&args).unwrap_or_default();
+
+        let sequence_number = self.sequence_number;
+        let call_id = func_call
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                use std::hash::{Hash, Hasher};
+                call_key.hash(&mut hasher);
+                sequence_number.hash(&mut hasher);
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+                    .hash(&mut hasher);
+                format!("call_{:x}", hasher.finish())
+            });
+
+        if let Some(sig) = part
+            .get("thoughtSignature")
+            .or(part.get("thought_signature"))
+            .and_then(|s| s.as_str())
+        {
+            crate::proxy::SignatureCache::global().cache_tool_signature(
+                &self.session_id,
+                &call_id,
+                sig.to_string(),
+            );
+        }
+        self.thinking_acc.record_tool_id(name, &call_id);
+
+        let (actual_name, namespace) = split_namespace_tool_name(name);
+        let tool_item_id = format!("item-{}", &Uuid::new_v4().to_string()[..16]);
+        let is_custom_tool = actual_name == "apply_patch"
+            || actual_name == "apply_patch_v2"
+            || actual_name == "shell";
+
+        let final_args_str = args_str.clone();
+
+        let mut item_obj = json!({
+            "id": &tool_item_id,
+            "type": if is_custom_tool { "custom_tool_call" } else { "function_call" },
+            "status": "completed",
+            "name": actual_name,
+            "call_id": &call_id,
+        });
+        if is_custom_tool {
+            item_obj["input"] = json!(&final_args_str);
+        } else {
+            item_obj["arguments"] = json!(&final_args_str);
+        }
+        if let Some(ns) = namespace {
+            item_obj["namespace"] = json!(ns);
+        }
+
+        let tool_output_index = self.next_output_index;
+        self.next_output_index += 1;
+
+        self.has_seen_tool_calls = true;
+
+        let mut added_item = item_obj.clone();
+        added_item["status"] = json!("in_progress");
+        if is_custom_tool {
+            added_item["input"] = json!("");
+        } else {
+            added_item["arguments"] = json!("");
+        }
+        let added_ev = json!({
+            "type": "response.output_item.added",
+            "output_index": tool_output_index,
+            "item": added_item
+        });
+        self.push_event(frames, added_ev);
+
+        let mut delta_ev = json!({
+            "type": if is_custom_tool { "response.custom_tool_call_input.delta" } else { "response.function_call_arguments.delta" },
+            "item_id": &tool_item_id,
+            "output_index": tool_output_index,
+            "delta": &final_args_str
+        });
+        if is_custom_tool {
+            delta_ev["call_id"] = json!(&call_id);
+        }
+        self.push_event(frames, delta_ev);
+
+        let mut args_done_ev = json!({
+            "type": if is_custom_tool { "response.custom_tool_call_input.done" } else { "response.function_call_arguments.done" },
+            "item_id": &tool_item_id,
+            "output_index": tool_output_index,
+        });
+        if is_custom_tool {
+            args_done_ev["call_id"] = json!(&call_id);
+            args_done_ev["input"] = json!(&final_args_str);
+        } else {
+            args_done_ev["arguments"] = json!(&final_args_str);
+        }
+        self.push_event(frames, args_done_ev);
+
+        let done_ev = json!({
+            "type": "response.output_item.done",
+            "output_index": tool_output_index,
+            "item": item_obj
+        });
+        self.push_event(frames, done_ev);
+
+        let tc_val = item_obj.clone();
+        if self.cache_tool_calls {
+            crate::proxy::handlers::openai::insert_cached_tool_call(
+                call_id.clone(),
+                tc_val.clone(),
+            );
+        }
+        self.final_outputs_map.insert(tool_output_index, tc_val);
+    }
+
+    fn handle_grounding(&mut self, grounding: &Value, frames: &mut Vec<Bytes>) {
+        let mut grounding_text = String::new();
+        if let Some(queries) = grounding.get("webSearchQueries").and_then(|q| q.as_array()) {
+            let query_list: Vec<&str> = queries.iter().filter_map(|v| v.as_str()).collect();
+            if !query_list.is_empty() {
+                grounding_text.push_str("\n\n---\n**🔍 已为您搜索：** ");
+                grounding_text.push_str(&query_list.join(", "));
+            }
+        }
+        if let Some(chunks) = grounding.get("groundingChunks").and_then(|c| c.as_array()) {
+            let mut links = Vec::new();
+            for (i, chunk) in chunks.iter().enumerate() {
+                if let Some(web) = chunk.get("web") {
+                    let title = web
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("网页来源");
+                    let uri = web.get("uri").and_then(|v| v.as_str()).unwrap_or("#");
+                    links.push(format!("[{}] [{}]({})", i + 1, title, uri));
                 }
-            });
-            let summary_part_done = inject_seq(summary_part_done, &mut sequence_number);
-            yield Ok::<Bytes, String>(codex_sse_frame(&summary_part_done));
-
-            let reasoning_item = json!({
-                "id": &active_reasoning_item_id,
-                "type": "reasoning",
-                "status": "completed",
-                "summary": [{
-                    "type": "summary_text",
-                    "text": &accumulated_thinking
-                }]
-            });
-
-            let done_ev = json!({
-                "type": "response.output_item.done",
-                "output_index": reasoning_output_index,
-                "item": &reasoning_item
-            });
-            let done_ev = inject_seq(done_ev, &mut sequence_number);
-            yield Ok::<Bytes, String>(codex_sse_frame(&done_ev));
-
-            final_outputs_map.insert(reasoning_output_index, reasoning_item);
+            }
+            if !links.is_empty() {
+                grounding_text.push_str("\n\n**🌐 来源引文：**\n");
+                grounding_text.push_str(&links.join("\n"));
+            }
+        }
+        if grounding_text.is_empty() {
+            return;
         }
 
-        // A proxy-generated diagnostic (for example an invalid apply_patch) may
-        // only become available after the upstream stream has ended. Open the
-        // message lazily here so it is not silently dropped behind reasoning.
-        if !message_item_emitted && !accumulated_text.is_empty() {
-            message_item_emitted = true;
-            message_output_index = next_output_index;
-            let output_item_added = json!({"type": "response.output_item.added", "output_index": message_output_index, "item": {"id": &message_item_id, "type": "message", "role": "assistant", "phase": "commentary", "status": "in_progress", "content": []}});
-            let output_item_added = inject_seq(output_item_added, &mut sequence_number);
-            yield Ok::<Bytes, String>(codex_sse_frame(&output_item_added));
-            let content_part_added = json!({"type": "response.content_part.added", "item_id": &message_item_id, "output_index": message_output_index, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}});
-            let content_part_added = inject_seq(content_part_added, &mut sequence_number);
-            yield Ok::<Bytes, String>(codex_sse_frame(&content_part_added));
+        self.open_message(frames);
+        self.accumulated_text.push_str(&grounding_text);
+        let delta_ev = json!({
+            "type": "response.output_text.delta",
+            "item_id": &self.message_item_id,
+            "output_index": self.message_output_index,
+            "content_index": 0,
+            "delta": grounding_text
+        });
+        self.push_event(frames, delta_ev);
+    }
+
+    fn commit_thinking(&mut self) {
+        if self.thinking_committed {
+            return;
+        }
+        self.thinking_committed = true;
+        self.thinking_acc.clone().commit(&self.session_id);
+        if self.session_id != self.response_id {
+            self.thinking_acc.clone().commit(&self.response_id);
+        }
+    }
+
+    fn build_terminal_frames(&mut self, error_report: Option<&StreamErrorReport>) -> Vec<Bytes> {
+        let mut frames = Vec::new();
+
+        // 上游流结束时仍打开的 reasoning summary 必须先闭合。
+        self.close_reasoning(&mut frames);
+
+        // 代理生成的诊断可能在上游结束后才可见；惰性打开 message，避免被 reasoning 吞掉。
+        if !self.message_item_emitted && !self.accumulated_text.is_empty() {
+            self.open_message(&mut frames);
         }
 
-        if message_item_emitted {
+        if self.message_item_emitted {
             let text_done = json!({
                 "type": "response.output_text.done",
-                "item_id": &message_item_id,
-                "output_index": message_output_index,
+                "item_id": &self.message_item_id,
+                "output_index": self.message_output_index,
                 "content_index": 0,
-                "text": &accumulated_text
+                "text": &self.accumulated_text
             });
-            let text_done = inject_seq(text_done, &mut sequence_number);
-            yield Ok::<Bytes, String>(codex_sse_frame(&text_done));
+            self.push_event(&mut frames, text_done);
 
             let content_part_done = json!({
                 "type": "response.content_part.done",
-                "item_id": &message_item_id,
-                "output_index": message_output_index,
+                "item_id": &self.message_item_id,
+                "output_index": self.message_output_index,
                 "content_index": 0,
                 "part": {
                     "type": "output_text",
-                    "text": &accumulated_text,
+                    "text": &self.accumulated_text,
                     "annotations": []
                 }
             });
-            let content_part_done = inject_seq(content_part_done, &mut sequence_number);
-            yield Ok::<Bytes, String>(codex_sse_frame(&content_part_done));
+            self.push_event(&mut frames, content_part_done);
 
-            // Tool rounds are process commentary. Only a response with no tool
-            // call is the authoritative final answer that remains expanded.
-            let message_phase = if has_seen_tool_calls { "commentary" } else { "final_answer" };
+            // 工具轮次的 message 只是过程性 commentary；无工具调用的 message 才是最终答案。
+            let message_phase = if self.has_seen_tool_calls {
+                "commentary"
+            } else {
+                "final_answer"
+            };
             let message_item = json!({
-                "id": &message_item_id,
+                "id": &self.message_item_id,
                 "type": "message",
                 "role": "assistant",
                 "phase": message_phase,
                 "status": "completed",
                 "content": [{
                     "type": "output_text",
-                    "text": &accumulated_text,
+                    "text": &self.accumulated_text,
                     "annotations": []
                 }]
             });
 
             let output_item_done = json!({
                 "type": "response.output_item.done",
-                "output_index": message_output_index,
+                "output_index": self.message_output_index,
                 "item": message_item.clone()
             });
-            let output_item_done = inject_seq(output_item_done, &mut sequence_number);
-            yield Ok::<Bytes, String>(codex_sse_frame(&output_item_done));
+            self.push_event(&mut frames, output_item_done);
 
-            final_outputs_map.insert(message_output_index, message_item);
+            self.final_outputs_map
+                .insert(self.message_output_index, message_item);
         }
 
-        let final_outputs: Vec<serde_json::Value> = final_outputs_map.into_values().collect();
+        let final_outputs: Vec<Value> = std::mem::take(&mut self.final_outputs_map)
+            .into_values()
+            .collect();
 
-        let missing_actionable_output = !message_item_emitted && !has_seen_tool_calls;
+        let missing_actionable_output = !self.message_item_emitted && !self.has_seen_tool_calls;
         let mut terminal_status = if missing_actionable_output {
             "incomplete"
         } else {
-            match final_finish_reason.as_deref() {
+            match self.final_finish_reason.as_deref() {
                 Some("MAX_TOKENS")
                 | Some("SAFETY")
                 | Some("RECITATION")
@@ -1551,7 +1480,7 @@ where
             }
         };
         let mut incomplete_details = if terminal_status == "incomplete" {
-            let reason = match final_finish_reason.as_deref() {
+            let reason = match self.final_finish_reason.as_deref() {
                 Some("MAX_TOKENS") => "max_output_tokens",
                 Some("SAFETY")
                 | Some("RECITATION")
@@ -1571,7 +1500,7 @@ where
                 "code": "empty_response",
                 "message": "Gemini stream ended without a final assistant message or tool call."
             })
-        } else if final_finish_reason.is_none() {
+        } else if self.final_finish_reason.is_none() {
             json!({
                 "code": "upstream_interrupted",
                 "message": "Gemini stream ended without finishReason."
@@ -1579,7 +1508,7 @@ where
         } else {
             Value::Null
         };
-        if let Some(report) = classified_stream_error {
+        if let Some(report) = error_report {
             terminal_status = "failed";
             incomplete_details = Value::Null;
             terminal_error = json!({
@@ -1597,36 +1526,38 @@ where
             .as_secs();
 
         if terminal_status == "completed" {
-            if let Some(tx) = completion_tx.take() {
+            if let Some(tx) = self.completion_tx.take() {
                 let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-                if tx.send((final_outputs.clone(), ack_tx)).is_err() || ack_rx.await.is_err() {
-                    return;
+                if tx.send((final_outputs.clone(), ack_tx)).is_ok() {
+                    self.ack_rx = Some(ack_rx);
+                } else {
+                    self.ack_failed = true;
                 }
             }
         }
 
-        thinking_acc.clone().commit(&session_id);
-        if session_id != response_id {
-            thinking_acc.commit(&response_id);
-        }
+        self.commit_thinking();
 
         let mut completed_ev = json!({
             "type": terminal_type,
             "response": {
-                "id": &response_id,
+                "id": &self.response_id,
                 "object": "response",
-                "created_at": created_at,
+                "created_at": self.created_at,
                 "completed_at": completed_at,
                 "status": terminal_status,
-                "model": &model,
+                "model": &self.model,
                 "output": final_outputs,
                 "incomplete_details": incomplete_details,
                 "error": terminal_error
             }
         });
 
-        if let Some(resp_obj) = completed_ev.get_mut("response").and_then(|r| r.as_object_mut()) {
-            if let Some(ref usage) = final_usage {
+        if let Some(resp_obj) = completed_ev
+            .get_mut("response")
+            .and_then(|r| r.as_object_mut())
+        {
+            if let Some(ref usage) = self.final_usage {
                 resp_obj.insert("usage".to_string(), usage.to_responses_usage_value());
             } else {
                 resp_obj.insert(
@@ -1646,10 +1577,187 @@ where
             }
         }
 
-        let completed_ev = inject_seq(completed_ev, &mut sequence_number);
-        yield Ok::<Bytes, String>(codex_sse_frame(&completed_ev));
-    };
-    Box::pin(stream)
+        self.push_event(&mut frames, completed_ev);
+        frames
+    }
+}
+
+impl ProtocolStreamHandler for CodexResponsesStreamHandler {
+    fn initial_frames(&mut self) -> Vec<Bytes> {
+        let mut frames = Vec::new();
+
+        // Native Responses lifecycle: created must be followed by in_progress.
+        let lifecycle_response = json!({
+            "id": &self.response_id,
+            "object": "response",
+            "created_at": self.created_at,
+            "status": "in_progress",
+            "model": &self.model,
+            "output": [],
+            "error": null,
+            "incomplete_details": null,
+            "usage": null
+        });
+        let created_ev =
+            json!({ "type": "response.created", "response": lifecycle_response.clone() });
+        self.push_event(&mut frames, created_ev);
+        let in_progress_ev =
+            json!({ "type": "response.in_progress", "response": lifecycle_response });
+        self.push_event(&mut frames, in_progress_ev);
+
+        frames
+    }
+
+    fn process_line(&mut self, line: &str) -> Vec<Bytes> {
+        let mut frames = Vec::new();
+        if !line.starts_with("data: ") {
+            return frames;
+        }
+        let json_part = line.trim_start_matches("data: ").trim();
+        if json_part.is_empty() || json_part == "[DONE]" {
+            return frames;
+        }
+
+        let mut json = match serde_json::from_str::<Value>(json_part) {
+            Ok(json) => json,
+            Err(_) => {
+                report_sse_json_parse(
+                    "openai-responses",
+                    "create_codex_sse_stream",
+                    json_part,
+                    format!(
+                        "model={} session={} response_id={} messages={}",
+                        self.model, self.session_id, self.response_id, self.message_count
+                    ),
+                );
+                return frames;
+            }
+        };
+
+        let actual_data = if let Some(inner) = json.get_mut("response").map(|v| v.take()) {
+            inner
+        } else {
+            json
+        };
+
+        if let Some(u) = actual_data.get("usageMetadata") {
+            self.final_usage = extract_usage_metadata(u);
+        }
+
+        if let Some(candidates) = actual_data.get("candidates").and_then(|c| c.as_array()) {
+            if !candidates.is_empty() {
+                tracing::debug!("[Codex-Stream-Debug] Raw Candidate: {:?}", candidates[0]);
+            }
+            if let Some(candidate) = candidates.first() {
+                if let Some(reason) = candidate.get("finishReason").and_then(Value::as_str) {
+                    self.final_finish_reason = Some(reason.to_string());
+                }
+                if let Some(parts) = candidate
+                    .get("content")
+                    .and_then(|c| c.get("parts"))
+                    .and_then(|p| p.as_array())
+                {
+                    for part in parts {
+                        self.handle_part(part, &mut frames);
+                    }
+                }
+
+                // 处理 groundingMetadata (搜索引文)
+                if let Some(grounding) = candidate.get("groundingMetadata") {
+                    self.handle_grounding(grounding, &mut frames);
+                }
+            }
+        }
+
+        frames
+    }
+
+    fn has_content(&self) -> bool {
+        self.message_item_emitted || self.has_seen_tool_calls
+    }
+
+    fn has_thinking(&self) -> bool {
+        self.has_thinking
+    }
+
+    fn is_thinking_active(&self) -> bool {
+        self.reasoning_open
+    }
+
+    fn finalize_without_content(&self) -> bool {
+        // Responses 协议具备语义完整的 response.incomplete（含 empty_response 诊断），
+        // 思考结束但无正文时仍应下发终态而非裸中断。
+        true
+    }
+
+    fn emit_finalize(&mut self) -> Vec<Bytes> {
+        self.build_terminal_frames(None)
+    }
+
+    fn emit_abnormal_finalize(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes> {
+        let mut frames = Vec::new();
+        self.push_error_event(&mut frames, error_report);
+        frames.extend(self.build_terminal_frames(Some(error_report)));
+        frames
+    }
+
+    fn emit_initial_error(&mut self, _error_report: &StreamErrorReport) -> Vec<Bytes> {
+        // 统一由 emit_error_finalize 下发 error + response.failed，避免重复。
+        Vec::new()
+    }
+
+    fn emit_error_finalize(&mut self, error_report: &StreamErrorReport) -> (Vec<Bytes>, bool) {
+        (self.emit_abnormal_finalize(error_report), true)
+    }
+
+    fn finalize_barrier(&mut self) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + '_>> {
+        Box::pin(async move {
+            if self.ack_failed {
+                return false;
+            }
+            match self.ack_rx.take() {
+                Some(ack_rx) => ack_rx.await.is_ok(),
+                None => true,
+            }
+        })
+    }
+
+    fn on_finish(&mut self) {
+        self.commit_thinking();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_codex_sse_stream<S, E>(
+    gemini_stream: Pin<Box<S>>,
+    model: String,
+    session_id: String,
+    message_count: usize,
+    _assistant_turn_index: usize,
+    response_id: String,
+    completion_tx: Option<
+        tokio::sync::oneshot::Sender<(Vec<Value>, tokio::sync::oneshot::Sender<()>)>,
+    >,
+    cache_tool_calls: bool,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    let trace_info = format!(
+        "model={} session={} response_id={} messages={}",
+        model, session_id, response_id, message_count
+    );
+    let handler = CodexResponsesStreamHandler::new(
+        model,
+        session_id,
+        message_count,
+        response_id,
+        completion_tx,
+        cache_tool_calls,
+    );
+    let config = StreamLifecycleConfig::new("openai-codex", "create_codex_sse_stream", trace_info);
+    run_stream_lifecycle(gemini_stream, handler, config)
 }
 
 #[cfg(test)]
@@ -1691,6 +1799,66 @@ mod tests {
             .filter_map(|data| serde_json::from_str::<Value>(data).ok())
             .collect();
         (raw, events)
+    }
+
+    async fn collect_legacy_stream(items: Vec<Result<Bytes, String>>) -> (String, Vec<Value>) {
+        let mut stream = create_legacy_sse_stream(
+            Box::pin(stream::iter(items)),
+            "gemini-pro-agent".to_string(),
+            "test-legacy-session".to_string(),
+            0,
+        );
+
+        let mut raw = String::new();
+        while let Some(item) = stream.next().await {
+            raw.push_str(&String::from_utf8_lossy(&item.expect("legacy stream item")));
+        }
+        let events = raw
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+            .collect();
+        (raw, events)
+    }
+
+    #[tokio::test]
+    async fn test_legacy_stream_flattens_thinking_and_finishes_with_done() {
+        let items = vec![
+            Ok::<Bytes, String>(Bytes::from(
+                "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"Thinking.\"}]}}]}\n\n",
+            )),
+            Ok::<Bytes, String>(Bytes::from(
+                "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Answer.\"}]},\"finishReason\":\"STOP\"}]}\n\n",
+            )),
+        ];
+        let (raw, events) = collect_legacy_stream(items).await;
+
+        assert_eq!(events[0]["choices"][0]["text"], "Thinking.");
+        assert_eq!(events[1]["choices"][0]["text"], "Answer.");
+        assert_eq!(events[1]["choices"][0]["finish_reason"], "stop");
+        assert!(raw.ends_with("data: [DONE]\n\n"));
+        assert!(!raw.contains("\"error\""));
+    }
+
+    #[tokio::test]
+    async fn test_legacy_stream_error_after_content_emits_error_and_single_done() {
+        let items = vec![
+            Ok::<Bytes, String>(Bytes::from(
+                "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Partial.\"}]}}]}\n\n",
+            )),
+            Err::<Bytes, String>(
+                "error reading a body from connection: connection reset by peer".to_string(),
+            ),
+        ];
+        let (raw, events) = collect_legacy_stream(items).await;
+
+        assert_eq!(events[0]["choices"][0]["text"], "Partial.");
+        let error_ev = events
+            .iter()
+            .find(|event| event.get("error").is_some())
+            .expect("legacy error frame");
+        assert_eq!(error_ev["error"]["code"], "stream_error");
+        assert_eq!(raw.matches("data: [DONE]").count(), 1, "exactly one [DONE]");
     }
 
     #[tokio::test]

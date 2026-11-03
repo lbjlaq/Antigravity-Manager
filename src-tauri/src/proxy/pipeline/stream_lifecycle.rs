@@ -61,6 +61,30 @@ pub trait ProtocolStreamHandler: Send + 'static {
     /// 返回协议专属的非重试终端错误帧（Claude 下发 api_error，OpenAI 下发 error frame）
     fn emit_initial_error(&mut self, error_report: &StreamErrorReport) -> Vec<Bytes>;
 
+    /// 可选：上游在产生正文/工具调用前失败时，协议自行下发终结错误帧。
+    ///
+    /// 返回 `(frames, handled)`：
+    /// - `frames`：在透传底层错误前下发的协议帧（如 Responses 的 `error` + `response.failed`）；
+    /// - `handled == true`：协议已用独立终结帧表达错误，生命周期无需再向客户端透传底层 `Err`。
+    ///
+    /// 默认不发送任何帧，交由客户端感知流中断并原生重试。
+    fn emit_error_finalize(&mut self, _error_report: &StreamErrorReport) -> (Vec<Bytes>, bool) {
+        (Vec::new(), false)
+    }
+
+    /// 可选：上游在未产生正文/工具调用时正常 EOF，协议是否仍能下发语义完整的终结帧
+    /// （如 Responses 的 `response.incomplete` / 空 text_completion 的 `[DONE]`）。
+    /// 默认 false：由生命周期透传中断错误，促使客户端原生重试。
+    fn finalize_without_content(&self) -> bool {
+        false
+    }
+
+    /// 可选：终结帧下发前的异步屏障（例如等待会话落盘确认）。
+    /// 返回 false 表示放弃本次终结帧，避免向客户端谎报完成。
+    fn finalize_barrier(&mut self) -> Pin<Box<dyn std::future::Future<Output = bool> + Send + '_>> {
+        Box::pin(std::future::ready(true))
+    }
+
     /// 可选：检查当前是否正处于思考块输出中（例如 Claude 的 Thinking block 处于打开状态）
     fn is_thinking_active(&self) -> bool {
         false
@@ -298,8 +322,16 @@ where
                                             yield Ok(c);
                                         }
                                     }
+                                    // 协议可选择自行下发终结错误帧并吞掉底层 Err（如 Responses 的 error + response.failed）
+                                    let (error_frames, error_handled) =
+                                        handler.emit_error_finalize(&report);
+                                    for c in error_frames {
+                                        yield Ok(c);
+                                    }
                                     error_emitted = true;
-                                    yield Err(report.client_message());
+                                    if !error_handled {
+                                        yield Err(report.client_message());
+                                    }
                                     break;
                                 }
                             }
@@ -308,7 +340,10 @@ where
                             // [关键契约守卫] 若上游到达 EOF 时未处于终止态，且从未产生任何正文或工具调用（无论是否产生了思考）：
                             // 严禁作为正常 EOF 终结或伪造收尾帧！如实作为 Err 透传底层中断，
                             // 促使 Claude Code 等客户端状态机捕获 ConnectionLost 并自动触发原生重试。
-                            if !handler.is_terminal() && !handler.has_content() {
+                            if !handler.is_terminal()
+                                && !handler.has_content()
+                                && !handler.finalize_without_content()
+                            {
                                 let reason = if handler.has_thinking() {
                                     "upstream stream ended after thinking without content"
                                 } else {
@@ -405,8 +440,16 @@ where
                                 yield Ok(c);
                             }
                         }
+                        // 协议可选择自行下发终结错误帧并吞掉底层 Err
+                        let (error_frames, error_handled) =
+                            handler.emit_error_finalize(&report);
+                        for c in error_frames {
+                            yield Ok(c);
+                        }
                         error_emitted = true;
-                        yield Err(report.client_message());
+                        if !error_handled {
+                            yield Err(report.client_message());
+                        }
                         break;
                     }
                     yield Ok(handler.heartbeat_frame());
@@ -422,7 +465,7 @@ where
 
         // [关键契约守卫] 若流结束时未处于终止态且未产生任何正文/工具调用（无论是否产生了思考）：
         // 严禁下发伪造终结帧，如实透传 Err 促使客户端原生重试
-        if !handler.is_terminal() && !handler.has_content() {
+        if !handler.is_terminal() && !handler.has_content() && !handler.finalize_without_content() {
             let reason = if handler.has_thinking() {
                 "upstream stream ended after thinking without content"
             } else {
@@ -475,8 +518,11 @@ where
             } else {
                 handler.emit_finalize()
             };
-            for c in final_chunks {
-                yield Ok(c);
+            // 终结屏障：允许协议在真正下发终结帧前完成异步确认（如会话落盘）
+            if handler.finalize_barrier().await {
+                for c in final_chunks {
+                    yield Ok(c);
+                }
             }
         }
 

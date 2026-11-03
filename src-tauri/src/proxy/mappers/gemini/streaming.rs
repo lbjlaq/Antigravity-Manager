@@ -28,6 +28,7 @@ pub struct GeminiStreamHandler {
     saw_function_call: bool,
     has_content: bool,
     has_thinking: bool,
+    is_thinking_active: bool,
 }
 
 impl GeminiStreamHandler {
@@ -58,6 +59,7 @@ impl GeminiStreamHandler {
             saw_function_call: false,
             has_content: false,
             has_thinking: false,
+            is_thinking_active: false,
         }
     }
 }
@@ -119,11 +121,13 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
             .cloned()
             .unwrap_or_default();
 
+        let mut chunk_has_finish_reason = false;
         for cand in &parts_snapshot {
             if cand.get("finishReason").and_then(|v| v.as_str()).is_some()
                 || cand.get("finish_reason").and_then(|v| v.as_str()).is_some()
             {
                 self.saw_finish_reason = true;
+                chunk_has_finish_reason = true;
             }
             if let Some(parts) = cand
                 .get("content")
@@ -134,10 +138,15 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
                     let is_thought = part.get("thought").and_then(|v| v.as_bool()) == Some(true);
                     if is_thought {
                         self.has_thinking = true;
+                        self.is_thinking_active = true;
+                    } else {
+                        self.is_thinking_active = false;
                     }
                     if part.get("functionCall").is_some() {
                         self.saw_function_call = true;
                         self.has_content = true;
+                        // 工具调用是明确的行动输出，必然意味着思考阶段已结束。
+                        self.is_thinking_active = false;
                     } else if (!is_thought && part.get("text").is_some())
                         || part.get("inlineData").is_some()
                         || part.get("inline_data").is_some()
@@ -164,6 +173,11 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
             }
         }
 
+        // finishReason 表示生成已收尾，思考阶段不再活跃。
+        if chunk_has_finish_reason {
+            self.is_thinking_active = false;
+        }
+
         // 注入工具调用 ID
         crate::proxy::mappers::gemini::wrapper::inject_ids_to_response(&mut json, &self.model_name);
 
@@ -187,6 +201,10 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
 
     fn has_thinking(&self) -> bool {
         self.has_thinking
+    }
+
+    fn is_thinking_active(&self) -> bool {
+        self.is_thinking_active
     }
 
     fn emit_finalize(&mut self) -> Vec<Bytes> {
@@ -308,6 +326,46 @@ impl ProtocolStreamHandler for GeminiStreamHandler {
 mod tests {
     use super::*;
     use futures::StreamExt;
+
+    fn test_gemini_handler() -> GeminiStreamHandler {
+        GeminiStreamHandler::new(
+            None,
+            "session_gemini_phase".to_string(),
+            "gemini-2.5-pro".to_string(),
+            0,
+            "anchor".to_string(),
+            false,
+            None,
+            "acc@example.com".to_string(),
+            "gemini-2.5-pro".to_string(),
+        )
+    }
+
+    #[test]
+    fn test_gemini_handler_tracks_thinking_phase_lifecycle() {
+        let mut handler = test_gemini_handler();
+
+        handler.process_line(
+            r#"data: {"candidates":[{"content":{"parts":[{"thought":true,"text":"Pondering."}]}}]}"#,
+        );
+        assert!(handler.has_thinking());
+        assert!(handler.is_thinking_active());
+        assert!(!handler.has_content());
+
+        handler
+            .process_line(r#"data: {"candidates":[{"content":{"parts":[{"text":"Answer."}]}}]}"#);
+        assert!(handler.has_content());
+        assert!(!handler.is_thinking_active());
+
+        // finishReason-only chunk must also close the thinking phase.
+        let mut finish_handler = test_gemini_handler();
+        finish_handler.process_line(
+            r#"data: {"candidates":[{"content":{"parts":[{"thought":true,"text":"Pondering."}]}}]}"#,
+        );
+        assert!(finish_handler.is_thinking_active());
+        finish_handler.process_line(r#"data: {"candidates":[{"finishReason":"STOP"}]}"#);
+        assert!(!finish_handler.is_thinking_active());
+    }
 
     #[tokio::test]
     async fn test_gemini_stream_abnormal_interruption_preserves_content_without_tampering() {

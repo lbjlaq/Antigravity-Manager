@@ -54,7 +54,7 @@
   - **Strictly Scoped Attribution (致谢范围约束)**: Gratitude, inline attribution, and co-authorship are strictly limited to:
     1. The current active developer/author;
     2. The contributor/author of the referenced PR;
-    3. User-defined co-creators (e.g., `Co-Authored-By: JeikCode <code@jeikcode.top>`).
+    3. User-defined co-creators.
     Never emit indiscriminate, unverified, or irrelevant thanks/attributions to arbitrary third parties.
 - **Contributor Respect & Attribution**:
   - **Merge From the Original PR First**: Integrate a contributor's original remote PR properly *before* applying any local modifications, then comment on that PR with the acceptance/merge points and any extra changes — never pull it locally, process it privately, and close the remote PR on your own; keep contribution credit and contributor goodwill intact.
