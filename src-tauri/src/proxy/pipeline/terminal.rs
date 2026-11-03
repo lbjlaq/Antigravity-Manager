@@ -101,7 +101,7 @@ impl UpstreamTerminal {
     ///   `DEADLINE_EXCEEDED` 处理，不再出现“Claude 504、其余 502”的双口径。
     /// - 重放上限是“我们主动不再重传”，与时间无关，用 503 表达“稍后重试”。
     /// - 四者都不罚账号：前三种是“等得不够久”，重放上限是“我们主动止损”，都不是账号故障。
-    /// - 首字节超时与全局预算耗尽时，虽然不惩罚账号，但解绑当前会话粘性绑定（abandon_sticky_account = true），
+    /// - 首字节超时、上传中断与全局预算耗尽时，虽然不惩罚账号，但解绑当前会话粘性绑定（abandon_sticky_account = true），
     ///   确保客户端下一次发起重试请求时能够自动调度到号池中的其他健康账号，彻底消除“卡在同一账号循环死等”问题。
     pub fn disposition(self) -> TerminalDisposition {
         TerminalDisposition {
@@ -111,7 +111,10 @@ impl UpstreamTerminal {
             },
             penalize_account: false,
             stop_rotation: true,
-            abandon_sticky_account: matches!(self, Self::FirstByte | Self::GlobalBudget),
+            abandon_sticky_account: matches!(
+                self,
+                Self::FirstByte | Self::Upload | Self::GlobalBudget
+            ),
         }
     }
 }
@@ -362,14 +365,10 @@ mod tests {
             );
             assert!(!disposition.penalize_account, "{terminal:?}");
             assert!(disposition.stop_rotation, "{terminal:?}");
-            if matches!(
-                terminal,
-                UpstreamTerminal::FirstByte | UpstreamTerminal::GlobalBudget
-            ) {
-                assert!(disposition.abandon_sticky_account, "{terminal:?}");
-            } else {
-                assert!(!disposition.abandon_sticky_account, "{terminal:?}");
-            }
+            assert!(
+                disposition.abandon_sticky_account,
+                "all time-like terminals must abandon sticky account: {terminal:?}"
+            );
         }
 
         // 重放上限不是时间问题，用 503 表达“稍后重试”，同样不罚账号
