@@ -174,15 +174,22 @@ impl UpstreamCallResult {
 
 /// 首字预算基准硬上限（秒）
 ///
-/// 必须显著小于下游客户端的首包看门狗（jeikcode 为 180s），
+/// 必须显著小于下游客户端的首包看门狗（jeikcode 常见 180s），
 /// 否则客户端先断开，网关白等一轮并留下一个“无日志的孤儿请求”。
-/// 预留 30s 给建连 + 上传 + 端点切换，故文字基准取 150s。
-pub const MAX_FIRST_BYTE_BUDGET_SECS: u64 = 150;
+/// 预留充足时间给建连 + 上传 + 端点切换，故文字基准取 135s。
+pub const MAX_FIRST_BYTE_BUDGET_SECS: u64 = 135;
 
-/// 叠加媒体增量后的最终上限（图片 +45 / 视频 +60）
+/// 叠加媒体增量后的首字最终上限（图片 +45 / 视频 +60）
 ///
-/// 仍须小于 `pipeline::budget::DEFAULT_GATEWAY_REQUEST_BUDGET_SECS`（默认 270s，可 env 覆盖）。
-pub const MAX_FIRST_BYTE_CEILING_SECS: u64 = MAX_FIRST_BYTE_BUDGET_SECS + 60;
+/// 严格受下游客户端 180s 看门狗的安全边界（145s）约束，
+/// 预留至少 35s 安全窗口，彻底根治带图/多模态请求击穿客户端看门狗问题。
+pub const MAX_FIRST_BYTE_CEILING_SECS: u64 = 145;
+
+/// 针对常见下游客户端（JeikCode 180s、Claude Desktop 等）的全链路总超时绝对安全上限（秒）
+///
+/// 包含所有端点上传阶段与首字等待阶段的笛卡尔累加和，强制截断在 160s 以内，
+/// 为客户端 180s 看门狗留足 20s 缓冲区，防止网关成为孤儿请求。
+pub const MAX_CLIENT_SAFE_TOTAL_BUDGET_SECS: u64 = 160;
 
 /// 由请求体体积粗估 token 规模（仅用于超时曲线分档，不参与计费/统计）
 ///
@@ -1194,9 +1201,12 @@ impl UpstreamClient {
         let first_byte_total_secs = primary.max(fallback).min(MAX_FIRST_BYTE_CEILING_SECS);
 
         // 每个端点尝试都包含完整上传阶段；首字预算全链只计一份
+        // 关键防护：total_budget_secs 必须严格受客户端绝对安全上限约束，
+        // 彻底杜绝上传预算乘以多端点叠加首字超时后击穿 180s 看门狗！
         let total_budget_secs = upload_budget_secs
             .saturating_mul(endpoint_attempt_limit as u64)
-            .saturating_add(first_byte_total_secs);
+            .saturating_add(first_byte_total_secs)
+            .min(MAX_CLIENT_SAFE_TOTAL_BUDGET_SECS);
 
         // 停滞超时：上传阶段单次持续无进展超时。不随 body 体积估算结果被挤压到极小值，
         // 至少给足建连与握手宽限（max connect_secs）。
@@ -2431,7 +2441,10 @@ mod tests {
             1024,
             false,
         );
-        assert_eq!(image_fallback, text + 45 / 2);
+        assert_eq!(
+            image_fallback,
+            (text + 45 / 2).min(MAX_FIRST_BYTE_CEILING_SECS)
+        );
         let other_fallback = UpstreamClient::calculate_first_byte_wait_secs(
             PayloadMediaKind::Other,
             1,
@@ -2499,8 +2512,9 @@ mod tests {
         assert_eq!(small_plan.first_byte_total_secs, text);
         assert_eq!(
             small_plan.total_budget_secs,
-            small_plan.upload_budget_secs * small_plan.endpoint_attempt_limit as u64
-                + small_plan.first_byte_total_secs
+            (small_plan.upload_budget_secs * small_plan.endpoint_attempt_limit as u64
+                + small_plan.first_byte_total_secs)
+                .min(MAX_CLIENT_SAFE_TOTAL_BUDGET_SECS)
         );
         assert_eq!(
             small_plan.stall_secs, 45,
