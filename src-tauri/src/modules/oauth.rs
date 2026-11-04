@@ -1,8 +1,19 @@
 use serde::{Deserialize, Serialize};
 
 // Google OAuth configuration
+// 个人版官方客户端 (IDE 默认)
 const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
 const CLIENT_SECRET: &str = "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";
+
+// 企业版 / GCP (Vertex AI) 官方客户端
+const GCP_CLIENT_ID: &str =
+    "884354919052-36trc1jjb3tguiac32ov6cod268c5blh.apps.googleusercontent.com";
+const GCP_CLIENT_SECRET: &str = "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";
+
+pub const BUILTIN_PERSONAL_CLIENT_KEY: &str = "antigravity_personal";
+pub const BUILTIN_ENTERPRISE_CLIENT_KEY: &str = "antigravity_enterprise";
+pub const BUILTIN_GCP_CLIENT_KEY: &str = "antigravity_gcp";
+
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo";
 const TOKEN_REFRESH_SKEW_SECONDS: i64 = 900;
@@ -74,6 +85,8 @@ pub struct OAuthClientDescriptor {
     pub client_id: String,
     pub is_active: bool,
     pub is_builtin: bool,
+    #[serde(default)]
+    pub is_gcp_tos: bool,
 }
 
 const OAUTH_CLIENTS_ENV: &str = "ANTIGRAVITY_OAUTH_CLIENTS";
@@ -87,14 +100,31 @@ fn normalize_client_key(key: &str) -> String {
     key.trim().to_ascii_lowercase()
 }
 
+pub fn is_gcp_enterprise_client(client_key: Option<&str>) -> bool {
+    let key = match client_key.map(str::trim).filter(|k| !k.is_empty()) {
+        Some(k) => k.to_ascii_lowercase(),
+        None => return false,
+    };
+    key == BUILTIN_GCP_CLIENT_KEY || key.contains("gcp") || key.contains("vertex")
+}
+
 fn build_registry() -> OAuthClientRegistry {
-    let mut clients: Vec<OAuthClientConfig> = vec![OAuthClientConfig {
-        key: normalize_client_key(DEFAULT_OAUTH_CLIENT_KEY),
-        label: "Antigravity Enterprise".to_string(),
-        client_id: CLIENT_ID.to_string(),
-        client_secret: CLIENT_SECRET.to_string(),
-        is_builtin: true,
-    }];
+    let mut clients: Vec<OAuthClientConfig> = vec![
+        OAuthClientConfig {
+            key: normalize_client_key(DEFAULT_OAUTH_CLIENT_KEY),
+            label: "Antigravity (Standard)".to_string(),
+            client_id: CLIENT_ID.to_string(),
+            client_secret: CLIENT_SECRET.to_string(),
+            is_builtin: true,
+        },
+        OAuthClientConfig {
+            key: normalize_client_key(BUILTIN_GCP_CLIENT_KEY),
+            label: "Google Cloud / Vertex AI (Enterprise)".to_string(),
+            client_id: GCP_CLIENT_ID.to_string(),
+            client_secret: GCP_CLIENT_SECRET.to_string(),
+            is_builtin: true,
+        },
+    ];
 
     if let Ok(raw_extra_clients) = std::env::var(OAUTH_CLIENTS_ENV) {
         for entry in raw_extra_clients.split(';') {
@@ -293,6 +323,7 @@ pub fn list_oauth_clients() -> Result<Vec<OAuthClientDescriptor>, String> {
             client_id: client.client_id.clone(),
             is_active: client.key == registry.active_key,
             is_builtin: client.is_builtin,
+            is_gcp_tos: is_gcp_enterprise_client(Some(&client.key)),
         })
         .collect())
 }

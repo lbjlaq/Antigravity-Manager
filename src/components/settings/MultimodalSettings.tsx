@@ -12,9 +12,9 @@ interface MultimodalSettingsProps {
 
 export const MultimodalSettings: React.FC<MultimodalSettingsProps> = ({
     config = {
-        enable_sliding_window: false,
+        enable_sliding_window: true,
         strategy: "count",
-        max_fresh_images: 10,
+        max_fresh_images: 5,
         strip_remote_urls: false,
         max_total_image_mb: 32,
     },
@@ -26,9 +26,9 @@ export const MultimodalSettings: React.FC<MultimodalSettingsProps> = ({
     const [savedSuccessfully, setSavedSuccessfully] = useState(false);
 
     const localConfig: MultimodalConfig = {
-        enable_sliding_window: config?.enable_sliding_window ?? false,
+        enable_sliding_window: config?.enable_sliding_window ?? true,
         strategy: config?.strategy ?? "count",
-        max_fresh_images: config?.max_fresh_images ?? 10,
+        max_fresh_images: config?.max_fresh_images ?? 5,
         strip_remote_urls: config?.strip_remote_urls ?? false,
         max_total_image_mb: config?.max_total_image_mb ?? 32,
     };

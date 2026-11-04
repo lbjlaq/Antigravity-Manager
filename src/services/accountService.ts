@@ -120,6 +120,13 @@ export interface OAuthClientInfo {
     client_id: string;
     is_active: boolean;
     is_builtin: boolean;
+    is_gcp_tos?: boolean;
+}
+
+export async function prepareOAuthUrl(oauthClientKey?: string): Promise<string> {
+    const res = await invoke<any>('prepare_oauth_url', oauthClientKey ? { oauthClientKey } : undefined);
+    const url = typeof res === 'string' ? res : res?.url;
+    return url || '';
 }
 
 export async function listOAuthClients(): Promise<OAuthClientInfo[]> {

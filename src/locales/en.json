@@ -412,6 +412,10 @@
             "proxy_enabled": "Enabled proxy for {{count}} accounts",
             "proxy_disabled": "Disabled proxy for {{count}} accounts"
         },
+        "type": {
+            "personal": "Personal Account",
+            "enterprise": "Enterprise / GCP (Vertex AI)"
+        },
         "add": {
             "title": "Add Account",
             "tabs": {
@@ -420,6 +424,8 @@
                 "import": "Import DB"
             },
             "oauth": {
+                "enterprise_title": "Google Cloud / Vertex AI Authorization",
+                "enterprise_desc": "Authorize with official GCP enterprise client to retain enterprise quota and link Vertex AI project",
                 "recommend": "Recommended",
                 "desc": "Opens default browser for Google login to auto-fetch and save Token.",
                 "btn_start": "Start OAuth",

@@ -1735,12 +1735,25 @@ async fn admin_refresh_all_quotas() -> Result<impl IntoResponse, (StatusCode, Js
 
 // --- OAuth Handlers ---
 
+#[derive(Deserialize, Default)]
+struct AdminOAuthRequest {
+    #[serde(
+        default,
+        alias = "client_key",
+        alias = "clientKey",
+        alias = "oauthClientKey"
+    )]
+    oauth_client_key: Option<String>,
+}
+
 async fn admin_prepare_oauth_url(
     State(state): State<AppState>,
+    body: Option<Json<AdminOAuthRequest>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let client_key = body.and_then(|b| b.0.oauth_client_key);
     let url = state
         .account_service
-        .prepare_oauth_url(None)
+        .prepare_oauth_url(client_key)
         .await
         .map_err(|e| {
             (
@@ -1753,10 +1766,12 @@ async fn admin_prepare_oauth_url(
 
 async fn admin_start_oauth_login(
     State(state): State<AppState>,
+    body: Option<Json<AdminOAuthRequest>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let client_key = body.and_then(|b| b.0.oauth_client_key);
     let account = state
         .account_service
-        .start_oauth_login(None)
+        .start_oauth_login(client_key)
         .await
         .map_err(|e| {
             (

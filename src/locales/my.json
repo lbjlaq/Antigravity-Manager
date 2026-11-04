@@ -380,7 +380,9 @@
                 "error_no_url": "Gagal mendapatkan URL OAuth",
                 "popup_blocked": "Pop timbul disekat",
                 "manual_submitting": "Menghantar kod pengesahan...",
-                "manual_submitted": "Kod pengesahan dihantar, sedang diproses di latar belakang..."
+                "manual_submitted": "Kod pengesahan dihantar, sedang diproses di latar belakang...",
+                "enterprise_title": "Google Cloud / Vertex AI လုပ်ငန်းသုံး ခွင့်ပြုချက်",
+                "enterprise_desc": "လုပ်ငန်းသုံး ခွဲတမ်းကို ထိန်းသိမ်းပြီး Vertex AI ပရောဂျက်နှင့် ချိတ်ဆက်ရန် တရားဝင် GCP လုပ်ငန်းသုံး client ဖြင့် ခွင့်ပြုပါ"
             },
             "token": {
                 "label": "Token Muat Semula",
@@ -483,7 +485,11 @@
         "client_cli": "CLI",
         "client_cli_tooltip": "Akaun log masuk Antigravity CLI (agy) semasa",
         "switch_next_short": "Seterusnya",
-        "weekly_exhausted_tooltip": "Kuota mingguan habis, perlindungan automatik diaktifkan"
+        "weekly_exhausted_tooltip": "Kuota mingguan habis, perlindungan automatik diaktifkan",
+        "type": {
+            "personal": "ကိုယ်ပိုင်အကောင့် (Personal)",
+            "enterprise": "လုပ်ငန်းသုံး / GCP (Vertex AI)"
+        }
     },
     "settings": {
         "save": "Simpan Tetapan",

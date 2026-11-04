@@ -377,7 +377,9 @@
                 "error_no_url": "Không thể lấy URL OAuth",
                 "popup_blocked": "Cửa sổ bật lên bị chặn",
                 "manual_submitting": "Đang gửi mã xác thực...",
-                "manual_submitted": "Mã xác thực đã gửi, đang xử lý ngầm..."
+                "manual_submitted": "Mã xác thực đã gửi, đang xử lý ngầm...",
+                "enterprise_title": "Ủy quyền doanh nghiệp Google Cloud / Vertex AI",
+                "enterprise_desc": "Ủy quyền bằng ứng dụng khách GCP doanh nghiệp chính thức để giữ hạn ngạch doanh nghiệp và liên kết dự án Vertex AI"
             },
             "token": {
                 "label": "Refresh Token",
@@ -485,7 +487,11 @@
         "client_cli": "CLI",
         "client_cli_tooltip": "Tài khoản đăng nhập Antigravity CLI (agy) hiện tại",
         "switch_next_short": "Tiếp",
-        "weekly_exhausted_tooltip": "Hạn mức tuần đã cạn, đã kích hoạt bảo vệ"
+        "weekly_exhausted_tooltip": "Hạn mức tuần đã cạn, đã kích hoạt bảo vệ",
+        "type": {
+            "personal": "Tài khoản cá nhân",
+            "enterprise": "Doanh nghiệp / GCP (Vertex AI)"
+        }
     },
     "settings": {
         "save": "Lưu Cài đặt",

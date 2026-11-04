@@ -403,7 +403,9 @@
                 "error_no_url": "No se pudo obtener la URL de OAuth",
                 "popup_blocked": "Ventana emergente bloqueada",
                 "manual_submitting": "Enviando código de autorización...",
-                "manual_submitted": "Código de autorización enviado, procesando en segundo plano..."
+                "manual_submitted": "Código de autorización enviado, procesando en segundo plano...",
+                "enterprise_title": "Autorización empresarial Google Cloud / Vertex AI",
+                "enterprise_desc": "Autorice con el cliente empresarial oficial de GCP para conservar la cuota empresarial y vincular el proyecto Vertex AI"
             },
             "token": {
                 "label": "Token de Actualización",
@@ -485,7 +487,11 @@
         "client_cli": "CLI",
         "client_cli_tooltip": "Cuenta iniciada en Antigravity CLI (agy)",
         "switch_next_short": "Siguiente",
-        "weekly_exhausted_tooltip": "Cuota semanal agotada, protección activada"
+        "weekly_exhausted_tooltip": "Cuota semanal agotada, protección activada",
+        "type": {
+            "personal": "Cuenta personal",
+            "enterprise": "Empresa / GCP (Vertex AI)"
+        }
     },
     "settings": {
         "save": "Guardar Configuración",

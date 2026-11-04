@@ -403,7 +403,9 @@
                 "error_no_url": "OAuth URL을 가져올 수 없습니다",
                 "popup_blocked": "팝업이 차단되었습니다",
                 "manual_submitting": "인증 코드 제출 중...",
-                "manual_submitted": "인증 코드가 제출되었습니다. 백엔드에서 처리 중입니다..."
+                "manual_submitted": "인증 코드가 제출되었습니다. 백엔드에서 처리 중입니다...",
+                "enterprise_title": "Google Cloud / Vertex AI 기업 인증",
+                "enterprise_desc": "공식 GCP 기업 전용 클라이언트로 인증하여 기업 할당량을 유지하고 Vertex AI 프로젝트와 연결합니다"
             },
             "token": {
                 "label": "리프레시 토큰",
@@ -485,7 +487,11 @@
         "client_cli": "CLI",
         "client_cli_tooltip": "현재 Antigravity CLI (agy)에 로그인된 계정",
         "switch_next_short": "다음",
-        "weekly_exhausted_tooltip": "주간 할당량이 소진되어 자동 보호가 실행되었습니다"
+        "weekly_exhausted_tooltip": "주간 할당량이 소진되어 자동 보호가 실행되었습니다",
+        "type": {
+            "personal": "개인 계정 (Personal)",
+            "enterprise": "기업 / GCP (Vertex AI)"
+        }
     },
     "settings": {
         "save": "설정 저장",

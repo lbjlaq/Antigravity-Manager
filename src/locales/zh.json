@@ -410,6 +410,10 @@
             "proxy_enabled": "成功启用 {{count}} 个账号的反代功能",
             "proxy_disabled": "成功禁用 {{count}} 个账号的反代功能"
         },
+        "type": {
+            "personal": "个人账号 (Personal)",
+            "enterprise": "企业 / GCP (Vertex AI)"
+        },
         "add": {
             "title": "添加新账号",
             "tabs": {
@@ -418,6 +422,8 @@
                 "import": "从数据库导入"
             },
             "oauth": {
+                "enterprise_title": "Google Cloud / Vertex AI 企业授权",
+                "enterprise_desc": "使用官方企业 GCP 专属客户端授权，自动保留企业配额并关联 Vertex AI 项目",
                 "recommend": "推荐方式",
                 "desc": "将打开默认浏览器进行 Google 登录授权，自动获取并保存 Token。",
                 "btn_start": "开始 OAuth 授权",

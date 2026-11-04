@@ -8,6 +8,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { request as invoke } from '../../utils/request';
 import { isTauri } from '../../utils/env';
 import { copyToClipboard } from '../../utils/clipboard';
+import * as accountService from '../../services/accountService';
 
 interface AddAccountDialogProps {
     onAdd: (email: string, refreshToken: string) => Promise<void>;
@@ -21,6 +22,7 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     const fetchAccounts = useAccountStore(state => state.fetchAccounts);
     const [isOpen, setIsOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<'oauth' | 'token' | 'import'>(isTauri() ? 'oauth' : 'token');
+    const [accountType, setAccountType] = useState<'personal' | 'enterprise'>('personal');
     const [refreshToken, setRefreshToken] = useState('');
     const [oauthUrl, setOauthUrl] = useState('');
     const [oauthUrlCopied, setOauthUrlCopied] = useState(false);
@@ -119,17 +121,17 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
     useEffect(() => {
         if (!isOpen) return;
         if (activeTab !== 'oauth') return;
-        if (oauthUrl) return;
 
-        invoke<any>('prepare_oauth_url')
-            .then((res) => {
-                const url = typeof res === 'string' ? res : res?.url;
+        const clientKey = accountType === 'enterprise' ? 'antigravity_gcp' : 'antigravity_enterprise';
+
+        accountService.prepareOAuthUrl(clientKey)
+            .then((url) => {
                 if (url && url.length > 0) setOauthUrl(url);
             })
             .catch((e) => {
                 console.error('Failed to prepare OAuth URL:', e);
             });
-    }, [isOpen, activeTab, oauthUrl]);
+    }, [isOpen, activeTab, accountType]);
 
     // If user navigates away from OAuth tab, cancel prepared flow to release the port.
     useEffect(() => {
@@ -279,11 +281,12 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             setStatus('loading');
             setMessage(t('accounts.add.oauth.btn_start') + '...');
 
+            const clientKey = accountType === 'enterprise' ? 'antigravity_gcp' : 'antigravity_enterprise';
+
             // 1. 获取 URL (复用已有 URL，避免重复触发 prepare_oauth_url 导致后端 Flow 状态被覆盖重置)
             let url = oauthUrl;
             if (!url) {
-                const res = await invoke<any>('prepare_oauth_url');
-                url = typeof res === 'string' ? res : res.url;
+                url = await accountService.prepareOAuthUrl(clientKey);
 
                 if (!url) {
                     throw new Error(t('accounts.add.oauth.error_no_url', 'OAuth URLを取得できませんでした'));
@@ -349,9 +352,10 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
             handleOAuthWeb();
             return;
         }
+        const clientKey = accountType === 'enterprise' ? 'antigravity_gcp' : 'antigravity_enterprise';
         // Default flow: opens the default browser and completes automatically.
         // (If user opened the URL manually, completion is also triggered by oauth-callback-received.)
-        handleAction(t('accounts.add.tabs.oauth'), startOAuthLogin, { clearOauthUrl: false });
+        handleAction(t('accounts.add.tabs.oauth'), () => startOAuthLogin(clientKey), { clearOauthUrl: false });
     };
 
     const handleCompleteOAuth = () => {
@@ -534,6 +538,36 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                             </button>
                         </div>
 
+                        {/* 账号类型选择：个人账号 vs 企业 / Google Cloud (Vertex AI) 账号 */}
+                        <div className="flex p-1 bg-gray-100 dark:bg-base-200 rounded-xl mb-4">
+                            <button
+                                type="button"
+                                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-medium transition-all duration-200 ${accountType === 'personal'
+                                    ? 'bg-white dark:bg-base-100 shadow-sm text-blue-600 dark:text-blue-400'
+                                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                                    }`}
+                                onClick={() => {
+                                    setAccountType('personal');
+                                    setOauthUrl('');
+                                }}
+                            >
+                                {t('accounts.type.personal', '个人账号 (Personal)')}
+                            </button>
+                            <button
+                                type="button"
+                                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-medium transition-all duration-200 ${accountType === 'enterprise'
+                                    ? 'bg-white dark:bg-base-100 shadow-sm text-blue-600 dark:text-blue-400'
+                                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                                    }`}
+                                onClick={() => {
+                                    setAccountType('enterprise');
+                                    setOauthUrl('');
+                                }}
+                            >
+                                {t('accounts.type.enterprise', '企业 / GCP (Vertex AI)')}
+                            </button>
+                        </div>
+
                         {/* 添加 Web 模式提示 */}
                         {!isTauri() && (
                             <div className="alert alert-info mb-4 text-xs py-2 flex items-center gap-2 bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 border-blue-100 dark:border-blue-800">
@@ -554,9 +588,15 @@ function AddAccountDialog({ onAdd, showText = true }: AddAccountDialogProps) {
                                             <Globe className="w-10 h-10 text-blue-500" />
                                         </div>
                                         <div className="space-y-1">
-                                            <h4 className="font-medium text-gray-900 dark:text-gray-100">{t('accounts.add.oauth.recommend')}</h4>
+                                            <h4 className="font-medium text-gray-900 dark:text-gray-100">
+                                                {accountType === 'enterprise'
+                                                    ? t('accounts.add.oauth.enterprise_title', 'Google Cloud / Vertex AI 企业授权')
+                                                    : t('accounts.add.oauth.recommend')}
+                                            </h4>
                                             <p className="text-sm text-gray-500 dark:text-gray-400 max-w-xs mx-auto">
-                                                {t('accounts.add.oauth.desc')}
+                                                {accountType === 'enterprise'
+                                                    ? t('accounts.add.oauth.enterprise_desc', '使用官方企业 GCP 专属客户端授权，自动保留企业配额并关联 Vertex AI 项目')
+                                                    : t('accounts.add.oauth.desc')}
                                             </p>
                                         </div>
                                     </div>

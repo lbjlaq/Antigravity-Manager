@@ -389,7 +389,9 @@
                 "error_no_url": "無法獲取 OAuth URL",
                 "popup_blocked": "彈窗被攔截，請允許彈出視窗",
                 "manual_submitting": "正在提交認證碼...",
-                "manual_submitted": "認證碼已提交，後台處理中..."
+                "manual_submitted": "認證碼已提交，後台處理中...",
+                "enterprise_title": "Google Cloud / Vertex AI 企業授權",
+                "enterprise_desc": "使用官方企業 GCP 專屬客戶端授權，自動保留企業配額並關聯 Vertex AI 專案"
             },
             "token": {
                 "label": "Refresh Token",
@@ -484,7 +486,11 @@
         "weekly_tokens": "本週期 Token",
         "weekly_tokens_tooltip": "本實例在此配額週期記錄的 Token 用量（輸入 + 輸出）",
         "switch_next_short": "切下一個",
-        "weekly_exhausted_tooltip": "週配額已耗盡，已觸發自動保護"
+        "weekly_exhausted_tooltip": "週配額已耗盡，已觸發自動保護",
+        "type": {
+            "personal": "個人帳號 (Personal)",
+            "enterprise": "企業 / GCP (Vertex AI)"
+        }
     },
     "settings": {
         "save": "儲存設定",

@@ -806,15 +806,15 @@ fn default_sliding_strategy() -> String {
 /// 多模态交互与保鲜滑窗配置
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MultimodalConfig {
-    /// 是否启用多模态历史保鲜滑动窗口 (默认关闭，贯彻保真透传)
-    #[serde(default)]
+    /// 是否启用多模态历史保鲜滑动窗口 (默认开启，自动防范长上下文堆积多图导致请求体膨胀及 504)
+    #[serde(default = "default_enable_sliding_window")]
     pub enable_sliding_window: bool,
 
     /// 保鲜策略模式: "count" (按图片张数) 或 "memory" (按累积内存大小)
     #[serde(default = "default_sliding_strategy")]
     pub strategy: String,
 
-    /// 滑动窗口保鲜最大图片张数（默认 10，填 0 为不限张数）
+    /// 滑动窗口保鲜最大图片张数（默认 5，填 0 为不限张数）
     #[serde(default = "default_max_fresh_images")]
     pub max_fresh_images: usize,
 
@@ -827,8 +827,12 @@ pub struct MultimodalConfig {
     pub max_total_image_mb: usize,
 }
 
+fn default_enable_sliding_window() -> bool {
+    true
+}
+
 fn default_max_fresh_images() -> usize {
-    10
+    5
 }
 
 fn default_max_total_image_mb() -> usize {
@@ -838,7 +842,7 @@ fn default_max_total_image_mb() -> usize {
 impl Default for MultimodalConfig {
     fn default() -> Self {
         Self {
-            enable_sliding_window: false,
+            enable_sliding_window: default_enable_sliding_window(),
             strategy: default_sliding_strategy(),
             max_fresh_images: default_max_fresh_images(),
             strip_remote_urls: false,
@@ -890,7 +894,7 @@ fn default_connect_secs() -> u64 {
 }
 
 fn default_min_upload_mbps() -> f64 {
-    2.0
+    0.8
 }
 
 fn default_extra_wait_ratio() -> f64 {

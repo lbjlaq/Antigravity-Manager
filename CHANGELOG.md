@@ -4,6 +4,19 @@
 
 *   **版本演进**:
     *   **v5.0.3-beta.1 (2026-11-04)**:
+        -   **[官方 GCP Vertex AI 企业账号支持与多协议凭据自适应隔离] (Fixes #3823)**:
+            -   **对齐官方 GCP 企业客户端凭据**: 深度逆向对齐官方 Antigravity 应用的 GCP / Vertex AI 企业授权协议架构，引入官方企业客户端（`884354919052-...`）及密钥体系，支持通过 `antigravity_gcp` 独立注册与动态鉴权，彻底解决企业组织账号授权后被误判为 Free Tier 或缺失 Vertex AI 项目配额的缺陷。(Fixes #3823)
+            -   **存量凭据数据严格向下兼容**: 账号凭据严格通过 `token.oauth_client_key` 与 `is_gcp_tos` 区分；存量使用个人版官方客户端授权的自定义域名企业邮箱（如 `@imsot.org`）100% 保持个人模式平滑刷新，杜绝因仅凭邮箱后缀切换客户端导致 Google 报 `400 invalid_grant` 的风险。
+            -   **添加账号全模式多语言支持**: 重构前端添加账号弹窗，将“个人账号 (Personal)”与“企业 / GCP (Vertex AI)”账号类型切换器提升至公共顶层区域，统一覆盖 OAuth 授权、Refresh Token 批量录入及本地 DB 导入全场景；并同步补齐了中英日繁韩西葡俄土越阿缅等 12 种主流语言的完整本地化翻译。(Fixes #3823)
+            -   **IDE 状态数据库与自适应刷新注入**: 在向本地 Antigravity IDE 数据库（`state.vscdb`）注入凭据时，根据客户端类型精准控制 Protobuf Field 6（`is_gcp_tos`）与 Vertex AI 项目映射；刷新机制自适应账号所属凭据类型，杜绝跨模式客户端混用。
+        -   **[修复免打扰模式开机自启仍弹出界面与自启状态同步] (Fixes #3820, Thanks to @W2514)**:
+            -   **启动项参数防御性模糊匹配**: 修复部分 Windows 启动项（注册表或快捷方式/任务计划）拼接参数或带引号导致启动入参无法被 `== "--minimized"` 精准全等匹配、从而错将开机自启识别为普通前台启动而弹出主窗口的缺陷；增强入参检测逻辑支持模糊包含匹配（`lower.contains("--minimized") || lower.contains("--silent") || lower.contains("--hidden")`），确保免打扰启动 100% 稳定留在系统托盘。(Fixes #3820, Thanks to @W2514)
+            -   **开机自启动配置状态原子同步**: 在 `toggle_auto_launch` 注册/注销系统自启动项时，同步将 `config.auto_launch` 原子持久化写入应用配置文件，消除前端界面配置与底层操作系统注册表之间的状态脱节。(Fixes #3820)
+        -   **[多模态保鲜滑窗默认启用与风控 403 粘性熔断自动禁用] (Fixes #3824)**:
+            -   **对齐官方多模态保鲜滑窗规范**: 深度逆向对齐官方 Antigravity 应用的旧图清理与尺寸收敛机制，将网关的多模态保鲜滑动窗口设为默认开启（`enable_sliding_window = true`），默认保留最新 5 张图片（`max_fresh_images = 5`）；彻底杜绝在长对话中多轮历史图片累积导致请求体线性膨胀至数兆、引发上传堵塞及 504 Gateway Timeout 的硬伤。(Fixes #3824)
+            -   **上传速度自适应基准放宽**: 将默认最低上传带宽基准由 2.0 Mbps 宽限至 0.8 Mbps，增强慢速代理与复杂跨国网络环境下大图与附件上传的预算容忍度。
+            -   **403 人机验证阻断全链熔断与解绑**: 修复遇到 Google `VALIDATION_REQUIRED` 人机验证挑战时，粘性会话与调度快照未做阻断校验导致客户端多次重试死锁在同一故障账号的缺陷；现在检测到人机验证阻断后，立即强制解除会话粘性绑定（`session_accounts.remove`），并在快照生成与固定账号选择中无缝降级迁移至池中健康账号。
+            -   **403 自动触发禁用反代**: 发生 403 验证阻断时，同步调用 `toggle_proxy_status` 将账号标记为 `proxy_disabled = true`，使账号即刻在前端直观呈现停用状态并彻底退出反代调度池。
         -   **[网关超时全链路预算安全截断与终态会话粘性解绑] (Fixes #3821, Thanks to @jeikl, @cubelikeplayDaniel)**:
             -   **客户端安全超时绝对硬顶**: 引入 `MAX_CLIENT_SAFE_TOTAL_BUDGET_SECS = 160s` 全链路安全硬上限；解决此前长文本结合多模态增量与多端点重试时总预算累加膨胀至 190s~256s 击穿下游客户端（如 JeikCode）180s 内置看门狗导致连接被强行切断为 canceled 孤儿请求的问题，为客户端看门狗预留出至少 20s 的安全缓冲，确保网关永远早于客户端吐出标准的结构化 504 响应。(Fixes #3821, Thanks to @jeikl, @cubelikeplayDaniel)
             -   **首字预算基准与媒体上限压制**: 将上游首字节等待预算基准 `MAX_FIRST_BYTE_BUDGET_SECS` 压制至 135s，媒体增量上限 `MAX_FIRST_BYTE_CEILING_SECS` 压制至 145s；200k+ 超大上下文自适应 TTFT 下限同步对齐至 135s。(Fixes #3821, Thanks to @jeikl)

@@ -407,7 +407,9 @@
                 "error_no_url": "Não foi possível obter a URL OAuth",
                 "popup_blocked": "Popup bloqueado",
                 "manual_submitting": "Enviando código de autorização...",
-                "manual_submitted": "Código de autorização enviado, processando em segundo plano..."
+                "manual_submitted": "Código de autorização enviado, processando em segundo plano...",
+                "enterprise_title": "Autorização corporativa Google Cloud / Vertex AI",
+                "enterprise_desc": "Autorize com o cliente corporativo oficial do GCP para manter a cota corporativa e vincular o projeto Vertex AI"
             },
             "token": {
                 "label": "Refresh Token",
@@ -489,7 +491,11 @@
         "client_cli": "CLI",
         "client_cli_tooltip": "Conta conectada no Antigravity CLI (agy)",
         "switch_next_short": "Próximo",
-        "weekly_exhausted_tooltip": "Cota semanal esgotada, proteção ativada"
+        "weekly_exhausted_tooltip": "Cota semanal esgotada, proteção ativada",
+        "type": {
+            "personal": "Conta pessoal",
+            "enterprise": "Corporativo / GCP (Vertex AI)"
+        }
     },
     "settings": {
         "save": "Salvar Configurações",

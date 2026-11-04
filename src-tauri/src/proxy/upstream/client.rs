@@ -2365,12 +2365,12 @@ mod tests {
         assert_eq!(small, 5, "small body budget should clamp to minimum 5s");
 
         // 2) 47.4MB 大视频：公式 请求体大小 ÷ 上传带宽 × (1 + 额外等待系数)
-        // 47_374_672 / 250_000 ≈ 189.5s * 1.4 ≈ 265s
+        // 47_374_672 / 100_000 ≈ 473.7s * 1.4 ≈ 663s (min_upload_mbps=0.8)
         let big = 47_374_672usize;
         let (big_budget, _) = UpstreamClient::calculate_upload_budget_secs(big, &cfg, None);
         assert!(
-            big_budget >= 250 && big_budget <= 280,
-            "47MB body budget should be around 263-265s, got {big_budget}"
+            big_budget >= 650 && big_budget <= 680,
+            "47MB body budget should be around 660-670s with 0.8Mbps, got {big_budget}"
         );
 
         // 3) 实测速度高于下限时参与估算：预算可收紧，仍受下限与停滞检测约束

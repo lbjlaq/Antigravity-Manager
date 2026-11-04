@@ -403,7 +403,9 @@
                 "error_no_url": "Не удалось получить URL OAuth",
                 "popup_blocked": "Всплывающее окно заблокировано",
                 "manual_submitting": "Отправка кода авторизации...",
-                "manual_submitted": "Код авторизации отправлен, обработка в фоновом режиме..."
+                "manual_submitted": "Код авторизации отправлен, обработка в фоновом режиме...",
+                "enterprise_title": "Авторизация Google Cloud / Vertex AI",
+                "enterprise_desc": "Авторизация через официальный корпоративный клиент GCP для сохранения квоты и привязки проекта Vertex AI"
             },
             "token": {
                 "label": "Refresh Token",
@@ -485,7 +487,11 @@
         "client_cli": "CLI",
         "client_cli_tooltip": "Текущий аккаунт Antigravity CLI (agy)",
         "switch_next_short": "След.",
-        "weekly_exhausted_tooltip": "Недельная квота исчерпана, защита активирована"
+        "weekly_exhausted_tooltip": "Недельная квота исчерпана, защита активирована",
+        "type": {
+            "personal": "Личный аккаунт",
+            "enterprise": "Корпоративный / GCP (Vertex AI)"
+        }
     },
     "settings": {
         "save": "Сохранить настройки",

@@ -380,7 +380,9 @@
                 "error_no_url": "فشل في الحصول على عنوان URL لـ OAuth",
                 "popup_blocked": "تم حظر النافذة المنبثقة",
                 "manual_submitting": "جارٍ إرسال رمز التحقق...",
-                "manual_submitted": "تم إرسال رمز التحقق، جارٍ المعالجة في الخلفية..."
+                "manual_submitted": "تم إرسال رمز التحقق، جارٍ المعالجة في الخلفية...",
+                "enterprise_title": "تفويض مؤسسي لـ Google Cloud / Vertex AI",
+                "enterprise_desc": "التفويض عبر عميل GCP الرسمي للمؤسسات للاحتفاظ بحصة المؤسسة وربط مشروع Vertex AI"
             },
             "token": {
                 "label": "Refresh Token",
@@ -483,7 +485,11 @@
         "client_cli": "CLI",
         "client_cli_tooltip": "حساب Antigravity CLI (agy) المسجل حالياً",
         "switch_next_short": "التالي",
-        "weekly_exhausted_tooltip": "تم استنفاد الحصة الأسبوعية، تم تفعيل الحماية التلقائية"
+        "weekly_exhausted_tooltip": "تم استنفاد الحصة الأسبوعية، تم تفعيل الحماية التلقائية",
+        "type": {
+            "personal": "حساب شخصي (Personal)",
+            "enterprise": "مؤسسي / GCP (Vertex AI)"
+        }
     },
     "settings": {
         "save": "حفظ الإعدادات",

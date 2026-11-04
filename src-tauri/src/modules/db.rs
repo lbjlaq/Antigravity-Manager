@@ -113,13 +113,18 @@ pub fn inject_token(
 ) -> Result<String, String> {
     crate::modules::logger::log_info("Starting Token injection...");
 
-    // 如果使用的是本项目的内置 Client ID (antigravity_enterprise 实际上是标准版)
-    // 则强制关闭 GCP TOS 标志，以确保 IDE 使用标准 Client ID 进行刷新
+    // 针对个人客户端（如内置标准客户端 antigravity_enterprise），若检测到误标 is_gcp_tos 则进行修正
+    // 但若为企业/GCP 客户端 (antigravity_gcp 等)，必须保留 is_gcp_tos = true
     if let Some(key) = oauth_client_key {
-        if key == "antigravity_enterprise" {
+        if crate::modules::oauth::is_gcp_enterprise_client(Some(key)) {
+            crate::modules::logger::log_info(
+                "[DB] GCP Enterprise client detected, preserving is_gcp_tos = true for injection.",
+            );
+            is_gcp_tos = true;
+        } else if key == "antigravity_enterprise" || key == "antigravity_personal" {
             if is_gcp_tos {
                 crate::modules::logger::log_info(
-                    "[DB] Built-in client detected, forcing Standard mode for injection.",
+                    "[DB] Standard client detected, forcing Standard mode for injection.",
                 );
                 is_gcp_tos = false;
             }

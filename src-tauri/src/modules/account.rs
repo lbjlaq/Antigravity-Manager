@@ -2056,11 +2056,12 @@ pub async fn switch_account(
 }
 
 fn is_enterprise_client(client_key: Option<&str>) -> bool {
-    client_key
-        .map(str::trim)
-        .filter(|key| !key.is_empty())
-        .map(|key| key.eq_ignore_ascii_case("antigravity_enterprise"))
-        .unwrap_or(false)
+    crate::modules::oauth::is_gcp_enterprise_client(client_key)
+        || client_key
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .map(|key| key.eq_ignore_ascii_case("antigravity_enterprise"))
+            .unwrap_or(false)
 }
 
 fn normalize_project_id(project_id: Option<&str>) -> Option<String> {
@@ -3271,6 +3272,17 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     }
                 };
 
+                let is_gcp_tos = if crate::modules::oauth::is_gcp_enterprise_client(
+                    token_res
+                        .oauth_client_key
+                        .as_deref()
+                        .or(account.token.oauth_client_key.as_deref()),
+                ) {
+                    true
+                } else {
+                    account.token.is_gcp_tos
+                };
+
                 let new_token = TokenData::new(
                     token_res.access_token.clone(),
                     account.token.refresh_token.clone(),
@@ -3278,7 +3290,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     account.token.email.clone(),
                     account.token.project_id.clone(), // Keep original project_id
                     None,                             // Add None as session_id
-                    account.token.is_gcp_tos,
+                    is_gcp_tos,
                     token_res.id_token.clone(),
                 )
                 .with_oauth_client_key(
@@ -3772,6 +3784,16 @@ pub async fn batch_import_accounts_logic(
                     )
                     .await;
 
+                    let is_gcp_tos = if crate::modules::oauth::is_gcp_enterprise_client(
+                        token_res.oauth_client_key.as_deref(),
+                    ) {
+                        true
+                    } else if let Ok(existing_acc) = load_account(&account_id) {
+                        existing_acc.token.is_gcp_tos
+                    } else {
+                        false
+                    };
+
                     // 5. 构造 TokenData 与 Account（若为既有账号，保留原有偏好与配额数据原地更新，杜绝重复凭据文件！）
                     let mut account = if let Ok(mut existing_acc) = load_account(&account_id) {
                         existing_acc.token = crate::models::TokenData::new(
@@ -3781,7 +3803,7 @@ pub async fn batch_import_accounts_logic(
                             Some(real_email.clone()),
                             project_id.or(existing_acc.token.project_id.clone()),
                             None,
-                            false,
+                            is_gcp_tos,
                             token_res.id_token,
                         )
                         .with_oauth_client_key(token_res.oauth_client_key);
@@ -3803,7 +3825,7 @@ pub async fn batch_import_accounts_logic(
                             Some(real_email.clone()),
                             project_id,
                             None,
-                            false,
+                            is_gcp_tos,
                             token_res.id_token,
                         )
                         .with_oauth_client_key(token_res.oauth_client_key);

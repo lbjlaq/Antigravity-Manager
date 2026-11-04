@@ -550,6 +550,7 @@ impl TokenManager {
                         let id_token = token_response.id_token;
                         let new_rt = token_response.refresh_token;
                         let write_ts = now + expires_in;
+                        let client_key = token_response.oauth_client_key;
                         tokio::task::spawn_blocking(move || {
                             let Ok(_lk) = crate::modules::account::lock_account_file_updates()
                             else {
@@ -570,6 +571,12 @@ impl TokenManager {
                             }
                             if let Some(rt) = new_rt {
                                 val["token"]["refresh_token"] = rt.into();
+                            }
+                            if let Some(ck) = client_key {
+                                if crate::modules::oauth::is_gcp_enterprise_client(Some(&ck)) {
+                                    val["token"]["is_gcp_tos"] = serde_json::Value::Bool(true);
+                                }
+                                val["token"]["oauth_client_key"] = ck.into();
                             }
                             if let Ok(s) = serde_json::to_string_pretty(&val) {
                                 let _ = std::fs::write(&write_path, s);
@@ -2830,8 +2837,21 @@ impl TokenManager {
         target_model: &str,
         excluded_accounts: &HashSet<String>,
     ) -> Result<(String, String, String, String, u64), String> {
-        let mut tokens_snapshot: Vec<ProxyToken> =
-            self.tokens.iter().map(|e| e.value().clone()).collect();
+        let now_ts = chrono::Utc::now().timestamp();
+        let mut tokens_snapshot: Vec<ProxyToken> = self
+            .tokens
+            .iter()
+            .map(|e| e.value().clone())
+            .filter(|token| {
+                if token.validation_blocked
+                    && (token.validation_blocked_until == 0
+                        || token.validation_blocked_until > now_ts)
+                {
+                    return false;
+                }
+                true
+            })
+            .collect();
         tokens_snapshot.retain(|token| !excluded_accounts.contains(&token.account_id));
         let mut total = tokens_snapshot.len();
         if total == 0 {
@@ -3185,6 +3205,11 @@ impl TokenManager {
                                 )
                                 .unwrap_or_else(|| target_model.to_string());
 
+                            let is_validation_blocked = preferred_token.validation_blocked
+                                && (preferred_token.validation_blocked_until == 0
+                                    || preferred_token.validation_blocked_until
+                                        > chrono::Utc::now().timestamp());
+
                             let is_rate_limited = self
                                 .is_rate_limited(
                                     &preferred_token.account_id,
@@ -3212,7 +3237,12 @@ impl TokenManager {
                                         > 0
                             });
 
-                            if has_zero_quota && has_healthy_alternative {
+                            if is_validation_blocked {
+                                tracing::warn!(
+                                    "🔒 [Validation-Blocked] Preferred account {} is blocked for validation, seamlessly falling back to available account in pool",
+                                    preferred_token.email
+                                );
+                            } else if has_zero_quota && has_healthy_alternative {
                                 tracing::warn!(
                                     "🔒 [Auto-Switch #3639] Preferred account {} has 0% quota for model {}, seamlessly falling back to available account in pool",
                                     preferred_token.email,
@@ -3350,7 +3380,18 @@ impl TokenManager {
                         let is_qos_jailed = self
                             .qos_guardian
                             .is_jailed_or_probing(&bound_token.account_id);
-                        if is_qos_jailed {
+                        let is_validation_blocked = bound_token.validation_blocked
+                            && (bound_token.validation_blocked_until == 0
+                                || bound_token.validation_blocked_until
+                                    > chrono::Utc::now().timestamp());
+
+                        if is_validation_blocked {
+                            tracing::warn!(
+                                "Sticky Session: Bound account {} is VALIDATION BLOCKED, unbinding and switching.",
+                                bound_token.email
+                            );
+                            self.session_accounts.remove(sid);
+                        } else if is_qos_jailed {
                             tracing::warn!(
                                 "Sticky Session: Bound account {} is JAILED in QoS Guardian, unbinding and switching.",
                                 bound_token.email
@@ -3808,6 +3849,7 @@ impl TokenManager {
         let expires_in = token_response.expires_in;
         let id_token = token_response.id_token.clone();
         let refresh_token = token_response.refresh_token.clone();
+        let oauth_client_key = token_response.oauth_client_key.clone();
         let expiry_timestamp = now + expires_in;
         update_account_json(&path, move |content| {
             content["token"]["access_token"] = serde_json::Value::String(access_token);
@@ -3823,6 +3865,13 @@ impl TokenManager {
             // 如果获取到了新的 refresh_token（Token 轮转），也一并保存
             if let Some(rt) = refresh_token {
                 content["token"]["refresh_token"] = serde_json::Value::String(rt);
+            }
+
+            if let Some(ck) = oauth_client_key {
+                if crate::modules::oauth::is_gcp_enterprise_client(Some(&ck)) {
+                    content["token"]["is_gcp_tos"] = serde_json::Value::Bool(true);
+                }
+                content["token"]["oauth_client_key"] = serde_json::Value::String(ck);
             }
         })
         .await?;
@@ -5393,14 +5442,18 @@ impl TokenManager {
         let refresh_token_clone = refresh_token.to_string();
 
         tokio::task::spawn_blocking(move || {
+            let is_gcp_tos = crate::modules::oauth::is_gcp_enterprise_client(
+                token_info.oauth_client_key.as_deref(),
+            );
+
             let token_data = crate::models::TokenData::new(
                 token_info.access_token,
                 refresh_token_clone,
                 token_info.expires_in,
                 Some(email_clone.clone()),
                 Some(project_id),
-                None,  // session_id
-                false, // 默认不开启
+                None,       // session_id
+                is_gcp_tos, // 企业或 GCP 客户端自适应开启
                 token_info.id_token,
             )
             .with_oauth_client_key(token_info.oauth_client_key.clone());
@@ -6207,6 +6260,13 @@ impl TokenManager {
                 token.validation_url = Some(url.clone());
             }
         }
+
+        // [FIX] 403 人机验证阻断时，同步标记 proxy_disabled = true，确保前端直接展示禁用反代状态并停止参与调度
+        let _ = crate::modules::account::toggle_proxy_status(
+            account_id,
+            false,
+            Some("validation_required"),
+        );
 
         let reason_owned = reason.to_string();
         update_account_json(&path, move |account| {

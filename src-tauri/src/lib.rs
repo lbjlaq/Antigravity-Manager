@@ -87,6 +87,9 @@ fn apply_login_launch_policy(app: &tauri::App) {
             || lower == "--hidden"
             || lower == "-s"
             || lower == "/minimized"
+            || lower.contains("--minimized")
+            || lower.contains("--silent")
+            || lower.contains("--hidden")
     });
     if !launched_by_login {
         return;
