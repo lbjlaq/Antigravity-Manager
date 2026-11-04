@@ -241,15 +241,139 @@ fn simplify_message(msg: &Value) -> Value {
     Value::Object(out)
 }
 
+fn redact_data_url(url_str: &str) -> String {
+    if url_str.starts_with("data:") {
+        let comma_pos = url_str.find(',').unwrap_or(0);
+        let header = &url_str[..comma_pos];
+        let len = url_str.len().saturating_sub(comma_pos);
+        format!("{},[base64 image: {} bytes]", header, len)
+    } else {
+        url_str.to_string()
+    }
+}
+
+fn simplify_image_url_value(img_url: &Value) -> Value {
+    if let Some(url_str) = img_url.as_str() {
+        return Value::String(redact_data_url(url_str));
+    }
+    if let Some(obj) = img_url.as_object() {
+        if let Some(url_str) = obj.get("url").and_then(|u| u.as_str()) {
+            if url_str.starts_with("data:") {
+                let mut cloned = obj.clone();
+                cloned.insert("url".into(), Value::String(redact_data_url(url_str)));
+                return Value::Object(cloned);
+            }
+        }
+    }
+    img_url.clone()
+}
+
+fn simplify_content_block(obj: &Map<String, Value>) -> Value {
+    let mut slim = Map::new();
+    if let Some(t) = obj.get("type") {
+        slim.insert("type".into(), t.clone());
+    }
+    if let Some(text) = obj.get("text") {
+        slim.insert("text".into(), simplify_content(text));
+    }
+    if let Some(thinking) = obj.get("thinking") {
+        slim.insert("thinking".into(), thinking.clone());
+    }
+    for sig_key in [
+        "signature",
+        "thoughtSignature",
+        "thinking_signature",
+        "thought_signature",
+    ] {
+        if let Some(sig) = obj.get(sig_key) {
+            slim.insert(sig_key.to_string(), sig.clone());
+        }
+    }
+    if let Some(id) = obj.get("id") {
+        slim.insert("id".into(), id.clone());
+    }
+    if let Some(name) = obj.get("name") {
+        slim.insert("name".into(), name.clone());
+    }
+    if let Some(input) = obj.get("input") {
+        slim.insert("input".into(), input.clone());
+    }
+    if let Some(tool_use_id) = obj.get("tool_use_id") {
+        slim.insert("tool_use_id".into(), tool_use_id.clone());
+    }
+    if let Some(is_error) = obj.get("is_error") {
+        slim.insert("is_error".into(), is_error.clone());
+    }
+    if let Some(nested_content) = obj.get("content") {
+        slim.insert("content".into(), simplify_content(nested_content));
+    }
+    if let Some(source) = obj.get("source") {
+        if source.get("type").and_then(|t| t.as_str()) == Some("base64") {
+            let media_type = source
+                .get("media_type")
+                .cloned()
+                .unwrap_or(json!("unknown"));
+            let len = source
+                .get("data")
+                .and_then(|d| d.as_str())
+                .map(|s| s.len())
+                .unwrap_or(0);
+            slim.insert(
+                "source".into(),
+                json!({
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": format!("[base64 image: {} bytes]", len)
+                }),
+            );
+        } else {
+            slim.insert("source".into(), source.clone());
+        }
+    }
+    if let Some(img_url) = obj.get("image_url") {
+        slim.insert("image_url".into(), simplify_image_url_value(img_url));
+    }
+    if let Some(file_data) = obj.get("file_data").and_then(|v| v.as_str()) {
+        let redacted = if file_data.starts_with("data:") {
+            redact_data_url(file_data)
+        } else {
+            format!("[base64 file: {} bytes]", file_data.len())
+        };
+        slim.insert("file_data".into(), Value::String(redacted));
+    }
+    if let Some(audio_obj) = obj.get("input_audio").and_then(|v| v.as_object()) {
+        let mut audio_slim = audio_obj.clone();
+        if let Some(data_str) = audio_obj.get("data").and_then(|d| d.as_str()) {
+            audio_slim.insert(
+                "data".into(),
+                Value::String(format!("[base64 audio: {} bytes]", data_str.len())),
+            );
+        }
+        slim.insert("input_audio".into(), Value::Object(audio_slim));
+    }
+    if slim.is_empty() {
+        Value::Object(obj.clone())
+    } else {
+        Value::Object(slim)
+    }
+}
+
 /// OpenAI Responses 的 `input` 项结构与 chat message 不同（`type` / `call_id` / `arguments` /
-/// `output` 等），单独裁剪：沿用 `simplify_message` 的体积控制，再补回调试必需的字段。
+/// `output` 等），单独裁剪：沿用 `simplify_message` 的体积控制，再补回调试必需的字段，
+/// 同时对 `output`（如 Codex `view_image` 返回的 `function_call_output` 图片数组）与顶层 `image_url` 执行 Base64 脱敏。
 fn simplify_responses_input_item(item: &Value) -> Value {
     let mut out = simplify_message(item);
     if let Some(obj) = out.as_object_mut() {
-        for key in ["type", "role", "call_id", "arguments", "output"] {
+        for key in ["type", "role", "call_id", "arguments"] {
             if let Some(v) = item.get(key) {
                 obj.insert(key.to_string(), v.clone());
             }
+        }
+        if let Some(output) = item.get("output") {
+            obj.insert("output".to_string(), simplify_content(output));
+        }
+        if let Some(img_url) = item.get("image_url") {
+            obj.insert("image_url".to_string(), simplify_image_url_value(img_url));
         }
     }
     out
@@ -257,96 +381,25 @@ fn simplify_responses_input_item(item: &Value) -> Value {
 
 fn simplify_content(content: &Value) -> Value {
     match content {
-        Value::String(s) => Value::String(s.clone()),
+        Value::String(s) => {
+            if s.starts_with("data:") {
+                Value::String(redact_data_url(s))
+            } else {
+                Value::String(s.clone())
+            }
+        }
         Value::Array(arr) => Value::Array(
             arr.iter()
                 .map(|block| {
                     if let Some(obj) = block.as_object() {
-                        let mut slim = Map::new();
-                        if let Some(t) = obj.get("type") {
-                            slim.insert("type".into(), t.clone());
-                        }
-                        if let Some(text) = obj.get("text") {
-                            slim.insert("text".into(), text.clone());
-                        }
-                        if let Some(thinking) = obj.get("thinking") {
-                            slim.insert("thinking".into(), thinking.clone());
-                        }
-                        for sig_key in [
-                            "signature",
-                            "thoughtSignature",
-                            "thinking_signature",
-                            "thought_signature",
-                        ] {
-                            if let Some(sig) = obj.get(sig_key) {
-                                slim.insert(sig_key.to_string(), sig.clone());
-                            }
-                        }
-                        if let Some(id) = obj.get("id") {
-                            slim.insert("id".into(), id.clone());
-                        }
-                        if let Some(name) = obj.get("name") {
-                            slim.insert("name".into(), name.clone());
-                        }
-                        if let Some(input) = obj.get("input") {
-                            slim.insert("input".into(), input.clone());
-                        }
-                        if let Some(tool_use_id) = obj.get("tool_use_id") {
-                            slim.insert("tool_use_id".into(), tool_use_id.clone());
-                        }
-                        if let Some(is_error) = obj.get("is_error") {
-                            slim.insert("is_error".into(), is_error.clone());
-                        }
-                        if let Some(source) = obj.get("source") {
-                            if source.get("type").and_then(|t| t.as_str()) == Some("base64") {
-                                let media_type = source
-                                    .get("media_type")
-                                    .cloned()
-                                    .unwrap_or(json!("unknown"));
-                                let len = source
-                                    .get("data")
-                                    .and_then(|d| d.as_str())
-                                    .map(|s| s.len())
-                                    .unwrap_or(0);
-                                slim.insert(
-                                    "source".into(),
-                                    json!({
-                                        "type": "base64",
-                                        "media_type": media_type,
-                                        "data": format!("[base64 image: {} bytes]", len)
-                                    }),
-                                );
-                            } else {
-                                slim.insert("source".into(), source.clone());
-                            }
-                        }
-                        if let Some(img_url) = obj.get("image_url") {
-                            if let Some(url_str) = img_url.get("url").and_then(|u| u.as_str()) {
-                                if url_str.starts_with("data:") {
-                                    let comma_pos = url_str.find(',').unwrap_or(0);
-                                    let header = &url_str[..comma_pos];
-                                    let len = url_str.len() - comma_pos;
-                                    slim.insert("image_url".into(), json!({
-                                        "url": format!("{},[base64 image: {} bytes]", header, len)
-                                    }));
-                                } else {
-                                    slim.insert("image_url".into(), img_url.clone());
-                                }
-                            } else {
-                                slim.insert("image_url".into(), img_url.clone());
-                            }
-                        }
-                        if slim.is_empty() {
-                            Value::Object(obj.clone())
-                        } else {
-                            Value::Object(slim)
-                        }
+                        simplify_content_block(obj)
                     } else {
                         block.clone()
                     }
                 })
                 .collect(),
         ),
+        Value::Object(obj) => simplify_content_block(obj),
         other => other.clone(),
     }
 }
@@ -798,6 +851,44 @@ mod tests {
         assert_eq!(simplified["input"][1]["call_id"], "call_1");
         assert_eq!(simplified["input"][1]["output"], "ok");
         assert_eq!(simplified["max_output_tokens"], 1024);
+    }
+
+    #[test]
+    fn test_simplify_responses_payload_redacts_input_image_and_tool_output_base64() {
+        let b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let data_url = format!("data:image/png;base64,{b64}");
+        let req = json!({
+            "model": "gemini-4-argon-high",
+            "instructions": "You are Codex.",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Look at this screenshot" },
+                        { "type": "input_image", "image_url": data_url.clone() }
+                    ]
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_view_img_1",
+                    "output": [
+                        { "type": "input_image", "image_url": data_url }
+                    ]
+                }
+            ]
+        });
+
+        let simplified = simplify_payload_json(&req);
+        let serialized = serde_json::to_string(&simplified).unwrap();
+        assert!(
+            !serialized.contains(b64),
+            "Concise mode must redact base64 in both message input_image and function_call_output: {serialized}"
+        );
+        assert!(
+            serialized.contains("[base64 image:"),
+            "Redacted placeholder should be present: {serialized}"
+        );
     }
 
     #[test]
