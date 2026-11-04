@@ -85,7 +85,6 @@ tauri-plugin-window-state = "2"
 parking_lot = "0.12.5"
 tokio-util = "0.7.18"
 aes-gcm = "0.10.3"
-machine-uid = "0.5.4"
 plist = "1.7"
 rquest = { version = "5.1.0", features = ["json", "stream", "socks", "cookies"] }
 rquest-util = "2.2.1"
@@ -93,6 +92,9 @@ time = { version = "0.3", features = ["formatting", "parsing"] }
 
 [target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
 gtk = "0.18"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+machine-uid = "0.5.4"
 
 [features]
 default = ["custom-protocol"]
