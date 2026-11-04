@@ -197,87 +197,108 @@ fn apply_account_credentials(
         }
     }
 
-    if use_keyring {
-        // ================== 最新版 Antigravity 原生应用逻辑 (>= 2.0.0) ==================
-        // 2.1 写入系统 Keychain/Keyring
-        if let Err(keyring_err) = write_to_system_keyring(account) {
-            // 如果写入系统 Keyring 失败（例如 Linux 下未安装 secret-tool 或无桌面会话 D-Bus）
-            // 检查本地是否存在可用的 SQLite 数据库，若存在则自动降级回退到 SQLite 注入，确保账号切换顺利完成
-            let db_fallback = if let Ok(db_path) = db::get_db_path(effective_target) {
-                if db_path.exists() {
-                    crate::modules::logger::log_warn(&format!(
-                        "[Desktop] Keyring write failed ({}), but found SQLite DB at {:?}. Falling back to SQLite token injection.",
-                        keyring_err, db_path
-                    ));
-                    let backup_path = db_path.with_extension("vscdb.backup");
-                    let _ = fs::copy(&db_path, &backup_path);
-                    let _ = db::inject_token(
-                        &db_path,
-                        &account.token.access_token,
-                        &account.token.refresh_token,
-                        account.token.expiry_timestamp,
-                        &account.email,
-                        account.token.is_gcp_tos,
-                        account.token.project_id.as_deref(),
-                        account.token.id_token.as_deref(),
-                        account.token.oauth_client_key.as_deref(),
-                        effective_target,
-                    );
-                    if let Some(ref profile) = account.device_profile {
-                        let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
-                    }
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+    // ================== Antigravity 经典版/原生应用逻辑 ==================
+    // 2.1 写入设备 Profile (若 storage_path 可解析)
+    if let Ok(storage_path) = device::get_storage_path(effective_target) {
+        if let Some(ref profile) = account.device_profile {
+            let _ = device::write_profile(&storage_path, profile);
+        }
+    }
 
-            if !db_fallback {
+    // 2.2 双写同步：若经典版存储路径下存在 SQLite state.vscdb，执行数据库 Token 注入
+    // 确保原生桌面端与扩展会话状态在所有 Antigravity 变体中保持严格一致 (Fixes #3829)
+    let mut sqlite_injected = false;
+    let mut sqlite_err_opt = None;
+    let db_path_res = db::get_db_path(effective_target);
+    match db_path_res {
+        Ok(ref db_path) if db_path.exists() => {
+            crate::modules::logger::log_info(&format!(
+                "[Desktop] Detected existing SQLite DB at {:?} for classic target; performing dual-write.",
+                db_path
+            ));
+            let backup_path = db_path.with_extension("vscdb.backup");
+            let _ = fs::copy(db_path, &backup_path);
+            match db::inject_token(
+                db_path,
+                &account.token.access_token,
+                &account.token.refresh_token,
+                account.token.expiry_timestamp,
+                &account.email,
+                account.token.is_gcp_tos,
+                account.token.project_id.as_deref(),
+                account.token.id_token.as_deref(),
+                account.token.oauth_client_key.as_deref(),
+                effective_target,
+            ) {
+                Ok(_) => {
+                    sqlite_injected = true;
+                    if let Some(ref profile) = account.device_profile {
+                        let _ = db::write_service_machine_id(db_path, &profile.mac_machine_id);
+                    }
+                }
+                Err(e) => {
+                    crate::modules::logger::log_warn(&format!(
+                        "[Desktop] Failed to inject token into SQLite DB for classic: {}",
+                        e
+                    ));
+                    sqlite_err_opt = Some(e);
+                }
+            }
+        }
+        Ok(ref db_path) => {
+            if !use_keyring {
+                sqlite_err_opt = Some(format!(
+                    "SQLite database file not found at {:?} for legacy Antigravity (< 2.0.0)",
+                    db_path
+                ));
+            }
+        }
+        Err(e) => {
+            if !use_keyring {
+                sqlite_err_opt = Some(e);
+            }
+        }
+    }
+
+    // 2.3 写入系统 Keychain/Keyring
+    let mut keyring_err_opt = None;
+    if use_keyring {
+        if let Err(keyring_err) = write_to_system_keyring(account) {
+            crate::modules::logger::log_warn(&format!(
+                "[Desktop] Keyring write failed ({}) for classic.",
+                keyring_err
+            ));
+            keyring_err_opt = Some(keyring_err);
+        }
+    }
+
+    // 2.4 同步写入 Standalone / 语言服务原生降级凭据: ~/.gemini/jetski-standalone-oauth-token 与 oauth_creds.json
+    // 消除经典款切号后客户端弹出“还需要登录认证”的问题 (Fixes #3829)
+    if let Err(file_err) = write_to_file_credentials(account, false) {
+        crate::modules::logger::log_warn(&format!(
+            "[Desktop] Warning: Failed to write file credentials for classic: {}",
+            file_err
+        ));
+    }
+
+    // 2.5 校验凭据写入状态：
+    if use_keyring {
+        // 若要求使用 Keyring 且 Keyring 写入失败，但在已成功注入本地 SQLite 数据库时降级允许切号继续；
+        // 若两者均未成功则阻断切号流程
+        if let Some(keyring_err) = keyring_err_opt {
+            if !sqlite_injected {
                 return Err(keyring_err);
             }
-        }
-
-        // 2.2 原生应用可能没有 storage.json，但如果有的话，我们也可以尝试安全地写入设备 Profile，以兼容指纹信息
-        if let Ok(storage_path) = device::get_storage_path(effective_target) {
-            if let Some(ref profile) = account.device_profile {
-                let _ = device::write_profile(&storage_path, profile);
-            }
+            crate::modules::logger::log_warn(
+                "[Desktop] Keyring write failed, but SQLite DB was synchronized for classic; switch proceeding.",
+            );
         }
     } else {
-        // ================== 原有 Antigravity 旧版或定制 IDE 逻辑 (< 2.0.0) ==================
-        // 2.1 获取存储路径
-        let storage_path = device::get_storage_path(effective_target)?;
-
-        // 2.2 写入设备 Profile
-        if let Some(ref profile) = account.device_profile {
-            device::write_profile(&storage_path, profile)?;
-        }
-
-        // 2.3 数据库处理与 Token 注入
-        let db_path = db::get_db_path(effective_target)?;
-        if db_path.exists() {
-            let backup_path = db_path.with_extension("vscdb.backup");
-            let _ = fs::copy(&db_path, &backup_path);
-        }
-
-        db::inject_token(
-            &db_path,
-            &account.token.access_token,
-            &account.token.refresh_token,
-            account.token.expiry_timestamp,
-            &account.email,
-            account.token.is_gcp_tos,
-            account.token.project_id.as_deref(),
-            account.token.id_token.as_deref(),
-            account.token.oauth_client_key.as_deref(),
-            effective_target,
-        )?;
-
-        // 2.4 同步 Service Machine ID 到数据库
-        if let Some(ref profile) = account.device_profile {
-            let _ = db::write_service_machine_id(&db_path, &profile.mac_machine_id);
+        // 旧版本 (< 2.0.0) 必须成功注入 SQLite
+        if !sqlite_injected {
+            return Err(sqlite_err_opt.unwrap_or_else(|| {
+                "Failed to inject token into SQLite DB for legacy Antigravity (< 2.0.0)".to_string()
+            }));
         }
     }
 
@@ -796,20 +817,14 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
     Ok(())
 }
 
-/// 辅助方法：同步写入本地文件凭据 (~/.gemini/antigravity-cli/antigravity-oauth-token 以及 ~/.gemini/oauth_creds.json)
-/// 用于在 SSH 会话、容器环境或无系统 Keyring / D-Bus 的场景下保障 CLI/工具的凭据兼容性
-fn write_to_file_credentials(
+/// 辅助方法：向指定目录同步写入本地文件凭据
+fn write_to_file_credentials_to_dir(
+    gemini_dir: &std::path::Path,
     account: &crate::models::Account,
     sync_agy_cli: bool,
 ) -> Result<(), String> {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return Err("Failed to resolve user home directory".to_string()),
-    };
-    let gemini_dir = home.join(".gemini");
-
     if !gemini_dir.exists() {
-        if let Err(e) = std::fs::create_dir_all(&gemini_dir) {
+        if let Err(e) = std::fs::create_dir_all(gemini_dir) {
             crate::modules::logger::log_warn(&format!(
                 "[Desktop] Failed to create .gemini directory: {}",
                 e
@@ -998,17 +1013,29 @@ fn write_to_file_credentials(
     Ok(())
 }
 
-/// 辅助方法：从本地文件凭据读取 Token 作为跨平台回退
-fn read_from_file_credentials() -> Result<crate::modules::migration::ImportedOAuthState, String> {
-    let home =
-        dirs::home_dir().ok_or_else(|| "Failed to resolve user home directory".to_string())?;
+/// 辅助方法：同步写入本地文件凭据 (~/.gemini/antigravity-cli/antigravity-oauth-token 以及 ~/.gemini/oauth_creds.json)
+/// 用于在 SSH 会话、容器环境或无系统 Keyring / D-Bus 的场景下保障 CLI/工具的凭据兼容性
+fn write_to_file_credentials(
+    account: &crate::models::Account,
+    sync_agy_cli: bool,
+) -> Result<(), String> {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return Err("Failed to resolve user home directory".to_string()),
+    };
+    write_to_file_credentials_to_dir(&home.join(".gemini"), account, sync_agy_cli)
+}
 
+/// 辅助方法：从指定目录的本地文件凭据读取 Token 作为跨平台回退
+fn read_from_file_credentials_from_dir(
+    gemini_dir: &std::path::Path,
+) -> Result<crate::modules::migration::ImportedOAuthState, String> {
     // 1. 优先尝试从 Antigravity CLI (agy) 原生文件凭据或 Standalone 回退凭据读取
     let candidate_paths = [
-        home.join(".gemini")
+        gemini_dir
             .join("antigravity-cli")
             .join("antigravity-oauth-token"),
-        home.join(".gemini").join("jetski-standalone-oauth-token"),
+        gemini_dir.join("jetski-standalone-oauth-token"),
     ];
     for path in &candidate_paths {
         if path.exists() {
@@ -1020,8 +1047,8 @@ fn read_from_file_credentials() -> Result<crate::modules::migration::ImportedOAu
         }
     }
 
-    // 2. 回退到 ~/.gemini/oauth_creds.json
-    let creds_path = home.join(".gemini").join("oauth_creds.json");
+    // 2. 回退到 oauth_creds.json
+    let creds_path = gemini_dir.join("oauth_creds.json");
     if !creds_path.exists() {
         return Err(
             "No file-based credentials found (~/.gemini/antigravity-cli/antigravity-oauth-token or ~/.gemini/oauth_creds.json)"
@@ -1042,6 +1069,13 @@ fn read_from_file_credentials() -> Result<crate::modules::migration::ImportedOAu
         is_gcp_tos: true,
         project_id: None,
     })
+}
+
+/// 辅助方法：从本地文件凭据读取 Token 作为跨平台回退
+fn read_from_file_credentials() -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    let home =
+        dirs::home_dir().ok_or_else(|| "Failed to resolve user home directory".to_string())?;
+    read_from_file_credentials_from_dir(&home.join(".gemini"))
 }
 
 /// 读取 Antigravity CLI (agy) 原生与备份文件凭据，严格限制仅扫描 Antigravity
@@ -1366,6 +1400,7 @@ impl SystemIntegration for CliIntegration {
                 );
             }
         }
+        let _ = write_to_file_credentials(account, false);
         Ok(())
     }
 
@@ -1621,5 +1656,333 @@ mod tests {
         );
         assert!(!is_ide_classic);
         assert_eq!(effective_classic, None);
+    }
+
+    #[test]
+    fn test_classic_credential_file_sync_writes_jetski_and_oauth_creds() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let gemini_dir = temp_dir.path().join(".gemini");
+
+        let token = crate::models::TokenData::new(
+            "ya29.classic_access_token".to_string(),
+            "1//classic_refresh_token".to_string(),
+            3600,
+            Some("classic-user@example.com".to_string()),
+            Some("proj-classic".to_string()),
+            None,
+            true,
+            Some("id-token-classic".to_string()),
+        );
+        let account = crate::models::Account::new(
+            "classic-acc-1".to_string(),
+            "classic-user@example.com".to_string(),
+            token,
+        );
+
+        // 模拟经典款切号写入凭据 (sync_agy_cli = false)
+        let res = write_to_file_credentials_to_dir(&gemini_dir, &account, false);
+        assert!(res.is_ok());
+
+        // 1. 验证 jetski-standalone-oauth-token 写入成功且内容正确 (Fixes #3829)
+        let standalone_path = gemini_dir.join("jetski-standalone-oauth-token");
+        assert!(standalone_path.exists());
+        let standalone_content = std::fs::read_to_string(&standalone_path).unwrap();
+        let standalone_json: serde_json::Value = serde_json::from_str(&standalone_content).unwrap();
+        assert_eq!(
+            standalone_json["token"]["access_token"],
+            "ya29.classic_access_token"
+        );
+        assert_eq!(
+            standalone_json["token"]["refresh_token"],
+            "1//classic_refresh_token"
+        );
+        assert_eq!(standalone_json["token"]["token_type"], "Bearer");
+        assert_eq!(standalone_json["auth_method"], "consumer");
+        assert_eq!(
+            standalone_json["id_token_email"],
+            "classic-user@example.com"
+        );
+        assert_eq!(standalone_json["id_token"], "id-token-classic");
+
+        // 2. 验证 read_from_file_credentials_from_dir 能够以此文件作为原生回退读取
+        let readback = read_from_file_credentials_from_dir(&gemini_dir).unwrap();
+        assert_eq!(readback.refresh_token, "1//classic_refresh_token");
+
+        // 3. 验证 oauth_creds.json 与 google_accounts.json 正确生成
+        let oauth_path = gemini_dir.join("oauth_creds.json");
+        assert!(oauth_path.exists());
+        let oauth_content = std::fs::read_to_string(&oauth_path).unwrap();
+        let oauth_json: serde_json::Value = serde_json::from_str(&oauth_content).unwrap();
+        assert_eq!(oauth_json["refresh_token"], "1//classic_refresh_token");
+
+        let accounts_path = gemini_dir.join("google_accounts.json");
+        assert!(accounts_path.exists());
+        let accounts_content = std::fs::read_to_string(&accounts_path).unwrap();
+        let accounts_json: serde_json::Value = serde_json::from_str(&accounts_content).unwrap();
+        assert_eq!(accounts_json["active"], "classic-user@example.com");
+
+        // 4. 验证严格隔离：sync_agy_cli = false 时不得向 antigravity-cli 目录写入凭据
+        let agy_cli_token_path = gemini_dir
+            .join("antigravity-cli")
+            .join("antigravity-oauth-token");
+        assert!(
+            !agy_cli_token_path.exists(),
+            "Classic switch must NOT write antigravity-cli credentials"
+        );
+    }
+
+    #[test]
+    fn test_agy_cli_credential_sync_writes_dedicated_cli_token() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let gemini_dir = temp_dir.path().join(".gemini");
+
+        let token = crate::models::TokenData::new(
+            "ya29.agy_access_token".to_string(),
+            "1//agy_refresh_token".to_string(),
+            3600,
+            Some("agy-user@example.com".to_string()),
+            None,
+            None,
+            true,
+            None,
+        );
+        let account = crate::models::Account::new(
+            "agy-acc-1".to_string(),
+            "agy-user@example.com".to_string(),
+            token,
+        );
+
+        // 切换 agy CLI 时同步写入 (sync_agy_cli = true)
+        let res = write_to_file_credentials_to_dir(&gemini_dir, &account, true);
+        assert!(res.is_ok());
+
+        let agy_cli_token_path = gemini_dir
+            .join("antigravity-cli")
+            .join("antigravity-oauth-token");
+        assert!(agy_cli_token_path.exists());
+        let content = std::fs::read_to_string(&agy_cli_token_path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(json["token"]["refresh_token"], "1//agy_refresh_token");
+    }
+
+    #[test]
+    fn test_classic_sqlite_dual_write_preserves_and_updates_state_db() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("state.vscdb");
+
+        // 初始化模拟 SQLite 数据库，包含初始旧数据
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute(
+                "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO ItemTable (key, value) VALUES ('antigravityAuthStatus', 'old_auth_data')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let backup_path = db_path.with_extension("vscdb.backup");
+        let _ = std::fs::copy(&db_path, &backup_path);
+        assert!(backup_path.exists());
+
+        // 注入新凭证与机器 ID
+        let inject_res = crate::modules::db::inject_token(
+            &db_path,
+            "ya29.new_classic_token",
+            "1//new_classic_refresh",
+            1893456000,
+            "new-classic@example.com",
+            true,
+            None,
+            None,
+            None,
+            Some("classic"),
+        );
+        assert!(inject_res.is_ok());
+
+        let machine_res =
+            crate::modules::db::write_service_machine_id(&db_path, "test-mac-machine-id");
+        assert!(machine_res.is_ok());
+
+        // 验证主数据库已正确写入新 Token、用户状态、引导状态与机器指纹
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let oauth_token_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.oauthToken'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(oauth_token_count, 1);
+
+        let user_status_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.userStatus'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(user_status_count, 1);
+
+        let onboarding_val: String = conn
+            .query_row(
+                "SELECT value FROM ItemTable WHERE key = 'antigravityOnboarding'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(onboarding_val, "true");
+
+        let machine_val: String = conn
+            .query_row(
+                "SELECT value FROM ItemTable WHERE key = 'telemetry.serviceMachineId'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(machine_val, "test-mac-machine-id");
+
+        // 验证备份数据库保留了原始内容且未被污染
+        let backup_conn = rusqlite::Connection::open(&backup_path).unwrap();
+        let backup_oauth_count: i64 = backup_conn
+            .query_row(
+                "SELECT COUNT(*) FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.oauthToken'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            backup_oauth_count, 0,
+            "Backup DB must not contain newly injected oauthToken"
+        );
+
+        let backup_machine_count: i64 = backup_conn
+            .query_row(
+                "SELECT COUNT(*) FROM ItemTable WHERE key = 'telemetry.serviceMachineId'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            backup_machine_count, 0,
+            "Backup DB must not contain newly injected machine ID"
+        );
+
+        let backup_old_auth: String = backup_conn
+            .query_row(
+                "SELECT value FROM ItemTable WHERE key = 'antigravityAuthStatus'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(backup_old_auth, "old_auth_data");
+    }
+
+    #[test]
+    fn test_read_from_file_credentials_priority_hierarchy() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let gemini_dir = temp_dir.path().join(".gemini");
+        std::fs::create_dir_all(gemini_dir.join("antigravity-cli")).unwrap();
+
+        let agy_account = crate::models::Account::new(
+            "agy-1".to_string(),
+            "agy@example.com".to_string(),
+            crate::models::TokenData::new(
+                "ya29.agy_acc".to_string(),
+                "1//agy_refresh".to_string(),
+                3600,
+                Some("agy@example.com".to_string()),
+                None,
+                None,
+                true,
+                None,
+            ),
+        );
+        let standalone_account = crate::models::Account::new(
+            "standalone-1".to_string(),
+            "standalone@example.com".to_string(),
+            crate::models::TokenData::new(
+                "ya29.standalone_acc".to_string(),
+                "1//standalone_refresh".to_string(),
+                3600,
+                Some("standalone@example.com".to_string()),
+                None,
+                None,
+                true,
+                None,
+            ),
+        );
+
+        // 1. 同时写入 CLI 凭据与 Standalone 凭据，验证 CLI 凭据优先级最高
+        let _ = write_to_file_credentials_to_dir(&gemini_dir, &agy_account, true);
+        // 覆盖 standalone 凭据为不同值
+        let _ = write_to_file_credentials_to_dir(&gemini_dir, &standalone_account, false);
+        // 此时 antigravity-cli/antigravity-oauth-token 为 agy_refresh，jetski-standalone-oauth-token 为 standalone_refresh
+        let cred = read_from_file_credentials_from_dir(&gemini_dir).unwrap();
+        assert_eq!(
+            cred.refresh_token, "1//agy_refresh",
+            "CLI credentials must have highest priority over standalone"
+        );
+
+        // 2. 移除 CLI 凭据后，验证 jetski-standalone-oauth-token 优于 oauth_creds.json
+        std::fs::remove_file(
+            gemini_dir
+                .join("antigravity-cli")
+                .join("antigravity-oauth-token"),
+        )
+        .unwrap();
+        let cred_standalone = read_from_file_credentials_from_dir(&gemini_dir).unwrap();
+        assert_eq!(
+            cred_standalone.refresh_token, "1//standalone_refresh",
+            "Standalone oauth token must take priority over oauth_creds.json"
+        );
+
+        // 3. 移除 standalone 凭据后，验证回退到 oauth_creds.json
+        std::fs::remove_file(gemini_dir.join("jetski-standalone-oauth-token")).unwrap();
+        let cred_oauth = read_from_file_credentials_from_dir(&gemini_dir).unwrap();
+        assert_eq!(
+            cred_oauth.refresh_token, "1//standalone_refresh",
+            "Should fallback to oauth_creds.json when standalone token missing"
+        );
+
+        // 4. 全部移除后，验证返回明确的错误
+        std::fs::remove_file(gemini_dir.join("oauth_creds.json")).unwrap();
+        let cred_err = read_from_file_credentials_from_dir(&gemini_dir);
+        assert!(
+            cred_err.is_err(),
+            "Must return error when no credential files exist"
+        );
+    }
+
+    #[test]
+    fn test_classic_sqlite_injection_failure_handling() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let corrupt_db_path = temp_dir.path().join("corrupted_state.vscdb");
+
+        // 写入损坏的非 SQLite 文件
+        std::fs::write(&corrupt_db_path, b"not a valid sqlite database header").unwrap();
+
+        let inject_res = crate::modules::db::inject_token(
+            &corrupt_db_path,
+            "ya29.token",
+            "1//refresh",
+            1893456000,
+            "corrupt@example.com",
+            true,
+            None,
+            None,
+            None,
+            Some("classic"),
+        );
+
+        // 必须优雅返回 Err 而不是 panic
+        assert!(
+            inject_res.is_err(),
+            "Injecting token into corrupted DB must return Err gracefully"
+        );
     }
 }
