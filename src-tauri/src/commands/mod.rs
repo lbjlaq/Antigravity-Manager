@@ -1227,15 +1227,23 @@ pub async fn show_mini_view(app: tauri::AppHandle) -> Result<(), String> {
 /// 设置窗口主题（用于同步 Windows 标题栏按钮颜色）
 #[tauri::command]
 pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<(), String> {
-    use tauri::Theme;
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri::Theme;
 
-    let tauri_theme = match theme.as_str() {
-        "dark" => Some(Theme::Dark),
-        "light" => Some(Theme::Light),
-        _ => None, // system default
-    };
+        let tauri_theme = match theme.as_str() {
+            "dark" => Some(Theme::Dark),
+            "light" => Some(Theme::Light),
+            _ => None, // system default
+        };
 
-    window.set_theme(tauri_theme).map_err(|e| e.to_string())
+        window.set_theme(tauri_theme).map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = (window, theme);
+        Ok(())
+    }
 }
 
 /// 获取 Antigravity 可执行文件路径
