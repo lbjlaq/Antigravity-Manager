@@ -3,13 +3,15 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
-    *   **v5.0.3-beta.1 (2026-11-04)**:
+    *   **v5.0.3-beta.2 (2026-11-04)**:
         -   **[Native Termux Android ARM64 Support & Headless Pure-Proxy Architecture] (Fixes #3818, Thanks to @sandwitchers)**:
             -   **Native Android Bionic Build**: Decoupled hard dependencies on Linux desktop GTK/WebKit toolchains, introducing native `aarch64-linux-android` compilation support to eliminate glibc incompatibilities with Android Bionic libc; enables users to run high-performance proxy instances directly on Termux without PRoot or Docker. (Fixes #3818, Thanks to @sandwitchers)
             -   **Standalone Headless Server Binary (`antigravity-server`)**: Extracted a dedicated CLI server binary supporting custom listening ports (`-p / --port`), listening addresses (`-h / --host`), and subcommands, while maintaining environment variable overrides and database initialization. (Fixes #3818)
             -   **One-Click `--no-web` Pure Proxy Power-Saving Mode**: Preserves Web UI static hosting by default for convenient mobile browser management, while introducing `--no-web` / `--pure-proxy` CLI flags and `ABV_DISABLE_WEB` environment variable to completely shut down static files and admin routes for minimal resource usage (~15MB–25MB RAM) and zero Web attack surface. (Fixes #3818)
             -   **Static Asset Whitelisting for Web UI**: Resolved an issue where strict auth modes caused Web UI assets to be intercepted with 401 Unauthorized; added static assets and root routing to the unauthenticated whitelist to ensure mobile browsers load the management UI cleanly. (Fixes #3818)
             -   **Termux One-Click Installation Script**: Added `scripts/install-termux.sh` to auto-detect ARM64 architectures and install the binary directly to Termux standard paths (`$PREFIX/bin/antigravity-server`), providing a seamless drop-in replacement for CLIProxyAPI with SillyTavern and Lumiverse. (Fixes #3818, Thanks to @sandwitchers)
+
+    *   **v5.0.3-beta.1 (2026-11-04)**:
         -   **[Official GCP Vertex AI Enterprise Account Support & Adaptive Credential Isolation] (Fixes #3823)**:
             -   **Aligned with Official GCP Enterprise OAuth Credentials**: Reverse-engineered and matched the official Antigravity application architecture for GCP / Vertex AI enterprise authorization, integrating the official GCP enterprise client (`884354919052-...`) under `antigravity_gcp`. Completely resolves the issue where enterprise accounts were misidentified as Free Tier or lost access to Vertex AI project quotas. (Fixes #3823)
             -   **Strict Backward Compatibility for Legacy Accounts**: Credentials strictly differentiate via `token.oauth_client_key` and `is_gcp_tos`; legacy accounts with custom domain emails (e.g. `@imsot.org`) previously authorized via the personal client retain 100% personal-mode refresh compatibility, preventing Google `400 invalid_grant` errors caused by naive domain-based client switching.

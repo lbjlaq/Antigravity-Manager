@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master, beta]
+    branches: [main, master, beta, 'feat/*']
   pull_request:
     branches: [main, master, beta]
 
@@ -141,3 +141,44 @@ jobs:
           # CI 环境不需要签名
           TAURI_SIGNING_PRIVATE_KEY: ""
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+
+  # Android ARM64 原生 Termux Headless 构建
+  build-android-arm64:
+    name: Build Android ARM64 Server (Termux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: true
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Android ARM64 headless server binary
+        run: |
+          cd src-tauri
+          cargo ndk -t arm64-v8a -p 24 -- cargo build --release --bin antigravity-server
+
+      - name: Package Android ARM64 artifact
+        run: |
+          mkdir -p dist-android
+          cp src-tauri/target/aarch64-linux-android/release/antigravity-server dist-android/
+          tar -czvf antigravity-server-android-arm64.tar.gz -C dist-android antigravity-server
+
+      - name: Upload Android ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: antigravity-server-android-arm64
+          path: antigravity-server-android-arm64.tar.gz
+          if-no-files-found: error
