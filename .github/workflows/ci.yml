@@ -168,7 +168,7 @@ jobs:
       - name: Build Android ARM64 headless server binary
         run: |
           cd src-tauri
-          cargo ndk -t arm64-v8a -p 24 -- cargo build --release --bin antigravity-server
+          cargo ndk -t arm64-v8a build --release --bin antigravity-server
 
       - name: Package Android ARM64 artifact
         run: |
