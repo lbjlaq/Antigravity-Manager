@@ -117,6 +117,19 @@ async fn auth_middleware_internal(
     let method = request.method().clone();
     let path = request.uri().path().to_string();
 
+    // 静态资源文件与前端入口白名单 (用于 Headless/Docker/Web UI 正常加载)
+    let is_static_asset = path == "/"
+        || path == "/index.html"
+        || path == "/favicon.ico"
+        || path.starts_with("/assets/")
+        || path.starts_with("/icons/")
+        || path.ends_with(".js")
+        || path.ends_with(".css")
+        || path.ends_with(".png")
+        || path.ends_with(".svg")
+        || path.ends_with(".woff")
+        || path.ends_with(".woff2");
+
     // 过滤心跳、健康检查与探针请求,避免日志噪音
     let is_health_check = path == "/healthz"
         || path == "/api/health"
@@ -124,7 +137,8 @@ async fn auth_middleware_internal(
         || path == "/version"
         || path == "/v1/version"
         || path == "/props"
-        || path == "/v1/props";
+        || path == "/v1/props"
+        || is_static_asset;
     let is_internal_endpoint = path.starts_with("/internal/");
     if !path.contains("event_logging") && !is_health_check {
         tracing::info!("Request: {} {}", method, path);
