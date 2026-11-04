@@ -15,6 +15,14 @@ edition = "2021"
 name = "antigravity_tools_lib"
 crate-type = ["rlib"]
 
+[[bin]]
+name = "antigravity-tools"
+path = "src/main.rs"
+
+[[bin]]
+name = "antigravity-server"
+path = "src/bin/server.rs"
+
 [build-dependencies]
 tauri-build = { version = "^2.2.5", features = [] }
 
@@ -83,7 +91,7 @@ rquest = { version = "5.1.0", features = ["json", "stream", "socks", "cookies"] 
 rquest-util = "2.2.1"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
 gtk = "0.18"
 
 [features]

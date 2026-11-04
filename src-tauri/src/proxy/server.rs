@@ -1107,15 +1107,24 @@ impl AxumServer {
             .layer(DefaultBodyLimit::max(max_body_size)) // 放宽 body 大小限制
             .with_state(state.clone());
 
-        // 静态文件托管 (用于 Headless/Docker 模式)
-        let dist_path = std::env::var("ABV_DIST_PATH").unwrap_or_else(|_| "dist".to_string());
-        let app = if std::path::Path::new(&dist_path).exists() {
-            tracing::info!("正在托管静态资源: {}", dist_path);
-            app.fallback_service(tower_http::services::ServeDir::new(&dist_path).fallback(
-                tower_http::services::ServeFile::new(format!("{}/index.html", dist_path)),
-            ))
-        } else {
+        // 静态文件托管 (用于 Headless/Docker 模式，可通过 ABV_DISABLE_WEB 显式关闭)
+        let disable_web = std::env::var("ABV_DISABLE_WEB")
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+
+        let app = if disable_web {
+            tracing::info!("Web 管理控制台已通过配置或入参关闭 (Pure-Proxy 纯代理模式)");
             app
+        } else {
+            let dist_path = std::env::var("ABV_DIST_PATH").unwrap_or_else(|_| "dist".to_string());
+            if std::path::Path::new(&dist_path).exists() {
+                tracing::info!("正在托管静态资源: {}", dist_path);
+                app.fallback_service(tower_http::services::ServeDir::new(&dist_path).fallback(
+                    tower_http::services::ServeFile::new(format!("{}/index.html", dist_path)),
+                ))
+            } else {
+                app
+            }
         };
 
         // 绑定地址（使用 socket2 开启 SO_REUSEADDR，通配地址自动开启 IPv6/IPv4 双栈支持）
