@@ -149,6 +149,101 @@ pub fn calculate_effective_auto_compact_threshold(user_threshold: u32, target_li
     user_threshold.max(50_000).max(min_safe_threshold)
 }
 
+/// 检查请求最新一条 user 消息是否包含 tool_result 或处于工具调用接续阶段。
+/// 在工具调用接续期间（Agent loop in-flight），绝不能假报 400 截断，
+/// 否则客户端的工具执行状态机会直接崩溃并将错误呈现给用户！
+#[allow(dead_code)]
+pub fn is_tool_result_continuation(request: &ClaudeRequest) -> bool {
+    let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
+    if let Some(msg) = last_user_msg {
+        match &msg.content {
+            MessageContent::Array(blocks) => blocks.iter().any(|b| {
+                matches!(
+                    b,
+                    crate::proxy::mappers::claude::models::ContentBlock::ToolResult { .. }
+                        | crate::proxy::mappers::claude::models::ContentBlock::WebSearchToolResult { .. }
+                )
+            }),
+            MessageContent::String(_) => false,
+        }
+    } else {
+        false
+    }
+}
+
+/// 判断当前请求是否属于百万上下文长文本模型或显式声明了 1M 上下文。
+///
+/// 判定依据：
+/// 1. 模型名称显式属于 Claude 5 家族 (fable, opus-5, sonnet-5) 或显式标注 [1m] / 1m，
+///    或属于 Gemini 长上下文模型 (gemini, flash, pro)；
+/// 2. 请求头 anthropic-beta 包含 `context-1m`。
+#[allow(dead_code)]
+pub fn is_1m_context_requested(request: &ClaudeRequest, headers: &HeaderMap) -> bool {
+    let model_lower = request.model.to_lowercase();
+    if model_lower.contains("fable")
+        || model_lower.contains("opus-5")
+        || model_lower.contains("sonnet-5")
+        || model_lower.contains("1m")
+        || model_lower.contains("gemini")
+        || model_lower.contains("flash")
+        || model_lower.contains("pro")
+    {
+        return true;
+    }
+
+    if let Some(beta) = headers.get("anthropic-beta").and_then(|v| v.to_str().ok()) {
+        if beta.contains("context-1m") {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// 判断当前请求是否应该触发 Cowork 响应式自动压缩假报警门禁。
+///
+/// 核心铁律（边界如铁）：
+/// 1. 配置守卫：`enable_cowork_auto_compact` 必须为 true；
+/// 2. 状态守卫：非压缩总结请求、非刚压缩接续、非手动 ./compact 指令、非正在压缩中；
+/// 3. 真实 Cowork 阈值守卫：
+///    - 必须为真正的 Cowork 会话（且非 Code 模式），且实际 tokens >= effective_threshold 与 target_limit。
+///    - 严格按用户配置的阈值触发压缩，不再对 1M 模型一刀切豁免，确保会话达到设定限额时受控深度压缩。
+pub fn should_trigger_cowork_auto_compact(
+    enable_auto_compact: bool,
+    user_configured_threshold: u32,
+    request: &ClaudeRequest,
+    headers: &HeaderMap,
+    est_tokens: u32,
+    is_compaction_request: bool,
+    is_post_compaction: bool,
+    is_manual_compact: bool,
+    is_in_compaction: bool,
+) -> Option<(u32, u32)> {
+    if !enable_auto_compact
+        || is_compaction_request
+        || is_post_compaction
+        || is_manual_compact
+        || is_in_compaction
+    {
+        return None;
+    }
+
+    if !is_cowork_session(request, headers) {
+        return None;
+    }
+
+    let fixed_overhead = calculate_claude_fixed_overhead(request);
+    let target_limit = (fixed_overhead + 15_000).max(35_000);
+    let effective_threshold =
+        calculate_effective_auto_compact_threshold(user_configured_threshold, target_limit);
+
+    if est_tokens >= effective_threshold && est_tokens > target_limit {
+        Some(calculate_cowork_pruning_target(est_tokens, target_limit))
+    } else {
+        None
+    }
+}
+
 /// 判定请求是否为用户在 Cowork 客户端输入的手动 ./compact 指令
 fn is_manual_compact_command(request: &ClaudeRequest) -> bool {
     let mut text_opt = None;
@@ -1394,66 +1489,54 @@ pub async fn handle_messages(
     }
 
     // 分流 D: 超限自愈假报警触发门禁 (必须自定义开启 + 双重确权 + 非手动指令 + 非正在压缩中)
-    // 铁律：普通 Agent 与未开启配置时，绝对不拦截，100% 享受 Gemini 百万超长上下文！
-    if experimental.enable_cowork_auto_compact
-        && !is_compaction_request
-        && !is_post_compaction
-        && !is_manual_compact
-        && !is_in_compaction
-    {
-        let is_cowork = is_cowork_session(&request, &headers);
-
-        if is_cowork {
-            let fixed_overhead = calculate_claude_fixed_overhead(&request);
-            let target_limit = (fixed_overhead + 15_000).max(35_000);
-            let effective_threshold = calculate_effective_auto_compact_threshold(
-                experimental.cowork_compact_threshold,
-                target_limit,
-            );
-            let est_tokens = crate::proxy::pipeline::estimate_tokens(&original_body);
-
-            // 负 Gap 与净空防御门禁：必须满足 est_tokens >= effective_threshold 且 est_tokens > target_limit
-            if est_tokens >= effective_threshold && est_tokens > target_limit {
-                tracing::warn!(
-                    "[{}] [Cowork-Gatekeeper] Cowork session reached {} tokens >= effective threshold {} (target_limit: {}), triggering native reactive compact",
-                    trace_id,
-                    est_tokens,
-                    effective_threshold,
-                    target_limit
-                );
-                prune_compact_sessions_if_needed();
-                let now = std::time::Instant::now();
-                COWORK_COMPACT_SESSIONS.insert(
-                    session_key.clone(),
-                    CoworkCompactState {
-                        kind: CoworkCompactKind::Auto,
-                        before_tokens: est_tokens,
-                        ts: now,
-                        summary_done: false,
-                        target_limit,
-                    },
-                );
-                PENDING_COMPACT_SESSIONS.insert(session_key.clone(), now);
-                let (report_tokens, client_target_limit) =
-                    calculate_cowork_pruning_target(est_tokens, target_limit);
-                let err_msg = format!(
-                    "prompt is too long: {} tokens > {} maximum",
-                    report_tokens, client_target_limit
-                );
-                return (
-                    StatusCode::BAD_REQUEST,
-                    [("content-type", "application/json")],
-                    Json(json!({
-                        "type": "error",
-                        "error": {
-                            "type": "invalid_request_error",
-                            "message": err_msg
-                        }
-                    })),
-                )
-                    .into_response();
-            }
-        }
+    // 铁律：普通长文本对话、具备百万上下文的模型、或处于工具调用执行中途时，绝对不拦截，100% 享受 Gemini 百万超长上下文！
+    let est_tokens = crate::proxy::pipeline::estimate_tokens(&original_body);
+    if let Some((report_tokens, client_target_limit)) = should_trigger_cowork_auto_compact(
+        experimental.enable_cowork_auto_compact,
+        experimental.cowork_compact_threshold,
+        &request,
+        &headers,
+        est_tokens,
+        is_compaction_request,
+        is_post_compaction,
+        is_manual_compact,
+        is_in_compaction,
+    ) {
+        tracing::warn!(
+            "[{}] [Cowork-Gatekeeper] Cowork session reached {} tokens >= effective threshold, triggering native reactive compact (target_limit: {})",
+            trace_id,
+            est_tokens,
+            client_target_limit
+        );
+        prune_compact_sessions_if_needed();
+        let now = std::time::Instant::now();
+        COWORK_COMPACT_SESSIONS.insert(
+            session_key.clone(),
+            CoworkCompactState {
+                kind: CoworkCompactKind::Auto,
+                before_tokens: est_tokens,
+                ts: now,
+                summary_done: false,
+                target_limit: client_target_limit,
+            },
+        );
+        PENDING_COMPACT_SESSIONS.insert(session_key.clone(), now);
+        let err_msg = format!(
+            "prompt is too long: {} tokens > {} maximum",
+            report_tokens, client_target_limit
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            [("content-type", "application/json")],
+            Json(json!({
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": err_msg
+                }
+            })),
+        )
+            .into_response();
     }
 
     if is_compaction_request {
@@ -4933,5 +5016,170 @@ mod warmup_tests {
 
         let scaling_for_desktop_code = enable_usage_scaling && !is_code_mode(&req_desktop_code);
         assert!(!scaling_for_desktop_code);
+    }
+
+    #[test]
+    fn test_should_trigger_cowork_auto_compact_respects_threshold_and_allows_tool_results() {
+        use crate::proxy::mappers::claude::models::{ContentBlock, Message, MessageContent, Tool};
+        use axum::http::HeaderMap;
+
+        let empty_headers = HeaderMap::new();
+
+        // 场景 1: Cowork 会话（claude-fable-5 模型，输入 250,967 tokens）
+        // 核心铁律：取消 1M 一刀切豁免后，当 tokens >= 配置阈值（如 200,000）且在用户文本提问轮次时，
+        // 必须精准触发自动自愈压缩（返回 Some），防止超大会话无限制膨胀至几十兆！
+        let req_fable = ClaudeRequest {
+            model: "claude-fable-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Physics question discussion".to_string()),
+            }],
+            tools: Some(vec![Tool {
+                type_: None,
+                name: Some("mcp__cowork__present_files".to_string()),
+                description: None,
+                input_schema: None,
+            }]),
+            ..Default::default()
+        };
+        let trigger_fable = should_trigger_cowork_auto_compact(
+            true,
+            200_000,
+            &req_fable,
+            &empty_headers,
+            250_967,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert!(
+            trigger_fable.is_some(),
+            "具备 1M 标头的模型在 Cowork 中达到用户配置阈值 (250k >= 200k) 时必须按配置触发压缩自愈！"
+        );
+
+        // 场景 1b: 同一模型未达到配置阈值（150k < 200k）时，绝对不拦截
+        assert!(
+            should_trigger_cowork_auto_compact(
+                true,
+                200_000,
+                &req_fable,
+                &empty_headers,
+                150_000,
+                false,
+                false,
+                false,
+                false,
+            )
+            .is_none(),
+            "未达到配置阈值 (150k < 200k) 的 Cowork 会话绝对不能被拦截！"
+        );
+
+        // 场景 2: 请求标头携带 context-1m-2025-08-07 beta 特征
+        // 达到配置阈值时同样按配置执行自愈压缩
+        let mut headers_1m = HeaderMap::new();
+        headers_1m.insert(
+            "anthropic-beta",
+            "claude-code-20250219,context-1m-2025-08-07"
+                .parse()
+                .unwrap(),
+        );
+        let req_1m_header = ClaudeRequest {
+            model: "claude-3-5-sonnet".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Long context reasoning".to_string()),
+            }],
+            tools: Some(vec![Tool {
+                type_: None,
+                name: Some("mcp__cowork__present_files".to_string()),
+                description: None,
+                input_schema: None,
+            }]),
+            ..Default::default()
+        };
+        assert!(
+            should_trigger_cowork_auto_compact(
+                true,
+                200_000,
+                &req_1m_header,
+                &headers_1m,
+                250_967,
+                false,
+                false,
+                false,
+                false,
+            )
+            .is_some(),
+            "声明了 context-1m 的 Cowork 会话在 250k >= 200k 时同样遵从用户配置触发压缩！"
+        );
+
+        // 场景 3: Agent 处于工具调用中途（最新一条为 tool_result）
+        // 铁律：Cowork 工具执行轮次达到配置阈值时，必须遵从配置正常触发自动压缩自愈
+        let req_tool_result = ClaudeRequest {
+            model: "claude-fable-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::Array(vec![ContentBlock::ToolResult {
+                    tool_use_id: "call_123456".to_string(),
+                    content: serde_json::json!("file content"),
+                    is_error: None,
+                }]),
+            }],
+            tools: Some(vec![Tool {
+                type_: None,
+                name: Some("mcp__cowork__present_files".to_string()),
+                description: None,
+                input_schema: None,
+            }]),
+            ..Default::default()
+        };
+        assert!(
+            should_trigger_cowork_auto_compact(
+                true,
+                100_000,
+                &req_tool_result,
+                &empty_headers,
+                250_000,
+                false,
+                false,
+                false,
+                false,
+            )
+            .is_some(),
+            "Cowork 会话即便最新一条为 tool_result，达到配置阈值时也必须遵从配置触发自动压缩自愈！"
+        );
+
+        // 场景 4: 处于 Code 模式（带有 mcp__ccd_ 工具或 You are Claude Code）
+        // 一票否决：Claude Code 自带 /compact，绝不能误入 Cowork 400 假限额
+        let req_code_mode = ClaudeRequest {
+            model: "claude-fable-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Implement feature".to_string()),
+            }],
+            tools: Some(vec![Tool {
+                type_: None,
+                name: Some("mcp__ccd_session__mark_chapter".to_string()),
+                description: None,
+                input_schema: None,
+            }]),
+            ..Default::default()
+        };
+        assert!(
+            should_trigger_cowork_auto_compact(
+                true,
+                100_000,
+                &req_code_mode,
+                &empty_headers,
+                250_000,
+                false,
+                false,
+                false,
+                false,
+            )
+            .is_none(),
+            "Code 模式会话具有一票否决权，绝对禁止触发 Cowork 自动压缩！"
+        );
     }
 }
