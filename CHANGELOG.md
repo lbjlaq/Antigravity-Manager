@@ -14,8 +14,9 @@
             -   **滑窗启用时豁免入口多图硬拦截**: 修复在开启多模态滑动窗口（`enable_sliding_window = true`）时，网关入口因未裁剪的历史累计图片超过 32MB 硬上限而提前返回 400 阻断的缺陷；现在开启滑窗时安全放行累积历史图片（单张 >20MB 校验仍然生效），统一交由后续管线滑动窗口执行裁剪，避免 Codex 等多模态 Agent 长对话误杀。(PR #3830, Thanks to @mclinyeshi)
             -   **补齐 Responses 简要日志 Base64 脱敏**: 在简要日志（simple）审计模式下，对 `/v1/responses` 的 `input_image`、内联 Data URL 以及工具输出（`function_call_output`）递归执行 Base64 占位脱敏（`[base64 image: xxx bytes]`），彻底解决长程看图任务导致本地数据库膨胀与前端视图卡顿的问题。(PR #3830, Thanks to @mclinyeshi)
             -   **补齐 Responses 协议视觉 Token 估算**: 在管线 Token 估算器中补齐 Responses 格式分支，正确识别多模态图片并按视觉 Token 标准统一折算，防止多模态请求 Token 估算失真影响管线超时预算。(PR #3830, Thanks to @mclinyeshi)
-        -   **[修复普通长文本对话误触发 Cowork 自动压缩 400 假限额报错] (Ref #3821, PR #3828, Thanks to @cubelikeplayDaniel)**:
-            -   **重构 Cowork 自愈压缩触发门禁**: 抽取 `should_trigger_cowork_auto_compact` 门禁函数，建立三道防御机制：对 Claude 5 家族 (fable, opus-5, sonnet-5) 或携带 `context-1m` 的百万长上下文对话实施 100% 免死放行；在客户端工具调用中间态（最新消息为 `tool_result`）避让拦截，杜绝工具链崩溃；严格对齐配置开启状态与纯用户交互轮次触发。(Ref #3821, PR #3828, Thanks to @cubelikeplayDaniel)
+        -   **[修复普通长文本对话误触发 Cowork 自动压缩与对照实验矩阵] (Fixes #3821, Ref #3826, PR #3835, PR #3836, Thanks to @cubelikeplayDaniel)**:
+            -   **对齐配置自愈门禁与工具轮次放行**: 移除 1M 模型一刀切硬豁免与工具中途阻断，确保包含工具返回的真实 Cowork 会话在超限时能够按配置的有效阈值（`effective_threshold`）精准触发自愈压缩；修复大请求体上传预算计算中的首字节倒扣截断缺陷。(Fixes #3821, Ref #3826, PR #3835, Thanks to @cubelikeplayDaniel)
+            -   **全链路 10 次双轨对照实验矩阵**: 新增 `test_cowork_10_control_experiment_matrix` 单元测试，全面覆盖 5 次超大截断与 5 次安全放行矩阵，保障 Cowork 门禁与配置阈值契约一致性。(Fixes #3821, Ref #3826, PR #3836, Thanks to @cubelikeplayDaniel)
 
     *   **v5.0.3-beta.1 (2026-11-04)**:
         -   **[官方 GCP Vertex AI 企业账号支持与多协议凭据自适应隔离] (Fixes #3823)**:
