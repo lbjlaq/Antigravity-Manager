@@ -165,6 +165,11 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk
 
+      - name: Build frontend
+        run: |
+          npm install --legacy-peer-deps
+          npm run build
+
       - name: Build Android ARM64 headless server binary
         run: |
           cd src-tauri

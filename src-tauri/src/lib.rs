@@ -107,6 +107,7 @@ fn apply_login_launch_policy(app: &tauri::App) {
         .unwrap_or(true);
     if !tray_enabled {
         info!("Quiet startup skipped because the tray is unavailable; showing the main window");
+        #[cfg(not(target_os = "android"))]
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.show();
         }
@@ -503,6 +504,7 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+#[cfg(not(target_os = "android"))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Record main thread ID on Linux for display disconnection guard
