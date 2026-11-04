@@ -505,7 +505,15 @@
             "batch_warmup_msg": "确定要为选中的 {{count}} 个账号立即触发预热吗？"
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
-        "switch_next_short": "切下个"
+        "switch_next_short": "切下个",
+        "project_id": "GCP Project ID",
+        "project_id_hint": "企业/GCP 账号关联的 Google Cloud 项目 ID。原生 Antigravity 在登录后会自动关联或使用缺省项目。",
+        "project_id_placeholder": "如: my-project-id",
+        "project_id_updated": "GCP Project ID 已更新",
+        "auto_fetch_project_id": "自动获取",
+        "fetching_project_id": "获取中...",
+        "auto_fetch_success": "成功自动获取 Project ID: {{projectId}}",
+        "auto_fetch_failed": "未能在上游找到关联的 Project ID"
     },
     "settings": {
         "save": "保存设置",

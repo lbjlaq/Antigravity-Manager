@@ -1051,6 +1051,14 @@ impl TokenManager {
         }
     }
 
+    /// Apply a saved GCP project_id dynamically to in-memory ProxyToken.
+    pub fn update_account_project_id(&self, account_id: &str, project_id: Option<String>) {
+        if let Some(mut token) = self.tokens.get_mut(account_id) {
+            token.project_id = project_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        }
+        self.project_id_failures.remove(account_id);
+    }
+
     /// Check if an account has been disabled on disk.
     ///
     /// Safety net: avoids selecting a disabled account when the in-memory pool hasn't been

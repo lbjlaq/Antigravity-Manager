@@ -489,7 +489,15 @@
         "type": {
             "personal": "حساب شخصي (Personal)",
             "enterprise": "مؤسسي / GCP (Vertex AI)"
-        }
+        },
+        "project_id": "GCP Project ID",
+        "project_id_hint": "معرّف مشروع Google Cloud المرتبط بحساب المؤسسة/GCP. يقوم تطبيق Antigravity الأصلي بربطه تلقائياً أو استخدام الافتراضي عند تسجيل الدخول.",
+        "project_id_placeholder": "مثال: my-project-id",
+        "project_id_updated": "تم تحديث GCP Project ID بنجاح",
+        "auto_fetch_project_id": "جلب تلقائي",
+        "fetching_project_id": "جارٍ الجلب...",
+        "auto_fetch_success": "تم جلب Project ID بنجاح: {{projectId}}",
+        "auto_fetch_failed": "لم يتم العثور على Project ID مرتبط"
     },
     "settings": {
         "save": "حفظ الإعدادات",

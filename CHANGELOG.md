@@ -4,6 +4,12 @@
 
 *   **版本演进**:
     *   **v5.0.3-beta.2 (2026-11-04)**:
+        -   **[企业与 GCP Vertex AI Project ID 智能绑定与一键自动获取] (Fixes #3823)**:
+            -   **GCP Project ID 可视化管理与持久化**: 在账号详情弹窗中新增 Project ID 设置项，支持为企业及 GCP 账号查看、手动配置或更换绑定的 Google Cloud 项目 ID，并原子更新至账号凭据存储与代理调度器。
+            -   **一键自动请求获取 Project ID**: 新增 `auto_fetch_account_project_id` 命令与前端「自动获取」按钮，调用上游 `loadCodeAssist` 自动嗅探并关联账号真实的 `cloudaicompanionProject`，极大简化企业账号接入流程。
+            -   **健壮的代理池链路与超时优化**: 优化 Project ID 获取逻辑，将原 3 秒过短硬编码超时放宽至 12 秒，并全面接入全局代理池（`ProxyPool`），确保网络抖动与跨国出口代理环境下 100% 稳定解析。
+            -   **等级识别精准校准**: 修复企业号识别中误将内置标准客户端（`antigravity_enterprise`）或历史遗留 `is_gcp_tos` 脏标记当作企业号导致普通账号被误标为 `ENTERPRISE` 的缺陷，严格按官方 `antigravity_gcp` 客户端及权威套餐返回收敛。
+            -   **12 种主流语言多语言补齐**: 为 Project ID 字段、提示说明与自动获取状态（获取中/成功/失败）补齐了中英日繁韩西葡俄土越阿缅等全量 12 种语言本地化翻译。
         -   **[修复 Responses 协议多模态滑窗入口误杀、简要日志脱敏与 Token 估算] (PR #3830, Thanks to @mclinyeshi)**:
             -   **滑窗启用时豁免入口多图硬拦截**: 修复在开启多模态滑动窗口（`enable_sliding_window = true`）时，网关入口因未裁剪的历史累计图片超过 32MB 硬上限而提前返回 400 阻断的缺陷；现在开启滑窗时安全放行累积历史图片（单张 >20MB 校验仍然生效），统一交由后续管线滑动窗口执行裁剪，避免 Codex 等多模态 Agent 长对话误杀。(PR #3830, Thanks to @mclinyeshi)
             -   **补齐 Responses 简要日志 Base64 脱敏**: 在简要日志（simple）审计模式下，对 `/v1/responses` 的 `input_image`、内联 Data URL 以及工具输出（`function_call_output`）递归执行 Base64 占位脱敏（`[base64 image: xxx bytes]`），彻底解决长程看图任务导致本地数据库膨胀与前端视图卡顿的问题。(PR #3830, Thanks to @mclinyeshi)

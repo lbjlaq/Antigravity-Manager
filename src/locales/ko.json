@@ -491,7 +491,15 @@
         "type": {
             "personal": "개인 계정 (Personal)",
             "enterprise": "기업 / GCP (Vertex AI)"
-        }
+        },
+        "project_id": "GCP Project ID",
+        "project_id_hint": "엔터프라이즈/GCP 계정에 연결된 Google Cloud 프로젝트 ID입니다. 공식 Antigravity 로그인 시 자동으로 연결되거나 기본값이 사용됩니다.",
+        "project_id_placeholder": "예: my-project-id",
+        "project_id_updated": "GCP Project ID가 업데이트되었습니다",
+        "auto_fetch_project_id": "자동 가져오기",
+        "fetching_project_id": "가져오는 중...",
+        "auto_fetch_success": "Project ID를 자동으로 가져왔습니다: {{projectId}}",
+        "auto_fetch_failed": "업스트림에서 연결된 Project ID를 찾을 수 없습니다"
     },
     "settings": {
         "save": "설정 저장",

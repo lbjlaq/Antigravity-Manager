@@ -250,3 +250,12 @@ export async function exportAccounts(accountIds: string[]): Promise<ExportAccoun
 export async function updateAccountLabel(accountId: string, label: string): Promise<void> {
     return await invoke('update_account_label', { accountId, label });
 }
+
+// GCP 项目 ID 相关
+export async function updateAccountProjectId(accountId: string, projectId: string | null): Promise<void> {
+    return await invoke('update_account_project_id', { accountId, projectId: projectId || null });
+}
+
+export async function autoFetchAccountProjectId(accountId: string): Promise<string> {
+    return await invoke('auto_fetch_account_project_id', { accountId });
+}

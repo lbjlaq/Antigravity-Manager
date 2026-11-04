@@ -489,7 +489,15 @@
         "type": {
             "personal": "ကိုယ်ပိုင်အကောင့် (Personal)",
             "enterprise": "လုပ်ငန်းသုံး / GCP (Vertex AI)"
-        }
+        },
+        "project_id": "GCP Project ID",
+        "project_id_hint": "လုပ်ငန်း/GCP အကောင့်နှင့် ဆက်စပ်နေသော Google Cloud Project ID။ Antigravity မူရင်းအက်ပ်သည် အကောင့်ဝင်ချိန်တွင် အလိုအလျောက်ချိတ်ဆက်ပါသည် သို့မဟုတ် မူရင်းကိုသုံးပါသည်။",
+        "project_id_placeholder": "ဥပမာ: my-project-id",
+        "project_id_updated": "GCP Project ID ကို အောင်မြင်စွာ ပြင်ဆင်ပြီးပါပြီ",
+        "auto_fetch_project_id": "အလိုအလျောက် ရယူရန်",
+        "fetching_project_id": "ရယူနေသည်...",
+        "auto_fetch_success": "Project ID ကို အောင်မြင်စွာ ရယူနိုင်ခဲ့ပါသည်: {{projectId}}",
+        "auto_fetch_failed": "ဆက်စပ်နေသော Project ID ကို မတွေ့ရှိပါ"
     },
     "settings": {
         "save": "Simpan Tetapan",

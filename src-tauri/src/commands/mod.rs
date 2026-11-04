@@ -1532,6 +1532,35 @@ pub async fn update_account_priority(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn update_account_project_id(
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+    account_id: String,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    modules::account::update_account_project_id(&account_id, project_id.clone())?;
+    if let Some(instance) = proxy_state.instance.read().await.as_ref() {
+        instance
+            .token_manager
+            .update_account_project_id(&account_id, project_id);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn auto_fetch_account_project_id(
+    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
+    account_id: String,
+) -> Result<String, String> {
+    let pid = modules::account::auto_fetch_account_project_id(&account_id).await?;
+    if let Some(instance) = proxy_state.instance.read().await.as_ref() {
+        instance
+            .token_manager
+            .update_account_project_id(&account_id, Some(pid.clone()));
+    }
+    Ok(pid)
+}
+
 /// 更新账号自定义标签
 #[tauri::command]
 pub async fn update_account_label(account_id: String, label: String) -> Result<(), String> {

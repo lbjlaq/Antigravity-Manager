@@ -491,7 +491,15 @@
         "type": {
             "personal": "Cuenta personal",
             "enterprise": "Empresa / GCP (Vertex AI)"
-        }
+        },
+        "project_id": "GCP Project ID",
+        "project_id_hint": "ID de proyecto de Google Cloud asociado con la cuenta empresarial/GCP. Antigravity nativo lo asocia o utiliza el predeterminado al iniciar sesión.",
+        "project_id_placeholder": "ej: my-project-id",
+        "project_id_updated": "GCP Project ID actualizado con éxito",
+        "auto_fetch_project_id": "Obtención automática",
+        "fetching_project_id": "Obteniendo...",
+        "auto_fetch_success": "Project ID obtenido con éxito: {{projectId}}",
+        "auto_fetch_failed": "No se encontró ningún Project ID asociado en el origen"
     },
     "settings": {
         "save": "Guardar Configuración",

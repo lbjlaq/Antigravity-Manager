@@ -32,7 +32,7 @@ import { request as invoke } from "../utils/request";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 
-type FilterType = "all" | "pro" | "ultra" | "free";
+type FilterType = "all" | "pro" | "ultra" | "enterprise" | "free";
 type ViewMode = "list" | "grid";
 
 
@@ -58,6 +58,8 @@ function Accounts() {
     warmUpAccount,
     updateAccountLabel,
     updateAccountPriority,
+    updateAccountProjectId,
+    autoFetchAccountProjectId,
   } = useAccountStore();
   const { config } = useConfigStore();
 
@@ -300,6 +302,7 @@ function Accounts() {
       all: searchedAccounts.length,
       pro: searchedAccounts.filter((a) => getAccountTier(a) === "pro").length,
       ultra: searchedAccounts.filter((a) => getAccountTier(a) === "ultra").length,
+      enterprise: searchedAccounts.filter((a) => getAccountTier(a) === "enterprise").length,
       free: searchedAccounts.filter((a) => getAccountTier(a) === "free").length,
     };
   }, [searchedAccounts]);
@@ -952,6 +955,28 @@ function Accounts() {
             </span>
           </button>
 
+          {/* ENTERPRISE */}
+          <button
+            className={cn(
+              "flex px-2 lg:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all items-center gap-1 lg:gap-1.5 whitespace-nowrap shrink-0",
+              filter === 'enterprise'
+                ? "bg-white dark:bg-base-100 text-emerald-600 dark:text-emerald-400 shadow-sm ring-1 ring-black/5"
+                : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content hover:bg-white/40"
+            )}
+            onClick={() => setFilter('enterprise')}
+            title={`ENTERPRISE (${filterCounts.enterprise})`}
+          >
+            <span className="hidden md:inline">ENTERPRISE</span>
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors",
+              filter === 'enterprise'
+                ? "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+            )}>
+              {filterCounts.enterprise}
+            </span>
+          </button>
+
           {/* FREE */}
           <button
             className={cn(
@@ -1187,6 +1212,8 @@ function Accounts() {
         account={accounts.find(a => a.id === detailsAccount?.id) || null}
         onClose={() => setDetailsAccount(null)}
         onUpdatePriority={updateAccountPriority}
+        onUpdateProjectId={updateAccountProjectId}
+        onAutoFetchProjectId={autoFetchAccountProjectId}
       />
       <DeviceFingerprintDialog
         account={deviceAccount}

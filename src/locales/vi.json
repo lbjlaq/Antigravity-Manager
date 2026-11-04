@@ -491,7 +491,15 @@
         "type": {
             "personal": "Tài khoản cá nhân",
             "enterprise": "Doanh nghiệp / GCP (Vertex AI)"
-        }
+        },
+        "project_id": "GCP Project ID",
+        "project_id_hint": "ID dự án Google Cloud được liên kết với tài khoản doanh nghiệp/GCP. Antigravity gốc sẽ tự động liên kết hoặc dùng mặc định khi đăng nhập.",
+        "project_id_placeholder": "vd: my-project-id",
+        "project_id_updated": "Đã cập nhật GCP Project ID",
+        "auto_fetch_project_id": "Tự động lấy",
+        "fetching_project_id": "Đang lấy...",
+        "auto_fetch_success": "Đã tự động lấy Project ID thành công: {{projectId}}",
+        "auto_fetch_failed": "Không tìm thấy Project ID liên kết trên máy chủ"
     },
     "settings": {
         "save": "Lưu Cài đặt",
