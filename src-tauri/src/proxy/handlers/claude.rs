@@ -1489,7 +1489,7 @@ pub async fn handle_messages(
     }
 
     // 分流 D: 超限自愈假报警触发门禁 (必须自定义开启 + 双重确权 + 非手动指令 + 非正在压缩中)
-    // 铁律：普通长文本对话、具备百万上下文的模型、或处于工具调用执行中途时，绝对不拦截，100% 享受 Gemini 百万超长上下文！
+    // 铁律：严格遵从用户在 GUI 配置的 Cowork 阈值触发压缩，非 Cowork 对话（如普通 Chat）或 Claude Code（带专属工具）免受拦截！
     let est_tokens = crate::proxy::pipeline::estimate_tokens(&original_body);
     if let Some((report_tokens, client_target_limit)) = should_trigger_cowork_auto_compact(
         experimental.enable_cowork_auto_compact,
@@ -5181,5 +5181,224 @@ mod warmup_tests {
             .is_none(),
             "Code 模式会话具有一票否决权，绝对禁止触发 Cowork 自动压缩！"
         );
+    }
+
+    #[test]
+    fn test_cowork_10_control_experiment_matrix() {
+        use crate::proxy::mappers::claude::models::{ContentBlock, Message, MessageContent, Tool};
+        use axum::http::HeaderMap;
+
+        let empty_headers = HeaderMap::new();
+        let cowork_tools = Some(vec![Tool {
+            type_: None,
+            name: Some("mcp__cowork__present_files".to_string()),
+            description: None,
+            input_schema: None,
+        }]);
+
+        // 【实验组 1】Cowork 250k+ tokens，包含 tool_result 轮次 (fable-5)
+        let exp1 = ClaudeRequest {
+            model: "claude-fable-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::Array(vec![ContentBlock::ToolResult {
+                    tool_use_id: "call_exp1".to_string(),
+                    content: serde_json::json!("large output"),
+                    is_error: None,
+                }]),
+            }],
+            tools: cowork_tools.clone(),
+            ..Default::default()
+        };
+        assert!(should_trigger_cowork_auto_compact(
+            true,
+            150_000,
+            &exp1,
+            &empty_headers,
+            250_000,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_some());
+
+        // 【实验组 2】Cowork 260k+ tokens，携带 context-1m beta 标头 (sonnet-4-6)
+        let mut h2 = HeaderMap::new();
+        h2.insert("anthropic-beta", "context-1m-2025-08-07".parse().unwrap());
+        let exp2 = ClaudeRequest {
+            model: "claude-sonnet-4-6".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Analyze codebase".to_string()),
+            }],
+            tools: cowork_tools.clone(),
+            ..Default::default()
+        };
+        assert!(should_trigger_cowork_auto_compact(
+            true, 150_000, &exp2, &h2, 260_000, false, false, false, false
+        )
+        .is_some());
+
+        // 【实验组 3】Cowork 180k+ tokens (>= 150k 配置阈值)，深度工具调用链 (opus-5)
+        let exp3 = ClaudeRequest {
+            model: "claude-opus-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Tool loop iteration".to_string()),
+            }],
+            tools: cowork_tools.clone(),
+            ..Default::default()
+        };
+        assert!(should_trigger_cowork_auto_compact(
+            true,
+            150_000,
+            &exp3,
+            &empty_headers,
+            180_000,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_some());
+
+        // 【实验组 4】Cowork 210k+ tokens，通过 local-agent 运行时标头识别 (fable-5)
+        let mut h4 = HeaderMap::new();
+        h4.insert(
+            "user-agent",
+            "claude-cli/2.1.309 (external, local-agent, agent-sdk/0.3.309)"
+                .parse()
+                .unwrap(),
+        );
+        let exp4 = ClaudeRequest {
+            model: "claude-fable-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Agent question".to_string()),
+            }],
+            tools: None,
+            ..Default::default()
+        };
+        assert!(should_trigger_cowork_auto_compact(
+            true, 150_000, &exp4, &h4, 210_000, false, false, false, false
+        )
+        .is_some());
+
+        // 【实验组 5】Cowork 305k+ tokens 极限超大会话截断 (fable-5)
+        let exp5 = ClaudeRequest {
+            model: "claude-fable-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Extremely large session continuation".to_string()),
+            }],
+            tools: cowork_tools.clone(),
+            ..Default::default()
+        };
+        assert!(should_trigger_cowork_auto_compact(
+            true,
+            150_000,
+            &exp5,
+            &empty_headers,
+            305_000,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_some());
+
+        // 【对照组 6】正常大小 Cowork 请求 (50k tokens < 150k 阈值) -> 不触发
+        assert!(should_trigger_cowork_auto_compact(
+            true,
+            150_000,
+            &exp1,
+            &empty_headers,
+            50_000,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_none());
+
+        // 【对照组 7】正在压缩请求 (is_compaction_request = true) -> 不触发
+        assert!(should_trigger_cowork_auto_compact(
+            true,
+            150_000,
+            &exp1,
+            &empty_headers,
+            250_000,
+            true,
+            false,
+            false,
+            false
+        )
+        .is_none());
+
+        // 【对照组 8】刚压缩完接续请求 (is_post_compaction = true) -> 不触发
+        assert!(should_trigger_cowork_auto_compact(
+            true,
+            150_000,
+            &exp1,
+            &empty_headers,
+            250_000,
+            false,
+            true,
+            false,
+            false
+        )
+        .is_none());
+
+        // 【对照组 9】Claude Code 模式请求 (含 mcp__ccd_* 工具，享有一票否决权) -> 不触发
+        let ctrl9 = ClaudeRequest {
+            model: "claude-fable-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Code task".to_string()),
+            }],
+            tools: Some(vec![Tool {
+                type_: None,
+                name: Some("mcp__ccd_session__mark_chapter".to_string()),
+                description: None,
+                input_schema: None,
+            }]),
+            ..Default::default()
+        };
+        assert!(should_trigger_cowork_auto_compact(
+            true,
+            150_000,
+            &ctrl9,
+            &empty_headers,
+            250_000,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_none());
+
+        // 【对照组 10】纯长文本普通对话 (无 Cowork 工具无 local-agent 标头) -> 不触发
+        let ctrl10 = ClaudeRequest {
+            model: "claude-fable-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Ordinary physics discussion".to_string()),
+            }],
+            tools: None,
+            ..Default::default()
+        };
+        assert!(should_trigger_cowork_auto_compact(
+            true,
+            150_000,
+            &ctrl10,
+            &empty_headers,
+            250_000,
+            false,
+            false,
+            false,
+            false
+        )
+        .is_none());
     }
 }
