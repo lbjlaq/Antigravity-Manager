@@ -3,6 +3,14 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.3-beta.2 (2026-11-04)**:
+        -   **[Fix Responses Protocol Multimodal Sliding Window Ingress Guard, Payload Audit Redaction, and Token Estimation] (PR #3830, Thanks to @mclinyeshi)**:
+            -   **Bypass Cumulative Image Byte Interception when Sliding Window is Active**: Fixed an issue where enabling the multimodal sliding freshness window (`enable_sliding_window = true`) still triggered an ingress HTTP 400 rejection if historical, unpruned images accumulated beyond 32MB; cumulative payload limits are now cleanly deferred to pipeline sliding window pruning while retaining single-image limits (>20MB), preventing multimodal Agent sessions (e.g. Codex) from being falsely blocked at entry. (PR #3830, Thanks to @mclinyeshi)
+            -   **Comprehensive Responses Base64 Image Audit Redaction**: In simple audit mode, recursively sanitized inline Data URLs, `input_image` blocks, and `function_call_output` images into lightweight placeholders (`[base64 image: xxx bytes]`), preventing SQLite database bloating and UI sluggishness during multiround image inspection tasks. (PR #3830, Thanks to @mclinyeshi)
+            -   **Responses Multimodal Visual Token Estimation**: Added native Responses payload parsing in `PipelineTokenEstimator`, correctly converting multimodal images into visual tokens and preventing token underestimation from skewing pipeline timeout budgets. (PR #3830, Thanks to @mclinyeshi)
+        -   **[Fix Long-Context Conversations Mistakenly Triggering Cowork Auto-Compaction 400 Limit Errors] (Ref #3821, PR #3828, Thanks to @cubelikeplayDaniel)**:
+            -   **Refactored Cowork Auto-Compaction Guard**: Extracted `should_trigger_cowork_auto_compact` with triple defense: 100% exemption for 1M-context models (Claude 5 fable, opus-5, sonnet-5) or requests declaring `context-1m`; intermediate tool-call avoidance (skips compaction when latest message is `tool_result`); strictly aligns compaction with user toggles and pure conversation turn thresholds. (Ref #3821, PR #3828, Thanks to @cubelikeplayDaniel)
+
     *   **v5.0.3-beta.1 (2026-11-04)**:
         -   **[Official GCP Vertex AI Enterprise Account Support & Adaptive Credential Isolation] (Fixes #3823)**:
             -   **Aligned with Official GCP Enterprise OAuth Credentials**: Reverse-engineered and matched the official Antigravity application architecture for GCP / Vertex AI enterprise authorization, integrating the official GCP enterprise client (`884354919052-...`) under `antigravity_gcp`. Completely resolves the issue where enterprise accounts were misidentified as Free Tier or lost access to Vertex AI project quotas. (Fixes #3823)
