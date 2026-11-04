@@ -4,6 +4,12 @@
 
 *   **Version History**:
     *   **v5.0.3-beta.2 (2026-11-04)**:
+        -   **[Fix Primary Daily Endpoint Jitter Leading to Sandbox Fallback Endpoint Poisoning] (Fixes #3827, PR #3833, Thanks to @modded-soldier-9)**:
+            -   **Sandbox Endpoint Isolation & Anti-Leapfrog Priority Partitioning**: Introduced sandbox endpoint detection and partitioned sorting so `daily-cloudcode-pa.sandbox.googleapis.com` never leapfrogs primary Daily endpoints due to health stats; eliminates accidental account poisoning and false 504 Gateway Timeouts triggered when non-US proxies receive 400 (User location is not supported) from sandbox endpoints. (Fixes #3827, PR #3833, Thanks to @modded-soldier-9)
+            -   **Sandbox 400 Degradation & Extended Cooldown**: Reclassified sandbox 400 errors as eligible for next-endpoint rotation with an enforced minimum 300-second cooldown penalty, preventing repetitive fallback cascades.
+        -   **[Fix Classic Client Credential Sync Missing Fallback Files and State Dual-Write] (Fixes #3829, PR #3834, Thanks to @modded-soldier-9)**:
+            -   **Unified Credential Dual-Write across Classic and IDE Modes**: Fixed an issue where switching accounts in Classic mode (`target_ide == "classic"`) prompted for re-authentication on desktop restart; unified the fallback credential writer (`jetski-standalone-oauth-token`) to apply seamlessly across both Classic and IDE runtimes. (Fixes #3829, PR #3834, Thanks to @modded-soldier-9)
+            -   **Safe SQLite Atomic Backup and State Ingestion**: When `state.vscdb` is present in the Classic data directory, atomically backs up the database and dual-writes the authentication token and `serviceMachineId` to maintain strict state parity.
         -   **[Enterprise & GCP Vertex AI Project ID Management and Auto-Discovery] (Fixes #3823)**:
             -   **Visual GCP Project ID Configuration & Persistence**: Added a dedicated Project ID setting within the Account Details modal, allowing users to inspect, manually set, or modify the linked Google Cloud Project ID for Enterprise/GCP accounts, synchronously persisted to local credentials and gateway memory.
             -   **One-Click Auto-Fetch Project ID**: Implemented the `auto_fetch_account_project_id` command with an "Auto Fetch" button in the GUI, automatically querying `loadCodeAssist` to discover and associate the account's upstream `cloudaicompanionProject`.

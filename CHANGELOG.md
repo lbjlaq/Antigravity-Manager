@@ -4,6 +4,12 @@
 
 *   **版本演进**:
     *   **v5.0.3-beta.2 (2026-11-04)**:
+        -   **[主端点偶发抖动沙箱降级抢占导致的端点毒化修复] (Fixes #3827, PR #3833, Thanks to @modded-soldier-9)**:
+            -   **沙箱端点隔离与防抢占排序**: 在上游端点调度中引入沙箱端点探测与分区保护机制，确保 `daily-cloudcode-pa.sandbox.googleapis.com` 永不因统计权重抢占 Daily 主端点，根除跨区 IP 触发 400（User location is not supported）后导致的整号熔断与 504 误判问题。(Fixes #3827, PR #3833, Thanks to @modded-soldier-9)
+            -   **沙箱 400 容错与长冷却降级**: 沙箱端点返回 400 时允许继续轮询下一个健康端点，并自动施加至少 300 秒长冷却惩罚，避免次级端点连续抖动。
+        -   **[经典版一键切号遗漏本地降级凭据及状态双写修复] (Fixes #3829, PR #3834, Thanks to @modded-soldier-9)**:
+            -   **经典版与 IDE 凭据双写平权**: 修复在 Antigravity 经典版（`classic`）下一键切号后重启客户端再次提示需登录认证的问题；统一经典版与 IDE 版的本地降级凭据（`jetski-standalone-oauth-token`）写入逻辑。(Fixes #3829, PR #3834, Thanks to @modded-soldier-9)
+            -   **本地 SQLite 状态安全双写与原子备份**: 若经典版用户数据目录中存在 `state.vscdb`，执行原子备份并在数据库中安全注入 token 与 `serviceMachineId`，实现状态严格双写。
         -   **[企业与 GCP Vertex AI Project ID 智能绑定与一键自动获取] (Fixes #3823)**:
             -   **GCP Project ID 可视化管理与持久化**: 在账号详情弹窗中新增 Project ID 设置项，支持为企业及 GCP 账号查看、手动配置或更换绑定的 Google Cloud 项目 ID，并原子更新至账号凭据存储与代理调度器。
             -   **一键自动请求获取 Project ID**: 新增 `auto_fetch_account_project_id` 命令与前端「自动获取」按钮，调用上游 `loadCodeAssist` 自动嗅探并关联账号真实的 `cloudaicompanionProject`，极大简化企业账号接入流程。
