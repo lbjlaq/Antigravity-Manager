@@ -1621,9 +1621,12 @@ impl UpstreamClient {
                     is_capacity_exhausted,
                 )
                 .min(remaining_budget.saturating_sub(reserve_for_fallback).max(5));
+                // [Fixes #3821] 上传阶段优先保证传输所需时间（按体积/实测速度自适应），
+                // 仅预留最小探活时间给首字节阶段，彻底避免首字预算（如 145s）倒挂倒扣导致大请求体（如 28.9MB）被掐死在 15s；
+                // 全链路总时间依然受 hard_deadline 刚性硬保护。
                 let upload_budget_secs = timeout_plan.upload_budget_secs.min(
                     remaining_budget
-                        .saturating_sub(first_byte_budget_secs)
+                        .saturating_sub(crate::proxy::pipeline::budget::MIN_ATTEMPT_BUDGET_SECS)
                         .max(10),
                 );
                 let hard_deadline =

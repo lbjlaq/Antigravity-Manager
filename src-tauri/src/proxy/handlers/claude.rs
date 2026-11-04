@@ -152,6 +152,7 @@ pub fn calculate_effective_auto_compact_threshold(user_threshold: u32, target_li
 /// 检查请求最新一条 user 消息是否包含 tool_result 或处于工具调用接续阶段。
 /// 在工具调用接续期间（Agent loop in-flight），绝不能假报 400 截断，
 /// 否则客户端的工具执行状态机会直接崩溃并将错误呈现给用户！
+#[allow(dead_code)]
 pub fn is_tool_result_continuation(request: &ClaudeRequest) -> bool {
     let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
     if let Some(msg) = last_user_msg {
@@ -176,6 +177,7 @@ pub fn is_tool_result_continuation(request: &ClaudeRequest) -> bool {
 /// 1. 模型名称显式属于 Claude 5 家族 (fable, opus-5, sonnet-5) 或显式标注 [1m] / 1m，
 ///    或属于 Gemini 长上下文模型 (gemini, flash, pro)；
 /// 2. 请求头 anthropic-beta 包含 `context-1m`。
+#[allow(dead_code)]
 pub fn is_1m_context_requested(request: &ClaudeRequest, headers: &HeaderMap) -> bool {
     let model_lower = request.model.to_lowercase();
     if model_lower.contains("fable")
@@ -203,14 +205,9 @@ pub fn is_1m_context_requested(request: &ClaudeRequest, headers: &HeaderMap) -> 
 /// 核心铁律（边界如铁）：
 /// 1. 配置守卫：`enable_cowork_auto_compact` 必须为 true；
 /// 2. 状态守卫：非压缩总结请求、非刚压缩接续、非手动 ./compact 指令、非正在压缩中；
-/// 3. 普通对话与百万上下文模型豁免（Zero False-Positive）：
-///    - 若当前请求模型具备百万上下文（如 claude-fable-5, opus-5, sonnet-5 或带 context-1m 标头），
-///      在尚未触及真实 1M 物理上限前，绝对不拦截、绝对不下发 400 假报警，100% 享受百万超长上下文！
-/// 4. 工具循环安全守卫（In-Flight Tool Loop Protection）：
-///    - 若最后一条用户消息为 tool_result，说明 Agent 正在工具调用链执行途中。
-///      此时若下发 400 假报警，客户端工具执行器无法处理并会直接向用户抛出致命弹窗，必须放行！
-/// 5. 真实 Cowork 阈值守卫：
+/// 3. 真实 Cowork 阈值守卫：
 ///    - 必须为真正的 Cowork 会话（且非 Code 模式），且实际 tokens >= effective_threshold 与 target_limit。
+///    - 严格按用户配置的阈值触发压缩，不再对 1M 模型一刀切豁免，确保会话达到设定限额时受控深度压缩。
 pub fn should_trigger_cowork_auto_compact(
     enable_auto_compact: bool,
     user_configured_threshold: u32,
@@ -228,14 +225,6 @@ pub fn should_trigger_cowork_auto_compact(
         || is_manual_compact
         || is_in_compaction
     {
-        return None;
-    }
-
-    if is_1m_context_requested(request, headers) && est_tokens < 1_000_000 {
-        return None;
-    }
-
-    if is_tool_result_continuation(request) {
         return None;
     }
 
@@ -5030,14 +5019,15 @@ mod warmup_tests {
     }
 
     #[test]
-    fn test_should_trigger_cowork_auto_compact_exempts_1m_and_tool_results() {
+    fn test_should_trigger_cowork_auto_compact_respects_threshold_and_allows_tool_results() {
         use crate::proxy::mappers::claude::models::{ContentBlock, Message, MessageContent, Tool};
         use axum::http::HeaderMap;
 
         let empty_headers = HeaderMap::new();
 
-        // 场景 1: 真实普通长文本会话（claude-fable-5 模型，输入高达 250,967 tokens）
-        // 铁律：具备百万上下文的模型在未达 1M 物理上限前，绝对禁止触发假报警门禁！
+        // 场景 1: Cowork 会话（claude-fable-5 模型，输入 250,967 tokens）
+        // 核心铁律：取消 1M 一刀切豁免后，当 tokens >= 配置阈值（如 200,000）且在用户文本提问轮次时，
+        // 必须精准触发自动自愈压缩（返回 Some），防止超大会话无限制膨胀至几十兆！
         let req_fable = ClaudeRequest {
             model: "claude-fable-5".to_string(),
             messages: vec![Message {
@@ -5052,23 +5042,41 @@ mod warmup_tests {
             }]),
             ..Default::default()
         };
+        let trigger_fable = should_trigger_cowork_auto_compact(
+            true,
+            200_000,
+            &req_fable,
+            &empty_headers,
+            250_967,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert!(
+            trigger_fable.is_some(),
+            "具备 1M 标头的模型在 Cowork 中达到用户配置阈值 (250k >= 200k) 时必须按配置触发压缩自愈！"
+        );
+
+        // 场景 1b: 同一模型未达到配置阈值（150k < 200k）时，绝对不拦截
         assert!(
             should_trigger_cowork_auto_compact(
                 true,
                 200_000,
                 &req_fable,
                 &empty_headers,
-                250_967,
+                150_000,
                 false,
                 false,
                 false,
                 false,
             )
             .is_none(),
-            "具备 1M 上下文的 claude-fable-5 普通长对话在 250k 时绝对不能被拦截！"
+            "未达到配置阈值 (150k < 200k) 的 Cowork 会话绝对不能被拦截！"
         );
 
         // 场景 2: 请求标头携带 context-1m-2025-08-07 beta 特征
+        // 达到配置阈值时同样按配置执行自愈压缩
         let mut headers_1m = HeaderMap::new();
         headers_1m.insert(
             "anthropic-beta",
@@ -5102,14 +5110,14 @@ mod warmup_tests {
                 false,
                 false,
             )
-            .is_none(),
-            "声明了 context-1m 的会话在 250k 时必须 100% 享受百万超长上下文！"
+            .is_some(),
+            "声明了 context-1m 的 Cowork 会话在 250k >= 200k 时同样遵从用户配置触发压缩！"
         );
 
         // 场景 3: Agent 处于工具调用中途（最新一条为 tool_result）
-        // 铁律：工具调用中途绝不能返回 400 假限额，否则客户端工具调度器会直接崩溃报错给用户！
+        // 铁律：Cowork 工具执行轮次达到配置阈值时，必须遵从配置正常触发自动压缩自愈
         let req_tool_result = ClaudeRequest {
-            model: "claude-3-5-haiku".to_string(),
+            model: "claude-fable-5".to_string(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: MessageContent::Array(vec![ContentBlock::ToolResult {
@@ -5132,78 +5140,46 @@ mod warmup_tests {
                 100_000,
                 &req_tool_result,
                 &empty_headers,
-                150_000,
+                250_000,
+                false,
+                false,
+                false,
+                false,
+            )
+            .is_some(),
+            "Cowork 会话即便最新一条为 tool_result，达到配置阈值时也必须遵从配置触发自动压缩自愈！"
+        );
+
+        // 场景 4: 处于 Code 模式（带有 mcp__ccd_ 工具或 You are Claude Code）
+        // 一票否决：Claude Code 自带 /compact，绝不能误入 Cowork 400 假限额
+        let req_code_mode = ClaudeRequest {
+            model: "claude-fable-5".to_string(),
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: MessageContent::String("Implement feature".to_string()),
+            }],
+            tools: Some(vec![Tool {
+                type_: None,
+                name: Some("mcp__ccd_session__mark_chapter".to_string()),
+                description: None,
+                input_schema: None,
+            }]),
+            ..Default::default()
+        };
+        assert!(
+            should_trigger_cowork_auto_compact(
+                true,
+                100_000,
+                &req_code_mode,
+                &empty_headers,
+                250_000,
                 false,
                 false,
                 false,
                 false,
             )
             .is_none(),
-            "处于 tool_result 轮次的会话绝对不能下发 400 截断假报警！"
+            "Code 模式会话具有一票否决权，绝对禁止触发 Cowork 自动压缩！"
         );
-
-        // 场景 4: 真正的 Cowork 会话（非 1M 模型，普通用户文本轮次，超过配置门限）
-        let req_real_cowork = ClaudeRequest {
-            model: "claude-3-5-haiku".to_string(),
-            messages: vec![Message {
-                role: "user".to_string(),
-                content: MessageContent::String("What should we do next?".to_string()),
-            }],
-            tools: Some(vec![Tool {
-                type_: None,
-                name: Some("mcp__cowork__present_files".to_string()),
-                description: None,
-                input_schema: None,
-            }]),
-            ..Default::default()
-        };
-        let trigger_result = should_trigger_cowork_auto_compact(
-            true,
-            100_000,
-            &req_real_cowork,
-            &empty_headers,
-            120_000,
-            false,
-            false,
-            false,
-            false,
-        );
-        assert!(
-            trigger_result.is_some(),
-            "非 1M 模型的纯正 Cowork 会话超限且在用户提问轮次时，必须精准触发自愈压缩"
-        );
-    }
-
-    #[test]
-    fn test_production_incident_payload_never_triggers_false_400() {
-        use axum::http::HeaderMap;
-
-        // 加载生产中发生 400 假限额报警的真实请求体与标头特征
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "user-agent",
-            "claude-cli/2.1.309 (external, local-agent, agent-sdk/0.3.309)"
-                .parse()
-                .unwrap(),
-        );
-        headers.insert("anthropic-client-platform", "desktop_app".parse().unwrap());
-        headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
-        headers.insert(
-            "anthropic-beta",
-            "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,tool-search-tool-2025-10-19,effort-2025-11-24".parse().unwrap(),
-        );
-
-        if let Ok(req_str) = std::fs::read_to_string("/tmp/req_400.json") {
-            if let Ok(req) = serde_json::from_str::<ClaudeRequest>(&req_str) {
-                let est_tokens = 250_967;
-                let decision = should_trigger_cowork_auto_compact(
-                    true, 200_000, &req, &headers, est_tokens, false, false, false, false,
-                );
-                assert!(
-                    decision.is_none(),
-                    "生产事故实际 Payload（claude-fable-5 + context-1m + tool_result 轮次）必须 100% 被豁免，绝对禁止下发 400 假报警！"
-                );
-            }
-        }
     }
 }
