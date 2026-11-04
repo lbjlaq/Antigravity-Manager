@@ -201,6 +201,20 @@ docker run -d --name antigravity-manager \
 # 忘记密钥？执行 docker logs antigravity-manager 或 grep -E '"api_key"|"admin_password"' ~/.antigravity_tools/gui_config.json
 ```
 
+### 选项 D: Android Termux 原生无容器部署 (ARM64 纯后端)
+针对 Android 用户与轻量部署场景（例如搭配 SillyTavern / Lumiverse 作为本地 API 代理），我们提供了原生的 `aarch64-linux-android` (Bionic libc) 无界面构建，无需安装 Debian PRoot 或 Docker：
+
+```bash
+# 一键安装至 Termux ($PREFIX/bin/antigravity-server)
+curl -sSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-termux.sh | bash
+
+# 运行方式 1: 标准启动（支持手机浏览器访问 Web UI 进行可视化管理）
+antigravity-server
+
+# 运行方式 2: 纯代理极简模式（完全关闭 Web 界面以极致省电 / 防局域网扫描）
+antigravity-server --no-web
+```
+
 > [!TIP]
 > **🧪 Beta / 预览版镜像拉取**：
 > 若需使用最新的 Beta 预发布特性，请直接指定对应的 Beta 版本 Tag（预发布版本独立发布，不会覆盖 `latest` 稳定版标签）：

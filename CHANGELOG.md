@@ -4,6 +4,12 @@
 
 *   **版本演进**:
     *   **v5.0.3-beta.1 (2026-11-04)**:
+        -   **[原生 Termux Android ARM64 支持与纯代理 Headless 架构] (Fixes #3818, Thanks to @sandwitchers)**:
+            -   **Android Bionic 原生构建**: 彻底解耦对 Linux 桌面 GTK/WebKit 的硬绑定依赖，引入原生 `aarch64-linux-android` 编译支持，解决 Android Bionic libc 与 glibc 链接不兼容问题；用户无需安装 PRoot 或 Docker 容器即可直接在 Termux 终端原生高效率运行。(Fixes #3818, Thanks to @sandwitchers)
+            -   **独立无界面服务端二进制 (`antigravity-server`)**: 拆分独立 CLI 服务端入口，支持自定义监听端口 (`-p / --port`)、监听地址 (`-h / --host`) 以及现有管理命令；保留全套安全环境变量覆盖与数据库自愈能力。(Fixes #3818)
+            -   **支持一键 `--no-web` 纯代理省电模式**: 默认支持手机浏览器打开 Web UI 进行可视化管理与添加账号；同时引入 `--no-web` / `--pure-proxy` 启动参数与 `ABV_DISABLE_WEB` 环境变量，配置完成后可彻底关闭静态资源与管理路由，进入极简纯代理 API 模式（内存占用仅 15MB~25MB），极致省电且杜绝公网/局域网 Web 扫描风险。(Fixes #3818)
+            -   **静态资源与入口白名单鉴权放行**: 修复严格鉴权模式下静态网页资源被误判 401 拦截的问题，将前端入口及资源文件纳入公开免鉴权白名单，确保在任何复杂认证策略下手机浏览器都能流畅加载并呈现登录界面。(Fixes #3818)
+            -   **Termux 一键快捷安装脚本**: 提供 `scripts/install-termux.sh`，自动检测 ARM64 架构并安装至 Termux 标准路径 (`$PREFIX/bin/antigravity-server`)，无缝对接 SillyTavern 与 Lumiverse。(Fixes #3818, Thanks to @sandwitchers)
         -   **[官方 GCP Vertex AI 企业账号支持与多协议凭据自适应隔离] (Fixes #3823)**:
             -   **对齐官方 GCP 企业客户端凭据**: 深度逆向对齐官方 Antigravity 应用的 GCP / Vertex AI 企业授权协议架构，引入官方企业客户端（`884354919052-...`）及密钥体系，支持通过 `antigravity_gcp` 独立注册与动态鉴权，彻底解决企业组织账号授权后被误判为 Free Tier 或缺失 Vertex AI 项目配额的缺陷。(Fixes #3823)
             -   **存量凭据数据严格向下兼容**: 账号凭据严格通过 `token.oauth_client_key` 与 `is_gcp_tos` 区分；存量使用个人版官方客户端授权的自定义域名企业邮箱（如 `@imsot.org`）100% 保持个人模式平滑刷新，杜绝因仅凭邮箱后缀切换客户端导致 Google 报 `400 invalid_grant` 的风险。
