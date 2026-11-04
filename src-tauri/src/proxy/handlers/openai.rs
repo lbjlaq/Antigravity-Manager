@@ -473,11 +473,25 @@ fn validate_responses_image_data_url(
 }
 
 fn validate_responses_input_image_limits(input: Option<&Value>) -> Result<(), String> {
-    fn visit(value: &Value, count: &mut usize, total: &mut usize) -> Result<(), String> {
+    let sliding_window_enabled =
+        crate::proxy::config::get_multimodal_config().enable_sliding_window;
+    validate_responses_input_image_limits_with_mode(input, sliding_window_enabled)
+}
+
+fn validate_responses_input_image_limits_with_mode(
+    input: Option<&Value>,
+    sliding_window_enabled: bool,
+) -> Result<(), String> {
+    fn visit(
+        value: &Value,
+        count: &mut usize,
+        total: &mut usize,
+        sliding_window_enabled: bool,
+    ) -> Result<(), String> {
         match value {
             Value::Array(values) => {
                 for value in values {
-                    visit(value, count, total)?;
+                    visit(value, count, total, sliding_window_enabled)?;
                 }
             }
             Value::Object(values) => {
@@ -495,14 +509,20 @@ fn validate_responses_input_image_limits(input: Option<&Value>) -> Result<(), St
                             return Ok(());
                         }
                         *count = count.saturating_add(1);
+                        // Pipeline First: 当启用多模态保鲜滑窗时，入口仅校验单张图片合法性与单图 20MB 上限，
+                        // 累积历史图片总容量交由 InboundThinkingPipeline 滑窗与 LRU 内存兜底统一治理，
+                        // 防止长程 Agent 多轮看图历史在进入流水线裁剪前被入口 32MB 门禁提前误杀。
+                        let accumulated = if sliding_window_enabled { 0 } else { *total };
                         let decoded_len =
-                            validate_responses_image_data_url(data_url, *count, *total)?;
-                        *total = total.saturating_add(decoded_len);
+                            validate_responses_image_data_url(data_url, *count, accumulated)?;
+                        if !sliding_window_enabled {
+                            *total = total.saturating_add(decoded_len);
+                        }
                     }
                     return Ok(());
                 }
                 for value in values.values() {
-                    visit(value, count, total)?;
+                    visit(value, count, total, sliding_window_enabled)?;
                 }
             }
             _ => {}
@@ -513,7 +533,7 @@ fn validate_responses_input_image_limits(input: Option<&Value>) -> Result<(), St
     let mut count = 0;
     let mut total = 0;
     if let Some(input) = input {
-        visit(input, &mut count, &mut total)?;
+        visit(input, &mut count, &mut total, sliding_window_enabled)?;
     }
     Ok(())
 }
@@ -929,6 +949,7 @@ mod stream_peek_tests {
     use super::stream_chunk_has_image_data;
     use super::validate_input_image_limits;
     use super::validate_responses_image_data_url;
+    use super::validate_responses_input_image_limits_with_mode;
     use super::{MAX_INPUT_IMAGE_BYTES, MAX_TOTAL_INPUT_IMAGE_BYTES};
     use crate::proxy::mappers::openai::{transform_openai_request, OpenAIRequest};
     use serde_json::{json, Value};
@@ -1314,6 +1335,38 @@ data: {"type":"response.failed","response":{"status":"failed","error":{"code":"u
         assert!(
             validate_input_image_limits(100, 2 * 1024 * 1024, MAX_TOTAL_INPUT_IMAGE_BYTES + 1)
                 .is_err()
+        );
+
+        // 当开启多模态保鲜滑窗时，多张合法图片累积超过 32MB 应在入口放行交由 Pipeline 裁剪；
+        // 当关闭滑窗时，入口应严格拦截累积超限。
+        let chunk_b64 = "AAAA".repeat((12 * 1024 * 1024) / 3); // 单张 12MB (< 20MB 单图上限)
+        let data_url = format!("data:image/png;base64,{chunk_b64}");
+        let multi_turn_input = json!([
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": [{ "type": "input_image", "image_url": data_url.clone() }]
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_2",
+                "output": [{ "type": "input_image", "image_url": data_url.clone() }]
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_3",
+                "output": [{ "type": "input_image", "image_url": data_url }]
+            }
+        ]);
+        assert!(
+            validate_responses_input_image_limits_with_mode(Some(&multi_turn_input), true).is_ok(),
+            "Sliding window enabled should defer cumulative historical total to InboundThinkingPipeline"
+        );
+        assert!(
+            validate_responses_input_image_limits_with_mode(Some(&multi_turn_input), false)
+                .unwrap_err()
+                .starts_with("Total input image data is too large"),
+            "Sliding window disabled must enforce cumulative limit at ingress"
         );
     }
 

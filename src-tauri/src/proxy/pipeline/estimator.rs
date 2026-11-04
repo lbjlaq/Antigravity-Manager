@@ -68,6 +68,17 @@ pub fn estimate_inline_data_tokens(mime_type: &str, data_len: usize) -> u32 {
     }
 }
 
+/// Data URL 或远程图片 URL 的 Token 折算（避免将 data:image/...;base64,... 按普通字符除以 4 算成百万 Token）
+fn estimate_image_url_tokens(url: &str) -> u32 {
+    if let Some(rest) = url.strip_prefix("data:") {
+        if let Some((meta, b64)) = rest.split_once(',') {
+            let mime = meta.split(';').next().unwrap_or("image/png");
+            return estimate_inline_data_tokens(mime, b64.len());
+        }
+    }
+    estimate_tokens_from_str(url).max(258)
+}
+
 /// 智能文本/多模态混合内容 Token 折算 (防止庞大的 Base64 字符串被误判为文本膨胀几十倍)
 fn estimate_content_str_tokens(s: &str) -> u32 {
     if s.is_empty() {
@@ -187,8 +198,13 @@ impl PipelineTokenEstimator {
             }
         }
 
-        // 模式 3: 兜底加权估算
-        estimate_tokens_from_str(&body.to_string())
+        // 模式 2.5: OpenAI Responses API 格式（包含 input 或 instructions）
+        if unwrapped.get("input").is_some() || unwrapped.get("instructions").is_some() {
+            return Self::estimate_responses_format(unwrapped);
+        }
+
+        // 模式 3: 兜底加权估算（带 data:image 防爆保护）
+        estimate_content_str_tokens(&body.to_string())
     }
 
     /// 估算 Gemini Canonical IR 结构
@@ -463,9 +479,11 @@ impl PipelineTokenEstimator {
                                 total += estimate_tokens_from_str(text);
                             }
                             if let Some(image_obj) = part.get("image_url") {
-                                let url =
-                                    image_obj.get("url").and_then(Value::as_str).unwrap_or("");
-                                total += estimate_tokens_from_str(url).max(258);
+                                let url = image_obj
+                                    .as_str()
+                                    .or_else(|| image_obj.get("url").and_then(Value::as_str))
+                                    .unwrap_or("");
+                                total += estimate_image_url_tokens(url);
                             }
                         }
                     }
@@ -492,6 +510,103 @@ impl PipelineTokenEstimator {
             }
         }
 
+        total
+    }
+
+    /// 估算 OpenAI Responses API 请求格式（/v1/responses）
+    fn estimate_responses_format(body: &Value) -> u32 {
+        fn estimate_responses_value(val: &Value) -> u32 {
+            match val {
+                Value::String(s) => estimate_content_str_tokens(s),
+                Value::Array(arr) => arr.iter().map(estimate_responses_value).sum(),
+                Value::Object(obj) => {
+                    let mut sub = 0u32;
+                    let item_type = obj.get("type").and_then(Value::as_str).unwrap_or("");
+                    match item_type {
+                        "input_image" | "image_url" => {
+                            let img_val = obj.get("image_url");
+                            let url = img_val
+                                .and_then(Value::as_str)
+                                .or_else(|| {
+                                    img_val.and_then(|v| v.get("url")).and_then(Value::as_str)
+                                })
+                                .unwrap_or("");
+                            return estimate_image_url_tokens(url);
+                        }
+                        "input_text" | "output_text" | "text" | "summary_text" => {
+                            if let Some(t) = obj.get("text").and_then(Value::as_str) {
+                                return estimate_content_str_tokens(t);
+                            }
+                        }
+                        "function_call" | "custom_tool_call" => {
+                            sub += 20;
+                            if let Some(name) = obj.get("name").and_then(Value::as_str) {
+                                sub += estimate_tokens_from_str(name);
+                            }
+                            if let Some(args) = obj.get("arguments").or_else(|| obj.get("input")) {
+                                if let Some(s) = args.as_str() {
+                                    sub += estimate_content_str_tokens(s);
+                                } else {
+                                    sub += estimate_content_str_tokens(&args.to_string());
+                                }
+                            }
+                            return sub;
+                        }
+                        "function_call_output" | "custom_tool_call_output" => {
+                            sub += 10;
+                            if let Some(out) = obj.get("output") {
+                                sub += estimate_responses_value(out);
+                            }
+                            return sub;
+                        }
+                        "reasoning" => {
+                            sub += 100;
+                            if let Some(summary) = obj.get("summary") {
+                                sub += estimate_responses_value(summary);
+                            }
+                            if let Some(enc) = obj.get("encrypted_content").and_then(Value::as_str)
+                            {
+                                sub += estimate_tokens_from_str(enc);
+                            }
+                            return sub;
+                        }
+                        _ => {}
+                    }
+
+                    if let Some(content) = obj.get("content") {
+                        sub += 4 + estimate_responses_value(content);
+                    }
+                    if let Some(output) = obj.get("output") {
+                        sub += estimate_responses_value(output);
+                    }
+                    if let Some(img_url) = obj.get("image_url") {
+                        let url = img_url
+                            .as_str()
+                            .or_else(|| img_url.get("url").and_then(Value::as_str))
+                            .unwrap_or("");
+                        sub += estimate_image_url_tokens(url);
+                    }
+                    if let Some(text) = obj.get("text").and_then(Value::as_str) {
+                        sub += estimate_content_str_tokens(text);
+                    }
+                    sub
+                }
+                _ => 0,
+            }
+        }
+
+        let mut total = 0u32;
+        if let Some(ins) = body.get("instructions").and_then(Value::as_str) {
+            total += estimate_tokens_from_str(ins);
+        }
+        if let Some(input) = body.get("input") {
+            total += estimate_responses_value(input);
+        }
+        if let Some(tools) = body.get("tools").and_then(Value::as_array) {
+            for tool in tools {
+                total += estimate_tokens_from_str(&tool.to_string());
+            }
+        }
         total
     }
 
@@ -729,6 +844,41 @@ mod tests {
             tokens >= 270,
             "Expected tokens >= 270, but got {} (indicates tool_use signature undercounted)",
             tokens
+        );
+    }
+
+    #[test]
+    fn test_pipeline_estimator_responses_format_with_large_base64_images() {
+        // 模拟 Codex /v1/responses 携带大体积 Base64 截图（例如 400KB base64 文本）：
+        // 修复前会落入兜底字符串分词算成 ~100,000 tokens；修复后应按标准单图 2000 tokens 折算。
+        let large_b64 = "A".repeat(400_000);
+        let data_url = format!("data:image/png;base64,{large_b64}");
+        let body = json!({
+            "model": "gemini-4-argon-high",
+            "instructions": "You are Codex.",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", "text": "Inspect this image" },
+                        { "type": "input_image", "image_url": data_url.clone() }
+                    ]
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_view_1",
+                    "output": [
+                        { "type": "input_image", "image_url": data_url }
+                    ]
+                }
+            ]
+        });
+
+        let tokens = PipelineTokenEstimator::estimate_tokens(&body);
+        assert!(
+            tokens >= 4000 && tokens < 5000,
+            "Expected ~4020 tokens for 2 high-res images + short text in /v1/responses, got {tokens}"
         );
     }
 }
