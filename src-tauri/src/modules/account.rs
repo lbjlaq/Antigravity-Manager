@@ -1707,7 +1707,10 @@ pub fn update_account_priority(account_id: &str, priority: u8) -> Result<(), Str
 ///
 /// When project_id is provided, sets is_gcp_tos to true so the gateway
 /// seamlessly routes requests to the enterprise/Vertex AI platform.
-pub fn update_account_project_id(account_id: &str, project_id: Option<String>) -> Result<(), String> {
+pub fn update_account_project_id(
+    account_id: &str,
+    project_id: Option<String>,
+) -> Result<(), String> {
     let _account_write = lock_account_file_updates()?;
     let mut account = load_account(account_id)?;
     let cleaned_pid = project_id
@@ -1735,7 +1738,12 @@ pub async fn auto_fetch_account_project_id(account_id: &str) -> Result<String, S
         let _ = save_account(&account);
     }
 
-    match crate::proxy::project_resolver::fetch_project_id_for_account(&token.access_token, Some(account_id)).await {
+    match crate::proxy::project_resolver::fetch_project_id_for_account(
+        &token.access_token,
+        Some(account_id),
+    )
+    .await
+    {
         Ok(pid) => {
             update_account_project_id(account_id, Some(pid.clone()))?;
             Ok(pid)

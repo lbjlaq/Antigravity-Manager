@@ -317,10 +317,7 @@ mod tests {
         // 上游真实 id（loadCodeAssist 返回的权威字段）
         assert_eq!(normalize_subscription_tier("free-tier"), "FREE");
         assert_eq!(normalize_subscription_tier("g1-pro-tier"), "PRO");
-        assert_eq!(
-            normalize_subscription_tier("standard-tier"),
-            "ENTERPRISE"
-        );
+        assert_eq!(normalize_subscription_tier("standard-tier"), "ENTERPRISE");
         assert_eq!(
             normalize_subscription_tier("GCP_ENTERPRISE_TIER"),
             "ENTERPRISE"
