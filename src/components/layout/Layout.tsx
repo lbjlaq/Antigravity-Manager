@@ -15,18 +15,18 @@ import { ensureFullViewState } from '../../utils/windowManager';
 
 function Layout() {
     const { isMiniView } = useViewStore();
-    const { accounts, toggleProxyStatus } = useAccountStore();
+    const { accounts, updateAccountPriority, toggleProxyStatus } = useAccountStore();
     const { active, checkCandidates, checkAndAutoRecover } = usePedalModeStore();
 
     // 蹬额度模式：账号状态变化或配额刷新时自动检测
     useEffect(() => {
         if (!accounts || accounts.length === 0) return;
         if (active) {
-            checkAndAutoRecover(accounts, toggleProxyStatus);
+            checkAndAutoRecover(accounts, updateAccountPriority, toggleProxyStatus);
         } else {
             checkCandidates(accounts);
         }
-    }, [accounts, active, checkCandidates, checkAndAutoRecover, toggleProxyStatus]);
+    }, [accounts, active, checkCandidates, checkAndAutoRecover, updateAccountPriority, toggleProxyStatus]);
 
     // 蹬额度模式：每 60 秒定期心跳校验临期与重置倒计时
     useEffect(() => {
@@ -35,13 +35,13 @@ function Layout() {
             if (!currentAccounts || currentAccounts.length === 0) return;
             const pedal = usePedalModeStore.getState();
             if (pedal.active) {
-                pedal.checkAndAutoRecover(currentAccounts, toggleProxyStatus);
+                pedal.checkAndAutoRecover(currentAccounts, updateAccountPriority, toggleProxyStatus);
             } else {
                 pedal.checkCandidates(currentAccounts);
             }
         }, 60000);
         return () => clearInterval(timer);
-    }, [toggleProxyStatus]);
+    }, [updateAccountPriority, toggleProxyStatus]);
 
     // Ensure correct window state when in Full View (not Mini View)
     // This handles the case where the app was closed in Mini View (small size, no decorations)

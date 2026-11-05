@@ -14,6 +14,7 @@ export interface PedalModeState {
     active: boolean;
     targetModel: PedalTargetModel | null;
     targetAccountIds: string[];
+    originalPriorities: Record<string, number>;
     snapshotDisabledIds: string[];
     temporarilyDisabledIds: string[];
     suppressNotice: {

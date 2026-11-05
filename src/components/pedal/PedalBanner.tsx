@@ -6,15 +6,15 @@ import { useAccountStore } from '../../stores/useAccountStore';
 
 export const PedalBanner: React.FC = () => {
     const { t } = useTranslation();
-    const { active, targetModel, targetAccountIds, temporarilyDisabledIds, manualExit } = usePedalModeStore();
-    const { toggleProxyStatus } = useAccountStore();
+    const { active, targetModel, targetAccountIds, manualExit } = usePedalModeStore();
+    const { updateAccountPriority, toggleProxyStatus } = useAccountStore();
 
     if (!active || !targetModel) return null;
 
     const modelLabel = targetModel === 'gemini' ? 'Gemini' : 'Claude';
 
     const handleManualExit = async () => {
-        await manualExit(toggleProxyStatus);
+        await manualExit(updateAccountPriority, toggleProxyStatus);
     };
 
     return (
@@ -27,7 +27,7 @@ export const PedalBanner: React.FC = () => {
                     <div className="text-xs sm:text-sm font-bold text-amber-300 flex items-center gap-2 flex-wrap">
                         <span>{t('pedal.banner_running', '🚴 蹬额度模式运行中 ({{model}})', { model: modelLabel })}</span>
                         <span className="text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full font-mono border border-amber-500/30">
-                            {t('pedal.banner_suspended_count', '已挂起 {{count}} 个账号', { count: temporarilyDisabledIds.length })}
+                            {t('pedal.banner_priority_badge', '最高优先级调度')}
                         </span>
                         <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded-full font-mono border border-emerald-500/20">
                             {t('pedal.banner_active_count', '{{count}} 个待消耗', { count: targetAccountIds.length })}
@@ -36,7 +36,7 @@ export const PedalBanner: React.FC = () => {
                     <div className="text-[11px] text-slate-400 mt-0.5">
                         {t(
                             'pedal.banner_subtext',
-                            '正在全力消耗临期配额，当目标账号配额全部降至 0% 或到达重置时间后，系统将自动恢复其他账号。'
+                            '正在全力优先消耗临期配额，其他正常账号正常待命作为会话连续性与并发弹性保底。当目标账号配额全部降至 0% 或到达重置时间后，系统将自动恢复默认调度。'
                         )}
                     </div>
                 </div>
