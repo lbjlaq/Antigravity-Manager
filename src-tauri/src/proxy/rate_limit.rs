@@ -244,6 +244,44 @@ impl RateLimitTracker {
             .unwrap_or(0)
     }
 
+    /// 当自适应熔断退避开关关闭时，依然坚定检查账号是否处于明确的配额耗尽锁定或周硬配额限制中
+    pub fn is_quota_exhausted_or_explicit_limited(
+        &self,
+        account_id: &str,
+        model: Option<&str>,
+    ) -> bool {
+        let now = SystemTime::now();
+
+        // 1. 周硬配额检查 (快照同步)
+        if self.get_quota_wait(account_id, model, true) > 0 {
+            return true;
+        }
+
+        // 2. 检查直接 key 是否处于 QuotaExhausted 锁定中
+        let direct_key = self.get_limit_key(account_id, model);
+        if let Some(info) = self.limits.get(&direct_key) {
+            if info.reset_time > now && info.reason == RateLimitReason::QuotaExhausted {
+                return true;
+            }
+        }
+
+        // 3. 归一化标准 ID 兜底检查
+        if let Some(m) = model {
+            if let Some(std_id) = crate::proxy::common::model_mapping::normalize_to_standard_id(m) {
+                if std_id != m {
+                    let std_key = self.get_limit_key(account_id, Some(&std_id));
+                    if let Some(info) = self.limits.get(&std_key) {
+                        if info.reset_time > now && info.reason == RateLimitReason::QuotaExhausted {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     pub fn sync_quota_bucket(
         &self,
         account_id: &str,
@@ -1300,10 +1338,7 @@ mod tests {
         .is_none());
 
         // 非法时间格式：不能 panic，必须返回 None
-        assert!(extract_quota_reset_timestamp(
-            r#"{"quotaResetTimeStamp":"not-a-date"}"#
-        )
-        .is_none());
+        assert!(extract_quota_reset_timestamp(r#"{"quotaResetTimeStamp":"not-a-date"}"#).is_none());
 
         // 非 JSON（纯文本错误）：返回 None
         assert!(extract_quota_reset_timestamp("Service Unavailable").is_none());
@@ -1326,9 +1361,7 @@ mod tests {
 
         // 3) 普通 Gemini 大桶 / Ultra 共享桶 —— 只有结构化字段
         assert!(
-            is_quota_depleted_signal(
-                r#"{"error":{"details":[{"reason":"QUOTA_EXHAUSTED"}]}}"#
-            ),
+            is_quota_depleted_signal(r#"{"error":{"details":[{"reason":"QUOTA_EXHAUSTED"}]}}"#),
             "structured reason"
         );
         assert!(
@@ -1341,7 +1374,10 @@ mod tests {
             is_quota_depleted_signal("You exceeded your current quota, please check your plan."),
             "3p bucket"
         );
-        assert!(is_quota_depleted_signal("insufficient_quota"), "3p bucket alt");
+        assert!(
+            is_quota_depleted_signal("insufficient_quota"),
+            "3p bucket alt"
+        );
 
         // 5) 1.5% 木桶触发入口必须保留（Fixes #3841）
         assert!(

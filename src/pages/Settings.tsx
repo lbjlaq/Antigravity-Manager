@@ -103,8 +103,8 @@ function Settings() {
             use_http2: true
         },
         circuit_breaker: {
-            enabled: false,
-            backoff_steps: [30, 60, 120, 300, 600]
+            enabled: true,
+            backoff_steps: [60, 300, 1800, 7200]
         },
         hidden_menu_items: [],  // 菜单显示设置：默认不隐藏任何菜单项
 

@@ -1696,6 +1696,8 @@ pub async fn handle_messages(
     let mut used_attempts = 0usize;
     // GraceRetry 复用同一账号凭据：不重新选号，也不消耗轮换次数（与 gemini/openai 同构）
     let mut retry_credentials: Option<(String, String, String, String, u64)> = None;
+    let mut attempted_accounts: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     // [Stage Timing] 阶段耗时度量变量 (毫秒，保留微秒级浮点精度)
     let clean_micros = clean_start.elapsed().as_micros() as u64;
@@ -1804,11 +1806,12 @@ pub async fn handle_messages(
             }
         } else {
             let mut res = token_manager
-                .get_token(
+                .get_token_filtered(
                     &config.request_type,
                     force_rotate,
                     session_id,
                     &config.final_model,
+                    &attempted_accounts,
                 )
                 .await;
 
@@ -1820,7 +1823,13 @@ pub async fn handle_messages(
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     res = token_manager
-                        .get_token(&config.request_type, true, session_id, &config.final_model)
+                        .get_token_filtered(
+                            &config.request_type,
+                            true,
+                            session_id,
+                            &config.final_model,
+                            &attempted_accounts,
+                        )
                         .await;
                 }
             }
@@ -1830,6 +1839,13 @@ pub async fn handle_messages(
         let (access_token, project_id, email, account_id, _wait_ms) = match token_result {
             Ok(t) => t,
             Err(e) => {
+                if !failure_statuses.is_empty() {
+                    tracing::warn!(
+                        "[{}] All available accounts attempted or exhausted for this request, breaking retry loop to return upstream error",
+                        trace_id
+                    );
+                    break;
+                }
                 let safe_message = if e.contains("invalid_grant") {
                     "OAuth refresh failed (invalid_grant): refresh_token likely revoked/expired; reauthorize account(s) to restore service.".to_string()
                 } else {
@@ -2973,6 +2989,12 @@ pub async fn handle_messages(
                 force_rotate = false;
             } else {
                 force_rotate = true;
+                if pool_size > 1 && attempted_accounts.len() < pool_size {
+                    attempted_accounts.insert(account_id.clone());
+                } else if pool_size > 1 && attempted_accounts.len() >= pool_size {
+                    attempted_accounts.clear();
+                    attempted_accounts.insert(account_id.clone());
+                }
             }
             continue;
         } else {

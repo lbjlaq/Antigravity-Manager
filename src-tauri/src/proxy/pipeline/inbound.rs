@@ -2001,7 +2001,9 @@ impl InboundThinkingPipeline {
                 } else if lower.ends_with("-tiered") {
                     *m_val = json!(format!("{}-high", &m_str[..m_str.len() - 7]));
                     promoted = true;
-                } else if (lower.contains("flash") || lower.contains("pro")) && !lower.ends_with("-high") {
+                } else if (lower.contains("flash") || lower.contains("pro"))
+                    && !lower.ends_with("-high")
+                {
                     *m_val = json!(format!("{}-high", m_str));
                     promoted = true;
                 }

@@ -171,6 +171,8 @@ pub async fn handle_generate(
     let mut force_rotate = false;
     let mut retry_state = RequestRetryState::default();
     let mut retry_credentials: Option<(String, String, String, String, u64)> = None;
+    let mut attempted_accounts: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     let mut image_permit = None;
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
@@ -294,11 +296,12 @@ pub async fn handle_generate(
             }
         } else {
             let mut token_result = token_manager
-                .get_token(
+                .get_token_filtered(
                     &config.request_type,
                     force_rotate,
                     Some(&affinity_key),
                     &config.final_model,
+                    &attempted_accounts,
                 )
                 .await;
 
@@ -310,11 +313,12 @@ pub async fn handle_generate(
                         );
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     token_result = token_manager
-                        .get_token(
+                        .get_token_filtered(
                             &config.request_type,
                             true,
                             Some(&affinity_key),
                             &config.final_model,
+                            &attempted_accounts,
                         )
                         .await;
                 }
@@ -323,6 +327,13 @@ pub async fn handle_generate(
             match token_result {
                 Ok(t) => t,
                 Err(e) => {
+                    if !failure_statuses.is_empty() {
+                        tracing::warn!(
+                            "[{}] All available accounts attempted or exhausted for this request, breaking retry loop to return upstream error",
+                            trace_id
+                        );
+                        break;
+                    }
                     let headers = build_token_error_headers(
                         Some(mapped_model.as_str()),
                         last_email.as_deref(),
@@ -1174,15 +1185,19 @@ pub async fn handle_generate(
                 force_rotate = false;
             } else {
                 force_rotate = true;
+                if pool_size > 1 && attempted_accounts.len() < pool_size {
+                    attempted_accounts.insert(account_id.clone());
+                } else if pool_size > 1 && attempted_accounts.len() >= pool_size {
+                    attempted_accounts.clear();
+                    attempted_accounts.insert(account_id.clone());
+                }
             }
 
             continue;
         }
 
         // 上游配额到期 429 报错绝对不改写，保持原汁原味透传
-        if status_code == 429
-            && crate::proxy::rate_limit::is_quota_depleted_signal(&error_text)
-        {
+        if status_code == 429 && crate::proxy::rate_limit::is_quota_depleted_signal(&error_text) {
             if let Ok(raw_json) = serde_json::from_str::<Value>(&error_text) {
                 return Ok((
                     status,
