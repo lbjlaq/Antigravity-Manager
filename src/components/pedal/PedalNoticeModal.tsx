@@ -9,7 +9,7 @@ import { formatTimeRemaining } from '../../utils/format';
 export const PedalNoticeModal: React.FC = () => {
     const { t } = useTranslation();
     const { pendingModal, dismissModal, suppressModel, activatePedalMode } = usePedalModeStore();
-    const { accounts, toggleProxyStatus } = useAccountStore();
+    const { accounts, updateAccountPriority } = useAccountStore();
 
     if (!pendingModal) return null;
 
@@ -17,7 +17,7 @@ export const PedalNoticeModal: React.FC = () => {
 
     const handleActivate = async () => {
         const targetIds = candidates.map(c => c.accountId);
-        await activatePedalMode(model, targetIds, accounts, toggleProxyStatus);
+        await activatePedalMode(model, targetIds, accounts, updateAccountPriority);
     };
 
     const handleSuppress = () => {

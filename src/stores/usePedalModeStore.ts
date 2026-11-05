@@ -3,6 +3,7 @@ import { Account, getAccountTier } from '../types/account';
 import { PedalCandidate, PedalModeState, PedalTargetModel } from '../types/pedal';
 import { getGroupQuotaSummaries } from '../utils/quotaDisplay';
 import { showToast } from '../components/common/ToastContainer';
+import { useAccountStore } from './useAccountStore';
 
 const STORAGE_KEY = 'antigravity_pedal_mode_state';
 const SUPPRESS_KEY = 'antigravity_pedal_mode_suppress';
@@ -23,14 +24,16 @@ interface PedalModeStore extends PedalModeState {
         model: PedalTargetModel,
         targetIds: string[],
         accounts: Account[],
-        toggleProxy: (accountId: string, enable: boolean, reason?: string) => Promise<void>
+        updatePriority?: (accountId: string, priority: number) => Promise<void>
     ) => Promise<void>;
     checkAndAutoRecover: (
         accounts: Account[],
-        toggleProxy: (accountId: string, enable: boolean, reason?: string) => Promise<void>
+        updatePriority?: (accountId: string, priority: number) => Promise<void>,
+        legacyToggle?: (accountId: string, enable: boolean, reason?: string) => Promise<void>
     ) => Promise<void>;
     manualExit: (
-        toggleProxy: (accountId: string, enable: boolean, reason?: string) => Promise<void>
+        updatePriority?: (accountId: string, priority: number) => Promise<void>,
+        legacyToggle?: (accountId: string, enable: boolean, reason?: string) => Promise<void>
     ) => Promise<void>;
     dismissModal: () => void;
     suppressModel: (model: PedalTargetModel) => void;
@@ -96,6 +99,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
         active: initialState.active || false,
         targetModel: initialState.targetModel || null,
         targetAccountIds: initialState.targetAccountIds || [],
+        originalPriorities: initialState.originalPriorities || {},
         snapshotDisabledIds: initialState.snapshotDisabledIds || [],
         temporarilyDisabledIds: initialState.temporarilyDisabledIds || [],
         suppressNotice: initialSuppress,
@@ -151,27 +155,27 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
             }
         },
 
-        activatePedalMode: async (model, targetIds, accounts, toggleProxy) => {
+        activatePedalMode: async (model, targetIds, accounts, updatePriority) => {
             const targetSet = new Set(targetIds);
-            const originallyDisabled: string[] = [];
-            const willDisable: string[] = [];
+            const originalPriorities: Record<string, number> = {};
 
             for (const acc of accounts) {
-                if (!targetSet.has(acc.id)) {
-                    if (acc.proxy_disabled) {
-                        originallyDisabled.push(acc.id);
-                    } else {
-                        willDisable.push(acc.id);
-                    }
+                if (targetSet.has(acc.id)) {
+                    originalPriorities[acc.id] = typeof acc.priority === 'number' ? acc.priority : 50;
                 }
             }
 
-            // 批量将非目标账号临时禁用
-            for (const id of willDisable) {
+            const priorityUpdater = updatePriority || (async (id: string, p: number) => {
+                const { updateAccountPriority } = useAccountStore.getState();
+                if (updateAccountPriority) await updateAccountPriority(id, p);
+            });
+
+            // 批量将目标账号设置为最高调度优先级（priority = 1），绝不挂起其他正常账号
+            for (const id of targetIds) {
                 try {
-                    await toggleProxy(id, false, 'pedal_mode_locked');
+                    await priorityUpdater(id, 1);
                 } catch (e) {
-                    console.error('[PedalMode] Failed to disable account:', id, e);
+                    console.error('[PedalMode] Failed to boost account priority:', id, e);
                 }
             }
 
@@ -179,8 +183,9 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 active: true,
                 targetModel: model,
                 targetAccountIds: targetIds,
-                snapshotDisabledIds: originallyDisabled,
-                temporarilyDisabledIds: willDisable,
+                originalPriorities,
+                snapshotDisabledIds: [],
+                temporarilyDisabledIds: [],
                 suppressNotice: get().suppressNotice,
             };
 
@@ -193,29 +198,42 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 pendingModal: null,
             });
 
-            showToast(`🚴 已启动“蹬额度模式”(${model.toUpperCase()})，临时挂起 ${willDisable.length} 个账号`);
+            showToast(`🚴 已启动“蹬额度模式”(${model.toUpperCase()})，已将 ${targetIds.length} 个临期账号设为最高调度优先级`);
         },
 
-        checkAndAutoRecover: async (accounts, toggleProxy) => {
+        checkAndAutoRecover: async (accounts, updatePriority, legacyToggle) => {
             const state = get();
             if (!state.active || !state.targetModel || state.targetAccountIds.length === 0) {
                 return;
             }
 
+            const priorityUpdater = updatePriority || (async (id: string, p: number) => {
+                const { updateAccountPriority } = useAccountStore.getState();
+                if (updateAccountPriority) await updateAccountPriority(id, p);
+            });
+
             const targetAccounts = accounts.filter(a => state.targetAccountIds.includes(a.id));
             if (targetAccounts.length === 0) {
-                // 异常保底：若所有目标账号已被用户删除或移除，立即退出并恢复挂起的正常账号，防死锁
-                for (const id of state.temporarilyDisabledIds) {
+                // 异常保底：若所有目标账号已被用户删除或移除，立即退出并恢复默认优先级
+                for (const id of state.targetAccountIds) {
+                    const origP = state.originalPriorities?.[id] ?? 50;
                     try {
-                        await toggleProxy(id, true);
+                        await priorityUpdater(id, origP);
                     } catch (e) {
-                        console.error('[PedalMode] Failed to restore account on empty targets:', id, e);
+                        console.error('[PedalMode] Failed to restore account priority on empty targets:', id, e);
+                    }
+                }
+                // 容错处理旧版本残留的挂起账号
+                if (legacyToggle && state.temporarilyDisabledIds?.length > 0) {
+                    for (const id of state.temporarilyDisabledIds) {
+                        try { await legacyToggle(id, true); } catch (_) {}
                     }
                 }
                 const clearedState = {
                     active: false,
                     targetModel: null,
                     targetAccountIds: [],
+                    originalPriorities: {},
                     snapshotDisabledIds: [],
                     temporarilyDisabledIds: [],
                 };
@@ -223,7 +241,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                     localStorage.removeItem(STORAGE_KEY);
                 } catch (_) {}
                 set(clearedState);
-                showToast('目标待蹬账号已不存在，已自动退出蹬额度模式并恢复所有账号');
+                showToast('目标待蹬账号已不存在，已自动退出蹬额度模式并恢复调度优先级');
                 return;
             }
 
@@ -255,8 +273,6 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
 
                 // 临期等待判定：仅当处于倒计时窗口内 (0 < diffHours <= 24) 且配额尚未恢复 (< 90%) 时，
                 // 才说明该账号既未到达重置时间、也未刷新新周期。
-                // 若 diffHours <= 0 (到达官方重置时间) 或 pct >= 90 (配额已满血) 或 diffHours > 24 (时间戳已进入下周)，
-                // 均表明该账号已到达重置时间或已成功重置。
                 if (diffHours > 0 && diffHours <= 24 && pct < 90) {
                     allReset = false;
                 }
@@ -264,12 +280,19 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
 
             if (allDrained || allReset) {
                 const reason = allDrained ? '周配额已全部用完' : '已到达官方重置时间';
-                // 恢复此前临时禁用的账号
-                for (const id of state.temporarilyDisabledIds) {
+                // 恢复目标账号的原始调度优先级
+                for (const id of state.targetAccountIds) {
+                    const origP = state.originalPriorities?.[id] ?? 50;
                     try {
-                        await toggleProxy(id, true);
+                        await priorityUpdater(id, origP);
                     } catch (e) {
-                        console.error('[PedalMode] Failed to restore account:', id, e);
+                        console.error('[PedalMode] Failed to restore priority:', id, e);
+                    }
+                }
+                // 容错处理旧版本残留的挂起账号
+                if (legacyToggle && state.temporarilyDisabledIds?.length > 0) {
+                    for (const id of state.temporarilyDisabledIds) {
+                        try { await legacyToggle(id, true); } catch (_) {}
                     }
                 }
 
@@ -277,6 +300,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                     active: false,
                     targetModel: null,
                     targetAccountIds: [],
+                    originalPriorities: {},
                     snapshotDisabledIds: [],
                     temporarilyDisabledIds: [],
                 };
@@ -286,19 +310,32 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 } catch (_) {}
 
                 set(clearedState);
-                showToast(`🎉 待蹬账号${reason}，已自动退出蹬额度模式并恢复所有账号！`);
+                showToast(`🎉 待蹬账号${reason}，已自动退出蹬额度模式并恢复调度优先级！`);
             }
         },
 
-        manualExit: async toggleProxy => {
+        manualExit: async (updatePriority, legacyToggle) => {
             const state = get();
             if (!state.active) return;
 
-            for (const id of state.temporarilyDisabledIds) {
+            const priorityUpdater = updatePriority || (async (id: string, p: number) => {
+                const { updateAccountPriority } = useAccountStore.getState();
+                if (updateAccountPriority) await updateAccountPriority(id, p);
+            });
+
+            for (const id of state.targetAccountIds) {
+                const origP = state.originalPriorities?.[id] ?? 50;
                 try {
-                    await toggleProxy(id, true);
+                    await priorityUpdater(id, origP);
                 } catch (e) {
-                    console.error('[PedalMode] Failed to restore account manually:', id, e);
+                    console.error('[PedalMode] Failed to restore account priority manually:', id, e);
+                }
+            }
+
+            // 容错处理旧版本残留的挂起账号
+            if (legacyToggle && state.temporarilyDisabledIds?.length > 0) {
+                for (const id of state.temporarilyDisabledIds) {
+                    try { await legacyToggle(id, true); } catch (_) {}
                 }
             }
 
@@ -306,6 +343,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 active: false,
                 targetModel: null,
                 targetAccountIds: [],
+                originalPriorities: {},
                 snapshotDisabledIds: [],
                 temporarilyDisabledIds: [],
             };
