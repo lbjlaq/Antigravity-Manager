@@ -1180,9 +1180,7 @@ pub async fn handle_generate(
         }
 
         // 上游配额到期 429 报错绝对不改写，保持原汁原味透传
-        if status_code == 429
-            && crate::proxy::rate_limit::is_quota_depleted_signal(&error_text)
-        {
+        if status_code == 429 && crate::proxy::rate_limit::is_quota_depleted_signal(&error_text) {
             if let Ok(raw_json) = serde_json::from_str::<Value>(&error_text) {
                 return Ok((
                     status,

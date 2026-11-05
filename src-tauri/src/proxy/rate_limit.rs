@@ -1300,10 +1300,7 @@ mod tests {
         .is_none());
 
         // 非法时间格式：不能 panic，必须返回 None
-        assert!(extract_quota_reset_timestamp(
-            r#"{"quotaResetTimeStamp":"not-a-date"}"#
-        )
-        .is_none());
+        assert!(extract_quota_reset_timestamp(r#"{"quotaResetTimeStamp":"not-a-date"}"#).is_none());
 
         // 非 JSON（纯文本错误）：返回 None
         assert!(extract_quota_reset_timestamp("Service Unavailable").is_none());
@@ -1326,9 +1323,7 @@ mod tests {
 
         // 3) 普通 Gemini 大桶 / Ultra 共享桶 —— 只有结构化字段
         assert!(
-            is_quota_depleted_signal(
-                r#"{"error":{"details":[{"reason":"QUOTA_EXHAUSTED"}]}}"#
-            ),
+            is_quota_depleted_signal(r#"{"error":{"details":[{"reason":"QUOTA_EXHAUSTED"}]}}"#),
             "structured reason"
         );
         assert!(
@@ -1341,7 +1336,10 @@ mod tests {
             is_quota_depleted_signal("You exceeded your current quota, please check your plan."),
             "3p bucket"
         );
-        assert!(is_quota_depleted_signal("insufficient_quota"), "3p bucket alt");
+        assert!(
+            is_quota_depleted_signal("insufficient_quota"),
+            "3p bucket alt"
+        );
 
         // 5) 1.5% 木桶触发入口必须保留（Fixes #3841）
         assert!(

@@ -3435,7 +3435,8 @@ impl TokenManager {
                                     .get(&normalized_target)
                                     .or_else(|| t.model_quotas.get(target_model))
                                     .copied()
-                                    .unwrap_or(0) > 0
+                                    .unwrap_or(0)
+                                    > 0
                         });
 
                         let is_qos_jailed = self
@@ -4981,7 +4982,8 @@ impl TokenManager {
                 if let Some(ref ts) = upstream_reset {
                     tracing::info!(
                         "账号 {} 429 携带上游权威 quotaResetTimeStamp={}，直接锁定（跳过本地推算）",
-                        email, ts
+                        email,
+                        ts
                     );
                 }
 
@@ -5048,9 +5050,7 @@ impl TokenManager {
                                 return false;
                             }
                             // 分组内任意窗口（5h / weekly / 专属桶）低于 1.5% 即视为事实耗尽
-                            g.buckets
-                                .iter()
-                                .any(|b| b.remaining_fraction <= 0.015)
+                            g.buckets.iter().any(|b| b.remaining_fraction <= 0.015)
                         })
                     });
 
@@ -9728,7 +9728,8 @@ mod tests {
         boosted.priority = 1; // 蹬额度模式把它提到最高优先级
         boosted.model_quotas.insert(model.to_string(), 0); // 但配额已耗尽
 
-        let mut healthy = create_test_token("healthy@example.com", Some("PRO"), 1.0, None, Some(100));
+        let mut healthy =
+            create_test_token("healthy@example.com", Some("PRO"), 1.0, None, Some(100));
         healthy.account_id = "acc_healthy".to_string();
         healthy.priority = 50; // 默认优先级
         healthy.model_quotas.insert(model.to_string(), 100);
@@ -9746,7 +9747,9 @@ mod tests {
 
         // 反向验证：当高优先级账号真正有配额时，优先级仍然生效
         let mut boosted_with_quota = boosted.clone();
-        boosted_with_quota.model_quotas.insert(model.to_string(), 80);
+        boosted_with_quota
+            .model_quotas
+            .insert(model.to_string(), 80);
         let both_healthy = vec![boosted_with_quota, healthy.clone()];
         let selected2 = manager
             .select_with_p2c(&both_healthy, &attempted, model, false)

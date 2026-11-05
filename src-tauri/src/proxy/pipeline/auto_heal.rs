@@ -185,7 +185,8 @@ pub fn try_auto_heal(
 ) -> Option<AutoHealOutcome> {
     // 0. 上游容量枯竭 (MODEL_CAPACITY_EXHAUSTED / 503)：原地将 medium/low/tiered 升档为 high 算力通道
     if crate::proxy::upstream::client::UpstreamClient::is_model_capacity_exhausted(
-        rquest::StatusCode::from_u16(status_code).unwrap_or(rquest::StatusCode::SERVICE_UNAVAILABLE),
+        rquest::StatusCode::from_u16(status_code)
+            .unwrap_or(rquest::StatusCode::SERVICE_UNAVAILABLE),
         error_text,
     ) && !flags.retried_with_capacity_promoted
     {

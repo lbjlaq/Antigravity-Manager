@@ -569,7 +569,9 @@ pub fn build_dual_track_error_with_ua_and_lang(
     let error_text = sanitized_error_text.as_str();
     let lower = error_text.to_lowercase();
     let is_internal_limited =
-        crate::proxy::pipeline::policy::UpstreamClassification::is_internal_gateway_exhaustion(&lower);
+        crate::proxy::pipeline::policy::UpstreamClassification::is_internal_gateway_exhaustion(
+            &lower,
+        );
 
     let is_network_error = lower.contains("http request failed")
         || lower.contains("failed to connect")
