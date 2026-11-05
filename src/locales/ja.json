@@ -491,7 +491,15 @@
         "type": {
             "personal": "個人アカウント (Personal)",
             "enterprise": "企業 / GCP (Vertex AI)"
-        }
+        },
+        "project_id": "GCP Project ID",
+        "project_id_hint": "エンタープライズ/GCP アカウントに関連付けられた Google Cloud プロジェクト ID。公式 Antigravity はログイン時に自動関連付けまたは既定値を使用します。",
+        "project_id_placeholder": "例: my-project-id",
+        "project_id_updated": "GCP Project ID を更新しました",
+        "auto_fetch_project_id": "自動取得",
+        "fetching_project_id": "取得中...",
+        "auto_fetch_success": "Project ID を自動取得しました: {{projectId}}",
+        "auto_fetch_failed": "上流で関連付けられた Project ID が見つかりませんでした"
     },
     "settings": {
         "save": "設定を保存",

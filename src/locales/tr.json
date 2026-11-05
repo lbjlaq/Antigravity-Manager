@@ -491,7 +491,15 @@
         "type": {
             "personal": "Kişisel Hesap",
             "enterprise": "Kurumsal / GCP (Vertex AI)"
-        }
+        },
+        "project_id": "GCP Project ID",
+        "project_id_hint": "Kurumsal/GCP hesabıyla ilişkili Google Cloud Proje Kimliği. Yerel Antigravity, oturum açıldığında bunu otomatik olarak bağlar veya varsayılanı kullanır.",
+        "project_id_placeholder": "ör: my-project-id",
+        "project_id_updated": "GCP Project ID başarıyla güncellendi",
+        "auto_fetch_project_id": "Otomatik Al",
+        "fetching_project_id": "Alınıyor...",
+        "auto_fetch_success": "Project ID başarıyla alındı: {{projectId}}",
+        "auto_fetch_failed": "Yukarı akışta ilişkili bir Project ID bulunamadı"
     },
     "settings": {
         "save": "Ayarları Kaydet",

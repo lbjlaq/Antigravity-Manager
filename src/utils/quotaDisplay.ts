@@ -314,15 +314,16 @@ function summarizeSupportedModels(models: ModelQuota[], key: 'gemini' | 'claude'
  * 提取 Gemini Models、Claude & GPT models 以及 Gemini 4 Argon 的聚合配额
  * @param groups 配额组数据 (quota_groups)
  * @param fallbackModels 兜底模型列表 (models)
- * @param tier 账号订阅类型 ('ultra' | 'pro' | 'free')
+ * @param tier 账号订阅类型 ('ultra' | 'pro' | 'enterprise' | 'free')
  */
 export function getGroupQuotaSummaries(
     groups: QuotaGroup[] = [],
     fallbackModels: ModelQuota[] = [],
-    tier?: 'ultra' | 'pro' | 'free'
+    tier?: 'ultra' | 'pro' | 'enterprise' | 'free'
 ): GroupQuotaSummary[] {
     const isFreeTier = tier === 'free';
     const isUltraTier = tier === 'ultra';
+    const isEnterpriseTier = tier === 'enterprise';
 
     const findGroupBuckets = (target: 'gemini' | 'claude' | 'argon') => {
         const directBuckets = (groups || []).filter(group => {
@@ -470,6 +471,21 @@ export function getGroupQuotaSummaries(
                 supportedModels,
                 fiveHour: undefined,
                 weekly: undefined,
+                isWeeklyConstrained: false,
+                isWeeklyExhausted: false,
+            };
+        }
+
+        // 企业账号走 Vertex AI 组织资源池，没有个人 5H/Weekly 滑动窗口约束，统一展示为 100% 满额可用
+        if (isEnterpriseTier && matchedForSummary.length > 0) {
+            return {
+                key,
+                labelKey,
+                defaultLabel,
+                dynamicLabel,
+                supportedModels,
+                fiveHour: { percentage: 100, resetTime: undefined },
+                weekly: { percentage: 100, resetTime: undefined },
                 isWeeklyConstrained: false,
                 isWeeklyExhausted: false,
             };

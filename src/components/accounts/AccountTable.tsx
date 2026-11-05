@@ -462,6 +462,13 @@ function AccountRowContent({
                                         {t('accounts.ultra')}
                                     </span>
                                 );
+                            } else if (tier === 'enterprise') {
+                                return (
+                                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-[10px] font-bold shadow-sm hover:scale-105 transition-transform cursor-default" title={account.token?.project_id ? `GCP Project: ${account.token.project_id}` : 'GCP / Vertex AI Enterprise'}>
+                                        <Diamond className="w-2.5 h-2.5 fill-current" />
+                                        ENTERPRISE
+                                    </span>
+                                );
                             } else if (tier === 'pro') {
                                 return (
                                     <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-[10px] font-bold shadow-sm hover:scale-105 transition-transform cursor-default">

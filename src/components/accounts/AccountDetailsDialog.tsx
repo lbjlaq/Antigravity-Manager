@@ -11,13 +11,24 @@ interface AccountDetailsDialogProps {
     account: Account | null;
     onClose: () => void;
     onUpdatePriority: (accountId: string, priority: number) => Promise<void>;
+    onUpdateProjectId?: (accountId: string, projectId: string) => Promise<void>;
+    onAutoFetchProjectId?: (accountId: string) => Promise<string>;
 }
 
-export default function AccountDetailsDialog({ account, onClose, onUpdatePriority }: AccountDetailsDialogProps) {
+export default function AccountDetailsDialog({
+    account,
+    onClose,
+    onUpdatePriority,
+    onUpdateProjectId,
+    onAutoFetchProjectId,
+}: AccountDetailsDialogProps) {
     const { t } = useTranslation();
     const [activeTab, setActiveTab] = useState<'basic' | 'detailed'>('basic');
     const [priorityInput, setPriorityInput] = useState('50');
     const [savingPriority, setSavingPriority] = useState(false);
+    const [projectIdInput, setProjectIdInput] = useState('');
+    const [savingProjectId, setSavingProjectId] = useState(false);
+    const [fetchingProjectId, setFetchingProjectId] = useState(false);
 
     const displayGroups = useMemo(() => {
         return account?.quota?.quota_groups || [];
@@ -49,7 +60,8 @@ export default function AccountDetailsDialog({ account, onClose, onUpdatePriorit
 
     useEffect(() => {
         setPriorityInput(String(account?.priority ?? 50));
-    }, [account?.id, account?.priority]);
+        setProjectIdInput(account?.token?.project_id || '');
+    }, [account?.id, account?.priority, account?.token?.project_id]);
 
     if (!account) return null;
 
@@ -67,6 +79,42 @@ export default function AccountDetailsDialog({ account, onClose, onUpdatePriorit
             showToast(`${t('common.error')}: ${error}`, 'error');
         } finally {
             setSavingPriority(false);
+        }
+    };
+
+    const saveProjectId = async () => {
+        if (!onUpdateProjectId) return;
+        setSavingProjectId(true);
+        try {
+            await onUpdateProjectId(account.id, projectIdInput.trim());
+            showToast(t('accounts.project_id_updated', 'GCP Project ID 已更新'), 'success');
+        } catch (error) {
+            showToast(`${t('common.error')}: ${error}`, 'error');
+        } finally {
+            setSavingProjectId(false);
+        }
+    };
+
+    const autoFetchProjectId = async () => {
+        if (!onAutoFetchProjectId) return;
+        setFetchingProjectId(true);
+        try {
+            const fetched = await onAutoFetchProjectId(account.id);
+            setProjectIdInput(fetched);
+            showToast(
+                t('accounts.auto_fetch_success', {
+                    defaultValue: '成功自动获取 Project ID: {{projectId}}',
+                    projectId: fetched,
+                }),
+                'success'
+            );
+        } catch (error) {
+            showToast(
+                `${t('accounts.auto_fetch_failed', '未能在上游找到关联的 Project ID')}: ${error}`,
+                'error'
+            );
+        } finally {
+            setFetchingProjectId(false);
         }
     };
 
@@ -158,6 +206,59 @@ export default function AccountDetailsDialog({ account, onClose, onUpdatePriorit
                                 disabled={savingPriority || priorityInput === String(account.priority ?? 50)}
                             >
                                 {savingPriority ? t('common.saving') : t('common.save')}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* GCP Project ID 设置 */}
+                    <div className="p-4 rounded-xl border border-gray-100 dark:border-base-200 bg-gray-50/50 dark:bg-base-200/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                            <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                                <span>{t('accounts.project_id', 'GCP Project ID')}</span>
+                                {account.token?.project_id ? (
+                                    <span className="text-xs px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-mono font-semibold">
+                                        {account.token.project_id}
+                                    </span>
+                                ) : (
+                                    <span className="text-xs px-2 py-0.5 rounded-md bg-gray-200 dark:bg-base-300 text-gray-600 dark:text-gray-400 font-mono">
+                                        {t('common.none', 'None')}
+                                    </span>
+                                )}
+                            </div>
+                            <p className="mt-1 text-xs text-gray-400 dark:text-gray-500 leading-relaxed max-w-md">
+                                {t('accounts.project_id_hint', 'Google Cloud Project ID associated with the enterprise/GCP account. Native Antigravity associates or defaults this upon sign-in.')}
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0 flex-wrap">
+                            <input
+                                id="account-project-id"
+                                type="text"
+                                placeholder={t('accounts.project_id_placeholder', 'e.g. my-project-id')}
+                                className="input input-bordered input-sm w-36 sm:w-44 font-mono text-xs"
+                                value={projectIdInput}
+                                disabled={savingProjectId || fetchingProjectId}
+                                onChange={event => setProjectIdInput(event.target.value)}
+                            />
+                            {onAutoFetchProjectId && (
+                                <button
+                                    className="btn btn-outline btn-sm px-2.5 text-xs"
+                                    onClick={autoFetchProjectId}
+                                    disabled={savingProjectId || fetchingProjectId}
+                                    title={t('accounts.auto_fetch_project_id', '自动获取')}
+                                >
+                                    {fetchingProjectId ? (
+                                        <span className="loading loading-spinner loading-xs" />
+                                    ) : (
+                                        t('accounts.auto_fetch_project_id', '自动获取')
+                                    )}
+                                </button>
+                            )}
+                            <button
+                                className="btn btn-primary btn-sm px-3 text-xs"
+                                onClick={saveProjectId}
+                                disabled={savingProjectId || fetchingProjectId || projectIdInput.trim() === (account.token?.project_id || '')}
+                            >
+                                {savingProjectId ? t('common.saving') : t('common.save')}
                             </button>
                         </div>
                     </div>

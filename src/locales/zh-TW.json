@@ -490,7 +490,15 @@
         "type": {
             "personal": "個人帳號 (Personal)",
             "enterprise": "企業 / GCP (Vertex AI)"
-        }
+        },
+        "project_id": "GCP Project ID",
+        "project_id_hint": "企業/GCP 帳號關聯的 Google Cloud 專案 ID。原生 Antigravity 在登入後會自動關聯或使用預設專案。",
+        "project_id_placeholder": "如: my-project-id",
+        "project_id_updated": "GCP Project ID 已更新",
+        "auto_fetch_project_id": "自動獲取",
+        "fetching_project_id": "獲取中...",
+        "auto_fetch_success": "成功自動獲取 Project ID: {{projectId}}",
+        "auto_fetch_failed": "未能在上游找到關聯的 Project ID"
     },
     "settings": {
         "save": "儲存設定",

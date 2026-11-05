@@ -217,9 +217,9 @@ impl QuotaData {
     }
 }
 
-/// 是否为三个已知等级之一
+/// 是否为已知等级之一 (ULTRA | PRO | FREE | ENTERPRISE)
 pub fn is_known_tier(tier: &str) -> bool {
-    matches!(tier, "ULTRA" | "PRO" | "FREE")
+    matches!(tier, "ULTRA" | "PRO" | "FREE" | "ENTERPRISE")
 }
 
 /// 订阅等级标准化：统一规范为 "ULTRA" | "PRO" | "FREE"
@@ -256,6 +256,16 @@ pub fn normalize_subscription_tier(tier: &str) -> String {
         return "PRO".to_string();
     }
 
+    // 4) 企业 / GCP 档：standard-tier / "Antigravity" enterprise / GCP_* / business / vertex
+    if lower.contains("enterprise")
+        || lower.contains("standard")
+        || lower.contains("business")
+        || lower.starts_with("gcp_")
+        || lower.contains("vertex")
+    {
+        return "ENTERPRISE".to_string();
+    }
+
     tier.to_string()
 }
 
@@ -287,7 +297,7 @@ pub fn resolve_subscription_tier(raw_tier: Option<&str>) -> String {
 pub fn tier_priority(tier: Option<&str>) -> u8 {
     match normalize_subscription_tier(tier.unwrap_or("")).as_str() {
         "ULTRA" => 0,
-        "PRO" => 1,
+        "PRO" | "ENTERPRISE" => 1,
         _ => 2,
     }
 }
@@ -309,7 +319,15 @@ mod tests {
         assert_eq!(normalize_subscription_tier("g1-pro-tier"), "PRO");
         assert_eq!(
             normalize_subscription_tier("standard-tier"),
-            "standard-tier"
+            "ENTERPRISE"
+        );
+        assert_eq!(
+            normalize_subscription_tier("GCP_ENTERPRISE_TIER"),
+            "ENTERPRISE"
+        );
+        assert_eq!(
+            normalize_subscription_tier("GCP_GE_PAYGO_TIER"),
+            "ENTERPRISE"
         );
         assert_eq!(normalize_subscription_tier("g1-ultra-tier"), "ULTRA");
         assert_eq!(normalize_subscription_tier("GOOGLE_ONE_HELIUM"), "ULTRA");

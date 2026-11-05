@@ -507,7 +507,15 @@
             "batch_warmup_msg": "Are you sure you want to trigger warmup for the selected {{count}} accounts immediately?"
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
-        "switch_next_short": "Next"
+        "switch_next_short": "Next",
+        "project_id": "GCP Project ID",
+        "project_id_hint": "Google Cloud Project ID associated with the enterprise/GCP account. Native Antigravity associates or defaults this upon sign-in.",
+        "project_id_placeholder": "e.g. my-project-id",
+        "project_id_updated": "GCP Project ID updated successfully",
+        "auto_fetch_project_id": "Auto Fetch",
+        "fetching_project_id": "Fetching...",
+        "auto_fetch_success": "Successfully fetched Project ID: {{projectId}}",
+        "auto_fetch_failed": "No associated Project ID found on upstream"
     },
     "settings": {
         "save": "Save Settings",

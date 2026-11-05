@@ -3,6 +3,27 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.3-beta.2 (2026-11-04)**:
+        -   **[主端点偶发抖动沙箱降级抢占导致的端点毒化修复] (Fixes #3827, PR #3833, Thanks to @modded-soldier-9)**:
+            -   **沙箱端点隔离与防抢占排序**: 在上游端点调度中引入沙箱端点探测与分区保护机制，确保 `daily-cloudcode-pa.sandbox.googleapis.com` 永不因统计权重抢占 Daily 主端点，根除跨区 IP 触发 400（User location is not supported）后导致的整号熔断与 504 误判问题。(Fixes #3827, PR #3833, Thanks to @modded-soldier-9)
+            -   **沙箱 400 容错与长冷却降级**: 沙箱端点返回 400 时允许继续轮询下一个健康端点，并自动施加至少 300 秒长冷却惩罚，避免次级端点连续抖动。
+        -   **[经典版一键切号遗漏本地降级凭据及状态双写修复] (Fixes #3829, PR #3834, Thanks to @modded-soldier-9)**:
+            -   **经典版与 IDE 凭据双写平权**: 修复在 Antigravity 经典版（`classic`）下一键切号后重启客户端再次提示需登录认证的问题；统一经典版与 IDE 版的本地降级凭据（`jetski-standalone-oauth-token`）写入逻辑。(Fixes #3829, PR #3834, Thanks to @modded-soldier-9)
+            -   **本地 SQLite 状态安全双写与原子备份**: 若经典版用户数据目录中存在 `state.vscdb`，执行原子备份并在数据库中安全注入 token 与 `serviceMachineId`，实现状态严格双写。
+        -   **[企业与 GCP Vertex AI Project ID 智能绑定与一键自动获取] (Fixes #3823)**:
+            -   **GCP Project ID 可视化管理与持久化**: 在账号详情弹窗中新增 Project ID 设置项，支持为企业及 GCP 账号查看、手动配置或更换绑定的 Google Cloud 项目 ID，并原子更新至账号凭据存储与代理调度器。
+            -   **一键自动请求获取 Project ID**: 新增 `auto_fetch_account_project_id` 命令与前端「自动获取」按钮，调用上游 `loadCodeAssist` 自动嗅探并关联账号真实的 `cloudaicompanionProject`，极大简化企业账号接入流程。
+            -   **健壮的代理池链路与超时优化**: 优化 Project ID 获取逻辑，将原 3 秒过短硬编码超时放宽至 12 秒，并全面接入全局代理池（`ProxyPool`），确保网络抖动与跨国出口代理环境下 100% 稳定解析。
+            -   **等级识别精准校准**: 修复企业号识别中误将内置标准客户端（`antigravity_enterprise`）或历史遗留 `is_gcp_tos` 脏标记当作企业号导致普通账号被误标为 `ENTERPRISE` 的缺陷，严格按官方 `antigravity_gcp` 客户端及权威套餐返回收敛。
+            -   **12 种主流语言多语言补齐**: 为 Project ID 字段、提示说明与自动获取状态（获取中/成功/失败）补齐了中英日繁韩西葡俄土越阿缅等全量 12 种语言本地化翻译。
+        -   **[修复 Responses 协议多模态滑窗入口误杀、简要日志脱敏与 Token 估算] (PR #3830, Thanks to @mclinyeshi)**:
+            -   **滑窗启用时豁免入口多图硬拦截**: 修复在开启多模态滑动窗口（`enable_sliding_window = true`）时，网关入口因未裁剪的历史累计图片超过 32MB 硬上限而提前返回 400 阻断的缺陷；现在开启滑窗时安全放行累积历史图片（单张 >20MB 校验仍然生效），统一交由后续管线滑动窗口执行裁剪，避免 Codex 等多模态 Agent 长对话误杀。(PR #3830, Thanks to @mclinyeshi)
+            -   **补齐 Responses 简要日志 Base64 脱敏**: 在简要日志（simple）审计模式下，对 `/v1/responses` 的 `input_image`、内联 Data URL 以及工具输出（`function_call_output`）递归执行 Base64 占位脱敏（`[base64 image: xxx bytes]`），彻底解决长程看图任务导致本地数据库膨胀与前端视图卡顿的问题。(PR #3830, Thanks to @mclinyeshi)
+            -   **补齐 Responses 协议视觉 Token 估算**: 在管线 Token 估算器中补齐 Responses 格式分支，正确识别多模态图片并按视觉 Token 标准统一折算，防止多模态请求 Token 估算失真影响管线超时预算。(PR #3830, Thanks to @mclinyeshi)
+        -   **[修复普通长文本对话误触发 Cowork 自动压缩与对照实验矩阵] (Fixes #3821, Ref #3826, PR #3835, PR #3836, Thanks to @cubelikeplayDaniel)**:
+            -   **对齐配置自愈门禁与工具轮次放行**: 移除 1M 模型一刀切硬豁免与工具中途阻断，确保包含工具返回的真实 Cowork 会话在超限时能够按配置的有效阈值（`effective_threshold`）精准触发自愈压缩；修复大请求体上传预算计算中的首字节倒扣截断缺陷。(Fixes #3821, Ref #3826, PR #3835, Thanks to @cubelikeplayDaniel)
+            -   **全链路 10 次双轨对照实验矩阵**: 新增 `test_cowork_10_control_experiment_matrix` 单元测试，全面覆盖 5 次超大截断与 5 次安全放行矩阵，保障 Cowork 门禁与配置阈值契约一致性。(Fixes #3821, Ref #3826, PR #3836, Thanks to @cubelikeplayDaniel)
+
     *   **v5.0.3-beta.1 (2026-11-04)**:
         -   **[官方 GCP Vertex AI 企业账号支持与多协议凭据自适应隔离] (Fixes #3823)**:
             -   **对齐官方 GCP 企业客户端凭据**: 深度逆向对齐官方 Antigravity 应用的 GCP / Vertex AI 企业授权协议架构，引入官方企业客户端（`884354919052-...`）及密钥体系，支持通过 `antigravity_gcp` 独立注册与动态鉴权，彻底解决企业组织账号授权后被误判为 Free Tier 或缺失 Vertex AI 项目配额的缺陷。(Fixes #3823)

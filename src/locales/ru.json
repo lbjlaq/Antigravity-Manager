@@ -491,7 +491,15 @@
         "type": {
             "personal": "Личный аккаунт",
             "enterprise": "Корпоративный / GCP (Vertex AI)"
-        }
+        },
+        "project_id": "GCP Project ID",
+        "project_id_hint": "Идентификатор проекта Google Cloud, связанный с корпоративной учетной записью/GCP. Официальный Antigravity связывает его автоматически или использует проект по умолчанию при входе.",
+        "project_id_placeholder": "например: my-project-id",
+        "project_id_updated": "GCP Project ID успешно обновлен",
+        "auto_fetch_project_id": "Автополучение",
+        "fetching_project_id": "Получение...",
+        "auto_fetch_success": "Project ID успешно получен: {{projectId}}",
+        "auto_fetch_failed": "Связанный Project ID не найден на сервере"
     },
     "settings": {
         "save": "Сохранить настройки",

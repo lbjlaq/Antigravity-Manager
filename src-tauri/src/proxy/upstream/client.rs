@@ -527,11 +527,24 @@ pub fn should_try_next_endpoint(status: StatusCode) -> bool {
     UpstreamClient::should_try_next_endpoint(status)
 }
 
+/// 判断端点或主机是否为 Google 内部沙箱备用端点（含 sandbox.googleapis.com）。
+/// 沙箱端点具有严格的地区准入限制（非美 IP 会返回 400 User location is not supported 或网络不可达），
+/// 在端点重排时绝不能抢占主端点 (Daily)，且在发生故障时须施加更长冷却观察期，防止高频踩坑与毒化。
+pub fn is_sandbox_endpoint(endpoint_or_host: &str) -> bool {
+    let host = extract_endpoint_host(endpoint_or_host);
+    host.contains("sandbox.googleapis.com")
+}
+
 /// 判断特定端点在特定状态码下是否可重试或回退。
 /// 特别针对 Sandbox 沙箱端点：非美 IP 会返回 400 Bad Request (FAILED_PRECONDITION: User location is not supported)，
-/// 此时必须标记该端点失败并快速回退到 Prod 生产端点。
+/// 此时必须标记该端点失败并快速回退到主端点。
 pub fn should_try_next_endpoint_for_url(status: StatusCode, endpoint_url: &str) -> bool {
-    UpstreamClient::should_try_next_endpoint_for_url(status, endpoint_url)
+    if status == StatusCode::BAD_REQUEST {
+        let host = extract_endpoint_host(endpoint_url);
+        is_sandbox_endpoint(host) || host.contains("sandbox")
+    } else {
+        should_try_next_endpoint(status)
+    }
 }
 
 /// 端点健康追踪器：记录故障端点与冷却期，动态优化上游端点 Fallback 顺序，避免无状态重复踩坑。
@@ -539,7 +552,7 @@ pub fn should_try_next_endpoint_for_url(status: StatusCode, endpoint_url: &str) 
 pub struct EndpointHealthTracker {
     /// 记录最近一次故障的时间戳 (host -> Instant)
     failures: Arc<DashMap<String, std::time::Instant>>,
-    /// 冷却观察期 (默认 60s)
+    /// 冷却观察期 (默认 30s)
     cooldown: std::time::Duration,
 }
 
@@ -560,14 +573,22 @@ impl EndpointHealthTracker {
     }
 
     /// 标记端点调用失败（记录当前时间戳，以 host 聚合）
+    /// 特别针对沙箱端点，施加更长的隔离冷却观察期（默认至少 300s），避免高频重试导致非美环境持续 400
     pub fn mark_failure(&self, endpoint: &str) {
         let host = extract_endpoint_host(endpoint);
         let now = std::time::Instant::now();
         self.failures.insert(host.to_string(), now);
+        let cd_secs = if is_sandbox_endpoint(host) {
+            self.cooldown
+                .max(std::time::Duration::from_secs(300))
+                .as_secs()
+        } else {
+            self.cooldown.as_secs()
+        };
         tracing::warn!(
             host = %host,
             endpoint = %endpoint,
-            cooldown_secs = ?self.cooldown.as_secs(),
+            cooldown_secs = cd_secs,
             "Marked upstream endpoint host as unhealthy (entering cooldown)"
         );
     }
@@ -588,9 +609,14 @@ impl EndpointHealthTracker {
     #[allow(dead_code)]
     pub fn is_healthy(&self, endpoint: &str) -> bool {
         let host = extract_endpoint_host(endpoint);
+        let cd = if is_sandbox_endpoint(host) {
+            self.cooldown.max(std::time::Duration::from_secs(300))
+        } else {
+            self.cooldown
+        };
         if let Some(entry) = self.failures.get(host) {
             let last_fail = *entry.value();
-            if last_fail.elapsed() >= self.cooldown {
+            if last_fail.elapsed() >= cd {
                 drop(entry);
                 self.failures.remove(host);
                 true
@@ -603,34 +629,54 @@ impl EndpointHealthTracker {
     }
 
     /// 根据各端点健康状况与冷却期，动态排列优先级顺序。
-    /// - 健康端点排在最前，保持原有的相对优先级；
-    /// - 处于冷却期内的端点排在后部，按故障发生时间由远及近（最早失败的相对排在前面，优先探活）；
+    /// - 健康主端点排在最前，保持原有的相对优先级；
+    /// - 处于冷却期内的主端点排在次前，按故障发生时间由远及近（优先探活恢复）；
+    /// - 沙箱备用端点 (sandbox.googleapis.com) 永远排在主端点之后，绝不因主端点偶发抖动而抢占首位导致非美用户大面积 400；
     /// - 永远保留所有端点，确保在全故障极端情况下仍能兜底尝试。
     pub fn get_ordered_endpoints<'a>(&self, default_endpoints: &[&'a str]) -> Vec<&'a str> {
-        let mut healthy = Vec::new();
-        let mut unhealthy = Vec::new();
+        let mut healthy_primary = Vec::new();
+        let mut unhealthy_primary = Vec::new();
+        let mut healthy_sandbox = Vec::new();
+        let mut unhealthy_sandbox = Vec::new();
 
         for &ep in default_endpoints {
             let host = extract_endpoint_host(ep);
+            let is_sandbox = is_sandbox_endpoint(host);
+            let cd = if is_sandbox {
+                self.cooldown.max(std::time::Duration::from_secs(300))
+            } else {
+                self.cooldown
+            };
+
+            let mut fail_time = None;
             if let Some(entry) = self.failures.get(host) {
                 let last_fail = *entry.value();
-                if last_fail.elapsed() >= self.cooldown {
+                if last_fail.elapsed() >= cd {
                     drop(entry);
                     self.failures.remove(host);
-                    healthy.push(ep);
                 } else {
-                    unhealthy.push((ep, last_fail));
+                    fail_time = Some(last_fail);
                 }
-            } else {
-                healthy.push(ep);
+            }
+
+            match (is_sandbox, fail_time) {
+                (false, None) => healthy_primary.push(ep),
+                (false, Some(t)) => unhealthy_primary.push((ep, t)),
+                (true, None) => healthy_sandbox.push(ep),
+                (true, Some(t)) => unhealthy_sandbox.push((ep, t)),
             }
         }
 
         // 不健康的端点：按照失败时间从早到晚排序（先失败的更早尝试探活）
-        unhealthy.sort_by_key(|&(_, time)| time);
+        unhealthy_primary.sort_by_key(|&(_, time)| time);
+        unhealthy_sandbox.sort_by_key(|&(_, time)| time);
 
-        let mut result = healthy;
-        for (ep, _) in unhealthy {
+        let mut result = healthy_primary;
+        for (ep, _) in unhealthy_primary {
+            result.push(ep);
+        }
+        result.extend(healthy_sandbox);
+        for (ep, _) in unhealthy_sandbox {
             result.push(ep);
         }
 
@@ -881,8 +927,7 @@ impl UpstreamClient {
     /// Specifically: Sandbox cluster rejects non-US IPs with 400 Bad Request (FAILED_PRECONDITION).
     /// When this occurs on a sandbox endpoint, we must rotate to Prod instead of returning 400 to the client.
     pub fn should_try_next_endpoint_for_url(status: StatusCode, endpoint_url: &str) -> bool {
-        Self::should_try_next_endpoint(status)
-            || (status == StatusCode::BAD_REQUEST && endpoint_url.contains("sandbox"))
+        should_try_next_endpoint_for_url(status, endpoint_url)
     }
 
     /// 判定上游错误是否为模型算力/集群容量耗尽 (MODEL_CAPACITY_EXHAUSTED / 503 / 504)
@@ -1831,6 +1876,11 @@ impl UpstreamClient {
                         }
 
                         // 不可重试的错误或已是最后一个端点，直接返回
+                        if is_sandbox_endpoint(base_url)
+                            && (status == StatusCode::BAD_REQUEST || status.is_server_error())
+                        {
+                            self.endpoint_health.mark_failure(base_url);
+                        }
                         fallback_attempts.push(FallbackAttemptLog {
                             endpoint_name: parse_endpoint_name(base_url).to_string(),
                             endpoint_url: url.clone(),
@@ -1855,41 +1905,54 @@ impl UpstreamClient {
                                 (sent_bytes as f64 / secs) as u64
                             })
                             .unwrap_or(0);
+                        let is_sandbox = is_sandbox_endpoint(base_url);
                         let terminal_large_body_failure =
                             timeout_plan.large_body && timeout_plan.endpoint_attempt_limit <= 1;
                         // 终态判定统一交给 `pipeline::terminal` 分类：
                         // - 全局预算耗尽：整条请求已到点
-                        // - 首字节耗尽且后面没有可尝试端点：上游只是慢，不是账号故障
-                        // - 大体积单次尝试策略：继续 fallback 只会再次上传同一份大 body
+                        // - 首字节耗尽且后面没有可尝试端点：上游只是慢，不是账号故障（沙箱端点除外，沙箱非美地区不连通绝非真实终态）
+                        // - 大体积单次尝试策略：继续 fallback 只会再次上传同一份大 body（但沙箱端点除外，沙箱故障不应毒化阻断账号轮换）
                         let global_exhausted = crate::proxy::pipeline::budget::exhausted();
                         let terminal = if global_exhausted {
                             Some(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget)
                         } else if send_stage == SendStage::AwaitFirstByte
                             && !has_next_for_send_stage
+                            && !is_sandbox
                         {
                             Some(crate::proxy::pipeline::terminal::UpstreamTerminal::FirstByte)
                         } else if send_stage == SendStage::Upload
+                            && !is_sandbox
                             && (!has_next_for_send_stage || terminal_large_body_failure)
                         {
                             Some(crate::proxy::pipeline::terminal::UpstreamTerminal::Upload)
                         } else {
                             None
                         };
-                        let detail = format!(
-                            "Upstream send failed at {} (method={}, kind={}, body_len={}, stage={}, bytes_sent={}, effective_bps={}, budget_source={}, upload_budget={}s, first_byte_budget={}s, total_elapsed={:.1}s): {}",
-                            base_url,
-                            method,
-                            media_kind.as_str(),
-                            body_bytes.len(),
-                            send_stage.as_str(),
-                            sent_bytes,
-                            effective_bps,
-                            timeout_plan.budget_source.as_str(),
-                            upload_budget_secs,
-                            first_byte_budget_secs,
-                            call_overall_start.elapsed().as_secs_f64(),
-                            e
-                        );
+                        let detail = if !fallback_attempts.is_empty() {
+                            format!(
+                                "Upstream send failed at {} (fallback attempt {} after primary {}): {}",
+                                base_url,
+                                idx + 1,
+                                fallback_attempts[0].endpoint_name,
+                                e
+                            )
+                        } else {
+                            format!(
+                                "Upstream send failed at {} (method={}, kind={}, body_len={}, stage={}, bytes_sent={}, effective_bps={}, budget_source={}, upload_budget={}s, first_byte_budget={}s, total_elapsed={:.1}s): {}",
+                                base_url,
+                                method,
+                                media_kind.as_str(),
+                                body_bytes.len(),
+                                send_stage.as_str(),
+                                sent_bytes,
+                                effective_bps,
+                                timeout_plan.budget_source.as_str(),
+                                upload_budget_secs,
+                                first_byte_budget_secs,
+                                call_overall_start.elapsed().as_secs_f64(),
+                                e
+                            )
+                        };
                         let msg = match terminal {
                             Some(terminal) => format!("{}{}", terminal.marker(), detail),
                             None => detail,
@@ -2325,6 +2388,71 @@ mod tests {
             StatusCode::BAD_REQUEST,
             "https://cloudcode-pa.googleapis.com/v1internal"
         ));
+    }
+
+    #[test]
+    fn test_is_sandbox_endpoint() {
+        assert!(is_sandbox_endpoint(
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal"
+        ));
+        assert!(is_sandbox_endpoint(
+            "daily-cloudcode-pa.sandbox.googleapis.com"
+        ));
+        assert!(!is_sandbox_endpoint(
+            "https://daily-cloudcode-pa.googleapis.com/v1internal"
+        ));
+        assert!(!is_sandbox_endpoint("daily-cloudcode-pa.googleapis.com"));
+        assert!(!is_sandbox_endpoint(
+            "https://cloudcode-pa.googleapis.com/v1internal"
+        ));
+    }
+
+    #[test]
+    fn test_endpoint_health_sandbox_never_leapfrogs_primary_daily() {
+        let tracker = EndpointHealthTracker::new(Duration::from_secs(60));
+        let endpoints = [
+            "https://daily-cloudcode-pa.googleapis.com/v1internal",
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal",
+        ];
+
+        // 场景 1: 两个端点均健康，Daily 始终在首位
+        assert_eq!(
+            tracker.get_ordered_endpoints(&endpoints),
+            vec![
+                "https://daily-cloudcode-pa.googleapis.com/v1internal",
+                "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal",
+            ]
+        );
+
+        // 场景 2: Daily 偶发抖动进入冷却期
+        // 核心铁律（非毒化恢复）：Daily 绝不能被降级到沙箱之后！
+        // 否则非美 IP 用户会在下一个请求中因沙箱 400 Location not supported 或网络阻断而全军覆没！
+        tracker.mark_failure("https://daily-cloudcode-pa.googleapis.com/v1internal");
+        assert_eq!(
+            tracker.get_ordered_endpoints(&endpoints),
+            vec![
+                "https://daily-cloudcode-pa.googleapis.com/v1internal",
+                "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal",
+            ],
+            "沙箱端点绝不能抢占 Daily 主端点首位！"
+        );
+
+        // 场景 3: Daily 恢复成功，标记健康
+        tracker.mark_success("https://daily-cloudcode-pa.googleapis.com/v1internal");
+        assert_eq!(
+            tracker.get_ordered_endpoints(&endpoints),
+            vec![
+                "https://daily-cloudcode-pa.googleapis.com/v1internal",
+                "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal",
+            ]
+        );
+
+        // 场景 4: Sandbox 发生故障时施加至少 300s 隔离观察期
+        tracker.mark_failure("https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal");
+        assert!(
+            !tracker.is_healthy("https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal"),
+            "沙箱端点在故障后必须进入冷却隔离期"
+        );
     }
 
     #[test]

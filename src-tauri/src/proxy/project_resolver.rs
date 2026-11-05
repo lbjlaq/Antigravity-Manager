@@ -12,13 +12,31 @@ const LOAD_PROJECT_ENDPOINTS: [&str; 3] = [
 /// 使用 Antigravity 的 loadCodeAssist API 获取 project_id
 /// 这是获取 cloudaicompanionProject 的正确方式
 pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
+    fetch_project_id_with_client_internal(access_token, None).await
+}
+
+pub async fn fetch_project_id_for_account(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Result<String, String> {
+    fetch_project_id_with_client_internal(access_token, account_id).await
+}
+
+async fn fetch_project_id_with_client_internal(
+    access_token: &str,
+    account_id: Option<&str>,
+) -> Result<String, String> {
     let request_body = serde_json::json!({
         "metadata": {
             "ideType": "ANTIGRAVITY"
         }
     });
 
-    let client = crate::utils::http::get_client();
+    let client = if let Some(pool) = crate::proxy::proxy_pool::get_global_proxy_pool() {
+        pool.get_effective_standard_client(account_id, 15).await
+    } else {
+        crate::utils::http::get_standard_client()
+    };
     let health_tracker = crate::proxy::upstream::client::get_global_endpoint_health();
     let ordered_endpoints = health_tracker.get_ordered_endpoints(&LOAD_PROJECT_ENDPOINTS);
     let mut last_error = String::new();
@@ -26,7 +44,7 @@ pub async fn fetch_project_id(access_token: &str) -> Result<String, String> {
     for (idx, url) in ordered_endpoints.iter().enumerate() {
         let response = client
             .post(*url)
-            .timeout(std::time::Duration::from_millis(3000))
+            .timeout(std::time::Duration::from_secs(12))
             .bearer_auth(access_token)
             .header(
                 "User-Agent",
