@@ -3,6 +3,16 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.3-beta.5 (2026-11-06)**:
+        -   **[Decouple Physical Quota Exhaustion from Adaptive Circuit Breaker; Exclude Attempted Accounts in Retry Loops] (PR #3845, Thanks to @cubelikeplayDaniel)**:
+            -   **Physical fact takes precedence over adaptive strategy**: Decoupled “upstream-declared quota exhaustion” from the “adaptive circuit breaker backoff switch”. Previously `if !config.enabled { return; }` ran before the quota predicate, so when Google returned an explicit `Individual quota reached`, the signal was dropped — the account was neither marked 0% nor locked. Now the invariant is established: an upstream-declared quota exhaustion is an objective physical fact and must never be gated by the breaker switch. (PR #3845, Thanks to @cubelikeplayDaniel)
+            -   **Attempted-account exclusion in retry loops**: Fixed repeated hammering of the same drained account. Previously `get_token` received an empty `excluded_accounts`, so P2C could re-select the just-429'd account due to its historical quota weight. Each protocol retry loop now maintains `attempted_accounts` and passes it to `get_token_filtered`, failing fast after a full pool sweep. (PR #3845, Thanks to @cubelikeplayDaniel)
+            -   **No longer bypassing realtime locks when the breaker is off**: Added `is_quota_exhausted_or_explicit_limited`, so accounts in `QuotaExhausted` state are still correctly intercepted even with the breaker disabled.
+            -   **Frontend breaker default corrected**: `circuit_breaker` now initializes with `enabled: true`, preventing users from accidentally disabling the breaker by saving settings. (PR #3845, Thanks to @cubelikeplayDaniel)
+        -   **[Fix beta.4 Release Pipeline Failure] (Ref #3845)**:
+            -   **Background**: The beta.4 Release pipeline hit a transient GitHub API HTTP 500 at the `publish-release` step (all 10 build jobs succeeded), so the Release object was never created and `updater.json` was missing — users could not see that version.
+            -   **Resolution**: Removed the dangling `v5.0.3-beta.4` tag and shipped beta.5 directly, delivering the PR #3845 fixes together with everything since beta.3.
+
     *   **v5.0.3-beta.4 (2026-11-05)**:
         -   **[Re-release: Fix Auto-Update Failure in beta.3] (Ref #3840)**:
             -   **Background**: After beta.3 shipped, a `cargo fmt` formatting fix required re-pointing the tag, which caused the Release workflow to run a second time for the same tag and overwrite the artifacts, changing their signatures. Clients already on beta.3 could not update in place due to signature mismatch and fell back to opening the download page.

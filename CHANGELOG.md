@@ -3,6 +3,16 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.3-beta.5 (2026-11-06)**:
+        -   **[解耦客观物理配额耗尽与自适应熔断，增加单请求重试账号排除] (PR #3845, Thanks to @cubelikeplayDaniel)**:
+            -   **物理事实优先于自适应策略**: 将「上游告知的配额耗尽」与「自适应熔断退避开关」彻底解耦。此前熔断关闭时，`if !config.enabled { return; }` 位于配额判据之前，导致 Google 明确返回 `Individual quota reached` 时信号被丢弃——账号配额不会置 0% 也不会锁定。现确立不变式：账号已被上游告知配额耗尽是客观物理事实，绝不受熔断开关影响。(PR #3845, Thanks to @cubelikeplayDaniel)
+            -   **重试循环引入账号排除机制**: 修复多轮重试锤击同一耗尽账号的问题。此前 `get_token` 传入空的 `excluded_accounts`，P2C 可能因历史配额权重再次选中刚 429 的账号。现各协议重试循环维护 `attempted_accounts` 并传入 `get_token_filtered`，全池遍历后快速失败。(PR #3845, Thanks to @cubelikeplayDaniel)
+            -   **熔断关闭时不再旁路实时锁定**: 新增 `is_quota_exhausted_or_explicit_limited`，即使熔断关闭也能正确拦截处于 `QuotaExhausted` 状态的账号。
+            -   **前端熔断默认值修正**: `circuit_breaker` 初始默认改为 `enabled: true`，避免用户在设置页点击保存时意外关闭熔断器。(PR #3845, Thanks to @cubelikeplayDaniel)
+        -   **[修复 beta.4 发布流水线失败] (Ref #3845)**:
+            -   **问题背景**: beta.4 的 Release 流水线在 `publish-release` 步骤遭遇 GitHub API 瞬时 500 错误（其余 10 个构建作业均成功），导致 Release 对象未创建、`updater.json` 缺失，用户无法感知该版本。
+            -   **修复方式**: 删除悬空的 `v5.0.3-beta.4` tag，直接发布 beta.5，将 PR #3845 的修复与 beta.3 以来的全部改动一并交付。
+
     *   **v5.0.3-beta.4 (2026-11-05)**:
         -   **[重新发布：修复 beta.3 自动更新失效] (Ref #3840)**:
             -   **问题背景**: beta.3 发布后因补充 `cargo fmt` 格式修复而重指 tag，导致 Release 流水线对同一 tag 二次构建并覆盖产物，签名随之变化。已安装 beta.3 的客户端会因签名不匹配而无法原地更新，降级为跳转下载。
