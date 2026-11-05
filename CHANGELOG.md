@@ -3,6 +3,12 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.3-beta.4 (2026-11-05)**:
+        -   **[重新发布：修复 beta.3 自动更新失效] (Ref #3840)**:
+            -   **问题背景**: beta.3 发布后因补充 `cargo fmt` 格式修复而重指 tag，导致 Release 流水线对同一 tag 二次构建并覆盖产物，签名随之变化。已安装 beta.3 的客户端会因签名不匹配而无法原地更新，降级为跳转下载。
+            -   **修复方式**: 发布 beta.4 新版本号，使存量用户走正常版本升级路径，自动更新恢复正常。功能上 beta.4 与 beta.3 完全一致，仅含 rustfmt 格式修正。
+            -   **配套保证**: 本次已确认 CI（含 `cargo fmt --check`）全部通过后再打 tag，避免重复覆盖。
+
     *   **v5.0.3-beta.3 (2026-11-05)**:
         -   **[根治 503 归因污染与配额假死：重构配额大桶调度、自定义映射优先级与超时契约] (Fixes #3838, #3841, Ref #3821, #3827, #3840)**:
             -   **根除 503 归因污染（占全量 5xx 的 92.6%）**: 统一收敛网关内部限流判据至 `policy::is_internal_gateway_exhaustion` 单一权威源，补全此前漏判的 `All accounts rate-limited`（旧列表只写 `all accounts limited`，导致本地账号池限流被误报为上游 503）；同步收敛 `rate_limit.rs` 与 `token_manager.rs` 中另两处独立漂移的判据实现。(Fixes #3838)

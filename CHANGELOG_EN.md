@@ -3,6 +3,12 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.3-beta.4 (2026-11-05)**:
+        -   **[Re-release: Fix Auto-Update Failure in beta.3] (Ref #3840)**:
+            -   **Background**: After beta.3 shipped, a `cargo fmt` formatting fix required re-pointing the tag, which caused the Release workflow to run a second time for the same tag and overwrite the artifacts, changing their signatures. Clients already on beta.3 could not update in place due to signature mismatch and fell back to opening the download page.
+            -   **Fix**: Ship beta.4 with a higher version number so existing users take the normal upgrade path and in-place auto-update works again. Functionally beta.4 is identical to beta.3 and contains only rustfmt formatting corrections.
+            -   **Safeguard**: This release only tags after CI (including `cargo fmt --check`) is fully green, preventing repeated overwrites.
+
     *   **v5.0.3-beta.3 (2026-11-05)**:
         -   **[Eliminate 503 Misattribution and Quota False-Deadlock: Rebuild Bucket Scheduling, Custom Mapping Priority and Timeout Contract] (Fixes #3838, #3841, Ref #3821, #3827, #3840)**:
             -   **Root-cause fix for 503 misattribution (92.6% of all 5xx)**: Unified the internal rate-limit predicate into `policy::is_internal_gateway_exhaustion` as the single source of truth, and filled in the previously missed `All accounts rate-limited` (the old list only matched `all accounts limited`, causing local pool exhaustion to be misreported as upstream 503); also converged two other independently drifting implementations in `rate_limit.rs` and `token_manager.rs`. (Fixes #3838)
