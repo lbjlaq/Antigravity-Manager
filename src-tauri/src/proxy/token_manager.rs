@@ -2828,7 +2828,7 @@ impl TokenManager {
         }
     }
 
-    async fn get_token_filtered(
+    pub async fn get_token_filtered(
         &self,
         quota_group: &str,
         force_rotate: bool,
@@ -4077,13 +4077,12 @@ impl TokenManager {
 
     /// 检查账号是否在限流中 (支持模型级)
     pub async fn is_rate_limited(&self, account_id: &str, model: Option<&str>) -> bool {
-        // [NEW] 检查熔断是否启用
+        // 检查熔断配置：当自适应熔断器关闭时，依然坚定拦截明确的配额耗尽与每周硬配额
         let config = self.circuit_breaker_config.read().await;
         if !config.enabled {
             return self
                 .rate_limit_tracker
-                .get_quota_wait(account_id, model, true)
-                > 0;
+                .is_quota_exhausted_or_explicit_limited(account_id, model);
         }
         self.rate_limit_tracker.is_rate_limited(account_id, model)
     }
@@ -5345,10 +5344,6 @@ impl TokenManager {
         let normalized_model =
             model.and_then(crate::proxy::common::model_mapping::normalize_to_standard_id);
         let model_to_track = normalized_model.as_deref().or(model);
-        let config = self.circuit_breaker_config.read().await.clone();
-        if !config.enabled {
-            return false;
-        }
 
         let account_id = self
             .email_to_account_id(email)
@@ -5359,6 +5354,20 @@ impl TokenManager {
             error_body,
         );
         let reason = classify_rate_limit_reason(error_body);
+        let is_quota_depleted = crate::proxy::rate_limit::is_quota_depleted_signal(error_body)
+            || reason == crate::proxy::rate_limit::RateLimitReason::QuotaExhausted;
+
+        // 【物理事实优先】当上游明确返回配额耗尽信号时，
+        // 账号已无可用配额是客观物理事实，绝不受自适应熔断器开关限制！
+        if is_quota_depleted {
+            self.mark_model_quota_depleted(&account_id, model_to_track);
+        }
+
+        let config = self.circuit_breaker_config.read().await.clone();
+        if !config.enabled && !is_quota_depleted && !has_explicit_retry_time {
+            return false;
+        }
+
         let recorded = self.record_rate_limit_atomic(
             &account_id,
             status,
@@ -5369,14 +5378,10 @@ impl TokenManager {
             TrackerParserMode::Current,
         );
 
-        if reason == crate::proxy::rate_limit::RateLimitReason::QuotaExhausted {
-            self.mark_model_quota_depleted(&account_id, model_to_track);
-        }
-
         status == 429
-            && recorded.is_some()
+            && (recorded.is_some() || is_quota_depleted)
             && !has_explicit_retry_time
-            && reason == crate::proxy::rate_limit::RateLimitReason::QuotaExhausted
+            && is_quota_depleted
     }
 
     /// [NEW] 将指定账号的目标模型配额在内存中即时标记为 0%
@@ -5393,7 +5398,11 @@ impl TokenManager {
                 token.model_quotas.insert(norm, 0);
                 token.model_quotas.insert(m.to_string(), 0);
                 let m_lower = m.trim().to_lowercase();
-                token.model_quotas.insert(m_lower, 0);
+                token.model_quotas.insert(m_lower.clone(), 0);
+                let base_name = crate::proxy::common::model_mapping::strip_tier_suffix(&m_lower);
+                if base_name != m_lower {
+                    token.model_quotas.insert(base_name, 0);
+                }
             }
             tracing::debug!(
                 "[Auto-Switch #3639] Reactively marked model quota depleted (0%) for account {} [model: {:?}]",
@@ -5495,10 +5504,6 @@ impl TokenManager {
         let normalized_model =
             model.and_then(crate::proxy::common::model_mapping::normalize_to_standard_id);
         let model_to_track = normalized_model.as_deref().or(model);
-        let config = self.circuit_breaker_config.read().await.clone();
-        if !config.enabled {
-            return;
-        }
 
         let account_id = self
             .email_to_account_id(email)
@@ -5507,6 +5512,9 @@ impl TokenManager {
         let is_quota_depleted_signal =
             crate::proxy::rate_limit::is_quota_depleted_signal(error_body);
 
+        // 【物理事实优先】当上游明确返回配额耗尽或配额到期信号时，
+        // 账号已无可用配额是客观物理事实，绝不受自适应熔断器开关限制！
+        // 必须立即将目标模型配额标记为 0%，杜绝调度器继续盲目重试该账号。
         if is_quota_depleted_signal
             || reason == crate::proxy::rate_limit::RateLimitReason::QuotaExhausted
         {
@@ -5533,6 +5541,8 @@ impl TokenManager {
             }
         }
 
+        let config = self.circuit_breaker_config.read().await.clone();
+
         if Self::has_explicit_retry_time(parser_mode, retry_after_header, error_body) {
             self.record_rate_limit_atomic(
                 &account_id,
@@ -5545,7 +5555,11 @@ impl TokenManager {
             );
             return;
         }
+
         if reason != crate::proxy::rate_limit::RateLimitReason::QuotaExhausted {
+            if !config.enabled {
+                return;
+            }
             self.record_rate_limit_atomic(
                 &account_id,
                 status,
@@ -5572,6 +5586,10 @@ impl TokenManager {
         }
         if self.set_precise_lockout(&account_id, reason, model_to_track.map(str::to_string)) {
             tracing::info!("账号 {} 已使用本地缓存配额锁定", account_id);
+            return;
+        }
+
+        if !config.enabled {
             return;
         }
 
@@ -10289,5 +10307,166 @@ mod tests {
         assert!(accounts_dir.join("acc-orphan-ghost.json").exists());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_hard_quota_depleted_locks_and_rotates_even_with_circuit_breaker_disabled() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        // 用户在配置界面关闭了自适应熔断器 (circuit_breaker.enabled = false)
+        manager.circuit_breaker_config.write().await.enabled = false;
+
+        let target_model = "claude-opus-5-5-high";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(norm_target.clone(), 50);
+        quotas1.insert(target_model.to_string(), 50);
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(norm_target.clone(), 40);
+        quotas2.insert(target_model.to_string(), 40);
+
+        let acc1_path = temp_dir.path().join("acc1.json");
+        let acc2_path = temp_dir.path().join("acc2.json");
+        std::fs::write(
+            &acc1_path,
+            serde_json::json!({"disabled": false}).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            &acc2_path,
+            serde_json::json!({"disabled": false}).to_string(),
+        )
+        .unwrap();
+
+        let mut token1 = create_test_token("acc1@example.com", Some("PRO"), 1.0, None, Some(50));
+        token1.account_id = "acc1".to_string();
+        token1.account_path = acc1_path;
+        token1.model_quotas = quotas1;
+        token1.available_models.insert(target_model.to_string());
+        token1.available_models.insert(norm_target.clone());
+
+        let mut token2 = create_test_token("acc2@example.com", Some("PRO"), 1.0, None, Some(40));
+        token2.account_id = "acc2".to_string();
+        token2.account_path = acc2_path;
+        token2.model_quotas = quotas2;
+        token2.available_models.insert(target_model.to_string());
+        token2.available_models.insert(norm_target.clone());
+
+        manager.tokens.insert("acc1".to_string(), token1);
+        manager.tokens.insert("acc2".to_string(), token2);
+
+        // 首次调度：acc1 (50%) 优于 acc2 (40%)，被选中
+        let (_token, _proj, email1, id1, _) = manager
+            .get_token("claude", false, None, target_model)
+            .await
+            .expect("First selection should succeed");
+        assert_eq!(id1, "acc1");
+        assert_eq!(email1, "acc1@example.com");
+
+        // 上游返回 429 Individual quota reached
+        let upstream_429 = r#"{
+            "error": {
+                "code": 429,
+                "message": "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4h52m54s.",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "QUOTA_EXHAUSTED",
+                        "metadata": {
+                            "quotaResetDelay": "17574s",
+                            "quotaResetTimeStamp": "2026-11-06T04:00:00Z"
+                        }
+                    }
+                ]
+            }
+        }"#;
+
+        // 标记限流
+        manager
+            .mark_rate_limited_async_baseline(
+                "acc1@example.com",
+                429,
+                None,
+                upstream_429,
+                Some(target_model),
+            )
+            .await;
+
+        // 核心断言：即使 circuit_breaker.enabled == false，
+        // 上游明确下发的配额耗尽 (QUOTA_EXHAUSTED / Individual quota reached) 依然必须标记 0 配额并精确锁定，
+        // 随后调度轮换必须自动剔除 acc1 并命中健康的 acc2！
+        let (_token, _proj, email2, id2, _) = manager
+            .get_token("claude", true, None, target_model)
+            .await
+            .expect("Rotation after 429 must succeed with acc2");
+        assert_eq!(id2, "acc2", "429 配额耗尽后绝不能重复选中已耗尽的 acc1");
+        assert_eq!(email2, "acc2@example.com");
+    }
+
+    #[tokio::test]
+    async fn test_get_token_filtered_excludes_attempted_accounts_in_retry_loop() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let acc1_file = temp_dir.path().join("acc1.json");
+        let acc2_file = temp_dir.path().join("acc2.json");
+        std::fs::write(&acc1_file, r#"{"disabled": false}"#).unwrap();
+        std::fs::write(&acc2_file, r#"{"disabled": false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        let target_model = "claude-opus-5-5-high";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut token1 = create_test_token("acc1@example.com", Some("PRO"), 1.0, None, Some(80));
+        token1.account_id = "acc1".to_string();
+        token1.account_path = acc1_file;
+        token1.available_models.insert(target_model.to_string());
+        token1.available_models.insert(norm_target.clone());
+        token1.model_quotas.insert(target_model.to_string(), 80);
+        token1.model_quotas.insert(norm_target.clone(), 80);
+        token1.remaining_quota = Some(80);
+
+        let mut token2 = create_test_token("acc2@example.com", Some("PRO"), 1.0, None, Some(40));
+        token2.account_id = "acc2".to_string();
+        token2.account_path = acc2_file;
+        token2.available_models.insert(target_model.to_string());
+        token2.available_models.insert(norm_target.clone());
+        token2.model_quotas.insert(target_model.to_string(), 40);
+        token2.model_quotas.insert(norm_target.clone(), 40);
+        token2.remaining_quota = Some(40);
+
+        manager.tokens.insert("acc1".to_string(), token1);
+        manager.tokens.insert("acc2".to_string(), token2);
+
+        let mut attempted = std::collections::HashSet::new();
+        // 第一次选号：没有被排除，acc1 额度更高 (80%) 优先被选中
+        let (_, _, _, id1, _) = manager
+            .get_token_filtered("claude", false, None, target_model, &attempted)
+            .await
+            .unwrap();
+        assert_eq!(id1, "acc1");
+
+        // 模拟第 1 次尝试失败并将 acc1 记入 attempted_accounts
+        attempted.insert(id1);
+
+        // 第二次重试选号：传入已尝试账号，调度器必须排除 acc1 并选中 acc2
+        let (_, _, _, id2, _) = manager
+            .get_token_filtered("claude", true, None, target_model, &attempted)
+            .await
+            .unwrap();
+        assert_eq!(id2, "acc2", "重试循环中必须排除当前请求中已尝试失败的账号");
+
+        // 当所有账号都被尝试过时，返回池空错误
+        attempted.insert(id2);
+        let res3 = manager
+            .get_token_filtered("claude", true, None, target_model, &attempted)
+            .await;
+        assert!(res3.is_err());
     }
 }

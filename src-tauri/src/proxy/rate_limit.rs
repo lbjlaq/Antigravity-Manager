@@ -244,6 +244,44 @@ impl RateLimitTracker {
             .unwrap_or(0)
     }
 
+    /// 当自适应熔断退避开关关闭时，依然坚定检查账号是否处于明确的配额耗尽锁定或周硬配额限制中
+    pub fn is_quota_exhausted_or_explicit_limited(
+        &self,
+        account_id: &str,
+        model: Option<&str>,
+    ) -> bool {
+        let now = SystemTime::now();
+
+        // 1. 周硬配额检查 (快照同步)
+        if self.get_quota_wait(account_id, model, true) > 0 {
+            return true;
+        }
+
+        // 2. 检查直接 key 是否处于 QuotaExhausted 锁定中
+        let direct_key = self.get_limit_key(account_id, model);
+        if let Some(info) = self.limits.get(&direct_key) {
+            if info.reset_time > now && info.reason == RateLimitReason::QuotaExhausted {
+                return true;
+            }
+        }
+
+        // 3. 归一化标准 ID 兜底检查
+        if let Some(m) = model {
+            if let Some(std_id) = crate::proxy::common::model_mapping::normalize_to_standard_id(m) {
+                if std_id != m {
+                    let std_key = self.get_limit_key(account_id, Some(&std_id));
+                    if let Some(info) = self.limits.get(&std_key) {
+                        if info.reset_time > now && info.reason == RateLimitReason::QuotaExhausted {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     pub fn sync_quota_bucket(
         &self,
         account_id: &str,
