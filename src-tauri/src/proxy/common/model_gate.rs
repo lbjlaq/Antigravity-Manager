@@ -343,7 +343,13 @@ pub async fn gate_inbound_model(
     } else {
         final_model.clone()
     };
-    if token_manager.accounts_with_positive_quota(&quota_model) == 0 {
+    let accounts_quota = token_manager.accounts_with_positive_quota(&quota_model);
+    let accounts_final = if quota_model != final_model {
+        token_manager.accounts_with_positive_quota(&final_model)
+    } else {
+        accounts_quota
+    };
+    if accounts_quota == 0 && accounts_final == 0 {
         return ModelGate::NoQuota;
     }
 

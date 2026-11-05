@@ -122,7 +122,7 @@ impl StreamLifecycleConfig {
     ) -> Self {
         let timeouts = crate::proxy::get_stream_timeout_config();
         // 首字阶段与上游首字节预算同源：
-        // - 同一 15..210 上限，避免前端配置 > 上限时两段行为不一致；
+        // - 同一 15..MAX_FIRST_BYTE_CEILING_SECS(270) 上限，避免前端配置 > 上限时两段行为不一致；
         // - 再用全局剩余预算封顶，避免“响应头已耗时 + 又等满 180s”超出 270s。
         let mut initial_ttft_secs = timeouts.initial_ttft_secs.clamp(
             15,

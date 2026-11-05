@@ -27,14 +27,8 @@ impl UpstreamClassification {
             return UpstreamClassification::InternalGatewayMessage;
         }
 
-        // 1. 优先排除网关自身内部错误（防自噬死循环）
-        if lower.contains("all accounts limited")
-            || lower.contains("no accounts available")
-            || lower.contains("all accounts failed")
-            || lower.contains("token pool is empty")
-            || lower.contains("all accounts exhausted")
-            || lower.contains("all accounts unhealthy")
-        {
+        // 1. 优先排除网关自身内部错误（防自噬死循环与假 503 误报）
+        if Self::is_internal_gateway_exhaustion(&lower) {
             return UpstreamClassification::InternalGatewayMessage;
         }
 
@@ -97,6 +91,21 @@ impl UpstreamClassification {
         }
 
         UpstreamClassification::OtherClientError(status)
+    }
+
+    /// 统一判定是否为网关内部账号池耗尽/限流错误（杜绝假 503 误报）
+    pub fn is_internal_gateway_exhaustion(lower: &str) -> bool {
+        (lower.contains("all accounts")
+            && (lower.contains("limited")
+                || lower.contains("rate-limited")
+                || lower.contains("rate_limited")
+                || lower.contains("failed")
+                || lower.contains("unhealthy")
+                || lower.contains("exhausted")
+                || lower.contains("suspended")))
+            || lower.contains("no accounts available")
+            || lower.contains("token pool is empty")
+            || lower.contains("no quota accounts")
     }
 
     /// 该分类是否应该触发 TokenManager 的账号冷却锁定

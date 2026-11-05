@@ -199,6 +199,16 @@ pub fn estimated_tokens() -> Option<u32> {
     })
 }
 
+/// 读取当前生效的大 body 判定门限（优先遵从用户在 GUI 配置的 large_body_threshold_mb，默认保底 4MB）
+pub fn replay_guard_threshold_bytes() -> usize {
+    let cfg_bytes = crate::proxy::get_upload_timeout_config().large_body_threshold_bytes();
+    if cfg_bytes > 0 {
+        cfg_bytes
+    } else {
+        REPLAY_GUARD_BODY_BYTES
+    }
+}
+
 /// 登记一次上游调用，并在“大 body + 超出重放上限”时拒绝
 ///
 /// 返回 `Err(已发生的调用次数)` 表示本次调用被护栏拦下。
@@ -207,7 +217,8 @@ pub fn register_upstream_call(body_len: usize) -> Result<(), usize> {
         return Ok(());
     };
     let call_no = ctx.register_upstream_call();
-    if body_len >= REPLAY_GUARD_BODY_BYTES && call_no > MAX_LARGE_BODY_UPSTREAM_CALLS {
+    let threshold = replay_guard_threshold_bytes();
+    if body_len >= threshold && call_no > MAX_LARGE_BODY_UPSTREAM_CALLS {
         return Err(call_no);
     }
     Ok(())

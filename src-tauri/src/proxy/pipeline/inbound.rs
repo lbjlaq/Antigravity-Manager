@@ -1926,6 +1926,100 @@ impl InboundThinkingPipeline {
         degraded
     }
 
+    /// [FIX 503] 当 Gemini 上游返回 503 (MODEL_CAPACITY_EXHAUSTED) 时，
+    /// 说明 medium / low / tiered 算力池已枯竭，原地将模型升档至 high 算力通道并调整 thinkingLevel 为 HIGH。
+    pub fn try_promote_to_high_capacity(body: &mut Value) -> bool {
+        let mut promoted = false;
+
+        let promote_tc = |tc: &mut Value| -> bool {
+            let mut changed = false;
+            if let Some(obj) = tc.as_object_mut() {
+                if let Some(level_val) = obj.get("thinkingLevel") {
+                    if let Some(level) = level_val.as_str() {
+                        if !level.eq_ignore_ascii_case("HIGH") {
+                            obj.insert("thinkingLevel".to_string(), json!("HIGH"));
+                            changed = true;
+                        }
+                    }
+                } else {
+                    obj.insert("thinkingLevel".to_string(), json!("HIGH"));
+                    changed = true;
+                }
+            }
+            changed
+        };
+
+        let check_gc = |gc: &mut Value| -> bool {
+            let mut gc_promoted = false;
+            if let Some(tc) = gc.get_mut("thinkingConfig") {
+                if promote_tc(tc) {
+                    gc_promoted = true;
+                }
+            }
+            if let Some(tc) = gc.get_mut("thinking_config") {
+                if promote_tc(tc) {
+                    gc_promoted = true;
+                }
+            }
+            gc_promoted
+        };
+
+        if let Some(gc) = body.get_mut("generationConfig") {
+            if check_gc(gc) {
+                promoted = true;
+            }
+        }
+        if let Some(gc) = body.get_mut("generation_config") {
+            if check_gc(gc) {
+                promoted = true;
+            }
+        }
+
+        if let Some(req) = body.get_mut("request") {
+            if let Some(gc) = req.get_mut("generationConfig") {
+                if check_gc(gc) {
+                    promoted = true;
+                }
+            }
+            if let Some(gc) = req.get_mut("generation_config") {
+                if check_gc(gc) {
+                    promoted = true;
+                }
+            }
+        }
+
+        // 检查并替换模型名：-medium / -low / -tiered 替换为 -high；裸模型如 gemini-3.8-flash 替换为 gemini-3.8-flash-high
+        let mut promote_model_str = |m_val: &mut Value| {
+            if let Some(m_str) = m_val.as_str() {
+                let lower = m_str.to_lowercase();
+                if lower.ends_with("-medium") {
+                    *m_val = json!(format!("{}-high", &m_str[..m_str.len() - 7]));
+                    promoted = true;
+                } else if lower.ends_with("-low") {
+                    *m_val = json!(format!("{}-high", &m_str[..m_str.len() - 4]));
+                    promoted = true;
+                } else if lower.ends_with("-tiered") {
+                    *m_val = json!(format!("{}-high", &m_str[..m_str.len() - 7]));
+                    promoted = true;
+                } else if (lower.contains("flash") || lower.contains("pro")) && !lower.ends_with("-high") {
+                    *m_val = json!(format!("{}-high", m_str));
+                    promoted = true;
+                }
+            }
+        };
+
+        if let Some(m) = body.get_mut("model") {
+            promote_model_str(m);
+        }
+        if let Some(req) = body.get_mut("request") {
+            if let Some(m) = req.get_mut("model") {
+                promote_model_str(m);
+            }
+        }
+
+        promoted
+    }
+
     /// 统一规范化与对齐四大协议转译后的 Google Request 内部拓扑（Pipeline First 核心归一节点）
     /// 确保 OpenAI Chat, OpenAI Responses, Claude 与 Gemini 在上游呈现 100% 严格对齐官方 Antigravity 的结构：
     /// 1. contents: 上下文历史置于首位

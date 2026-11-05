@@ -174,22 +174,19 @@ impl UpstreamCallResult {
 
 /// 首字预算基准硬上限（秒）
 ///
-/// 必须显著小于下游客户端的首包看门狗（jeikcode 常见 180s），
-/// 否则客户端先断开，网关白等一轮并留下一个“无日志的孤儿请求”。
-/// 预留充足时间给建连 + 上传 + 端点切换，故文字基准取 135s。
-pub const MAX_FIRST_BYTE_BUDGET_SECS: u64 = 135;
+/// 文字基准允许充分发挥初始宽限 (默认 180s，与前端契约 100% 对齐)，在超大上下文与高阶思考场景下给予首选端点充分时间生成首字。
+pub const MAX_FIRST_BYTE_BUDGET_SECS: u64 = 180;
 
 /// 叠加媒体增量后的首字最终上限（图片 +45 / 视频 +60）
 ///
-/// 严格受下游客户端 180s 看门狗的安全边界（145s）约束，
-/// 预留至少 35s 安全窗口，彻底根治带图/多模态请求击穿客户端看门狗问题。
-pub const MAX_FIRST_BYTE_CEILING_SECS: u64 = 145;
+/// 允许带图/带视频请求在文字基准之上充分获得多模态宽限，仍受全局请求总预算约束 (270s)。
+pub const MAX_FIRST_BYTE_CEILING_SECS: u64 = 270;
 
-/// 针对常见下游客户端（JeikCode 180s、Claude Desktop 等）的全链路总超时绝对安全上限（秒）
+/// 全链路总超时安全上限（秒）
 ///
-/// 包含所有端点上传阶段与首字等待阶段的笛卡尔累加和，强制截断在 160s 以内，
-/// 为客户端 180s 看门狗留足 20s 缓冲区，防止网关成为孤儿请求。
-pub const MAX_CLIENT_SAFE_TOTAL_BUDGET_SECS: u64 = 160;
+/// 对齐请求级全局预算 (270s)，彻底解除 160s 暴力硬截断导致的慢长请求反向 504 误杀。
+pub const MAX_CLIENT_SAFE_TOTAL_BUDGET_SECS: u64 =
+    crate::proxy::pipeline::budget::DEFAULT_GATEWAY_REQUEST_BUDGET_SECS;
 
 /// 由请求体体积粗估 token 规模（仅用于超时曲线分档，不参与计费/统计）
 ///

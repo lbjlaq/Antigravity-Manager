@@ -62,7 +62,7 @@ export function getModelQuotaDisplay(modelId: string, model: ModelQuota | undefi
         .reduce<(typeof buckets)[number] | undefined>((chosen, bucket) =>
             !chosen || bucket.remaining_fraction < chosen.remaining_fraction ? bucket : chosen, undefined);
     const weekly = buckets.filter(bucket => /week|7d/i.test(`${bucket.window} ${bucket.bucket_id}`)
-        && bucket.remaining_fraction <= 0.001 && Date.parse(bucket.reset_time) > Date.now())
+        && bucket.remaining_fraction <= 0.015 && Date.parse(bucket.reset_time) > Date.now())
         .reduce<(typeof buckets)[number] | undefined>((chosen, bucket) =>
             !chosen || Date.parse(bucket.reset_time) > Date.parse(chosen.reset_time) ? bucket : chosen, undefined);
     return {
@@ -148,8 +148,8 @@ export function getModelConstrainedQuota(
     const fiveHourResetTime = fiveHourBucket?.reset_time || model?.reset_time;
     const weeklyResetTime = weeklyBucket?.reset_time;
 
-    // 2. 状态判定
-    const isWeeklyExhausted = rawWeekly !== null && rawWeekly <= 0;
+    // 2. 状态判定 (周配额低于 1.5% 即实际见底，木桶短板生效)
+    const isWeeklyExhausted = rawWeekly !== null && rawWeekly <= 1;
     const isWeeklyConstrained = isWeeklyExhausted || (rawWeekly !== null && raw5h !== null && rawWeekly < raw5h);
     const is5hCooling = raw5h !== null && raw5h <= 0 && (rawWeekly === null || rawWeekly > 0);
 
@@ -440,7 +440,8 @@ export function getGroupQuotaSummaries(
         const effectiveWeekly = rawWeekly;
         const effectiveWeeklyResetTime = weeklyResetTime;
 
-        const isWeeklyExhausted = effectiveWeekly !== undefined && effectiveWeekly <= 0;
+        // 周配额低于 1.5% (取整 <= 1%) 时实际已无法支撑请求，木桶短板生效触发周熔断
+        const isWeeklyExhausted = effectiveWeekly !== undefined && effectiveWeekly <= 1;
         const isWeeklyConstrained = isWeeklyExhausted || (effectiveWeekly !== undefined && raw5h !== undefined && effectiveWeekly < raw5h);
 
         const labelKey = key === 'argon'

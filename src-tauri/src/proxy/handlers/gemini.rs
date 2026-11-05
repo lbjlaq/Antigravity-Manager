@@ -1179,6 +1179,24 @@ pub async fn handle_generate(
             continue;
         }
 
+        // 上游配额到期 429 报错绝对不改写，保持原汁原味透传
+        if status_code == 429
+            && crate::proxy::rate_limit::is_quota_depleted_signal(&error_text)
+        {
+            if let Ok(raw_json) = serde_json::from_str::<Value>(&error_text) {
+                return Ok((
+                    status,
+                    [
+                        ("X-Account-Email", email.as_str()),
+                        ("X-Mapped-Model", mapped_model.as_str()),
+                        ("X-Upstream-Model", config.final_model.as_str()),
+                    ],
+                    Json(raw_json),
+                )
+                    .into_response());
+            }
+        }
+
         // 404 等由于模型配置或路径错误的 HTTP 异常，直接报错，不进行无效轮换
         error!(
             "Gemini Upstream non-retryable error {}: {}",
@@ -1209,6 +1227,15 @@ pub async fn handle_generate(
         last_email.as_deref(),
         &last_error,
     );
+
+    // 上游配额到期 429 报错绝对不改写，保持原汁原味透传
+    if final_status == StatusCode::TOO_MANY_REQUESTS
+        && crate::proxy::rate_limit::is_quota_depleted_signal(&last_error)
+    {
+        if let Ok(raw_json) = serde_json::from_str::<Value>(&last_error) {
+            return Ok((final_status, headers, Json(raw_json)).into_response());
+        }
+    }
 
     let dual_err = crate::proxy::handlers::common::build_dual_track_error(
         "gemini",
