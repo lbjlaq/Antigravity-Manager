@@ -2495,6 +2495,38 @@ impl TokenManager {
             available.retain(|t| allowed_set.contains(&t.account_id));
         }
 
+        // [FIX #3840] 目标模型正配额过滤必须**先于**优先级收敛执行。
+        //
+        // 为什么顺序不能反：下面的优先级收敛会把 available 直接收缩到
+        // 「最高优先级的空闲账号组」（available = min_p_idle 是赋值覆盖，
+        // 不是 retain）。若该组恰好是一个配额已耗尽的临期账号
+        // （蹬额度模式 pedal 会把它调到 priority=1，用户手动设高优先级同样可触发），
+        // 就会出现经典的优先级倒置 / 饥饿死锁：
+        //   1. 其他 priority=50 但配额 100% 的账号被提前剔除；
+        //   2. 随后 has_positive_model_quota 只能看到那个 0% 账号；
+        //   3. 于是直接 return None，报「无可用账号」——即使池中还有满额账号。
+        //
+        // 先做配额过滤，等于确立了调度器的核心不变式：
+        // 「优先级只在具备该模型有效正配额的健康账号之间竞争；
+        //   配额已知为 0% 的账号从一开始就不具备参与优先级裁决的资格。」
+        //
+        // 注：max_spillover 截断与 P2C 都在本步之后，语义不受影响——
+        // 被提前剔除的本就是不该参与并发调度的零配额账号。
+        let has_positive_model_quota = available
+            .iter()
+            .any(|t| t.model_quotas.get(normalized_target).copied().unwrap_or(0) > 0);
+        if has_positive_model_quota {
+            available.retain(|t| t.model_quotas.get(normalized_target).copied().unwrap_or(0) > 0);
+        } else {
+            // 全池候选账号确实均已配额耗尽：本地拦下，杜绝裸奔打爆 Google 429。
+            tracing::warn!(
+                "[Scheduler] All {} candidate accounts have 0% quota for model {}. Intercepting upstream call to protect pool.",
+                available.len(),
+                normalized_target
+            );
+            return None;
+        }
+
         // Keep lower-priority groups for retries; only this draw is restricted.
         // [NEW] 并发感知与次级分流加速 (Concurrency-Aware & Priority Spillover Acceleration)：
         // 1. 获取当前可用池中最高优先级 min_priority
@@ -2542,22 +2574,6 @@ impl TokenManager {
                     }
                 }
             }
-        }
-
-        // [FIX #3639] 优先保留对目标模型具备正配额 (> 0%) 的账号，防止抽中已知 0% 额度的账号导致 429
-        let has_positive_model_quota = available
-            .iter()
-            .any(|t| t.model_quotas.get(normalized_target).copied().unwrap_or(0) > 0);
-        if has_positive_model_quota {
-            available.retain(|t| t.model_quotas.get(normalized_target).copied().unwrap_or(0) > 0);
-        } else {
-            // [FIX] 科学木桶终极闭环：当全池候选账号已知配额均 <=0 时，严禁裸奔放行打爆 Google 429！
-            tracing::warn!(
-                "[Scheduler] All {} candidate accounts have 0% quota for model {}. Intercepting upstream call to protect pool.",
-                available.len(),
-                normalized_target
-            );
-            return None;
         }
 
         if available.len() == 1 {
@@ -9686,6 +9702,72 @@ mod tests {
         }
 
         assert_eq!(manager.get_in_flight(acc_id), 0);
+    }
+
+    #[test]
+    fn test_zero_quota_high_priority_account_must_not_starve_pool() {
+        // [FIX #3840] 回归：优先级倒置 / 饥饿死锁
+        //
+        // 场景（蹬额度模式 pedal 或用户手动设高优先级均可复现）：
+        //   A: priority=1（最高优先级，空闲 in_flight=0），但目标模型配额 = 0%
+        //   B: priority=50（默认优先级），目标模型配额 = 100%
+        //
+        // 旧行为（配额过滤在优先级收敛之后）：
+        //   优先级收敛先执行 available = min_p_idle → 只剩 A；
+        //   随后配额检查只看到 A 是 0%，has_positive_model_quota=false
+        //   → return None，报「无可用账号」，B 被活活饿死。
+        //
+        // 新行为（配额过滤前置）：
+        //   A 因 0 配额先被剔除，B 接管 → 必须返回 B。
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        let model = "claude-sonnet-4-6";
+
+        let mut boosted = create_test_token("pedal@example.com", Some("PRO"), 1.0, None, Some(0));
+        boosted.account_id = "acc_pedal_drained".to_string();
+        boosted.priority = 1; // 蹬额度模式把它提到最高优先级
+        boosted.model_quotas.insert(model.to_string(), 0); // 但配额已耗尽
+
+        let mut healthy = create_test_token("healthy@example.com", Some("PRO"), 1.0, None, Some(100));
+        healthy.account_id = "acc_healthy".to_string();
+        healthy.priority = 50; // 默认优先级
+        healthy.model_quotas.insert(model.to_string(), 100);
+
+        let candidates = vec![boosted.clone(), healthy.clone()];
+        let attempted = HashSet::new();
+
+        let selected = manager
+            .select_with_p2c(&candidates, &attempted, model, false)
+            .expect("必须回退到有正配额的账号，而不是返回 None");
+        assert_eq!(
+            selected.account_id, "acc_healthy",
+            "高优先级但 0 配额的账号绝不能饿死全池"
+        );
+
+        // 反向验证：当高优先级账号真正有配额时，优先级仍然生效
+        let mut boosted_with_quota = boosted.clone();
+        boosted_with_quota.model_quotas.insert(model.to_string(), 80);
+        let both_healthy = vec![boosted_with_quota, healthy.clone()];
+        let selected2 = manager
+            .select_with_p2c(&both_healthy, &attempted, model, false)
+            .expect("两者都有配额时应正常选中");
+        assert_eq!(
+            selected2.account_id, "acc_pedal_drained",
+            "配额健康时，最高优先级仍应优先命中"
+        );
+
+        // 安全网：全池 0 配额时仍必须坚定拦截（不打爆 Google）
+        let mut all_zero_a = boosted.clone();
+        all_zero_a.model_quotas.insert(model.to_string(), 0);
+        let mut all_zero_b = healthy.clone();
+        all_zero_b.model_quotas.insert(model.to_string(), 0);
+        let all_zero = vec![all_zero_a, all_zero_b];
+        assert!(
+            manager
+                .select_with_p2c(&all_zero, &attempted, model, false)
+                .is_none(),
+            "全池均为 0 配额时必须本地拦截"
+        );
     }
 
     #[test]
