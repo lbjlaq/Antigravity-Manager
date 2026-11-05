@@ -446,6 +446,7 @@
             "batch_warmup_msg": "Bạn có chắc muốn chạy tác vụ làm nóng cho {{count}} tài khoản đã chọn ngay bây giờ?"
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
+        "switch_to_acp": "Switch to Antigravity IDE Plugin (ACP)",
         "drag_disabled_during_sort": "Đang bật sắp xếp theo cột; tính năng kéo thả tạm dừng",
         "import_json": "Import",
         "import_success": "Successfully imported {{count}} accounts",
@@ -486,6 +487,8 @@
         "client_ide_tooltip": "Tài khoản đăng nhập Antigravity IDE hiện tại",
         "client_cli": "CLI",
         "client_cli_tooltip": "Tài khoản đăng nhập Antigravity CLI (agy) hiện tại",
+        "client_acp": "Plugin",
+        "client_acp_tooltip": "Tài khoản đăng nhập Plugin IDE Antigravity (ACP) hiện tại",
         "switch_next_short": "Tiếp",
         "weekly_exhausted_tooltip": "Hạn mức tuần đã cạn, đã kích hoạt bảo vệ",
         "type": {

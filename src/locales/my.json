@@ -449,6 +449,7 @@
             "batch_warmup_msg": "Adakah anda pasti mahu mencetuskan pemanasan untuk {{count}} akaun yang dipilih dengan segera?"
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
+        "switch_to_acp": "Switch to Antigravity IDE Plugin (ACP)",
         "drag_disabled_during_sort": "Isihan lajur aktif; seret untuk susun dijeda",
         "copy_validation_url": "Copy Verification Link",
         "validation_url_copied": "Verification link copied to clipboard",
@@ -484,6 +485,8 @@
         "client_ide_tooltip": "Akaun log masuk Antigravity IDE semasa",
         "client_cli": "CLI",
         "client_cli_tooltip": "Akaun log masuk Antigravity CLI (agy) semasa",
+        "client_acp": "Plugin",
+        "client_acp_tooltip": "Akaun log masuk Plugin IDE Antigravity (ACP) semasa",
         "switch_next_short": "Seterusnya",
         "weekly_exhausted_tooltip": "Kuota mingguan habis, perlindungan automatik diaktifkan",
         "type": {

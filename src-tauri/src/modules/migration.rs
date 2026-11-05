@@ -349,6 +349,37 @@ pub async fn import_all_local_accounts(target_ide: Option<&str>) -> Result<Vec<A
         }
     }
 
+    // 2.5 Antigravity IDE Plugin (antigravity-acp) native credentials
+    for oauth_state in integration::read_antigravity_acp_credentials() {
+        let refresh_token = oauth_state.refresh_token.clone();
+        if !refresh_token.is_empty() && seen_refresh_tokens.insert(refresh_token.clone()) {
+            crate::modules::logger::log_info(
+                "Discovered OAuth state in Antigravity ACP IDE Plugin credentials",
+            );
+            if let Ok(token_resp) = oauth::refresh_access_token(&refresh_token, None).await {
+                let email = match oauth::get_user_info(&token_resp.access_token, None).await {
+                    Ok(info) => info.email,
+                    Err(_) => "Unknown".to_string(),
+                };
+                let token_data = TokenData::new(
+                    token_resp.access_token,
+                    refresh_token,
+                    token_resp.expires_in,
+                    Some(email.clone()),
+                    oauth_state.project_id,
+                    None,
+                    oauth_state.is_gcp_tos,
+                    token_resp.id_token,
+                )
+                .with_oauth_client_key(token_resp.oauth_client_key);
+
+                if let Ok(acc) = account::upsert_account(email, None, token_data) {
+                    imported_accounts.push(acc);
+                }
+            }
+        }
+    }
+
     // 3. 扫描本地所有 Antigravity 数据库（同时覆盖经典款 Antigravity 与 IDE 款 Antigravity IDE）
     let candidate_paths = if target_ide.is_none() || target_ide == Some("all") {
         db::get_all_antigravity_db_paths()
@@ -541,6 +572,10 @@ pub fn extract_oauth_state_from_file(db_path: &PathBuf) -> Result<ImportedOAuthS
 /// Get current Refresh Token from System Keyring or candidate databases
 pub fn get_refresh_token_from_db(target_ide: Option<&str>) -> Result<String, String> {
     use crate::modules::integration;
+
+    if integration::is_acp_target(target_ide) {
+        return integration::read_acp_credentials().map(|state| state.refresh_token);
+    }
 
     // 严禁对 IDE 目标查询系统 Keyring：
     // 系统 Keyring（如 Keychain/Secret Service）专属于原生桌面端 (>= 2.0.0) 或 CLI (agy)，

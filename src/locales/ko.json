@@ -472,6 +472,7 @@
             "batch_warmup_msg": "선택한 {{count}}개 계정에 대해 즉시 웜업을 트리거하시겠습니까?"
         },
         "switch_to_agy": "Antigravity CLI (agy)로 전환",
+        "switch_to_acp": "Antigravity IDE 플러그인 (ACP)으로 전환",
         "drag_disabled_during_sort": "열 정렬이 활성화되어 드래그 정렬이 일시 중지되었습니다",
         "go_to_appeal": "이의 제기하러 가기",
         "copy_appeal_url": "이의 제기 URL 복사",
@@ -486,6 +487,8 @@
         "client_ide_tooltip": "현재 Antigravity IDE에 로그인된 계정",
         "client_cli": "CLI",
         "client_cli_tooltip": "현재 Antigravity CLI (agy)에 로그인된 계정",
+        "client_acp": "플러그인",
+        "client_acp_tooltip": "현재 Antigravity IDE 플러그인 (ACP)에 로그인된 계정",
         "switch_next_short": "다음",
         "weekly_exhausted_tooltip": "주간 할당량이 소진되어 자동 보호가 실행되었습니다",
         "type": {

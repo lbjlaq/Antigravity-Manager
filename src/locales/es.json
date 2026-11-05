@@ -472,6 +472,7 @@
             "batch_warmup_msg": "¿Está seguro de que desea activar el calentamiento para las {{count}} cuentas seleccionadas inmediatamente?"
         },
         "switch_to_agy": "Cambiar a CLI de Antigravity (agy)",
+        "switch_to_acp": "Cambiar al plugin de IDE de Antigravity (ACP)",
         "drag_disabled_during_sort": "La ordenación por columnas está activa; el arrastre está en pausa",
         "go_to_appeal": "Go to Appeal",
         "copy_appeal_url": "Copy Appeal URL",
@@ -486,6 +487,8 @@
         "client_ide_tooltip": "Cuenta iniciada en Antigravity IDE",
         "client_cli": "CLI",
         "client_cli_tooltip": "Cuenta iniciada en Antigravity CLI (agy)",
+        "client_acp": "Plugin",
+        "client_acp_tooltip": "Cuenta iniciada en el plugin de IDE de Antigravity (ACP)",
         "switch_next_short": "Siguiente",
         "weekly_exhausted_tooltip": "Cuota semanal agotada, protección activada",
         "type": {

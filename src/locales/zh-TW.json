@@ -267,6 +267,8 @@
         "client_ide_tooltip": "目前 Antigravity IDE 用戶端登入帳號",
         "client_cli": "CLI",
         "client_cli_tooltip": "目前 Antigravity CLI (agy) 登入帳號",
+        "client_acp": "外掛",
+        "client_acp_tooltip": "目前 Antigravity IDE 外掛 (ACP) 登入帳號",
         "disabled": "已停用",
         "disabled_tooltip": "帳號已被停用（例如 refresh_token 被撤銷/過期）。重新授權或更新 Token 後可恢復。",
         "proxy_disabled": "反向代理已停用",
@@ -453,7 +455,8 @@
             "batch_warmup_title": "批次手動預熱",
             "batch_warmup_msg": "確定要為選中的 {{count}} 個帳號立即觸發預熱嗎？"
         },
-        "switch_to_agy": "Switch to Antigravity CLI (agy)",
+        "switch_to_agy": "切換到 Antigravity CLI (agy)",
+        "switch_to_acp": "切換到 Antigravity IDE 外掛 (ACP)",
         "drag_disabled_during_sort": "已啟用欄位排序，拖曳排序已暫停",
         "import_json": "Import",
         "import_success": "Successfully imported {{count}} accounts",

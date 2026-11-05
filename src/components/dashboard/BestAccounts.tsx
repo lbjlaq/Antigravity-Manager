@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { TrendingUp, ArrowRightLeft, Zap, Laptop, Code2, Terminal } from 'lucide-react';
+import { TrendingUp, ArrowRightLeft, Zap, Laptop, Code2, Terminal, Blocks } from 'lucide-react';
 import { Account, QuotaGroup, ActiveClientsStatus, getAccountTier } from '../../types/account';
 import { findQuotaModel } from '../../config/modelConfig';
 import { useTranslation } from 'react-i18next';
@@ -11,7 +11,7 @@ interface BestAccountsProps {
     onSwitch?: (accountId: string, targetIde?: string) => void;
 }
 
-type TargetIdeType = 'classic' | 'ide' | 'agy';
+type TargetIdeType = 'classic' | 'ide' | 'agy' | 'acp';
 
 /** 从 quota_groups 中提取 5h 或 Weekly 桶百分比 (0-100) */
 function getBucketPercentage(
@@ -107,6 +107,12 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
             icon: Terminal,
             activeBg: 'bg-emerald-600 text-white shadow-xs',
         },
+        {
+            key: 'acp' as TargetIdeType,
+            label: t('accounts.client_acp', 'Plugin'),
+            icon: Blocks,
+            activeBg: 'bg-violet-600 text-white shadow-xs',
+        },
     ];
 
     // 获取当前所选目标客户端当前已生效的账号 ID，推荐时智能排除
@@ -118,6 +124,8 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
                 return activeClients?.ide_account_id;
             case 'agy':
                 return activeClients?.agy_account_id;
+            case 'acp':
+                return activeClients?.acp_account_id;
         }
     }, [targetIde, activeClients, currentAccountId]);
 

@@ -202,6 +202,75 @@ pub fn is_process_running_by_name(target_name: &str) -> bool {
     false
 }
 
+/// Check if an Antigravity ACP server (`agy_acp_server`) process is currently running.
+pub fn is_acp_server_running() -> bool {
+    let mut system = System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    for (_pid, process) in system.processes() {
+        let name = process.name().to_string_lossy().to_lowercase();
+        if name.contains("agy_acp_server") {
+            return true;
+        }
+        let args_match = process
+            .cmd()
+            .iter()
+            .any(|arg| arg.to_string_lossy().to_lowercase().contains("agy_acp_server"));
+        if args_match {
+            return true;
+        }
+        if let Some(exe) = process.exe() {
+            if exe.to_string_lossy().to_lowercase().contains("agy_acp_server") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Terminate running `agy_acp_server` processes so the host IDE plugin respawns them with new credentials.
+pub fn kill_acp_server_processes() -> usize {
+    let mut system = System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    let current_pid = std::process::id();
+    let mut killed = 0;
+
+    for (pid, process) in system.processes() {
+        let pid_u32 = pid.as_u32();
+        if pid_u32 == current_pid {
+            continue;
+        }
+        let name = process.name().to_string_lossy().to_lowercase();
+        let args_str = process
+            .cmd()
+            .iter()
+            .map(|a| a.to_string_lossy().to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let exe_str = process
+            .exe()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+
+        if is_manager_or_tools_process(&name, &exe_str, &args_str) {
+            continue;
+        }
+
+        if name.contains("agy_acp_server")
+            || args_str.contains("agy_acp_server")
+            || exe_str.contains("agy_acp_server")
+        {
+            crate::modules::logger::log_info(&format!(
+                "[ACP] Terminating agy_acp_server process (PID: {}) to reload switched credentials",
+                pid_u32
+            ));
+            force_kill_pid(pid_u32);
+            killed += 1;
+        }
+    }
+
+    killed
+}
+
 /// Helper process discriminator to filter out sub-processes, audio/gpu/renderers, crashpads, and language servers
 pub(crate) fn is_helper_process(name: &str, args_str: &str, exe_path: &str) -> bool {
     let name_lower = name.to_lowercase();

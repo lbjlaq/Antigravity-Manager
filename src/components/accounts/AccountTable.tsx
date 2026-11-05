@@ -44,6 +44,7 @@ import {
     Clock,
     Repeat2,
     Terminal,
+    Blocks,
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
@@ -228,7 +229,8 @@ function SortableAccountRow({
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
     const isAgy = activeClients?.agy_account_id === account.id;
-    const isRowCurrent = isCurrent || isClassic || isIde || isAgy;
+    const isAcp = activeClients?.acp_account_id === account.id;
+    const isRowCurrent = isCurrent || isClassic || isIde || isAgy || isAcp;
 
     return (
         <tr
@@ -322,7 +324,8 @@ function AccountRowContent({
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
     const isAgy = activeClients?.agy_account_id === account.id;
-    const isRowActive = isCurrent || isClassic || isIde || isAgy;
+    const isAcp = activeClients?.acp_account_id === account.id;
+    const isRowActive = isCurrent || isClassic || isIde || isAgy || isAcp;
 
     const handleSaveLabel = () => {
         if (onUpdateLabel) {
@@ -409,7 +412,15 @@ function AccountRowContent({
                                 {t('accounts.client_cli', 'CLI')}
                             </span>
                         )}
-                        {!isClassic && !isIde && !isAgy && isCurrent && (
+                        {isAcp && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 text-[10px] font-bold shadow-sm border border-violet-200/50 dark:border-violet-800/50"
+                                title={t('accounts.client_acp_tooltip', 'Active account in Antigravity IDE Plugin (ACP)')}
+                            >
+                                {t('accounts.client_acp', 'Plugin')}
+                            </span>
+                        )}
+                        {!isClassic && !isIde && !isAgy && !isAcp && isCurrent && (
                             <span className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-bold shadow-sm border border-blue-200/50 dark:border-blue-800/50">
                                 {t('accounts.current').toUpperCase()}
                             </span>
@@ -695,6 +706,14 @@ function AccountRowContent({
                         disabled={isSwitching || isDisabled}
                     >
                         <Terminal className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button
+                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/30'}`}
+                        onClick={(e) => { e.stopPropagation(); onSwitch('acp'); }}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_acp', 'Switch to Antigravity IDE Plugin (ACP)'))}
+                        disabled={isSwitching || isDisabled}
+                    >
+                        <Blocks className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
                     </button>
                     {onWarmup && (
                         <button

@@ -471,7 +471,8 @@
             "batch_warmup_title": "一括手動ウォームアップ",
             "batch_warmup_msg": "選択した{{count}}個のアカウントに対して、直ちにウォームアップを開始してもよろしいですか？"
         },
-        "switch_to_agy": "Switch to Antigravity CLI (agy)",
+        "switch_to_agy": "Antigravity CLI (agy) に切り替え",
+        "switch_to_acp": "Antigravity IDE プラグイン (ACP) に切り替え",
         "drag_disabled_during_sort": "列ソートが有効なため、ドラッグ並び替えは一時停止中です",
         "go_to_appeal": "異議申し立てへ移動",
         "copy_appeal_url": "異議申し立てURLをコピー",
@@ -486,6 +487,8 @@
         "client_ide_tooltip": "現在 Antigravity IDE にログインしているアカウント",
         "client_cli": "CLI",
         "client_cli_tooltip": "現在 Antigravity CLI (agy) にログインしているアカウント",
+        "client_acp": "プラグイン",
+        "client_acp_tooltip": "現在 Antigravity IDE プラグイン (ACP) にログインしているアカウント",
         "switch_next_short": "次へ",
         "weekly_exhausted_tooltip": "週間クォータが枯渇し、自動保護が有効化されました",
         "type": {

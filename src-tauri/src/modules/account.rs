@@ -161,6 +161,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: Some("id-alpha-111".to_string()),
+            current_acp_account_id: None,
         };
 
         // 1. 纯数字序号 1-based
@@ -475,6 +476,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: None,
+            current_acp_account_id: None,
         };
 
         // Save the index
@@ -546,6 +548,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: None,
+            current_acp_account_id: None,
         };
         save_account_index_in_dir(dir.path(), &index).unwrap();
 
@@ -596,6 +599,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: None,
+            current_acp_account_id: None,
         };
         save_account_index_in_dir(dir.path(), &index).unwrap();
 
@@ -668,6 +672,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: None,
+            current_acp_account_id: None,
         };
         save_account_index_in_dir(dir.path(), &index).unwrap();
 
@@ -1331,6 +1336,7 @@ fn try_migrate_legacy_single_file(data_dir: &PathBuf, raw_content: &str) -> Opti
         current_classic_account_id: None,
         current_ide_account_id: None,
         current_agy_account_id: None,
+        current_acp_account_id: None,
     };
 
     // 3. 写入新版规范索引
@@ -1506,6 +1512,7 @@ fn rebuild_index_from_accounts_in_dir(data_dir: &PathBuf) -> Result<AccountIndex
         current_classic_account_id: None,
         current_ide_account_id: None,
         current_agy_account_id: None,
+        current_acp_account_id: None,
     })
 }
 
@@ -2557,11 +2564,17 @@ pub fn set_current_account_id_with_target(
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
     index.current_account_id = Some(account_id.to_string());
-    index.current_target_ide = target_ide.map(|s| s.to_string());
-    match target_ide {
+    let normalized_target = if crate::modules::integration::is_acp_target(target_ide) {
+        Some("acp")
+    } else {
+        target_ide
+    };
+    index.current_target_ide = normalized_target.map(|s| s.to_string());
+    match normalized_target {
         Some("classic") => index.current_classic_account_id = Some(account_id.to_string()),
         Some("ide") => index.current_ide_account_id = Some(account_id.to_string()),
         Some("agy") => index.current_agy_account_id = Some(account_id.to_string()),
+        Some("acp") => index.current_acp_account_id = Some(account_id.to_string()),
         _ => {
             index.current_classic_account_id = Some(account_id.to_string());
         }
@@ -2569,7 +2582,7 @@ pub fn set_current_account_id_with_target(
     save_account_index(&index)
 }
 
-/// 智能探查并获取经典款、Antigravity IDE、Antigravity CLI 三大客户端当前各自生效的账号状态
+/// 智能探查并获取经典款、Antigravity IDE、Antigravity CLI、IDE Plugin 四大客户端当前各自生效的账号状态
 pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStatus, String> {
     let index = load_account_index()?;
     let mut status = crate::models::ActiveClientsStatus {
@@ -2579,6 +2592,8 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
         ide_email: None,
         agy_account_id: index.current_agy_account_id.clone(),
         agy_email: None,
+        acp_account_id: index.current_acp_account_id.clone(),
+        acp_email: None,
     };
 
     // [FIX #3726] 针对探测出的外部 refresh_token 进行快速按需匹配（彻底杜绝全量加载数百个小文件与 SQLite 密集查询）
@@ -2600,6 +2615,7 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
             index.current_ide_account_id.as_deref(),
             index.current_classic_account_id.as_deref(),
             index.current_agy_account_id.as_deref(),
+            index.current_acp_account_id.as_deref(),
             index.current_account_id.as_deref(),
         ];
         for candidate_id in candidates.into_iter().flatten() {
@@ -2733,15 +2749,40 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
         }
     }
 
+    // 5. Determine active account for IDE Plugin (antigravity-acp)
+    let acp_acc = crate::modules::integration::read_acp_credentials()
+        .ok()
+        .and_then(|st| find_by_rt(&st.refresh_token));
+    if let Some((a_id, a_email)) = acp_acc {
+        status.acp_account_id = Some(a_id);
+        status.acp_email = Some(a_email);
+    }
+    if status.acp_account_id.is_none() {
+        if let Some(ref id) = index.current_acp_account_id {
+            status.acp_account_id = Some(id.clone());
+            status.acp_email = find_email_by_id(id);
+        }
+    } else if status.acp_email.is_none() {
+        if let Some(ref id) = status.acp_account_id {
+            if let Some(email) = find_email_by_id(id) {
+                status.acp_email = Some(email);
+            }
+        }
+    }
+
     // Fallback if index has current_account_id and current_target_ide
     if status.classic_account_id.is_none()
         && status.ide_account_id.is_none()
         && status.agy_account_id.is_none()
+        && status.acp_account_id.is_none()
     {
         if let Some(ref curr_id) = index.current_account_id {
             match index.current_target_ide.as_deref() {
                 Some("ide") => status.ide_account_id = Some(curr_id.clone()),
                 Some("agy") => status.agy_account_id = Some(curr_id.clone()),
+                Some("acp" | "plugin" | "ide-plugin") => {
+                    status.acp_account_id = Some(curr_id.clone())
+                }
                 _ => status.classic_account_id = Some(curr_id.clone()),
             }
         }
@@ -2825,6 +2866,10 @@ pub fn resolve_account_summary_in_index(
     let current_id = match target_ide {
         Some("agy") => index
             .current_agy_account_id
+            .as_deref()
+            .or(index.current_account_id.as_deref()),
+        Some("acp" | "plugin" | "ide-plugin") => index
+            .current_acp_account_id
             .as_deref()
             .or(index.current_account_id.as_deref()),
         Some("ide") => index
