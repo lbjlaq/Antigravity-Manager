@@ -170,6 +170,7 @@ jobs:
       - name: Build universal secondary binaries
         if: matrix.platform == 'macos-latest' && contains(matrix.args, 'universal-apple-darwin')
         run: |
+          npm run build
           cargo build --release --target aarch64-apple-darwin --bin antigravity-server --manifest-path src-tauri/Cargo.toml
           cargo build --release --target x86_64-apple-darwin --bin antigravity-server --manifest-path src-tauri/Cargo.toml
           mkdir -p src-tauri/target/universal-apple-darwin/release
