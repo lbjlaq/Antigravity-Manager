@@ -1361,7 +1361,7 @@
             "first_byte_effective": "目前生效（基準上限 {{cap}}s）：常規 {{text}}s　圖片 {{image}}s　影片 {{video}}s　輔助 {{aux}}s",
             "section_stream": "③ 首字與連續輸出",
             "stream_desc": "首回應標頭與首個輸出 token 已合併為統一首字延遲：未收到 200 前可切換端點；收到 200 後僅安全收尾，不再切換。",
-            "auto_summary": "例：最大等待時間= 47MB ÷ 2Mbps ×1.4 ≈ {{big}} 秒；"
+            "auto_summary": "例：最大等待時間= 47MB ÷ {{mbps}}Mbps ×1.4 ≈ {{big}} 秒；"
         },
         "example": {
             "title": "使用示例",

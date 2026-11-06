@@ -1331,7 +1331,7 @@
             "first_byte_effective": "Em vigor agora: texto/código {{text}}s　imagem {{image}}s　vídeo {{video}}s　auxiliar {{aux}}s",
             "section_stream": "③ Primeiro token e saída contínua",
             "stream_desc": "A espera de cabeçalhos e o primeiro token foram unificados em uma única latência do primeiro byte: a troca de endpoint é permitida antes de HTTP 200 e, depois disso, apenas finalização segura.",
-            "auto_summary": "Ex.: espera máxima = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} s;"
+            "auto_summary": "Ex.: espera máxima = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}} s;"
         },
         "cloudflared": {
             "title": "Túnel Cloudflare (Cloudflared)",

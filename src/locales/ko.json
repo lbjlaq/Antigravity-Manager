@@ -1318,7 +1318,7 @@
             "first_byte_effective": "현재 적용: 일반 {{text}}s　이미지 {{image}}s　동영상 {{video}}s　보조 {{aux}}s",
             "section_stream": "③ 첫 글자와 연속 출력",
             "stream_desc": "응답 헤더 대기와 첫 토큰이 하나의 첫 바이트 지연으로 통합되었습니다. HTTP 200 이전에는 엔드포인트 전환이 가능하고, 이후에는 안전하게 마무리만 합니다.",
-            "auto_summary": "예: 최대 대기 = 47MB ÷ 2Mbps × 1.4 ≈ {{big}}초;"
+            "auto_summary": "예: 최대 대기 = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}}초;"
         },
         "cloudflared": {
             "title": "공개 액세스 (Cloudflared)",
