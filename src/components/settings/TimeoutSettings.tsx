@@ -33,7 +33,8 @@ type DefaultUpload = Omit<Required<UploadTimeoutConfig>, "header_wait_secs">;
 
 const DEFAULT_UPLOAD: DefaultUpload = {
     connect_secs: 10,
-    min_upload_mbps: 2,
+    // 与后端 default_min_upload_mbps 对齐（0.8）：该值是「声明的最慢上行」，越小越宽松
+    min_upload_mbps: 0.8,
     extra_wait_ratio: 0.4,
     stall_secs: 45,
     large_body_threshold_mb: 8,
@@ -380,6 +381,7 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
                     <div className="font-semibold">{t("proxy.upload_timeouts.formula_title")}</div>
                     <div className="font-mono">
                         {t("proxy.timeouts.auto_summary", {
+                            mbps: uploadRaw.min_upload_mbps || DEFAULT_UPLOAD.min_upload_mbps,
                             big: estimateUploadSecs(47),
                         })}
                     </div>

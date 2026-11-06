@@ -1374,7 +1374,7 @@
             "first_byte_effective": "Şu anda geçerli: metin/kod {{text}}s　görsel {{image}}s　video {{video}}s　yardımcı {{aux}}s",
             "section_stream": "③ İlk token ve sürekli çıktı",
             "stream_desc": "Başlık bekleme ve ilk token tek bir ilk-bayt gecikmesinde birleştirildi: HTTP 200 öncesi uç nokta değişimi serbest, sonrasında yalnızca güvenli kapatma yapılır.",
-            "auto_summary": "Örn.: maks. bekleme = 47MB ÷ 2Mbps × 1.4 ≈ {{big}} sn;"
+            "auto_summary": "Örn.: maks. bekleme = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}} sn;"
         },
         "example": {
             "title": "Kullanım Örnekleri",
