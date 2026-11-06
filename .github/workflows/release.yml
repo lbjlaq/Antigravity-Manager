@@ -166,6 +166,17 @@ jobs:
           Write-Host "Prerelease version detected; MSI (WiX) cannot bundle SemVer prerelease versions. Falling back to NSIS only."
           "PRE_BUNDLE_ARGS=--bundles nsis" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      # Universal macOS app: pre-build and lipo secondary binaries so Tauri's bundler finds them
+      - name: Build universal secondary binaries
+        if: matrix.platform == 'macos-latest' && contains(matrix.args, 'universal-apple-darwin')
+        run: |
+          cargo build --release --target aarch64-apple-darwin --bin antigravity-server --manifest-path src-tauri/Cargo.toml
+          cargo build --release --target x86_64-apple-darwin --bin antigravity-server --manifest-path src-tauri/Cargo.toml
+          mkdir -p src-tauri/target/universal-apple-darwin/release
+          lipo -create -output src-tauri/target/universal-apple-darwin/release/antigravity-server \
+            src-tauri/target/aarch64-apple-darwin/release/antigravity-server \
+            src-tauri/target/x86_64-apple-darwin/release/antigravity-server
+
       - name: Build the app
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
