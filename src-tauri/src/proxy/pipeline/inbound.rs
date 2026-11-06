@@ -117,6 +117,14 @@ impl InboundThinkingPipeline {
         // 若拆为多个 model 轮次，后续轮次将因缺失独立签名被直接拒收 400。
         Self::merge_consecutive_function_call_turns(contents);
 
+        // 0.15 工具调用与回执相邻性对齐（Pipeline First 统一治理，仅 Claude 目标生效）：
+        // 把夹在 functionCall 轮与 functionResponse 轮之间的纯文本 model 轮折回调用轮，
+        // 避免 Claude 目标把夹层正文当作末尾 assistant prefill 拒收 400。
+        // Gemini 目标本身接受该顺序，保持原样以免改写历史前缀、导致已有会话的上下文缓存失效。
+        if is_claude {
+            Self::fold_commentary_between_call_and_response(contents);
+        }
+
         // 0.2 统一上下文结构对齐（Pipeline First 统一治理）：
         // 将连续的 user 消息直到下一个 model，统一合并为一个 user 轮次的多个 block (parts)，保持严格顺序。
         // 这彻底消除了 Adapter 层各自为政导致的轮次错位，使得四大协议进入流水线后结构 100% 同构！
@@ -1231,6 +1239,104 @@ impl InboundThinkingPipeline {
         }
         *contents = merged;
         merged_count
+    }
+
+    /// 工具调用与回执相邻性对齐（Pipeline First 统一治理）。
+    ///
+    /// 部分客户端会把同一次响应里的过程说明文本落在 functionCall 之后、functionResponse 之前
+    /// （例如 Codex 按 `response.output_item.done` 的到达顺序记录历史，而 message 项在流末尾才闭合），
+    /// 重放时形成 `model[functionCall] → model[text] → user[functionResponse]`。
+    /// Gemini 目标对此宽容；Claude 目标要求 tool_result 紧跟携带 tool_use 的 assistant 轮，
+    /// 夹层正文会让上游判定会话以 assistant 收尾并 400
+    /// （"This model does not support assistant message prefill"）。
+    ///
+    /// 处理方式：把这些夹层纯文本 model 轮的 parts 折回调用轮、插在首个 functionCall 之前，
+    /// 还原模型原始输出顺序 `[thought?, text, functionCall]`。
+    /// 检测宽、动作窄：仅当调用轮之后连续若干纯文本 model 轮、且其后紧跟回执轮时才折叠；
+    /// 含思考、媒体、调用或回执的轮次一律原样保留。
+    ///
+    /// 返回被折叠的 content 数。
+    pub fn fold_commentary_between_call_and_response(contents: &mut Vec<Value>) -> usize {
+        fn is_model(content: &Value) -> bool {
+            matches!(
+                content.get("role").and_then(|r| r.as_str()),
+                Some("model") | Some("assistant")
+            )
+        }
+        fn parts_any(content: &Value, key: &str) -> bool {
+            content
+                .get("parts")
+                .and_then(|p| p.as_array())
+                .is_some_and(|parts| parts.iter().any(|p| p.get(key).is_some()))
+        }
+        fn is_plain_commentary_turn(content: &Value) -> bool {
+            if !is_model(content) {
+                return false;
+            }
+            let Some(parts) = content.get("parts").and_then(|p| p.as_array()) else {
+                return false;
+            };
+            !parts.is_empty()
+                && parts.iter().all(|p| {
+                    p.get("text").is_some_and(Value::is_string)
+                        && !crate::proxy::thinking_store::is_thought_part(p)
+                        && [
+                            "functionCall",
+                            "functionResponse",
+                            "inlineData",
+                            "inline_data",
+                            "fileData",
+                        ]
+                        .iter()
+                        .all(|key| p.get(*key).is_none())
+                })
+        }
+
+        let mut folded = 0usize;
+        let mut i = 0usize;
+        while i < contents.len() {
+            if !(is_model(&contents[i]) && parts_any(&contents[i], "functionCall")) {
+                i += 1;
+                continue;
+            }
+
+            let mut j = i + 1;
+            while j < contents.len() && is_plain_commentary_turn(&contents[j]) {
+                j += 1;
+            }
+            let wedged = j - i - 1;
+            if wedged == 0 || j >= contents.len() || !parts_any(&contents[j], "functionResponse") {
+                i = j.max(i + 1);
+                continue;
+            }
+
+            let moved: Vec<Value> = contents
+                .drain(i + 1..j)
+                .flat_map(
+                    |mut content| match content.get_mut("parts").map(Value::take) {
+                        Some(Value::Array(parts)) => parts,
+                        _ => Vec::new(),
+                    },
+                )
+                .collect();
+            if let Some(parts) = contents[i].get_mut("parts").and_then(|p| p.as_array_mut()) {
+                let insert_at = parts
+                    .iter()
+                    .position(|p| p.get("functionCall").is_some())
+                    .unwrap_or(parts.len());
+                parts.splice(insert_at..insert_at, moved);
+            }
+            folded += wedged;
+            i += 1;
+        }
+
+        if folded > 0 {
+            tracing::debug!(
+                "[InboundPipeline] Folded {} commentary turn(s) wedged between functionCall and functionResponse",
+                folded
+            );
+        }
+        folded
     }
 
     /// 把工具回执（`functionResponse`）轮的 role 归一化为官方 Antigravity 形态，并将连续回执合并打包。
@@ -3472,6 +3578,149 @@ mod tests {
 
     fn fc_part(id: &str, name: &str) -> Value {
         json!({"functionCall": {"id": id, "name": name, "args": {}}})
+    }
+
+    // ============ 工具调用与回执相邻性对齐 ============
+
+    /// Codex 形态：过程说明文本落在 functionCall 之后、functionResponse 之前，
+    /// 必须折回调用轮的首个 functionCall 之前，使回执紧跟调用轮。
+    #[test]
+    fn test_fold_commentary_wedged_between_call_and_response() {
+        let mut contents = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [{"text": "plan", "thought": true}]}),
+            json!({"role": "model", "parts": [fc_part("c1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Next I'll create the branch."}]}),
+            json!({"role": "user", "parts": [fr_part("c1", "exec_command")]}),
+        ];
+        let n = InboundThinkingPipeline::fold_commentary_between_call_and_response(&mut contents);
+        assert_eq!(n, 1);
+        assert_eq!(contents.len(), 4);
+        assert_eq!(
+            contents[1]["parts"][0]["thought"], true,
+            "独立思考轮保持不动"
+        );
+        let call_parts = contents[2]["parts"].as_array().unwrap();
+        assert_eq!(call_parts.len(), 2);
+        assert_eq!(call_parts[0]["text"], "Next I'll create the branch.");
+        assert!(call_parts[1].get("functionCall").is_some());
+        assert!(contents[3]["parts"][0].get("functionResponse").is_some());
+    }
+
+    /// 并行调用：多条连续调用轮先被合并，再折叠夹层文本；多段夹层文本保持原有顺序。
+    #[test]
+    fn test_fold_commentary_with_parallel_calls_keeps_text_order() {
+        let mut contents = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [fc_part("c1", "a")]}),
+            json!({"role": "model", "parts": [fc_part("c2", "b")]}),
+            json!({"role": "model", "parts": [{"text": "first"}]}),
+            json!({"role": "model", "parts": [{"text": "second"}]}),
+            json!({"role": "user", "parts": [fr_part("c1", "a")]}),
+            json!({"role": "user", "parts": [fr_part("c2", "b")]}),
+        ];
+        InboundThinkingPipeline::merge_consecutive_function_call_turns(&mut contents);
+        let n = InboundThinkingPipeline::fold_commentary_between_call_and_response(&mut contents);
+        assert_eq!(n, 2);
+        let call_parts = contents[1]["parts"].as_array().unwrap();
+        assert_eq!(call_parts[0]["text"], "first");
+        assert_eq!(call_parts[1]["text"], "second");
+        assert_eq!(call_parts[2]["functionCall"]["id"], "c1");
+        assert_eq!(call_parts[3]["functionCall"]["id"], "c2");
+        assert!(contents[2]["parts"][0].get("functionResponse").is_some());
+    }
+
+    /// 动作窄：调用轮之后不是回执（如工具调用尚未回执、或夹层含思考/媒体）时一律不动。
+    #[test]
+    fn test_fold_commentary_leaves_other_shapes_untouched() {
+        let shapes = vec![
+            // 纯文本收尾，没有后续回执
+            vec![
+                json!({"role": "user", "parts": [{"text": "go"}]}),
+                json!({"role": "model", "parts": [fc_part("c1", "a")]}),
+                json!({"role": "model", "parts": [{"text": "done"}]}),
+            ],
+            // 夹层带思考块
+            vec![
+                json!({"role": "user", "parts": [{"text": "go"}]}),
+                json!({"role": "model", "parts": [fc_part("c1", "a")]}),
+                json!({"role": "model", "parts": [{"text": "hm", "thought": true}]}),
+                json!({"role": "user", "parts": [fr_part("c1", "a")]}),
+            ],
+            // 已是原生顺序
+            vec![
+                json!({"role": "user", "parts": [{"text": "go"}]}),
+                json!({"role": "model", "parts": [{"text": "plan"}, fc_part("c1", "a")]}),
+                json!({"role": "user", "parts": [fr_part("c1", "a")]}),
+            ],
+        ];
+        for mut contents in shapes {
+            let snapshot = contents.clone();
+            let n =
+                InboundThinkingPipeline::fold_commentary_between_call_and_response(&mut contents);
+            assert_eq!(n, 0);
+            assert_eq!(contents, snapshot);
+        }
+    }
+
+    /// 端到端：Claude 目标经完整流水线后，回执轮紧跟调用轮，且末轮为 user。
+    #[test]
+    fn test_claude_pipeline_keeps_tool_result_adjacent_to_tool_use() {
+        let mut contents = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [fc_part("call_1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Creating the branch now."}]}),
+            json!({"role": "user", "parts": [fr_part("call_1", "exec_command")]}),
+        ];
+        InboundThinkingPipeline::process_contents(
+            &mut contents,
+            "claude-opus-5-5-high",
+            false,
+            None,
+            false,
+        );
+        let last = contents.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert!(last["parts"][0].get("functionResponse").is_some());
+        let call_turn = &contents[contents.len() - 2];
+        assert_eq!(call_turn["role"], "model");
+        let call_parts = call_turn["parts"].as_array().unwrap();
+        assert_eq!(call_parts[0]["text"], "Creating the branch now.");
+        assert!(call_parts.iter().any(|p| p.get("functionCall").is_some()));
+    }
+
+    /// 端到端：Gemini 目标不折叠夹层正文，保持原有历史前缀，避免已有会话缓存失效。
+    #[test]
+    fn test_gemini_pipeline_does_not_fold_commentary() {
+        let mut contents = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [fc_part("call_1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Creating the branch now."}]}),
+            json!({"role": "user", "parts": [fr_part("call_1", "exec_command")]}),
+        ];
+        InboundThinkingPipeline::process_contents(
+            &mut contents,
+            "gemini-3.8-flash-low",
+            false,
+            None,
+            false,
+        );
+        let flat: Vec<&Value> = contents
+            .iter()
+            .flat_map(|c| c["parts"].as_array().unwrap().iter())
+            .collect();
+        let call_idx = flat
+            .iter()
+            .position(|p| p.get("functionCall").is_some())
+            .unwrap();
+        let text_idx = flat
+            .iter()
+            .position(|p| p["text"] == "Creating the branch now.")
+            .unwrap();
+        assert!(
+            call_idx < text_idx,
+            "Gemini 目标应保持 functionCall 在夹层正文之前"
+        );
     }
 
     /// 官方形态（回执已在 `role:"model"`）→ 必须完全幂等。
