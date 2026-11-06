@@ -102,6 +102,7 @@ RUN if [ "$USE_MIRROR" = "true" ] || ( [ "$USE_MIRROR" = "auto" ] && ! timeout 3
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
+    tini \
     curl \
     libssl3 \
     libsqlite3-0 \
@@ -127,8 +128,8 @@ ENV PORT=8045
 EXPOSE 8045
 
 # Healthcheck for container orchestration
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://127.0.0.1:8045/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f --max-time 3 http://127.0.0.1:8045/health || exit 1
 
 # Run the application in headless mode
-ENTRYPOINT ["/app/antigravity-tools", "--headless"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/antigravity-tools", "--headless"]

@@ -49,6 +49,7 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.localdist.y
 # 啟動容器 (請替换 your-secret-key 為強密鑰)
 docker run -d \
   --name antigravity-manager \
+  --init \
   -p 8045:8045 \
   -e API_KEY=your-api-key \
   -e WEB_PASSWORD=your-login-password \
@@ -64,8 +65,9 @@ docker run -d \
 > # 拉取指定 Beta 預發布版本
 > docker pull lbjlaq/antigravity-manager:v4.8.2-beta.0
 > 
-> # 運行 Beta 容器
+> # 運行 Beta 容器 (推薦加 --init)
 > docker run -d --name antigravity-manager-beta \
+>   --init \
 >   -p 8045:8045 \
 >   -e API_KEY=your-api-key \
 >   -e WEB_PASSWORD=your-login-password \

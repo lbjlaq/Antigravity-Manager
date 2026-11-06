@@ -7,6 +7,7 @@
 services:
   antigravity-manager:
     image: antigravity-manager:local
+    init: true  # 启用 init 进程管理信号并及时回收子进程
     # 覆盖官方 compose 的 host 模式，便于 Windows / Docker Desktop
     network_mode: bridge
     ports:

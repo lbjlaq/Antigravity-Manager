@@ -1,5 +1,6 @@
 services:
   antigravity-manager:
+    init: true
     build:
       context: ..
       dockerfile: docker/Dockerfile.backend.localdist
