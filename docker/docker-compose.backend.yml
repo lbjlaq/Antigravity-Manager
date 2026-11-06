@@ -1,5 +1,6 @@
 services:
   antigravity-manager:
+    init: true
     build:
       dockerfile: docker/Dockerfile.backend
       args:
