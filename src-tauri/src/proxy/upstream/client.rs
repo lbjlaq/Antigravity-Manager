@@ -207,9 +207,9 @@ fn adaptive_ttft_secs(estimated_tokens: u32) -> u64 {
 /// 上传预算来源（诊断可观测性：明确本次预算是按体积自适应还是用户手填）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UploadBudgetSource {
-    /// 按请求体大小 ÷ 上传带宽估算
+    /// 按配置的声明带宽（下限）估算：实测不慢于声明值时，声明值就是更慢、更宽松的一侧
     AdaptiveSize,
-    /// 按体积 ÷ 被动实测上行速度估算
+    /// 按体积 ÷ 被动实测上行速度估算：实测比声明下限还慢时才启用，用于放宽预算
     AdaptiveObserved,
 }
 
@@ -935,6 +935,14 @@ impl UpstreamClient {
     }
 
     /// 依据“请求体大小 ÷ 上传带宽 × (1 + 额外等待系数)”估算上传阶段最大等待时间（秒）
+    ///
+    /// 预算语义：`min_upload_mbps` 是用户声明的**最低**上行带宽，据此算出的是“传完这份 body
+    /// 最慢要多久”的上界；被动实测样本（EWMA）只允许在上界之外继续放宽，绝不允许收紧：
+    /// - `record()` 记的是“交给传输层”的字节，小请求体会被 socket/TLS 缓冲瞬间吞掉，样本显著虚高；
+    /// - EWMA 是跨账号 / 代理 / 端点的进程级全局值，快链路的一次样本会替慢链路缩短预算。
+    ///
+    /// 用虚高样本收紧预算，等于把仍在稳定上传的大包掐死在半途：现场 8.77MB 图片请求被估成 15s，
+    /// 实测仅 437KB/s（需要 20s+），于是在 6.55MB 处被中断，并误报为上游网络 504。
     pub fn calculate_upload_budget_secs(
         body_len: usize,
         cfg: &crate::proxy::config::UploadTimeoutConfig,
@@ -943,11 +951,9 @@ impl UpstreamClient {
         // Mbps（十进制）→ B/s：1 Mbps = 1_000_000 bit/s ÷ 8 = 125_000 B/s
         let floor_bps = ((cfg.min_upload_mbps.max(0.1)) * 125_000.0).round() as u64;
         let floor_bps = floor_bps.max(1);
-        let ceiling_bps = floor_bps.saturating_mul(4);
-        let (effective_bps, source) = match observed_bps {
-            Some(bps) if bps > floor_bps => {
-                (bps.min(ceiling_bps), UploadBudgetSource::AdaptiveObserved)
-            }
+        // 实测比声明下限还慢 → 声明值不可信，按实测放宽；实测更快 → 声明值仍是更慢一侧，永不收紧
+        let (effective_bps, source) = match observed_bps.filter(|bps| *bps > 0) {
+            Some(bps) if bps < floor_bps => (bps, UploadBudgetSource::AdaptiveObserved),
             _ => (floor_bps, UploadBudgetSource::AdaptiveSize),
         };
 
@@ -1154,12 +1160,15 @@ impl UpstreamClient {
                         }
                         if let Some(transfer_elapsed) = progress.elapsed_since_first_byte() {
                             if transfer_elapsed >= upload_budget {
+                                let secs = transfer_elapsed.as_secs_f64().max(0.001);
+                                let rate_kbps = (sent as f64 / secs / 1024.0) as u64;
                                 return PhasedSendOutcome {
                                     result: Err(format!(
-                                        "Upload budget exhausted after {}s of transfer (sent {}/{} bytes)",
+                                        "Upload budget exhausted after {}s of transfer (sent {}/{} bytes, rate={}KB/s)",
                                         upload_budget.as_secs(),
                                         sent,
-                                        body_len
+                                        body_len,
+                                        rate_kbps
                                     )),
                                     stage: SendStage::Upload,
                                     bytes_sent: sent,
@@ -1896,12 +1905,13 @@ impl UpstreamClient {
                     Err(e) => {
                         self.endpoint_health.mark_failure(base_url);
                         last_attempt_failed_at = Some(std::time::Instant::now());
+                        // 上传未完成时 upload_elapsed 为 None，退化成整段尝试耗时估算，
+                        // 否则诊断里会出现误导性的 effective_bps=0（现场实际有 437KB/s 在传）。
                         let effective_bps = upload_elapsed
-                            .map(|elapsed| {
-                                let secs = elapsed.as_secs_f64().max(0.001);
-                                (sent_bytes as f64 / secs) as u64
-                            })
-                            .unwrap_or(0);
+                            .map(|elapsed| elapsed.as_secs_f64())
+                            .unwrap_or_else(|| duration_s)
+                            .max(0.001);
+                        let effective_bps = (sent_bytes as f64 / effective_bps) as u64;
                         let is_sandbox = is_sandbox_endpoint(base_url);
                         let terminal_large_body_failure =
                             timeout_plan.large_body && timeout_plan.endpoint_attempt_limit <= 1;
@@ -2501,17 +2511,42 @@ mod tests {
             "47MB body budget should be around 660-670s with 0.8Mbps, got {big_budget}"
         );
 
-        // 3) 实测速度高于下限时参与估算：预算可收紧，仍受下限与停滞检测约束
+        // 3) 实测快于声明下限：只作参考，预算不得收紧（现场 8.77MB 被 15s 掐断的根因）
         let (fast_budget, fast_source) =
             UpstreamClient::calculate_upload_budget_secs(big, &cfg, Some(1000 * 1024));
-        assert_eq!(fast_source, UploadBudgetSource::AdaptiveObserved);
-        assert!(fast_budget < big_budget);
-        assert!(fast_budget >= 5);
+        assert_eq!(fast_source, UploadBudgetSource::AdaptiveSize);
+        assert_eq!(fast_budget, big_budget);
 
-        // 4) 低速实测样本（低于下限）回退到体积估算，避免把预算压得过紧
-        let (_, slow_source) =
+        // 4) 实测慢于声明下限：说明声明值不可信，按实测放宽而不是按声明值硬等
+        let (slow_budget, slow_source) =
             UpstreamClient::calculate_upload_budget_secs(big, &cfg, Some(8 * 1024));
-        assert_eq!(slow_source, UploadBudgetSource::AdaptiveSize);
+        assert_eq!(slow_source, UploadBudgetSource::AdaptiveObserved);
+        assert!(slow_budget > big_budget);
+    }
+
+    #[test]
+    fn test_upload_budget_never_shrinks_below_declared_floor() {
+        // 现场回归（8.77MB / kind=image / budget_source=adaptive_observed_speed）：
+        // 存量配置 min_upload_mbps=2.0，被动 EWMA 被测成 ~850KB/s，旧实现据此把预算收紧到 15s；
+        // 而这条请求真实上行只有 437KB/s、完整传输需要 20s+，于是在 6.55MB 处被掐断，
+        // 并被打包成 504 upstream_network_error（看起来像上游网络故障，实际是本地预算先到）。
+        let cfg = crate::proxy::config::UploadTimeoutConfig {
+            min_upload_mbps: 2.0,
+            ..Default::default()
+        };
+        let body = 8_772_751usize;
+
+        // 1) 实测比声明下限更快：预算取声明下限一侧（≈50s），8.77MB 才有完整传输窗口
+        let (budget, source) =
+            UpstreamClient::calculate_upload_budget_secs(body, &cfg, Some(850 * 1024));
+        assert!(budget >= 50, "budget={budget}s source={source:?}");
+        assert_eq!(source, UploadBudgetSource::AdaptiveSize);
+
+        // 2) 实测比声明下限更慢（如走慢代理）：按实测放宽到能传完
+        let (slow_budget, slow_source) =
+            UpstreamClient::calculate_upload_budget_secs(body, &cfg, Some(100 * 1024));
+        assert!(slow_budget >= 119, "slow budget={slow_budget}s");
+        assert_eq!(slow_source, UploadBudgetSource::AdaptiveObserved);
     }
 
     #[test]
@@ -2649,15 +2684,23 @@ mod tests {
             "stall_secs must not be squeezed down by small body upload budget"
         );
 
-        // 500KB 左右触发重放护栏检查的体积，上传预算必须有保底（至少 15s），且 stall_secs 不被挤压
-        let medium_plan = UpstreamClient::plan_upstream_timeouts_with_observed(
+        // 重放护栏阈值（4MB）以上的大请求体，即便声明带宽极高，上传预算也有 15s 保底，
+        // 且 stall_secs 不被上传预算挤压（停滞判定与传输预算解耦）
+        let very_fast_cfg = crate::proxy::config::UploadTimeoutConfig {
+            min_upload_mbps: 100.0,
+            ..cfg.clone()
+        };
+        let gated_plan = UpstreamClient::plan_upstream_timeouts_with_observed(
             PayloadMediaKind::TextChat,
-            501_938,
-            &cfg,
+            crate::proxy::pipeline::budget::REPLAY_GUARD_BODY_BYTES,
+            &very_fast_cfg,
             None,
         );
-        assert!(medium_plan.upload_budget_secs >= 15);
-        assert_eq!(medium_plan.stall_secs, 45);
+        assert_eq!(
+            gated_plan.upload_budget_secs, 15,
+            ">=4MB bodies keep 15s floor"
+        );
+        assert_eq!(gated_plan.stall_secs, 45);
 
         // 大体积请求默认仅允许 1 个端点，抑制同一大 body 重传放大
         let big_plan = UpstreamClient::plan_upstream_timeouts_with_observed(
