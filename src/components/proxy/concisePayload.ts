@@ -72,8 +72,21 @@ function orderKeys(obj: Record<string, unknown>, priority: readonly string[]): R
     return out;
 }
 
+/** 任意字符串里内嵌的大段 data URL（如序列化进文本的会话转录）也折叠，只保留头部与长度。 */
+const TEXT_DATA_URL = /(data:[a-z]+\\{0,3}\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[a-z0-9.+_-]+)?)*;base64,)([A-Za-z0-9+/=_\\-]{1024,})/gi;
+
+function slimString(val: string): string {
+    if (val.length < 1024 || !val.includes('base64,')) return val;
+    return val.replace(TEXT_DATA_URL, (_m, header: string, payload: string) => {
+        const trailing = payload.match(/\\+$/)?.[0] ?? '';
+        const body = payload.length - trailing.length;
+        return `${header}[base64 data: ${body} chars]${trailing}`;
+    });
+}
+
 function slimValue(val: unknown): unknown {
-    if (typeof val === 'string' || val == null || typeof val !== 'object') return val;
+    if (typeof val === 'string') return slimString(val);
+    if (val == null || typeof val !== 'object') return val;
     if (Array.isArray(val)) return val.map(slimValue);
 
     const record = val as Record<string, unknown>;

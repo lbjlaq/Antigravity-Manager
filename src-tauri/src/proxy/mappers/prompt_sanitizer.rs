@@ -35,7 +35,13 @@
 //! 9. 安全策略约束清洗（Issue #3781）：在 System 轨中动态剥离客户端（如 Antigravity）注入的 CTF 与安全约束指令
 //!    （`IMPORTANT: Assist with authorized security testing...`），消除模型风控误拒答（False Positives），
 //!    节省上下文 Token 并保持排版自然过渡。
-
+//! 10. 文本内嵌 data URL 处理：正常上传的媒体在适配层已是结构化 `inlineData`，不经过本节点；
+//!    但客户端把会话转录 / 日志序列化成**纯文本**发送时（如 Codex 后台 memory 生成把 rollout JSON
+//!    原样塞进 prompt），其中的 `data:image/png;base64,...` 会被上游按文本 token 逐字计费（单张截图
+//!    即数十万 token）。本节点把 user 文本中通过校验的媒体提升为真正的 `inlineData`（按内容去重），
+//!    无法承载或校验失败的折叠为长度占位符。`ABV_TEXT_DATA_URL_MODE=attach|omit|keep` 切换策略，
+//!    `ABV_TEXT_DATA_URL_MIN_CHARS` 调整阈值。
+//!
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Value;
@@ -195,6 +201,28 @@ static RE_KNOWN_CLIENT_DECLARATION: Lazy<Regex> = Lazy::new(|| {
     ))
     .unwrap()
 });
+
+/// 文本内嵌 data URL 的头部（`data:<mime>[;param]*;base64,`），负载部分由线性扫描截取，
+/// 避免 `{N,}` 计数重复在 regex 引擎中展开成超大 NFA。
+static RE_TEXT_DATA_URL_HEADER: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?i)data:([a-z]+\\{0,3}/[a-z0-9.+\-]+)(?:;[a-z0-9.+_\-]+(?:=[a-z0-9.+_\-]+)?)*;base64,",
+    )
+    .unwrap()
+});
+
+/// 默认折叠阈值（base64 字符数）：约 6 KB 二进制，远大于正常的内联小图标 / 示例片段
+const DEFAULT_TEXT_DATA_URL_MIN_CHARS: usize = 8192;
+/// 单次请求最多从文本中提升的独立媒体数量（去重后）
+const MAX_TEXT_DATA_URL_ATTACHMENTS: usize = 16;
+/// 单次请求从文本中提升的媒体 base64 总长度上限（约 15 MB，低于上游 inline 请求体限制）
+const MAX_TEXT_DATA_URL_ATTACHED_CHARS: usize = 15 * 1024 * 1024;
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum TextDataUrlMode {
+    Attach,
+    Omit,
+}
 
 /// 身份声明归一化的快速前置特征（命中任一才进入正则流程，规避 33k 级提示词的全量正则开销）
 const IDENTITY_FAST_MARKERS: &[&str] = &[
@@ -736,6 +764,269 @@ impl PromptSanitizer {
         before - parts.len()
     }
 
+    /// 读取文本内嵌 data URL 的处理策略；环境变量覆盖与 GUI 无关，无头 / CLI / Docker 一致生效：
+    /// - `ABV_TEXT_DATA_URL_MODE`：`attach`（默认，有效媒体转为真正的 `inlineData` 部件）/
+    ///   `omit`（一律折叠为长度占位符）/ `keep`（原样保留，关闭本节点）；
+    /// - `ABV_TEXT_DATA_URL_MIN_CHARS`：触发处理的最小 base64 负载长度。
+    fn text_data_url_policy() -> Option<(TextDataUrlMode, usize)> {
+        let mode = match std::env::var("ABV_TEXT_DATA_URL_MODE")
+            .map(|v| v.trim().to_ascii_lowercase())
+            .unwrap_or_default()
+            .as_str()
+        {
+            "keep" | "off" | "0" | "false" => return None,
+            "omit" | "strip" => TextDataUrlMode::Omit,
+            _ => TextDataUrlMode::Attach,
+        };
+        let min = std::env::var("ABV_TEXT_DATA_URL_MIN_CHARS")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT_TEXT_DATA_URL_MIN_CHARS);
+        Some((mode, min))
+    }
+
+    /// 在文本中定位负载长度 >= `min_chars` 的内联 data URL，并用 `replace(mime, payload)` 的返回值
+    /// 替换**整个** data URL。只替换匹配片段本身，不跨越引号 / 换行 / 其它字段；末尾的转义反斜杠
+    /// 回退保留，防止破坏外层 JSON 字符串中的 `\"` 转义。返回 `None` 表示没有改动。
+    fn rewrite_text_data_urls(
+        text: &str,
+        min_chars: usize,
+        mut replace: impl FnMut(&str, &str) -> String,
+    ) -> Option<String> {
+        if text.len() < min_chars || !text.contains("base64,") {
+            return None;
+        }
+        let bytes = text.as_bytes();
+        let mut out = String::with_capacity(text.len().min(64 * 1024));
+        let mut last = 0usize;
+        let mut changed = false;
+        for caps in RE_TEXT_DATA_URL_HEADER.captures_iter(text) {
+            let m = caps.get(0).expect("whole match");
+            if m.start() < last {
+                continue;
+            }
+            let start = m.end();
+            let mut end = start;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric()
+                    || matches!(bytes[end], b'+' | b'/' | b'=' | b'\\' | b'-' | b'_'))
+            {
+                end += 1;
+            }
+            while end > start && bytes[end - 1] == b'\\' {
+                end -= 1;
+            }
+            if end - start < min_chars {
+                continue;
+            }
+            // JSON 转义后的 `\/` 还原为 `/`，得到真实 MIME 与 base64 负载
+            let mime = caps[1].replace('\\', "");
+            let payload = text[start..end].replace('\\', "");
+            out.push_str(&text[last..m.start()]);
+            out.push_str(&replace(&mime, &payload));
+            last = end;
+            changed = true;
+        }
+        if !changed {
+            return None;
+        }
+        out.push_str(&text[last..]);
+        Some(out)
+    }
+
+    fn omitted_data_url_placeholder(mime: &str, payload_len: usize, reason: &str) -> String {
+        format!(
+            "[inline {} data omitted{}: {} base64 chars]",
+            mime, reason, payload_len
+        )
+    }
+
+    /// 把文本中的大段内联 data URL 折叠为长度占位符（不转图片）。供 systemInstruction、
+    /// `functionResponse`、model 轮次以及日志精简使用。
+    pub fn collapse_text_data_urls(text: &str, min_chars: usize) -> Option<String> {
+        Self::rewrite_text_data_urls(text, min_chars, |mime, payload| {
+            Self::omitted_data_url_placeholder(mime, payload.len(), "")
+        })
+    }
+
+    /// 递归折叠 JSON 值中所有字符串叶子的内联 data URL，返回改动的叶子数。
+    fn collapse_data_urls_in_value(value: &mut Value, min_chars: usize) -> usize {
+        match value {
+            Value::String(s) => match Self::collapse_text_data_urls(s, min_chars) {
+                Some(collapsed) => {
+                    *s = collapsed;
+                    1
+                }
+                None => 0,
+            },
+            Value::Array(items) => items
+                .iter_mut()
+                .map(|v| Self::collapse_data_urls_in_value(v, min_chars))
+                .sum(),
+            Value::Object(map) => map
+                .values_mut()
+                .map(|v| Self::collapse_data_urls_in_value(v, min_chars))
+                .sum(),
+            _ => 0,
+        }
+    }
+
+    fn is_attachable_mime(mime: &str) -> bool {
+        let m = mime.to_ascii_lowercase();
+        m.starts_with("image/")
+            || m.starts_with("audio/")
+            || m.starts_with("video/")
+            || m == "application/pdf"
+    }
+
+    /// 文本内嵌 data URL 处理节点（Pipeline First，协议无关）：
+    /// 正常上传的媒体在适配层就已是结构化字段（`input_image` / `image_url` / `source` / `inlineData`），
+    /// 到这里已经是 `inlineData`，**不经过本节点**。本节点只处理“被序列化进文本字符串”的 data URL：
+    /// - user 轮次的 text part：通过魔数与结构完整性校验的媒体提升为紧跟其后的 `inlineData` 部件，
+    ///   原位置替换为 `[inline <mime> data attached as media #N]`；整包内容相同的媒体只附加一次；
+    /// - 校验失败、超出数量 / 体积上限、`omit` 模式，以及 systemInstruction / model 轮次 /
+    ///   `functionResponse`（这些位置不能承载 inlineData）一律折叠为长度占位符；
+    /// - 思考块（受签名保护）与已有 `inlineData` 原样不动。
+    fn process_text_data_urls(body: &mut Value) -> usize {
+        let Some((mode, min_chars)) = Self::text_data_url_policy() else {
+            return 0;
+        };
+        let mut changed = 0usize;
+        let collapse_part = |part: &mut Value| -> usize {
+            if crate::proxy::thinking_store::is_thought_part(part)
+                || part.get("thoughtSignature").is_some()
+            {
+                return 0;
+            }
+            let Some(obj) = part.as_object_mut() else {
+                return 0;
+            };
+            let mut n = 0;
+            let collapsed = obj
+                .get("text")
+                .and_then(Value::as_str)
+                .and_then(|t| Self::collapse_text_data_urls(t, min_chars));
+            if let Some(collapsed) = collapsed {
+                obj.insert("text".to_string(), Value::String(collapsed));
+                n += 1;
+            }
+            for key in ["functionResponse", "function_response"] {
+                if let Some(resp) = obj.get_mut(key) {
+                    n += Self::collapse_data_urls_in_value(resp, min_chars);
+                }
+            }
+            n
+        };
+
+        for key in ["systemInstruction", "system_instruction"] {
+            if let Some(parts) = body
+                .get_mut(key)
+                .and_then(|s| s.get_mut("parts"))
+                .and_then(Value::as_array_mut)
+            {
+                for part in parts.iter_mut() {
+                    changed += collapse_part(part);
+                }
+            }
+        }
+
+        let Some(contents) = body.get_mut("contents").and_then(Value::as_array_mut) else {
+            return changed;
+        };
+        // 已附加媒体：(base64 负载, 编号)；按整包内容去重，同一张截图在转录中反复出现时只附加一次
+        let mut attached: Vec<String> = Vec::new();
+        let mut attached_chars = 0usize;
+        for turn in contents.iter_mut() {
+            let is_user = turn.get("role").and_then(Value::as_str) == Some("user");
+            let Some(parts) = turn.get_mut("parts").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            if !is_user || mode == TextDataUrlMode::Omit {
+                for part in parts.iter_mut() {
+                    changed += collapse_part(part);
+                }
+                continue;
+            }
+            let mut rebuilt: Vec<Value> = Vec::with_capacity(parts.len());
+            for mut part in std::mem::take(parts) {
+                let is_protected = crate::proxy::thinking_store::is_thought_part(&part)
+                    || part.get("thoughtSignature").is_some();
+                let text = (!is_protected)
+                    .then(|| part.get("text").and_then(Value::as_str))
+                    .flatten()
+                    .map(str::to_string);
+                let Some(text) = text else {
+                    changed += collapse_part(&mut part);
+                    rebuilt.push(part);
+                    continue;
+                };
+                let mut new_media: Vec<Value> = Vec::new();
+                let rewritten = Self::rewrite_text_data_urls(&text, min_chars, |mime, payload| {
+                    if let Some(idx) = attached.iter().position(|d| d == payload) {
+                        return format!("[inline {} data attached as media #{}]", mime, idx + 1);
+                    }
+                    if !Self::is_attachable_mime(mime) {
+                        return Self::omitted_data_url_placeholder(mime, payload.len(), "");
+                    }
+                    if attached.len() >= MAX_TEXT_DATA_URL_ATTACHMENTS
+                        || attached_chars + payload.len() > MAX_TEXT_DATA_URL_ATTACHED_CHARS
+                    {
+                        return Self::omitted_data_url_placeholder(
+                            mime,
+                            payload.len(),
+                            " (attachment limit reached)",
+                        );
+                    }
+                    match crate::proxy::mappers::common_utils::validate_and_sanitize_inline_data(
+                        Some(mime),
+                        payload,
+                    ) {
+                        Some((valid_mime, valid_data)) => {
+                            attached.push(payload.to_string());
+                            attached_chars += payload.len();
+                            new_media.push(serde_json::json!({
+                                "inlineData": { "mimeType": valid_mime, "data": valid_data }
+                            }));
+                            format!(
+                                "[inline {} data attached as media #{}]",
+                                mime,
+                                attached.len()
+                            )
+                        }
+                        None => Self::omitted_data_url_placeholder(
+                            mime,
+                            payload.len(),
+                            " (invalid or corrupted)",
+                        ),
+                    }
+                });
+                match rewritten {
+                    Some(new_text) => {
+                        tracing::info!(
+                            "[Prompt-Sanitizer] Rewrote inline base64 data URL embedded in text (len: {} -> {}, attached: {})",
+                            text.len(),
+                            new_text.len(),
+                            new_media.len()
+                        );
+                        if let Some(obj) = part.as_object_mut() {
+                            obj.insert("text".to_string(), Value::String(new_text));
+                        }
+                        changed += 1;
+                        rebuilt.push(part);
+                        rebuilt.extend(new_media);
+                    }
+                    None => {
+                        changed += collapse_part(&mut part);
+                        rebuilt.push(part);
+                    }
+                }
+            }
+            *parts = rebuilt;
+        }
+        changed
+    }
+
     fn sanitize_parts_core(parts: &mut Vec<Value>, scope_of: impl Fn(usize) -> PartScope) -> usize {
         // 0. 物理剔除客户端注入的计费元数据 Part（下标必须在选轨道之前定格）
         let mut cleaned_count = Self::drop_billing_parts(parts);
@@ -893,6 +1184,9 @@ impl PromptSanitizer {
     fn sanitize_gemini_payload_inner(body: &mut Value) -> usize {
         let mut cleaned_count = 0;
 
+        // 0. 文本内嵌 data URL：有效媒体提升为 inlineData，其余折叠（须早于轨道划分与 token 估算）
+        cleaned_count += Self::process_text_data_urls(body);
+
         // 1. 清洗系统提示词 (systemInstruction)
         //    走 System 轨：Header 轨之外叠加身份声明归一化（协议无关，四协议共用）
         if let Some(sys) = body
@@ -998,6 +1292,131 @@ impl PromptSanitizer {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn fake_b64(len: usize) -> String {
+        "iVBORw0KGgoAAAANSUhEUg+/"
+            .chars()
+            .cycle()
+            .take(len)
+            .collect()
+    }
+
+    /// 一张结构完整的 PNG（签名 + IHDR + IDAT 填充 + IEND），base64 长度可控，能通过魔数与完整性校验
+    fn valid_png_b64(min_b64_len: usize) -> String {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        bytes.extend_from_slice(&[
+            0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+        bytes.extend(std::iter::repeat(0u8).take(min_b64_len * 3 / 4));
+        bytes.extend_from_slice(&[0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xAE, 0x42, 0x60, 0x82]);
+        STANDARD.encode(bytes)
+    }
+
+    #[test]
+    fn test_collapse_text_data_urls_in_serialized_rollout_json() {
+        let b64 = fake_b64(20_000);
+        let text = format!(
+            r#"Analyze this rollout.\n{{\"type\":\"input_image\",\"image_url\":\"data:image\/png;base64,{b64}\"}},{{\"type\":\"input_text\",\"text\":\"next\"}}"#
+        );
+        let out = PromptSanitizer::collapse_text_data_urls(&text, 8192).expect("must collapse");
+        assert!(!out.contains(&b64));
+        assert!(out
+            .contains(r#"\"image_url\":\"[inline image/png data omitted: 20000 base64 chars]\"}"#));
+        assert!(out.starts_with("Analyze this rollout."));
+        assert!(out.ends_with(r#"{\"type\":\"input_text\",\"text\":\"next\"}"#));
+    }
+
+    #[test]
+    fn test_collapse_text_data_urls_keeps_small_and_plain_text() {
+        let small = format!("icon: data:image/png;base64,{}", fake_b64(200));
+        assert!(PromptSanitizer::collapse_text_data_urls(&small, 8192).is_none());
+        let plain = "x".repeat(20_000);
+        assert!(PromptSanitizer::collapse_text_data_urls(&plain, 8192).is_none());
+    }
+
+    #[test]
+    fn test_text_data_url_attached_as_inline_data_once_per_unique_image() {
+        let png = valid_png_b64(20_000);
+        let rollout = format!(
+            r#"Analyze this rollout: {{\"image_url\":\"data:image/png;base64,{png}\"}} ... again {{\"image_url\":\"data:image/png;base64,{png}\"}} end"#
+        );
+        let mut payload = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": rollout }] }]
+        });
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let parts = payload["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(
+            parts.len(),
+            2,
+            "same screenshot must be attached only once: {parts:?}"
+        );
+        let text = parts[0]["text"].as_str().unwrap();
+        assert!(!text.contains(&png));
+        assert_eq!(
+            text.matches("[inline image/png data attached as media #1]")
+                .count(),
+            2
+        );
+        assert!(text.starts_with("Analyze this rollout:") && text.ends_with(" end"));
+        assert_eq!(parts[1]["inlineData"]["mimeType"], "image/png");
+        assert_eq!(parts[1]["inlineData"]["data"].as_str().unwrap(), png);
+    }
+
+    #[test]
+    fn test_text_data_url_collapsed_where_inline_data_cannot_live_or_invalid() {
+        let png = valid_png_b64(20_000);
+        let junk = fake_b64(20_000);
+        let mut payload = json!({
+            "systemInstruction": { "parts": [{ "text": format!("sys data:image/png;base64,{png}") }] },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        { "inlineData": { "mimeType": "image/png", "data": png.clone() } },
+                        { "text": format!("broken data:image/png;base64,{junk} tail") }
+                    ]
+                },
+                {
+                    "role": "model",
+                    "parts": [{ "text": format!("echo data:image/png;base64,{png}") }]
+                },
+                {
+                    "role": "user",
+                    "parts": [{ "functionResponse": { "name": "read", "response": { "output": format!("data:image/jpeg;base64,{junk}") } } }]
+                }
+            ]
+        });
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let sys = payload["systemInstruction"]["parts"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            sys,
+            format!(
+                "sys [inline image/png data omitted: {} base64 chars]",
+                png.len()
+            )
+        );
+        let c = &payload["contents"];
+        assert_eq!(
+            c[0]["parts"][0]["inlineData"]["data"].as_str().unwrap(),
+            png
+        );
+        assert_eq!(c[0]["parts"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            c[0]["parts"][1]["text"].as_str().unwrap(),
+            "broken [inline image/png data omitted (invalid or corrupted): 20000 base64 chars] tail"
+        );
+        assert!(c[1]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("data omitted"));
+        let resp = c[2]["parts"][0]["functionResponse"]["response"]["output"]
+            .as_str()
+            .unwrap();
+        assert_eq!(resp, "[inline image/jpeg data omitted: 20000 base64 chars]");
+    }
 
     #[test]
     fn test_client_identity_mapping_normalizes_to_official_antigravity() {
