@@ -1293,7 +1293,7 @@
         "upload_timeouts": {
             "adaptive_title": "Tiempo de carga: determinado automáticamente por el ancho de banda",
             "min_speed_title": "Ancho de banda de subida (Mbps)",
-            "min_speed_desc": "Los usuarios de VPN suelen tener mucha bajada y poca subida; se recomienda 1–5 Mbps.",
+            "min_speed_desc": "Introduce un ancho de banda de subida mínimo conservador; cuanto menor sea el valor, mayor será el presupuesto de subida. Los usuarios de VPN suelen tener mucha bajada y poca subida; se recomienda 0,5–5 Mbps.",
             "extra_wait_title": "Factor de espera adicional",
             "extra_wait_desc": "Este parámetro afecta al tiempo máximo de espera de la carga.",
             "formula_title": "Espera máxima = tamaño del cuerpo ÷ ancho de banda × (1 + factor de espera)",

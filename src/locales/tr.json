@@ -1342,7 +1342,7 @@
         "upload_timeouts": {
             "adaptive_title": "Yükleme zaman aşımı: bant genişliğinden otomatik belirlenir",
             "min_speed_title": "Yükleme bant genişliği (Mbps)",
-            "min_speed_desc": "VPN kullanıcılarında indirme yüksek, yükleme düşüktür; 1–5 Mbps önerilir.",
+            "min_speed_desc": "Muhafazakâr bir minimum yükleme bant genişliği girin; değer küçüldükçe yükleme için ayrılan süre artar. VPN kullanıcılarında indirme yüksek, yükleme düşüktür; 0,5–5 Mbps önerilir.",
             "extra_wait_title": "Ek bekleme katsayısı",
             "extra_wait_desc": "Bu parametre maksimum yükleme bekleme süresini etkiler.",
             "formula_title": "Maks. bekleme = gövde boyutu ÷ yükleme hızı × (1 + ek bekleme katsayısı)",

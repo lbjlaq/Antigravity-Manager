@@ -59,6 +59,8 @@ docker run -d \
 ```
 
 > [!TIP]
+> **提示**：鏡像 ENTRYPOINT 已內置 `tini`；`docker run --init` 與 compose 的 `init: true` 屬於額外保險，可同時保留，不會衝突。
+
 > **🧪 體驗 Beta / 預覽版鏡像**：
 > 若需使用最新的 Beta 預發布特性，請拉取對應的 Beta 版本 Tag（預發布版本獨立構建發布，不會覆蓋 `latest` 穩定版標籤）：
 > ```bash

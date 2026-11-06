@@ -381,7 +381,7 @@ export const TimeoutSettings: React.FC<TimeoutSettingsProps> = ({
                     <div className="font-semibold">{t("proxy.upload_timeouts.formula_title")}</div>
                     <div className="font-mono">
                         {t("proxy.timeouts.auto_summary", {
-                            mbps: uploadRaw.min_upload_mbps || DEFAULT_UPLOAD.min_upload_mbps,
+                            mbps: parseUpload("min_upload_mbps"),
                             big: estimateUploadSecs(47),
                         })}
                     </div>

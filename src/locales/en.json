@@ -1328,7 +1328,7 @@
         "upload_timeouts": {
             "adaptive_title": "Upload timeout: determined automatically from bandwidth",
             "min_speed_title": "Upload bandwidth (Mbps)",
-            "min_speed_desc": "VPN users usually have high download and low upload; 1–5 Mbps is recommended.",
+            "min_speed_desc": "Enter a conservative minimum upload bandwidth; lower values allow a longer upload budget. VPN users usually have high download and low upload; 0.5–5 Mbps is recommended.",
             "extra_wait_title": "Extra wait factor",
             "extra_wait_desc": "This parameter affects the maximum upload wait time.",
             "formula_title": "Max wait = request body size ÷ upload bandwidth × (1 + extra wait factor)",

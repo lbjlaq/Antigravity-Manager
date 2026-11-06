@@ -1306,7 +1306,7 @@
         "upload_timeouts": {
             "adaptive_title": "Tempo de upload: determinado automaticamente pela banda",
             "min_speed_title": "Banda de upload (Mbps)",
-            "min_speed_desc": "Usuários de VPN costumam ter download alto e upload baixo; recomenda-se 1–5 Mbps.",
+            "min_speed_desc": "Informe uma largura de banda de upload mínima conservadora; quanto menor o valor, maior será o orçamento de upload. Usuários de VPN costumam ter download alto e upload baixo; recomenda-se 0,5–5 Mbps.",
             "extra_wait_title": "Fator de espera extra",
             "extra_wait_desc": "Este parâmetro afeta o tempo máximo de espera do upload.",
             "formula_title": "Espera máxima = tamanho do corpo ÷ banda de upload × (1 + fator de espera)",

@@ -1293,7 +1293,7 @@
         "upload_timeouts": {
             "adaptive_title": "업로드 시간: 대역폭으로 자동 판정",
             "min_speed_title": "업로드 대역폭(Mbps)",
-            "min_speed_desc": "VPN은 보통 다운로드가 빠르고 업로드가 느리므로 1~5Mbps를 권장합니다.",
+            "min_speed_desc": "보수적인 최소 업로드 대역폭을 입력하세요. 값이 작을수록 업로드 허용 시간이 길어집니다. VPN은 보통 다운로드가 빠르고 업로드가 느리므로 0.5~5Mbps를 권장합니다.",
             "extra_wait_title": "추가 대기 계수",
             "extra_wait_desc": "이 값은 업로드 최대 대기 시간에 영향을 줍니다.",
             "formula_title": "최대 대기 시간 = 요청 본문 크기 ÷ 업로드 대역폭 × (1 + 추가 대기 계수)",

@@ -1340,7 +1340,7 @@
         "upload_timeouts": {
             "adaptive_title": "Thời gian tải lên: tự động theo băng thông",
             "min_speed_title": "Băng thông tải lên (Mbps)",
-            "min_speed_desc": "Người dùng VPN thường tải xuống cao, tải lên thấp; nên nhập 1–5 Mbps.",
+            "min_speed_desc": "Nhập băng thông tải lên tối thiểu thận trọng; giá trị càng nhỏ thì thời gian cho phép tải lên càng dài. Người dùng VPN thường tải xuống cao, tải lên thấp; nên nhập 0,5–5 Mbps.",
             "extra_wait_title": "Hệ số chờ thêm",
             "extra_wait_desc": "Tham số này ảnh hưởng đến thời gian chờ tối đa khi tải lên.",
             "formula_title": "Chờ tối đa = kích thước nội dung ÷ băng thông tải lên × (1 + hệ số chờ)",

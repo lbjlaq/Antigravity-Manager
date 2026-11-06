@@ -1319,7 +1319,7 @@
         "upload_timeouts": {
             "adaptive_title": "上传超时：自动根据带宽判定",
             "min_speed_title": "上传带宽 (Mbps)",
-            "min_speed_desc": "VPN用户通常高下行、低上行、推荐填1-5Mbps。",
+            "min_speed_desc": "请填写保守的最低上行带宽；数值越小，上传允许时间越宽松。VPN 用户通常高下行、低上行，建议填 0.5–5 Mbps。",
             "extra_wait_title": "额外等待系数",
             "extra_wait_desc": "该参数影响上传最大等待时间。",
             "formula_title": "最大等待时间 = 请求体大小 ÷ 上传带宽 × (1 + 额外等待系数)",
