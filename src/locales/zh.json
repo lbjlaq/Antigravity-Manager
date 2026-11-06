@@ -297,6 +297,12 @@
         "disable_proxy_selected": "禁用 ({{count}})",
         "proxy_disabled_reason_manual": "用户手动禁用",
         "proxy_disabled_reason_batch": "批量禁用",
+        "banned": "已封禁",
+        "banned_tooltip": "账号已被上游封禁（违反服务条款），请提交申诉。",
+        "banned_msg": "账号已被上游封禁，已停止自动刷新",
+        "refresh_quota_and_ban": "刷新配额并检测封禁",
+        "appeal_url_copied": "申诉链接已复制到剪贴板",
+        "copy_failed": "复制失败，请手动选择内容复制",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "API 返回 403 Forbidden，账号无权使用 Gemini Code Assist",
@@ -308,7 +314,8 @@
             "validation_required": "账号需验证",
             "risk_controlled": "风控/限流",
             "oauth_reauth_required": "授权异常",
-            "violation_blocked": "由于违规被禁用"
+            "violation_blocked": "由于违规被禁用",
+            "banned": "账号已封禁"
         },
         "error_details": "错误详情",
         "error_status": "错误状态",

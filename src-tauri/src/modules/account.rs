@@ -7,8 +7,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::models::{
-    Account, AccountIndex, AccountSummary, DeviceProfile, DeviceProfileVersion, QuotaData,
-    TokenData,
+    Account, AccountBanInfo, AccountIndex, AccountSummary, DeviceProfile, DeviceProfileVersion,
+    QuotaData, TokenData,
 };
 use crate::modules;
 use once_cell::sync::Lazy;
@@ -2198,41 +2198,72 @@ fn is_validation_required_error(err: &crate::error::AppError) -> bool {
 }
 
 pub fn extract_action_url(reason: &str) -> Option<String> {
-    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(reason) {
-        let metadata_url = parsed
-            .get("error")
-            .and_then(|e| e.get("details"))
+    fn normalize(raw: &str) -> String {
+        raw.replace("\\u0026", "&")
+            .replace("\\u003d", "=")
+            .replace("\\/", "/")
+            .trim()
+            .to_string()
+    }
+
+    fn from_value(parsed: &serde_json::Value) -> Option<String> {
+        let error = parsed.get("error").unwrap_or(parsed);
+
+        // 申诉链接优先（TOS 封禁），其次才是验证链接。
+        if let Some(url) = error
+            .get("details")
             .and_then(|d| d.as_array())
             .and_then(|arr| arr.iter().find_map(|item| item.get("metadata")))
-            .and_then(|m| m.get("validation_url").or_else(|| m.get("appeal_url")))
+            .and_then(|m| m.get("appeal_url").or_else(|| m.get("validation_url")))
             .and_then(|u| u.as_str())
-            .map(|s| s.replace("\\u0026", "&"));
-
-        if metadata_url.is_some() {
-            return metadata_url;
+        {
+            return Some(normalize(url));
         }
 
-        let link_url = parsed
-            .get("error")
-            .and_then(|e| e.get("details"))
+        if let Some(url) = error
+            .get("details")
             .and_then(|d| d.as_array())
             .and_then(|arr| arr.iter().find_map(|item| item.get("links")))
             .and_then(|links| links.as_array())
             .and_then(|arr| arr.first())
             .and_then(|item| item.get("url"))
             .and_then(|u| u.as_str())
-            .map(|s| s.replace("\\u0026", "&"));
+        {
+            return Some(normalize(url));
+        }
 
-        if link_url.is_some() {
-            return link_url;
+        None
+    }
+
+    // 调用方可能给 JSON 拼上 "Forbidden (403): " 前缀，因此允许从任意文本中
+    // 定位内嵌的 JSON 对象，而不是只接受纯 JSON 字符串。
+    let parsed = serde_json::from_str::<serde_json::Value>(reason)
+        .ok()
+        .or_else(|| {
+            let start = reason.find('{')?;
+            let end = reason.rfind('}')?;
+            if end <= start {
+                return None;
+            }
+            serde_json::from_str::<serde_json::Value>(&reason[start..=end]).ok()
+        });
+
+    if let Some(parsed) = parsed {
+        if let Some(url) = from_value(&parsed) {
+            return Some(url);
+        }
+
+        if let Some(inner) = parsed.get("error").and_then(|v| v.as_str()) {
+            if let Ok(inner_parsed) = serde_json::from_str::<serde_json::Value>(inner) {
+                if let Some(url) = from_value(&inner_parsed) {
+                    return Some(url);
+                }
+            }
         }
     }
 
-    let url_regex = regex::Regex::new(r#"https://[^\s"'\\]+"#).ok()?;
-    url_regex.find(reason).map(|m| {
-        let raw_url = m.as_str().to_string();
-        raw_url.replace("\\u0026", "&")
-    })
+    // 最后兜底：完整提取（支持 https:\/\/... 转义，且不会在 & 或反斜杠处截断）。
+    AccountBanInfo::extract_url_from_text(reason)
 }
 
 fn is_account_access_blocked_message(message: &str) -> bool {
@@ -2875,6 +2906,25 @@ pub fn update_account_quota_internal(
     let mut account = load_account(account_id)?;
     account.update_quota(quota);
 
+    // 封禁状态具有比配额快照更高的权威性：Daily 端点成功返回配额并不代表解封。
+    // 在权威探测清除 `banned` 之前，始终保持反代禁用与 is_forbidden。
+    if account.banned {
+        account.proxy_disabled = true;
+        if !account
+            .proxy_disabled_reason
+            .as_deref()
+            .map_or(false, |reason| reason.starts_with("banned:"))
+        {
+            account.proxy_disabled_reason = Some(format!(
+                "banned: {}",
+                account.banned_code.as_deref().unwrap_or("BANNED")
+            ));
+        }
+        if account.proxy_disabled_at.is_none() {
+            account.proxy_disabled_at = Some(chrono::Utc::now().timestamp());
+        }
+    }
+
     // --- Quota protection logic start ---
     if let Ok(config) = crate::modules::config::load_app_config() {
         if config.quota_protection.enabled {
@@ -2953,7 +3003,7 @@ pub fn update_account_quota_internal(
 
     // If quota retrieval succeeded and quota is not forbidden, auto-recover 403 / validation locks
     if let Some(ref q) = account.quota {
-        if !q.is_forbidden {
+        if !q.is_forbidden && !account.banned {
             clear_validation_blocked(&mut account);
             if account.proxy_disabled
                 && account.proxy_disabled_reason.as_ref().map_or(false, |r| {
@@ -3033,6 +3083,14 @@ pub fn toggle_proxy_status(
 
     let mut account = load_account(account_id)?;
 
+    // 封禁账号不能通过手动开关重新入池；必须等权威探测确认解封。
+    if enable && account.banned {
+        return Err(format!(
+            "Account is banned by upstream ({}); submit an appeal before enabling proxy",
+            account.banned_code.as_deref().unwrap_or("BANNED")
+        ));
+    }
+
     account.proxy_disabled = !enable;
     account.proxy_disabled_reason = if !enable {
         reason.map(|s| s.to_string())
@@ -3067,43 +3125,103 @@ pub fn find_account_id_by_email(email: &str) -> Option<String> {
         .map(|a| a.id)
 }
 
+/// 将封禁证据写入账号实体（不负责持久化/索引同步）。
+fn apply_ban_state(account: &mut Account, info: &AccountBanInfo, now: i64) {
+    account.banned = true;
+    account.banned_code = Some(info.code.clone());
+    account.banned_reason = Some(info.message.clone());
+    account.banned_at = Some(now);
+    account.ban_appeal_url = info.appeal_url.clone();
+
+    // 封禁账号必须立即退出反代池；`banned:` 前缀不会被自动恢复逻辑误清理。
+    account.proxy_disabled = true;
+    account.proxy_disabled_reason = Some(format!("banned: {}", info.code));
+    account.proxy_disabled_at = Some(now);
+
+    if let Some(url) = info.appeal_url.clone() {
+        account.validation_url = Some(url);
+    }
+
+    if let Some(ref mut quota) = account.quota {
+        quota.is_forbidden = true;
+        quota.forbidden_reason = Some(info.message.clone());
+        quota.models.clear();
+        quota.quota_groups = None;
+    } else {
+        account.quota = Some(QuotaData {
+            models: Vec::new(),
+            last_updated: now,
+            subscription_tier: None,
+            is_forbidden: true,
+            forbidden_reason: Some(info.message.clone()),
+            model_forwarding_rules: std::collections::HashMap::new(),
+            quota_groups: None,
+        });
+    }
+}
+
+fn forbidden_quota_for_ban(account: &Account, info: &AccountBanInfo) -> QuotaData {
+    let mut forbidden = QuotaData::new();
+    forbidden.is_forbidden = true;
+    forbidden.forbidden_reason = Some(info.message.clone());
+    forbidden.subscription_tier = account
+        .quota
+        .as_ref()
+        .and_then(|quota| quota.subscription_tier.clone());
+    forbidden
+}
+
 pub fn mark_account_forbidden(account_id: &str, reason: &str) -> Result<(), String> {
     let _lock = ACCOUNT_INDEX_LOCK
         .lock()
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
 
     let mut account = load_account(account_id)?;
+    let now = chrono::Utc::now().timestamp();
+    let ban_info = AccountBanInfo::classify_text(reason);
 
     // Extract action URL (appeal_url or validation_url)
-    if let Some(url) = extract_action_url(reason) {
+    let action_url = ban_info
+        .as_ref()
+        .and_then(|info| info.appeal_url.clone())
+        .or_else(|| extract_action_url(reason));
+    if let Some(url) = action_url {
         account.validation_url = Some(url);
     }
 
-    // 1. Update quota status
-    if let Some(ref mut q) = account.quota {
-        q.is_forbidden = true;
-        q.forbidden_reason = Some(reason.to_string());
+    if let Some(ref info) = ban_info {
+        apply_ban_state(&mut account, info, now);
+        crate::modules::logger::log_warn(&format!(
+            "🚫 [Ban] Account {} is banned by upstream: {} - {}",
+            account.email, info.code, info.message
+        ));
     } else {
-        account.quota = Some(crate::models::QuotaData {
-            models: Vec::new(),
-            last_updated: chrono::Utc::now().timestamp(),
-            subscription_tier: None,
-            is_forbidden: true,
-            forbidden_reason: Some(reason.to_string()),
-            model_forwarding_rules: std::collections::HashMap::new(),
-            quota_groups: None,
-        });
-    }
+        // 1. Update quota status
+        if let Some(ref mut q) = account.quota {
+            q.is_forbidden = true;
+            q.forbidden_reason = Some(reason.to_string());
+        } else {
+            account.quota = Some(crate::models::QuotaData {
+                models: Vec::new(),
+                last_updated: now,
+                subscription_tier: None,
+                is_forbidden: true,
+                forbidden_reason: Some(reason.to_string()),
+                model_forwarding_rules: std::collections::HashMap::new(),
+                quota_groups: None,
+            });
+        }
 
-    // 2. Disable proxy for this account
-    account.proxy_disabled = true;
-    let formatted_reason = if reason.starts_with("Forbidden (403):") {
-        reason.to_string()
-    } else {
-        format!("Forbidden (403): {}", reason)
-    };
-    account.proxy_disabled_reason = Some(formatted_reason);
-    account.proxy_disabled_at = Some(chrono::Utc::now().timestamp());
+        // 2. Disable proxy for this account
+        account.proxy_disabled = true;
+        let formatted_reason = if reason.starts_with("Forbidden (403):") {
+            reason.to_string()
+        } else {
+            format!("Forbidden (403): {}", reason)
+        };
+        account.proxy_disabled_reason = Some(formatted_reason);
+        account.proxy_disabled_at = Some(now);
+    }
 
     save_account(&account)?;
 
@@ -3114,10 +3232,111 @@ pub fn mark_account_forbidden(account_id: &str, reason: &str) -> Result<(), Stri
         save_account_index(&index)?;
     }
 
-    // 4. Notify frontend to refresh account list
+    // 4. 立即从运行中的反代池卸载该账号，避免 403/封禁后仍被反复调度。
+    crate::proxy::server::trigger_account_reload(account_id);
+
+    // 5. Notify frontend to refresh account list
     crate::modules::log_bridge::emit_accounts_refreshed();
 
     Ok(())
+}
+
+/// 持久化一次生产端点探测到的封禁状态。
+///
+/// 返回 `true` 表示状态发生了变化（用于日志/事件抑制）。
+pub fn mark_account_banned(account_id: &str, info: &AccountBanInfo) -> Result<bool, String> {
+    let _lock = ACCOUNT_INDEX_LOCK
+        .lock()
+        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+
+    let mut account = load_account(account_id)?;
+    let now = chrono::Utc::now().timestamp();
+    let changed = !account.banned
+        || account.banned_code.as_deref() != Some(info.code.as_str())
+        || account.banned_reason.as_deref() != Some(info.message.as_str())
+        || account.ban_appeal_url != info.appeal_url;
+
+    apply_ban_state(&mut account, info, now);
+    save_account(&account)?;
+
+    if let Ok(mut index) = load_account_index() {
+        if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
+            summary.proxy_disabled = true;
+            let _ = save_account_index(&index);
+        }
+    }
+
+    crate::proxy::server::trigger_account_reload(account_id);
+    if changed {
+        crate::modules::logger::log_warn(&format!(
+            "🚫 [Ban] Account {} marked as banned: {} - {}",
+            account.email, info.code, info.message
+        ));
+        crate::modules::log_bridge::emit_accounts_refreshed();
+    }
+
+    Ok(changed)
+}
+
+/// 清除封禁状态（仅在权威生产端点确认恢复 2xx 后调用）。
+///
+/// 只清理由封禁写入的字段；若反代禁用原因是用户手动设置，则保留不动。
+pub fn clear_account_ban(account_id: &str) -> Result<bool, String> {
+    let _lock = ACCOUNT_INDEX_LOCK
+        .lock()
+        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+
+    let mut account = load_account(account_id)?;
+    if !account.banned {
+        return Ok(false);
+    }
+
+    let previous_appeal_url = account.ban_appeal_url.clone();
+    account.banned = false;
+    account.banned_code = None;
+    account.banned_reason = None;
+    account.banned_at = None;
+    account.ban_appeal_url = None;
+
+    // 仅解除由封禁引起的反代禁用，避免覆盖用户手动禁用。
+    if account.proxy_disabled
+        && account
+            .proxy_disabled_reason
+            .as_deref()
+            .map_or(false, |reason| reason.starts_with("banned:"))
+    {
+        account.proxy_disabled = false;
+        account.proxy_disabled_reason = None;
+        account.proxy_disabled_at = None;
+    }
+
+    // 清掉由封禁写入的申诉链接，避免 UI 残留。
+    if account.validation_url.is_some() && account.validation_url == previous_appeal_url {
+        account.validation_url = None;
+    }
+
+    if let Some(ref mut quota) = account.quota {
+        quota.is_forbidden = false;
+        quota.forbidden_reason = None;
+    }
+
+    save_account(&account)?;
+
+    if let Ok(mut index) = load_account_index() {
+        if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
+            summary.proxy_disabled = account.proxy_disabled;
+            let _ = save_account_index(&index);
+        }
+    }
+
+    crate::proxy::server::trigger_account_reload(account_id);
+    crate::modules::logger::log_info(&format!(
+        "✅ [Ban] Account {} recovered; ban state cleared",
+        account.email
+    ));
+    crate::modules::log_bridge::emit_accounts_refreshed();
+
+    Ok(true)
 }
 
 pub fn mark_account_validation_blocked(
@@ -3255,6 +3474,87 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
             }
             Err(e) => {
                 modules::logger::log_warn(&format!("Failed to fetch display name: {}", e));
+            }
+        }
+    }
+
+    // 1.5 Authoritative ban probe.
+    //
+    // Daily/Sandbox quota endpoints keep returning 200 for TOS-banned accounts; a successful
+    // quota snapshot is therefore NOT evidence that the account is healthy. Probe the
+    // production endpoint on every refresh and only a confirmed 2xx may clear a ban.
+    match crate::modules::quota::probe_account_ban(&account.token.access_token, Some(&account.id))
+        .await
+    {
+        crate::modules::quota::BanProbeOutcome::Banned(info) => {
+            apply_ban_state(account, &info, chrono::Utc::now().timestamp());
+
+            if let Err(e) = mark_account_banned(&account.id, &info) {
+                modules::logger::log_warn(&format!(
+                    "Failed to persist ban state for {}: {}",
+                    account.email, e
+                ));
+            }
+
+            return Ok(forbidden_quota_for_ban(account, &info));
+        }
+        crate::modules::quota::BanProbeOutcome::Healthy => {
+            if account.banned {
+                match clear_account_ban(&account.id) {
+                    Ok(_) => {
+                        account.banned = false;
+                        account.banned_code = None;
+                        account.banned_reason = None;
+                        account.banned_at = None;
+                        account.ban_appeal_url = None;
+                        if account
+                            .proxy_disabled_reason
+                            .as_deref()
+                            .map_or(false, |reason| reason.starts_with("banned:"))
+                        {
+                            account.proxy_disabled = false;
+                            account.proxy_disabled_reason = None;
+                            account.proxy_disabled_at = None;
+                        }
+                        if let Some(ref mut quota) = account.quota {
+                            quota.is_forbidden = false;
+                            quota.forbidden_reason = None;
+                        }
+                    }
+                    Err(e) => modules::logger::log_warn(&format!(
+                        "Failed to clear ban state for {}: {}",
+                        account.email, e
+                    )),
+                }
+            }
+        }
+        crate::modules::quota::BanProbeOutcome::Unknown => {
+            // 探测不可用（网络/429/5xx）时保留现状，避免把仍被封禁的账号误放回池。
+            //
+            // 兼容旧版本已经写入 "Forbidden (403): ..." / TOS 文本、但还没有新增
+            // `banned` 字段的账号：只要持久化原因里仍带明确封禁证据，就升级为
+            // banned 状态，避免随后 Daily 配额 200 把这条封禁记录清掉。
+            if !account.banned {
+                let legacy_info = {
+                    let reason = account.proxy_disabled_reason.as_deref().or_else(|| {
+                        account
+                            .quota
+                            .as_ref()
+                            .and_then(|q| q.forbidden_reason.as_deref())
+                    });
+                    reason.and_then(AccountBanInfo::classify_text)
+                };
+
+                if let Some(info) = legacy_info {
+                    apply_ban_state(account, &info, chrono::Utc::now().timestamp());
+                    if let Err(e) = mark_account_banned(&account.id, &info) {
+                        modules::logger::log_warn(&format!(
+                            "Failed to upgrade legacy ban state for {}: {}",
+                            account.email, e
+                        ));
+                    }
+                    return Ok(forbidden_quota_for_ban(account, &info));
+                }
             }
         }
     }
@@ -3627,7 +3927,7 @@ pub async fn check_and_trigger_warmup_for_recovered_models() {
 
     for account in accounts {
         // Skip disabled accounts
-        if account.disabled || account.proxy_disabled {
+        if account.disabled || account.proxy_disabled || account.banned {
             continue;
         }
 
@@ -3820,18 +4120,38 @@ pub async fn batch_import_accounts_logic(
                     let account_id =
                         existing_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+                    // 3.5 权威封禁探测：批量导入时也立即识别 TOS 封禁，
+                    // 避免 Daily 配额端点 200 让新导入的封禁账号显示为正常。
+                    let ban_info = match crate::modules::quota::probe_account_ban(
+                        &token_res.access_token,
+                        Some(&account_id),
+                    )
+                    .await
+                    {
+                        crate::modules::quota::BanProbeOutcome::Banned(info) => Some(info),
+                        _ => None,
+                    };
+
                     // 4. [NEW #3726] 探测 Project ID 与拉取完备配额（满血持久化，确保导入完成后冷启动秒加载！）
                     let project_id =
                         crate::proxy::project_resolver::fetch_project_id(&token_res.access_token)
                             .await
                             .ok();
 
-                    let quota_res = crate::modules::quota::fetch_quota(
-                        &token_res.access_token,
-                        &real_email,
-                        Some(&account_id),
-                    )
-                    .await;
+                    let quota_res = if ban_info.is_some() {
+                        let mut forbidden = crate::models::QuotaData::new();
+                        forbidden.is_forbidden = true;
+                        forbidden.forbidden_reason =
+                            ban_info.as_ref().map(|info| info.message.clone());
+                        Ok((forbidden, project_id.clone()))
+                    } else {
+                        crate::modules::quota::fetch_quota(
+                            &token_res.access_token,
+                            &real_email,
+                            Some(&account_id),
+                        )
+                        .await
+                    };
 
                     let is_gcp_tos = if crate::modules::oauth::is_gcp_enterprise_client(
                         token_res.oauth_client_key.as_deref(),
@@ -3865,6 +4185,13 @@ pub async fn batch_import_accounts_logic(
                                 existing_acc.token.project_id = Some(pid);
                             }
                         }
+                        if let Some(ref info) = ban_info {
+                            apply_ban_state(
+                                &mut existing_acc,
+                                info,
+                                chrono::Utc::now().timestamp(),
+                            );
+                        }
                         existing_acc
                     } else {
                         let token_data = crate::models::TokenData::new(
@@ -3889,6 +4216,9 @@ pub async fn batch_import_accounts_logic(
                             if let Some(pid) = new_pid {
                                 new_acc.token.project_id = Some(pid);
                             }
+                        }
+                        if let Some(ref info) = ban_info {
+                            apply_ban_state(&mut new_acc, info, chrono::Utc::now().timestamp());
                         }
                         new_acc
                     };

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { X, Clock, AlertCircle, Bot } from 'lucide-react';
+import { X, Clock, AlertCircle, Bot, Ban, ExternalLink, Copy } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Account, getAccountTier, getTierLabel } from '../../types/account';
 import { formatDate, formatTimeRemaining } from '../../utils/format';
 import { useTranslation } from 'react-i18next';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
 import { showToast } from '../common/ToastContainer';
+import { copyToClipboard } from '../../utils/clipboard';
 
 interface AccountDetailsDialogProps {
     account: Account | null;
@@ -154,8 +155,47 @@ export default function AccountDetailsDialog({
                 </div>
 
                 {/* Status Alerts */}
-                {(account.disabled || account.proxy_disabled) && (
+                {(account.disabled || account.proxy_disabled || account.banned) && (
                     <div className="px-6 py-3 bg-red-50 dark:bg-red-950/20 border-b border-red-100 dark:border-red-900/30 flex flex-col gap-1">
+                        {account.banned && (
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-red-700 dark:text-red-400">
+                                <Ban size={14} />
+                                <span className="font-semibold">{t('accounts.status.banned', '账号已封禁')}:</span>
+                                <span className="break-all">{account.banned_reason || t('common.unknown')}</span>
+                                {account.ban_appeal_url && (
+                                    <>
+                                        <a
+                                            href={account.ban_appeal_url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+                                        >
+                                            <ExternalLink size={12} />
+                                            {t('accounts.go_to_appeal', '前往申诉')}
+                                        </a>
+                                        <button
+                                            onClick={async () => {
+                                                const ok = await copyToClipboard(account.ban_appeal_url || '');
+                                                showToast(
+                                                    ok
+                                                        ? t('accounts.appeal_url_copied', '申诉链接已复制到剪贴板')
+                                                        : t('accounts.copy_failed', '复制失败，请手动选择链接复制'),
+                                                    ok ? 'success' : 'error'
+                                                );
+                                            }}
+                                            className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                                            title={account.ban_appeal_url}
+                                        >
+                                            <Copy size={12} />
+                                            {t('accounts.copy_appeal_url', '复制申诉链接')}
+                                        </button>
+                                        <span className="w-full mt-1 text-[10px] font-mono break-all select-all text-gray-500 dark:text-gray-400">
+                                            {account.ban_appeal_url}
+                                        </span>
+                                    </>
+                                )}
+                            </div>
+                        )}
                         {account.disabled && (
                             <div className="flex items-center gap-2 text-xs text-red-700 dark:text-red-400">
                                 <AlertCircle size={14} />
@@ -163,7 +203,7 @@ export default function AccountDetailsDialog({
                                 <span>{account.disabled_reason || t('common.unknown')}</span>
                             </div>
                         )}
-                        {account.proxy_disabled && (
+                        {account.proxy_disabled && !account.banned && (
                             <div className="flex items-center gap-2 text-xs text-orange-700 dark:text-orange-400">
                                 <AlertCircle size={14} />
                                 <span className="font-semibold">{t('accounts.status.proxy_disabled')}:</span>

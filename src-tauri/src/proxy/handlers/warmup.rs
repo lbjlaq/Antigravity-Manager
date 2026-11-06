@@ -426,6 +426,22 @@ pub async fn handle_warmup(
                     (true, format!("Warmup triggered for {}", req.model))
                 };
 
+                // 探活成功 = 上游已实际可用：立即清除该账号在这个模型上的
+                // 900s 临时熔断与限流锁定，避免“探活成功但调度仍等 15 分钟”。
+                if final_success && !account_id.is_empty() {
+                    state
+                        .token_manager
+                        .clear_model_unsupported(&account_id, &mapped_model);
+                    state
+                        .token_manager
+                        .clear_model_rate_limit(&account_id, &mapped_model);
+                    tracing::info!(
+                        "[Warmup-API] Cleared model breaker for {} / {} after successful probe",
+                        req.email,
+                        mapped_model
+                    );
+                }
+
                 info!(
                     "[Warmup-API] ========== SUCCESS: {} / {} -> {} ({}ms, retired={}) ==========",
                     req.email, req.model, mapped_model, duration, is_retired

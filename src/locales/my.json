@@ -272,6 +272,12 @@
         "disable_proxy_selected": "Nyahaktifkan ({{count}})",
         "proxy_disabled_reason_manual": "Dinyahaktifkan secara manual oleh pengguna",
         "proxy_disabled_reason_batch": "Dinyahaktifkan secara berkelompok",
+        "banned": "Banned",
+        "banned_tooltip": "Account is banned by upstream (TOS violation). Please submit an appeal.",
+        "banned_msg": "Account banned by upstream; auto refresh stopped",
+        "refresh_quota_and_ban": "Refresh quota & ban status",
+        "appeal_url_copied": "Appeal link copied to clipboard",
+        "copy_failed": "Copy failed; please select and copy manually",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "API mengembalikan 403 Forbidden, akaun tiada kebenaran untuk Gemini Code Assist",
@@ -283,7 +289,8 @@
             "validation_required": "Verification Required",
             "risk_controlled": "Risk / Rate Limited",
             "oauth_reauth_required": "OAuth Re-auth Required",
-            "violation_blocked": "Blocked due to Violation"
+            "violation_blocked": "Blocked due to Violation",
+            "banned": "Account Banned"
         },
         "error_details": "အမှား အသေးစိတ်",
         "error_status": "အမှား အခြေအနေ",

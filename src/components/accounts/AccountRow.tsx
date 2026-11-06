@@ -49,6 +49,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
 
     const claudeModel = findQuotaModel(account.quota?.models, 'claude');
     const isDisabled = Boolean(account.disabled);
+    const isBanned = Boolean(account.banned);
 
     // 颜色映射，避免动态类名被 Tailwind purge
     const getColorClass = (percentage: number) => {
@@ -114,7 +115,17 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                             </span>
                         )}
 
-                        {account.proxy_disabled && !isDisabled && (
+                        {isBanned && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-red-200/50"
+                                title={account.banned_reason || t('accounts.banned_tooltip', '账号已被上游封禁（违反服务条款），请提交申诉')}
+                            >
+                                <Ban className="w-2.5 h-2.5" />
+                                <span>{t('accounts.banned', '已封禁')}</span>
+                            </span>
+                        )}
+
+                        {account.proxy_disabled && !isDisabled && !isBanned && (
                             <span
                                 className="px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-orange-200/50"
                                 title={account.proxy_disabled_reason || t('accounts.proxy_disabled_tooltip')}
@@ -124,7 +135,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                             </span>
                         )}
 
-                        {account.quota?.is_forbidden && (
+                        {account.quota?.is_forbidden && !isBanned && (
                             <span className="px-2 py-0.5 rounded-md bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-red-200/50" title={t('accounts.forbidden_tooltip')}>
                                 <Lock className="w-2.5 h-2.5" />
                                 <span>{t('accounts.forbidden')}</span>
@@ -165,10 +176,10 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
 
             {/* 模型配额 */}
             <td className="px-4 py-1">
-                {account.quota?.is_forbidden ? (
+                {account.banned || account.quota?.is_forbidden ? (
                     <div className="flex items-center gap-2 text-xs text-red-500 dark:text-red-400 bg-red-50/50 dark:bg-red-900/10 p-1.5 rounded-lg border border-red-100 dark:border-red-900/30">
-                        <Ban className="w-4 h-4 shrink-0" />
-                        <span>{t('accounts.forbidden_msg')}</span>
+                        {account.banned ? <Ban className="w-4 h-4 shrink-0" /> : <Lock className="w-4 h-4 shrink-0" />}
+                        <span>{account.banned ? t('accounts.banned_msg', '账号已被上游封禁，已停止自动刷新') : t('accounts.forbidden_msg')}</span>
                     </div>
                 ) : (
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1 py-0">
@@ -349,7 +360,7 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                     <button
                         className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isRefreshing || isDisabled) ? 'bg-green-50 dark:bg-green-900/10 text-green-600 dark:text-green-400 cursor-not-allowed' : 'hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'}`}
                         onClick={(e) => { e.stopPropagation(); onRefresh(); }}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : (isRefreshing ? t('common.refreshing') : t('common.refresh'))}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isRefreshing ? t('common.refreshing') : t('accounts.refresh_quota_and_ban', '刷新配额并检测封禁'))}
                         disabled={isRefreshing || isDisabled}
                     >
                         <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -364,12 +375,14 @@ function AccountRow({ account, selected, onSelect, isCurrent, isRefreshing, isSw
                     <button
                         className={cn(
                             "p-1.5 rounded-lg transition-all",
+                            isBanned && "opacity-40 cursor-not-allowed",
                             account.proxy_disabled
                                 ? "text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30"
                                 : "text-gray-500 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/30"
                         )}
                         onClick={(e) => { e.stopPropagation(); onToggleProxy(); }}
-                        title={account.proxy_disabled ? t('accounts.enable_proxy') : t('accounts.disable_proxy')}
+                        disabled={isBanned}
+                        title={isBanned ? t('accounts.banned_tooltip', '账号已被上游封禁（违反服务条款），请提交申诉') : (account.proxy_disabled ? t('accounts.enable_proxy') : t('accounts.disable_proxy'))}
                     >
                         {account.proxy_disabled ? (
                             <ToggleRight className="w-3.5 h-3.5" />

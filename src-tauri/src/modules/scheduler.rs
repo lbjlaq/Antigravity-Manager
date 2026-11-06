@@ -145,7 +145,7 @@ pub fn start_scheduler(
             let mut tasks_to_run = Vec::new();
 
             for acc in &accounts {
-                if acc.disabled || acc.proxy_disabled {
+                if acc.disabled || acc.proxy_disabled || acc.banned {
                     continue;
                 }
 

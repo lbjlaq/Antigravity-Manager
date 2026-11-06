@@ -1,3 +1,4 @@
+use crate::models::AccountBanInfo;
 use crate::models::QuotaData;
 use crate::modules::config;
 use once_cell::sync::Lazy;
@@ -136,6 +137,81 @@ struct Tier {
     name: Option<String>,
     #[allow(dead_code)]
     slug: Option<String>,
+}
+
+/// 账号状态探测结果。
+#[derive(Debug, Clone)]
+pub enum BanProbeOutcome {
+    /// 生产端点明确返回封禁证据。
+    Banned(AccountBanInfo),
+    /// 生产端点返回 2xx，账号当前可用。
+    Healthy,
+    /// 网络错误 / 429 / 5xx 等，无法判断（绝不能据此解封）。
+    Unknown,
+}
+
+/// 生产端点（权威端点）。
+///
+/// Daily/Sandbox 对被 TOS 封禁的账号仍会返回 200 配额数据；只有生产端点会返回
+/// 403 `TOS_VIOLATION`。因此封禁检测必须固定访问这里，不能复用配额端点的 fallback 链。
+const BAN_PROBE_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+
+/// 探测账号是否被上游封禁。
+///
+/// 只把「生产端点 403 + 明确封禁证据」视为封禁；其余情况一律返回 `Unknown`，
+/// 避免网络抖动或临时限流误伤正常账号。
+pub async fn probe_account_ban(access_token: &str, account_id: Option<&str>) -> BanProbeOutcome {
+    let client = create_standard_client(account_id).await;
+    let payload = json!({ "metadata": { "ideType": "ANTIGRAVITY" } });
+
+    let response = client
+        .post(BAN_PROBE_ENDPOINT)
+        .timeout(std::time::Duration::from_secs(15))
+        .bearer_auth(access_token)
+        .header(
+            rquest::header::USER_AGENT,
+            crate::constants::current_egress_user_agent().as_str(),
+        )
+        .json(&payload)
+        .send()
+        .await;
+
+    match response {
+        Ok(response) => {
+            let status = response.status();
+            if status.is_success() {
+                BanProbeOutcome::Healthy
+            } else if status == rquest::StatusCode::FORBIDDEN {
+                let text = response.text().await.unwrap_or_default();
+                match AccountBanInfo::classify_upstream(403, &text) {
+                    Some(info) => {
+                        tracing::debug!(
+                            account = account_id.unwrap_or("<unknown>"),
+                            code = %info.code,
+                            "Production endpoint reported an account ban"
+                        );
+                        BanProbeOutcome::Banned(info)
+                    }
+                    None => BanProbeOutcome::Unknown,
+                }
+            } else {
+                tracing::debug!(
+                    account = account_id.unwrap_or("<unknown>"),
+                    %status,
+                    "Ban probe returned a non-authoritative status"
+                );
+                BanProbeOutcome::Unknown
+            }
+        }
+        Err(e) => {
+            tracing::debug!(
+                account = account_id.unwrap_or("<unknown>"),
+                error = %e,
+                "Ban probe failed; keeping the previous ban state"
+            );
+            BanProbeOutcome::Unknown
+        }
+    }
 }
 
 /// Get shared HTTP Client (15s timeout) for pure info fetching (No JA3)
@@ -1072,10 +1148,10 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 
     loop {
         let all_accounts = crate::modules::account::list_accounts().unwrap_or_default();
-        // [FIX] 过滤掉禁用反代的账号
+        // [FIX] 过滤掉禁用反代 / 已被上游封禁的账号
         let target_accounts: Vec<_> = all_accounts
             .into_iter()
-            .filter(|a| !a.disabled && !a.proxy_disabled)
+            .filter(|a| !a.disabled && !a.proxy_disabled && !a.banned)
             .collect();
 
         if target_accounts.is_empty() {
@@ -1294,7 +1370,7 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
         .cloned()
         .ok_or_else(|| "Account not found".to_string())?;
 
-    if account_owned.disabled || account_owned.proxy_disabled {
+    if account_owned.disabled || account_owned.proxy_disabled || account_owned.banned {
         return Err("Account is disabled".to_string());
     }
 

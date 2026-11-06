@@ -572,14 +572,30 @@ pub fn create_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
                                     return;
                                 }
 
+                                // 托盘「切换下一个」同样必须跳过封禁/禁用/验证中的账号，
+                                // 否则会把官方客户端切到一个确定不可用的账号上。
+                                let candidates: Vec<_> = accounts
+                                    .iter()
+                                    .filter(|a| {
+                                        !a.disabled
+                                            && !a.proxy_disabled
+                                            && !a.banned
+                                            && !a.validation_blocked
+                                            && !a.quota.as_ref().map_or(false, |q| q.is_forbidden)
+                                    })
+                                    .collect();
+                                if candidates.is_empty() {
+                                    return;
+                                }
+
                                 let current_id = modules::get_current_account_id().unwrap_or(None);
                                 let next_account = if let Some(curr) = current_id {
-                                    let idx =
-                                        accounts.iter().position(|a| a.id == curr).unwrap_or(0);
-                                    let next_idx = (idx + 1) % accounts.len();
-                                    &accounts[next_idx]
+                                    match candidates.iter().position(|a| a.id == curr) {
+                                        Some(idx) => &candidates[(idx + 1) % candidates.len()],
+                                        None => &candidates[0],
+                                    }
                                 } else {
-                                    &accounts[0]
+                                    &candidates[0]
                                 };
 
                                 let integration = crate::modules::integration::DesktopIntegration {

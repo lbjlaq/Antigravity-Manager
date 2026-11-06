@@ -38,6 +38,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
     const { t } = useTranslation();
     const { config } = useConfigStore();
     const isDisabled = Boolean(account.disabled);
+    const isBanned = Boolean(account.banned);
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
 
     // 自定义标签编辑状态
@@ -177,7 +178,16 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     {t('accounts.disabled').toUpperCase()}
                                 </span>
                             )}
-                            {account.proxy_disabled && !isDisabled && (
+                            {isBanned && (
+                                <span
+                                    className="px-1.5 py-0.5 rounded-md bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 text-[9px] font-bold flex items-center gap-1 shadow-sm border border-red-200/50"
+                                    title={account.banned_reason || t('accounts.banned_tooltip', '账号已被上游封禁（违反服务条款），请提交申诉')}
+                                >
+                                    <Ban className="w-2.5 h-2.5" />
+                                    {t('accounts.banned', '已封禁').toUpperCase()}
+                                </span>
+                            )}
+                            {account.proxy_disabled && !isDisabled && !isBanned && (
                                 <span
                                     className="px-1.5 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[9px] font-bold flex items-center gap-1 shadow-sm border border-orange-200/50"
                                 >
@@ -185,7 +195,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     {t('accounts.proxy_disabled').toUpperCase()}
                                 </span>
                             )}
-                            {account.quota?.is_forbidden && (
+                            {account.quota?.is_forbidden && !isBanned && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 text-[9px] font-bold flex items-center gap-1 shadow-sm border border-red-200/50">
                                     <Lock className="w-2.5 h-2.5" />
                                     {t('accounts.forbidden').toUpperCase()}
@@ -287,20 +297,20 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
 
             {/* 配额展示 (统一分组展示) */}
             <div className="flex-1 px-1 mb-2 overflow-y-auto scrollbar-none">
-                {isDisabled || account.quota?.is_forbidden || account.validation_blocked ? (
+                {isDisabled || account.banned || account.quota?.is_forbidden || account.validation_blocked ? (
                     <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 h-full py-4 text-center">
                         <div className={cn(
                             "flex items-center gap-1.5",
-                            account.validation_blocked ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
+                            account.validation_blocked && !account.banned ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
                         )}>
-                            {account.validation_blocked ? <Clock className="w-4 h-4" /> : (isDisabled ? <Ban className="w-4 h-4" /> : <Lock className="w-4 h-4" />)}
+                            {account.validation_blocked && !account.banned ? <Clock className="w-4 h-4" /> : (account.banned ? <Ban className="w-4 h-4" /> : (isDisabled ? <Ban className="w-4 h-4" /> : <Lock className="w-4 h-4" />))}
                             <span className="text-[11px] font-bold">
-                                {account.validation_blocked ? validationBlockedLabel : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg'))}
+                                {account.validation_blocked && !account.banned ? validationBlockedLabel : (account.banned ? t('accounts.banned_msg', '账号已被上游封禁，已停止自动刷新') : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg')))}
                             </span>
                         </div>
                         <div className={cn(
                             "w-px h-3 hidden sm:block",
-                            account.validation_blocked ? "bg-amber-200 dark:bg-amber-800/50" : "bg-red-200 dark:bg-red-800/50"
+                            account.validation_blocked && !account.banned ? "bg-amber-200 dark:bg-amber-800/50" : "bg-red-200 dark:bg-red-800/50"
                         )} />
                         <button
                             onClick={(e) => { e.stopPropagation(); onViewError(); }}
@@ -442,7 +452,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                             : 'text-gray-400 hover:text-green-600 hover:bg-green-50'}`}
                         onClick={(e) => { e.stopPropagation(); onRefresh(); }}
                         disabled={isRefreshing || isDisabled}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : t('common.refresh')}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : t('accounts.refresh_quota_and_ban', '刷新配额并检测封禁')}
                     >
                         <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                     </button>
@@ -456,12 +466,14 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                     <button
                         className={cn(
                             "p-1.5 rounded-lg transition-all",
+                            isBanned && "opacity-40 cursor-not-allowed",
                             account.proxy_disabled
                                 ? "text-gray-400 hover:text-green-600 hover:bg-green-50"
                                 : "text-gray-400 hover:text-orange-600 hover:bg-orange-50"
                         )}
                         onClick={(e) => { e.stopPropagation(); onToggleProxy(); }}
-                        title={account.proxy_disabled ? t('accounts.enable_proxy') : t('accounts.disable_proxy')}
+                        disabled={isBanned}
+                        title={isBanned ? t('accounts.banned_tooltip', '账号已被上游封禁（违反服务条款），请提交申诉') : (account.proxy_disabled ? t('accounts.enable_proxy') : t('accounts.disable_proxy'))}
                     >
                         {account.proxy_disabled ? (
                             <ToggleRight className="w-3.5 h-3.5" />

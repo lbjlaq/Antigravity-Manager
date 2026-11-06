@@ -272,6 +272,12 @@
         "disable_proxy_selected": "تعطيل ({{count}})",
         "proxy_disabled_reason_manual": "تم التعطيل يدويًا بواسطة المستخدم",
         "proxy_disabled_reason_batch": "تم التعطيل في الدفعة",
+        "banned": "Banned",
+        "banned_tooltip": "Account is banned by upstream (TOS violation). Please submit an appeal.",
+        "banned_msg": "Account banned by upstream; auto refresh stopped",
+        "refresh_quota_and_ban": "Refresh quota & ban status",
+        "appeal_url_copied": "Appeal link copied to clipboard",
+        "copy_failed": "Copy failed; please select and copy manually",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "أعاد API الخطأ 403 Forbidden، الحساب ليس لديه إذن لخدمة Gemini Code Assist",
@@ -283,7 +289,8 @@
             "validation_required": "Verification Required",
             "risk_controlled": "Risk / Rate Limited",
             "oauth_reauth_required": "OAuth Re-auth Required",
-            "violation_blocked": "Blocked due to Violation"
+            "violation_blocked": "Blocked due to Violation",
+            "banned": "Account Banned"
         },
         "error_details": "تفاصيل الخطأ",
         "error_status": "حالة الخطأ",

@@ -22,6 +22,12 @@ export interface Account {
     validation_blocked_until?: number;
     validation_blocked_reason?: string;
     validation_url?: string;
+    /** 上游已确认的账号封禁（如 TOS_VIOLATION），只有生产端点探测恢复后才会清除 */
+    banned?: boolean;
+    banned_code?: string;
+    banned_reason?: string;
+    banned_at?: number;
+    ban_appeal_url?: string;
     created_at: number;
     last_used: number;
 }

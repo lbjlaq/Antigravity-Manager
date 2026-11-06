@@ -124,7 +124,7 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
     // 1. 获取按“付费账号优先 + 5h 内最多”排序的候选账号
     const geminiSorted = useMemo(() => {
         return accounts
-            .filter(a => a.id !== currentTargetAccountId && !a.disabled && !a.validation_blocked)
+            .filter(a => a.id !== currentTargetAccountId && !a.disabled && !a.validation_blocked && !a.banned)
             .map(a => {
                 const tier = getAccountTier(a);
                 const isPaid = tier === 'ultra' || tier === 'pro';
@@ -147,7 +147,7 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
 
     const claudeSorted = useMemo(() => {
         return accounts
-            .filter(a => a.id !== currentTargetAccountId && !a.disabled && !a.validation_blocked)
+            .filter(a => a.id !== currentTargetAccountId && !a.disabled && !a.validation_blocked && !a.banned)
             .map(a => {
                 const tier = getAccountTier(a);
                 const isPaid = tier === 'ultra' || tier === 'pro';

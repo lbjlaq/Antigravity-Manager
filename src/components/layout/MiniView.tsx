@@ -359,14 +359,14 @@ export default function MiniView() {
 
     const availableAccounts = useMemo(() => {
         return accounts.filter(
-            a => !a.disabled && !a.proxy_disabled && !a.validation_blocked && !a.quota?.is_forbidden
+            a => !a.disabled && !a.proxy_disabled && !a.banned && !a.validation_blocked && !a.quota?.is_forbidden
         );
     }, [accounts]);
 
     const activePool = useMemo(() => {
         return availableAccounts.length > 0
             ? availableAccounts
-            : accounts.filter(a => !a.validation_blocked && !a.quota?.is_forbidden);
+            : accounts.filter(a => !a.banned && !a.validation_blocked && !a.quota?.is_forbidden);
     }, [availableAccounts, accounts]);
 
     const handleSwitchAccount = async (accountId: string) => {
@@ -386,7 +386,8 @@ export default function MiniView() {
 
     const handleQuickNextAccount = async () => {
         if (isSwitching || activeTab === 'pool' || accounts.length <= 1) return;
-        const poolToUse = availableAccounts.length > 0 ? availableAccounts : accounts;
+        const poolToUse = availableAccounts.length > 0 ? availableAccounts : activePool;
+        if (poolToUse.length === 0) return;
         const currentId = displayedAccount?.id;
         const currentIndex = poolToUse.findIndex((a: Account) => a.id === currentId);
         const nextIndex = (currentIndex + 1) % poolToUse.length;
@@ -580,13 +581,13 @@ export default function MiniView() {
     const getTabStatus = (tabKey: 'classic' | 'ide' | 'agy') => {
         const id = getClientAccountId(tabKey);
         if (!id && tabKey === 'classic' && currentAccount) {
-            const isHealthy = !currentAccount.quota?.is_forbidden && !currentAccount.validation_blocked && !currentAccount.disabled;
+            const isHealthy = !currentAccount.quota?.is_forbidden && !currentAccount.validation_blocked && !currentAccount.disabled && !currentAccount.banned;
             return { hasAccount: true, isHealthy };
         }
         if (!id) return { hasAccount: false, isHealthy: false };
         const acc = accounts.find((a) => a.id === id);
         if (!acc) return { hasAccount: false, isHealthy: false };
-        const isHealthy = !acc.quota?.is_forbidden && !acc.validation_blocked && !acc.disabled;
+        const isHealthy = !acc.quota?.is_forbidden && !acc.validation_blocked && !acc.disabled && !acc.banned;
         return { hasAccount: true, isHealthy };
     };
 
@@ -840,7 +841,7 @@ export default function MiniView() {
                             {accounts.map((acc) => {
                                 const isCurrent = acc.id === displayedAccount?.id;
                                 const accTier = getAccountTier(acc);
-                                const isHealthy = !acc.quota?.is_forbidden && !acc.validation_blocked && !acc.disabled;
+                                const isHealthy = !acc.quota?.is_forbidden && !acc.validation_blocked && !acc.disabled && !acc.banned;
 
                                 return (
                                     <button

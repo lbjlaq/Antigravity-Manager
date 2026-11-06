@@ -934,13 +934,20 @@ async fn pick_auto_test_account(
 ) -> Result<(crate::models::account::Account, String, String), String> {
     let candidates: Vec<_> = accounts
         .iter()
-        .filter(|a| !a.disabled && !a.proxy_disabled)
+        .filter(|a| {
+            // 探活是诊断入口：只排除确定不可用的账号（停用/封禁/验证中/403 冻结）。
+            // 手动禁用反代或配额保护的账号仍允许被主动探活，否则用户永远无法验证恢复。
+            !a.disabled
+                && !a.banned
+                && !a.validation_blocked
+                && !a.quota.as_ref().map_or(false, |q| q.is_forbidden)
+        })
         .cloned()
         .collect();
 
     if candidates.is_empty() {
         return Err(
-            "当前没有开启反代的可用账号，请先在账号页面开启至少一个账号的反代，或指定具体账号测试"
+            "当前没有可用于探活的账号（已排除停用/封禁/验证中/403 冻结账号），请先恢复账号或指定具体账号测试"
                 .to_string(),
         );
     }

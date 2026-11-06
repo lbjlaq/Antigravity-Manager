@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use tokio_util::sync::CancellationToken;
 
@@ -219,6 +219,10 @@ pub struct TokenManager {
     /// 当某账号调用高级模型（如 Claude 5.5）返回 404/403 时，仅将该特定模型打入冷却，绝不连坐其他模型
     unsupported_models: Arc<DashMap<(String, String), i64>>,
 
+    /// 模型门禁在准备返回 `no quota accounts` 前，强制从磁盘刷新账号池的节流时间戳（Unix 秒）。
+    /// 确保无论通过 Tauri / HTTP API / CLI 哪条路径导入新账号，门禁都能在 2 秒内看到它。
+    last_gate_pool_refresh: Arc<AtomicI64>,
+
     /// [NEW] 活跃在途请求跟踪器: account_id -> 实时并发计数
     in_flight_requests: Arc<DashMap<String, Arc<AtomicUsize>>>,
 
@@ -262,6 +266,7 @@ impl TokenManager {
             cancel_token: CancellationToken::new(),
             image_scheduler: std::sync::RwLock::new(None),
             unsupported_models: Arc::new(DashMap::new()),
+            last_gate_pool_refresh: Arc::new(AtomicI64::new(0)),
             in_flight_requests: Arc::new(DashMap::new()),
             qos_guardian: {
                 let qos_auto_jail = crate::modules::config::load_app_config()
@@ -927,6 +932,12 @@ impl TokenManager {
         }
 
         self.sync_image_scheduler_accounts();
+
+        // 全量重载（服务启动 / 导入 / 删除 / 刷新全部）代表一次权威账号快照。
+        // 清空内存中的模型级 900s 临时熔断，避免新导入或已恢复配额的账号
+        // 继续被历史冷却卡住 15 分钟。
+        self.unsupported_models.clear();
+
         Ok(count)
     }
 
@@ -993,7 +1004,16 @@ impl TokenManager {
 
         match self.load_single_account(&path).await {
             Ok(Some(token)) => {
+                let has_positive_quota = token.model_quotas.values().any(|quota| *quota > 0);
                 self.tokens.insert(account_id.to_string(), token);
+
+                // 配额刷新是权威快照：立即释放该账号的历史模型级 900s 熔断；
+                // 若账号已有正配额，同时释放旧限流锁定，避免恢复后仍被冷却挡住。
+                self.clear_unsupported_models_for_account(account_id);
+                if has_positive_quota {
+                    self.rate_limit_tracker.clear(account_id);
+                }
+
                 self.sync_image_scheduler_accounts();
                 Ok(())
             }
@@ -1010,7 +1030,71 @@ impl TokenManager {
 
     /// 重新加载所有账号
     pub async fn reload_all_accounts(&self) -> Result<usize, String> {
-        self.load_accounts().await
+        let count = self.load_accounts().await?;
+
+        // 批量配额刷新的调用方：对已恢复正配额的账号立即释放旧限流锁定，
+        // 避免「配额已恢复但仍被 5/15 分钟冷却挡住」。
+        let positive_account_ids: Vec<String> = self
+            .tokens
+            .iter()
+            .filter(|entry| entry.value().model_quotas.values().any(|quota| *quota > 0))
+            .map(|entry| entry.key().clone())
+            .collect();
+        for account_id in positive_account_ids {
+            self.rate_limit_tracker.clear(&account_id);
+        }
+
+        Ok(count)
+    }
+
+    /// 处理待重载账号队列。
+    ///
+    /// 模型门禁在判断 `no quota accounts` 前必须先刷新内存池，否则配额更新/新导入
+    /// 产生的 reload 信号只能等到 `get_token_filtered` 才能被消费；而门禁一旦误判，
+    /// 请求根本到不了 `get_token_filtered`，形成「越等越不恢复」的死锁。
+    pub async fn sync_pending_account_reloads(&self) {
+        for account_id in crate::proxy::server::take_pending_reload_accounts() {
+            if let Err(e) = self.reload_account(&account_id).await {
+                tracing::warn!(
+                    "[Quota] Failed to reload account {} before model gate: {}",
+                    account_id,
+                    e
+                );
+            }
+        }
+    }
+
+    /// 模型门禁的最后一道自愈保障：在返回 `no quota accounts` 前强制刷新一次账号池。
+    ///
+    /// 配额更新/新账号导入可能来自 Tauri、HTTP API、CLI 等不同入口，部分入口只写入
+    /// 磁盘而不会向运行中的 TokenManager 发 reload。若不在这里重新读盘，门禁会
+    /// 持续用旧快照判死整池，直到 900s 旧熔断过期才偶然恢复。
+    ///
+    /// 为避免真正无配额时每个请求都触发全量磁盘扫描，这里做 2 秒节流。
+    pub async fn refresh_pool_for_gate_if_stale(&self) {
+        let now = chrono::Utc::now().timestamp();
+        let last = self.last_gate_pool_refresh.load(Ordering::Relaxed);
+        // 池子为空时不节流：新账号导入后必须尽快解除 no-quota 门禁。
+        if !self.tokens.is_empty() && now.saturating_sub(last) < 2 {
+            return;
+        }
+        if self
+            .last_gate_pool_refresh
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+
+        // 先处理精确的待刷新账号（配额更新路径），再做一次全量读盘兜底
+        // （覆盖 CLI/headless 导入等未主动触发 reload 的路径）。
+        self.sync_pending_account_reloads().await;
+        if let Err(e) = self.reload_all_accounts().await {
+            tracing::warn!(
+                "[ModelGate] Failed to refresh account pool before rejection: {}",
+                e
+            );
+        }
     }
 
     /// 从内存中彻底移除指定账号及其关联数据 (Issue #1477)
@@ -1119,6 +1203,10 @@ impl TokenManager {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
                 || account
+                    .get("banned")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                || account
                     .get("quota")
                     .and_then(|q| q.get("is_forbidden"))
                     .and_then(|v| v.as_bool())
@@ -1162,6 +1250,24 @@ impl TokenManager {
                     .and_then(|v| v.as_str())
                     .unwrap_or("<unknown>"),
                 disabled_reason
+            );
+            return Ok(None);
+        }
+
+        // 上游封禁（TOS_VIOLATION 等）与手动禁用相互独立：即使用户解锁反代开关，
+        // 封禁账号也不得重新进入调度池。
+        if account
+            .get("banned")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            tracing::debug!(
+                "Account skipped due to upstream ban: {:?} (email={})",
+                path,
+                account
+                    .get("email")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unknown>")
             );
             return Ok(None);
         }
@@ -4114,15 +4220,9 @@ impl TokenManager {
         self.rate_limit_tracker.cleanup_expired();
     }
 
-    /// 将指定账号的特定高阶模型标记为临时不支持（例如调用 Claude 5.5 返回 404/403）
-    /// 默认冷却 15 分钟 (900s)，期间仅该模型跳过此账号，其他模型 100% 正常调用。
-    pub fn mark_model_unsupported(
-        &self,
-        account_id: &str,
-        model: &str,
-        cooldown_secs: Option<i64>,
-    ) {
-        let base_key = model
+    /// 模型级临时熔断的归一化 key（去掉档位/思考后缀，归属到同一模型族）。
+    fn model_breaker_key(model: &str) -> String {
+        model
             .trim()
             .to_lowercase()
             .replace("-extra-low", "")
@@ -4132,7 +4232,18 @@ impl TokenManager {
             .replace("-xhigh", "")
             .replace("-thinking", "")
             .replace("-tiered", "")
-            .replace("@default", "");
+            .replace("@default", "")
+    }
+
+    /// 将指定账号的特定高阶模型标记为临时不支持（例如调用 Claude 5.5 返回 404/403）
+    /// 默认冷却 15 分钟 (900s)，期间仅该模型跳过此账号，其他模型 100% 正常调用。
+    pub fn mark_model_unsupported(
+        &self,
+        account_id: &str,
+        model: &str,
+        cooldown_secs: Option<i64>,
+    ) {
+        let base_key = Self::model_breaker_key(model);
         let cooldown = cooldown_secs.unwrap_or(900);
         let until = chrono::Utc::now().timestamp() + cooldown;
         tracing::warn!(
@@ -4147,19 +4258,28 @@ impl TokenManager {
             .insert((account_id.to_string(), base_key), until);
     }
 
-    /// 检查指定账号对特定模型是否处于临时熔断状态
+    /// 清除指定账号对某个模型的临时熔断。
+    ///
+    /// 配额刷新 / 模型探活成功都代表上游已经重新可用，必须立即解锁，
+    /// 不能让 900s 的旧冷却继续阻塞调度。
+    pub fn clear_model_unsupported(&self, account_id: &str, model: &str) -> bool {
+        let base_key = Self::model_breaker_key(model);
+        self.unsupported_models
+            .remove(&(account_id.to_string(), base_key))
+            .is_some()
+    }
+
+    /// 清除指定账号的全部模型级临时熔断（用于该账号的配额/账号状态刷新）。
+    pub fn clear_unsupported_models_for_account(&self, account_id: &str) -> usize {
+        let before = self.unsupported_models.len();
+        self.unsupported_models
+            .retain(|(account_id_key, _), _| account_id_key != account_id);
+        before.saturating_sub(self.unsupported_models.len())
+    }
+
+    /// 判断指定账号对特定模型是否处于临时熔断状态
     pub fn is_model_unsupported(&self, account_id: &str, model: &str) -> bool {
-        let base_key = model
-            .trim()
-            .to_lowercase()
-            .replace("-extra-low", "")
-            .replace("-low", "")
-            .replace("-medium", "")
-            .replace("-high", "")
-            .replace("-xhigh", "")
-            .replace("-thinking", "")
-            .replace("-tiered", "")
-            .replace("@default", "");
+        let base_key = Self::model_breaker_key(model);
         let now = chrono::Utc::now().timestamp();
         if let Some(entry) = self
             .unsupported_models
@@ -4181,11 +4301,17 @@ impl TokenManager {
             .map(|entry| entry.value().account_id.clone())
     }
 
-    /// 清除指定账号的限流记录
+    /// 清除指定账号的限流记录（含模型级临时熔断）
     pub fn clear_rate_limit(&self, account_id: &str) -> bool {
         let cleared = self.rate_limit_tracker.clear(account_id);
         let persisted_cleared = self.clear_all_persisted_live_limits(account_id);
-        cleared || persisted_cleared
+        let breakers_cleared = self.clear_unsupported_models_for_account(account_id) > 0;
+        cleared || persisted_cleared || breakers_cleared
+    }
+
+    /// 清除指定账号在特定模型上的限流锁定（用于模型探活成功后立即恢复）
+    pub fn clear_model_rate_limit(&self, account_id: &str, model: &str) -> bool {
+        self.rate_limit_tracker.clear_model(account_id, model)
     }
 
     pub fn clear_rate_limit_memory(&self, account_id: &str) -> bool {
@@ -8877,6 +9003,124 @@ mod tests {
             fallback_token, "token1",
             "账号 2 发生单模型临时熔断后，调度器必须自动避开账号 2"
         );
+    }
+
+    #[tokio::test]
+    async fn test_gate_pool_refresh_sees_newly_imported_mapped_model_account() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let tmp_root = temp_dir.path().to_path_buf();
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+        let now = chrono::Utc::now().timestamp();
+
+        // Start with an empty indexed pool (the exact state that yields no quota accounts).
+        let empty_index = serde_json::json!({
+            "version": "2.0",
+            "accounts": [],
+            "current_account_id": null
+        });
+        std::fs::write(
+            tmp_root.join("accounts.json"),
+            serde_json::to_string_pretty(&empty_index).unwrap(),
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        manager.load_accounts().await.unwrap();
+        assert_eq!(
+            manager.accounts_with_positive_quota("gemini-3.8-flash-high"),
+            0
+        );
+
+        // Simulate an external import (e.g. CLI/headless) that only writes the entity + index.
+        let account_id = "acc_newly_imported";
+        let account = serde_json::json!({
+            "id": account_id,
+            "email": "newly@test.com",
+            "token": {
+                "access_token": "atk-new",
+                "refresh_token": "rtk-new",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600,
+                "project_id": "pid-new"
+            },
+            "quota": {
+                "models": [{ "name": "gemini-3.8-flash-high", "percentage": 100 }],
+                "last_updated": now
+            },
+            "disabled": false,
+            "proxy_disabled": false,
+            "created_at": now,
+            "last_used": now
+        });
+        std::fs::write(
+            accounts_dir.join(format!("{}.json", account_id)),
+            serde_json::to_string_pretty(&account).unwrap(),
+        )
+        .unwrap();
+        let index = serde_json::json!({
+            "version": "2.0",
+            "accounts": [{
+                "id": account_id,
+                "email": "newly@test.com",
+                "name": null,
+                "disabled": false,
+                "proxy_disabled": false,
+                "protected_models": [],
+                "created_at": now,
+                "last_used": now
+            }],
+            "current_account_id": null
+        });
+        std::fs::write(
+            tmp_root.join("accounts.json"),
+            serde_json::to_string_pretty(&index).unwrap(),
+        )
+        .unwrap();
+
+        // The in-memory pool is still stale and would return `no quota accounts` here.
+        assert_eq!(
+            manager.accounts_with_positive_quota("gemini-3.8-flash-high"),
+            0
+        );
+
+        // The gate's self-healing refresh must pick up the newly imported account immediately.
+        manager.refresh_pool_for_gate_if_stale().await;
+        assert_eq!(
+            manager.accounts_with_positive_quota("gemini-3.8-flash-high"),
+            1,
+            "newly imported account with mapped-model quota must release the no-quota gate"
+        );
+    }
+
+    #[test]
+    fn test_model_breaker_clear_after_quota_recovery() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        manager.mark_model_unsupported("acc_recovered", "claude-sonnet-5-5-high", Some(900));
+        manager.mark_model_unsupported("acc_recovered", "gemini-3.8-flash-high", Some(900));
+        manager.mark_model_unsupported("acc_other", "claude-sonnet-5-5-high", Some(900));
+
+        assert!(manager.is_model_unsupported("acc_recovered", "claude-sonnet-5-5"));
+        assert!(manager.is_model_unsupported("acc_recovered", "gemini-3.8-flash"));
+
+        // Quota refresh for one account must release only this account's breakers.
+        assert_eq!(
+            manager.clear_unsupported_models_for_account("acc_recovered"),
+            2
+        );
+        assert!(!manager.is_model_unsupported("acc_recovered", "claude-sonnet-5-5"));
+        assert!(!manager.is_model_unsupported("acc_recovered", "gemini-3.8-flash"));
+        assert!(
+            manager.is_model_unsupported("acc_other", "claude-sonnet-5-5"),
+            "clearing one account must not release other accounts"
+        );
+
+        // Successful single-model probe clears exactly that model family.
+        manager.mark_model_unsupported("acc_probe", "claude-sonnet-5-5-low", Some(900));
+        assert!(manager.clear_model_unsupported("acc_probe", "claude-sonnet-5-5-high"));
+        assert!(!manager.is_model_unsupported("acc_probe", "claude-sonnet-5-5"));
     }
 
     #[tokio::test]

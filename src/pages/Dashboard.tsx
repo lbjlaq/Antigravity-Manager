@@ -109,11 +109,11 @@ function Dashboard() {
         // 1. 账号生态健康状态分类（风控与启用状态定生死，不以额度定生死）
         // 异常账号：触发 Google 验证码/风控阻断，或配额接口返回 403 Forbidden 封禁
         const abnormalAccounts = accounts.filter(
-            a => a.validation_blocked || a.quota?.is_forbidden
+            a => a.validation_blocked || a.banned || a.quota?.is_forbidden
         );
         // 全量正常状态账号（彻底剔除风控异常账号）
         const normalAccounts = accounts.filter(
-            a => !a.validation_blocked && !a.quota?.is_forbidden
+            a => !a.validation_blocked && !a.banned && !a.quota?.is_forbidden
         );
         // 完全被用户手动停用的账号 (disabled 为 true)
         const fullyDisabledAccounts = normalAccounts.filter(

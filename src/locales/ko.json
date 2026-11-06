@@ -274,6 +274,12 @@
         "disable_proxy_selected": "비활성화 ({{count}})",
         "proxy_disabled_reason_manual": "사용자에 의해 수동으로 비활성화됨",
         "proxy_disabled_reason_batch": "일괄 비활성화됨",
+        "banned": "Banned",
+        "banned_tooltip": "Account is banned by upstream (TOS violation). Please submit an appeal.",
+        "banned_msg": "Account banned by upstream; auto refresh stopped",
+        "refresh_quota_and_ban": "Refresh quota & ban status",
+        "appeal_url_copied": "Appeal link copied to clipboard",
+        "copy_failed": "Copy failed; please select and copy manually",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "API가 403 Forbidden을 반환했습니다. 계정에 Gemini Code Assist 권한이 없습니다.",
@@ -285,7 +291,8 @@
             "validation_required": "확인 필요",
             "risk_controlled": "위험 제어 / 속도 제한",
             "oauth_reauth_required": "OAuth 재인증 필요",
-            "violation_blocked": "위반으로 차단됨"
+            "violation_blocked": "위반으로 차단됨",
+            "banned": "Account Banned"
         },
         "error_details": "오류 상세 정보",
         "error_status": "오류 상태",

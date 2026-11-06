@@ -274,6 +274,12 @@
         "disable_proxy_selected": "Desabilitar ({{count}})",
         "proxy_disabled_reason_manual": "Desabilitado manualmente pelo usuário",
         "proxy_disabled_reason_batch": "Desabilitado em lote",
+        "banned": "Banned",
+        "banned_tooltip": "Account is banned by upstream (TOS violation). Please submit an appeal.",
+        "banned_msg": "Account banned by upstream; auto refresh stopped",
+        "refresh_quota_and_ban": "Refresh quota & ban status",
+        "appeal_url_copied": "Appeal link copied to clipboard",
+        "copy_failed": "Copy failed; please select and copy manually",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "API retornou 403 Forbidden, conta não tem permissão para Gemini Code Assist",
@@ -285,7 +291,8 @@
             "validation_required": "Validação Necessária",
             "risk_controlled": "Controle de Risco",
             "oauth_reauth_required": "Reautenticação Necessária",
-            "violation_blocked": "Bloqueado por Violação"
+            "violation_blocked": "Bloqueado por Violação",
+            "banned": "Account Banned"
         },
         "error_details": "Detalhes do erro",
         "error_status": "Status do erro",

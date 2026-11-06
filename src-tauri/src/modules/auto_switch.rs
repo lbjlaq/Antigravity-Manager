@@ -168,7 +168,7 @@ pub fn find_model_percentage(quota: &QuotaData, model_pattern: &str) -> Option<i
 /// * `monitored_models`: 监控模型列表。若非空，任一监控模型低于阈值即判定为耗尽；若为空，则全部核心模型归零才触发
 pub fn is_account_depleted(account: &Account, threshold: i32, monitored_models: &[String]) -> bool {
     // 1. 禁用或封禁
-    if account.disabled || account.validation_blocked {
+    if account.disabled || account.banned || account.validation_blocked {
         return true;
     }
 
@@ -294,6 +294,7 @@ pub fn find_best_candidate(
         .filter(|acc| {
             acc.id != current_id
                 && !acc.disabled
+                && !acc.banned
                 && !acc.validation_blocked
                 && !is_account_depleted(acc, threshold, monitored_models)
         })

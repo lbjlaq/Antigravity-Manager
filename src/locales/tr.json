@@ -268,6 +268,12 @@
         "disable_proxy_selected": "Devre Dışı Bırak ({{count}})",
         "proxy_disabled_reason_manual": "Kullanıcı tarafından manuel olarak devre dışı bırakıldı",
         "proxy_disabled_reason_batch": "Toplu işlemle devre dışı bırakıldı",
+        "banned": "Banned",
+        "banned_tooltip": "Account is banned by upstream (TOS violation). Please submit an appeal.",
+        "banned_msg": "Account banned by upstream; auto refresh stopped",
+        "refresh_quota_and_ban": "Refresh quota & ban status",
+        "appeal_url_copied": "Appeal link copied to clipboard",
+        "copy_failed": "Copy failed; please select and copy manually",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "API 403 Forbidden döndürdü, hesap Gemini Code Assist için izne sahip değil",
@@ -279,7 +285,8 @@
             "validation_required": "Verification Required",
             "risk_controlled": "Risk / Rate Limited",
             "oauth_reauth_required": "OAuth Re-auth Required",
-            "violation_blocked": "Blocked due to Violation"
+            "violation_blocked": "Blocked due to Violation",
+            "banned": "Account Banned"
         },
         "error_details": "Hata Detayları",
         "error_status": "Hata Durumu",

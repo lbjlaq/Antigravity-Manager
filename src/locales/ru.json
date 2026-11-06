@@ -274,6 +274,12 @@
         "disable_proxy_selected": "Отключить ({{count}})",
         "proxy_disabled_reason_manual": "Отключен вручную пользователем",
         "proxy_disabled_reason_batch": "Отключен пакетно",
+        "banned": "Banned",
+        "banned_tooltip": "Account is banned by upstream (TOS violation). Please submit an appeal.",
+        "banned_msg": "Account banned by upstream; auto refresh stopped",
+        "refresh_quota_and_ban": "Refresh quota & ban status",
+        "appeal_url_copied": "Appeal link copied to clipboard",
+        "copy_failed": "Copy failed; please select and copy manually",
         "forbidden": "403",
         "forbidden_badge": "403",
         "forbidden_tooltip": "API вернул 403 Forbidden, у аккаунта нет прав для Gemini Code Assist",
@@ -285,7 +291,8 @@
             "validation_required": "Требуется проверка",
             "risk_controlled": "Ограничение по рискам / лимитам",
             "oauth_reauth_required": "Требуется повторная авторизация OAuth",
-            "violation_blocked": "Заблокировано из-за нарушений"
+            "violation_blocked": "Заблокировано из-за нарушений",
+            "banned": "Account Banned"
         },
         "error_details": "Детали ошибки",
         "error_status": "Статус ошибки",
