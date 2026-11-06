@@ -117,13 +117,12 @@ impl InboundThinkingPipeline {
         // 若拆为多个 model 轮次，后续轮次将因缺失独立签名被直接拒收 400。
         Self::merge_consecutive_function_call_turns(contents);
 
-        // 0.15 工具调用与回执相邻性对齐（Pipeline First 统一治理，仅 Claude 目标生效）：
-        // 把夹在 functionCall 轮与 functionResponse 轮之间的纯文本 model 轮折回调用轮，
-        // 避免 Claude 目标把夹层正文当作末尾 assistant prefill 拒收 400。
-        // Gemini 目标本身接受该顺序，保持原样以免改写历史前缀、导致已有会话的上下文缓存失效。
-        if is_claude {
-            Self::fold_commentary_between_call_and_response(contents);
-        }
+        // 0.15 工具调用与回执相邻性对齐（Pipeline First 统一治理）：
+        // 把夹在 functionCall 轮与 functionResponse 轮之间的纯文本 model 轮折回调用轮：
+        // - Claude 目标：避免把夹层正文当作末尾 assistant prefill 拒收 400；
+        // - Gemini 目标：避免独立夹层 model 轮在紧随其后的那一轮因处于 last_model_idx 被挂上会话签名、
+        //   下一轮不再是末轮又丢失签名，从而造成历史前缀跳变与上下文缓存失效。
+        Self::fold_commentary_between_call_and_response(contents);
 
         // 0.2 统一上下文结构对齐（Pipeline First 统一治理）：
         // 将连续的 user 消息直到下一个 model，统一合并为一个 user 轮次的多个 block (parts)，保持严格顺序。
@@ -3689,37 +3688,50 @@ mod tests {
         assert!(call_parts.iter().any(|p| p.get("functionCall").is_some()));
     }
 
-    /// 端到端：Gemini 目标不折叠夹层正文，保持原有历史前缀，避免已有会话缓存失效。
+    /// 端到端：Gemini 目标同样折叠夹层正文，消除夹层轮在相邻两轮之间签名闪烁导致的前缀缓存失效。
     #[test]
-    fn test_gemini_pipeline_does_not_fold_commentary() {
-        let mut contents = vec![
+    fn test_gemini_pipeline_folds_commentary_and_keeps_prefix_stable() {
+        let sid = "test-gemini-fold-commentary-prefix-stability";
+        let sig = "E".repeat(64);
+        crate::proxy::SignatureCache::global().cache_tool_signature(sid, "call_1", sig.clone());
+        crate::proxy::SignatureCache::global().cache_session_signature(sid, sig.clone(), 1);
+
+        // 第 N 轮（工具刚执行完回传）
+        let mut turn_n = vec![
             json!({"role": "user", "parts": [{"text": "go"}]}),
             json!({"role": "model", "parts": [fc_part("call_1", "exec_command")]}),
             json!({"role": "model", "parts": [{"text": "Creating the branch now."}]}),
             json!({"role": "user", "parts": [fr_part("call_1", "exec_command")]}),
         ];
         InboundThinkingPipeline::process_contents(
-            &mut contents,
+            &mut turn_n,
             "gemini-3.8-flash-low",
-            false,
-            None,
+            true,
+            Some(sid),
             false,
         );
-        let flat: Vec<&Value> = contents
-            .iter()
-            .flat_map(|c| c["parts"].as_array().unwrap().iter())
-            .collect();
-        let call_idx = flat
-            .iter()
-            .position(|p| p.get("functionCall").is_some())
-            .unwrap();
-        let text_idx = flat
-            .iter()
-            .position(|p| p["text"] == "Creating the branch now.")
-            .unwrap();
-        assert!(
-            call_idx < text_idx,
-            "Gemini 目标应保持 functionCall 在夹层正文之前"
+
+        // 第 N+1 轮（后续轮次继续推进，该工具轮进入历史前缀）
+        let mut turn_n_plus_1 = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [fc_part("call_1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Creating the branch now."}]}),
+            json!({"role": "user", "parts": [fr_part("call_1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Branch created.", "thoughtSignature": sig}]}),
+            json!({"role": "user", "parts": [{"text": "next"}]}),
+        ];
+        InboundThinkingPipeline::process_contents(
+            &mut turn_n_plus_1,
+            "gemini-3.8-flash-low",
+            true,
+            Some(sid),
+            false,
+        );
+
+        assert_eq!(
+            &turn_n[..],
+            &turn_n_plus_1[..turn_n.len()],
+            "Gemini 目标在工具回传轮与后续轮次中的历史前缀必须逐字节一致"
         );
     }
 
