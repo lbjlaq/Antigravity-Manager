@@ -385,7 +385,13 @@ fn simplify_content(content: &Value) -> Value {
             if s.starts_with("data:") {
                 Value::String(redact_data_url(s))
             } else {
-                Value::String(s.clone())
+                // 文本内嵌的 data URL（如序列化进 prompt 的会话转录）同样折叠，避免日志被 Base64 撑爆
+                Value::String(
+                    crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::collapse_text_data_urls(
+                        s, 1024,
+                    )
+                    .unwrap_or_else(|| s.clone()),
+                )
             }
         }
         Value::Array(arr) => Value::Array(
