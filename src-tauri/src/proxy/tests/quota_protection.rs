@@ -44,6 +44,9 @@ mod tests {
             model_limits: std::collections::HashMap::new(),
             available_models: std::collections::HashSet::new(),
             model_metadata: std::collections::HashMap::new(),
+            model_reset_times: std::collections::HashMap::new(),
+            model_weekly_reset_times: std::collections::HashMap::new(),
+            model_quota_windows: std::collections::HashMap::new(),
         }
     }
 
@@ -1115,6 +1118,9 @@ mod tests {
             model_limits: std::collections::HashMap::new(),
             available_models: std::collections::HashSet::new(),
             model_metadata: std::collections::HashMap::new(),
+            model_reset_times: std::collections::HashMap::new(),
+            model_weekly_reset_times: std::collections::HashMap::new(),
+            model_quota_windows: std::collections::HashMap::new(),
         }
     }
 

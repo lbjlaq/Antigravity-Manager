@@ -827,6 +827,9 @@ mod tests {
             model_limits: HashMap::new(),
             available_models: HashSet::new(),
             model_metadata: HashMap::new(),
+            model_reset_times: HashMap::new(),
+            model_weekly_reset_times: HashMap::new(),
+            model_quota_windows: HashMap::new(),
         }
     }
 

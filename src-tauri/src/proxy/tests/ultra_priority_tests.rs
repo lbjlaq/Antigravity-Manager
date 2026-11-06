@@ -59,6 +59,9 @@ fn create_test_token(
         model_limits: std::collections::HashMap::new(),
         available_models: supported_models.iter().map(|s| s.to_lowercase()).collect(),
         model_metadata: std::collections::HashMap::new(),
+        model_reset_times: HashMap::new(),
+        model_weekly_reset_times: HashMap::new(),
+        model_quota_windows: HashMap::new(),
     }
 }
 

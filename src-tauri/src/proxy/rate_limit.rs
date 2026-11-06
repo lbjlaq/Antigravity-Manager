@@ -982,31 +982,59 @@ impl RateLimitTracker {
 
     /// 安全释放因配额耗尽产生的持续锁定：
     /// - 仅清除 reason 为 QuotaExhausted 的记录，严禁误触 429 速率限制 (RateLimitExceeded)、服务器错误等独立限流；
-    /// - 针对直接或标准 ID 均做精确比对；
+    /// - 针对直接、标准 ID 以及同族变体均做精确比对；
     pub fn reconcile_quota_recovery(&self, account_id: &str, model: &str) -> bool {
         let normalized = crate::proxy::common::model_mapping::normalize_to_standard_id(model)
             .unwrap_or_else(|| model.to_string());
 
-        let keys = if normalized != model {
-            vec![
-                self.get_limit_key(account_id, Some(&normalized)),
-                self.get_limit_key(account_id, Some(model)),
-            ]
-        } else {
-            vec![self.get_limit_key(account_id, Some(model))]
-        };
-
         let mut cleared = false;
-        for key in keys {
-            if let Some(entry) = self.limits.get(&key) {
-                if entry.reason == RateLimitReason::QuotaExhausted {
-                    drop(entry);
-                    if self.limits.remove(&key).is_some() {
-                        cleared = true;
-                    }
-                }
+        let prefix = format!("{}:", account_id);
+
+        self.limits.retain(|key, entry| {
+            if entry.reason != RateLimitReason::QuotaExhausted {
+                return true;
             }
-        }
+            if !key.starts_with(&prefix) && key != account_id {
+                return true;
+            }
+            let key_model = if key == account_id {
+                ""
+            } else {
+                &key[prefix.len()..]
+            };
+            let matches = key_model == model
+                || key_model == normalized
+                || (!key_model.is_empty()
+                    && crate::proxy::common::model_mapping::normalize_to_standard_id(key_model)
+                        .is_some_and(|std_k| std_k == normalized || std_k == model));
+            if matches {
+                cleared = true;
+                false
+            } else {
+                true
+            }
+        });
+
+        cleared
+    }
+
+    /// 安全释放指定账号的所有已恢复配额锁定：
+    /// - 仅清除 reason 为 QuotaExhausted 的记录，严格保留 429 速率限制 (RateLimitExceeded) 等独立限流退避；
+    pub fn reconcile_all_quota_recovery_for_account(&self, account_id: &str) -> bool {
+        let mut cleared = false;
+        let prefix = format!("{}:", account_id);
+
+        self.limits.retain(|key, entry| {
+            if entry.reason != RateLimitReason::QuotaExhausted {
+                return true;
+            }
+            if !key.starts_with(&prefix) && key != account_id {
+                return true;
+            }
+            cleared = true;
+            false
+        });
+
         cleared
     }
 
@@ -1551,6 +1579,37 @@ mod tests {
         // 配额恢复：严禁清除独立 429 速率限制！
         assert!(!tracker.reconcile_quota_recovery("acc_test", "claude-sonnet-4-6"));
         assert!(tracker.is_rate_limited("acc_test", Some("claude-sonnet-4-6")));
+    }
+
+    #[test]
+    fn test_reconcile_all_quota_recovery_for_account_preserves_rate_limit_exceeded() {
+        let tracker = RateLimitTracker::new();
+        let target_time = SystemTime::now() + Duration::from_secs(3600);
+
+        // 设置配额耗尽锁定
+        tracker.set_lockout_until_with_cap(
+            "acc_p16",
+            target_time,
+            RateLimitReason::QuotaExhausted,
+            Some("claude".to_string()),
+            false,
+        );
+        // 设置 429 速率限制锁定
+        tracker.set_lockout_until_with_cap(
+            "acc_p16",
+            target_time,
+            RateLimitReason::RateLimitExceeded,
+            Some("gemini-2.5-pro".to_string()),
+            false,
+        );
+
+        assert!(tracker.is_rate_limited("acc_p16", Some("claude")));
+        assert!(tracker.is_rate_limited("acc_p16", Some("gemini-2.5-pro")));
+
+        // 账号全量配额恢复重对齐：仅释放 QuotaExhausted，必须保留 RateLimitExceeded
+        assert!(tracker.reconcile_all_quota_recovery_for_account("acc_p16"));
+        assert!(!tracker.is_rate_limited("acc_p16", Some("claude")));
+        assert!(tracker.is_rate_limited("acc_p16", Some("gemini-2.5-pro")));
     }
 
     #[test]
