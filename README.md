@@ -201,6 +201,20 @@ docker run -d --name antigravity-manager \
 # Forgot keys? Run `docker logs antigravity-manager` or `grep -E '"api_key"|"admin_password"' ~/.antigravity_tools/gui_config.json`
 ```
 
+### Option D: Android Termux Native Deployment (ARM64 Headless)
+For Android users and lightweight self-hosting (e.g. running alongside SillyTavern / Lumiverse as a local API gateway on phone), we provide native `aarch64-linux-android` (Bionic libc) headless binaries without requiring Debian PRoot or Docker:
+
+```bash
+# One-line installer for Termux ($PREFIX/bin/antigravity-server)
+curl -sSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-termux.sh | bash
+
+# Run mode 1: Standard server (allows browser access to Web UI for dashboard management)
+antigravity-server
+
+# Run mode 2: Pure proxy mode (completely disables Web UI to save battery & eliminate LAN attack surface)
+antigravity-server --no-web
+```
+
 > [!TIP]
 > **🧪 Pulling Beta / Preview Images**:
 > To test the latest Beta pre-release features, specify the corresponding Beta version tag (pre-releases are published independently and will never overwrite the `latest` stable tag):

@@ -3,6 +3,15 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.0 (2026-11-06)**:
+        -   **[Native Android Architecture: Termux ARM64 Container-Free Deployment & Headless Runtime] (Fixes #3818, Thanks to @sandwitchers)**:
+            -   **Android Termux Native Support**: Added native `aarch64-linux-android` (Bionic libc) backend target and one-click installation script `scripts/install-termux.sh`, completely freeing Android devices from container overhead (PRoot / chroot / Docker) for ultra-lightweight, energy-efficient local API gateway and Web UI execution. (Fixes #3818, Thanks to @sandwitchers)
+            -   **Zero-Account Web Deadlock Resolution**: Fixed middleware deadlock in static asset and authentication filtering when zero accounts exist or the proxy service is inactive, ensuring seamless access to the Web console and account onboarding on cold boots. (Fixes #3818)
+            -   **Cascading Static Asset Path Resolution**: Introduced `resolve_static_dist_path` algorithm supporting `ABV_DIST_PATH` env override and cascaded directory probing (`./dist`, `<exe_dir>/dist`, `$PREFIX/share/antigravity/dist`), eliminating CWD execution path dependencies. (Fixes #3818)
+            -   **CI Workflow & Distribution Packaging**: Updated the Android release workflow to bundle frontend `dist` assets into `antigravity-server-android-arm64.tar.gz`, with the installer automatically deploying it to the standard share path. (Fixes #3818)
+            -   **Server Command-Line Help Interception Fix**: Pre-empted `--help` / `-h` before generic CLI parsing, restoring the display of server flags (`-p`, `-h`, `--no-web`, `--pure-proxy`). (Fixes #3818)
+            -   **Web UI Model Probe Endpoint Parity**: Registered the `POST /api/proxy/test-model` route on the headless admin server, resolving the 405 Method Not Allowed error when clicking the "Test" button on models in the Web UI. (Fixes #3818)
+
     *   **v5.0.3 (2026-11-06)**:
         -   **[Quota Attribution Governance: Root-Fixing 503 Misattribution & Quota False-Death; Refactoring Bucket Scheduling and Priority Competition] (Fixes #3838, #3841, #3821, PR #3845, Ref #3827, #3840)**:
             -   **Eradicate 503 Attribution Pollution (92.6% of all 5xx)**: Unified all internal gateway throttling predicates into the single source of truth `policy::is_internal_gateway_exhaustion`, covering the previously mis-detected `All accounts rate-limited` (the old list only matched `all accounts limited`), so local pool throttling is no longer reported as an upstream 503; converged the two other drifting implementations in `rate_limit.rs` and `token_manager.rs`. (Fixes #3838)

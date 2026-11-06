@@ -1227,15 +1227,23 @@ pub async fn show_mini_view(app: tauri::AppHandle) -> Result<(), String> {
 /// 设置窗口主题（用于同步 Windows 标题栏按钮颜色）
 #[tauri::command]
 pub async fn set_window_theme(window: tauri::Window, theme: String) -> Result<(), String> {
-    use tauri::Theme;
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri::Theme;
 
-    let tauri_theme = match theme.as_str() {
-        "dark" => Some(Theme::Dark),
-        "light" => Some(Theme::Light),
-        _ => None, // system default
-    };
+        let tauri_theme = match theme.as_str() {
+            "dark" => Some(Theme::Dark),
+            "light" => Some(Theme::Light),
+            _ => None, // system default
+        };
 
-    window.set_theme(tauri_theme).map_err(|e| e.to_string())
+        window.set_theme(tauri_theme).map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = (window, theme);
+        Ok(())
+    }
 }
 
 /// 获取 Antigravity 可执行文件路径
@@ -1530,35 +1538,6 @@ pub async fn update_account_priority(
             .update_account_priority(&account_id, priority);
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn update_account_project_id(
-    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
-    account_id: String,
-    project_id: Option<String>,
-) -> Result<(), String> {
-    modules::account::update_account_project_id(&account_id, project_id.clone())?;
-    if let Some(instance) = proxy_state.instance.read().await.as_ref() {
-        instance
-            .token_manager
-            .update_account_project_id(&account_id, project_id);
-    }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn auto_fetch_account_project_id(
-    proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
-    account_id: String,
-) -> Result<String, String> {
-    let pid = modules::account::auto_fetch_account_project_id(&account_id).await?;
-    if let Some(instance) = proxy_state.instance.read().await.as_ref() {
-        instance
-            .token_manager
-            .update_account_project_id(&account_id, Some(pid.clone()));
-    }
-    Ok(pid)
 }
 
 /// 更新账号自定义标签

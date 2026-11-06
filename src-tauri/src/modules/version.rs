@@ -79,7 +79,7 @@ pub fn get_antigravity_version_with_path(
         .ok_or("Unable to locate Antigravity executable")?;
 
     // 2. 根据平台读取版本信息
-    let res = {
+    let res: Result<AntigravityVersion, String> = {
         #[cfg(target_os = "macos")]
         {
             get_version_macos(&exe_path)

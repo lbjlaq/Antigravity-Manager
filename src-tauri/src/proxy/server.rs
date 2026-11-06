@@ -918,6 +918,7 @@ impl AxumServer {
             .route("/proxy/cloudflared/stop", post(admin_cloudflared_stop))
             .route("/system/open-folder", post(admin_open_folder))
             .route("/proxy/stats", get(admin_get_proxy_stats))
+            .route("/proxy/test-model", post(admin_test_model))
             .route("/logs", get(admin_get_proxy_logs_filtered))
             .route("/logs/count", get(admin_get_proxy_logs_count_filtered))
             .route("/logs/disk-size", get(admin_get_proxy_db_disk_size))
@@ -1107,15 +1108,26 @@ impl AxumServer {
             .layer(DefaultBodyLimit::max(max_body_size)) // 放宽 body 大小限制
             .with_state(state.clone());
 
-        // 静态文件托管 (用于 Headless/Docker 模式)
-        let dist_path = std::env::var("ABV_DIST_PATH").unwrap_or_else(|_| "dist".to_string());
-        let app = if std::path::Path::new(&dist_path).exists() {
-            tracing::info!("正在托管静态资源: {}", dist_path);
-            app.fallback_service(tower_http::services::ServeDir::new(&dist_path).fallback(
-                tower_http::services::ServeFile::new(format!("{}/index.html", dist_path)),
-            ))
-        } else {
+        // 静态文件托管 (用于 Headless/Docker 模式，可通过 ABV_DISABLE_WEB 显式关闭)
+        let disable_web = std::env::var("ABV_DISABLE_WEB")
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
+
+        let app = if disable_web {
+            tracing::info!("Web 管理控制台已通过配置或入参关闭 (Pure-Proxy 纯代理模式)");
             app
+        } else {
+            let dist_path = resolve_static_dist_path();
+            if let Some(path_buf) = dist_path {
+                let path_str = path_buf.to_string_lossy().to_string();
+                tracing::info!("正在托管静态资源: {}", path_str);
+                app.fallback_service(tower_http::services::ServeDir::new(&path_buf).fallback(
+                    tower_http::services::ServeFile::new(path_buf.join("index.html")),
+                ))
+            } else {
+                tracing::warn!("未找到前端静态资源目录 (dist)，Web 仪表盘静态托管未激活");
+                app
+            }
         };
 
         // 绑定地址（使用 socket2 开启 SO_REUSEADDR，通配地址自动开启 IPv6/IPv4 双栈支持）
@@ -1310,6 +1322,30 @@ fn bind_dual_stack_socket(port: u16) -> Result<tokio::net::TcpListener, String> 
     let std_listener: std::net::TcpListener = socket.into();
     tokio::net::TcpListener::from_std(std_listener)
         .map_err(|e| format!("转换为 Tokio TcpListener 失败 ([::]:{}): {}", port, e))
+}
+
+/// 解析前端静态资源目录，不依赖当前工作目录。
+/// 优先级：ABV_DIST_PATH > ./dist > 可执行文件同级 dist > 可执行文件上级 ../share/antigravity/dist
+fn resolve_static_dist_path() -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(p) = std::env::var("ABV_DIST_PATH") {
+        if !p.trim().is_empty() {
+            candidates.push(PathBuf::from(p));
+        }
+    }
+    candidates.push(PathBuf::from("dist"));
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("dist"));
+            candidates.push(dir.join("../share/antigravity/dist"));
+        }
+    }
+
+    candidates
+        .into_iter()
+        .find(|p| p.join("index.html").is_file())
 }
 
 /// 绑定 TCP 监听器（启用地址复用，遇通配地址如 0.0.0.0 / :: 时自动开启 IPv6/IPv4 双栈支持）
@@ -2538,6 +2574,126 @@ async fn admin_get_proxy_stats(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let stats = state.monitor.get_stats().await;
     Ok(Json(stats))
+}
+
+#[derive(serde::Deserialize)]
+struct AdminTestModelRequest {
+    model: String,
+    #[serde(default, rename = "targetAccountId")]
+    target_account_id: Option<String>,
+}
+
+async fn admin_test_model(
+    State(state): State<AppState>,
+    Json(payload): Json<AdminTestModelRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let port = state.port;
+    let accounts = crate::modules::account::list_accounts().unwrap_or_default();
+
+    let (chosen_account, token, pid) = if let Some(ref acc_id) = payload.target_account_id {
+        if !acc_id.is_empty() {
+            let acc = accounts
+                .iter()
+                .find(|a| &a.id == acc_id)
+                .cloned()
+                .ok_or_else(|| {
+                    (
+                        StatusCode::NOT_FOUND,
+                        Json(ErrorResponse {
+                            error: "未找到指定的账号".to_string(),
+                        }),
+                    )
+                })?;
+            let (t, p) = crate::modules::quota::get_valid_token_for_warmup(&acc)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse { error: e }),
+                    )
+                })?;
+            (acc, t, p)
+        } else {
+            pick_auto_test_account_for_web(&accounts)
+                .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?
+        }
+    } else {
+        pick_auto_test_account_for_web(&accounts)
+            .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?
+    };
+
+    let warmup_url = format!("http://127.0.0.1:{}/internal/warmup", port);
+    let body = serde_json::json!({
+        "email": chosen_account.email,
+        "model": payload.model,
+        "access_token": token,
+        "project_id": pid,
+        "account_id": chosen_account.id
+    });
+
+    let client = rquest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .no_proxy()
+        .build()
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("创建客户端失败: {}", e),
+                }),
+            )
+        })?;
+
+    let resp = client
+        .post(&warmup_url)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("发送预热检测请求失败: {}", e),
+                }),
+            )
+        })?;
+
+    let result = resp
+        .json::<crate::proxy::handlers::warmup::WarmupResponse>()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("解析预热检测结果失败: {}", e),
+                }),
+            )
+        })?;
+
+    Ok(Json(result))
+}
+
+fn pick_auto_test_account_for_web(
+    accounts: &[crate::models::account::Account],
+) -> Result<(crate::models::account::Account, String, String), String> {
+    let candidates: Vec<_> = accounts
+        .iter()
+        .filter(|a| !a.disabled && !a.proxy_disabled)
+        .cloned()
+        .collect();
+
+    if candidates.is_empty() {
+        return Err(
+            "当前没有开启反代的可用账号，请先在账号页面开启至少一个账号的反代，或指定具体账号测试"
+                .to_string(),
+        );
+    }
+
+    let chosen = candidates[0].clone();
+    let token = chosen.token.access_token.clone();
+    let pid = chosen.token.project_id.clone().unwrap_or_default();
+    Ok((chosen, token, pid))
 }
 
 async fn admin_get_data_dir_path() -> impl IntoResponse {

@@ -13,7 +13,7 @@ pub async fn service_status_middleware(
 ) -> Response {
     let path = request.uri().path();
 
-    // 管理接口、OAuth 回调和健康检查在停服后仍要可达。
+    // 管理接口、OAuth 回调、健康检查和前端静态资源在停服后仍要可达（以便用户通过 Web 界面配置账号）。
     // /internal/ 只放行本机回环，避免停服后公网仍能打到预热端点。
     let internal_from_loopback = path.starts_with("/internal/")
         && crate::proxy::middleware::ip_filter::is_direct_loopback(&request);
@@ -21,6 +21,7 @@ pub async fn service_status_middleware(
         || internal_from_loopback
         || path == "/auth/callback"
         || path == "/health"
+        || crate::proxy::middleware::is_static_asset_path(path)
     {
         return next.run(request).await;
     }

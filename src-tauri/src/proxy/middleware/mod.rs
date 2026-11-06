@@ -8,7 +8,7 @@ pub mod monitor;
 
 pub mod service_status;
 
-pub use auth::{admin_auth_middleware, auth_middleware};
+pub use auth::{admin_auth_middleware, auth_middleware, is_static_asset_path};
 pub use cors::cors_layer;
 pub use ip_filter::ip_filter_middleware;
 pub use monitor::monitor_middleware;
