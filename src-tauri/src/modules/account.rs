@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::models::account::{classify_lock_reason, AccountLockKind};
 use crate::models::{
     Account, AccountBanInfo, AccountIndex, AccountSummary, DeviceProfile, DeviceProfileVersion,
     QuotaData, TokenData,
@@ -1086,6 +1087,44 @@ mod tests {
         assert!(unlocked.validation_url.is_none());
         assert!(!unlocked.proxy_disabled);
         assert!(!unlocked.quota.as_ref().unwrap().is_forbidden);
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
+    fn test_clear_validation_blocked_accepts_lowercase_validation_reason() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-lowercase-validation-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "validation-lower@example.com");
+
+        let mut account = load_account(acc_id).unwrap();
+        account.validation_blocked = true;
+        account.validation_blocked_until = Some(chrono::Utc::now().timestamp() + 600);
+        account.validation_blocked_reason = Some("VALIDATION_REQUIRED: Human captcha".to_string());
+        account.proxy_disabled = true;
+        // 代理层写入的是小写 validation_required；旧实现区分大小写，导致永远清不掉。
+        account.proxy_disabled_reason = Some("validation_required".to_string());
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("VALIDATION_REQUIRED: Human captcha".to_string());
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        clear_validation_blocked(&mut account);
+
+        assert!(!account.validation_blocked);
+        assert!(
+            !account.proxy_disabled,
+            "lowercase validation_required must auto-recover proxy_disabled"
+        );
+        assert!(account.proxy_disabled_reason.is_none());
+        assert!(!account.quota.as_ref().unwrap().is_forbidden);
 
         std::env::remove_var("ABV_DATA_DIR");
     }
@@ -2636,23 +2675,30 @@ fn clear_validation_blocked(account: &mut Account) {
 
     // 严禁因人机验证锁清除而越权清除 403 Forbidden 或 TOS 封禁状态。
     // 只有定向测活成功 (clear_account_forbidden_and_validation) 或用户手动操作才能解封 403。
-    let is_403_or_banned = account.banned
-        || account.proxy_disabled_reason.as_deref().map_or(false, |r| {
-            r.starts_with("Forbidden (403)")
-                || r.contains("403 Forbidden")
-                || r.starts_with("banned:")
-        })
-        || account
-            .quota
-            .as_ref()
-            .and_then(|q| q.forbidden_reason.as_deref())
-            .map_or(false, |r| {
-                r.starts_with("Forbidden (403)")
-                    || r.contains("403 Forbidden")
-                    || r.starts_with("banned:")
-            });
+    // 同时必须只看“仍然生效”的锁：proxy_disabled / quota.is_forbidden 为 false 时，
+    // 陈旧的 reason 文本不得阻止验证状态清理。
+    let is_hard_lock = account.banned
+        || (account.proxy_disabled
+            && account
+                .proxy_disabled_reason
+                .as_deref()
+                .is_some_and(|reason| {
+                    matches!(
+                        classify_lock_reason(reason),
+                        AccountLockKind::Banned | AccountLockKind::HardForbidden
+                    )
+                }))
+        || account.quota.as_ref().is_some_and(|quota| {
+            quota.is_forbidden
+                && quota.forbidden_reason.as_deref().is_some_and(|reason| {
+                    matches!(
+                        classify_lock_reason(reason),
+                        AccountLockKind::Banned | AccountLockKind::HardForbidden
+                    )
+                })
+        });
 
-    if !is_403_or_banned {
+    if !is_hard_lock {
         if let Some(ref mut q) = account.quota {
             q.is_forbidden = false;
             q.forbidden_reason = None;
@@ -2662,7 +2708,7 @@ fn clear_validation_blocked(account: &mut Account) {
             && account
                 .proxy_disabled_reason
                 .as_deref()
-                .map_or(false, |r| r.contains("VALIDATION_REQUIRED"))
+                .is_some_and(|reason| classify_lock_reason(reason) == AccountLockKind::Validation)
         {
             account.proxy_disabled = false;
             account.proxy_disabled_reason = None;
@@ -3294,8 +3340,10 @@ pub fn update_account_quota_internal(
             if account.proxy_disabled
                 && account
                     .proxy_disabled_reason
-                    .as_ref()
-                    .map_or(false, |r| r == "quota_protection")
+                    .as_deref()
+                    .is_some_and(|reason| {
+                        classify_lock_reason(reason) == AccountLockKind::QuotaProtection
+                    })
             {
                 crate::modules::logger::log_info(&format!(
                     "[Quota] Account {} recovered successfully, clearing proxy_disabled",
@@ -3711,11 +3759,15 @@ pub fn clear_account_forbidden_and_validation(
         || account.validation_blocked_reason.is_some()
         || account.validation_url.is_some();
     let had_proxy_disabled = account.proxy_disabled
-        && account.proxy_disabled_reason.as_ref().is_some_and(|r| {
-            r.starts_with("Forbidden (403)")
-                || r.contains("403 Forbidden")
-                || r.contains("VALIDATION_REQUIRED")
-        });
+        && account
+            .proxy_disabled_reason
+            .as_deref()
+            .is_some_and(|reason| {
+                matches!(
+                    classify_lock_reason(reason),
+                    AccountLockKind::HardForbidden | AccountLockKind::Validation
+                )
+            });
 
     if !had_forbidden && !had_validation && !had_proxy_disabled {
         return Ok(false);

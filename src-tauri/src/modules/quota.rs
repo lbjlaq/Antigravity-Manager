@@ -183,6 +183,20 @@ pub async fn probe_account_ban(access_token: &str, account_id: Option<&str>) -> 
                 BanProbeOutcome::Healthy
             } else if status == rquest::StatusCode::FORBIDDEN {
                 let text = response.text().await.unwrap_or_default();
+                let text_lower = text.to_lowercase();
+                // 验证挑战不是账号封禁，交给配额/代理层的验证锁路径处理。
+                // 否则同一份 403 在“配额刷新”和“代理请求”两条路径上会得到不同结论。
+                if text_lower.contains("validation_required")
+                    || text_lower.contains("validation_url")
+                    || text_lower.contains("verify your account")
+                    || text_lower.contains("further action is required")
+                {
+                    tracing::debug!(
+                        account = account_id.unwrap_or("<unknown>"),
+                        "Production endpoint returned a validation challenge; keeping status unknown"
+                    );
+                    return BanProbeOutcome::Unknown;
+                }
                 match AccountBanInfo::classify_upstream(403, &text) {
                     Some(info) => {
                         tracing::debug!(

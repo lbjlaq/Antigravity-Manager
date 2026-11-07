@@ -27,6 +27,7 @@ import { exportAccounts } from "../services/accountService";
 import { useAccountStore } from "../stores/useAccountStore";
 import { useConfigStore } from "../stores/useConfigStore";
 import { Account, getAccountTier, ImportAccountEntry } from "../types/account";
+import { isAccountAbnormal } from "../utils/accountStatus";
 import { cn } from "../utils/cn";
 import { isTauri } from "../utils/env";
 import { request as invoke } from "../utils/request";
@@ -307,10 +308,6 @@ function Accounts() {
     const lowQuery = searchQuery.toLowerCase();
     return accounts.filter((a) => a.email.toLowerCase().includes(lowQuery));
   }, [accounts, searchQuery]);
-
-  const isAccountAbnormal = (a: Account) => {
-    return Boolean(a.banned || a.validation_blocked || a.quota?.is_forbidden);
-  };
 
   // 计算各筛选状态下的数量 (基于搜索结果)
   const filterCounts = useMemo(() => {

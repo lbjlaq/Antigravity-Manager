@@ -153,6 +153,7 @@
         "disabled_accounts": "Disabled Accounts",
         "disabled_accounts_desc": "Manually stopped / Proxy disabled",
         "abnormal_accounts": "Abnormal Accounts",
+        "view_abnormal_accounts": "Click to view abnormal and risk-control details in the account list",
         "abnormal_accounts_has_risk": "⚠ Verification / Blocked risk",
         "abnormal_accounts_no_risk": "✓ No risk or blocked accounts",
         "quota_matrix_active": "Active Accounts Quota Productivity Matrix",

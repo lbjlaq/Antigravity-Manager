@@ -151,6 +151,7 @@
         "disabled_accounts": "禁用账号数",
         "disabled_accounts_desc": "手动停用 / 反代已禁用",
         "abnormal_accounts": "异常账号数",
+        "view_abnormal_accounts": "点击前往账号列表查看异常与风控详情",
         "abnormal_accounts_has_risk": "⚠ 需处理风控验证 / 封禁",
         "abnormal_accounts_no_risk": "✓ 零风控异常账号",
         "quota_matrix_active": "可用账号配额生产力矩阵",

@@ -63,7 +63,10 @@ impl AccountBanInfo {
     pub fn classify_text(body: &str) -> Option<Self> {
         let lower = body.to_lowercase();
 
-        const BAN_REASON_CODES: [&str; 14] = [
+        // 只保留高置信、账号级 TOS 封禁信号。`suspicious_activity`、泛化的
+        // `third-party`、临时 `account is locked` 等词会把风控/验证 403 误升级为
+        // 永久封禁；新增关键词前必须先用真实封禁样本验证并补负向测试。
+        const BAN_REASON_CODES: [&str; 9] = [
             "tos_violation",
             "terms_of_service_violation",
             "policy_violation",
@@ -73,28 +76,15 @@ impl AccountBanInfo {
             "user_disabled",
             "account_disabled",
             "service_disabled",
-            "third_party_software",
-            "third-party",
-            "third_party",
-            "unauthorized_software",
-            "suspicious_activity",
         ];
-        const BAN_PHRASES: [&str; 10] = [
+        const BAN_PHRASES: [&str; 6] = [
             "violation of terms of service",
             "violation of the terms of service",
             "service has been disabled in this account",
             "account has been suspended",
             "account is suspended",
             "account has been disabled",
-            "third-party software",
-            "third party software",
-            "account has been locked",
-            "account is locked",
         ];
-
-        let has_appeal_link = lower.contains("docs.google.com/forms")
-            || lower.contains("forms.gle")
-            || lower.contains("appeal_url");
 
         let reason_code = BAN_REASON_CODES
             .iter()
@@ -102,7 +92,7 @@ impl AccountBanInfo {
             .map(|code| (*code).to_string());
         let has_phrase = BAN_PHRASES.iter().any(|phrase| lower.contains(*phrase));
 
-        if reason_code.is_none() && !has_phrase && !has_appeal_link {
+        if reason_code.is_none() && !has_phrase {
             return None;
         }
 
@@ -258,6 +248,45 @@ impl AccountBanInfo {
             }
         }
     }
+}
+
+/// 账号锁定原因分类。
+///
+/// 403/封禁的持久化状态会在日配额刷新、验证解除、定向测活等多个路径里读写；
+/// 统一在这里分类，避免各处用略有差异的字符串前缀判断。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AccountLockKind {
+    /// 上游确认的账号级封禁（`banned: ...`）。
+    Banned,
+    /// 明确的生产端点 403 锁定。
+    HardForbidden,
+    /// 人机验证/风控挑战，解除后应允许恢复。
+    Validation,
+    /// 配额保护，不是 403。
+    QuotaProtection,
+    /// 用户手动或其他原因。
+    Manual,
+}
+
+pub(crate) fn classify_lock_reason(reason: &str) -> AccountLockKind {
+    let lower = reason.trim().to_ascii_lowercase();
+    if lower.starts_with("banned:") {
+        return AccountLockKind::Banned;
+    }
+    if lower.contains("validation_required")
+        || lower.contains("verify your account")
+        || lower.contains("validation_url")
+        || lower.contains("further action is required")
+    {
+        return AccountLockKind::Validation;
+    }
+    if lower.starts_with("forbidden (403)") || lower.contains("403 forbidden") {
+        return AccountLockKind::HardForbidden;
+    }
+    if lower == "quota_protection" {
+        return AccountLockKind::QuotaProtection;
+    }
+    AccountLockKind::Manual
 }
 
 /// 账号数据结构
@@ -480,14 +509,32 @@ impl Account {
         // Daily/Sandbox 配额端点对被封禁与 403 账号仍返回 200；一次成功的配额快照
         // 不能抵消生产端点确认过的封禁与 403 锁定。
         // 只有 `clear_account_ban` 或生产端点测活成功 `clear_account_forbidden_and_validation` 才能解除。
-        let was_forbidden = self.banned
+        // 验证锁（VALIDATION_REQUIRED / validation_url）是临时风控状态，必须允许日配额成功清除，
+        // 否则用户完成验证后账号会永久卡在 is_forbidden。
+        let is_validation_lock = self.validation_blocked
+            || self
+                .proxy_disabled_reason
+                .as_deref()
+                .is_some_and(|reason| classify_lock_reason(reason) == AccountLockKind::Validation)
             || self
                 .quota
                 .as_ref()
-                .map_or(false, |existing| existing.is_forbidden)
-            || self.proxy_disabled_reason.as_deref().map_or(false, |r| {
-                r.starts_with("Forbidden (403)") || r.contains("403 Forbidden")
-            });
+                .and_then(|quota| quota.forbidden_reason.as_deref())
+                .is_some_and(|reason| classify_lock_reason(reason) == AccountLockKind::Validation);
+
+        let was_forbidden = !is_validation_lock
+            && (self.banned
+                || self
+                    .quota
+                    .as_ref()
+                    .is_some_and(|existing| existing.is_forbidden)
+                || (self.proxy_disabled
+                    && self.proxy_disabled_reason.as_deref().is_some_and(|reason| {
+                        matches!(
+                            classify_lock_reason(reason),
+                            AccountLockKind::Banned | AccountLockKind::HardForbidden
+                        )
+                    })));
 
         if was_forbidden {
             quota.is_forbidden = true;
@@ -898,12 +945,11 @@ mod tests {
         let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
         account.banned = false;
         account.proxy_disabled = true;
-        account.proxy_disabled_reason =
-            Some("Forbidden (403): User not authorized to access model claude-3-5-sonnet".into());
+        // 账号级 403 必须保持；模型级 403 是否整号停用属于独立策略，不在本测试断言。
+        account.proxy_disabled_reason = Some("Forbidden (403): Location not supported".into());
         let mut q = QuotaData::new();
         q.is_forbidden = true;
-        q.forbidden_reason =
-            Some("Forbidden (403): User not authorized to access model claude-3-5-sonnet".into());
+        q.forbidden_reason = Some("Forbidden (403): Location not supported".into());
         account.quota = Some(q);
 
         // Daily quota snapshot returns 200 with is_forbidden: false
@@ -918,12 +964,12 @@ mod tests {
         );
         assert_eq!(
             quota.forbidden_reason.as_deref(),
-            Some("Forbidden (403): User not authorized to access model claude-3-5-sonnet")
+            Some("Forbidden (403): Location not supported")
         );
     }
 
     #[test]
-    fn classifies_third_party_and_google_form_ban_response() {
+    fn does_not_classify_generic_third_party_or_appeal_only_response() {
         let body = r#"{
             "error": {
                 "code": 403,
@@ -932,12 +978,86 @@ mod tests {
             }
         }"#;
 
-        let info =
-            AccountBanInfo::classify_upstream(403, body).expect("must detect third-party ban");
-        assert!(info.message.contains("third-party software"));
+        assert!(
+            AccountBanInfo::classify_upstream(403, body).is_none(),
+            "泛化 third-party 文本与 appeal 链接不能单独作为账号级封禁证据；如确有此类封禁，需先引入结构化 reason 白名单并用真实样本验证"
+        );
+    }
+
+    #[test]
+    fn ignores_risk_control_and_temporary_lock_responses() {
+        let suspicious = r#"{"error":{"code":403,"message":"We detected unusual activity. Verify your account.","details":[{"reason":"SUSPICIOUS_ACTIVITY","metadata":{"validation_url":"https://example.test/verify"}}]}}"#;
+        assert!(
+            AccountBanInfo::classify_upstream(403, suspicious).is_none(),
+            "risk-control/validation 403 不得升级为永久封禁"
+        );
+
+        let null_appeal = r#"{"error":{"code":403,"message":"User not authorized to access model claude-3-5-sonnet","details":[{"reason":"MODEL_ACCESS_DENIED","metadata":{"appeal_url":null}}]}}"#;
+        assert!(
+            AccountBanInfo::classify_upstream(403, null_appeal).is_none(),
+            "appeal_url key 存在但值为 null 不得作为封禁证据"
+        );
+
+        let temporary_lock = r#"{"error":{"code":403,"message":"This account is locked for 60 minutes due to repeated requests."}}"#;
+        assert!(
+            AccountBanInfo::classify_upstream(403, temporary_lock).is_none(),
+            "临时锁定不得当成永久封禁"
+        );
+    }
+
+    #[test]
+    fn classifies_lock_reasons_case_insensitively() {
         assert_eq!(
-            info.appeal_url.as_deref(),
-            Some("https://docs.google.com/forms/d/e/1FAIpQLScOJWibQ_-hYuVv63kJTgEqlgAaOwRLGFTbXm-QY1gz8U0CGA/viewform")
+            classify_lock_reason("banned: TOS_VIOLATION"),
+            AccountLockKind::Banned
+        );
+        assert_eq!(
+            classify_lock_reason("Forbidden (403): Location not supported"),
+            AccountLockKind::HardForbidden
+        );
+        assert_eq!(
+            classify_lock_reason("validation_required"),
+            AccountLockKind::Validation
+        );
+        assert_eq!(
+            classify_lock_reason("VALIDATION_REQUIRED"),
+            AccountLockKind::Validation
+        );
+        assert_eq!(
+            classify_lock_reason("quota_protection"),
+            AccountLockKind::QuotaProtection
+        );
+        assert_eq!(classify_lock_reason("manual"), AccountLockKind::Manual);
+    }
+
+    #[test]
+    fn validation_lock_is_not_preserved_as_hard_forbidden() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.validation_blocked = true;
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("validation_required".into());
+        let mut q = QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("VALIDATION_REQUIRED: human captcha".into());
+        account.quota = Some(q);
+
+        let mut fresh_quota = QuotaData::new();
+        fresh_quota.is_forbidden = false;
+        account.update_quota(fresh_quota);
+
+        assert!(
+            !account.quota.as_ref().unwrap().is_forbidden,
+            "验证锁不得被当成永久 403 保留"
         );
     }
 }
