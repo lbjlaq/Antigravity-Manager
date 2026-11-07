@@ -3,7 +3,19 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
-    *   **v5.0.4-beta.1 (2026-11-07)**:
+    *   **v5.0.4-beta.1 (2026-11-08)**:
+        -   **[403 Ban State Machine & Quota Refresh Overwrite Protection: Root-Fixing 403 State Loss on 200 OK Daily Quota & Adding Abnormal Filter] (Fixes #3863, Ref #3865, PR #3875, commit fc45775c, a079bdf9, 3010f9e8, Thanks to @cubelikeplayDaniel, @jeikl)**:
+            -   **403 Status Lock Persistence**: Established invariant that 403/Ban state outranks daily quota 200 OK responses. Guarded `update_quota` and `update_account_quota_internal` so background/manual quota refreshes never wipe active `is_forbidden` or `proxy_disabled` flags, resolving the issue where banned accounts seemed healthy until invoked. (Fixes #3863, PR #3875)
+            -   **Safe Probe Healing**: Non-model 403 locks are only released when live production probes return `Healthy`; model-scoped restrictions preserve locks, preventing regular daily quota pulls from spoofing unbans. (commit a079bdf9, 3010f9e8)
+            -   **Abnormal Account Filter & Direct Navigation**: Added an "Abnormal" filter button on the Accounts toolbar aggregating all banned / validation_blocked / 403 accounts with badge counts; made Dashboard "Health & Risk" card clickable for direct navigation to the abnormal filter view. (Ref #3865, PR #3875)
+        -   **[UI Interaction & Dialog Layering Fix: Eliminating Add Account Button Penetration] (Fixes #3853, PR #3872, Thanks to @cubelikeplayDaniel)**:
+            -   Removed legacy `relative z-[100]` escaping stacking context on the Add Account trigger button to prevent it piercing through the update notification modal; promoted UpdateNotification card z-index to `z-[200]` matching ToastContainer standards. (Fixes #3853, PR #3872)
+        -   **[Startup Asynchronous Quota Refresh & Toolbar Action] (Ref #3726, PR #3871, Thanks to @lbjlaq)**:
+            -   Asynchronously refreshes quotas on application startup up to the configured account threshold, and adds a manual refresh action to the accounts toolbar. (Ref #3726, PR #3871)
+        -   **[Pedal Quota Mode Stability & Visual Polishing] (Ref #3870, commit 73d798c5, 0f734f57, Thanks to @cubelikeplayDaniel)**:
+            -   Completed reset exit semantics tests and reduced-motion accessibility compatibility; polished light theme styling and highlighted target pedal accounts for smoother rotation. (Ref #3870, commit 73d798c5, 0f734f57)
+        -   **[Web Model Probe Dispatch & Credential Refresh] (Ref #3861, Ref #3869, PR #3868, commit fb32517a, 8232798c, 2677d8c6, 32735f92, Thanks to @cubelikeplayDaniel)**:
+            -   Unified Web model test automatic account selection and credential refreshing, sorting by target model, and enabling model-scoped self-healing while intercepting TOS bans. (Ref #3861, PR #3868)
         -   **[Hierarchical Quota Window Contract & Recovery Governance: Root-Fixing Cross-Model Reset Contamination & Zero-Quota Deadlock] (Fixes #3840, #3845, PR #3852, Thanks to @jeikl, @cubelikeplayDaniel)**:
             -   **Weekly Hard Quota Priority Contract (P0-1)**: Enforced strict hierarchy between weekly windows and short-term 5-hour rolling windows. When an account's weekly hard quota is depleted (0%), self-healing is strictly disallowed even if the 5h window has elapsed; all depleted buckets (e.g. secondary Argon WTU weekly buckets) must expire before admission is restored. (Fixes #3840, PR #3852)
             -   **Model-Family Reset Isolation (P0-2)**: Decoupled reset timestamp extraction into independent model-family maps (Argon / 3P / Gemini); models absent from the family reset map never fall back to the global reset timestamp when per-model maps are populated, preventing Argon resets from erroneously accelerating Gemini models. (Fixes #3845, PR #3852)
