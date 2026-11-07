@@ -1761,6 +1761,21 @@ pub fn load_account_index() -> Result<AccountIndex, String> {
     load_account_index_in_dir(&data_dir)
 }
 
+/// 轻量读取账号索引中的账号数（供启动阶段轮询，不触发恢复流程与日志放大）
+pub fn indexed_account_count() -> usize {
+    let Ok(data_dir) = get_data_dir() else {
+        return 0;
+    };
+    let index_path = data_dir.join(ACCOUNTS_INDEX);
+    let Ok(raw) = fs::read(&index_path) else {
+        return 0;
+    };
+    let sanitized = sanitize_index_content(&raw);
+    serde_json::from_str::<AccountIndex>(&sanitized)
+        .map(|index| index.accounts.len())
+        .unwrap_or(0)
+}
+
 /// Sanitize index file content by stripping BOM and leading NUL bytes
 fn sanitize_index_content(raw: &[u8]) -> String {
     // Skip UTF-8 BOM if present

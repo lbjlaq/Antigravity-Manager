@@ -17,6 +17,7 @@ import AccountDetailsDialog from "../components/accounts/AccountDetailsDialog";
 import AccountGrid from "../components/accounts/AccountGrid";
 import AccountTable from "../components/accounts/AccountTable";
 import AddAccountDialog from "../components/accounts/AddAccountDialog";
+import StartupRefreshControl from "../components/accounts/StartupRefreshControl";
 import DeviceFingerprintDialog from "../components/accounts/DeviceFingerprintDialog";
 import ModalDialog from "../components/common/ModalDialog";
 import Pagination from "../components/common/Pagination";
@@ -1000,7 +1001,9 @@ function Accounts() {
           </button>
         </div>
 
-        <div className="flex-1 min-w-[8px]"></div>
+        <div className="flex-1 min-w-[8px] flex items-center justify-end">
+          <StartupRefreshControl />
+        </div>
 
         {/* 操作按钮组 */}
         <div className="flex items-center gap-1.5 shrink-0">
