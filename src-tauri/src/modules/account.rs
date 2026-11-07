@@ -1228,6 +1228,81 @@ mod tests {
         account.proxy_disabled = true;
         account.proxy_disabled_reason = Some("validation_required".into());
         assert!(!has_non_model_forbidden_lock(&account));
+
+        // 账号级封禁优先级最高：即使存在通用 403 锁，也不允许 403 清理路径参与。
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.banned = true;
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("Forbidden (403): Location not supported".into());
+        let mut q = QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("Forbidden (403): Location not supported".into());
+        account.quota = Some(q);
+        assert!(
+            !has_non_model_forbidden_lock(&account),
+            "banned 必须压过通用 403 清理判断"
+        );
+    }
+
+    #[test]
+    fn test_mark_account_forbidden_does_not_downgrade_banned_account() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-banned-precedence-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "banned-precedence@example.com");
+
+        let mut account = load_account(acc_id).unwrap();
+        account.banned = true;
+        account.banned_code = Some("TOS_VIOLATION".to_string());
+        account.banned_reason = Some("violation of Terms of Service".to_string());
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("banned: TOS_VIOLATION".to_string());
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("violation of Terms of Service".to_string());
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        mark_account_forbidden(
+            acc_id,
+            "Forbidden (403): User not authorized to access model claude-3-5-sonnet",
+        )
+        .unwrap();
+
+        let reloaded = load_account(acc_id).unwrap();
+        assert!(reloaded.banned);
+        assert_eq!(reloaded.banned_code.as_deref(), Some("TOS_VIOLATION"));
+        assert_eq!(
+            reloaded.banned_reason.as_deref(),
+            Some("violation of Terms of Service")
+        );
+        assert!(reloaded.proxy_disabled);
+        assert_eq!(
+            reloaded.proxy_disabled_reason.as_deref(),
+            Some("banned: TOS_VIOLATION")
+        );
+        assert!(reloaded.quota.as_ref().unwrap().is_forbidden);
+        assert_eq!(
+            reloaded.quota.as_ref().unwrap().forbidden_reason.as_deref(),
+            Some("violation of Terms of Service")
+        );
+
+        std::env::remove_var("ABV_DATA_DIR");
     }
 
     #[test]
@@ -3611,6 +3686,18 @@ pub fn mark_account_forbidden(account_id: &str, reason: &str) -> Result<(), Stri
 
     let mut account = load_account(account_id)?;
     let now = chrono::Utc::now().timestamp();
+
+    // 账号级封禁是最高优先级：已封禁账号不接受模型级 403 的降级覆盖，
+    // 保持 banned_code / banned_reason / "banned:" 代理原因不被改写。
+    if account.banned {
+        crate::modules::logger::log_info(&format!(
+            "🛡️ [Ban] Account {} is already banned ({}); ignoring model-level 403 reason",
+            account.email,
+            account.banned_code.as_deref().unwrap_or("BANNED")
+        ));
+        return Ok(());
+    }
+
     let ban_info = AccountBanInfo::classify_text(reason);
 
     // Extract action URL (appeal_url or validation_url)
@@ -3863,6 +3950,12 @@ fn is_model_scoped_forbidden_reason(reason: &str) -> bool {
 /// 配额 200 不是权威证据，绝不能走这里。只要 proxy 或 quota 任一来源带模型级
 /// 指向，就保持原锁，等定向测活按模型解除。
 fn has_non_model_forbidden_lock(account: &Account) -> bool {
+    // 账号级封禁优先级最高：banned 账号的 403/配额状态由 clear_account_ban 统一管理，
+    // 不允许 403 清理路径抢先改动。
+    if account.banned {
+        return false;
+    }
+
     let mut has_hard_lock = false;
     let mut has_model_scope = false;
 
@@ -3893,6 +3986,11 @@ fn has_non_model_forbidden_lock(account: &Account) -> bool {
 }
 
 fn clear_non_model_forbidden_state(account: &mut Account) {
+    // 防御性守卫：即使调用方判断失误，也绝不在 banned 状态下清 403。
+    if account.banned {
+        return;
+    }
+
     if account.proxy_disabled
         && account
             .proxy_disabled_reason

@@ -522,19 +522,21 @@ impl Account {
                 .and_then(|quota| quota.forbidden_reason.as_deref())
                 .is_some_and(|reason| classify_lock_reason(reason) == AccountLockKind::Validation);
 
-        let was_forbidden = !is_validation_lock
-            && (self.banned
-                || self
+        // 账号级封禁优先级最高：即使同时存在 validation_blocked / validation_required，
+        // banned 也必须继续压住 is_forbidden 并清空过期配额。
+        let was_forbidden = self.banned
+            || (!is_validation_lock
+                && (self
                     .quota
                     .as_ref()
                     .is_some_and(|existing| existing.is_forbidden)
-                || (self.proxy_disabled
-                    && self.proxy_disabled_reason.as_deref().is_some_and(|reason| {
-                        matches!(
-                            classify_lock_reason(reason),
-                            AccountLockKind::Banned | AccountLockKind::HardForbidden
-                        )
-                    })));
+                    || (self.proxy_disabled
+                        && self.proxy_disabled_reason.as_deref().is_some_and(|reason| {
+                            matches!(
+                                classify_lock_reason(reason),
+                                AccountLockKind::Banned | AccountLockKind::HardForbidden
+                            )
+                        }))));
 
         if was_forbidden {
             quota.is_forbidden = true;
@@ -1028,6 +1030,47 @@ mod tests {
             AccountLockKind::QuotaProtection
         );
         assert_eq!(classify_lock_reason("manual"), AccountLockKind::Manual);
+    }
+
+    #[test]
+    fn banned_account_takes_precedence_over_validation_lock() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.banned = true;
+        account.banned_code = Some("TOS_VIOLATION".into());
+        account.banned_reason = Some("violation of Terms of Service".into());
+        account.validation_blocked = true;
+        account.validation_blocked_reason = Some("VALIDATION_REQUIRED".into());
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("validation_required".into());
+        let mut q = QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("VALIDATION_REQUIRED".into());
+        account.quota = Some(q);
+
+        let mut fresh_quota = QuotaData::new();
+        fresh_quota.is_forbidden = false;
+        account.update_quota(fresh_quota);
+
+        let quota = account.quota.as_ref().unwrap();
+        assert!(
+            quota.is_forbidden,
+            "账号级封禁必须优先于 validation 锁，不能被日配额 200 冲掉"
+        );
+        assert_eq!(
+            quota.forbidden_reason.as_deref(),
+            Some("violation of Terms of Service")
+        );
+        assert!(account.banned);
     }
 
     #[test]
