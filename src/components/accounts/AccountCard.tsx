@@ -254,7 +254,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                             {/* 蹬额度中高亮标识 */}
                             {isPedaling && (
                                 <span
-                                    className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[9px] font-bold flex items-center gap-1 shadow-xs border border-amber-500/40 animate-pulse"
+                                    className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[9px] font-bold flex items-center gap-1 shadow-xs border border-amber-500/40 animate-pulse motion-reduce:animate-none"
                                     title={t('pedal.account_pedaling_tooltip', '该账号当前处于蹬额度模式，已被设为最高调度优先级 (priority = 1)')}
                                 >
                                     <Zap className="w-2.5 h-2.5 fill-current text-amber-500" />

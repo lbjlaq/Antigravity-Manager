@@ -344,6 +344,34 @@ async function runTests() {
         assert(!priorities.some(p => p.id === 'acc-4'), 'acc-4 priority must NOT be restored while it still has quota');
     });
 
+    // Test 12: Reset timestamp reached ends the cycle even if the quota snapshot still shows < 90%
+    await test('12. Reset time reached exits pedal mode even when quota snapshot is still below 90%', async () => {
+        const pastReset = new Date(now - 3600 * 1000).toISOString();
+        const resetAcc3 = makeAccount('acc-3', 'Account 3 Reset', 50, pastReset, 80, farReset, false, 1);
+        const resetAcc4 = makeAccount('acc-4', 'Account 4 Reset', 50, pastReset, 80, farReset, false, 1);
+
+        usePedalModeStore.setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3', 'acc-4'],
+            originalPriorities: { 'acc-3': 50, 'acc-4': 50 },
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
+        });
+
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
+        };
+
+        await store.checkAndAutoRecover([acc1, resetAcc3, resetAcc4], mockSetPriority);
+
+        const state = usePedalModeStore.getState();
+        assert(state.active === false, 'Pedal mode must exit once the official reset timestamp is reached');
+        assert(priorities.some(p => p.id === 'acc-3' && p.priority === 50), 'acc-3 priority must be restored on reset');
+        assert(priorities.some(p => p.id === 'acc-4' && p.priority === 50), 'acc-4 priority must be restored on reset');
+    });
+
     console.log(`\nPedal Mode Tests Summary: ${passed} passed, ${failed} failed.`);
     if (failed > 0) {
         throw new Error(`Pedal Mode tests failed: ${failed}`);

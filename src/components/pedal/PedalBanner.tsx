@@ -22,7 +22,7 @@ export const PedalBanner: React.FC = () => {
         <div className="mx-4 mt-3 mb-1 p-3.5 rounded-xl bg-gradient-to-r from-amber-50 via-orange-50/60 to-amber-50 dark:from-amber-950/40 dark:via-slate-900/80 dark:to-amber-950/40 border border-amber-200/90 dark:border-amber-500/30 shadow-xs dark:shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
             <div className="flex items-start sm:items-center gap-3 min-w-0">
                 <div className="p-2 rounded-lg bg-amber-100 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400 border border-amber-200/60 dark:border-amber-500/30 flex-shrink-0">
-                    <Zap className="w-5 h-5 animate-pulse" />
+                    <Zap className="w-5 h-5 animate-pulse motion-reduce:animate-none" />
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className="text-xs sm:text-sm font-bold text-amber-950 dark:text-amber-300 flex items-center gap-2 flex-wrap">
@@ -44,7 +44,7 @@ export const PedalBanner: React.FC = () => {
                     {targetAccounts.length > 0 && (
                         <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                             <span className="text-[10px] font-semibold text-amber-900 dark:text-amber-300 flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping inline-block" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping motion-reduce:animate-none inline-block" />
                                 {t('pedal.target_accounts', '待蹬账号')}:
                             </span>
                             {targetAccounts.map(acc => (

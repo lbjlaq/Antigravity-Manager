@@ -296,6 +296,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 // 该账号是否已刷新/重置：
                 // 1) 周配额已刷新恢复至 90% 以上（无论时间戳如何，配额已实锤刷新）
                 // 2) 具有合法的重置时间戳，且当前时间已经到达或超过官方重置时间 (diffHours <= 0)
+                // 注意：到达官方重置时间即视为本周期结束，不等待下一次配额快照刷新到 90%。
                 const isThisAccountReset = pct >= 90 || (hasValidResetTime && diffHours <= 0);
 
                 // 只要还有任何一个账号未处于已重置状态，就绝不能判定为全部重置

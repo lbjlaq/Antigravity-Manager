@@ -30,7 +30,7 @@ export const PedalNoticeModal: React.FC = () => {
                 {/* 头部 */}
                 <div className="flex items-start gap-3">
                     <div className="p-2.5 rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400 border border-amber-200/80 dark:border-amber-500/30 flex-shrink-0">
-                        <Zap className="w-6 h-6 animate-pulse" />
+                        <Zap className="w-6 h-6 animate-pulse motion-reduce:animate-none" />
                     </div>
                     <div>
                         <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
