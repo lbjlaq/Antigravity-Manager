@@ -3,6 +3,14 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.2 (2026-11-08)**:
+        -   **[Account State Management & Routing Convergence: Priority Hierarchy, Model-Scoped 403 & Recovery Authority] (Ref #3863, #3865, #3875, commit 9850f750, Thanks to @jeikl, @cubelikeplayDaniel)**:
+            -   **State Priority Hierarchy**: Established a unified `banned > validation > hard 403 > quota_protection > manual` priority chain, preventing account-level bans from being downgraded or wiped by model-level 403s or daily quota refreshes. (Ref #3863, #3875)
+            -   **Model-Scoped 403 Isolation**: Introduced `forbidden_models` freeze mechanism so a 403 on a single model only freezes that model and associated dynamic rewrite routes, allowing healthy models to remain in proxy routing and preventing whole-account dropouts. (Ref #3863, #3865)
+            -   **Recovery Authority & Anti-Privilege Escalation**: Introduced `probe_intent` to strictly distinguish targeted live probes from background warmups, preventing automated schedulers from unlocking accounts; targeted probes safely unblock validated models and verification locks while keeping heterogeneous models (Claude/Opus) and TOS bans isolated. (Ref #3863, #3875)
+            -   **Physical Isolation of User Intent**: Separated `manual_proxy_disabled` from runtime system locks, ensuring system self-healing never reenables user-disabled accounts and resolving state drift between GUI switches and scheduler gates. (Ref #3863, #3875)
+            -   **Zero-Migration Legacy Healing & Locked Index Sync**: Smoothly migrates legacy model 403s during proxy startup, unifies `until == 0` with a 24-hour timeout safeguard, and synchronizes index updates under `ACCOUNT_INDEX_LOCK` to eliminate concurrent index overwrite and console warnings. (Ref #3863, #3875)
+
     *   **v5.0.4-beta.1 (2026-11-08)**:
         -   **[403 Ban State Machine & Quota Refresh Overwrite Protection: Root-Fixing 403 State Loss on 200 OK Daily Quota & Adding Abnormal Filter] (Fixes #3863, Ref #3865, PR #3875, commit fc45775c, a079bdf9, 3010f9e8, Thanks to @cubelikeplayDaniel, @jeikl)**:
             -   **403 Status Lock Persistence**: Established invariant that 403/Ban state outranks daily quota 200 OK responses. Guarded `update_quota` and `update_account_quota_internal` so background/manual quota refreshes never wipe active `is_forbidden` or `proxy_disabled` flags, resolving the issue where banned accounts seemed healthy until invoked. (Fixes #3863, PR #3875)
