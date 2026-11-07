@@ -862,51 +862,54 @@ fn extract_best_schema_from_union(union_array: &[Value]) -> Option<Value> {
     best_option.cloned()
 }
 
-/// Merge a union whose non-null branches are all object schemas (at least two of them)
-/// into one object schema, instead of keeping a single branch.
+/// Merge a union whose branches are all object schemas (at least two of them) into one
+/// object schema, instead of keeping a single branch.
 ///
-/// - `properties`: union of every branch's properties (first definition wins), except that
-///   `enum` values of a property defined in several branches are unioned (this keeps every
-///   value of a discriminator such as `action`).
-/// - `required`: only fields required by every object branch.
+/// - `properties`: union of every branch's properties (first definition wins). For a property
+///   defined in several branches, `enum` values are unioned when every definition has an
+///   `enum` (this keeps every value of a discriminator such as `action`); if any definition
+///   is unconstrained, the merged property is unconstrained too.
+/// - `required`: only fields required by every branch.
 ///
-/// Returns `None` for nullable (`T | null`), mixed-type, or single-object unions so the
-/// existing best-branch selection still handles them.
+/// Returns `None` unless every branch is an object, so nullable (`T | null`) and mixed-type
+/// unions keep the existing best-branch selection. Branches arrive already cleaned, so a
+/// `{"type": "null"}` branch has been rewritten to a non-object type by then.
 fn merge_object_union_branches(union_array: &[Value]) -> Option<Value> {
-    let non_null: Vec<&Value> = union_array
-        .iter()
-        .filter(|b| b.get("type").and_then(|t| t.as_str()) != Some("null"))
-        .collect();
-    if non_null.len() < 2 || !non_null.iter().all(|b| score_schema_option(b) == 3) {
+    if union_array.len() < 2 || !union_array.iter().all(|b| score_schema_option(b) == 3) {
         return None;
     }
 
     let mut properties = serde_json::Map::new();
     let mut required: Option<Vec<Value>> = None;
 
-    for branch in &non_null {
+    for branch in union_array {
         if let Some(props) = branch.get("properties").and_then(|p| p.as_object()) {
             for (name, schema) in props {
                 match properties.get_mut(name) {
                     None => {
                         properties.insert(name.clone(), schema.clone());
                     }
-                    Some(existing) => {
-                        if let Some(new_enum) = schema.get("enum").and_then(|e| e.as_array()) {
-                            if let Some(existing_obj) = existing.as_object_mut() {
-                                let merged = existing_obj
-                                    .entry("enum".to_string())
-                                    .or_insert_with(|| Value::Array(Vec::new()));
-                                if let Some(merged_arr) = merged.as_array_mut() {
-                                    for v in new_enum {
-                                        if !merged_arr.contains(v) {
-                                            merged_arr.push(v.clone());
-                                        }
+                    // The merged property accepts the union of what each branch accepts:
+                    // union the enums when every definition has one, otherwise leave it
+                    // unconstrained (never narrow a free field to another branch's enum).
+                    Some(existing) => match schema.get("enum").and_then(Value::as_array) {
+                        Some(new_enum) => {
+                            if let Some(existing_enum) =
+                                existing.get_mut("enum").and_then(Value::as_array_mut)
+                            {
+                                for v in new_enum {
+                                    if !existing_enum.contains(v) {
+                                        existing_enum.push(v.clone());
                                     }
                                 }
                             }
                         }
-                    }
+                        None => {
+                            if let Some(existing_obj) = existing.as_object_mut() {
+                                existing_obj.remove("enum");
+                            }
+                        }
+                    },
                 }
             }
         }
@@ -1402,6 +1405,35 @@ mod tests {
             .map(|v| v.as_str().unwrap())
             .collect();
         assert_eq!(required, vec!["name", "action"]);
+    }
+
+    #[test]
+    fn test_object_union_merge_never_narrows_free_field() {
+        // A free string in one branch must stay free, whichever branch comes first.
+        for branches in [
+            json!([
+                { "type": "object", "properties": { "mode": { "type": "string" } } },
+                { "type": "object", "properties": { "mode": { "type": "string", "enum": ["patch"] } } }
+            ]),
+            json!([
+                { "type": "object", "properties": { "mode": { "type": "string", "enum": ["patch"] } } },
+                { "type": "object", "properties": { "mode": { "type": "string" } } }
+            ]),
+        ] {
+            let mut schema = json!({
+                "type": "object",
+                "properties": { "op": { "anyOf": branches } }
+            });
+
+            clean_json_schema(&mut schema);
+
+            let mode = &schema["properties"]["op"]["properties"]["mode"];
+            assert_eq!(mode["type"], "string");
+            assert!(
+                mode.get("enum").is_none(),
+                "free field was narrowed: {mode}"
+            );
+        }
     }
 
     // [NEW TEST] 验证 Issue #815: anyOf 内部属性不丢失
