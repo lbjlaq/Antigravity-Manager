@@ -651,7 +651,7 @@ mod tests {
     #[test]
     fn falls_back_to_english_without_a_supported_locale() {
         assert_eq!(language_from_locales(Vec::<String>::new()), "en");
-        for locale in ["", "C", "POSIX", "C.UTF-8", "de-DE", "my-MM"] {
+        for locale in ["", "C", "POSIX", "C.UTF-8", "de-DE", "fr-FR"] {
             assert_eq!(language_from_locales([locale]), "en", "{locale}");
         }
     }
