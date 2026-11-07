@@ -440,6 +440,15 @@ pub async fn handle_warmup(
                         req.email,
                         mapped_model
                     );
+
+                    // 仅当明确指定了目标账号（定向诊断/测活）时才尝试账号级 403 / validation 自愈，
+                    // 自动调度探活不越权解封，且严格遵循模型隔离与 TOS 拦截规则
+                    if req.account_id.as_deref().is_some_and(|id| !id.is_empty()) {
+                        let _ = crate::modules::account::clear_account_forbidden_and_validation(
+                            &account_id,
+                            Some(&mapped_model),
+                        );
+                    }
                 }
 
                 info!(

@@ -887,6 +887,165 @@ mod tests {
 
         std::env::remove_var("ABV_DATA_DIR");
     }
+
+    #[test]
+    fn test_clear_account_forbidden_and_validation_banned_protection() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-banned-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "banned@example.com");
+
+        // 构造真正的 TOS 封禁账号
+        let mut account = load_account(acc_id).unwrap();
+        account.banned = true;
+        account.banned_code = Some("TOS_VIOLATION".to_string());
+        account.banned_reason = Some("Terms of Service violation".to_string());
+        account.ban_appeal_url = Some("https://support.google.com/appeal".to_string());
+        account.validation_url = Some("https://support.google.com/appeal".to_string());
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("banned: TOS_VIOLATION".to_string());
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        // 尝试通过测活解封
+        let res = clear_account_forbidden_and_validation(acc_id, Some("gemini-2.5-flash")).unwrap();
+        assert!(!res, "TOS 封禁账号绝不能被探活流程自动解封");
+
+        // 状态必须完整保留
+        let updated = load_account(acc_id).unwrap();
+        assert!(updated.banned);
+        assert_eq!(updated.banned_code.as_deref(), Some("TOS_VIOLATION"));
+        assert!(updated.ban_appeal_url.is_some());
+        assert!(updated.validation_url.is_some());
+        assert!(updated.proxy_disabled);
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
+    fn test_clear_account_forbidden_and_validation_pure_is_forbidden() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-pure-forbidden-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "pure_forbidden@example.com");
+
+        // 构造仅有 quota.is_forbidden = true，无 validation_blocked 与 proxy_disabled 的账号
+        let mut account = load_account(acc_id).unwrap();
+        account.validation_blocked = false;
+        account.proxy_disabled = false;
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("Forbidden (403): Location not supported".to_string());
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        // 调用解封
+        let recovered =
+            clear_account_forbidden_and_validation(acc_id, Some("gemini-2.5-flash")).unwrap();
+        assert!(recovered, "纯 is_forbidden 账号应被正确解封");
+
+        let updated = load_account(acc_id).unwrap();
+        assert!(!updated.quota.as_ref().unwrap().is_forbidden);
+        assert!(updated.quota.as_ref().unwrap().forbidden_reason.is_none());
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
+    fn test_clear_account_forbidden_and_validation_model_isolation() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-model-isolation-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "model_iso@example.com");
+
+        // 构造因调用 Claude 3.5 触发 403 的账号
+        let mut account = load_account(acc_id).unwrap();
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some(
+            "Forbidden (403): User not authorized to access model claude-3-5-sonnet".to_string(),
+        );
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some(
+            "Forbidden (403): User not authorized to access model claude-3-5-sonnet".to_string(),
+        );
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        // 1. 使用 gemini-2.5-flash 测活：由于 403 锁定原因绑定在 Claude 模型，测试不同模型不得解封
+        let res_gemini =
+            clear_account_forbidden_and_validation(acc_id, Some("gemini-2.5-flash")).unwrap();
+        assert!(!res_gemini, "测试不同模型绝不能解封特定模型的 403 锁定");
+
+        let still_locked = load_account(acc_id).unwrap();
+        assert!(still_locked.proxy_disabled);
+        assert!(still_locked.quota.as_ref().unwrap().is_forbidden);
+
+        // 2. 使用 claude-3-5-sonnet 测活成功：测试同一模型，允许解封
+        let res_claude =
+            clear_account_forbidden_and_validation(acc_id, Some("claude-3-5-sonnet")).unwrap();
+        assert!(res_claude, "测试同一受限模型成功时应解除锁定");
+
+        let unlocked = load_account(acc_id).unwrap();
+        assert!(!unlocked.proxy_disabled);
+        assert!(!unlocked.quota.as_ref().unwrap().is_forbidden);
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
+    fn test_clear_account_forbidden_and_validation_validation_blocked() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-validation-blocked-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "validation@example.com");
+
+        // 构造人机验证锁定的账号
+        let mut account = load_account(acc_id).unwrap();
+        account.validation_blocked = true;
+        account.validation_blocked_reason = Some("VALIDATION_REQUIRED: Human captcha".to_string());
+        account.validation_url = Some("https://accounts.google.com/challenge".to_string());
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("VALIDATION_REQUIRED".to_string());
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        // 探活成功：验证挑战通过，清空验证拦截
+        let res = clear_account_forbidden_and_validation(acc_id, Some("gemini-2.5-flash")).unwrap();
+        assert!(res);
+
+        let unlocked = load_account(acc_id).unwrap();
+        assert!(!unlocked.validation_blocked);
+        assert!(unlocked.validation_url.is_none());
+        assert!(!unlocked.proxy_disabled);
+        assert!(!unlocked.quota.as_ref().unwrap().is_forbidden);
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
 }
 
 /// Global account write lock to prevent corruption during concurrent operations
@@ -3332,6 +3491,159 @@ pub fn clear_account_ban(account_id: &str) -> Result<bool, String> {
     crate::proxy::server::trigger_account_reload(account_id);
     crate::modules::logger::log_info(&format!(
         "✅ [Ban] Account {} recovered; ban state cleared",
+        account.email
+    ));
+    crate::modules::log_bridge::emit_accounts_refreshed();
+
+    Ok(true)
+}
+
+/// 判断 403/禁用原因是否显式绑定到了与当前测活模型不同的特定模型。
+///
+/// 若原因为特定模型 403（例如 "User not authorized to access model claude-3-5-sonnet"），
+/// 使用其他模型（如 gemini-2.5-flash）探活成功绝不能解除该账号全局 403 锁定。
+pub(crate) fn is_forbidden_reason_tied_to_different_model(
+    reason: &str,
+    tested_model: &str,
+) -> bool {
+    let reason_lower = reason.to_lowercase();
+    let tested_lower = tested_model.to_lowercase();
+
+    // 1. 如果原因是人机验证或通用限制，属于账号级，不绑定特定模型
+    if reason_lower.contains("validation_required")
+        || reason_lower.contains("challenge")
+        || reason_lower.contains("verify your account")
+        || reason_lower.contains("location")
+        || reason_lower.contains("quota project")
+    {
+        return false;
+    }
+
+    // 2. 检查常见模型家族隔离：
+    // 若原因为 claude 专属 403，但测活模型非 claude，隔离保护
+    let reason_has_claude = reason_lower.contains("claude");
+    let tested_has_claude = tested_lower.contains("claude");
+    if reason_has_claude && !tested_has_claude {
+        return true;
+    }
+
+    // 若原因为 gpt/openai/o3 专属 403，但测活模型非 openai 系列，隔离保护
+    let reason_has_openai = reason_lower.contains("gpt")
+        || reason_lower.contains("o1")
+        || reason_lower.contains("o3")
+        || reason_lower.contains("o4");
+    let tested_has_openai = tested_lower.contains("gpt")
+        || tested_lower.contains("o1")
+        || tested_lower.contains("o3")
+        || tested_lower.contains("o4");
+    if reason_has_openai && !tested_has_openai {
+        return true;
+    }
+
+    // 3. 检查更具体的模型名称提取 (例如 "model 'xxx'" 或 "model xxx")
+    if let Some(idx) = reason_lower.find("model") {
+        let after_model = &reason_lower[idx + 5..];
+        let trimmed =
+            after_model.trim_start_matches(|c: char| c == ' ' || c == '\'' || c == '"' || c == ':');
+        let model_token = trimmed
+            .split(|c: char| c == ' ' || c == '\'' || c == '"' || c == ',' || c == ';')
+            .next()
+            .unwrap_or("");
+        if !model_token.is_empty() && model_token.contains('-') {
+            if !tested_lower.contains(model_token) && !model_token.contains(&tested_lower) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// 测活探测成功后，自动解除账号的 403 封禁及验证锁定状态，恢复其在反代池中的调度资格。
+///
+/// 边界防护契约：
+/// 1. 严格拦截 `account.banned`（TOS 违规等封禁绝不自动解封，保留申诉 URL 与封禁标识）；
+/// 2. 显式清除 `quota.is_forbidden` 与理由，即使账号无 validation/proxy_disabled 也彻底解封；
+/// 3. 若 403 明确绑定了某个具体模型（例如 Claude 专属 403），而测活模型与之不匹配，则不越权清除账号级 403。
+pub fn clear_account_forbidden_and_validation(
+    account_id: &str,
+    tested_model: Option<&str>,
+) -> Result<bool, String> {
+    let _lock = ACCOUNT_INDEX_LOCK
+        .lock()
+        .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
+
+    let mut account = load_account(account_id)?;
+
+    // 契约 1：TOS 等真正封禁账号绝不被探针流程篡改解封
+    if account.banned {
+        return Ok(false);
+    }
+
+    let had_forbidden = account.quota.as_ref().is_some_and(|q| q.is_forbidden);
+    let had_validation = account.validation_blocked
+        || account.validation_blocked_until.is_some()
+        || account.validation_blocked_reason.is_some()
+        || account.validation_url.is_some();
+    let had_proxy_disabled = account.proxy_disabled
+        && account.proxy_disabled_reason.as_ref().is_some_and(|r| {
+            r.starts_with("Forbidden (403)")
+                || r.contains("403 Forbidden")
+                || r.contains("VALIDATION_REQUIRED")
+        });
+
+    if !had_forbidden && !had_validation && !had_proxy_disabled {
+        return Ok(false);
+    }
+
+    // 契约 3：若 403 绑定了不同模型，不越权清除账号级状态
+    if let Some(tested) = tested_model {
+        let reason_check = account.proxy_disabled_reason.as_deref().or_else(|| {
+            account
+                .quota
+                .as_ref()
+                .and_then(|q| q.forbidden_reason.as_deref())
+        });
+        if let Some(reason) = reason_check {
+            if is_forbidden_reason_tied_to_different_model(reason, tested) {
+                crate::modules::logger::log_warn(&format!(
+                    "⚠️ [Probe] Account {} probe succeeded for {}, but 403 lock is tied to a different model ({}); skipping unblock",
+                    account.email, tested, reason
+                ));
+                return Ok(false);
+            }
+        }
+    }
+
+    // 契约 2：显式清空验证拦截、配额 is_forbidden 及关联 proxy_disabled
+    account.validation_blocked = false;
+    account.validation_blocked_until = None;
+    account.validation_blocked_reason = None;
+    account.validation_url = None;
+
+    if let Some(ref mut q) = account.quota {
+        q.is_forbidden = false;
+        q.forbidden_reason = None;
+    }
+
+    if had_proxy_disabled {
+        account.proxy_disabled = false;
+        account.proxy_disabled_reason = None;
+        account.proxy_disabled_at = None;
+    }
+
+    save_account(&account)?;
+
+    if let Ok(mut index) = load_account_index() {
+        if let Some(summary) = index.accounts.iter_mut().find(|a| a.id == account_id) {
+            summary.proxy_disabled = account.proxy_disabled;
+            let _ = save_account_index(&index);
+        }
+    }
+
+    crate::proxy::server::trigger_account_reload(account_id);
+    crate::modules::logger::log_info(&format!(
+        "✅ [Probe] Account {} verified live and functional; cleared forbidden/validation locks",
         account.email
     ));
     crate::modules::log_bridge::emit_accounts_refreshed();
