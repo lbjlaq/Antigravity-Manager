@@ -273,6 +273,77 @@ async function runTests() {
         assertEqual(priorities.length, 0, 'No account should be toggled');
     });
 
+    // Test 10: Missing reset_time with positive quota must NOT trigger premature allReset exit
+    await test('10. Missing or unparseable reset_time with remaining quota (>0%) must NOT trigger premature exit', async () => {
+        const accNoResetTime: Account = {
+            id: 'acc-3',
+            name: 'Account 3 (No Reset Time)',
+            email: 'acc-3@example.com',
+            proxy_disabled: false,
+            priority: 1,
+            quota: {
+                last_updated: now,
+                subscription_tier: 'PRO',
+                quota_groups: [
+                    {
+                        display_name: 'Gemini Models',
+                        buckets: [
+                            { bucket_id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.45, reset_time: undefined as any },
+                        ],
+                    },
+                ],
+                models: [],
+            },
+        } as any;
+
+        usePedalModeStore.setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3'],
+            originalPriorities: { 'acc-3': 50 },
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
+        });
+
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
+        };
+
+        await store.checkAndAutoRecover([acc1, accNoResetTime], mockSetPriority);
+
+        const state = usePedalModeStore.getState();
+        assert(state.active === true, 'Pedal mode must remain active when account has 45% quota even without resetTime');
+        assertEqual(priorities.length, 0, 'No priority should be restored while account still has quota');
+    });
+
+    // Test 11: Individual account reaches 0% quota restores its priority without killing pedal mode if others remain
+    await test('11. Individual account reaching 0% quota restores its own priority while other targets remain active', async () => {
+        const drainedAcc3 = makeAccount('acc-3', 'Account 3 Drained', 0, soonReset, 80, farReset, false, 1);
+        const activeAcc4 = makeAccount('acc-4', 'Account 4 Still Active', 25, soonReset, 80, farReset, false, 1);
+
+        usePedalModeStore.setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3', 'acc-4'],
+            originalPriorities: { 'acc-3': 50, 'acc-4': 50 },
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
+        });
+
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
+        };
+
+        await store.checkAndAutoRecover([acc1, drainedAcc3, activeAcc4], mockSetPriority);
+
+        const state = usePedalModeStore.getState();
+        assert(state.active === true, 'Pedal mode must stay active because acc-4 still has 25% quota');
+        assert(priorities.some(p => p.id === 'acc-3' && p.priority === 50), 'acc-3 priority must be restored to 50 upon draining');
+        assert(!priorities.some(p => p.id === 'acc-4'), 'acc-4 priority must NOT be restored while it still has quota');
+    });
+
     console.log(`\nPedal Mode Tests Summary: ${passed} passed, ${failed} failed.`);
     if (failed > 0) {
         throw new Error(`Pedal Mode tests failed: ${failed}`);

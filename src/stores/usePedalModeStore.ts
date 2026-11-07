@@ -4,6 +4,7 @@ import { PedalCandidate, PedalModeState, PedalTargetModel } from '../types/pedal
 import { getGroupQuotaSummaries } from '../utils/quotaDisplay';
 import { showToast } from '../components/common/ToastContainer';
 import { useAccountStore } from './useAccountStore';
+import { request } from '../utils/request';
 
 const STORAGE_KEY = 'antigravity_pedal_mode_state';
 const SUPPRESS_KEY = 'antigravity_pedal_mode_suppress';
@@ -56,6 +57,13 @@ const getStoredState = (): Partial<PedalModeState> => {
     return {};
 };
 
+async function safeClearSessionBindings() {
+    if (typeof window === 'undefined') return;
+    try {
+        await request('clear_proxy_session_bindings');
+    } catch (_) {}
+}
+
 function extractCandidate(account: Account, model: PedalTargetModel): PedalCandidate | null {
     // 排除已被用户主动禁用或处于锁定状态的账号，避免坏号被选为唯一可用账号导致全池瘫痪
     if (account.proxy_disabled) {
@@ -107,8 +115,8 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
 
         checkCandidates: (accounts: Account[]) => {
             const state = get();
-            if (state.active) {
-                // 如果已激活，退出检查交给外部或定期轮询 checkAndAutoRecover
+            if (state.active || state.pendingModal) {
+                // 如果已激活或弹窗已在展示中，不重复触发检查
                 return;
             }
 
@@ -179,6 +187,9 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 }
             }
 
+            // 自动清除既有会话粘性映射，使正在进行的旧对话在下一次发消息时立即切换至待蹬账号
+            await safeClearSessionBindings();
+
             const newState: PedalModeState = {
                 active: true,
                 targetModel: model,
@@ -245,7 +256,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 return;
             }
 
-            // 检查所有待蹬账号是否全部用完 (0%) 或已到达重置时间 (已刷新)
+            // 检查待蹬账号：单个账号用尽时恢复其调度优先级；当所有目标账号用尽或到达重置时间后整体退出
             let allDrained = true;
             let allReset = true;
 
@@ -264,16 +275,31 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 const pct = s.weekly.percentage;
                 const resetTimeStr = s.weekly.resetTime;
                 const resetTimestamp = resetTimeStr ? Date.parse(resetTimeStr) : NaN;
-                const diffHours = !isNaN(resetTimestamp) ? (resetTimestamp - Date.now()) / (3600 * 1000) : 999;
+                const hasValidResetTime = !isNaN(resetTimestamp);
+                const diffHours = hasValidResetTime ? (resetTimestamp - Date.now()) / (3600 * 1000) : 999;
 
-                // 若任何一个账号配额仍 > 0，则未全部用完
-                if (pct > 0) {
+                // 若该账号配额已降至 0%，且该账号仍处于优先级 1 状态，则将其动态恢复至原始优先级
+                // 避免单号用尽后仍作为最高优先级截留非待蹬模型的请求
+                if (pct <= 0) {
+                    if (acc.priority === 1 || acc.priority === 0) {
+                        const origP = state.originalPriorities?.[acc.id] ?? 50;
+                        try {
+                            await priorityUpdater(acc.id, origP);
+                        } catch (e) {
+                            console.error('[PedalMode] Failed to restore single drained account priority:', acc.id, e);
+                        }
+                    }
+                } else {
                     allDrained = false;
                 }
 
-                // 临期等待判定：仅当处于倒计时窗口内 (0 < diffHours <= 24) 且配额尚未恢复 (< 90%) 时，
-                // 才说明该账号既未到达重置时间、也未刷新新周期。
-                if (diffHours > 0 && diffHours <= 24 && pct < 90) {
+                // 该账号是否已刷新/重置：
+                // 1) 周配额已刷新恢复至 90% 以上（无论时间戳如何，配额已实锤刷新）
+                // 2) 具有合法的重置时间戳，且当前时间已经到达或超过官方重置时间 (diffHours <= 0)
+                const isThisAccountReset = pct >= 90 || (hasValidResetTime && diffHours <= 0);
+
+                // 只要还有任何一个账号未处于已重置状态，就绝不能判定为全部重置
+                if (!isThisAccountReset) {
                     allReset = false;
                 }
             }
@@ -308,6 +334,8 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 try {
                     localStorage.removeItem(STORAGE_KEY);
                 } catch (_) {}
+
+                await safeClearSessionBindings();
 
                 set(clearedState);
                 showToast(`🎉 待蹬账号${reason}，已自动退出蹬额度模式并恢复调度优先级！`);
@@ -351,6 +379,8 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
             try {
                 localStorage.removeItem(STORAGE_KEY);
             } catch (_) {}
+
+            await safeClearSessionBindings();
 
             set(clearedState);
             showToast('已退出“蹬额度模式”，账号已恢复原状');
