@@ -142,6 +142,39 @@ pub struct QuotaWindowStatus {
     pub reset_time: Option<i64>,
 }
 
+/// 只读配额桶视图：用于测试、诊断与未来 QuotaSnapshot 迁移，不参与调度决策。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct QuotaBucketState {
+    pub family: String,
+    pub is_weekly: bool,
+    pub remaining_fraction: Option<f64>,
+    pub reset_at: Option<i64>,
+}
+
+/// 由 ProxyToken 现有三套 map 派生出的只读快照；不改变任何调度读写路径。
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize)]
+pub struct QuotaSnapshot {
+    pub buckets: Vec<QuotaBucketState>,
+}
+
+impl QuotaSnapshot {
+    pub fn family_buckets<'a>(
+        &'a self,
+        family: &'a str,
+    ) -> impl Iterator<Item = &'a QuotaBucketState> + 'a {
+        self.buckets.iter().filter(move |b| b.family == family)
+    }
+}
+
+/// 配额写入入口的中立输入：load / 实时刷新都先归一化为该结构。
+#[derive(Debug, Clone, PartialEq)]
+struct QuotaBucketInput {
+    family: &'static str,
+    is_weekly: bool,
+    remaining_fraction: Option<f64>,
+    reset_at: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProxyToken {
     pub account_id: String,
@@ -176,6 +209,102 @@ pub struct ProxyToken {
     pub model_weekly_reset_times: HashMap<String, i64>,
     /// [NEW] 各模型及各同族配额组具体配额窗口快照（包含 is_weekly, remaining_fraction, reset_time）
     pub model_quota_windows: HashMap<String, Vec<QuotaWindowStatus>>,
+}
+
+impl ProxyToken {
+    /// 只读配额视图：由现有三套 map 派生，供测试、诊断与后续迁移使用。
+    /// 注意：调度器仍读取原始 map，本方法不参与任何调度决策。
+    pub fn quota_snapshot(&self) -> QuotaSnapshot {
+        let mut buckets = Vec::new();
+        for (family, windows) in &self.model_quota_windows {
+            for w in windows {
+                buckets.push(QuotaBucketState {
+                    family: family.clone(),
+                    is_weekly: w.is_weekly,
+                    remaining_fraction: w.remaining_fraction,
+                    reset_at: w.reset_time,
+                });
+            }
+        }
+
+        // 兼容旧数据：窗口快照缺失时，用族级 reset map 补出只读视图。
+        for family in ["argon", "3p", "gemini"] {
+            if self.model_quota_windows.contains_key(family) {
+                continue;
+            }
+            if let Some(ts) = self.model_reset_times.get(family) {
+                buckets.push(QuotaBucketState {
+                    family: family.to_string(),
+                    is_weekly: false,
+                    remaining_fraction: None,
+                    reset_at: Some(*ts),
+                });
+            }
+            if let Some(ts) = self.model_weekly_reset_times.get(family) {
+                buckets.push(QuotaBucketState {
+                    family: family.to_string(),
+                    is_weekly: true,
+                    remaining_fraction: None,
+                    reset_at: Some(*ts),
+                });
+            }
+        }
+
+        buckets.sort_by(|a, b| {
+            a.family
+                .cmp(&b.family)
+                .then_with(|| a.is_weekly.cmp(&b.is_weekly))
+                .then_with(|| a.reset_at.cmp(&b.reset_at))
+        });
+        QuotaSnapshot { buckets }
+    }
+
+    /// 在持有 `DashMap::RefMut` 时安全地统一写入三套配额 map。
+    fn apply_quota_bucket_inputs(&mut self, inputs: impl IntoIterator<Item = QuotaBucketInput>) {
+        let Self {
+            model_quota_windows,
+            model_reset_times,
+            model_weekly_reset_times,
+            ..
+        } = self;
+        TokenManager::apply_quota_bucket_inputs(
+            model_quota_windows,
+            model_reset_times,
+            model_weekly_reset_times,
+            inputs,
+        );
+    }
+
+    /// Debug/测试专用：校验族级窗口快照与 reset map 的最小截止时间一致。
+    /// Release 构建不包含该方法，不会影响线上行为。
+    #[cfg(debug_assertions)]
+    pub fn assert_quota_state_consistent(&self) {
+        for family in ["argon", "3p", "gemini"] {
+            let Some(windows) = self.model_quota_windows.get(family) else {
+                continue;
+            };
+            let short_min = windows
+                .iter()
+                .filter(|w| !w.is_weekly)
+                .filter_map(|w| w.reset_time)
+                .min();
+            let weekly_min = windows
+                .iter()
+                .filter(|w| w.is_weekly)
+                .filter_map(|w| w.reset_time)
+                .min();
+            debug_assert_eq!(
+                self.model_reset_times.get(family).copied(),
+                short_min,
+                "short reset map drifted for family {family}"
+            );
+            debug_assert_eq!(
+                self.model_weekly_reset_times.get(family).copied(),
+                weekly_min,
+                "weekly reset map drifted for family {family}"
+            );
+        }
+    }
 }
 
 /// 活跃在途请求 RAII Guard：在请求处理或流式传输期间持有，Drop 时原子释放并发计数
@@ -1254,6 +1383,140 @@ impl TokenManager {
     }
 
     /// 加载单个账号
+    fn quota_family_key(display_name_lower: &str, bucket_id_lower: &str) -> &'static str {
+        if display_name_lower.contains("argon") || bucket_id_lower.contains("argon") {
+            "argon"
+        } else if display_name_lower.contains("claude")
+            || display_name_lower.contains("gpt")
+            || bucket_id_lower.contains("3p")
+        {
+            "3p"
+        } else {
+            "gemini"
+        }
+    }
+
+    fn quota_bucket_is_weekly(window_lower: &str, bucket_id_lower: &str) -> bool {
+        window_lower.contains("week")
+            || window_lower.contains("7d")
+            || bucket_id_lower.contains("week")
+            || bucket_id_lower.contains("7d")
+    }
+
+    /// 将账号 JSON 中的 `quota_groups` 归一化为中立输入。
+    fn quota_bucket_inputs_from_json(groups: &[serde_json::Value]) -> Vec<QuotaBucketInput> {
+        let mut inputs = Vec::new();
+        for group in groups {
+            let display_name_lower = group
+                .get("display_name")
+                .or_else(|| group.get("displayName"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let Some(buckets) = group.get("buckets").and_then(|b| b.as_array()) else {
+                continue;
+            };
+            for bucket in buckets {
+                let window_lower = bucket
+                    .get("window")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let bucket_id_lower = bucket
+                    .get("bucket_id")
+                    .or_else(|| bucket.get("bucketId"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let remaining_fraction = bucket
+                    .get("remaining_fraction")
+                    .or_else(|| bucket.get("remainingFraction"))
+                    .and_then(|v| v.as_f64());
+                let reset_at = bucket
+                    .get("reset_time")
+                    .or_else(|| bucket.get("resetTime"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.timestamp());
+                inputs.push(QuotaBucketInput {
+                    family: Self::quota_family_key(&display_name_lower, &bucket_id_lower),
+                    is_weekly: Self::quota_bucket_is_weekly(&window_lower, &bucket_id_lower),
+                    remaining_fraction,
+                    reset_at,
+                });
+            }
+        }
+        inputs
+    }
+
+    /// 将强类型 `QuotaGroup` 归一化为同一份中立输入。
+    fn quota_bucket_inputs_from_typed(
+        groups: &[crate::models::quota::QuotaGroup],
+    ) -> Vec<QuotaBucketInput> {
+        let mut inputs = Vec::new();
+        for group in groups {
+            let display_name_lower = group.display_name.to_lowercase();
+            for bucket in &group.buckets {
+                let window_lower = bucket.window.to_lowercase();
+                let bucket_id_lower = bucket.bucket_id.to_lowercase();
+                let reset_at = if bucket.reset_time.is_empty() {
+                    None
+                } else {
+                    chrono::DateTime::parse_from_rfc3339(&bucket.reset_time)
+                        .ok()
+                        .map(|dt| dt.timestamp())
+                };
+                inputs.push(QuotaBucketInput {
+                    family: Self::quota_family_key(&display_name_lower, &bucket_id_lower),
+                    is_weekly: Self::quota_bucket_is_weekly(&window_lower, &bucket_id_lower),
+                    remaining_fraction: Some(bucket.remaining_fraction),
+                    reset_at,
+                });
+            }
+        }
+        inputs
+    }
+
+    /// 统一写入三套既有 map：窗口快照 + 短期 reset + 周 reset。
+    /// 调用方负责在重建前清空旧 map；本函数只做确定性写入。
+    fn apply_quota_bucket_inputs(
+        model_quota_windows: &mut HashMap<String, Vec<QuotaWindowStatus>>,
+        model_reset_times: &mut HashMap<String, i64>,
+        model_weekly_reset_times: &mut HashMap<String, i64>,
+        inputs: impl IntoIterator<Item = QuotaBucketInput>,
+    ) {
+        for input in inputs {
+            model_quota_windows
+                .entry(input.family.to_string())
+                .or_default()
+                .push(QuotaWindowStatus {
+                    is_weekly: input.is_weekly,
+                    remaining_fraction: input.remaining_fraction,
+                    reset_time: input.reset_at,
+                });
+
+            let Some(ts) = input.reset_at else {
+                continue;
+            };
+            let target_map: &mut HashMap<String, i64> = if input.is_weekly {
+                &mut *model_weekly_reset_times
+            } else {
+                &mut *model_reset_times
+            };
+            target_map
+                .entry(input.family.to_string())
+                .and_modify(|existing| *existing = (*existing).min(ts))
+                .or_insert(ts);
+            if input.family == "argon" {
+                target_map
+                    .entry("gemini-4-argon".to_string())
+                    .and_modify(|existing| *existing = (*existing).min(ts))
+                    .or_insert(ts);
+            }
+        }
+    }
+
     async fn load_single_account(&self, path: &PathBuf) -> Result<Option<ProxyToken>, String> {
         let content = std::fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?;
 
@@ -1725,99 +1988,19 @@ impl TokenManager {
         }
 
         // [NEW] 从配额桶分组精确提取周周期与短期周期重置时间及窗口快照（模型大类组级隔离，P1-2, P1-3）
+        // 写入入口统一收敛到 apply_quota_bucket_inputs，避免 load / 实时刷新各写一套逻辑。
         if let Some(groups) = account
             .get("quota")
             .and_then(|q| q.get("quota_groups").or_else(|| q.get("quotaGroups")))
             .and_then(|g| g.as_array())
         {
-            for group in groups {
-                let dname = group
-                    .get("display_name")
-                    .or_else(|| group.get("displayName"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                if let Some(buckets) = group.get("buckets").and_then(|b| b.as_array()) {
-                    for bucket in buckets {
-                        let win = bucket
-                            .get("window")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_lowercase();
-                        let bid = bucket
-                            .get("bucket_id")
-                            .or_else(|| bucket.get("bucketId"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_lowercase();
-                        let is_weekly = win.contains("week")
-                            || win.contains("7d")
-                            || bid.contains("week")
-                            || bid.contains("7d");
-                        let frac = bucket
-                            .get("remaining_fraction")
-                            .or_else(|| bucket.get("remainingFraction"))
-                            .and_then(|v| v.as_f64());
-                        let reset_val = bucket
-                            .get("reset_time")
-                            .or_else(|| bucket.get("resetTime"))
-                            .and_then(|v| v.as_str());
-
-                        let ts_opt = reset_val.and_then(|reset_str| {
-                            if reset_str.is_empty() {
-                                None
-                            } else {
-                                chrono::DateTime::parse_from_rfc3339(reset_str)
-                                    .ok()
-                                    .map(|dt| dt.timestamp())
-                            }
-                        });
-
-                        let is_argon = dname.contains("argon") || bid.contains("argon");
-                        let is_3p = !is_argon
-                            && (dname.contains("claude")
-                                || dname.contains("gpt")
-                                || bid.contains("3p"));
-                        let family_key = if is_argon {
-                            "argon"
-                        } else if is_3p {
-                            "3p"
-                        } else {
-                            "gemini"
-                        };
-
-                        let window_status = QuotaWindowStatus {
-                            is_weekly,
-                            remaining_fraction: frac,
-                            reset_time: ts_opt,
-                        };
-                        model_quota_windows
-                            .entry(family_key.to_string())
-                            .or_default()
-                            .push(window_status);
-
-                        if let Some(ts) = ts_opt {
-                            let target_map = if is_weekly {
-                                &mut model_weekly_reset_times
-                            } else {
-                                &mut model_reset_times
-                            };
-
-                            target_map
-                                .entry(family_key.to_string())
-                                .and_modify(|existing| *existing = (*existing).min(ts))
-                                .or_insert(ts);
-
-                            if is_argon {
-                                target_map
-                                    .entry("gemini-4-argon".to_string())
-                                    .and_modify(|existing| *existing = (*existing).min(ts))
-                                    .or_insert(ts);
-                            }
-                        }
-                    }
-                }
-            }
+            let inputs = Self::quota_bucket_inputs_from_json(groups);
+            Self::apply_quota_bucket_inputs(
+                &mut model_quota_windows,
+                &mut model_reset_times,
+                &mut model_weekly_reset_times,
+                inputs,
+            );
         }
 
         if let Some(live_limits) = account
@@ -5452,68 +5635,13 @@ impl TokenManager {
                     }
 
                     // [NEW P1-2] 实时刷新时同步各模型/各组专属重置时间与配额窗口快照
+                    // 与 load_single_account 共用同一个写入入口，避免两条路径漂移。
                     if let Some(groups) = quota_data.quota_groups.as_ref() {
                         token.model_quota_windows.clear();
                         token.model_reset_times.clear();
                         token.model_weekly_reset_times.clear();
-                        for group in groups {
-                            let dname = group.display_name.to_lowercase();
-                            for bucket in &group.buckets {
-                                let win = bucket.window.to_lowercase();
-                                let bid = bucket.bucket_id.to_lowercase();
-                                let is_weekly = win.contains("week")
-                                    || win.contains("7d")
-                                    || bid.contains("week")
-                                    || bid.contains("7d");
-                                let ts_opt =
-                                    chrono::DateTime::parse_from_rfc3339(&bucket.reset_time)
-                                        .ok()
-                                        .map(|dt| dt.timestamp());
-
-                                let is_argon = dname.contains("argon") || bid.contains("argon");
-                                let is_3p = !is_argon
-                                    && (dname.contains("claude")
-                                        || dname.contains("gpt")
-                                        || bid.contains("3p"));
-                                let family_key = if is_argon {
-                                    "argon"
-                                } else if is_3p {
-                                    "3p"
-                                } else {
-                                    "gemini"
-                                };
-
-                                let window_status = QuotaWindowStatus {
-                                    is_weekly,
-                                    remaining_fraction: Some(bucket.remaining_fraction),
-                                    reset_time: ts_opt,
-                                };
-                                token
-                                    .model_quota_windows
-                                    .entry(family_key.to_string())
-                                    .or_default()
-                                    .push(window_status);
-
-                                if let Some(ts) = ts_opt {
-                                    let target_map = if is_weekly {
-                                        &mut token.model_weekly_reset_times
-                                    } else {
-                                        &mut token.model_reset_times
-                                    };
-                                    target_map
-                                        .entry(family_key.to_string())
-                                        .and_modify(|existing| *existing = (*existing).min(ts))
-                                        .or_insert(ts);
-
-                                    if is_argon {
-                                        target_map
-                                            .entry("gemini-4-argon".to_string())
-                                            .and_modify(|existing| *existing = (*existing).min(ts))
-                                            .or_insert(ts);
-                                    }
-                                }
-                            }
-                        }
+                        let inputs = Self::quota_bucket_inputs_from_typed(groups);
+                        token.apply_quota_bucket_inputs(inputs);
                     }
 
                     for m in &quota_data.models {
@@ -11743,5 +11871,143 @@ mod tests {
             TokenManager::resolve_model_reset_time(&token, "gemini-3.8-flash-high", true),
             Some(now_ts - 100)
         );
+    }
+
+    #[test]
+    fn test_quota_bucket_inputs_json_and_typed_are_equivalent() {
+        let json_groups = serde_json::json!([
+            {
+                "displayName": "Gemini Models",
+                "buckets": [
+                    {
+                        "bucketId": "gemini_weekly",
+                        "window": "7d",
+                        "remainingFraction": 0.0,
+                        "resetTime": "2026-11-10T00:00:00Z"
+                    },
+                    {
+                        "bucketId": "gemini_5h",
+                        "window": "5h",
+                        "remainingFraction": 0.75,
+                        "resetTime": "2026-11-07T08:00:00Z"
+                    }
+                ]
+            }
+        ]);
+        let json_inputs =
+            TokenManager::quota_bucket_inputs_from_json(json_groups.as_array().unwrap());
+
+        let typed_groups: Vec<crate::models::quota::QuotaGroup> =
+            serde_json::from_value(serde_json::json!([
+                {
+                    "display_name": "Gemini Models",
+                    "buckets": [
+                        {
+                            "bucket_id": "gemini_weekly",
+                            "window": "7d",
+                            "remaining_fraction": 0.0,
+                            "reset_time": "2026-11-10T00:00:00Z"
+                        },
+                        {
+                            "bucket_id": "gemini_5h",
+                            "window": "5h",
+                            "remaining_fraction": 0.75,
+                            "reset_time": "2026-11-07T08:00:00Z"
+                        }
+                    ]
+                }
+            ]))
+            .unwrap();
+        let typed_inputs = TokenManager::quota_bucket_inputs_from_typed(&typed_groups);
+
+        assert_eq!(json_inputs, typed_inputs);
+    }
+
+    #[test]
+    fn test_apply_quota_bucket_inputs_builds_consistent_view_and_min_reset() {
+        let mut windows = HashMap::new();
+        let mut short = HashMap::new();
+        let mut weekly = HashMap::new();
+        let inputs = vec![
+            QuotaBucketInput {
+                family: "gemini",
+                is_weekly: true,
+                remaining_fraction: Some(0.0),
+                reset_at: Some(300),
+            },
+            QuotaBucketInput {
+                family: "gemini",
+                is_weekly: true,
+                remaining_fraction: Some(0.0),
+                reset_at: Some(200),
+            },
+            QuotaBucketInput {
+                family: "gemini",
+                is_weekly: false,
+                remaining_fraction: Some(0.5),
+                reset_at: Some(100),
+            },
+            QuotaBucketInput {
+                family: "argon",
+                is_weekly: true,
+                remaining_fraction: Some(0.8),
+                reset_at: Some(400),
+            },
+        ];
+
+        TokenManager::apply_quota_bucket_inputs(&mut windows, &mut short, &mut weekly, inputs);
+
+        assert_eq!(weekly.get("gemini"), Some(&200));
+        assert_eq!(short.get("gemini"), Some(&100));
+        assert_eq!(weekly.get("argon"), Some(&400));
+        assert_eq!(weekly.get("gemini-4-argon"), Some(&400));
+        assert_eq!(windows.get("gemini").unwrap().len(), 3);
+        assert_eq!(windows.get("argon").unwrap().len(), 1);
+
+        let mut token = create_test_token("snapshot@test.com", Some("PRO"), 1.0, None, Some(0));
+        token.model_quota_windows = windows;
+        token.model_reset_times = short;
+        token.model_weekly_reset_times = weekly;
+        token.assert_quota_state_consistent();
+
+        let snapshot = token.quota_snapshot();
+        assert_eq!(snapshot.buckets.len(), 4);
+        assert_eq!(snapshot.family_buckets("gemini").count(), 3);
+    }
+
+    #[test]
+    fn test_readonly_quota_snapshot_falls_back_to_reset_maps() {
+        let mut token = create_test_token("legacy@test.com", Some("PRO"), 1.0, None, Some(0));
+        token.model_reset_times.insert("gemini".to_string(), 100);
+        token
+            .model_weekly_reset_times
+            .insert("gemini".to_string(), 200);
+
+        let snapshot = token.quota_snapshot();
+        assert_eq!(snapshot.family_buckets("gemini").count(), 2);
+        assert!(snapshot
+            .family_buckets("gemini")
+            .any(|b| !b.is_weekly && b.reset_at == Some(100)));
+        assert!(snapshot
+            .family_buckets("gemini")
+            .any(|b| b.is_weekly && b.reset_at == Some(200)));
+        token.assert_quota_state_consistent();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "short reset map drifted")]
+    fn test_quota_state_consistency_assertion_detects_drift() {
+        let mut token = create_test_token("drift@test.com", Some("PRO"), 1.0, None, Some(0));
+        token.model_quota_windows.insert(
+            "gemini".to_string(),
+            vec![QuotaWindowStatus {
+                is_weekly: false,
+                remaining_fraction: Some(0.0),
+                reset_time: Some(100),
+            }],
+        );
+        token.model_reset_times.insert("gemini".to_string(), 999);
+        token.assert_quota_state_consistent();
     }
 }
