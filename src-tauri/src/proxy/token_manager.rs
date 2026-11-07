@@ -1017,16 +1017,23 @@ impl TokenManager {
 
         match self.load_single_account(&path).await {
             Ok(Some(token)) => {
-                let has_positive_quota = token.model_quotas.values().any(|quota| *quota > 0);
-                self.tokens.insert(account_id.to_string(), token);
-
                 // 配额刷新是权威快照：立即释放该账号的历史模型级 900s 熔断；
-                // 若账号已有正配额，仅安全解限已恢复的 QuotaExhausted，严格保留 429 速率限制退避 (Ref #3840, #3845)
+                // 仅针对在存配额确定 > 0 的具体模型定向解限 QuotaExhausted，严格保留 429 速率限制退避与 0 配额模型的锁 (Ref #3840, #3845)
                 self.clear_unsupported_models_for_account(account_id);
-                if has_positive_quota {
-                    self.rate_limit_tracker
-                        .reconcile_all_quota_recovery_for_account(account_id);
+                if token.model_quotas.is_empty() {
+                    if token.remaining_quota.unwrap_or(0) > 0 {
+                        self.rate_limit_tracker
+                            .reconcile_all_quota_recovery_for_account(account_id);
+                    }
+                } else {
+                    for (model, quota) in &token.model_quotas {
+                        if *quota > 0 {
+                            self.rate_limit_tracker
+                                .reconcile_quota_recovery(account_id, model);
+                        }
+                    }
                 }
+                self.tokens.insert(account_id.to_string(), token);
 
                 self.sync_image_scheduler_accounts();
                 Ok(())
@@ -1046,16 +1053,24 @@ impl TokenManager {
     pub async fn reload_all_accounts(&self) -> Result<usize, String> {
         let count = self.load_accounts().await?;
 
-        // 批量配额刷新的调用方：对已恢复正配额的账号立即释放旧限流锁定，
-        // 避免「配额已恢复但仍被 5/15 分钟冷却挡住」。
-        let positive_account_ids: Vec<String> = self
-            .tokens
-            .iter()
-            .filter(|entry| entry.value().model_quotas.values().any(|quota| *quota > 0))
-            .map(|entry| entry.key().clone())
-            .collect();
-        for account_id in positive_account_ids {
-            self.rate_limit_tracker.clear(&account_id);
+        // 批量配额刷新的调用方：按模型粒度对已恢复正配额的模型释放旧 QuotaExhausted 锁定，
+        // 严格保留 429 速率限制退避与仍为 0 配额模型的锁定 (Ref #3840, #3845, #3852)
+        for entry in self.tokens.iter() {
+            let account_id = entry.key();
+            let token = entry.value();
+            if token.model_quotas.is_empty() {
+                if token.remaining_quota.unwrap_or(0) > 0 {
+                    self.rate_limit_tracker
+                        .reconcile_all_quota_recovery_for_account(account_id);
+                }
+            } else {
+                for (model, quota) in &token.model_quotas {
+                    if *quota > 0 {
+                        self.rate_limit_tracker
+                            .reconcile_quota_recovery(account_id, model);
+                    }
+                }
+            }
         }
 
         Ok(count)
@@ -1710,7 +1725,7 @@ impl TokenManager {
         // [NEW] 从配额桶分组精确提取周周期与短期周期重置时间及窗口快照（模型大类组级隔离，P1-2, P1-3）
         if let Some(groups) = account
             .get("quota")
-            .and_then(|q| q.get("quota_groups"))
+            .and_then(|q| q.get("quota_groups").or_else(|| q.get("quotaGroups")))
             .and_then(|g| g.as_array())
         {
             for group in groups {
@@ -2725,53 +2740,19 @@ impl TokenManager {
         let now_ts = chrono::Utc::now().timestamp();
 
         // 1. 优先检查详细的窗口快照 (model_quota_windows)
+        // 核心契约：筛选出所有已耗尽 (remaining_fraction <= 0.001) 的桶（无论 weekly 还是 5h），
+        // 杜绝使用 .find() 只取第一个周桶而漏判其它周桶；必须满足所有耗尽桶的 reset_time 均已越过当前物理时间，才判定自愈。
         if let Some(buckets) = Self::resolve_model_quota_windows(t, model) {
             if !buckets.is_empty() {
-                let weekly_bucket = buckets.iter().find(|b| b.is_weekly);
-                let short_bucket = buckets.iter().find(|b| !b.is_weekly);
-
-                // P0-1 核心约束：Weekly 硬配额优先
-                if let Some(w) = weekly_bucket {
-                    if w.remaining_fraction.is_some_and(|f| f <= 0.001) {
-                        // weekly 耗尽，必须等待 weekly reset
-                        match w.reset_time {
-                            Some(w_reset) => {
-                                if now_ts < w_reset {
-                                    // weekly 重置时间未到，绝对不得自愈
-                                    return false;
-                                }
-                            }
-                            None => {
-                                // weekly 耗尽且无 reset_time，安全起见不得自愈
-                                return false;
-                            }
-                        }
-                    }
-                }
-
-                // 检查短期窗口 (5h / daily)
-                if let Some(s) = short_bucket {
-                    if s.remaining_fraction.is_some_and(|f| f <= 0.001) {
-                        match s.reset_time {
-                            Some(s_reset) => {
-                                if now_ts < s_reset {
-                                    // 短期重置时间未到，不得自愈
-                                    return false;
-                                }
-                            }
-                            None => {
-                                return false;
-                            }
-                        }
-                    }
-                }
-
-                // 存在耗尽的桶，且所有耗尽桶的 reset_time 均已越过当前时间
-                let any_depleted = buckets
+                let depleted_buckets: Vec<_> = buckets
                     .iter()
-                    .any(|b| b.remaining_fraction.is_some_and(|f| f <= 0.001));
-                if any_depleted {
-                    return true;
+                    .filter(|b| b.remaining_fraction.is_some_and(|f| f <= 0.001))
+                    .collect();
+
+                if !depleted_buckets.is_empty() {
+                    return depleted_buckets
+                        .iter()
+                        .all(|b| b.reset_time.is_some_and(|r| now_ts >= r));
                 }
             }
         }
@@ -5469,6 +5450,8 @@ impl TokenManager {
                     // [NEW P1-2] 实时刷新时同步各模型/各组专属重置时间与配额窗口快照
                     if let Some(groups) = quota_data.quota_groups.as_ref() {
                         token.model_quota_windows.clear();
+                        token.model_reset_times.clear();
+                        token.model_weekly_reset_times.clear();
                         for group in groups {
                             let dname = group.display_name.to_lowercase();
                             for bucket in &group.buckets {
@@ -6890,7 +6873,7 @@ impl TokenManager {
     fn extract_weekly_reset_time(&self, account: &serde_json::Value) -> Option<i64> {
         let groups = account
             .get("quota")
-            .and_then(|q| q.get("quota_groups"))
+            .and_then(|q| q.get("quota_groups").or_else(|| q.get("quotaGroups")))
             .and_then(|g| g.as_array())?;
 
         let mut earliest_weekly_ts: Option<i64> = None;
@@ -6955,7 +6938,11 @@ impl TokenManager {
             .and_then(|v| v.as_i64())
             .unwrap_or(0)
             .saturating_mul(1000);
-        if let Some(groups) = quota.get("quota_groups").and_then(|g| g.as_array()) {
+        if let Some(groups) = quota
+            .get("quota_groups")
+            .or_else(|| quota.get("quotaGroups"))
+            .and_then(|g| g.as_array())
+        {
             for group in groups {
                 let group_name = group
                     .get("display_name")
@@ -11461,6 +11448,180 @@ mod tests {
         assert!(
             TokenManager::is_model_quota_depleted_expired(&token, "gemini-4-argon-high"),
             "Argon 模型可正常命中专属自愈"
+        );
+    }
+
+    #[test]
+    fn test_multi_weekly_bucket_depleted_requires_all_depleted_to_expire() {
+        let now_ts = chrono::Utc::now().timestamp();
+        let mut token = create_test_token("multi_weekly@test.com", Some("PRO"), 1.0, None, Some(0));
+        token
+            .model_quotas
+            .insert("gemini-4-argon-high".to_string(), 0);
+
+        // 场景 1：两个周桶，桶 A 剩余 85%（重置在 1 天后），桶 B 耗尽 0%（重置在 3 天后）
+        // 杜绝 .find() 提前命中非耗尽桶或遗漏次级耗尽桶导致的静默泄露
+        let windows = vec![
+            QuotaWindowStatus {
+                is_weekly: true,
+                remaining_fraction: Some(0.85),
+                reset_time: Some(now_ts - 100), // 虽然桶 A 重置已过，但它不是耗尽桶
+            },
+            QuotaWindowStatus {
+                is_weekly: true,
+                remaining_fraction: Some(0.0),        // 桶 B 耗尽
+                reset_time: Some(now_ts + 3 * 86400), // 重置在 3 天后
+            },
+        ];
+        token
+            .model_quota_windows
+            .insert("argon".to_string(), windows);
+
+        assert!(
+            !TokenManager::is_model_quota_depleted_expired(&token, "gemini-4-argon-high"),
+            "次级周桶耗尽且重置时间未到时，绝对不可提前判定为过期自愈"
+        );
+
+        // 场景 2：两个周桶均耗尽，桶 A 重置已过 (1 小时前)，桶 B 重置未过 (3 天后)
+        let windows_both_depleted = vec![
+            QuotaWindowStatus {
+                is_weekly: true,
+                remaining_fraction: Some(0.0),
+                reset_time: Some(now_ts - 3600),
+            },
+            QuotaWindowStatus {
+                is_weekly: true,
+                remaining_fraction: Some(0.0),
+                reset_time: Some(now_ts + 3 * 86400),
+            },
+        ];
+        token
+            .model_quota_windows
+            .insert("argon".to_string(), windows_both_depleted);
+
+        assert!(
+            !TokenManager::is_model_quota_depleted_expired(&token, "gemini-4-argon-high"),
+            "所有耗尽桶中只要有任意一个未到重置时间，均不可恢复准入"
+        );
+
+        // 场景 3：所有耗尽周桶的重置时间均已到达
+        let windows_all_expired = vec![
+            QuotaWindowStatus {
+                is_weekly: true,
+                remaining_fraction: Some(0.0),
+                reset_time: Some(now_ts - 3600),
+            },
+            QuotaWindowStatus {
+                is_weekly: true,
+                remaining_fraction: Some(0.0),
+                reset_time: Some(now_ts - 10),
+            },
+        ];
+        token
+            .model_quota_windows
+            .insert("argon".to_string(), windows_all_expired);
+
+        assert!(
+            TokenManager::is_model_quota_depleted_expired(&token, "gemini-4-argon-high"),
+            "所有耗尽桶重置时间均到达后必须允许自愈"
+        );
+    }
+
+    #[test]
+    fn test_per_model_lockout_reconciliation_preserves_depleted_model_and_rate_limit() {
+        let manager = TokenManager::new(std::path::PathBuf::from("/tmp/test_tokens"));
+        let account_id = "test_acc_reconcile";
+
+        // 设置三种锁：
+        // 1. gemini: QuotaExhausted
+        // 2. claude: QuotaExhausted
+        // 3. gemini: RateLimitExceeded (429)
+        manager.rate_limit_tracker.set_lockout_until_with_cap(
+            account_id,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+            Some("gemini-2.5-pro".to_string()),
+            false,
+        );
+        manager.rate_limit_tracker.set_lockout_until_with_cap(
+            account_id,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+            Some("claude-sonnet-4-6".to_string()),
+            false,
+        );
+        manager.rate_limit_tracker.set_lockout_until_with_cap(
+            account_id,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+            crate::proxy::rate_limit::RateLimitReason::RateLimitExceeded,
+            Some("gemini-2.5-flash".to_string()),
+            false,
+        );
+
+        // 模拟账号刷新后：gemini 恢复正配额 (100)，claude 仍耗尽 (0)
+        let mut model_quotas = std::collections::HashMap::new();
+        model_quotas.insert("gemini-2.5-pro".to_string(), 100);
+        model_quotas.insert("claude-sonnet-4-6".to_string(), 0);
+
+        // 仅对 quota > 0 的模型调用 reconcile_quota_recovery
+        for (model, quota) in &model_quotas {
+            if *quota > 0 {
+                manager
+                    .rate_limit_tracker
+                    .reconcile_quota_recovery(account_id, model);
+            }
+        }
+
+        assert!(
+            !manager
+                .rate_limit_tracker
+                .is_rate_limited(account_id, Some("gemini-2.5-pro")),
+            "正配额模型必须精准解除 QuotaExhausted 锁定"
+        );
+        assert!(
+            manager
+                .rate_limit_tracker
+                .is_rate_limited(account_id, Some("claude-sonnet-4-6")),
+            "零配额模型绝对不可因其他模型的正配额被误解禁"
+        );
+        assert!(
+            manager
+                .rate_limit_tracker
+                .is_rate_limited(account_id, Some("gemini-2.5-flash")),
+            "RateLimitExceeded (429) 限流绝对不可被配额解禁逻辑冲掉"
+        );
+    }
+
+    #[test]
+    fn test_camel_case_quota_groups_support() {
+        let manager = TokenManager::new(std::path::PathBuf::from("/tmp/test_tokens"));
+        let future_time = chrono::Utc::now() + chrono::Duration::days(5);
+        let future_rfc3339 = future_time.to_rfc3339();
+
+        let account_val = serde_json::json!({
+            "quota": {
+                "last_updated": 1700000000,
+                "quotaGroups": [
+                    {
+                        "displayName": "Gemini",
+                        "buckets": [
+                            {
+                                "bucketId": "gemini_weekly",
+                                "window": "7d",
+                                "remainingFraction": 0.5,
+                                "resetTime": future_rfc3339
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let extracted_ts = manager.extract_weekly_reset_time(&account_val);
+        assert_eq!(
+            extracted_ts,
+            Some(future_time.timestamp()),
+            "camelCase quotaGroups 与 resetTime 必须能正确解析出周重置时间戳"
         );
     }
 }
