@@ -18,6 +18,7 @@ pub mod logger;
 pub mod migration;
 pub mod oauth;
 pub mod oauth_server;
+pub mod probe;
 pub mod process;
 pub mod proxy_db;
 pub mod quota;

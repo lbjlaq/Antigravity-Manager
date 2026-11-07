@@ -2603,6 +2603,23 @@ struct AdminTestModelRequest {
     target_account_id: Option<String>,
 }
 
+fn probe_selection_error_response(
+    error: crate::modules::probe::ProbeSelectionError,
+) -> (StatusCode, Json<ErrorResponse>) {
+    let status = match error {
+        crate::modules::probe::ProbeSelectionError::NoCandidates => StatusCode::BAD_REQUEST,
+        crate::modules::probe::ProbeSelectionError::AllCandidatesFailed { .. } => {
+            StatusCode::BAD_GATEWAY
+        }
+    };
+    (
+        status,
+        Json(ErrorResponse {
+            error: error.to_string(),
+        }),
+    )
+}
+
 async fn admin_test_model(
     State(state): State<AppState>,
     Json(payload): Json<AdminTestModelRequest>,
@@ -2610,38 +2627,40 @@ async fn admin_test_model(
     let port = state.port;
     let accounts = crate::modules::account::list_accounts().unwrap_or_default();
 
-    let (chosen_account, token, pid) = if let Some(ref acc_id) = payload.target_account_id {
-        if !acc_id.is_empty() {
-            let acc = accounts
-                .iter()
-                .find(|a| &a.id == acc_id)
-                .cloned()
-                .ok_or_else(|| {
-                    (
-                        StatusCode::NOT_FOUND,
-                        Json(ErrorResponse {
-                            error: "未找到指定的账号".to_string(),
-                        }),
-                    )
-                })?;
-            let (t, p) = crate::modules::quota::get_valid_token_for_warmup(&acc)
-                .await
-                .map_err(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse { error: e }),
-                    )
-                })?;
-            (acc, t, p)
-        } else {
-            crate::commands::proxy::pick_auto_test_account(&accounts)
-                .await
-                .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?
-        }
-    } else {
-        crate::commands::proxy::pick_auto_test_account(&accounts)
+    let (chosen_account, token, pid) = if let Some(acc_id) = payload
+        .target_account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        let acc = accounts
+            .iter()
+            .find(|a| a.id == acc_id)
+            .cloned()
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorResponse {
+                        error: "未找到指定的账号".to_string(),
+                    }),
+                )
+            })?;
+        let (t, p) = crate::modules::quota::get_valid_token_for_warmup(&acc)
             .await
-            .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse { error: e }),
+                )
+            })?;
+        (acc, t, p)
+    } else {
+        // Web 端“自动调度”遵循反代号池语义：默认排除手动禁用反代的账号。
+        let probe =
+            crate::modules::probe::pick_auto_probe_account(&accounts, &payload.model, false)
+                .await
+                .map_err(probe_selection_error_response)?;
+        (probe.account, probe.access_token, probe.project_id)
     };
 
     let warmup_url = format!("http://127.0.0.1:{}/internal/warmup", port);
@@ -5472,6 +5491,24 @@ mod save_update_settings_payload_tests {
             resolve_oauth_redirect_uri(8045, Some("https://my-domain.example.com/"), false),
             "https://my-domain.example.com/auth/callback"
         );
+    }
+}
+
+#[cfg(test)]
+mod admin_test_model_tests {
+    use super::*;
+    use crate::modules::probe::ProbeSelectionError;
+
+    #[test]
+    fn test_probe_selection_error_status_mapping() {
+        let (no_candidates, _) = probe_selection_error_response(ProbeSelectionError::NoCandidates);
+        assert_eq!(no_candidates, StatusCode::BAD_REQUEST);
+
+        let (all_failed, _) =
+            probe_selection_error_response(ProbeSelectionError::AllCandidatesFailed {
+                reasons: vec!["account@example.com: token refresh failed".to_string()],
+            });
+        assert_eq!(all_failed, StatusCode::BAD_GATEWAY);
     }
 
     #[test]

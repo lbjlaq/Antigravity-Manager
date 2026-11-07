@@ -1066,14 +1066,26 @@ pub async fn get_valid_token_for_warmup(
         }
     }
 
-    // Fetch project_id
-    let (project_id, _) = fetch_project_id(
-        &account.token.access_token,
-        &account.email,
-        Some(&account.id),
-    )
-    .await;
-    let final_pid = project_id.unwrap_or_else(|| "bamboo-precept-lgxtn".to_string());
+    // 探活只需要 project_id，不需要每次重新拉取订阅等级。已有缓存时直接复用，
+    // 避免自动选号遍历多个候选时重复请求 loadCodeAssist。
+    // 注意：fetch_quota_with_cache 仍必须每次调用 loadCodeAssist 作为 tier 权威源。
+    let final_pid = if let Some(pid) = account
+        .token
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|pid| !pid.is_empty())
+    {
+        pid.to_string()
+    } else {
+        let (project_id, _) = fetch_project_id(
+            &account.token.access_token,
+            &account.email,
+            Some(&account.id),
+        )
+        .await;
+        project_id.unwrap_or_else(|| "bamboo-precept-lgxtn".to_string())
+    };
 
     Ok((account.token.access_token, final_pid))
 }
