@@ -24,6 +24,7 @@ mod tests {
         ProxyToken {
             account_id: account_id.to_string(),
             priority: crate::models::account::default_priority(),
+            model_priorities: std::collections::HashMap::new(),
             access_token: format!("mock_access_token_{}", account_id),
             refresh_token: format!("mock_refresh_token_{}", account_id),
             expires_in: 3600,
@@ -1098,6 +1099,7 @@ mod tests {
         ProxyToken {
             account_id: account_id.to_string(),
             priority: crate::models::account::default_priority(),
+            model_priorities: std::collections::HashMap::new(),
             access_token: format!("mock_access_token_{}", account_id),
             refresh_token: format!("mock_refresh_token_{}", account_id),
             expires_in: 3600,

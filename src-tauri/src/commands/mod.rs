@@ -1530,12 +1530,24 @@ pub async fn update_account_priority(
     proxy_state: tauri::State<'_, crate::commands::proxy::ProxyServiceState>,
     account_id: String,
     priority: u8,
+    model_priorities: Option<std::collections::HashMap<String, u8>>,
 ) -> Result<(), String> {
-    modules::account::update_account_priority(&account_id, priority)?;
+    let has_model_override = model_priorities.is_some();
+    let saved_model_priorities = modules::account::update_account_priority_with_models(
+        &account_id,
+        priority,
+        model_priorities,
+    )?;
     if let Some(instance) = proxy_state.instance.read().await.as_ref() {
-        instance
-            .token_manager
-            .update_account_priority(&account_id, priority);
+        instance.token_manager.update_account_model_priorities(
+            &account_id,
+            priority,
+            if has_model_override {
+                Some(saved_model_priorities)
+            } else {
+                None
+            },
+        );
     }
     Ok(())
 }

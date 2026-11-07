@@ -179,6 +179,7 @@ struct QuotaBucketInput {
 pub struct ProxyToken {
     pub account_id: String,
     pub priority: u8,
+    pub model_priorities: HashMap<String, u8>,
     pub access_token: String,
     pub refresh_token: String,
     pub expires_in: i64,
@@ -212,6 +213,20 @@ pub struct ProxyToken {
 }
 
 impl ProxyToken {
+    /// 根据当前请求的目标模型与归一化模型组，计算该账号的实际生效调度优先级。
+    /// 若设置了对应模型组（"gemini" | "claude"）的独立优先级则优先采用，否则回退至账号全局 `priority`。
+    pub fn effective_priority(&self, target_model: &str, normalized_target: &str) -> u8 {
+        if self.model_priorities.is_empty() {
+            return self.priority;
+        }
+        let group =
+            crate::models::account::resolve_model_priority_group(target_model, normalized_target);
+        self.model_priorities
+            .get(group)
+            .copied()
+            .unwrap_or(self.priority)
+    }
+
     /// 只读配额视图：由现有三套 map 派生，供测试、诊断与后续迁移使用。
     /// 注意：调度器仍读取原始 map，本方法不参与任何调度决策。
     pub fn quota_snapshot(&self) -> QuotaSnapshot {
@@ -1290,8 +1305,21 @@ impl TokenManager {
 
     /// Apply a saved priority without resetting sessions or live rate limits.
     pub fn update_account_priority(&self, account_id: &str, priority: u8) {
+        self.update_account_model_priorities(account_id, priority, None);
+    }
+
+    /// Apply saved priority and optional per-model-family priority overrides to in-memory ProxyToken.
+    pub fn update_account_model_priorities(
+        &self,
+        account_id: &str,
+        priority: u8,
+        model_priorities: Option<HashMap<String, u8>>,
+    ) {
         if let Some(mut token) = self.tokens.get_mut(account_id) {
             token.priority = priority;
+            if let Some(mp) = model_priorities {
+                token.model_priorities = mp;
+            }
         }
     }
 
@@ -2064,6 +2092,13 @@ impl TokenManager {
                 )),
             )
             .map_err(|e| format!("invalid account priority: {}", e))?,
+            model_priorities: account
+                .get("model_priorities")
+                .cloned()
+                .map(crate::models::account::deserialize_model_priorities)
+                .transpose()
+                .map_err(|e| format!("invalid account model_priorities: {}", e))?
+                .unwrap_or_default(),
             access_token,
             refresh_token,
             expires_in,
@@ -3130,10 +3165,10 @@ impl TokenManager {
         if max_spillover > 0 {
             let mut distinct_account_ids: Vec<String> = Vec::new();
             let mut sorted_pool = available.clone();
-            // 排序规则：优先级数字越小越优先；相同优先级下，在途请求数越小越优先；最后按 account_id 稳定排序
+            // 排序规则：当前模型的生效优先级数字越小越优先；相同优先级下，在途请求数越小越优先；最后按 account_id 稳定排序
             sorted_pool.sort_by(|a, b| {
-                a.priority
-                    .cmp(&b.priority)
+                a.effective_priority(normalized_target, normalized_target)
+                    .cmp(&b.effective_priority(normalized_target, normalized_target))
                     .then_with(|| {
                         self.get_in_flight(&a.account_id)
                             .cmp(&self.get_in_flight(&b.account_id))
@@ -3186,12 +3221,13 @@ impl TokenManager {
 
         // Keep lower-priority groups for retries; only this draw is restricted.
         // [NEW] 并发感知与次级分流加速 (Concurrency-Aware & Priority Spillover Acceleration)：
-        // 1. 获取当前可用池中最高优先级 min_priority
-        if let Some(min_priority) = available.iter().map(|t| t.priority).min() {
+        // 1. 获取当前可用池中针对目标模型的最高生效优先级 min_priority
+        let eff_p = |t: &ProxyToken| t.effective_priority(normalized_target, normalized_target);
+        if let Some(min_priority) = available.iter().map(|t| eff_p(t)).min() {
             // 检查最高优先级是否有完全空闲（在途请求数 == 0）的健康账号
             let min_p_idle: Vec<&ProxyToken> = available
                 .iter()
-                .filter(|t| t.priority == min_priority && self.get_in_flight(&t.account_id) == 0)
+                .filter(|t| eff_p(t) == min_priority && self.get_in_flight(&t.account_id) == 0)
                 .copied()
                 .collect();
 
@@ -3203,11 +3239,11 @@ impl TokenManager {
                 // 检查更低优先级 (priority > min_priority) 中是否存在完全空闲 (in_flight == 0) 的健康账号
                 let lower_idle: Vec<&ProxyToken> = available
                     .iter()
-                    .filter(|t| t.priority > min_priority && self.get_in_flight(&t.account_id) == 0)
+                    .filter(|t| eff_p(t) > min_priority && self.get_in_flight(&t.account_id) == 0)
                     .copied()
                     .collect();
 
-                if let Some(next_min_p) = lower_idle.iter().map(|t| t.priority).min() {
+                if let Some(next_min_p) = lower_idle.iter().map(|t| eff_p(t)).min() {
                     // 🚀 触发多会话分流加速：新会话平滑外溢到次高优先级的空闲账号组，打破单号串行排队阻塞！
                     tracing::info!(
                         "🚀 [Concurrency Spillover] Priority {} accounts are busy (in_flight > 0). Offloading new conversation to idle priority {} account",
@@ -3215,7 +3251,7 @@ impl TokenManager {
                     );
                     available = lower_idle
                         .into_iter()
-                        .filter(|t| t.priority == next_min_p)
+                        .filter(|t| eff_p(t) == next_min_p)
                         .collect();
                 } else {
                     // 全池账号皆处于忙碌状态，按最低在途并发度 (Least-Loaded) 筛选，防单号被压垮
@@ -3226,8 +3262,8 @@ impl TokenManager {
                         .unwrap_or(0);
                     available.retain(|t| self.get_in_flight(&t.account_id) == min_inflight);
                     // 在相同最低并发度的账号中，恢复优先级优选
-                    if let Some(best_p) = available.iter().map(|t| t.priority).min() {
-                        available.retain(|t| t.priority == best_p);
+                    if let Some(best_p) = available.iter().map(|t| eff_p(t)).min() {
+                        available.retain(|t| eff_p(t) == best_p);
                     }
                 }
             }
@@ -3736,7 +3772,9 @@ impl TokenManager {
         }
 
         tokens_snapshot.sort_by(|a, b| {
-            let priority_cmp = a.priority.cmp(&b.priority);
+            let priority_cmp = a
+                .effective_priority(target_model, &normalized_target)
+                .cmp(&b.effective_priority(target_model, &normalized_target));
             if priority_cmp != std::cmp::Ordering::Equal {
                 return priority_cmp;
             }
@@ -4194,6 +4232,26 @@ impl TokenManager {
                                             > 0
                                 });
 
+                                let found_eff_priority =
+                                    found.effective_priority(target_model, &normalized_target);
+                                let has_higher_priority_alt = tokens_snapshot.iter().any(|t| {
+                                    &t.account_id != account_id
+                                        && !attempted.contains(&t.account_id)
+                                        && !self.qos_guardian.is_jailed_or_probing(&t.account_id)
+                                        && !self.rate_limit_tracker.is_rate_limited(
+                                            &t.account_id,
+                                            Some(&normalized_target),
+                                        )
+                                        && !(quota_protection_enabled
+                                            && t.protected_models.contains(&normalized_target))
+                                        && Self::has_candidate_quota_admission(
+                                            t,
+                                            &normalized_target,
+                                        )
+                                        && t.effective_priority(target_model, &normalized_target)
+                                            < found_eff_priority
+                                });
+
                                 let is_qos_jailed =
                                     self.qos_guardian.is_jailed_or_probing(&found.account_id);
                                 if is_qos_jailed {
@@ -4205,6 +4263,11 @@ impl TokenManager {
                                     tracing::debug!(
                                         "60s Window: Last account {} has 0% quota for model {}, skipping reuse (Fixes #3639)",
                                         found.email, normalized_target
+                                    );
+                                } else if has_higher_priority_alt {
+                                    tracing::debug!(
+                                        "60s Window: Last account {} has lower effective priority ({}) for model {}, yielding to higher-priority account",
+                                        found.email, found_eff_priority, normalized_target
                                     );
                                 } else if !self
                                     .is_rate_limited(&found.account_id, Some(&normalized_target))
@@ -8457,6 +8520,7 @@ mod tests {
         ProxyToken {
             account_id: email.to_string(),
             priority: crate::models::account::default_priority(),
+            model_priorities: HashMap::new(),
             access_token: "test_token".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_in: 3600,
@@ -8854,6 +8918,7 @@ mod tests {
         ProxyToken {
             account_id: email.to_string(),
             priority: crate::models::account::default_priority(),
+            model_priorities: HashMap::new(),
             access_token: "test_token".to_string(),
             refresh_token: "test_refresh".to_string(),
             expires_in: 3600,
@@ -9500,6 +9565,7 @@ mod tests {
             subscription_tier: Some("PRO".to_string()),
             remaining_quota: Some(100),
             priority: 0,
+            model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             health_score: 1.0,
             reset_time: None,
@@ -9533,6 +9599,7 @@ mod tests {
             subscription_tier: Some("PRO".to_string()),
             remaining_quota: Some(80),
             priority: 0,
+            model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             health_score: 1.0,
             reset_time: None,
@@ -9754,6 +9821,7 @@ mod tests {
             subscription_tier: Some("PRO".to_string()),
             remaining_quota: Some(100),
             priority: 0,
+            model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             health_score: 1.0,
             reset_time: None,
@@ -9829,6 +9897,7 @@ mod tests {
             subscription_tier: Some("PRO".to_string()),
             remaining_quota: Some(100),
             priority: 0,
+            model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             health_score: 1.0,
             reset_time: None,
@@ -10836,6 +10905,7 @@ mod tests {
         let token = ProxyToken {
             account_id: "acc_test_meta".to_string(),
             priority: 0,
+            model_priorities: HashMap::new(),
             access_token: "token1".to_string(),
             refresh_token: "refresh1".to_string(),
             expires_in: 3600,
@@ -11992,6 +12062,82 @@ mod tests {
             .family_buckets("gemini")
             .any(|b| b.is_weekly && b.reset_at == Some(200)));
         token.assert_quota_state_consistent();
+    }
+
+    #[tokio::test]
+    async fn account_model_priorities_route_claude_and_gemini_independently() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let acc_personal_file = temp_dir.path().join("acc_personal.json");
+        let acc_pool_file = temp_dir.path().join("acc_pool.json");
+        std::fs::write(&acc_personal_file, r#"{"disabled": false}"#).unwrap();
+        std::fs::write(&acc_pool_file, r#"{"disabled": false}"#).unwrap();
+
+        let claude_model = "claude-sonnet-4-6";
+        let gemini_model = "gemini-3.1-pro-high";
+
+        // Personal account: default priority 50, Claude priority 1 (use first), Gemini priority 80 (use after other Pro accounts)
+        let mut personal =
+            create_test_token("personal@example.com", Some("PRO"), 1.0, None, Some(80));
+        personal.account_id = "acc_personal".to_string();
+        personal.access_token = "tok_personal".to_string();
+        personal.account_path = acc_personal_file;
+        personal.priority = 50;
+        personal.model_priorities.insert("claude".to_string(), 1);
+        personal.model_priorities.insert("gemini".to_string(), 80);
+        for m in [claude_model, gemini_model, "claude", "gemini"] {
+            personal.available_models.insert(m.to_string());
+            personal.model_quotas.insert(m.to_string(), 80);
+        }
+
+        // Pool Pro account: default priority 50, no per-model overrides
+        let mut pool_pro = create_test_token("pool@example.com", Some("PRO"), 1.0, None, Some(90));
+        pool_pro.account_id = "acc_pool".to_string();
+        pool_pro.access_token = "tok_pool".to_string();
+        pool_pro.account_path = acc_pool_file;
+        pool_pro.priority = 50;
+        for m in [claude_model, gemini_model, "claude", "gemini"] {
+            pool_pro.available_models.insert(m.to_string());
+            pool_pro.model_quotas.insert(m.to_string(), 90);
+        }
+
+        assert_eq!(personal.effective_priority(claude_model, claude_model), 1);
+        assert_eq!(personal.effective_priority(gemini_model, gemini_model), 80);
+        assert_eq!(pool_pro.effective_priority(claude_model, claude_model), 50);
+        assert_eq!(pool_pro.effective_priority(gemini_model, gemini_model), 50);
+
+        manager.tokens.insert("acc_personal".to_string(), personal);
+        manager.tokens.insert("acc_pool".to_string(), pool_pro);
+
+        // 1. Requesting Claude selects `acc_personal` (effective priority 1 < 50)
+        let (tok_claude, _, _, id_claude, _) = manager
+            .get_token("claude", false, None, claude_model)
+            .await
+            .unwrap();
+        assert_eq!(id_claude, "acc_personal");
+        assert_eq!(tok_claude, "tok_personal");
+
+        // 2. Immediately requesting Gemini (even within the 60s stateless window) yields to `acc_pool`
+        // because `acc_personal` has effective Gemini priority 80 > `acc_pool` priority 50.
+        let (tok_gemini, _, _, id_gemini, _) = manager
+            .get_token("gemini", false, None, gemini_model)
+            .await
+            .unwrap();
+        assert_eq!(id_gemini, "acc_pool");
+        assert_eq!(tok_gemini, "tok_pool");
+
+        // 3. Hot-updating model priorities via TokenManager flips Gemini priority to 1 on `acc_personal`
+        let mut updated_map = HashMap::new();
+        updated_map.insert("claude".to_string(), 1);
+        updated_map.insert("gemini".to_string(), 1);
+        manager.update_account_model_priorities("acc_personal", 50, Some(updated_map));
+
+        let (_, _, _, id_gemini_after, _) = manager
+            .get_token("gemini", false, None, gemini_model)
+            .await
+            .unwrap();
+        assert_eq!(id_gemini_after, "acc_personal");
     }
 
     #[cfg(debug_assertions)]

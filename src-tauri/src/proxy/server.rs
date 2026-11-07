@@ -3512,9 +3512,16 @@ struct ToggleProxyRequest {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct AccountPriorityRequest {
     #[serde(deserialize_with = "crate::models::account::deserialize_priority")]
     priority: u8,
+    #[serde(
+        default,
+        alias = "model_priorities",
+        deserialize_with = "crate::models::account::deserialize_optional_model_priorities"
+    )]
+    model_priorities: Option<std::collections::HashMap<String, u8>>,
 }
 
 async fn admin_update_account_priority(
@@ -3522,17 +3529,27 @@ async fn admin_update_account_priority(
     Path(account_id): Path<String>,
     Json(payload): Json<AccountPriorityRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    crate::modules::account::update_account_priority(&account_id, payload.priority).map_err(
-        |e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse { error: e }),
-            )
+    let has_model_override = payload.model_priorities.is_some();
+    let saved_model_priorities = crate::modules::account::update_account_priority_with_models(
+        &account_id,
+        payload.priority,
+        payload.model_priorities,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e }),
+        )
+    })?;
+    state.token_manager.update_account_model_priorities(
+        &account_id,
+        payload.priority,
+        if has_model_override {
+            Some(saved_model_priorities)
+        } else {
+            None
         },
-    )?;
-    state
-        .token_manager
-        .update_account_priority(&account_id, payload.priority);
+    );
     Ok(StatusCode::OK)
 }
 

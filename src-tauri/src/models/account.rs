@@ -21,6 +21,62 @@ pub(crate) fn deserialize_priority<'de, D: serde::Deserializer<'de>>(
     Ok(priority)
 }
 
+pub(crate) fn validate_model_priorities(
+    priorities: &HashMap<String, u8>,
+) -> Result<HashMap<String, u8>, String> {
+    let mut normalized = HashMap::new();
+    for (raw_key, &value) in priorities {
+        validate_priority(value)?;
+        let key = raw_key.trim().to_ascii_lowercase();
+        if !matches!(key.as_str(), "gemini" | "claude") {
+            return Err(format!(
+                "unsupported model priority group '{}': expected 'gemini' or 'claude'",
+                raw_key
+            ));
+        }
+        normalized.insert(key, value);
+    }
+    Ok(normalized)
+}
+
+pub(crate) fn deserialize_model_priorities<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<HashMap<String, u8>, D::Error> {
+    let raw = Option::<HashMap<String, u8>>::deserialize(deserializer)?.unwrap_or_default();
+    validate_model_priorities(&raw).map_err(serde::de::Error::custom)
+}
+
+pub(crate) fn deserialize_optional_model_priorities<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<HashMap<String, u8>>, D::Error> {
+    let raw = Option::<HashMap<String, u8>>::deserialize(deserializer)?;
+    match raw {
+        Some(map) => validate_model_priorities(&map)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        None => Ok(None),
+    }
+}
+
+/// Map any requested or normalized model identifier to its canonical scheduling priority family ("gemini" or "claude").
+pub(crate) fn resolve_model_priority_group(
+    target_model: &str,
+    normalized_target: &str,
+) -> &'static str {
+    let norm = normalized_target.trim().to_ascii_lowercase();
+    let raw = target_model.trim().to_ascii_lowercase();
+    if norm == "claude"
+        || norm.contains("claude")
+        || norm.starts_with("gpt")
+        || raw.contains("claude")
+        || raw.starts_with("gpt")
+    {
+        "claude"
+    } else {
+        "gemini"
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveLimitStatus {
     pub model: String,
@@ -301,6 +357,14 @@ pub struct Account {
         deserialize_with = "deserialize_priority"
     )]
     pub priority: u8,
+    /// Optional per-model-family priority overrides ("gemini" / "claude", 1-100; lower is selected first).
+    /// Falls back to `priority` when a family override is not set.
+    #[serde(
+        default,
+        skip_serializing_if = "HashMap::is_empty",
+        deserialize_with = "deserialize_model_priorities"
+    )]
+    pub model_priorities: HashMap<String, u8>,
     pub token: TokenData,
     /// 可选的设备指纹，用于切换账号时固定机器信息
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -390,6 +454,7 @@ impl Account {
             email,
             name: None,
             priority: default_priority(),
+            model_priorities: HashMap::new(),
             token,
             device_profile: None,
             device_history: Vec::new(),
@@ -738,6 +803,62 @@ mod tests {
             crate::modules::account::update_account_priority("missing", 101)
                 .unwrap_err()
                 .contains("priority")
+        );
+    }
+
+    #[test]
+    fn account_model_priorities_validate_and_resolve_groups() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let account = Account::new("test".into(), "test@test.invalid".into(), token);
+        assert!(account.model_priorities.is_empty());
+
+        let mut json = serde_json::to_value(account).unwrap();
+        assert!(
+            json.get("model_priorities").is_none(),
+            "empty model_priorities should be omitted from serialized JSON"
+        );
+
+        json["model_priorities"] = serde_json::json!({
+            "claude": 1,
+            "gemini": 80
+        });
+        let parsed = serde_json::from_value::<Account>(json.clone()).unwrap();
+        assert_eq!(parsed.model_priorities.get("claude"), Some(&1));
+        assert_eq!(parsed.model_priorities.get("gemini"), Some(&80));
+
+        for invalid in [
+            serde_json::json!({"claude": 0}),
+            serde_json::json!({"gemini": 101}),
+            serde_json::json!({"unknown_group": 10}),
+        ] {
+            json["model_priorities"] = invalid;
+            assert!(serde_json::from_value::<Account>(json.clone()).is_err());
+        }
+
+        assert_eq!(
+            resolve_model_priority_group("claude-sonnet-4-6", "claude-sonnet-4-6"),
+            "claude"
+        );
+        assert_eq!(
+            resolve_model_priority_group("gpt-4o", "claude-sonnet-4-6"),
+            "claude"
+        );
+        assert_eq!(
+            resolve_model_priority_group("gemini-3.1-pro-high", "gemini-3.1-pro-high"),
+            "gemini"
+        );
+        assert_eq!(
+            resolve_model_priority_group("gemini-4-argon-high", "gemini-4-argon-high"),
+            "gemini"
         );
     }
 
