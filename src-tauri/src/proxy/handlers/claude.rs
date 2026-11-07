@@ -2920,8 +2920,16 @@ pub async fn handle_messages(
                     tracing::error!("Failed to set validation block: {}", e);
                 }
             } else {
-                // 设置 is_forbidden 状态（仅当真正非人机验证类 403 时才进入永久禁用）
-                if let Err(e) = token_manager.set_forbidden(&account_id, &error_text).await {
+                // 设置 is_forbidden 状态（同时传入请求模型与映射模型，彻底消除动态改写盲区）
+                if let Err(e) = token_manager
+                    .set_forbidden_with_models(
+                        &account_id,
+                        &error_text,
+                        Some(&config.final_model),
+                        Some(&mapped_model),
+                    )
+                    .await
+                {
                     tracing::error!("Failed to set forbidden status for {}: {}", email, e);
                 } else {
                     tracing::warn!("[Claude] Account {} marked as forbidden due to 403", email);

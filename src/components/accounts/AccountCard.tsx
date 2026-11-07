@@ -14,6 +14,7 @@ import { releaseAccountQoSJail } from '../../services/accountService';
 import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
+import { isValidationBlockActive } from '../../utils/accountStatus';
 
 interface AccountCardProps {
     account: Account;
@@ -42,6 +43,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
     const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
     const isDisabled = Boolean(account.disabled);
     const isBanned = Boolean(account.banned);
+    const isValidationBlocked = isValidationBlockActive(account);
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
 
     // 自定义标签编辑状态
@@ -206,7 +208,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     {t('accounts.forbidden').toUpperCase()}
                                 </span>
                             )}
-                            {account.validation_blocked && (
+                            {isValidationBlocked && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 text-[9px] font-bold flex items-center gap-1 shadow-sm border border-amber-200/50">
                                     <Clock className="w-2.5 h-2.5" />
                                     {validationBlockedLabel.toUpperCase()}
@@ -309,6 +311,17 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     GPT-120B
                                 </span>
                             )}
+                            {account.forbidden_models && account.forbidden_models.length > 0 && (
+                                account.forbidden_models.map((fm) => (
+                                    <span
+                                        key={fm}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[9px] font-bold border border-rose-200/50 dark:border-rose-900/30"
+                                        title={t('accounts.forbidden_model_tooltip', '该模型已被 403 冻结')}
+                                    >
+                                        ❄️ {fm}
+                                    </span>
+                                ))
+                            )}
                         </div>
                         <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono shrink-0 whitespace-nowrap">
                             {new Date(account.last_used * 1000).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
@@ -320,20 +333,20 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
 
             {/* 配额展示 (统一分组展示) */}
             <div className="flex-1 px-1 mb-2 overflow-y-auto scrollbar-none">
-                {isDisabled || account.banned || account.quota?.is_forbidden || account.validation_blocked ? (
+                {isDisabled || account.banned || account.quota?.is_forbidden || isValidationBlocked ? (
                     <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 h-full py-4 text-center">
                         <div className={cn(
                             "flex items-center gap-1.5",
-                            account.validation_blocked && !account.banned ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
+                            isValidationBlocked && !account.banned ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
                         )}>
-                            {account.validation_blocked && !account.banned ? <Clock className="w-4 h-4" /> : (account.banned ? <Ban className="w-4 h-4" /> : (isDisabled ? <Ban className="w-4 h-4" /> : <Lock className="w-4 h-4" />))}
+                            {isValidationBlocked && !account.banned ? <Clock className="w-4 h-4" /> : (account.banned ? <Ban className="w-4 h-4" /> : (isDisabled ? <Ban className="w-4 h-4" /> : <Lock className="w-4 h-4" />))}
                             <span className="text-[11px] font-bold">
-                                {account.validation_blocked && !account.banned ? validationBlockedLabel : (account.banned ? t('accounts.banned_msg', '账号已被上游封禁，已停止自动刷新') : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg')))}
+                                {isValidationBlocked && !account.banned ? validationBlockedLabel : (account.banned ? t('accounts.banned_msg', '账号已被上游封禁，已停止自动刷新') : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg')))}
                             </span>
                         </div>
                         <div className={cn(
                             "w-px h-3 hidden sm:block",
-                            account.validation_blocked && !account.banned ? "bg-amber-200 dark:bg-amber-800/50" : "bg-red-200 dark:bg-red-800/50"
+                            isValidationBlocked && !account.banned ? "bg-amber-200 dark:bg-amber-800/50" : "bg-red-200 dark:bg-red-800/50"
                         )} />
                         <button
                             onClick={(e) => { e.stopPropagation(); onViewError(); }}

@@ -266,6 +266,7 @@
         "pro": "PRO",
         "free": "FREE",
         "filter_abnormal": "Abnormal",
+        "forbidden_model_tooltip": "This model is frozen due to 403; other models remain available",
         "edit_label": "Edit Label",
         "custom_label_placeholder": "Enter custom label",
         "label_updated": "Label updated",

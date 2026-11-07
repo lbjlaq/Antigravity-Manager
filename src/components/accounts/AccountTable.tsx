@@ -63,6 +63,7 @@ import { showToast } from '../common/ToastContainer';
 import { releaseAccountQoSJail } from '../../services/accountService';
 import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
+import { isValidationBlockActive } from '../../utils/accountStatus';
 
 // ============================================================================
 // 类型定义
@@ -322,6 +323,7 @@ function AccountRowContent({
     const { config } = useConfigStore();
     const { active: isPedalActive, targetAccountIds } = usePedalModeStore();
     const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
+    const isValidationBlocked = isValidationBlockActive(account);
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
     const isBanned = Boolean(account.banned);
 
@@ -458,11 +460,22 @@ function AccountRowContent({
                                 <span>{t('accounts.forbidden')}</span>
                             </span>
                         )}
-                        {account.validation_blocked && (
+                        {isValidationBlocked && (
                             <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-400 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-amber-200/50">
                                 <Clock className="w-2.5 h-2.5" />
                                 <span>{validationBlockedLabel}</span>
                             </span>
+                        )}
+                        {account.forbidden_models && account.forbidden_models.length > 0 && (
+                            account.forbidden_models.map((fm) => (
+                                <span
+                                    key={fm}
+                                    className="px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-[10px] font-bold flex items-center gap-1 shadow-xs border border-rose-200/50 dark:border-rose-900/30"
+                                    title={t('accounts.forbidden_model_tooltip', '该模型已被 403 冻结')}
+                                >
+                                    ❄️ {fm}
+                                </span>
+                            ))
                         )}
                         <QoSStatusBadge
                             status={account.qos_status}
@@ -599,26 +612,26 @@ function AccountRowContent({
 
             {/* 模型配额列 */}
             <td className="px-3 py-2 align-middle">
-                {isDisabled || account.banned || account.quota?.is_forbidden || account.validation_blocked ? (
+                {isDisabled || account.banned || account.quota?.is_forbidden || isValidationBlocked ? (
                     <div className={cn(
                         "flex items-center justify-center gap-3 py-1.5 px-4 rounded-xl border group/error",
-                        account.validation_blocked && !account.banned ? "bg-amber-50/50 dark:bg-amber-900/10 border-amber-100/50 dark:border-amber-900/20" : "bg-red-50/50 dark:bg-red-900/10 border-red-100/50 dark:border-red-900/20"
+                        isValidationBlocked && !account.banned ? "bg-amber-50/50 dark:bg-amber-900/10 border-amber-100/50 dark:border-amber-900/20" : "bg-red-50/50 dark:bg-red-900/10 border-red-100/50 dark:border-red-900/20"
                     )}>
                         <div className={cn(
                             "flex items-center gap-1.5",
-                            account.validation_blocked && !account.banned ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
+                            isValidationBlocked && !account.banned ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
                         )}>
-                            {account.validation_blocked && !account.banned ? <Clock className="w-3.5 h-3.5" /> : (account.banned ? <Ban className="w-3.5 h-3.5" /> : (account.quota?.is_forbidden ? <Lock className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />))}
+                            {isValidationBlocked && !account.banned ? <Clock className="w-3.5 h-3.5" /> : (account.banned ? <Ban className="w-3.5 h-3.5" /> : (account.quota?.is_forbidden ? <Lock className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />))}
                             <span className={cn(
                                 "text-[11px] font-bold",
-                                account.validation_blocked && !account.banned ? "text-amber-700/80 dark:text-amber-400" : "text-red-700/80 dark:text-red-400"
+                                isValidationBlocked && !account.banned ? "text-amber-700/80 dark:text-amber-400" : "text-red-700/80 dark:text-red-400"
                             )}>
-                                {account.validation_blocked && !account.banned ? validationBlockedLabel : (account.banned ? t('accounts.banned_msg', '账号已被上游封禁，已停止自动刷新') : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg')))}
+                                {isValidationBlocked && !account.banned ? validationBlockedLabel : (account.banned ? t('accounts.banned_msg', '账号已被上游封禁，已停止自动刷新') : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg')))}
                             </span>
                         </div>
                         <div className={cn(
                             "w-px h-3",
-                            account.validation_blocked ? "bg-amber-200 dark:bg-amber-800/50" : "bg-red-200 dark:bg-red-800/50"
+                            isValidationBlocked ? "bg-amber-200 dark:bg-amber-800/50" : "bg-red-200 dark:bg-red-800/50"
                         )} />
                         <button
                             onClick={(e) => { e.stopPropagation(); onViewError(); }}

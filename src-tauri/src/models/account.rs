@@ -66,7 +66,7 @@ impl AccountBanInfo {
         // 只保留高置信、账号级 TOS 封禁信号。`suspicious_activity`、泛化的
         // `third-party`、临时 `account is locked` 等词会把风控/验证 403 误升级为
         // 永久封禁；新增关键词前必须先用真实封禁样本验证并补负向测试。
-        const BAN_REASON_CODES: [&str; 9] = [
+        const BAN_REASON_CODES: [&str; 8] = [
             "tos_violation",
             "terms_of_service_violation",
             "policy_violation",
@@ -75,7 +75,6 @@ impl AccountBanInfo {
             "account_banned",
             "user_disabled",
             "account_disabled",
-            "service_disabled",
         ];
         const BAN_PHRASES: [&str; 6] = [
             "violation of terms of service",
@@ -197,9 +196,15 @@ impl AccountBanInfo {
                     let lower_reason = reason.to_lowercase();
                     // 只接受与封禁语义相关的 reason code，避免被
                     // SUBSCRIPTION_REQUIRED / PERMISSION_DENIED 等泛化原因覆盖。
-                    if ["violation", "suspend", "disab", "ban"]
-                        .iter()
-                        .any(|marker| lower_reason.contains(marker))
+                    if [
+                        "violation",
+                        "suspend",
+                        "account_disabled",
+                        "user_disabled",
+                        "ban",
+                    ]
+                    .iter()
+                    .any(|marker| lower_reason.contains(marker))
                     {
                         *code = Some(reason.to_string());
                     }
@@ -289,6 +294,162 @@ pub(crate) fn classify_lock_reason(reason: &str) -> AccountLockKind {
     AccountLockKind::Manual
 }
 
+pub const MODEL_FAMILIES: [&str; 7] = ["claude", "gpt", "gemini", "o1", "o3", "o4", "imagen"];
+
+/// 从任意文本 token 中清洗并提取有效的模型 ID。
+/// 支持处理 Google Vertex / Cloud Code 资源路径（如 `projects/.../models/gemini-3-pro`）。
+pub(crate) fn clean_model_token(token: &str) -> Option<String> {
+    let token = token.trim_matches(|c: char| {
+        matches!(
+            c,
+            '`' | '\'' | '"' | ':' | '(' | ')' | '[' | ']' | ',' | ';' | '.'
+        )
+    });
+    // 若 token 是资源路径（如 "projects/.../locations/us/publishers/google/models/gemini-3-pro" 或 "s/gemini-3-pro"），取最后一个 `/` 后的片段
+    let token = if let Some(slash_idx) = token.rfind('/') {
+        &token[slash_idx + 1..]
+    } else {
+        token
+    };
+    let token = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-');
+    if token.is_empty() {
+        return None;
+    }
+    // 大小写无关地校验是否包含已知模型家族
+    let token_lower = token.to_lowercase();
+    if MODEL_FAMILIES.iter().any(|f| token_lower.contains(f)) {
+        return Some(token.to_string());
+    }
+    None
+}
+
+/// 从 403/禁用原因中提取可冻结的具体模型 scope。
+///
+/// 只有能明确指向模型家族或模型 token 时才返回 Some；区域/验证/配额项目等
+/// 账号级限制返回 None，避免把整号 403 误记成模型级。
+pub(crate) fn forbidden_model_scope(reason: &str) -> Option<String> {
+    let lower = reason.to_lowercase();
+    if lower.contains("validation_required")
+        || lower.contains("challenge")
+        || lower.contains("verify your account")
+        || lower.contains("user location")
+        || lower.contains("location not supported")
+        || lower.contains("location is not supported")
+        || lower.contains("location not allowed")
+        || lower.contains("quota project")
+    {
+        return None;
+    }
+
+    // 1. 优先提取 "model" 或 "models/" 后的具体模型名或资源路径片段
+    if let Some(idx) = lower.find("model") {
+        let after_model = &lower[idx + 5..];
+        let trimmed = after_model.trim_start_matches(|c: char| {
+            c == ' ' || c == '\'' || c == '"' || c == ':' || c == '`' || c == '/'
+        });
+        let raw_token = trimmed
+            .split(|c: char| c == ' ' || c == '\'' || c == '"' || c == '`' || c == ',' || c == ';')
+            .next()
+            .unwrap_or("");
+        if let Some(cleaned) = clean_model_token(raw_token) {
+            return Some(cleaned);
+        }
+    }
+
+    // 2. 扫描带版本号或家族名的合法模型 token
+    for raw_token in lower.split(|c: char| {
+        c == ' '
+            || c == '\''
+            || c == '"'
+            || c == '`'
+            || c == ','
+            || c == ';'
+            || c == '('
+            || c == ')'
+            || c == ':'
+    }) {
+        if let Some(cleaned) = clean_model_token(raw_token) {
+            if cleaned.contains('-') {
+                return Some(cleaned);
+            }
+        }
+    }
+
+    // 3. 只有纯家族名时按家族冻结
+    for family in MODEL_FAMILIES {
+        if lower.contains(family) {
+            return Some(family.to_string());
+        }
+    }
+
+    None
+}
+
+/// 判断单个 forbidden scope 是否覆盖目标模型。
+///
+/// 核心契约：
+/// 1. 宽 scope 拦截具体 target（如 scope "claude" 拦截 target "claude-3-5-sonnet"）；
+/// 2. 具体 scope 拦截自身及派生变体（如 scope "claude-3-5-sonnet" 拦截 target "claude-3-5-sonnet-thinking"）；
+/// 3. 具体 scope 严禁逆向拦截宽泛类别（如 scope "claude-3-5-sonnet" 绝不能拦截 target "claude"）；
+/// 4. 文本模型 scope 严禁误拦截生图模型（如 scope "gemini-3-pro" 绝不能拦截 "gemini-3-pro-image"）；
+/// 5. 严格词边界匹配，杜绝 "gpt-4" 误拦截 "gpt-4o"。
+pub(crate) fn model_scope_matches(scope: &str, model: &str) -> bool {
+    let scope = scope.trim().to_lowercase();
+    let target = model.trim().to_lowercase();
+    if scope.is_empty() || target.is_empty() {
+        return false;
+    }
+    let scope_base = crate::proxy::common::model_mapping::strip_tier_suffix(&scope);
+    let target_base = crate::proxy::common::model_mapping::strip_tier_suffix(&target);
+
+    // 生图变体剥离（如 -4k / -2k）
+    let scope_img_base = crate::proxy::common::model_mapping::strip_image_variant_suffix(&scope);
+    let target_img_base = crate::proxy::common::model_mapping::strip_image_variant_suffix(&target);
+
+    // 文本模型严禁误伤生图模型：若 target 属于生图但 scope 并不声明生图，不匹配
+    let target_is_image = target.contains("image") || target.starts_with("imagen");
+    let scope_is_image = scope.contains("image") || scope.starts_with("imagen");
+    if target_is_image && !scope_is_image {
+        return false;
+    }
+
+    // 1. 完全相同或基名相同
+    if scope == target
+        || scope == target_base
+        || scope_base == target
+        || scope_base == target_base
+        || scope_img_base == target_img_base
+    {
+        return true;
+    }
+
+    // 2. 目标模型以该 scope 加上词分隔符（'-' 或 '@'）为前缀
+    let is_prefix_variant =
+        |t: &str, s: &str| t.starts_with(&format!("{}-", s)) || t.starts_with(&format!("{}@", s));
+    if is_prefix_variant(&target, &scope)
+        || is_prefix_variant(&target_base, &scope)
+        || is_prefix_variant(&target, &scope_base)
+        || is_prefix_variant(&target_base, &scope_base)
+        || is_prefix_variant(&target_img_base, &scope_img_base)
+    {
+        return true;
+    }
+
+    // 3. 模型家族匹配（仅当 scope 是纯家族名时允许拦截属于该家族的具体模型）
+    if MODEL_FAMILIES.contains(&scope.as_str()) {
+        return is_prefix_variant(&target, &scope)
+            || is_prefix_variant(&target_base, &scope)
+            || target == scope
+            || target_base == scope;
+    }
+
+    false
+}
+
+pub(crate) fn is_model_forbidden_by_scopes(model: &str, scopes: &HashSet<String>) -> bool {
+    scopes.iter().any(|scope| model_scope_matches(scope, model))
+}
+
 /// 账号数据结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
@@ -318,6 +479,10 @@ pub struct Account {
     /// Unix timestamp when the account was disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disabled_at: Option<i64>,
+    /// 用户手动禁用了反代功能（与系统锁如 banned / 403 / validation 隔离）。
+    /// 当系统锁解除时，若 manual_proxy_disabled 为 true，账号仍保持禁用状态。
+    #[serde(default)]
+    pub manual_proxy_disabled: bool,
     /// User manually disabled proxy feature (does not affect app usage).
     #[serde(default)]
     pub proxy_disabled: bool,
@@ -330,6 +495,10 @@ pub struct Account {
     /// 受配额保护禁用的模型列表 [NEW #621]
     #[serde(default, skip_serializing_if = "HashSet::is_empty")]
     pub protected_models: HashSet<String>,
+    /// 模型级 403 冻结（原始模型 ID 或模型族 token）。
+    /// 与账号级 `banned` / `quota.is_forbidden` 独立：只影响对应模型，其他模型仍可调度。
+    #[serde(default, skip_serializing_if = "HashSet::is_empty")]
+    pub forbidden_models: HashSet<String>,
     /// Temporary live upstream throttles observed from actual generation requests.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub live_limited_models: HashMap<String, LiveLimitStatus>,
@@ -397,10 +566,12 @@ impl Account {
             disabled: false,
             disabled_reason: None,
             disabled_at: None,
+            manual_proxy_disabled: false,
             proxy_disabled: false,
             proxy_disabled_reason: None,
             proxy_disabled_at: None,
             protected_models: HashSet::new(),
+            forbidden_models: HashSet::new(),
             live_limited_models: HashMap::new(),
             validation_blocked: false,
             validation_blocked_until: None,
@@ -443,6 +614,56 @@ impl Account {
             message: self.banned_reason.clone().unwrap_or_default(),
             appeal_url: self.ban_appeal_url.clone(),
         })
+    }
+
+    pub fn is_model_forbidden(&self, model: &str) -> bool {
+        is_model_forbidden_by_scopes(model, &self.forbidden_models)
+    }
+
+    /// 验证锁是否仍在有效窗口内。
+    /// - 若有明确截止时间，以 `until > now` 为准；
+    /// - 若 `until == 0` 或缺失（人工验证挑战），在 `last_used` 24 小时内按生效处理，超过 24 小时自动兜底失效防永久死锁。
+    pub fn is_validation_block_active(&self, now: i64) -> bool {
+        if !self.validation_blocked {
+            return false;
+        }
+        match self.validation_blocked_until {
+            Some(0) | None => {
+                let age = now.saturating_sub(self.last_used);
+                age < 86400
+            }
+            Some(until) => until > now,
+        }
+    }
+
+    /// 是否存在有效的系统锁（Banned / HardForbidden / 处于有效窗口的 Validation）
+    pub fn has_active_system_lock(&self, now: i64) -> bool {
+        if self.banned {
+            return true;
+        }
+        if self.is_validation_block_active(now) {
+            return true;
+        }
+        if self.proxy_disabled {
+            let kind = classify_lock_reason(self.proxy_disabled_reason.as_deref().unwrap_or(""));
+            if matches!(
+                kind,
+                AccountLockKind::HardForbidden | AccountLockKind::Banned
+            ) {
+                return true;
+            }
+        }
+        if let Some(quota) = self.quota.as_ref() {
+            if quota.is_forbidden {
+                let kind = classify_lock_reason(quota.forbidden_reason.as_deref().unwrap_or(""));
+                // 关键守卫（审查项 3）：只要 quota 标记为 is_forbidden 且非 QuotaProtection，
+                // 包括空原因与未识别的 403 原因，一律视为有效系统锁，严禁允许手动启用导致调度端跳过的不一致！
+                if !matches!(kind, AccountLockKind::QuotaProtection) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub fn update_quota(&mut self, mut quota: QuotaData) {
@@ -506,46 +727,77 @@ impl Account {
             }
         }
 
+        // 模型级 403：不能写成账号级 is_forbidden，否则一个模型会停掉整号。
+        // 403 快照通常没有 models，保留上一次成功刷新得到的其他模型配额。
+        if !self.banned {
+            if let Some(scope) = quota
+                .forbidden_reason
+                .as_deref()
+                .and_then(forbidden_model_scope)
+            {
+                self.forbidden_models.insert(scope);
+                quota.is_forbidden = false;
+                quota.forbidden_reason = None;
+                if quota.models.is_empty() {
+                    if let Some(existing) = &self.quota {
+                        quota.models = existing.models.clone();
+                        if quota.quota_groups.is_none() {
+                            quota.quota_groups = existing.quota_groups.clone();
+                        }
+                    }
+                }
+            }
+        }
+
         // Daily/Sandbox 配额端点对被封禁与 403 账号仍返回 200；一次成功的配额快照
         // 不能抵消生产端点确认过的封禁与 403 锁定。
         // 只有 `clear_account_ban` 或生产端点测活成功 `clear_account_forbidden_and_validation` 才能解除。
-        // 验证锁（VALIDATION_REQUIRED / validation_url）是临时风控状态，必须允许日配额成功清除，
-        // 否则用户完成验证后账号会永久卡在 is_forbidden。
-        let is_validation_lock = self.validation_blocked
-            || self
-                .proxy_disabled_reason
-                .as_deref()
-                .is_some_and(|reason| classify_lock_reason(reason) == AccountLockKind::Validation)
-            || self
-                .quota
-                .as_ref()
-                .and_then(|quota| quota.forbidden_reason.as_deref())
-                .is_some_and(|reason| classify_lock_reason(reason) == AccountLockKind::Validation);
+        //
+        // 关键防护：即使当前账号碰巧有 validation 锁，既有的 hard 403 / banned 锁也绝对不能被压制遗失。
+        let had_hard_lock = self.banned
+            || (self.quota.as_ref().is_some_and(|existing| {
+                existing.is_forbidden
+                    && classify_lock_reason(existing.forbidden_reason.as_deref().unwrap_or(""))
+                        == AccountLockKind::HardForbidden
+            }))
+            || (self.proxy_disabled
+                && self.proxy_disabled_reason.as_deref().is_some_and(|reason| {
+                    classify_lock_reason(reason) == AccountLockKind::HardForbidden
+                }));
 
-        // 账号级封禁优先级最高：即使同时存在 validation_blocked / validation_required，
-        // banned 也必须继续压住 is_forbidden 并清空过期配额。
-        let was_forbidden = self.banned
-            || (!is_validation_lock
-                && (self
-                    .quota
-                    .as_ref()
-                    .is_some_and(|existing| existing.is_forbidden)
-                    || (self.proxy_disabled
-                        && self.proxy_disabled_reason.as_deref().is_some_and(|reason| {
-                            matches!(
-                                classify_lock_reason(reason),
-                                AccountLockKind::Banned | AccountLockKind::HardForbidden
-                            )
-                        }))));
-
-        if was_forbidden {
+        if had_hard_lock {
             quota.is_forbidden = true;
-            if quota.forbidden_reason.is_none() {
+            // 确保保留真正的 hard lock 理由，不被临时 validation 理由覆盖
+            if quota.forbidden_reason.is_none()
+                || quota.forbidden_reason.as_deref().map_or(false, |r| {
+                    classify_lock_reason(r) == AccountLockKind::Validation
+                })
+            {
                 quota.forbidden_reason = self
                     .banned_reason
                     .clone()
-                    .or_else(|| self.quota.as_ref().and_then(|e| e.forbidden_reason.clone()))
-                    .or_else(|| self.proxy_disabled_reason.clone());
+                    .or_else(|| {
+                        self.quota.as_ref().and_then(|e| {
+                            if classify_lock_reason(e.forbidden_reason.as_deref().unwrap_or(""))
+                                == AccountLockKind::HardForbidden
+                            {
+                                e.forbidden_reason.clone()
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .or_else(|| {
+                        if self.proxy_disabled
+                            && classify_lock_reason(
+                                self.proxy_disabled_reason.as_deref().unwrap_or(""),
+                            ) == AccountLockKind::HardForbidden
+                        {
+                            self.proxy_disabled_reason.clone()
+                        } else {
+                            None
+                        }
+                    });
             }
             if self.banned {
                 // 封禁期间不保留过期配额，避免 API/UI 误读为「仍有 100% 可用」。
@@ -1102,5 +1354,232 @@ mod tests {
             !account.quota.as_ref().unwrap().is_forbidden,
             "验证锁不得被当成永久 403 保留"
         );
+    }
+
+    #[test]
+    fn extracts_model_scope_from_forbidden_reason() {
+        assert_eq!(
+            forbidden_model_scope(
+                "Forbidden (403): User not authorized to access model claude-3-5-sonnet"
+            ),
+            Some("claude-3-5-sonnet".to_string())
+        );
+        assert_eq!(
+            forbidden_model_scope("Forbidden (403): access to gemini-3-pro denied"),
+            Some("gemini-3-pro".to_string())
+        );
+        assert_eq!(
+            forbidden_model_scope("Forbidden (403): claude access denied"),
+            Some("claude".to_string())
+        );
+        // 关键防护（审查项 3）：资源路径含 /locations/ 与反引号，绝不能被 location 误杀为 None
+        assert_eq!(
+            forbidden_model_scope("Forbidden (403): Publisher Model `projects/123/locations/us-central1/publishers/google/models/gemini-3-pro` was not found or your project does not have access to it."),
+            Some("gemini-3-pro".to_string())
+        );
+        // 关键防护（审查项 3）：前置 models/ 形式，提取出纯净模型 token 而不是带 "s/" 垃圾前缀
+        assert_eq!(
+            forbidden_model_scope("Forbidden (403): Access denied to models/gemini-3-flash"),
+            Some("gemini-3-flash".to_string())
+        );
+        // 关键防护（审查项 3）：支持大小写不敏感提取与 imagen 家族提取
+        assert_eq!(
+            forbidden_model_scope(
+                "Forbidden (403): User not authorized for model Imagen-3.0-generate-001"
+            ),
+            Some("imagen-3.0-generate-001".to_string())
+        );
+        assert_eq!(
+            clean_model_token("Gemini-3-Pro-High"),
+            Some("Gemini-3-Pro-High".to_string())
+        );
+        assert_eq!(
+            forbidden_model_scope("Forbidden (403): Location not supported"),
+            None
+        );
+        assert_eq!(
+            forbidden_model_scope("Forbidden (403): User location is not allowed"),
+            None
+        );
+        assert_eq!(
+            forbidden_model_scope("VALIDATION_REQUIRED: verify your account"),
+            None
+        );
+    }
+
+    #[test]
+    fn matches_model_scopes_by_family_and_token() {
+        assert!(model_scope_matches("claude", "claude-3-5-sonnet"));
+        assert!(model_scope_matches(
+            "claude-3-5-sonnet",
+            "claude-3-5-sonnet-thinking"
+        ));
+        assert!(model_scope_matches("gemini", "gemini-3-pro"));
+        assert!(!model_scope_matches("claude-3-5-sonnet", "gemini-3-pro"));
+        assert!(!model_scope_matches("o1", "gemini-3-pro"));
+
+        // 关键防护（审查项 11）：具体模型 scope 严禁逆向拦截宽泛类别
+        assert!(!model_scope_matches("claude-3-5-sonnet", "claude"));
+        assert!(!model_scope_matches("gemini-3.8-flash", "gemini"));
+        assert!(!model_scope_matches("gpt-4o", "gpt"));
+
+        // 关键防护（审查项 11）：词边界限定，杜绝 gpt-4 误伤 gpt-4o，文本模型误伤生图模型
+        assert!(!model_scope_matches("gpt-4", "gpt-4o"));
+        assert!(!model_scope_matches("gemini-3-pro", "gemini-3-pro-image"));
+        assert!(model_scope_matches(
+            "gemini-3-pro-image-4k",
+            "gemini-3-pro-image"
+        ));
+        assert!(model_scope_matches("imagen", "imagen-3.0-generate-001"));
+    }
+
+    #[test]
+    fn model_scoped_quota_forbidden_does_not_lock_whole_account() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        let mut q = QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason =
+            Some("Forbidden (403): User not authorized to access model claude-3-5-sonnet".into());
+
+        account.update_quota(q);
+
+        assert!(!account.quota.as_ref().unwrap().is_forbidden);
+        assert!(account.forbidden_models.contains("claude-3-5-sonnet"));
+    }
+
+    #[test]
+    fn ignores_service_disabled_project_level_error() {
+        let service_disabled_json = r#"{
+            "error": {
+                "code": 403,
+                "message": "Cloud Code API has not been used in project 123456 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/cloudaistudio.googleapis.com/overview?project=123456 then retry.",
+                "status": "PERMISSION_DENIED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.Help",
+                        "links": [
+                            {
+                                "description": "Google developers console API activation",
+                                "url": "https://console.developers.google.com/apis/api/cloudaistudio.googleapis.com/overview?project=123456"
+                            }
+                        ]
+                    },
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "SERVICE_DISABLED",
+                        "domain": "googleapis.com",
+                        "metadata": {
+                            "consumer": "projects/123456",
+                            "service": "cloudaistudio.googleapis.com"
+                        }
+                    }
+                ]
+            }
+        }"#;
+
+        assert!(
+            AccountBanInfo::classify_upstream(403, service_disabled_json).is_none(),
+            "项目级 SERVICE_DISABLED 不得误判为账号级永久封禁"
+        );
+    }
+
+    #[test]
+    fn hard_forbidden_preserved_even_when_validation_blocked() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.banned = false;
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("Forbidden (403): Location not supported".into());
+        let mut q = QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("Forbidden (403): Location not supported".into());
+        account.quota = Some(q);
+
+        // 此时账号并发遇到了验证挑战
+        account.validation_blocked = true;
+        account.validation_blocked_until = Some(chrono::Utc::now().timestamp() + 600);
+
+        // Daily 200 配额到来
+        let mut fresh_quota = QuotaData::new();
+        fresh_quota.is_forbidden = false;
+        account.update_quota(fresh_quota);
+
+        let quota = account.quota.as_ref().unwrap();
+        assert!(
+            quota.is_forbidden,
+            "即使同时存在 validation 锁，既有的 hard 403 锁定也绝不能被 Daily 200 冲刷丢弃"
+        );
+        assert_eq!(
+            quota.forbidden_reason.as_deref(),
+            Some("Forbidden (403): Location not supported")
+        );
+    }
+
+    #[test]
+    fn manual_proxy_disabled_separated_from_system_locks() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.manual_proxy_disabled = true;
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("testing manual".into());
+
+        let now = chrono::Utc::now().timestamp();
+        assert!(!account.has_active_system_lock(now));
+
+        // 发生 403 系统锁
+        account.proxy_disabled_reason = Some("Forbidden (403): Location not supported".into());
+        assert!(account.has_active_system_lock(now));
+    }
+
+    #[test]
+    fn validation_block_active_respects_until() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.validation_blocked = true;
+        account.validation_blocked_until = Some(100);
+
+        assert!(account.is_validation_block_active(99));
+        assert!(!account.is_validation_block_active(100));
+        assert!(!account.is_validation_block_active(101));
+
+        account.validation_blocked_until = Some(0);
+        assert!(account.is_validation_block_active(999));
     }
 }

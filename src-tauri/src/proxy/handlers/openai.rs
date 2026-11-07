@@ -3472,8 +3472,16 @@ pub async fn handle_chat_completions(
                         tracing::error!("Failed to set validation block: {}", e);
                     }
                 } else {
-                    // 设置 is_forbidden 状态并持久化（仅当真正非人机验证类 403 时才进入永久禁用）
-                    if let Err(e) = token_manager.set_forbidden(&acc_id, &error_text).await {
+                    // 设置 is_forbidden 状态并持久化（同时传入请求模型与映射模型，彻底消除动态改写盲区）
+                    if let Err(e) = token_manager
+                        .set_forbidden_with_models(
+                            &acc_id,
+                            &error_text,
+                            Some(&mapped_model),
+                            Some(&config.final_model),
+                        )
+                        .await
+                    {
                         tracing::error!("Failed to set forbidden status: {}", e);
                     }
                 }

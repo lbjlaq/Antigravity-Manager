@@ -909,7 +909,8 @@ pub async fn test_model_connectivity(
         "model": model,
         "access_token": token,
         "project_id": pid,
-        "account_id": chosen_account.id
+        "account_id": chosen_account.id,
+        "probe_intent": true
     });
 
     let client = rquest::Client::builder()

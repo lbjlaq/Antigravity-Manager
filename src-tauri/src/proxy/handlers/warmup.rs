@@ -31,6 +31,9 @@ pub struct WarmupRequest {
     pub project_id: Option<String>,
     /// 可选：直接提供 Account ID
     pub account_id: Option<String>,
+    /// 诊断/定向测活意图（为 true 时测活成功允许解除单模型冻结与验证锁）
+    #[serde(default)]
+    pub probe_intent: bool,
 }
 
 /// 预热响应
@@ -441,9 +444,9 @@ pub async fn handle_warmup(
                         mapped_model
                     );
 
-                    // 仅当明确指定了目标账号（定向诊断/测活）时才尝试账号级 403 / validation 自愈，
-                    // 自动调度探活不越权解封，且严格遵循模型隔离与 TOS 拦截规则
-                    if req.account_id.as_deref().is_some_and(|id| !id.is_empty()) {
+                    // 关键守卫（审查项 5）：仅当显式带有定向诊断/测活意图（probe_intent == true）时，
+                    // 成功后才允许触发自愈解限；后台定时周预热/自动轮询严禁越权清除处于冷静期的验证锁！
+                    if req.probe_intent && !account_id.is_empty() {
                         let _ = crate::modules::account::clear_account_forbidden_and_validation(
                             &account_id,
                             Some(&mapped_model),
@@ -551,12 +554,14 @@ pub async fn handle_warmup(
 
                         if !resolved_account_id.is_empty() {
                             warn!(
-                                "[Warmup-API] 403 Forbidden detected for {}, marking account as forbidden",
+                                "[Warmup-API] 403 Forbidden detected for {}, marking forbidden status",
                                 req.email
                             );
-                            let _ = crate::modules::account::mark_account_forbidden(
+                            // 关键防护（审查项 4）：统一使用 mapped_model 记录冻结 scope，确保与解冻模型完全闭环
+                            let _ = crate::modules::account::mark_account_forbidden_with_model(
                                 &resolved_account_id,
                                 &error_text,
+                                Some(&mapped_model),
                             );
                         } else {
                             warn!(
