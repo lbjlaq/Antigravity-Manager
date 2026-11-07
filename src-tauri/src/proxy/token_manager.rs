@@ -1018,21 +1018,9 @@ impl TokenManager {
         match self.load_single_account(&path).await {
             Ok(Some(token)) => {
                 // 配额刷新是权威快照：立即释放该账号的历史模型级 900s 熔断；
-                // 仅针对在存配额确定 > 0 的具体模型定向解限 QuotaExhausted，严格保留 429 速率限制退避与 0 配额模型的锁 (Ref #3840, #3845)
+                // 再按模型粒度释放已恢复的 QuotaExhausted，严格保留 429 速率限制退避与 0 配额模型的锁 (Ref #3840, #3845)
                 self.clear_unsupported_models_for_account(account_id);
-                if token.model_quotas.is_empty() {
-                    if token.remaining_quota.unwrap_or(0) > 0 {
-                        self.rate_limit_tracker
-                            .reconcile_all_quota_recovery_for_account(account_id);
-                    }
-                } else {
-                    for (model, quota) in &token.model_quotas {
-                        if *quota > 0 {
-                            self.rate_limit_tracker
-                                .reconcile_quota_recovery(account_id, model);
-                        }
-                    }
-                }
+                self.reconcile_recovered_quota_locks(account_id, &token);
                 self.tokens.insert(account_id.to_string(), token);
 
                 self.sync_image_scheduler_accounts();
@@ -1056,24 +1044,38 @@ impl TokenManager {
         // 批量配额刷新的调用方：按模型粒度对已恢复正配额的模型释放旧 QuotaExhausted 锁定，
         // 严格保留 429 速率限制退避与仍为 0 配额模型的锁定 (Ref #3840, #3845, #3852)
         for entry in self.tokens.iter() {
-            let account_id = entry.key();
-            let token = entry.value();
-            if token.model_quotas.is_empty() {
-                if token.remaining_quota.unwrap_or(0) > 0 {
-                    self.rate_limit_tracker
-                        .reconcile_all_quota_recovery_for_account(account_id);
-                }
-            } else {
-                for (model, quota) in &token.model_quotas {
-                    if *quota > 0 {
-                        self.rate_limit_tracker
-                            .reconcile_quota_recovery(account_id, model);
-                    }
-                }
-            }
+            self.reconcile_recovered_quota_locks(entry.key(), entry.value());
         }
 
         Ok(count)
+    }
+
+    /// 对一次权威账号快照执行按模型粒度的配额解限：
+    /// - 有 per-model 配额：仅对 `> 0` 的模型清 `QuotaExhausted`；
+    /// - 无 per-model 配额：回退到账号级聚合配额；
+    /// - 任一模型正配额时，额外清账号级“全模型耗尽”锁；
+    /// - `RateLimitExceeded` 永不触碰。
+    fn reconcile_recovered_quota_locks(&self, account_id: &str, token: &ProxyToken) {
+        if token.model_quotas.is_empty() {
+            if token.remaining_quota.unwrap_or(0) > 0 {
+                self.rate_limit_tracker
+                    .reconcile_all_quota_recovery_for_account(account_id);
+            }
+            return;
+        }
+
+        let mut has_positive = false;
+        for (model, quota) in &token.model_quotas {
+            if *quota > 0 {
+                has_positive = true;
+                self.rate_limit_tracker
+                    .reconcile_quota_recovery(account_id, model);
+            }
+        }
+        if has_positive {
+            self.rate_limit_tracker
+                .reconcile_account_quota_recovery(account_id);
+        }
     }
 
     /// 处理待重载账号队列。
@@ -2648,15 +2650,17 @@ impl TokenManager {
     /// 解析指定模型的重置时间戳（支持短期滚动与周周期窗口）
     ///
     /// 核心契约（防跨模型时间污染，Ref #3840, #3845）：
-    /// 1. 若对应 map 非空，严格在 map 中按「具体模型名 -> 小写 -> 基名 -> 标准 ID -> 族群 Key」匹配；
+    /// 1. 两个 per-model map 任一非空时，严格在对应 map 中按「具体模型名 -> 小写 -> 基名 -> 标准 ID -> 族群 Key」匹配；
     ///    若未检索到，绝对不回退全局兜底 reset_time（防止如 Argon 到期污染 Gemini 模型）；
-    /// 2. 仅当 map 完全为空时（旧版数据或无多模型隔离），才允许回退全局兜底时间。
+    /// 2. 仅当两个 map 都为空时（旧版数据或无多模型隔离），才允许回退全局兜底时间。
     pub fn resolve_model_reset_time(t: &ProxyToken, model: &str, is_weekly: bool) -> Option<i64> {
         let map = if is_weekly {
             &t.model_weekly_reset_times
         } else {
             &t.model_reset_times
         };
+        let any_model_map_populated =
+            !t.model_reset_times.is_empty() || !t.model_weekly_reset_times.is_empty();
         let group_key = Self::resolve_model_group_key(model);
 
         let model_lower = model.trim().to_lowercase();
@@ -2679,7 +2683,7 @@ impl TokenManager {
 
         if matched.is_some() {
             matched
-        } else if map.is_empty() {
+        } else if !any_model_map_populated {
             if is_weekly {
                 t.weekly_reset_time
             } else {
@@ -11622,6 +11626,122 @@ mod tests {
             extracted_ts,
             Some(future_time.timestamp()),
             "camelCase quotaGroups 与 resetTime 必须能正确解析出周重置时间戳"
+        );
+    }
+
+    #[test]
+    fn test_reconcile_recovered_quota_locks_clears_account_level_and_preserves_zero_model() {
+        let manager = TokenManager::new(std::path::PathBuf::from("/tmp/test_tokens"));
+        let account_id = "acc_recovered_helper";
+        let target_time = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        use crate::proxy::rate_limit::RateLimitReason;
+
+        // 账号级“全模型耗尽”锁
+        manager.rate_limit_tracker.set_lockout_until_with_cap(
+            account_id,
+            target_time,
+            RateLimitReason::QuotaExhausted,
+            None,
+            false,
+        );
+        // 模型级配额锁：gemini 已恢复，claude 仍为 0
+        manager.rate_limit_tracker.set_lockout_until_with_cap(
+            account_id,
+            target_time,
+            RateLimitReason::QuotaExhausted,
+            Some("gemini".to_string()),
+            false,
+        );
+        manager.rate_limit_tracker.set_lockout_until_with_cap(
+            account_id,
+            target_time,
+            RateLimitReason::QuotaExhausted,
+            Some("claude".to_string()),
+            false,
+        );
+        // 独立 429 退避，必须保留
+        manager.rate_limit_tracker.set_lockout_until_with_cap(
+            account_id,
+            target_time,
+            RateLimitReason::RateLimitExceeded,
+            Some("gemini-2.5-flash".to_string()),
+            false,
+        );
+
+        let mut token = create_test_token("recovered@test.com", Some("PRO"), 1.0, None, Some(100));
+        token.account_id = account_id.to_string();
+        token.model_quotas.insert("gemini".to_string(), 100);
+        token.model_quotas.insert("claude".to_string(), 0);
+
+        manager.reconcile_recovered_quota_locks(account_id, &token);
+
+        assert!(
+            !manager
+                .rate_limit_tracker
+                .is_rate_limited(account_id, Some("gemini")),
+            "正配额模型必须精准解除 QuotaExhausted"
+        );
+        assert!(
+            !manager.rate_limit_tracker.is_rate_limited(account_id, None),
+            "任一模型恢复后，账号级全模型耗尽锁必须解除"
+        );
+        assert!(
+            manager
+                .rate_limit_tracker
+                .is_rate_limited(account_id, Some("claude")),
+            "仍为 0 配额的模型不可被其他模型恢复连带解禁"
+        );
+        assert!(
+            manager
+                .rate_limit_tracker
+                .is_rate_limited(account_id, Some("gemini-2.5-flash")),
+            "RateLimitExceeded (429) 退避必须保留"
+        );
+    }
+
+    #[test]
+    fn test_resolve_model_reset_time_requires_both_model_maps_empty_for_global_fallback() {
+        let now_ts = chrono::Utc::now().timestamp();
+        let mut token = create_test_token("fallback@test.com", Some("PRO"), 1.0, None, Some(0));
+        token.reset_time = Some(now_ts - 100);
+        token.weekly_reset_time = Some(now_ts - 100);
+
+        // 仅 short map 非空：weekly 查询也不得回退全局
+        token
+            .model_reset_times
+            .insert("argon".to_string(), now_ts - 100);
+        assert_eq!(
+            TokenManager::resolve_model_reset_time(&token, "gemini-3.8-flash-high", false),
+            None
+        );
+        assert_eq!(
+            TokenManager::resolve_model_reset_time(&token, "gemini-3.8-flash-high", true),
+            None
+        );
+
+        // 仅 weekly map 非空：short 查询也不得回退全局
+        token.model_reset_times.clear();
+        token
+            .model_weekly_reset_times
+            .insert("argon".to_string(), now_ts - 100);
+        assert_eq!(
+            TokenManager::resolve_model_reset_time(&token, "gemini-3.8-flash-high", false),
+            None
+        );
+        assert_eq!(
+            TokenManager::resolve_model_reset_time(&token, "gemini-3.8-flash-high", true),
+            None
+        );
+
+        // 两个 map 都为空：才允许全局回退
+        token.model_weekly_reset_times.clear();
+        assert_eq!(
+            TokenManager::resolve_model_reset_time(&token, "gemini-3.8-flash-high", false),
+            Some(now_ts - 100)
+        );
+        assert_eq!(
+            TokenManager::resolve_model_reset_time(&token, "gemini-3.8-flash-high", true),
+            Some(now_ts - 100)
         );
     }
 }

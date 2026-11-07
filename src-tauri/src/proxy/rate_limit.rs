@@ -1038,6 +1038,20 @@ impl RateLimitTracker {
         cleared
     }
 
+    /// 仅释放账号级（无模型键）的 `QuotaExhausted` 锁：
+    /// - 账号级“全模型耗尽”锁定在任一模型恢复后即失效；
+    /// - 严格保留 `RateLimitExceeded` / `ServerError` 等独立限流。
+    pub fn reconcile_account_quota_recovery(&self, account_id: &str) -> bool {
+        let Some(entry) = self.limits.get(account_id) else {
+            return false;
+        };
+        if entry.reason != RateLimitReason::QuotaExhausted {
+            return false;
+        }
+        drop(entry);
+        self.limits.remove(account_id).is_some()
+    }
+
     /// 检查账号是否仍在限流中
     /// 检查账号是否仍在限流中 (支持模型级)
     pub fn is_rate_limited(&self, account_id: &str, model: Option<&str>) -> bool {
@@ -1610,6 +1624,34 @@ mod tests {
         assert!(tracker.reconcile_all_quota_recovery_for_account("acc_p16"));
         assert!(!tracker.is_rate_limited("acc_p16", Some("claude")));
         assert!(tracker.is_rate_limited("acc_p16", Some("gemini-2.5-pro")));
+    }
+
+    #[test]
+    fn test_reconcile_account_quota_recovery_clears_only_account_quota_lock() {
+        let tracker = RateLimitTracker::new();
+        let target_time = SystemTime::now() + Duration::from_secs(3600);
+
+        // 账号级“全模型耗尽”锁
+        tracker.set_lockout_until_with_cap(
+            "acc_account_level",
+            target_time,
+            RateLimitReason::QuotaExhausted,
+            None,
+            false,
+        );
+        // 模型级 429 退避，必须保留
+        tracker.set_lockout_until_with_cap(
+            "acc_account_level",
+            target_time,
+            RateLimitReason::RateLimitExceeded,
+            Some("gemini-2.5-pro".to_string()),
+            false,
+        );
+
+        assert!(tracker.is_rate_limited("acc_account_level", None));
+        assert!(tracker.reconcile_account_quota_recovery("acc_account_level"));
+        assert!(!tracker.is_rate_limited("acc_account_level", None));
+        assert!(tracker.is_rate_limited("acc_account_level", Some("gemini-2.5-pro")));
     }
 
     #[test]
