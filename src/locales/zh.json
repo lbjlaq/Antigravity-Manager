@@ -2437,6 +2437,8 @@
         "target_accounts": "待蹬账号",
         "account_pedaling_badge": "⚡ 蹬额度中",
         "account_pedaling_tooltip": "该账号当前处于蹬额度模式，已被设为最高调度优先级 (priority = 1)",
+        "session_unbind_title": "会话解绑与缓存清除提示：",
+        "session_unbind_desc": "启动将自动解绑当前会话并清除缓存映射，以便旧对话直接切换至待蹬账号。因新账号首次接管需重新建立上游缓存，若不希望初始请求消耗过多待蹬配额，建议先在客户端执行上下文压缩（如 /compact）后再启动。",
         "exit_button": "手动退出并恢复"
     }
 }

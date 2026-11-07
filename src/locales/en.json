@@ -2471,6 +2471,8 @@
         "target_accounts": "Target Accounts",
         "account_pedaling_badge": "⚡ Pedaling",
         "account_pedaling_tooltip": "This account is in Pedal Quota Mode with highest scheduling priority (priority = 1)",
+        "session_unbind_title": "Session Unbind & Cache Reset Notice: ",
+        "session_unbind_desc": "Activating will automatically unbind existing sessions and reset prompt caches, allowing ongoing conversations to seamlessly switch to target accounts. Because the upstream prompt cache must be rebuilt on the new account, we recommend compressing your context (e.g. /compact) beforehand if you wish to avoid heavy initial quota consumption.",
         "exit_button": "Manual Exit & Restore"
     }
 }

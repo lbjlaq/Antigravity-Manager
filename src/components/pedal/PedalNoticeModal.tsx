@@ -1,7 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Zap, Clock, ShieldAlert, Sparkles } from 'lucide-react';
+import { Zap, Clock, ShieldAlert, Sparkles, Info } from 'lucide-react';
 import { usePedalModeStore } from '../../stores/usePedalModeStore';
 import { useAccountStore } from '../../stores/useAccountStore';
 import { formatTimeRemaining } from '../../utils/format';
@@ -74,6 +74,22 @@ export const PedalNoticeModal: React.FC = () => {
                             '启动后将设置以上账号为最高调度优先级（priority = 1），优先全力消耗临期配额，同时保留其他账号用于会话连续性与并发弹性保底。待额度全部用完 (0%) 或官方重置后，系统将自动恢复默认优先级。'
                         )}
                     </span>
+                </div>
+
+                {/* 会话解绑与缓存开销提示框 */}
+                <div className="text-xs text-sky-950 dark:text-sky-200/90 bg-sky-50 dark:bg-sky-950/30 border border-sky-200/80 dark:border-sky-800/50 p-2.5 rounded-lg flex items-start gap-2">
+                    <Info className="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-0.5 leading-relaxed">
+                        <span className="font-semibold text-sky-900 dark:text-sky-200">
+                            {t('pedal.session_unbind_title', '会话解绑与缓存清除提示：')}
+                        </span>
+                        <span>
+                            {t(
+                                'pedal.session_unbind_desc',
+                                '启动将自动解绑当前会话并清除缓存映射，以便旧对话直接切换至待蹬账号。因新账号首次接管需重新建立上游缓存，若不希望初始请求消耗过多待蹬配额，建议先在客户端执行上下文压缩（如 /compact）后再启动。'
+                            )}
+                        </span>
+                    </div>
                 </div>
 
                 {/* 底部按钮栏 */}

@@ -4,6 +4,7 @@ import { PedalCandidate, PedalModeState, PedalTargetModel } from '../types/pedal
 import { getGroupQuotaSummaries } from '../utils/quotaDisplay';
 import { showToast } from '../components/common/ToastContainer';
 import { useAccountStore } from './useAccountStore';
+import { request } from '../utils/request';
 
 const STORAGE_KEY = 'antigravity_pedal_mode_state';
 const SUPPRESS_KEY = 'antigravity_pedal_mode_suppress';
@@ -55,6 +56,13 @@ const getStoredState = (): Partial<PedalModeState> => {
     } catch (_) {}
     return {};
 };
+
+async function safeClearSessionBindings() {
+    if (typeof window === 'undefined') return;
+    try {
+        await request('clear_proxy_session_bindings');
+    } catch (_) {}
+}
 
 function extractCandidate(account: Account, model: PedalTargetModel): PedalCandidate | null {
     // 排除已被用户主动禁用或处于锁定状态的账号，避免坏号被选为唯一可用账号导致全池瘫痪
@@ -178,6 +186,9 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                     console.error('[PedalMode] Failed to boost account priority:', id, e);
                 }
             }
+
+            // 自动清除既有会话粘性映射，使正在进行的旧对话在下一次发消息时立即切换至待蹬账号
+            await safeClearSessionBindings();
 
             const newState: PedalModeState = {
                 active: true,
@@ -324,6 +335,8 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                     localStorage.removeItem(STORAGE_KEY);
                 } catch (_) {}
 
+                await safeClearSessionBindings();
+
                 set(clearedState);
                 showToast(`🎉 待蹬账号${reason}，已自动退出蹬额度模式并恢复调度优先级！`);
             }
@@ -366,6 +379,8 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
             try {
                 localStorage.removeItem(STORAGE_KEY);
             } catch (_) {}
+
+            await safeClearSessionBindings();
 
             set(clearedState);
             showToast('已退出“蹬额度模式”，账号已恢复原状');
