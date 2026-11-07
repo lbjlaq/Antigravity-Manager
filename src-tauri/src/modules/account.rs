@@ -1089,6 +1089,54 @@ mod tests {
 
         std::env::remove_var("ABV_DATA_DIR");
     }
+
+    #[test]
+    fn test_update_account_quota_internal_preserves_403_and_proxy_disabled() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-preserve-403-acc";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "preserve403@example.com");
+
+        let mut account = load_account(acc_id).unwrap();
+        account.banned = false;
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("Forbidden (403): Location not supported".to_string());
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("Forbidden (403): Location not supported".to_string());
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        // 模拟日常配额刷新返回 200 OK（is_forbidden: false）
+        let mut fresh_quota = crate::models::QuotaData::new();
+        fresh_quota.is_forbidden = false;
+        let updated = update_account_quota_internal(acc_id, fresh_quota, true).unwrap();
+
+        assert!(
+            updated.proxy_disabled,
+            "日常配额刷新成功绝不能消除 403 proxy_disabled 锁定"
+        );
+        assert_eq!(
+            updated.proxy_disabled_reason.as_deref(),
+            Some("Forbidden (403): Location not supported")
+        );
+        assert!(
+            updated.quota.as_ref().unwrap().is_forbidden,
+            "日常配额刷新成功绝不能清除 403 quota.is_forbidden 状态"
+        );
+
+        // 重新从磁盘加载校验持久化一致性
+        let reloaded = load_account(acc_id).unwrap();
+        assert!(reloaded.proxy_disabled);
+        assert!(reloaded.quota.as_ref().unwrap().is_forbidden);
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
 }
 
 /// Global account write lock to prevent corruption during concurrent operations
@@ -2577,7 +2625,6 @@ fn clear_validation_blocked(account: &mut Account) {
         && account.validation_blocked_until.is_none()
         && account.validation_blocked_reason.is_none()
         && account.validation_url.is_none()
-        && !account.proxy_disabled
     {
         return;
     }
@@ -2586,22 +2633,41 @@ fn clear_validation_blocked(account: &mut Account) {
     account.validation_blocked_until = None;
     account.validation_blocked_reason = None;
     account.validation_url = None;
-    if let Some(ref mut q) = account.quota {
-        q.is_forbidden = false;
-        q.forbidden_reason = None;
-    }
 
-    // Auto-recover proxy_disabled if it was caused by 403 or validation
-    if account.proxy_disabled
-        && account.proxy_disabled_reason.as_ref().map_or(false, |r| {
+    // 严禁因人机验证锁清除而越权清除 403 Forbidden 或 TOS 封禁状态。
+    // 只有定向测活成功 (clear_account_forbidden_and_validation) 或用户手动操作才能解封 403。
+    let is_403_or_banned = account.banned
+        || account.proxy_disabled_reason.as_deref().map_or(false, |r| {
             r.starts_with("Forbidden (403)")
                 || r.contains("403 Forbidden")
-                || r.contains("VALIDATION_REQUIRED")
+                || r.starts_with("banned:")
         })
-    {
-        account.proxy_disabled = false;
-        account.proxy_disabled_reason = None;
-        account.proxy_disabled_at = None;
+        || account
+            .quota
+            .as_ref()
+            .and_then(|q| q.forbidden_reason.as_deref())
+            .map_or(false, |r| {
+                r.starts_with("Forbidden (403)")
+                    || r.contains("403 Forbidden")
+                    || r.starts_with("banned:")
+            });
+
+    if !is_403_or_banned {
+        if let Some(ref mut q) = account.quota {
+            q.is_forbidden = false;
+            q.forbidden_reason = None;
+        }
+
+        if account.proxy_disabled
+            && account
+                .proxy_disabled_reason
+                .as_deref()
+                .map_or(false, |r| r.contains("VALIDATION_REQUIRED"))
+        {
+            account.proxy_disabled = false;
+            account.proxy_disabled_reason = None;
+            account.proxy_disabled_at = None;
+        }
     }
 
     if let Err(e) = save_account(account) {
@@ -3218,17 +3284,18 @@ pub fn update_account_quota_internal(
     }
     // --- Quota protection logic end ---
 
-    // If quota retrieval succeeded and quota is not forbidden, auto-recover 403 / validation locks
+    // If quota retrieval succeeded and quota is not forbidden, auto-recover quota_protection locks
     if let Some(ref q) = account.quota {
         if !q.is_forbidden && !account.banned {
             clear_validation_blocked(&mut account);
+            // 403 Forbidden 与上游封禁绝不因日配额刷新返回 200 而自动解除（Daily 接口对封禁账号仍返回 200）。
+            // 只有定向测活成功 (clear_account_forbidden_and_validation) 或用户手动操作才能解封。
+            // 仅对配额保护 (quota_protection) 在额度回升后自动解除。
             if account.proxy_disabled
-                && account.proxy_disabled_reason.as_ref().map_or(false, |r| {
-                    r == "quota_protection"
-                        || r.starts_with("Forbidden (403)")
-                        || r.contains("403 Forbidden")
-                        || r.contains("VALIDATION_REQUIRED")
-                })
+                && account
+                    .proxy_disabled_reason
+                    .as_ref()
+                    .map_or(false, |r| r == "quota_protection")
             {
                 crate::modules::logger::log_info(&format!(
                     "[Quota] Account {} recovered successfully, clearing proxy_disabled",

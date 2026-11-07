@@ -835,7 +835,9 @@ function Dashboard() {
                             <motion.div
                                 whileHover={{ y: -2 }}
                                 transition={{ duration: 0.15 }}
-                                className="bg-white dark:bg-[#15161b] rounded-2xl p-5 shadow-sm dark:shadow-xl dark:shadow-black/40 border border-gray-100 dark:border-white/[0.10] flex flex-col justify-between"
+                                onClick={() => navigate('/accounts', { state: { filter: stats.abnormal > 0 ? 'abnormal' : 'all' } })}
+                                className="bg-white dark:bg-[#15161b] rounded-2xl p-5 shadow-sm dark:shadow-xl dark:shadow-black/40 border border-gray-100 dark:border-white/[0.10] flex flex-col justify-between cursor-pointer group hover:border-purple-300 dark:hover:border-purple-800/60 transition-colors"
+                                title={t('dashboard.view_abnormal_accounts', '点击前往账号列表查看异常与风控详情')}
                             >
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
