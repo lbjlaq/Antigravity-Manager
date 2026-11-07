@@ -47,6 +47,7 @@ import {
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
+    Zap,
 } from 'lucide-react';
 import { type Account, type ActiveClientsStatus, getAccountTier, hasAccountArgonCapability } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -54,6 +55,7 @@ import { cn } from '../../utils/cn';
 
 import { useConfigStore } from '../../stores/useConfigStore';
 import { useAccountStore } from '../../stores/useAccountStore';
+import { usePedalModeStore } from '../../stores/usePedalModeStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
@@ -230,15 +232,20 @@ function SortableAccountRow({
     const isAgy = activeClients?.agy_account_id === account.id;
     const isRowCurrent = isCurrent || isClassic || isIde || isAgy;
 
+    const { active: isPedalActive, targetAccountIds } = usePedalModeStore();
+    const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
+
     return (
         <tr
             ref={setNodeRef}
             style={style as React.CSSProperties}
             className={cn(
                 "group transition-colors border-b border-gray-100 dark:border-base-200",
-                isRowCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
+                isPedaling && "bg-amber-50/50 dark:bg-amber-950/20 border-l-4 border-l-amber-500",
+                !isPedaling && isRowCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
                 isDragging && "bg-blue-100 dark:bg-blue-900/30 shadow-lg",
-                !isDragging && "hover:bg-gray-50 dark:hover:bg-base-200"
+                !isDragging && !isPedaling && "hover:bg-gray-50 dark:hover:bg-base-200",
+                !isDragging && isPedaling && "hover:bg-amber-50/80 dark:hover:bg-amber-950/30"
             )}
         >
             {/* 拖拽手柄 */}
@@ -313,6 +320,8 @@ function AccountRowContent({
 }: AccountRowContentProps) {
     const { t } = useTranslation();
     const { config } = useConfigStore();
+    const { active: isPedalActive, targetAccountIds } = usePedalModeStore();
+    const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
     const isBanned = Boolean(account.banned);
 
@@ -496,8 +505,26 @@ function AccountRowContent({
                                 );
                             }
                         })()}
-                        {/* 自定义标签 */}
-                        <span className="px-2 py-0.5 rounded-md bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400 text-[10px] font-bold" title={t('accounts.priority_hint')}>
+                        {/* 蹬额度中高亮徽章 */}
+                        {isPedaling && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[10px] font-bold flex items-center gap-1 shadow-xs border border-amber-500/40 animate-pulse"
+                                title={t('pedal.account_pedaling_tooltip', '该账号当前处于蹬额度模式，已被设为最高调度优先级 (priority = 1)')}
+                            >
+                                <Zap className="w-2.5 h-2.5 fill-current text-amber-500" />
+                                {t('pedal.account_pedaling_badge', '⚡ 蹬额度中')}
+                            </span>
+                        )}
+                        {/* 优先级 */}
+                        <span
+                            className={cn(
+                                "px-2 py-0.5 rounded-md text-[10px] font-bold",
+                                isPedaling
+                                    ? "bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 border border-amber-300/80 dark:border-amber-700/80 shadow-2xs"
+                                    : "bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400"
+                            )}
+                            title={t('accounts.priority_hint')}
+                        >
                             {t('accounts.priority')}: {account.priority ?? 50}
                         </span>
                         {account.custom_label && !isEditingLabel && (

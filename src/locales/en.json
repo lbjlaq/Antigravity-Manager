@@ -2468,6 +2468,9 @@
         "banner_suspended_count": "{{count}} accounts suspended",
         "banner_active_count": "{{count}} accounts to exhaust",
         "banner_subtext": "Prioritizing imminent accounts with top scheduling priority while keeping others standby for session affinity and concurrency resilience. Default scheduling restores once quotas hit 0% or reset.",
+        "target_accounts": "Target Accounts",
+        "account_pedaling_badge": "⚡ Pedaling",
+        "account_pedaling_tooltip": "This account is in Pedal Quota Mode with highest scheduling priority (priority = 1)",
         "exit_button": "Manual Exit & Restore"
     }
 }

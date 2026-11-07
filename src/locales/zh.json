@@ -2434,6 +2434,9 @@
         "banner_suspended_count": "已挂起 {{count}} 个账号",
         "banner_active_count": "{{count}} 个待消耗",
         "banner_subtext": "正在全力优先消耗临期配额，其他正常账号正常待命作为会话连续性与并发弹性保底。当目标账号配额全部降至 0% 或到达重置时间后，系统将自动恢复默认调度。",
+        "target_accounts": "待蹬账号",
+        "account_pedaling_badge": "⚡ 蹬额度中",
+        "account_pedaling_tooltip": "该账号当前处于蹬额度模式，已被设为最高调度优先级 (priority = 1)",
         "exit_button": "手动退出并恢复"
     }
 }

@@ -107,8 +107,8 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
 
         checkCandidates: (accounts: Account[]) => {
             const state = get();
-            if (state.active) {
-                // 如果已激活，退出检查交给外部或定期轮询 checkAndAutoRecover
+            if (state.active || state.pendingModal) {
+                // 如果已激活或弹窗已在展示中，不重复触发检查
                 return;
             }
 
@@ -245,7 +245,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 return;
             }
 
-            // 检查所有待蹬账号是否全部用完 (0%) 或已到达重置时间 (已刷新)
+            // 检查待蹬账号：单个账号用尽时恢复其调度优先级；当所有目标账号用尽或到达重置时间后整体退出
             let allDrained = true;
             let allReset = true;
 
@@ -264,16 +264,31 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 const pct = s.weekly.percentage;
                 const resetTimeStr = s.weekly.resetTime;
                 const resetTimestamp = resetTimeStr ? Date.parse(resetTimeStr) : NaN;
-                const diffHours = !isNaN(resetTimestamp) ? (resetTimestamp - Date.now()) / (3600 * 1000) : 999;
+                const hasValidResetTime = !isNaN(resetTimestamp);
+                const diffHours = hasValidResetTime ? (resetTimestamp - Date.now()) / (3600 * 1000) : 999;
 
-                // 若任何一个账号配额仍 > 0，则未全部用完
-                if (pct > 0) {
+                // 若该账号配额已降至 0%，且该账号仍处于优先级 1 状态，则将其动态恢复至原始优先级
+                // 避免单号用尽后仍作为最高优先级截留非待蹬模型的请求
+                if (pct <= 0) {
+                    if (acc.priority === 1 || acc.priority === 0) {
+                        const origP = state.originalPriorities?.[acc.id] ?? 50;
+                        try {
+                            await priorityUpdater(acc.id, origP);
+                        } catch (e) {
+                            console.error('[PedalMode] Failed to restore single drained account priority:', acc.id, e);
+                        }
+                    }
+                } else {
                     allDrained = false;
                 }
 
-                // 临期等待判定：仅当处于倒计时窗口内 (0 < diffHours <= 24) 且配额尚未恢复 (< 90%) 时，
-                // 才说明该账号既未到达重置时间、也未刷新新周期。
-                if (diffHours > 0 && diffHours <= 24 && pct < 90) {
+                // 该账号是否已刷新/重置：
+                // 1) 周配额已刷新恢复至 90% 以上（无论时间戳如何，配额已实锤刷新）
+                // 2) 具有合法的重置时间戳，且当前时间已经到达或超过官方重置时间 (diffHours <= 0)
+                const isThisAccountReset = pct >= 90 || (hasValidResetTime && diffHours <= 0);
+
+                // 只要还有任何一个账号未处于已重置状态，就绝不能判定为全部重置
+                if (!isThisAccountReset) {
                     allReset = false;
                 }
             }
