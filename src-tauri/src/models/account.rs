@@ -63,7 +63,7 @@ impl AccountBanInfo {
     pub fn classify_text(body: &str) -> Option<Self> {
         let lower = body.to_lowercase();
 
-        const BAN_REASON_CODES: [&str; 9] = [
+        const BAN_REASON_CODES: [&str; 14] = [
             "tos_violation",
             "terms_of_service_violation",
             "policy_violation",
@@ -73,15 +73,28 @@ impl AccountBanInfo {
             "user_disabled",
             "account_disabled",
             "service_disabled",
+            "third_party_software",
+            "third-party",
+            "third_party",
+            "unauthorized_software",
+            "suspicious_activity",
         ];
-        const BAN_PHRASES: [&str; 6] = [
+        const BAN_PHRASES: [&str; 10] = [
             "violation of terms of service",
             "violation of the terms of service",
             "service has been disabled in this account",
             "account has been suspended",
             "account is suspended",
             "account has been disabled",
+            "third-party software",
+            "third party software",
+            "account has been locked",
+            "account is locked",
         ];
+
+        let has_appeal_link = lower.contains("docs.google.com/forms")
+            || lower.contains("forms.gle")
+            || lower.contains("appeal_url");
 
         let reason_code = BAN_REASON_CODES
             .iter()
@@ -89,7 +102,7 @@ impl AccountBanInfo {
             .map(|code| (*code).to_string());
         let has_phrase = BAN_PHRASES.iter().any(|phrase| lower.contains(*phrase));
 
-        if reason_code.is_none() && !has_phrase {
+        if reason_code.is_none() && !has_phrase && !has_appeal_link {
             return None;
         }
 
@@ -464,16 +477,32 @@ impl Account {
             }
         }
 
-        // Daily/Sandbox 配额端点对被封禁账号仍返回 200；一次成功的配额快照
-        // 不能抵消生产端点确认过的封禁。只有 `clear_account_ban` 才能解除该标记。
-        if self.banned {
+        // Daily/Sandbox 配额端点对被封禁与 403 账号仍返回 200；一次成功的配额快照
+        // 不能抵消生产端点确认过的封禁与 403 锁定。
+        // 只有 `clear_account_ban` 或生产端点测活成功 `clear_account_forbidden_and_validation` 才能解除。
+        let was_forbidden = self.banned
+            || self
+                .quota
+                .as_ref()
+                .map_or(false, |existing| existing.is_forbidden)
+            || self.proxy_disabled_reason.as_deref().map_or(false, |r| {
+                r.starts_with("Forbidden (403)") || r.contains("403 Forbidden")
+            });
+
+        if was_forbidden {
             quota.is_forbidden = true;
             if quota.forbidden_reason.is_none() {
-                quota.forbidden_reason = self.banned_reason.clone();
+                quota.forbidden_reason = self
+                    .banned_reason
+                    .clone()
+                    .or_else(|| self.quota.as_ref().and_then(|e| e.forbidden_reason.clone()))
+                    .or_else(|| self.proxy_disabled_reason.clone());
             }
-            // 封禁期间不保留过期配额，避免 API/UI 误读为「仍有 100% 可用」。
-            quota.models.clear();
-            quota.quota_groups = None;
+            if self.banned {
+                // 封禁期间不保留过期配额，避免 API/UI 误读为「仍有 100% 可用」。
+                quota.models.clear();
+                quota.quota_groups = None;
+            }
         }
 
         self.quota = Some(quota);
@@ -851,6 +880,64 @@ mod tests {
         assert_eq!(
             quota.forbidden_reason.as_deref(),
             Some("violation of Terms of Service")
+        );
+    }
+
+    #[test]
+    fn forbidden_account_keeps_quota_forbidden_after_successful_daily_refresh() {
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.banned = false;
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason =
+            Some("Forbidden (403): User not authorized to access model claude-3-5-sonnet".into());
+        let mut q = QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason =
+            Some("Forbidden (403): User not authorized to access model claude-3-5-sonnet".into());
+        account.quota = Some(q);
+
+        // Daily quota snapshot returns 200 with is_forbidden: false
+        let mut fresh_quota = QuotaData::new();
+        fresh_quota.is_forbidden = false;
+        account.update_quota(fresh_quota);
+
+        let quota = account.quota.as_ref().unwrap();
+        assert!(
+            quota.is_forbidden,
+            "403 锁定账号接收日配额快照时不得丢失 is_forbidden 状态"
+        );
+        assert_eq!(
+            quota.forbidden_reason.as_deref(),
+            Some("Forbidden (403): User not authorized to access model claude-3-5-sonnet")
+        );
+    }
+
+    #[test]
+    fn classifies_third_party_and_google_form_ban_response() {
+        let body = r#"{
+            "error": {
+                "code": 403,
+                "message": "Account blocked due to detection of unauthorized third-party software. Appeal here: https://docs.google.com/forms/d/e/1FAIpQLScOJWibQ_-hYuVv63kJTgEqlgAaOwRLGFTbXm-QY1gz8U0CGA/viewform",
+                "status": "PERMISSION_DENIED"
+            }
+        }"#;
+
+        let info =
+            AccountBanInfo::classify_upstream(403, body).expect("must detect third-party ban");
+        assert!(info.message.contains("third-party software"));
+        assert_eq!(
+            info.appeal_url.as_deref(),
+            Some("https://docs.google.com/forms/d/e/1FAIpQLScOJWibQ_-hYuVv63kJTgEqlgAaOwRLGFTbXm-QY1gz8U0CGA/viewform")
         );
     }
 }

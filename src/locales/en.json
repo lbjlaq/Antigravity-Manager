@@ -264,6 +264,7 @@
         "ultra": "ULTRA",
         "pro": "PRO",
         "free": "FREE",
+        "filter_abnormal": "Abnormal",
         "edit_label": "Edit Label",
         "custom_label_placeholder": "Enter custom label",
         "label_updated": "Label updated",
