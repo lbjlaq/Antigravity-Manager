@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Account, getAccountTier } from '../types/account';
+import { Account, getAccountTier, ModelPriorities } from '../types/account';
 import { PedalCandidate, PedalModeState, PedalTargetModel } from '../types/pedal';
 import { getGroupQuotaSummaries } from '../utils/quotaDisplay';
 import { showToast } from '../components/common/ToastContainer';
@@ -25,15 +25,15 @@ interface PedalModeStore extends PedalModeState {
         model: PedalTargetModel,
         targetIds: string[],
         accounts: Account[],
-        updatePriority?: (accountId: string, priority: number) => Promise<void>
+        updatePriority?: (accountId: string, priority: number, modelPriorities?: ModelPriorities) => Promise<void>
     ) => Promise<void>;
     checkAndAutoRecover: (
         accounts: Account[],
-        updatePriority?: (accountId: string, priority: number) => Promise<void>,
+        updatePriority?: (accountId: string, priority: number, modelPriorities?: ModelPriorities) => Promise<void>,
         legacyToggle?: (accountId: string, enable: boolean, reason?: string) => Promise<void>
     ) => Promise<void>;
     manualExit: (
-        updatePriority?: (accountId: string, priority: number) => Promise<void>,
+        updatePriority?: (accountId: string, priority: number, modelPriorities?: ModelPriorities) => Promise<void>,
         legacyToggle?: (accountId: string, enable: boolean, reason?: string) => Promise<void>
     ) => Promise<void>;
     dismissModal: () => void;
@@ -108,6 +108,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
         targetModel: initialState.targetModel || null,
         targetAccountIds: initialState.targetAccountIds || [],
         originalPriorities: initialState.originalPriorities || {},
+        originalModelPriorities: initialState.originalModelPriorities || {},
         snapshotDisabledIds: initialState.snapshotDisabledIds || [],
         temporarilyDisabledIds: initialState.temporarilyDisabledIds || [],
         suppressNotice: initialSuppress,
@@ -166,22 +167,32 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
         activatePedalMode: async (model, targetIds, accounts, updatePriority) => {
             const targetSet = new Set(targetIds);
             const originalPriorities: Record<string, number> = {};
+            const originalModelPriorities: Record<string, ModelPriorities> = {};
+            const otherModel: PedalTargetModel = model === 'gemini' ? 'claude' : 'gemini';
 
             for (const acc of accounts) {
                 if (targetSet.has(acc.id)) {
                     originalPriorities[acc.id] = typeof acc.priority === 'number' ? acc.priority : 50;
+                    originalModelPriorities[acc.id] = acc.model_priorities ? { ...acc.model_priorities } : {};
                 }
             }
 
-            const priorityUpdater = updatePriority || (async (id: string, p: number) => {
+            const priorityUpdater = updatePriority || (async (id: string, p: number, mp?: ModelPriorities) => {
                 const { updateAccountPriority } = useAccountStore.getState();
-                if (updateAccountPriority) await updateAccountPriority(id, p);
+                if (updateAccountPriority) await updateAccountPriority(id, p, mp);
             });
 
-            // 批量将目标账号设置为最高调度优先级（priority = 1），绝不挂起其他正常账号
+            // 批量将目标账号对应模型族设置为最高调度优先级（priority = 1），保留另一模型族原优先级，绝不挂起其他正常账号
             for (const id of targetIds) {
                 try {
-                    await priorityUpdater(id, 1);
+                    const origP = originalPriorities[id] ?? 50;
+                    const origMp = originalModelPriorities[id] || {};
+                    const boostedMp: ModelPriorities = {
+                        ...origMp,
+                        [model]: 1,
+                        [otherModel]: origMp[otherModel] ?? origP,
+                    };
+                    await priorityUpdater(id, 1, boostedMp);
                 } catch (e) {
                     console.error('[PedalMode] Failed to boost account priority:', id, e);
                 }
@@ -195,6 +206,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 targetModel: model,
                 targetAccountIds: targetIds,
                 originalPriorities,
+                originalModelPriorities,
                 snapshotDisabledIds: [],
                 temporarilyDisabledIds: [],
                 suppressNotice: get().suppressNotice,
@@ -218,9 +230,9 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 return;
             }
 
-            const priorityUpdater = updatePriority || (async (id: string, p: number) => {
+            const priorityUpdater = updatePriority || (async (id: string, p: number, mp?: ModelPriorities) => {
                 const { updateAccountPriority } = useAccountStore.getState();
-                if (updateAccountPriority) await updateAccountPriority(id, p);
+                if (updateAccountPriority) await updateAccountPriority(id, p, mp);
             });
 
             const targetAccounts = accounts.filter(a => state.targetAccountIds.includes(a.id));
@@ -228,8 +240,9 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 // 异常保底：若所有目标账号已被用户删除或移除，立即退出并恢复默认优先级
                 for (const id of state.targetAccountIds) {
                     const origP = state.originalPriorities?.[id] ?? 50;
+                    const origMp = state.originalModelPriorities?.[id] ?? {};
                     try {
-                        await priorityUpdater(id, origP);
+                        await priorityUpdater(id, origP, origMp);
                     } catch (e) {
                         console.error('[PedalMode] Failed to restore account priority on empty targets:', id, e);
                     }
@@ -245,6 +258,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                     targetModel: null,
                     targetAccountIds: [],
                     originalPriorities: {},
+                    originalModelPriorities: {},
                     snapshotDisabledIds: [],
                     temporarilyDisabledIds: [],
                 };
@@ -281,10 +295,12 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 // 若该账号配额已降至 0%，且该账号仍处于优先级 1 状态，则将其动态恢复至原始优先级
                 // 避免单号用尽后仍作为最高优先级截留非待蹬模型的请求
                 if (pct <= 0) {
-                    if (acc.priority === 1 || acc.priority === 0) {
+                    const effectiveModelP = acc.model_priorities?.[state.targetModel];
+                    if (acc.priority === 1 || acc.priority === 0 || effectiveModelP === 1) {
                         const origP = state.originalPriorities?.[acc.id] ?? 50;
+                        const origMp = state.originalModelPriorities?.[acc.id] ?? {};
                         try {
-                            await priorityUpdater(acc.id, origP);
+                            await priorityUpdater(acc.id, origP, origMp);
                         } catch (e) {
                             console.error('[PedalMode] Failed to restore single drained account priority:', acc.id, e);
                         }
@@ -310,8 +326,9 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 // 恢复目标账号的原始调度优先级
                 for (const id of state.targetAccountIds) {
                     const origP = state.originalPriorities?.[id] ?? 50;
+                    const origMp = state.originalModelPriorities?.[id] ?? {};
                     try {
-                        await priorityUpdater(id, origP);
+                        await priorityUpdater(id, origP, origMp);
                     } catch (e) {
                         console.error('[PedalMode] Failed to restore priority:', id, e);
                     }
@@ -328,6 +345,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                     targetModel: null,
                     targetAccountIds: [],
                     originalPriorities: {},
+                    originalModelPriorities: {},
                     snapshotDisabledIds: [],
                     temporarilyDisabledIds: [],
                 };
@@ -347,15 +365,16 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
             const state = get();
             if (!state.active) return;
 
-            const priorityUpdater = updatePriority || (async (id: string, p: number) => {
+            const priorityUpdater = updatePriority || (async (id: string, p: number, mp?: ModelPriorities) => {
                 const { updateAccountPriority } = useAccountStore.getState();
-                if (updateAccountPriority) await updateAccountPriority(id, p);
+                if (updateAccountPriority) await updateAccountPriority(id, p, mp);
             });
 
             for (const id of state.targetAccountIds) {
                 const origP = state.originalPriorities?.[id] ?? 50;
+                const origMp = state.originalModelPriorities?.[id] ?? {};
                 try {
-                    await priorityUpdater(id, origP);
+                    await priorityUpdater(id, origP, origMp);
                 } catch (e) {
                     console.error('[PedalMode] Failed to restore account priority manually:', id, e);
                 }
@@ -373,6 +392,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 targetModel: null,
                 targetAccountIds: [],
                 originalPriorities: {},
+                originalModelPriorities: {},
                 snapshotDisabledIds: [],
                 temporarilyDisabledIds: [],
             };

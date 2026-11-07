@@ -1,8 +1,16 @@
+export type ModelPriorityGroup = 'gemini' | 'claude';
+
+export interface ModelPriorities {
+    gemini?: number;
+    claude?: number;
+}
+
 export interface Account {
     id: string;
     email: string;
     name?: string;
     priority?: number;
+    model_priorities?: ModelPriorities;
     token: TokenData;
     device_profile?: DeviceProfile;
     device_history?: DeviceProfileVersion[];
@@ -222,6 +230,30 @@ export function checkArgonEligibility(
  */
 export function getTierLabel(tier: 'ultra' | 'pro' | 'enterprise' | 'free'): string {
     return tier.toUpperCase();
+}
+
+export function getEffectiveModelPriority(
+    account: { priority?: number; model_priorities?: ModelPriorities },
+    group: ModelPriorityGroup
+): number {
+    const override = account.model_priorities?.[group];
+    if (typeof override === 'number' && override >= 1 && override <= 100) {
+        return override;
+    }
+    return typeof account.priority === 'number' && account.priority >= 1 && account.priority <= 100
+        ? account.priority
+        : 50;
+}
+
+export function hasCustomModelPriorities(account: {
+    priority?: number;
+    model_priorities?: ModelPriorities;
+}): boolean {
+    if (!account.model_priorities) return false;
+    const base = typeof account.priority === 'number' ? account.priority : 50;
+    const g = account.model_priorities.gemini;
+    const c = account.model_priorities.claude;
+    return (typeof g === 'number' && g !== base) || (typeof c === 'number' && c !== base);
 }
 
 export interface ImportAccountEntry {

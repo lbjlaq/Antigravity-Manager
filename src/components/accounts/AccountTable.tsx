@@ -49,7 +49,7 @@ import {
     ArrowDown,
     Zap,
 } from 'lucide-react';
-import { type Account, type ActiveClientsStatus, getAccountTier, hasAccountArgonCapability } from '../../types/account';
+import { type Account, type ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountArgonCapability, hasCustomModelPriorities } from '../../types/account';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 
@@ -521,11 +521,19 @@ function AccountRowContent({
                                 "px-2 py-0.5 rounded-md text-[10px] font-bold",
                                 isPedaling
                                     ? "bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 border border-amber-300/80 dark:border-amber-700/80 shadow-2xs"
-                                    : "bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400"
+                                    : hasCustomModelPriorities(account)
+                                        ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50"
+                                        : "bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400"
                             )}
-                            title={t('accounts.priority_hint')}
+                            title={
+                                hasCustomModelPriorities(account)
+                                    ? `Gemini: ${getEffectiveModelPriority(account, 'gemini')} | Claude: ${getEffectiveModelPriority(account, 'claude')} (${t('accounts.priority')}: ${account.priority ?? 50})`
+                                    : t('accounts.priority_hint')
+                            }
                         >
-                            {t('accounts.priority')}: {account.priority ?? 50}
+                            {hasCustomModelPriorities(account)
+                                ? `${t('accounts.priority')}: G:${getEffectiveModelPriority(account, 'gemini')} · C:${getEffectiveModelPriority(account, 'claude')}`
+                                : `${t('accounts.priority')}: ${account.priority ?? 50}`}
                         </span>
                         {account.custom_label && !isEditingLabel && (
                             <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-bold shadow-sm border border-orange-200/50 dark:border-orange-800/50">
