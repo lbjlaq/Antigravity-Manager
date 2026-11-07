@@ -2634,11 +2634,13 @@ async fn admin_test_model(
                 })?;
             (acc, t, p)
         } else {
-            pick_auto_test_account_for_web(&accounts)
+            crate::commands::proxy::pick_auto_test_account(&accounts)
+                .await
                 .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?
         }
     } else {
-        pick_auto_test_account_for_web(&accounts)
+        crate::commands::proxy::pick_auto_test_account(&accounts)
+            .await
             .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?
     };
 
@@ -2692,28 +2694,6 @@ async fn admin_test_model(
         })?;
 
     Ok(Json(result))
-}
-
-fn pick_auto_test_account_for_web(
-    accounts: &[crate::models::account::Account],
-) -> Result<(crate::models::account::Account, String, String), String> {
-    let candidates: Vec<_> = accounts
-        .iter()
-        .filter(|a| !a.disabled && !a.proxy_disabled)
-        .cloned()
-        .collect();
-
-    if candidates.is_empty() {
-        return Err(
-            "当前没有开启反代的可用账号，请先在账号页面开启至少一个账号的反代，或指定具体账号测试"
-                .to_string(),
-        );
-    }
-
-    let chosen = candidates[0].clone();
-    let token = chosen.token.access_token.clone();
-    let pid = chosen.token.project_id.clone().unwrap_or_default();
-    Ok((chosen, token, pid))
 }
 
 async fn admin_get_data_dir_path() -> impl IntoResponse {
@@ -5492,5 +5472,36 @@ mod save_update_settings_payload_tests {
             resolve_oauth_redirect_uri(8045, Some("https://my-domain.example.com/"), false),
             "https://my-domain.example.com/auth/callback"
         );
+    }
+
+    #[test]
+    fn test_admin_test_model_request_deserialization() {
+        use super::AdminTestModelRequest;
+
+        // 1. 带 targetAccountId 的请求（Web 前端单模型测试）
+        let with_account: AdminTestModelRequest = serde_json::from_value(serde_json::json!({
+            "model": "gemini-2.5-pro",
+            "targetAccountId": "acc-12345"
+        }))
+        .expect("should deserialize with targetAccountId");
+        assert_eq!(with_account.model, "gemini-2.5-pro");
+        assert_eq!(with_account.target_account_id.as_deref(), Some("acc-12345"));
+
+        // 2. targetAccountId 为 null（Web 前端自动调度模式）
+        let auto_dispatch_null: AdminTestModelRequest = serde_json::from_value(serde_json::json!({
+            "model": "gemini-2.5-flash",
+            "targetAccountId": null
+        }))
+        .expect("should deserialize with null targetAccountId");
+        assert_eq!(auto_dispatch_null.model, "gemini-2.5-flash");
+        assert_eq!(auto_dispatch_null.target_account_id, None);
+
+        // 3. 缺少 targetAccountId 字段（原生 API 调用）
+        let bare: AdminTestModelRequest = serde_json::from_value(serde_json::json!({
+            "model": "claude-sonnet-4-5"
+        }))
+        .expect("should deserialize without targetAccountId");
+        assert_eq!(bare.model, "claude-sonnet-4-5");
+        assert_eq!(bare.target_account_id, None);
     }
 }
