@@ -1011,6 +1011,49 @@ mod tests {
     }
 
     #[test]
+    fn test_clear_account_forbidden_and_validation_uses_specific_quota_reason() {
+        let _guard = SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = TestDataDir::new();
+        std::env::set_var("ABV_DATA_DIR", dir.path());
+
+        let acc_id = "test-generic-proxy-specific-quota";
+        let path_buf = dir.path().clone();
+        create_account_file(&path_buf, acc_id, "specific_quota@example.com");
+
+        // proxy_disabled_reason 是泛化原因，真正的模型绑定信息在 quota.forbidden_reason
+        let mut account = load_account(acc_id).unwrap();
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("Forbidden (403)".to_string());
+        let mut q = crate::models::QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some(
+            "Forbidden (403): User not authorized to access model claude-3-5-sonnet".to_string(),
+        );
+        account.quota = Some(q);
+        save_account(&account).unwrap();
+
+        // 测试 Gemini：必须读取更具体的 quota reason，不能因泛化 proxy reason 误解封
+        let res_gemini =
+            clear_account_forbidden_and_validation(acc_id, Some("gemini-2.5-flash")).unwrap();
+        assert!(
+            !res_gemini,
+            "泛化 proxy reason 不得掩盖 quota 中的模型绑定信息"
+        );
+        let still_locked = load_account(acc_id).unwrap();
+        assert!(still_locked.proxy_disabled);
+        assert!(still_locked.quota.as_ref().unwrap().is_forbidden);
+
+        // 测试同一 Claude 模型：允许正常解封
+        let res_claude =
+            clear_account_forbidden_and_validation(acc_id, Some("claude-3-5-sonnet")).unwrap();
+        assert!(res_claude, "测试匹配的受限模型时应允许解封");
+
+        std::env::remove_var("ABV_DATA_DIR");
+    }
+
+    #[test]
     fn test_clear_account_forbidden_and_validation_validation_blocked() {
         let _guard = SHARED_TEST_ENV_LOCK
             .lock()
@@ -3596,15 +3639,18 @@ pub fn clear_account_forbidden_and_validation(
         return Ok(false);
     }
 
-    // 契约 3：若 403 绑定了不同模型，不越权清除账号级状态
+    // 契约 3：若任一 403 原因绑定了不同模型，不越权清除账号级状态。
+    // proxy_disabled_reason 可能是泛化的 "Forbidden (403)"，更具体的模型信息
+    // 往往在 quota.forbidden_reason 中，因此两个来源都必须检查，不能只看前者。
     if let Some(tested) = tested_model {
-        let reason_check = account.proxy_disabled_reason.as_deref().or_else(|| {
+        let reason_candidates = [
+            account.proxy_disabled_reason.as_deref(),
             account
                 .quota
                 .as_ref()
-                .and_then(|q| q.forbidden_reason.as_deref())
-        });
-        if let Some(reason) = reason_check {
+                .and_then(|q| q.forbidden_reason.as_deref()),
+        ];
+        for reason in reason_candidates.into_iter().flatten() {
             if is_forbidden_reason_tied_to_different_model(reason, tested) {
                 crate::modules::logger::log_warn(&format!(
                     "⚠️ [Probe] Account {} probe succeeded for {}, but 403 lock is tied to a different model ({}); skipping unblock",
