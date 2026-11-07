@@ -307,6 +307,9 @@ pub async fn run_headless_server(
     modules::scheduler::start_scheduler(None, proxy_state.clone());
     info!("Smart scheduler (7-Day Weekly Reset Warmup) started in headless mode.");
 
+    // 账号在 internal_start_proxy_service 中已完成加载，异步刷新一次全量配额
+    modules::startup_refresh::spawn_startup_quota_refresh(None, proxy_state.clone());
+
     // Wait for Ctrl-C
     tokio::signal::ctrl_c().await.ok();
     info!("Headless mode shutting down");
@@ -679,6 +682,13 @@ pub fn run() {
                             info!("Proxy service auto-started successfully");
                         }
                     }
+
+                    // 3. 账号加载与代理启动就绪后，异步刷新一次全量配额
+                    //    由 startup_refresh 配置开关控制，单进程仅触发一次，避免启动阶段全量轰炸
+                    modules::startup_refresh::spawn_startup_quota_refresh(
+                        Some(handle.clone()),
+                        state.inner().clone(),
+                    );
                 } else {
                     // 配置加载失败不能再被静默吞掉：否则重启后“服务没起来”时无任何痕迹可查。
                     error!(

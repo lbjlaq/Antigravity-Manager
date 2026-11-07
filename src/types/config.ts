@@ -202,6 +202,10 @@ export interface AppConfig {
     theme: string;
     auto_refresh: boolean;
     refresh_interval: number;
+    /** 启动完成、账号加载就绪后异步刷新一次全部配额 */
+    startup_refresh?: boolean;
+    /** 启动刷新允许的最大账号数；超过该值跳过启动刷新，0 表示不限制 */
+    startup_refresh_max_accounts?: number;
     auto_sync: boolean;
     sync_interval: number;
     auto_switch_classic_depleted?: boolean; // [NEW] 兼容旧版开关

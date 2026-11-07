@@ -52,6 +52,8 @@ function Settings() {
         theme: 'system',
         auto_refresh: false,
         refresh_interval: 10,
+        startup_refresh: true,
+        startup_refresh_max_accounts: 15,
         auto_sync: false,
         sync_interval: 5,
         auto_switch_classic_depleted: false,
@@ -1017,6 +1019,52 @@ function Settings() {
                                             }}
                                         />
                                         <div className={`w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500 shadow-inner ${formData.quota_protection.enabled ? 'peer-checked:bg-blue-500' : ''}`}></div>
+                                    </label>
+                                </div>
+
+                                <div className="mt-5 pt-5 border-t border-gray-50 dark:border-base-300 flex items-center justify-between gap-4 animate-in slide-in-from-top-1 duration-200">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-sm font-bold text-gray-900 dark:text-gray-100">{t('settings.account.startup_refresh')}</div>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t('settings.account.startup_refresh_desc')}</p>
+                                        {formData.startup_refresh !== false && (
+                                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                                                <label className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('settings.account.startup_refresh_limit')}</label>
+                                                <input
+                                                    type="number"
+                                                    className="w-16 px-2 py-1 bg-gray-50 dark:bg-base-200 border border-gray-100 dark:border-base-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-blue-600 dark:text-blue-400"
+                                                    min="0"
+                                                    max="100000"
+                                                    value={formData.startup_refresh_max_accounts ?? 15}
+                                                    onChange={(e) => {
+                                                        const parsed = parseInt(e.target.value);
+                                                        setFormData({
+                                                            ...formData,
+                                                            startup_refresh_max_accounts: Number.isNaN(parsed) ? 0 : Math.min(Math.max(parsed, 0), 100000),
+                                                        });
+                                                    }}
+                                                />
+                                                <span className="text-[11px] text-gray-500 dark:text-gray-400">{t('settings.account.startup_refresh_limit_hint')}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={formData.startup_refresh !== false}
+                                            onChange={async (e) => {
+                                                const enabled = e.target.checked;
+                                                const newConfig = { ...formData, startup_refresh: enabled };
+                                                setFormData(newConfig);
+                                                // Hot Save
+                                                try {
+                                                    await saveConfig(newConfig);
+                                                } catch (error) {
+                                                    showToast(`${t('common.error')}: ${error}`, 'error');
+                                                }
+                                            }}
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 dark:bg-base-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500 shadow-inner"></div>
                                     </label>
                                 </div>
 

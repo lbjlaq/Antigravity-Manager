@@ -25,6 +25,7 @@ pub mod quota;
 pub mod scheduler;
 pub mod security_db;
 pub mod startup_quiet;
+pub mod startup_refresh;
 pub mod token_stats;
 pub mod tray;
 pub mod update_checker;

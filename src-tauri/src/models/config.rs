@@ -9,6 +9,12 @@ pub struct AppConfig {
     pub theme: String,
     pub auto_refresh: bool,
     pub refresh_interval: i32, // minutes
+    /// 启动完成、账号加载就绪后，异步刷新一次全部账号配额
+    #[serde(default = "default_startup_refresh")]
+    pub startup_refresh: bool,
+    /// 启动刷新允许的最大账号数；账号数超过该值时跳过启动刷新，0 表示不限制
+    #[serde(default = "default_startup_refresh_max_accounts")]
+    pub startup_refresh_max_accounts: u32,
     pub auto_sync: bool,
     pub sync_interval: i32, // minutes
     pub default_export_path: Option<String>,
@@ -58,6 +64,14 @@ fn default_tray_click_action() -> String {
 
 fn default_quiet_autostart() -> bool {
     true
+}
+
+fn default_startup_refresh() -> bool {
+    true
+}
+
+fn default_startup_refresh_max_accounts() -> u32 {
+    15
 }
 
 /// Scheduled warmup configuration
@@ -249,6 +263,8 @@ impl AppConfig {
             theme: "system".to_string(),
             auto_refresh: true,
             refresh_interval: 10,
+            startup_refresh: true,
+            startup_refresh_max_accounts: 15,
             auto_sync: false,
             sync_interval: 5,
             default_export_path: None,
@@ -309,6 +325,28 @@ mod tests {
         let saved = serde_json::to_string(&config).unwrap();
         let restored: AppConfig = serde_json::from_str(&saved).unwrap();
         assert!(!restored.quiet_autostart);
+    }
+
+    #[test]
+    fn startup_refresh_defaults_are_backward_compatible() {
+        let config = AppConfig::new();
+        let mut value = serde_json::to_value(&config).unwrap();
+        value.as_object_mut().unwrap().remove("startup_refresh");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("startup_refresh_max_accounts");
+        let restored: AppConfig = serde_json::from_value(value).unwrap();
+        assert!(restored.startup_refresh);
+        assert_eq!(restored.startup_refresh_max_accounts, 15);
+
+        let mut config = AppConfig::new();
+        config.startup_refresh = false;
+        config.startup_refresh_max_accounts = 0;
+        let saved = serde_json::to_string(&config).unwrap();
+        let restored: AppConfig = serde_json::from_str(&saved).unwrap();
+        assert!(!restored.startup_refresh);
+        assert_eq!(restored.startup_refresh_max_accounts, 0);
     }
 
     #[test]

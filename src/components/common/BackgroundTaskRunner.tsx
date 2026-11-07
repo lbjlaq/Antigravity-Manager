@@ -17,7 +17,9 @@ function BackgroundTaskRunner() {
         let intervalId: ReturnType<typeof setTimeout> | null = null;
         const { auto_refresh, refresh_interval } = config;
 
-        // [FIX #3726] 仅在用户手动从关闭 (false) 切换为开启 (true) 时触发即时刷新，应用初始启动挂载时绝不立即全量轰炸
+        // [FIX #3726] 仅在用户手动从关闭 (false) 切换为开启 (true) 时触发即时刷新。
+        // 启动阶段的一次性刷新已下沉到后端 startup_refresh：账号加载就绪后单进程触发一次，
+        // 不受多窗口/重复挂载影响，避免应用初始启动时并发轰炸全量配额。
         const isFirstMount = !hasMountedRef.current;
         hasMountedRef.current = true;
 
