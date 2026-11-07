@@ -929,7 +929,7 @@ pub async fn test_model_connectivity(
     Ok(result)
 }
 
-async fn pick_auto_test_account(
+pub(crate) async fn pick_auto_test_account(
     accounts: &[crate::models::account::Account],
 ) -> Result<(crate::models::account::Account, String, String), String> {
     let candidates: Vec<_> = accounts
@@ -940,7 +940,7 @@ async fn pick_auto_test_account(
             !a.disabled
                 && !a.banned
                 && !a.validation_blocked
-                && !a.quota.as_ref().map_or(false, |q| q.is_forbidden)
+                && !a.quota.as_ref().is_some_and(|q| q.is_forbidden)
         })
         .cloned()
         .collect();
