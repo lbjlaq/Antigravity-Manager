@@ -1130,6 +1130,107 @@ mod tests {
     }
 
     #[test]
+    fn test_is_model_scoped_forbidden_reason() {
+        assert!(!is_model_scoped_forbidden_reason(
+            "Forbidden (403): Location not supported"
+        ));
+        assert!(!is_model_scoped_forbidden_reason("validation_required"));
+        assert!(is_model_scoped_forbidden_reason(
+            "Forbidden (403): User not authorized to access model claude-3-5-sonnet"
+        ));
+        assert!(is_model_scoped_forbidden_reason(
+            "Forbidden (403): model gemini-3-pro is not available"
+        ));
+    }
+
+    #[test]
+    fn test_non_model_forbidden_lock_is_clearable_only_without_model_scope() {
+        // 普通日配额 200 仍然由 update_quota / update_account_quota_internal 保持 403，
+        // 见 models::account::tests::forbidden_account_keeps_quota_forbidden_after_successful_daily_refresh
+        // 与 test_update_account_quota_internal_preserves_403_and_proxy_disabled。
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("Forbidden (403): Location not supported".into());
+        let mut q = QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason = Some("Forbidden (403): Location not supported".into());
+        account.quota = Some(q);
+
+        assert!(has_non_model_forbidden_lock(&account));
+        clear_non_model_forbidden_state(&mut account);
+        assert!(!account.proxy_disabled);
+        assert!(account.proxy_disabled_reason.is_none());
+        assert!(!account.quota.as_ref().unwrap().is_forbidden);
+
+        // 模型级 403：proxy 原因是通用 403，但 quota 原因明确绑定模型，必须保持锁定。
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("Forbidden (403)".into());
+        let mut q = QuotaData::new();
+        q.is_forbidden = true;
+        q.forbidden_reason =
+            Some("Forbidden (403): User not authorized to access model claude-3-5-sonnet".into());
+        account.quota = Some(q);
+        assert!(
+            !has_non_model_forbidden_lock(&account),
+            "任一来源带模型指向时必须保留锁"
+        );
+
+        // 纯 is_forbidden、无原因文本：按账号级 403 处理。
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        let mut q = QuotaData::new();
+        q.is_forbidden = true;
+        account.quota = Some(q);
+        assert!(has_non_model_forbidden_lock(&account));
+
+        // 验证锁不是可由生产 Healthy 清理的账号级 403。
+        let token = TokenData::new(
+            "test".into(),
+            "test".into(),
+            3600,
+            None,
+            None,
+            None,
+            false,
+            None,
+        );
+        let mut account = Account::new("test".into(), "test@test.invalid".into(), token);
+        account.proxy_disabled = true;
+        account.proxy_disabled_reason = Some("validation_required".into());
+        assert!(!has_non_model_forbidden_lock(&account));
+    }
+
+    #[test]
     fn test_update_account_quota_internal_preserves_403_and_proxy_disabled() {
         let _guard = SHARED_TEST_ENV_LOCK
             .lock()
@@ -3732,6 +3833,85 @@ pub(crate) fn is_forbidden_reason_tied_to_different_model(
     false
 }
 
+/// 判断 403/禁用原因是否明确绑定到某个具体模型。
+///
+/// 与 `is_forbidden_reason_tied_to_different_model` 保持同一套模型家族/模型名识别；
+/// 这里只判断“是否模型级”，不比较具体测活模型。`model` 字样本身也视为模型级，
+/// 宁可保守保留锁，也不要在生产探测 Healthy 时误清一个仍只影响单个模型的 403。
+fn is_model_scoped_forbidden_reason(reason: &str) -> bool {
+    let lower = reason.to_lowercase();
+    if lower.contains("validation_required")
+        || lower.contains("challenge")
+        || lower.contains("verify your account")
+        || lower.contains("location")
+        || lower.contains("quota project")
+    {
+        return false;
+    }
+    lower.contains("claude")
+        || lower.contains("gpt")
+        || lower.contains("gemini")
+        || lower.contains("o1")
+        || lower.contains("o3")
+        || lower.contains("o4")
+        || lower.contains("model")
+}
+
+/// 是否存在可由生产端点 Healthy 解除的账号级 403 锁。
+///
+/// 调用方必须只在 `probe_account_ban` 返回 `Healthy` 时使用；Daily/Sandbox
+/// 配额 200 不是权威证据，绝不能走这里。只要 proxy 或 quota 任一来源带模型级
+/// 指向，就保持原锁，等定向测活按模型解除。
+fn has_non_model_forbidden_lock(account: &Account) -> bool {
+    let mut has_hard_lock = false;
+    let mut has_model_scope = false;
+
+    if account.proxy_disabled {
+        if let Some(reason) = account.proxy_disabled_reason.as_deref() {
+            if classify_lock_reason(reason) == AccountLockKind::HardForbidden {
+                has_hard_lock = true;
+                has_model_scope |= is_model_scoped_forbidden_reason(reason);
+            }
+        }
+    }
+
+    if let Some(quota) = account.quota.as_ref() {
+        if quota.is_forbidden {
+            if let Some(reason) = quota.forbidden_reason.as_deref() {
+                if classify_lock_reason(reason) == AccountLockKind::HardForbidden {
+                    has_hard_lock = true;
+                    has_model_scope |= is_model_scoped_forbidden_reason(reason);
+                }
+            } else {
+                // 纯 is_forbidden、无原因文本：按账号级 403 处理。
+                has_hard_lock = true;
+            }
+        }
+    }
+
+    has_hard_lock && !has_model_scope
+}
+
+fn clear_non_model_forbidden_state(account: &mut Account) {
+    if account.proxy_disabled
+        && account
+            .proxy_disabled_reason
+            .as_deref()
+            .is_some_and(|reason| classify_lock_reason(reason) == AccountLockKind::HardForbidden)
+    {
+        account.proxy_disabled = false;
+        account.proxy_disabled_reason = None;
+        account.proxy_disabled_at = None;
+    }
+
+    if let Some(quota) = account.quota.as_mut() {
+        if quota.is_forbidden {
+            quota.is_forbidden = false;
+            quota.forbidden_reason = None;
+        }
+    }
+}
+
 /// 测活探测成功后，自动解除账号的 403 封禁及验证锁定状态，恢复其在反代池中的调度资格。
 ///
 /// 边界防护契约：
@@ -4018,6 +4198,25 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                         account.email, e
                     )),
                 }
+            }
+
+            // 生产端点 2xx 是账号级 403 的权威恢复证据。Daily/Sandbox 配额 200
+            // 不会进入这个分支，因此普通拉额度无法欺骗解封；模型级 403 由
+            // `has_non_model_forbidden_lock` 保守排除，仍需定向测活按模型解除。
+            if has_non_model_forbidden_lock(account) {
+                clear_non_model_forbidden_state(account);
+                if let Err(e) = save_account(account) {
+                    modules::logger::log_warn(&format!(
+                        "Failed to persist recovered 403 state for {}: {}",
+                        account.email, e
+                    ));
+                }
+                crate::proxy::server::trigger_account_reload(&account.id);
+                crate::modules::log_bridge::emit_accounts_refreshed();
+                modules::logger::log_info(&format!(
+                    "✅ [Probe] Account {} recovered from account-level 403 lock",
+                    account.email
+                ));
             }
         }
         crate::modules::quota::BanProbeOutcome::Unknown => {
