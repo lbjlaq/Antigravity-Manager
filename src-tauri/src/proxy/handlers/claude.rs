@@ -152,7 +152,6 @@ pub fn calculate_effective_auto_compact_threshold(user_threshold: u32, target_li
 /// 检查请求最新一条 user 消息是否包含 tool_result 或处于工具调用接续阶段。
 /// 在工具调用接续期间（Agent loop in-flight），绝不能假报 400 截断，
 /// 否则客户端的工具执行状态机会直接崩溃并将错误呈现给用户！
-#[allow(dead_code)]
 pub fn is_tool_result_continuation(request: &ClaudeRequest) -> bool {
     let last_user_msg = request.messages.iter().rev().find(|m| m.role == "user");
     if let Some(msg) = last_user_msg {
@@ -177,7 +176,6 @@ pub fn is_tool_result_continuation(request: &ClaudeRequest) -> bool {
 /// 1. 模型名称显式属于 Claude 5 家族 (fable, opus-5, sonnet-5) 或显式标注 [1m] / 1m，
 ///    或属于 Gemini 长上下文模型 (gemini, flash, pro)；
 /// 2. 请求头 anthropic-beta 包含 `context-1m`。
-#[allow(dead_code)]
 pub fn is_1m_context_requested(request: &ClaudeRequest, headers: &HeaderMap) -> bool {
     let model_lower = request.model.to_lowercase();
     if model_lower.contains("fable")
@@ -202,12 +200,15 @@ pub fn is_1m_context_requested(request: &ClaudeRequest, headers: &HeaderMap) -> 
 
 /// 判断当前请求是否应该触发 Cowork 响应式自动压缩假报警门禁。
 ///
-/// 核心铁律（边界如铁）：
+/// 核心准则：
 /// 1. 配置守卫：`enable_cowork_auto_compact` 必须为 true；
 /// 2. 状态守卫：非压缩总结请求、非刚压缩接续、非手动 ./compact 指令、非正在压缩中；
-/// 3. 真实 Cowork 阈值守卫：
-///    - 必须为真正的 Cowork 会话（且非 Code 模式），且实际 tokens >= effective_threshold 与 target_limit。
-///    - 严格按用户配置的阈值触发压缩，不再对 1M 模型一刀切豁免，确保会话达到设定限额时受控深度压缩。
+/// 3. 真实 Cowork 会话守卫：必须为真正的 Cowork 会话（且非 Code 模式）；
+/// 4. 工具在途避让（核心防护）：Agent 正在执行工具链（最新一条包含 tool_result）期间绝不假报 400！
+///    必须等待当前工具调用链闭环、回到用户新回合输入时再优雅触发压缩，
+///    彻底杜绝客户端工具状态机崩溃并弹出全屏 "Your context window is full" 阻塞弹窗；
+/// 5. 1M 兼顾与配额自愈：1M 模型同样必须按用户配置阈值（如 150k）受控压缩，防止无限膨胀；
+///    当 est_tokens >= effective_threshold 且处于人类新回合开始时，平滑触发原生压缩。
 pub fn should_trigger_cowork_auto_compact(
     enable_auto_compact: bool,
     user_configured_threshold: u32,
@@ -228,7 +229,15 @@ pub fn should_trigger_cowork_auto_compact(
         return None;
     }
 
+    // 必须为真正的 Cowork 会话（且非 Code 模式）
     if !is_cowork_session(request, headers) {
+        return None;
+    }
+
+    // 关键守卫：Agent 执行工具链接续期间（包含 tool_result）绝不截断！
+    // 此时客户端正在等待模型消费工具结果，若突发 400 会打崩客户端工具调用状态机并弹窗报错。
+    // 必须等待当前工具调用链闭环、回到用户新回合输入时再优雅触发压缩！
+    if is_tool_result_continuation(request) {
         return None;
     }
 
@@ -296,58 +305,91 @@ fn is_manual_compact_command(request: &ClaudeRequest) -> bool {
 }
 
 /// 判断当前请求是否属于 Claude Code 模式（CLI / Desktop Code Tab）
+pub fn is_code_mode(request: &ClaudeRequest) -> bool {
+    is_code_mode_with_headers(request, None)
+}
+
+/// 判断当前请求是否属于 Claude Code 模式（支持标头嗅探）
 ///
 /// 判定依据（与 Cowork 排除判定完全对齐）：
 /// 1. 工具声明包含 `mcp__ccd_` 前缀（Claude Desktop Code Tab 专属工具）；
-/// 2. 或系统提示词显式声明包含 "You are Claude Code"（Claude Code CLI 官方身份）。
-pub fn is_code_mode(request: &ClaudeRequest) -> bool {
-    request.tools.as_ref().map_or(false, |tools| {
-        tools.iter().any(|t| t.get_name().starts_with("mcp__ccd_"))
-    }) || request.system.as_ref().map_or(false, |sys| match sys {
+/// 2. 系统提示词显式声明包含 "You are Claude Code"（Claude Code CLI 官方身份）；
+/// 3. 请求头 anthropic-beta 包含 `claude-code`（Claude Code CLI 专属功能标头）。
+pub fn is_code_mode_with_headers(request: &ClaudeRequest, headers: Option<&HeaderMap>) -> bool {
+    // 1. 工具声明包含 `mcp__ccd_` 前缀（Claude Desktop Code Tab 专属工具）
+    let has_ccd_tools = request
+        .tools
+        .as_ref()
+        .is_some_and(|tools| tools.iter().any(|t| t.get_name().starts_with("mcp__ccd_")));
+    if has_ccd_tools {
+        return true;
+    }
+
+    // 2. 系统提示词显式声明 "You are Claude Code"（无论是否有 cowork 工具，一票否决）
+    let has_code_system = request.system.as_ref().is_some_and(|sys| match sys {
         crate::proxy::mappers::claude::models::SystemPrompt::String(s) => {
             s.contains("You are Claude Code")
         }
         crate::proxy::mappers::claude::models::SystemPrompt::Array(arr) => {
             arr.iter().any(|b| b.text.contains("You are Claude Code"))
         }
-    })
+    });
+    if has_code_system {
+        return true;
+    }
+
+    // 若显式携带真实 Cowork 专属工具 (mcp__cowork_*)，且无上述绝对 Code 身份，坚决归属 Cowork
+    let has_cowork_tools = request.tools.as_ref().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|t| t.get_name().starts_with("mcp__cowork"))
+    });
+    if has_cowork_tools {
+        return false;
+    }
+
+    // 3. 请求标头包含 Claude Code 专有标识（且无 Cowork 专属工具）
+    if let Some(hdrs) = headers {
+        if let Some(beta) = hdrs.get("anthropic-beta").and_then(|v| v.to_str().ok()) {
+            if beta.contains("claude-code") {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 /// 判断当前请求是否属于 Claude Desktop Cowork 专属会话
-/// 关键防护：严格排除 Claude Code 模式（CLI / Desktop Code Tab），防止日常代码工程被误触截断。
-/// 仅精准放行真正的 Cowork 模式（带 mcp__cowork_* / mcp__workspace_* 工具或 local-agent 运行环境）。
+/// 关键防护：严格排除 Claude Code 模式（CLI / Desktop Code Tab），防止日常代码工程与普通对话被误触截断。
+/// 仅精准放行真正的 Cowork 模式（带 mcp__cowork_* 专属工具，或桌面工作区专属智能体）。
 pub fn is_cowork_session(request: &ClaudeRequest, headers: &HeaderMap) -> bool {
     // 1. 显式排除 Claude Code 模式（一票否决权）：
-    // 关键认知：Claude Desktop 的 Cowork 模式底层同样基于 agent-sdk，也会携带 x-app: cli、x-claude-code-session-id
-    // 以及通用宿主标头 claude-desktop-3p（代表 3p 嵌入桌面宿主），因此绝不能用这些通用标头判定 Code 模式！
-    // 真正的 Code 模式专属特征为：包含 mcp__ccd_* 工具前缀，或系统提示词显式声明 "You are Claude Code"
-    if is_code_mode(request) {
+    if is_code_mode_with_headers(request, Some(headers)) {
         return false;
     }
 
     // 2. 识别真正的 Cowork 会话：
-    // 特征：带有 mcp__cowork_* 或 mcp__workspace_* 专属工具，
-    // 或运行环境为 local-agent / Claude Desktop 内置原生日常工作区
-    let has_cowork_tool = request.tools.as_ref().map_or(false, |tools| {
+    // 特征 A: 带有 mcp__cowork_* 或 mcp__workspace_* 专属工具
+    let has_cowork_tool = request.tools.as_ref().is_some_and(|tools| {
         tools.iter().any(|t| {
             let n = t.get_name();
             n.starts_with("mcp__cowork") || n.starts_with("mcp__workspace")
         })
     });
 
+    // 特征 B: Claude Desktop 内置原生日常工作区智能体应用描述
     let has_cowork_agent = headers
         .iter()
-        .any(|(_, v)| v.to_str().map_or(false, |val| val.contains("local-agent")))
-        || request.system.as_ref().map_or(false, |sys| match sys {
+        .any(|(_, v)| v.to_str().is_ok_and(|val| val.contains("local-agent")))
+        || request.system.as_ref().is_some_and(|sys| match sys {
             crate::proxy::mappers::claude::models::SystemPrompt::String(s) => {
-                s.contains("local-agent")
-                    || s.contains("operating as an agent inside the Claude desktop app")
+                s.contains("operating as an agent inside the Claude desktop app")
             }
             crate::proxy::mappers::claude::models::SystemPrompt::Array(arr) => {
                 arr.iter().any(|b| {
-                    b.text.contains("local-agent")
-                        || b.text
-                            .contains("operating as an agent inside the Claude desktop app")
+                    b.text
+                        .contains("operating as an agent inside the Claude desktop app")
                 })
             }
         });
@@ -724,10 +766,9 @@ mod variant_tests {
     }
 
     #[test]
-    fn invalid_effort_falls_back_to_budget_tokens_for_gemini_3_model() {
-        // Given a Gemini 3 model ("gemini-3-flash") with an unrecognized
-        // effort value ("unrecognized"), tier_from_effort returns None, so
-        // apply_variant falls back to budget-based tier inference.
+    fn invalid_effort_ignores_budget_tokens_for_gemini_3_model() {
+        // [USER RULE] 对于 Gemini >= 3 的裸模型，由客户端思考强度 (effort) 接管，思考预算字段 (budget_tokens) 直接忽略！
+        // 客户端未传 valid effort 时绝不按 budget_tokens 推断档位，默认对齐官方 High 旗舰算力保障通道
         let mut request = request_with_effort("gemini-3-flash", "unrecognized", 4_000);
         let effort = crate::proxy::common::variant_mapping::tier_from_effort(
             request
@@ -739,19 +780,12 @@ mod variant_tests {
         // tier_from_effort(Some("unrecognized")) → None (invalid value)
         assert_eq!(effort, None);
 
-        // With effort=None and budget=4_000, infer_tier → Medium →
-        // resolve_with_tier("gemini-3-flash", None, Some(4_000)) →
-        // SPEC_35_FLASH_LOW → physical id "gemini-3.5-flash-low"
+        // With effort=None and budget=4_000, Gemini >= 3 ignores budget and defaults to High tier -> "gemini-3-flash-agent"
         apply_variant(&mut request, effort, Some(4_000))
             .expect("gemini-3-flash must resolve even without valid effort");
 
-        assert_eq!(request.model, "gemini-3.5-flash-low");
+        assert_eq!(request.model, "gemini-3-flash-agent");
         assert!(request.output_config.is_none());
-        // SPEC_35_FLASH_LOW has thinking_budget=4_000, preserve_client_budget=false
-        assert_eq!(
-            request.thinking.as_ref().and_then(|t| t.budget_tokens),
-            Some(4_000)
-        );
     }
 
     #[test]
@@ -1120,7 +1154,7 @@ pub async fn handle_messages(
     // 若对其开启用量缩放，会将百万级物理 Token 压缩映射至假性偏低的数值区间（如 500k 映射为 58k），
     // 导致客户端永远无法感知真实上下文压力、丧失主动 /compact 触发时机，并在触及服务端硬限制时骤然崩溃 (Fixes #867, #1066, #1079)。
     // 因此：若检测为 Claude Code 会话，强制关闭用量缩放，如实下发真实物理 Token 用量。
-    let is_code = is_code_mode(&request);
+    let is_code = is_code_mode_with_headers(&request, Some(&headers));
     let scaling_enabled = experimental.enable_usage_scaling && !is_code;
 
     // [全链路会话生命周期与自愈分流体系 (Pipeline First)]
@@ -5145,7 +5179,9 @@ mod warmup_tests {
         );
 
         // 场景 3: Agent 处于工具调用中途（最新一条为 tool_result）
-        // 铁律：Cowork 工具执行轮次达到配置阈值时，必须遵从配置正常触发自动压缩自愈
+        // 铁律：工具在途期间（in-flight tool_result）必须暂缓拦截（返回 None），
+        // 允许当前工具调用链顺利闭环，防止打崩客户端工具调用状态机并弹窗 "Your context window is full"！
+        // 待当前工具执行完毕、用户发送新一轮提问时，再在干净的回合边界触发压缩！
         let req_tool_result = ClaudeRequest {
             model: "claude-fable-5".to_string(),
             messages: vec![Message {
@@ -5176,8 +5212,8 @@ mod warmup_tests {
                 false,
                 false,
             )
-            .is_some(),
-            "Cowork 会话即便最新一条为 tool_result，达到配置阈值时也必须遵从配置触发自动压缩自愈！"
+            .is_none(),
+            "Agent 处于工具调用接续在途期间绝不能截断，必须等待工具链闭环！"
         );
 
         // 场景 4: 处于 Code 模式（带有 mcp__ccd_ 工具或 You are Claude Code）
@@ -5226,7 +5262,7 @@ mod warmup_tests {
             input_schema: None,
         }]);
 
-        // 【实验组 1】Cowork 250k+ tokens，包含 tool_result 轮次 (fable-5)
+        // 【实验组 1】Cowork 250k+ tokens，包含 tool_result 轮次 (fable-5) -> 工具在途避让，返回 None
         let exp1 = ClaudeRequest {
             model: "claude-fable-5".to_string(),
             messages: vec![Message {
@@ -5251,7 +5287,7 @@ mod warmup_tests {
             false,
             false
         )
-        .is_some());
+        .is_none());
 
         // 【实验组 2】Cowork 260k+ tokens，携带 context-1m beta 标头 (sonnet-4-6)
         let mut h2 = HeaderMap::new();

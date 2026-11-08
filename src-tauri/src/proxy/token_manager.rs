@@ -4447,25 +4447,43 @@ impl TokenManager {
                         let reset_sec = self
                             .rate_limit_tracker
                             .get_remaining_wait(&key, Some(&normalized_target));
-                        let bound_zero_quota = bound_token
+                        let bound_quota = bound_token
                             .model_quotas
                             .get(&normalized_target)
                             .or_else(|| bound_token.model_quotas.get(target_model))
                             .copied()
-                            .is_some_and(|q| q <= 0);
-                        let has_healthy_alternative = tokens_snapshot.iter().any(|t| {
-                            t.account_id != bound_token.account_id
-                                && !attempted.contains(&t.account_id)
-                                && !self
-                                    .rate_limit_tracker
-                                    .is_rate_limited(&t.account_id, Some(&normalized_target))
-                                && t.model_quotas
+                            .unwrap_or(100);
+                        let bound_zero_quota = bound_quota <= 0;
+
+                        let max_alternative_quota = tokens_snapshot
+                            .iter()
+                            .filter(|t| {
+                                t.account_id != bound_token.account_id
+                                    && !attempted.contains(&t.account_id)
+                                    && !self
+                                        .rate_limit_tracker
+                                        .is_rate_limited(&t.account_id, Some(&normalized_target))
+                                    && !(quota_protection_enabled
+                                        && t.protected_models.contains(&normalized_target))
+                                    && !self.qos_guardian.is_jailed_or_probing(&t.account_id)
+                                    && !(t.validation_blocked
+                                        && (t.validation_blocked_until == 0
+                                            || t.validation_blocked_until
+                                                > chrono::Utc::now().timestamp()))
+                            })
+                            .filter_map(|t| {
+                                t.model_quotas
                                     .get(&normalized_target)
                                     .or_else(|| t.model_quotas.get(target_model))
                                     .copied()
-                                    .unwrap_or(0)
-                                    > 0
-                        });
+                            })
+                            .max()
+                            .unwrap_or(0);
+
+                        let has_healthy_alternative = max_alternative_quota > 0;
+                        let quota_disparity_migration = bound_quota <= 65
+                            && has_healthy_alternative
+                            && max_alternative_quota >= bound_quota.saturating_add(25);
 
                         let is_qos_jailed = self
                             .qos_guardian
@@ -4503,6 +4521,18 @@ impl TokenManager {
                                 normalized_target
                             );
                             self.session_accounts.remove(sid);
+                            attempted.insert(bound_token.account_id.clone());
+                        } else if quota_disparity_migration {
+                            // 兼顾上游前缀缓存 (Prefix Caching) 与号池负载均衡：当绑定账号额度降至 65% 以下且池中有显著健康账号 (领先 >= 25%) 时主动迁移
+                            tracing::info!(
+                                "Sticky Session: Bound account {} quota is {}% for model {} (pool best: {}%), migrating to healthy account for quota equity",
+                                bound_token.email,
+                                bound_quota,
+                                normalized_target,
+                                max_alternative_quota
+                            );
+                            self.session_accounts.remove(sid);
+                            attempted.insert(bound_token.account_id.clone());
                         } else if !attempted.contains(&bound_id)
                             && !(quota_protection_enabled
                                 && bound_token.protected_models.contains(&normalized_target))
@@ -4550,26 +4580,46 @@ impl TokenManager {
                             {
                                 // 【修复】检查限流状态和配额保护，避免复用已被锁定的账号
                                 // 多键容错匹配：归一化 ID 与实际模型名不一致时不能当作满额
-                                let last_zero_quota = found
+                                let last_quota = found
                                     .model_quotas
                                     .get(&normalized_target)
                                     .or_else(|| found.model_quotas.get(target_model))
                                     .copied()
-                                    .is_some_and(|q| q <= 0);
-                                let has_healthy_alt = tokens_snapshot.iter().any(|t| {
-                                    &t.account_id != account_id
-                                        && !attempted.contains(&t.account_id)
-                                        && !self.rate_limit_tracker.is_rate_limited(
-                                            &t.account_id,
-                                            Some(&normalized_target),
-                                        )
-                                        && t.model_quotas
+                                    .unwrap_or(100);
+                                let last_zero_quota = last_quota <= 0;
+
+                                let max_alt_quota = tokens_snapshot
+                                    .iter()
+                                    .filter(|t| {
+                                        &t.account_id != account_id
+                                            && !attempted.contains(&t.account_id)
+                                            && !self.rate_limit_tracker.is_rate_limited(
+                                                &t.account_id,
+                                                Some(&normalized_target),
+                                            )
+                                            && !(quota_protection_enabled
+                                                && t.protected_models.contains(&normalized_target))
+                                            && !self
+                                                .qos_guardian
+                                                .is_jailed_or_probing(&t.account_id)
+                                            && !(t.validation_blocked
+                                                && (t.validation_blocked_until == 0
+                                                    || t.validation_blocked_until
+                                                        > chrono::Utc::now().timestamp()))
+                                    })
+                                    .filter_map(|t| {
+                                        t.model_quotas
                                             .get(&normalized_target)
                                             .or_else(|| t.model_quotas.get(target_model))
                                             .copied()
-                                            .unwrap_or(0)
-                                            > 0
-                                });
+                                    })
+                                    .max()
+                                    .unwrap_or(0);
+
+                                let has_healthy_alt = max_alt_quota > 0;
+                                let disparity_migration = last_quota <= 65
+                                    && has_healthy_alt
+                                    && max_alt_quota >= last_quota.saturating_add(25);
 
                                 let is_qos_jailed =
                                     self.qos_guardian.is_jailed_or_probing(&found.account_id);
@@ -4583,6 +4633,13 @@ impl TokenManager {
                                         "60s Window: Last account {} has 0% quota for model {}, skipping reuse (Fixes #3639)",
                                         found.email, normalized_target
                                     );
+                                    attempted.insert(account_id.clone());
+                                } else if disparity_migration {
+                                    tracing::info!(
+                                        "60s Window: Last account {} quota is {}% for model {} (pool best: {}%), skipping reuse for quota equity",
+                                        found.email, last_quota, normalized_target, max_alt_quota
+                                    );
+                                    attempted.insert(account_id.clone());
                                 } else if !self
                                     .is_rate_limited(&found.account_id, Some(&normalized_target))
                                     .await
@@ -10560,6 +10617,183 @@ mod tests {
             acc2_id,
             "会话必须被自动 commit 绑定至新健康的账号 acc2"
         );
+    }
+
+    #[tokio::test]
+    async fn test_sticky_session_quota_disparity_migration_balances_pool_and_cache() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc1_id = "acc_depleted_50";
+        let acc2_id = "acc_pristine_100";
+
+        let acc1_path = accounts_dir.join(format!("{}.json", acc1_id));
+        let acc2_path = accounts_dir.join(format!("{}.json", acc2_id));
+
+        std::fs::write(&acc1_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&acc2_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let target_model = "gemini-4-argon";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(norm_target.clone(), 50); // 50% 额度 (已降至 <= 65%)
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(norm_target.clone(), 100); // 100% 额度 (领先 >= 25%)
+
+        let mut token1 = create_test_token("acc1@test.com", Some("PRO"), 1.0, None, Some(50));
+        token1.account_id = acc1_id.to_string();
+        token1.account_path = acc1_path;
+        token1.model_quotas = quotas1;
+
+        let mut token2 = create_test_token("acc2@test.com", Some("PRO"), 1.0, None, Some(100));
+        token2.account_id = acc2_id.to_string();
+        token2.account_path = acc2_path;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc1_id.to_string(), token1);
+        manager.tokens.insert(acc2_id.to_string(), token2);
+
+        let session_id = "test-session-quota-disparity";
+        // 初始将会话绑定至 acc1
+        manager.commit_session(session_id, acc1_id);
+        assert_eq!(
+            manager.session_accounts.get(session_id).unwrap().as_str(),
+            acc1_id
+        );
+
+        // Case 1: acc1 为 50%，池中有 100% 的 acc2 -> 触发配额悬殊主动解绑并迁移到 acc2
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .expect("Token acquisition must migrate to healthy account on quota disparity");
+
+        assert_eq!(
+            selected_id, acc2_id,
+            "配额差距 >= 25% 且当前账号 <= 65% 时必须迁移至高配额账号"
+        );
+        assert_eq!(email, "acc2@test.com");
+        assert_eq!(
+            manager.session_accounts.get(session_id).unwrap().as_str(),
+            acc2_id,
+            "会话必须被自动原子绑定至新迁移的账号 acc2"
+        );
+
+        // Case 2: 保持前缀缓存保护 —— 当绑定账号额度高于 65% (例如 80%) 时，即使号池有 100% 账号，依然保持复用
+        let session_high_quota = "test-session-cache-preserved";
+        if let Some(mut t1) = manager.tokens.get_mut(acc1_id) {
+            t1.model_quotas.insert(norm_target.clone(), 80);
+        }
+        manager.commit_session(session_high_quota, acc1_id);
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered(
+                "chat",
+                false,
+                Some(session_high_quota),
+                target_model,
+                &excluded,
+            )
+            .await
+            .expect("Token acquisition must preserve cache when bound account has >65% quota");
+        assert_eq!(
+            selected_id, acc1_id,
+            "配额高于 65% 时必须坚守复用以最大化前缀缓存命中率"
+        );
+        assert_eq!(email, "acc1@test.com");
+
+        // Case 3: 保持前缀缓存保护 —— 当两账号配额差距 < 25% (例如 55% vs 70%) 时，依然保持复用
+        let session_small_diff = "test-session-small-diff";
+        if let Some(mut t1) = manager.tokens.get_mut(acc1_id) {
+            t1.model_quotas.insert(norm_target.clone(), 55);
+        }
+        if let Some(mut t2) = manager.tokens.get_mut(acc2_id) {
+            t2.model_quotas.insert(norm_target.clone(), 70);
+        }
+        manager.commit_session(session_small_diff, acc1_id);
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered(
+                "chat",
+                false,
+                Some(session_small_diff),
+                target_model,
+                &excluded,
+            )
+            .await
+            .expect("Token acquisition must preserve cache when disparity is < 25%");
+        assert_eq!(
+            selected_id, acc1_id,
+            "配额差距 < 25% 时不得频繁跳号损失前缀缓存"
+        );
+        assert_eq!(email, "acc1@test.com");
+    }
+
+    #[tokio::test]
+    async fn test_60s_window_quota_disparity_migration() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc1_id = "acc_mode_b_50";
+        let acc2_id = "acc_mode_b_100";
+
+        let acc1_path = accounts_dir.join(format!("{}.json", acc1_id));
+        let acc2_path = accounts_dir.join(format!("{}.json", acc2_id));
+
+        std::fs::write(&acc1_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&acc2_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let target_model = "gemini-4-argon";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(norm_target.clone(), 50); // 50% 额度
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(norm_target.clone(), 100); // 100% 额度
+
+        let mut token1 = create_test_token("acc1@test.com", Some("PRO"), 1.0, None, Some(50));
+        token1.account_id = acc1_id.to_string();
+        token1.account_path = acc1_path;
+        token1.model_quotas = quotas1;
+
+        let mut token2 = create_test_token("acc2@test.com", Some("PRO"), 1.0, None, Some(100));
+        token2.account_id = acc2_id.to_string();
+        token2.account_path = acc2_path;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc1_id.to_string(), token1);
+        manager.tokens.insert(acc2_id.to_string(), token2);
+
+        // 模拟 60s 窗口内上一请求使用了 acc1
+        {
+            let mut last_used = manager.last_used_account.lock().await;
+            *last_used = Some((acc1_id.to_string(), std::time::Instant::now()));
+        }
+
+        // 无 session_id 请求（触发模式 B 60s 全局锁定）
+        // 因为 acc1 配额降至 50% 且池中有 100% 的 acc2 (领先 50% >= 25%)，模式 B 必须跳过 acc1 选取 acc2
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, None, target_model, &excluded)
+            .await
+            .expect("60s window should migrate away from low quota account");
+
+        assert_eq!(
+            selected_id, acc2_id,
+            "60s 窗口必须跳过额度偏低的账号并选拔健康满额账号"
+        );
+        assert_eq!(email, "acc2@test.com");
     }
 
     #[tokio::test]
