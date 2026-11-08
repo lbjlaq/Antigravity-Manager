@@ -3,6 +3,13 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.3 (2026-11-08)**:
+        -   **[Pedal Mode CPU Re-entrancy Loop Elimination & Windows File Lock Backoff] (Fixes #3881, PR #3882, Thanks to @vigarh-netizen, @cubelikeplayDaniel)**:
+            -   **React Cascade & In-Flight Mutex Hardening**: Added module-level `isProcessing` concurrency mutex in `usePedalModeStore`; cleared state (`active: false`) and local storage immediately before awaiting priority restoration, eliminating race conditions where intermediate account updates re-triggered recovery. (Fixes #3881, PR #3882)
+            -   **Quota Metrics Fingerprint Gating**: Introduced `prevFingerprintRef` in `Layout.tsx` tracking only essential quota metrics (account IDs, proxy_disabled, weekly percentages, and reset timestamps). Account priority changes no longer trigger re-evaluation, severing the component re-entrancy loop. (Fixes #3881, PR #3882)
+            -   **Redundant Disk Write Elimination & Safe Reset Action**: Re-enabled accounts in `temporarilyDisabledIds` now check `(!acc || acc.proxy_disabled)` to avoid redundant disk writes; added `resetPedalModeState` action with automated fallback in `PedalBanner.tsx` on error. (Fixes #3881, PR #3882)
+            -   **Windows File System Transient Lock Exponential Backoff**: Enhanced Windows `MoveFileExW` in `src-tauri/src/utils/fs.rs` with up to 5 retries and exponential backoff (5ms, 10ms, 20ms, 40ms, 80ms) on `ERROR_ACCESS_DENIED (5)` and `ERROR_SHARING_VIOLATION (32)` to withstand rapid concurrent atomic replacements. (Fixes #3881, PR #3882)
+
     *   **v5.0.4-beta.2 (2026-11-08)**:
         -   **[Account State Management & Routing Convergence: Priority Hierarchy, Model-Scoped 403 & Recovery Authority] (Ref #3863, #3865, #3875, commit 9850f750, Thanks to @jeikl, @cubelikeplayDaniel)**:
             -   **State Priority Hierarchy**: Established a unified `banned > validation > hard 403 > quota_protection > manual` priority chain, preventing account-level bans from being downgraded or wiped by model-level 403s or daily quota refreshes. (Ref #3863, #3875)
