@@ -24,31 +24,22 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import {
     GripVertical,
-    ArrowRightLeft,
     RefreshCw,
-    Trash2,
-    Download,
-    Fingerprint,
-    Info,
     Lock,
     Ban,
     Diamond,
     Gem,
     Circle,
-    ToggleLeft,
-    ToggleRight,
     Sparkles,
     Tag,
-    X,
-    Check,
     Clock,
     Repeat2,
-    Terminal,
-    Blocks,
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
     Zap,
+    Power,
+    MoreHorizontal,
 } from 'lucide-react';
 import { type Account, type ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountArgonCapability, hasCustomModelPriorities } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -65,6 +56,9 @@ import { releaseAccountQoSJail } from '../../services/accountService';
 import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { isValidationBlockActive } from '../../utils/accountStatus';
+import { parseTags } from '../../utils/tagUtils';
+import AccountActionsModal from './AccountActionsModal';
+import AccountTagEditorModal from './AccountTagEditorModal';
 
 // ============================================================================
 // 类型定义
@@ -329,9 +323,8 @@ function AccountRowContent({
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
     const isBanned = Boolean(account.banned);
 
-    // 自定义标签编辑状态
-    const [isEditingLabel, setIsEditingLabel] = useState(false);
-    const [labelInput, setLabelInput] = useState(account.custom_label || '');
+    const [isActionsModalOpen, setIsActionsModalOpen] = useState(false);
+    const [isTagEditorOpen, setIsTagEditorOpen] = useState(false);
 
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
@@ -339,12 +332,7 @@ function AccountRowContent({
     const isAcp = activeClients?.acp_account_id === account.id;
     const isRowActive = isCurrent || isClassic || isIde || isAgy || isAcp;
 
-    const handleSaveLabel = () => {
-        if (onUpdateLabel) {
-            onUpdateLabel(labelInput.trim());
-        }
-        setIsEditingLabel(false);
-    };
+    const tags = useMemo(() => parseTags(account.custom_label), [account.custom_label]);
 
     const handleReleaseJail = async () => {
         try {
@@ -356,19 +344,6 @@ function AccountRowContent({
             await useAccountStore.getState().fetchAccounts();
         } catch (err: any) {
             showToast(err?.message || '解除失败', 'error');
-        }
-    };
-
-    const handleCancelLabel = () => {
-        setLabelInput(account.custom_label || '');
-        setIsEditingLabel(false);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter') {
-            handleSaveLabel();
-        } else if (e.key === 'Escape') {
-            handleCancelLabel();
         }
     };
 
@@ -559,11 +534,21 @@ function AccountRowContent({
                                 ? `${t('accounts.priority')}: G:${getEffectiveModelPriority(account, 'gemini')} · C:${getEffectiveModelPriority(account, 'claude')}`
                                 : `${t('accounts.priority')}: ${account.priority ?? 50}`}
                         </span>
-                        {account.custom_label && !isEditingLabel && (
-                            <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-bold shadow-sm border border-orange-200/50 dark:border-orange-800/50">
-                                <Tag className="w-2.5 h-2.5" />
-                                {account.custom_label}
-                            </span>
+                        {/* 多标签平铺渲染 (最多显示 2 个，超出的显示 +N 徽章) */}
+                        {tags.length > 0 && (
+                            <>
+                                {tags.slice(0, 2).map((tag, idx) => (
+                                    <span key={`${tag}-${idx}`} className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-bold bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 border border-orange-200/50 dark:border-orange-800/50 shadow-sm">
+                                        <Tag className="w-2.5 h-2.5" />
+                                        {tag}
+                                    </span>
+                                ))}
+                                {tags.length > 2 && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded-md text-gray-500 bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 font-bold" title={tags.slice(2).join(', ')}>
+                                        +{tags.length - 2}
+                                    </span>
+                                )}
+                            </>
                         )}
 
                         {/* 核心支持模型徽章栏 (直观展现该账号具体可用的旗舰模型代际) */}
@@ -595,34 +580,6 @@ function AccountRowContent({
                             >
                                 GPT-120B
                             </span>
-                        )}
-                        {/* 标签编辑输入框 */}
-                        {isEditingLabel && (
-                            <div className="flex items-center gap-1">
-                                <input
-                                    type="text"
-                                    className="px-1.5 py-0.5 text-[10px] w-20 border border-orange-300 dark:border-orange-700 rounded focus:outline-none focus:ring-1 focus:ring-orange-500 bg-white dark:bg-base-200"
-                                    placeholder={t('accounts.custom_label_placeholder', 'Label')}
-                                    value={labelInput}
-                                    onChange={(e) => setLabelInput(e.target.value)}
-                                    onKeyDown={handleKeyDown}
-                                    autoFocus
-                                    maxLength={15}
-                                    onClick={(e) => e.stopPropagation()}
-                                />
-                                <button
-                                    className="p-0.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30 rounded transition-all"
-                                    onClick={(e) => { e.stopPropagation(); handleSaveLabel(); }}
-                                >
-                                    <Check className="w-3 h-3" />
-                                </button>
-                                <button
-                                    className="p-0.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-all"
-                                    onClick={(e) => { e.stopPropagation(); handleCancelLabel(); }}
-                                >
-                                    <X className="w-3 h-3" />
-                                </button>
-                            </div>
                         )}
                     </div>
 
@@ -705,126 +662,115 @@ function AccountRowContent({
 
             {/* 操作列 */}
             <td className={cn(
-                "px-1 py-1 sticky right-0 z-10 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center align-middle",
+                "px-2 py-1 sticky right-0 z-10 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center align-middle",
                 // 动态背景色处理
                 isCurrent
                     ? "bg-[#f1f6ff] dark:bg-[#1e2330]" // 接近 blue-50/50 的实色
                     : "bg-white dark:bg-base-100",
                 !isCurrent && "group-hover:bg-gray-50 dark:group-hover:bg-base-200"
             )}>
-                <div className="flex flex-wrap items-center justify-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity max-w-[220px] mx-auto">
-                    <button
-                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/30 rounded-lg transition-all"
-                        onClick={(e) => { e.stopPropagation(); onViewDetails(); }}
-                        title={t('common.details')}
-                    >
-                        <Info className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-all"
-                        onClick={(e) => { e.stopPropagation(); onViewDevice(); }}
-                        title={t('accounts.device_fingerprint')}
-                    >
-                        <Fingerprint className="w-3.5 h-3.5" />
-                    </button>
-                    {/* 自定义标签按钮 */}
-                    {onUpdateLabel && (
-                        <button
-                            className={cn(
-                                "p-1.5 rounded-lg transition-all",
-                                account.custom_label
-                                    ? "text-orange-500 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/30"
-                                    : "text-gray-500 dark:text-gray-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/30"
-                            )}
-                            onClick={(e) => { e.stopPropagation(); setIsEditingLabel(true); }}
-                            title={t('accounts.edit_label', 'Edit Label')}
-                        >
-                            <Tag className="w-3.5 h-3.5" />
-                        </button>
-                    )}
-                    <button
-                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'}`}
-                        onClick={(e) => { e.stopPropagation(); onSwitch('classic'); }}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_classic', '切换到 Antigravity (经典版)'))}
-                        disabled={isSwitching || isDisabled}
-                    >
-                        <ArrowRightLeft className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
-                    </button>
-                    <button
-                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-sky-600 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/30'}`}
-                        onClick={(e) => { e.stopPropagation(); onSwitch('ide'); }}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_ide', '切换到 Antigravity IDE'))}
-                        disabled={isSwitching || isDisabled}
-                    >
-                        <Repeat2 className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
-                    </button>
-                    <button
-                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'}`}
-                        onClick={(e) => { e.stopPropagation(); onSwitch('agy'); }}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_agy', '切换到 Antigravity CLI (agy)'))}
-                        disabled={isSwitching || isDisabled}
-                    >
-                        <Terminal className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
-                    </button>
-                    <button
-                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/30'}`}
-                        onClick={(e) => { e.stopPropagation(); onSwitch('acp'); }}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_acp', 'Switch to Antigravity IDE Plugin (ACP)'))}
-                        disabled={isSwitching || isDisabled}
-                    >
-                        <Blocks className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
-                    </button>
-                    {onWarmup && (
-                        <button
-                            className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isRefreshing || isDisabled) ? 'bg-orange-50 dark:bg-orange-900/10 text-orange-600 dark:text-orange-400 cursor-not-allowed' : 'hover:text-orange-500 dark:hover:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/30'}`}
-                            onClick={(e) => { e.stopPropagation(); onWarmup(); }}
-                            title={isDisabled ? t('accounts.disabled_tooltip') : (isRefreshing ? t('common.loading') : t('accounts.warmup_this', '预热该账号'))}
-                            disabled={isRefreshing || isDisabled}
-                        >
-                            <Sparkles className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-pulse' : ''}`} />
-                        </button>
-                    )}
-                    <button
-                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isRefreshing || isDisabled) ? 'bg-green-50 dark:bg-green-900/10 text-green-600 dark:text-green-400 cursor-not-allowed' : 'hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'}`}
-                        onClick={(e) => { e.stopPropagation(); onRefresh(); }}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : (isRefreshing ? t('common.refreshing') : t('accounts.refresh_quota_and_ban', '刷新配额并检测封禁'))}
-                        disabled={isRefreshing || isDisabled}
-                    >
-                        <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                    </button>
-                    <button
-                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-all"
-                        onClick={(e) => { e.stopPropagation(); onExport(); }}
-                        title={t('common.export')}
-                    >
-                        <Download className="w-3.5 h-3.5" />
-                    </button>
+                <div className="grid grid-cols-4 gap-1 w-full max-w-[240px] mx-auto">
+                    {/* 1. 切换 */}
                     <button
                         className={cn(
-                            "p-1.5 rounded-lg transition-all",
-                            isBanned && "opacity-40 cursor-not-allowed",
-                            account.proxy_disabled
-                                ? "text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30"
-                                : "text-gray-500 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/30"
+                            "flex items-center justify-center gap-0.5 px-1 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs",
+                            (isSwitching || isDisabled || isBanned)
+                                ? "bg-gray-100 dark:bg-base-200 text-gray-400 dark:text-gray-500 cursor-not-allowed border border-gray-200 dark:border-base-300"
+                                : "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-200/60 dark:border-blue-800/40 active:scale-95"
+                        )}
+                        onClick={(e) => { e.stopPropagation(); onSwitch('ide'); }}
+                        disabled={isSwitching || isDisabled || isBanned}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_ide', '切换到 Antigravity IDE'))}
+                    >
+                        <Repeat2 className={cn("w-3 h-3 flex-shrink-0", isSwitching && "animate-spin")} />
+                        <span className="truncate">{t('accounts.action_switch', '切换')}</span>
+                    </button>
+
+                    {/* 2. 刷新 */}
+                    <button
+                        className={cn(
+                            "flex items-center justify-center gap-0.5 px-1 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs",
+                            (isRefreshing || isDisabled)
+                                ? "bg-gray-100 dark:bg-base-200 text-gray-400 dark:text-gray-500 cursor-not-allowed border border-gray-200 dark:border-base-300"
+                                : "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 border border-emerald-200/60 dark:border-emerald-800/40 active:scale-95"
+                        )}
+                        onClick={(e) => { e.stopPropagation(); onRefresh(); }}
+                        disabled={isRefreshing || isDisabled}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : t('accounts.refresh_quota_and_ban', '刷新配额并检测封禁')}
+                    >
+                        <RefreshCw className={cn("w-3 h-3 flex-shrink-0", isRefreshing && "animate-spin")} />
+                        <span className="truncate">{t('accounts.action_refresh', '刷新')}</span>
+                    </button>
+
+                    {/* 3. 启停 */}
+                    <button
+                        className={cn(
+                            "flex items-center justify-center gap-0.5 px-1 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs",
+                            isBanned
+                                ? "bg-gray-100 dark:bg-base-200 text-gray-400 dark:text-gray-500 cursor-not-allowed border border-gray-200 dark:border-base-300"
+                                : account.proxy_disabled
+                                    ? "bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40 border border-amber-200/60 dark:border-amber-800/40 active:scale-95"
+                                    : "bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400 hover:bg-teal-100 dark:hover:bg-teal-900/40 border border-teal-200/60 dark:border-teal-800/40 active:scale-95"
                         )}
                         onClick={(e) => { e.stopPropagation(); onToggleProxy(); }}
                         disabled={isBanned}
                         title={isBanned ? t('accounts.banned_tooltip', '账号已被上游封禁（违反服务条款），请提交申诉') : (account.proxy_disabled ? t('accounts.enable_proxy') : t('accounts.disable_proxy'))}
                     >
-                        {account.proxy_disabled ? (
-                            <ToggleRight className="w-3.5 h-3.5" />
-                        ) : (
-                            <ToggleLeft className="w-3.5 h-3.5" />
-                        )}
+                        <Power className="w-3 h-3 flex-shrink-0" />
+                        <span className="truncate">
+                            {account.proxy_disabled ? t('accounts.action_enable', '启用') : t('accounts.action_disable', '停用')}
+                        </span>
                     </button>
+
+                    {/* 4. 更多 */}
                     <button
-                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-all"
-                        onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                        title={t('common.delete')}
+                        className="flex items-center justify-center gap-0.5 px-1 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs bg-gray-50 dark:bg-base-200 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-base-300 border border-gray-200 dark:border-base-300 active:scale-95"
+                        onClick={(e) => { e.stopPropagation(); setIsActionsModalOpen(true); }}
+                        title={t('accounts.actions_modal.title', '账号操作管理')}
                     >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <MoreHorizontal className="w-3 h-3 flex-shrink-0" />
+                        <span className="truncate">{t('accounts.action_more', '更多')}</span>
                     </button>
                 </div>
+
+                {/* Modals */}
+                <AccountActionsModal
+                    isOpen={isActionsModalOpen}
+                    onClose={() => setIsActionsModalOpen(false)}
+                    account={account}
+                    onSwitch={(target) => onSwitch(target)}
+                    onWarmup={onWarmup}
+                    onViewDevice={() => {
+                        setIsActionsModalOpen(false);
+                        onViewDevice();
+                    }}
+                    onViewDetails={() => {
+                        setIsActionsModalOpen(false);
+                        onViewDetails();
+                    }}
+                    onExport={onExport}
+                    onOpenTagEditor={() => {
+                        setIsActionsModalOpen(false);
+                        setIsTagEditorOpen(true);
+                    }}
+                    onDelete={() => {
+                        setIsActionsModalOpen(false);
+                        onDelete();
+                    }}
+                    isSwitching={isSwitching}
+                    isRefreshing={isRefreshing}
+                />
+
+                <AccountTagEditorModal
+                    isOpen={isTagEditorOpen}
+                    onClose={() => setIsTagEditorOpen(false)}
+                    accountName={account.name || account.email}
+                    initialLabel={account.custom_label}
+                    onSave={async (newLabel) => {
+                        if (onUpdateLabel) await onUpdateLabel(newLabel);
+                        setIsTagEditorOpen(false);
+                    }}
+                />
             </td>
         </>
     );
@@ -1015,7 +961,7 @@ function AccountTable({
                                     )}
                                 </button>
                             </th>
-                            <th className="px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap sticky right-0 w-[220px] bg-gray-50 dark:bg-base-200 z-20 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center">{t('accounts.table.actions')}</th>
+                            <th className="px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap sticky right-0 w-[240px] bg-gray-50 dark:bg-base-200 z-20 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center">{t('accounts.table.actions')}</th>
                         </tr >
                     </thead >
                     <SortableContext items={accountIds} strategy={verticalListSortingStrategy}>
