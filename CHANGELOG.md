@@ -3,6 +3,13 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.5 (2026-11-08)**:
+        -   **[跨轮次前缀稳定性与多轮会话 KV 缓存保护] (PR #3889, Ref #3764, #3769, #3867, Thanks to @mclinyeshi, @cubelikeplayDaniel)**:
+            -   **锁定首个 model 轮次前的开场注入边界**: 在 `src-tauri/src/proxy/mappers/prompt_sanitizer.rs` 中将 `leading_injection_boundary` 严格限制在 `&contents[..first_model]` 切片内。首轮 assistant 回答生成后，`first_model` 索引终身固定，彻底根治跨轮次新提问到达时，末尾追加新 user 轮次导致 `cur_turn` 漂移回溯将第 1 轮 user 提问从 `Anchored` 轨篡改为 `System` 轨的严重缺陷，杜绝 100k+ 历史上下文 KV 缓存（Prompt Cache）雪崩失效。(Ref #3764, #3769, #3867, PR #3889)
+            -   **保守型流水线标记清洗**: 在 `strip_pipeline_markers` 中引入变动判定，仅当匹配并剥离真实系统提示词标记或策略文本时才执行 `.trim()`，避免无标记的干净文本末尾空白字符被意外清除导致哈希变动。(PR #3889)
+        -   **[CI 自动化门禁与 Rust 代码格式规范对齐] (Thanks to @cubelikeplayDaniel)**:
+            -   **ACP 集成测试代码格式化**: 规范化 `src-tauri/src/modules/integration.rs` 中的 `test_switch_acp_account_e2e_flow_and_project_id_preservation` 断言逻辑，修复跨平台 CI 任务因 `cargo fmt` 检查导致的构建中断，确保全平台测试链路畅通。(Fixes #3842, Ref #3844)
+
     *   **v5.0.4-beta.4 (2026-11-08)**:
         -   **[支持 Antigravity IDE 插件 (antigravity-acp) 账号切换与状态检测] (Fixes #3842, PR #3844, Thanks to @Al-Taie, @cubelikeplayDaniel)**:
             -   **IDE 插件凭据无缝同步与进程重载**: 新增官方 Google Antigravity IDE 插件 (`antigravity-acp` / JetBrains & Android Studio) 客户端目标。支持将选定账号原子化写入 `$GEMINI_HOME/antigravity-acp/acp_token.json` 与 `settings.json`，并自动同步 macOS 钥匙串凭据 (`service="gemini"`, `account="antigravity-acp"`)，在优雅重启 `agy_acp_server` 后即时生效。(Fixes #3842, PR #3844)
