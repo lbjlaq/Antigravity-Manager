@@ -2332,8 +2332,77 @@ mod tests {
         assert!(!is_acp_target(None));
     }
 
+    struct KeychainBackupGuard {
+        #[cfg(target_os = "macos")]
+        service: &'static str,
+        #[cfg(target_os = "macos")]
+        account: &'static str,
+        #[cfg(target_os = "macos")]
+        original_val: Option<String>,
+    }
+
+    impl KeychainBackupGuard {
+        fn new(service: &'static str, account: &'static str) -> Self {
+            #[cfg(target_os = "macos")]
+            {
+                let original_val = Command::new("security")
+                    .args(["find-generic-password", "-s", service, "-a", account, "-w"])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+                Self {
+                    service,
+                    account,
+                    original_val,
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (service, account);
+                Self {}
+            }
+        }
+    }
+
+    impl Drop for KeychainBackupGuard {
+        fn drop(&mut self) {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = Command::new("security")
+                    .args([
+                        "delete-generic-password",
+                        "-s",
+                        self.service,
+                        "-a",
+                        self.account,
+                    ])
+                    .output();
+                if let Some(val) = &self.original_val {
+                    let _ = Command::new("security")
+                        .args([
+                            "add-generic-password",
+                            "-s",
+                            self.service,
+                            "-a",
+                            self.account,
+                            "-w",
+                            val,
+                            "-A",
+                        ])
+                        .output();
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_write_and_read_acp_credentials() {
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _keychain_guard = KeychainBackupGuard::new("gemini", "antigravity-acp");
+
         let tmp_dir = std::env::temp_dir().join(format!("agy_acp_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
         std::env::set_var("GEMINI_HOME", &tmp_dir);
@@ -2436,6 +2505,11 @@ mod tests {
 
     #[test]
     fn test_switch_acp_account_e2e_flow_and_project_id_preservation() {
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _keychain_guard = KeychainBackupGuard::new("gemini", "antigravity-acp");
+
         let tmp_dir = std::env::temp_dir().join(format!("agy_acp_e2e_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
         std::env::set_var("GEMINI_HOME", &tmp_dir);
