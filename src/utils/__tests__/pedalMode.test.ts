@@ -448,11 +448,81 @@ async function runTests() {
         });
         localStorage.setItem('antigravity_pedal_mode_state', JSON.stringify({ active: true }));
 
-        store.resetPedalModeState();
+        await store.resetPedalModeState();
         const state = usePedalModeStore.getState();
         assertEqual(state.active, false, 'active should be false');
         assertEqual(state.targetModel, null, 'targetModel should be null');
         assertEqual(localStorage.getItem('antigravity_pedal_mode_state'), null, 'localStorage key should be deleted');
+    });
+
+    await test('17. Exposes modelBadge (e.g. Claude 4.6 vs Claude 5.5) on candidates and supports activating a user-selected subset', async () => {
+        const store = usePedalModeStore.getState();
+        store.clearSuppress();
+        usePedalModeStore.setState({ active: false, pendingModal: null });
+
+        const accClaude46: Account = {
+            ...makeAccount('acc-c46', 'Legacy 4.6 Account', 90, farReset, 100, soonReset, false, 50),
+            quota: {
+                last_updated: now,
+                subscription_tier: 'PRO',
+                quota_groups: [
+                    {
+                        display_name: 'Claude and GPT models',
+                        buckets: [
+                            { bucket_id: '3p-weekly', window: 'weekly', remaining_fraction: 1.0, reset_time: soonReset },
+                        ],
+                    },
+                ],
+                models: [
+                    { name: 'claude-sonnet-4-6', percentage: 100, reset_time: soonReset },
+                    { name: 'claude-opus-4-6-thinking', percentage: 100, reset_time: soonReset },
+                ],
+            },
+        } as any;
+
+        const accClaude55: Account = {
+            ...makeAccount('acc-c55', 'Flagship 5.5 Account', 90, farReset, 100, soonReset, false, 50),
+            quota: {
+                last_updated: now,
+                subscription_tier: 'PRO',
+                quota_groups: [
+                    {
+                        display_name: 'Claude and GPT models',
+                        buckets: [
+                            { bucket_id: '3p-weekly', window: 'weekly', remaining_fraction: 1.0, reset_time: soonReset },
+                        ],
+                    },
+                ],
+                models: [
+                    { name: 'claude-opus-5-5-high', percentage: 100, reset_time: soonReset },
+                    { name: 'claude-sonnet-5-5-high', percentage: 100, reset_time: soonReset },
+                ],
+            },
+        } as any;
+
+        store.checkCandidates([accClaude46, accClaude55]);
+        const modal = usePedalModeStore.getState().pendingModal;
+        assert(modal !== null, 'Should pop up Claude pedal modal');
+        assertEqual(modal?.model, 'claude');
+        assertEqual(modal?.candidates.length, 2);
+
+        const c46 = modal?.candidates.find(c => c.accountId === 'acc-c46');
+        const c55 = modal?.candidates.find(c => c.accountId === 'acc-c55');
+        assertEqual(c46?.modelBadge, 'Claude 4.6', 'Candidate 1 must show Claude 4.6 badge');
+        assertEqual(c55?.modelBadge, 'Claude 5.5', 'Candidate 2 must show Claude 5.5 badge');
+
+        // User unchecks acc-c46 and only selects acc-c55
+        const boostedIds: string[] = [];
+        await store.activatePedalMode('claude', ['acc-c55'], [accClaude46, accClaude55], async (id) => {
+            boostedIds.push(id);
+        });
+
+        const activeState = usePedalModeStore.getState();
+        assertEqual(activeState.active, true);
+        assertEqual(activeState.targetAccountIds.length, 1, 'Only selected account should be in targetAccountIds');
+        assertEqual(activeState.targetAccountIds[0], 'acc-c55');
+        assertEqual(boostedIds.length, 1, 'Only selected account should have priority boosted');
+        assertEqual(boostedIds[0], 'acc-c55');
     });
 
     console.log(`\nPedal Mode Tests Summary: ${passed} passed, ${failed} failed.`);

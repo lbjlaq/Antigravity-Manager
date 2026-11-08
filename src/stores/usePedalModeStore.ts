@@ -88,11 +88,15 @@ function extractCandidate(account: Account, model: PedalTargetModel): PedalCandi
 
     // 触发条件：周配额 > 5% 且距离重置小于 24 小时
     if (pct > 5 && diffHours > 0 && diffHours <= 24) {
+        const rawBadge = summary.dynamicLabel || summary.defaultLabel;
+        const cleanBadge = rawBadge.replace(/\s*\/\s*GPT$/i, '');
         return {
             accountId: account.id,
-            accountName: account.name || account.email,
+            accountName: account.custom_label || account.name || account.email,
             email: account.email,
             model,
+            modelBadge: cleanBadge,
+            supportedModels: summary.supportedModels,
             percentage: pct,
             resetTime: resetTimeStr,
             hoursLeft: diffHours,
@@ -167,6 +171,9 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
         },
 
         activatePedalMode: async (model, targetIds, accounts, updatePriority) => {
+            if (!targetIds || targetIds.length === 0) {
+                return;
+            }
             const targetSet = new Set(targetIds);
             const originalPriorities: Record<string, number> = {};
             const originalModelPriorities: Record<string, ModelPriorities> = {};

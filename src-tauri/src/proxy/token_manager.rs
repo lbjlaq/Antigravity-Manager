@@ -4661,9 +4661,7 @@ impl TokenManager {
                                         )
                                         && !(quota_protection_enabled
                                             && t.protected_models.contains(&normalized_target))
-                                        && !self
-                                            .qos_guardian
-                                            .is_jailed_or_probing(&t.account_id)
+                                        && !self.qos_guardian.is_jailed_or_probing(&t.account_id)
                                         && !(t.validation_blocked
                                             && (t.validation_blocked_until == 0
                                                 || t.validation_blocked_until
