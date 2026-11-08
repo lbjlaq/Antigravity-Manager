@@ -2433,4 +2433,96 @@ mod tests {
         .expect("resolve next for ide-plugin");
         assert_eq!(next_for_plugin_alias.id, "id-1");
     }
+
+    #[test]
+    fn test_switch_acp_account_e2e_flow_and_project_id_preservation() {
+        let tmp_dir = std::env::temp_dir().join(format!("agy_acp_e2e_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("GEMINI_HOME", &tmp_dir);
+
+        let token1 = crate::models::TokenData::new(
+            "ya29.test_acp_token_1".to_string(),
+            "1//test_acp_rt_1".to_string(),
+            3600,
+            Some("user1@example.com".to_string()),
+            Some("project-alpha-123".to_string()),
+            None,
+            true,
+            None,
+        );
+        let account1 = crate::models::Account::new(
+            "acc-1".to_string(),
+            "user1@example.com".to_string(),
+            token1,
+        );
+
+        // 1. 切换到 account1
+        let switch_res1 = switch_acp_account(&account1);
+        assert!(switch_res1.is_ok(), "First switch must succeed");
+
+        let state1 = read_acp_credentials().expect("Must read account1 credentials");
+        assert_eq!(state1.refresh_token, "1//test_acp_rt_1");
+        assert_eq!(state1.project_id.as_deref(), Some("project-alpha-123"));
+
+        // 验证物理文件包含 aicode scope
+        let token_file = tmp_dir.join("antigravity-acp").join("acp_token.json");
+        assert!(token_file.exists());
+        let file_content = std::fs::read_to_string(&token_file).unwrap();
+        let json_val: serde_json::Value = serde_json::from_str(&file_content).unwrap();
+        let scopes = json_val["scopes"].as_array().expect("scopes must be an array");
+        assert!(
+            scopes.iter().any(|s| s.as_str() == Some("https://www.googleapis.com/auth/aicode")),
+            "acp_token.json must strictly contain https://www.googleapis.com/auth/aicode scope for agy_acp_server"
+        );
+
+        // 2. 模拟 account1 凭证更新（无显式 project_id 时，必须继承同 refresh_token 已有的 project_id）
+        let token1_no_proj = crate::models::TokenData::new(
+            "ya29.test_acp_token_1_refreshed".to_string(),
+            "1//test_acp_rt_1".to_string(),
+            3600,
+            Some("user1@example.com".to_string()),
+            None, // 没有显式 project_id
+            None,
+            true,
+            None,
+        );
+        let account1_refreshed = crate::models::Account::new(
+            "acc-1".to_string(),
+            "user1@example.com".to_string(),
+            token1_no_proj,
+        );
+        write_to_acp_credentials(&account1_refreshed).expect("credential re-write must succeed");
+        let state1_preserved = read_acp_credentials().expect("Must read refreshed credentials");
+        assert_eq!(
+            state1_preserved.project_id.as_deref(),
+            Some("project-alpha-123"),
+            "Project ID must be preserved when existing file has the same refresh token"
+        );
+
+        // 3. 切换到全新 account2（带不同 project_id）
+        let token2 = crate::models::TokenData::new(
+            "ya29.test_acp_token_2".to_string(),
+            "1//test_acp_rt_2".to_string(),
+            3600,
+            Some("user2@example.com".to_string()),
+            Some("project-beta-456".to_string()),
+            None,
+            true,
+            None,
+        );
+        let account2 = crate::models::Account::new(
+            "acc-2".to_string(),
+            "user2@example.com".to_string(),
+            token2,
+        );
+        let switch_res2 = switch_acp_account(&account2);
+        assert!(switch_res2.is_ok(), "Second switch must succeed");
+
+        let state2 = read_acp_credentials().expect("Must read account2 credentials");
+        assert_eq!(state2.refresh_token, "1//test_acp_rt_2");
+        assert_eq!(state2.project_id.as_deref(), Some("project-beta-456"));
+
+        std::env::remove_var("GEMINI_HOME");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
 }
