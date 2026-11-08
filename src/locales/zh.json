@@ -536,7 +536,38 @@
         "auto_fetch_project_id": "自动获取",
         "fetching_project_id": "获取中...",
         "auto_fetch_success": "成功自动获取 Project ID: {{projectId}}",
-        "auto_fetch_failed": "未能在上游找到关联的 Project ID"
+        "auto_fetch_failed": "未能在上游找到关联的 Project ID",
+        "actions_modal": {
+            "title": "账号操作总览",
+            "subtitle": "管理该账号的客户端登录、维护工具与高级操作",
+            "clients_section": "客户端快速切换",
+            "clients": {
+                "ide": "Antigravity IDE (VS Code 版)",
+                "ide_desc": "一键切换此账号到 IDE 客户端登录",
+                "acp": "Antigravity IDE 插件 (ACP - JetBrains)",
+                "acp_desc": "一键切换此账号到 JetBrains / Android Studio 插件",
+                "agy": "Antigravity CLI (agy)",
+                "agy_desc": "一键切换此账号到命令行工具登录",
+                "classic": "Antigravity 经典版",
+                "classic_desc": "一键切换此账号到经典版客户端"
+            },
+            "maintenance_section": "账号维护与工具",
+            "tools": {
+                "tags": "标签管理",
+                "tags_desc": "为此账号添加、删除或重新排序标签",
+                "warmup": "账号预热",
+                "warmup_desc": "触发连通性探测并预热配额周期",
+                "fingerprint": "设备指纹配置",
+                "fingerprint_desc": "查看或修改 machineId、devDeviceId 等硬件指纹",
+                "details": "账号详细信息",
+                "details_desc": "查看详细配额、模型状态与原始凭据数据",
+                "export": "导出凭据 JSON",
+                "export_desc": "导出此账号的完整授权凭据配置文件"
+            },
+            "danger_section": "危险操作区",
+            "delete": "从管理器删除该账号",
+            "delete_desc": "永久移除此账号记录（不影响上游 Google 账号本身）"
+        }
     },
     "settings": {
         "save": "保存设置",

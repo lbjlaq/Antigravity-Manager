@@ -538,7 +538,38 @@
         "auto_fetch_project_id": "Auto Fetch",
         "fetching_project_id": "Fetching...",
         "auto_fetch_success": "Successfully fetched Project ID: {{projectId}}",
-        "auto_fetch_failed": "No associated Project ID found on upstream"
+        "auto_fetch_failed": "No associated Project ID found on upstream",
+        "actions_modal": {
+            "title": "Account Actions & Management",
+            "subtitle": "Manage client login, maintenance tools and advanced operations for this account",
+            "clients_section": "Client Quick Switching",
+            "clients": {
+                "ide": "Antigravity IDE (VS Code)",
+                "ide_desc": "Switch this account to IDE client login",
+                "acp": "Antigravity IDE Plugin (ACP - JetBrains)",
+                "acp_desc": "Switch this account to JetBrains / Android Studio plugin",
+                "agy": "Antigravity CLI (agy)",
+                "agy_desc": "Switch this account to CLI terminal tool login",
+                "classic": "Antigravity Classic",
+                "classic_desc": "Switch this account to classic client login"
+            },
+            "maintenance_section": "Maintenance & Tools",
+            "tools": {
+                "tags": "Tag Management",
+                "tags_desc": "Add, remove or reorder tags for this account",
+                "warmup": "Account Warmup",
+                "warmup_desc": "Trigger connectivity probe and warmup quota cycle",
+                "fingerprint": "Device Fingerprint",
+                "fingerprint_desc": "View or modify machineId, devDeviceId and hardware fingerprint",
+                "details": "Account Details",
+                "details_desc": "View detailed quota, model status and raw credential data",
+                "export": "Export Credentials JSON",
+                "export_desc": "Export full authorization credential configuration file for this account"
+            },
+            "danger_section": "Danger Zone",
+            "delete": "Delete Account from Manager",
+            "delete_desc": "Permanently remove this account record (does not affect upstream Google account)"
+        }
     },
     "settings": {
         "save": "Save Settings",
