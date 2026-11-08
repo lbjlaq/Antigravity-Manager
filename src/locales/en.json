@@ -574,6 +574,22 @@
             "danger_section": "Danger Zone",
             "delete": "Delete Account from Manager",
             "delete_desc": "Permanently remove this account record (does not affect upstream Google account)"
+        },
+        "tag_editor": {
+            "title": "Manage Account Tags",
+            "add_tag": "Add New Tag",
+            "placeholder": "Enter tag name (max 15 chars)...",
+            "add_btn": "Add",
+            "preset_title": "Preset Quick Tags",
+            "current_title": "Current Tags",
+            "empty": "No tags yet. Enter above or click preset tags to add.",
+            "move_up": "Move Up",
+            "move_down": "Move Down",
+            "delete": "Delete",
+            "save_failed": "Failed to save tags",
+            "error_too_long": "Tag length cannot exceed 15 characters",
+            "error_max_limit": "Maximum 8 tags allowed",
+            "error_duplicate": "Tag already exists"
         }
     },
     "settings": {

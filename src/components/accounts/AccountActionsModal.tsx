@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
     X,
@@ -48,29 +48,22 @@ export default function AccountActionsModal({
     isRefreshing = false,
 }: AccountActionsModalProps) {
     const { t } = useTranslation();
-    const [confirmDelete, setConfirmDelete] = useState(false);
 
     useEffect(() => {
-        if (!isOpen) {
-            setConfirmDelete(false);
-            return;
-        }
+        if (!isOpen) return;
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
-                if (confirmDelete) {
-                    setConfirmDelete(false);
-                } else {
-                    onClose();
-                }
+                onClose();
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, confirmDelete, onClose]);
+    }, [isOpen, onClose]);
 
     if (!isOpen) return null;
 
     const tags = parseTags(account.custom_label);
+    const isSwitchDisabled = isSwitching || Boolean(account.disabled) || Boolean(account.banned);
 
     return createPortal(
         <div className="modal modal-open z-[130] bg-black/50 backdrop-blur-sm transition-all">
@@ -103,9 +96,13 @@ export default function AccountActionsModal({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                             {/* IDE */}
                             <button
-                                disabled={isSwitching}
+                                disabled={isSwitchDisabled}
                                 onClick={() => onSwitch('ide')}
-                                className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-base-200 hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50/40 dark:hover:bg-blue-500/10 transition-all text-left group"
+                                className={`flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-base-200 transition-all text-left group ${
+                                    isSwitchDisabled
+                                        ? 'opacity-50 cursor-not-allowed bg-gray-50/50 dark:bg-base-200/30'
+                                        : 'hover:border-blue-500 dark:hover:border-blue-500 hover:bg-blue-50/40 dark:hover:bg-blue-500/10'
+                                }`}
                             >
                                 <div className="p-2 rounded-lg bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400 group-hover:scale-105 transition-transform">
                                     <Repeat2 size={18} />
@@ -122,9 +119,13 @@ export default function AccountActionsModal({
 
                             {/* ACP / JetBrains */}
                             <button
-                                disabled={isSwitching}
+                                disabled={isSwitchDisabled}
                                 onClick={() => onSwitch('acp')}
-                                className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-base-200 hover:border-purple-500 dark:hover:border-purple-500 hover:bg-purple-50/40 dark:hover:bg-purple-500/10 transition-all text-left group"
+                                className={`flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-base-200 transition-all text-left group ${
+                                    isSwitchDisabled
+                                        ? 'opacity-50 cursor-not-allowed bg-gray-50/50 dark:bg-base-200/30'
+                                        : 'hover:border-purple-500 dark:hover:border-purple-500 hover:bg-purple-50/40 dark:hover:bg-purple-500/10'
+                                }`}
                             >
                                 <div className="p-2 rounded-lg bg-purple-50 text-purple-600 dark:bg-purple-500/15 dark:text-purple-400 group-hover:scale-105 transition-transform">
                                     <Blocks size={18} />
@@ -141,9 +142,13 @@ export default function AccountActionsModal({
 
                             {/* CLI (agy) */}
                             <button
-                                disabled={isSwitching}
+                                disabled={isSwitchDisabled}
                                 onClick={() => onSwitch('agy')}
-                                className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-base-200 hover:border-emerald-500 dark:hover:border-emerald-500 hover:bg-emerald-50/40 dark:hover:bg-emerald-500/10 transition-all text-left group"
+                                className={`flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-base-200 transition-all text-left group ${
+                                    isSwitchDisabled
+                                        ? 'opacity-50 cursor-not-allowed bg-gray-50/50 dark:bg-base-200/30'
+                                        : 'hover:border-emerald-500 dark:hover:border-emerald-500 hover:bg-emerald-50/40 dark:hover:bg-emerald-500/10'
+                                }`}
                             >
                                 <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400 group-hover:scale-105 transition-transform">
                                     <Terminal size={18} />
@@ -160,9 +165,13 @@ export default function AccountActionsModal({
 
                             {/* Classic */}
                             <button
-                                disabled={isSwitching}
+                                disabled={isSwitchDisabled}
                                 onClick={() => onSwitch('classic')}
-                                className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-base-200 hover:border-amber-500 dark:hover:border-amber-500 hover:bg-amber-50/40 dark:hover:bg-amber-500/10 transition-all text-left group"
+                                className={`flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-base-200 transition-all text-left group ${
+                                    isSwitchDisabled
+                                        ? 'opacity-50 cursor-not-allowed bg-gray-50/50 dark:bg-base-200/30'
+                                        : 'hover:border-amber-500 dark:hover:border-amber-500 hover:bg-amber-50/40 dark:hover:bg-amber-500/10'
+                                }`}
                             >
                                 <div className="p-2 rounded-lg bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400 group-hover:scale-105 transition-transform">
                                     <ArrowRightLeft size={18} />
@@ -325,29 +334,12 @@ export default function AccountActionsModal({
                                     </div>
                                 </div>
                             </div>
-                            {confirmDelete ? (
-                                <div className="flex items-center gap-2 flex-shrink-0">
-                                    <button
-                                        onClick={() => setConfirmDelete(false)}
-                                        className="btn btn-xs btn-ghost text-gray-600 dark:text-gray-300"
-                                    >
-                                        {t('common.cancel')}
-                                    </button>
-                                    <button
-                                        onClick={onDelete}
-                                        className="btn btn-xs btn-error text-white"
-                                    >
-                                        {t('common.confirm')}
-                                    </button>
-                                </div>
-                            ) : (
-                                <button
-                                    onClick={() => setConfirmDelete(true)}
-                                    className="btn btn-xs btn-outline btn-error flex-shrink-0"
-                                >
-                                    {t('common.delete')}
-                                </button>
-                            )}
+                            <button
+                                onClick={onDelete}
+                                className="btn btn-xs btn-outline btn-error flex-shrink-0"
+                            >
+                                {t('common.delete', '删除')}
+                            </button>
                         </div>
                     </div>
                 </div>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, Lock, Ban, Diamond, Gem, Circle, Clock, Repeat2, Tag, Power, MoreHorizontal } from 'lucide-react';
+import { RefreshCw, Lock, Ban, Diamond, Gem, Zap, Circle, Clock, Repeat2, Tag, Power, MoreHorizontal } from 'lucide-react';
 import { Account, ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountArgonCapability, hasCustomModelPriorities } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -82,6 +82,8 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
         const hasGpt = supported.some(m => m.startsWith('gpt'));
         return { hasArgon, hasClaude55, hasClaude46, hasGpt };
     }, [account, groupSummaries]);
+
+    const tags = useMemo(() => parseTags(account.custom_label), [account.custom_label]);
 
     const isGroupProtected = (key: 'gemini' | 'claude' | 'argon') => {
         if (!config?.quota_protection?.enabled) return false;
@@ -248,7 +250,7 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[9px] font-bold flex items-center gap-1 shadow-xs border border-amber-500/40 animate-pulse motion-reduce:animate-none"
                                     title={t('pedal.account_pedaling_tooltip', '该账号当前处于蹬额度模式，已被设为最高调度优先级 (priority = 1)')}
                                 >
-                                    <Gem className="w-2.5 h-2.5 fill-current text-amber-500" />
+                                    <Zap className="w-2.5 h-2.5 fill-current text-amber-500" />
                                     {t('pedal.account_pedaling_badge', '⚡ 蹬额度中')}
                                 </span>
                             )}
@@ -273,17 +275,17 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     : `${t('accounts.priority')}: ${account.priority ?? 50}`}
                             </span>
                             {/* 多标签平铺渲染 (最多显示 2 个，超出的显示 +N 徽章) */}
-                            {parseTags(account.custom_label).length > 0 && (
+                            {tags.length > 0 && (
                                 <>
-                                    {parseTags(account.custom_label).slice(0, 2).map((tag) => (
-                                        <span key={tag} className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 border border-orange-200/50 dark:border-orange-800/50 shadow-sm">
+                                    {tags.slice(0, 2).map((tag, idx) => (
+                                        <span key={`${tag}-${idx}`} className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 border border-orange-200/50 dark:border-orange-800/50 shadow-sm">
                                             <Tag className="w-2.5 h-2.5" />
                                             {tag}
                                         </span>
                                     ))}
-                                    {parseTags(account.custom_label).length > 2 && (
-                                        <span className="text-[9px] px-1.5 py-0.5 rounded-md text-gray-500 bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 font-bold" title={parseTags(account.custom_label).slice(2).join(', ')}>
-                                            +{parseTags(account.custom_label).length - 2}
+                                    {tags.length > 2 && (
+                                        <span className="text-[9px] px-1.5 py-0.5 rounded-md text-gray-500 bg-gray-100 dark:bg-base-200 border border-gray-200 dark:border-base-300 font-bold" title={tags.slice(2).join(', ')}>
+                                            +{tags.length - 2}
                                         </span>
                                     )}
                                 </>
@@ -465,14 +467,23 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                 account={account}
                 onSwitch={onSwitch}
                 onWarmup={onWarmup}
-                onViewDevice={onViewDevice}
-                onViewDetails={onViewDetails}
+                onViewDevice={() => {
+                    setIsActionsModalOpen(false);
+                    onViewDevice();
+                }}
+                onViewDetails={() => {
+                    setIsActionsModalOpen(false);
+                    onViewDetails();
+                }}
                 onExport={onExport}
                 onOpenTagEditor={() => {
                     setIsActionsModalOpen(false);
                     setIsTagEditorOpen(true);
                 }}
-                onDelete={onDelete}
+                onDelete={() => {
+                    setIsActionsModalOpen(false);
+                    onDelete();
+                }}
                 isSwitching={isSwitching}
                 isRefreshing={isRefreshing}
             />

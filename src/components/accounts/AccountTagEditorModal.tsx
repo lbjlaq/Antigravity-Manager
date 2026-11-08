@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Tag, Plus, X, ArrowUp, ArrowDown, Check, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { parseTags, formatTags, reorderTags } from '../../utils/tagUtils';
 
 export interface AccountTagEditorModalProps {
@@ -20,6 +21,7 @@ export default function AccountTagEditorModal({
     initialLabel,
     onSave,
 }: AccountTagEditorModalProps) {
+    const { t } = useTranslation();
     const [tags, setTags] = useState<string[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -50,25 +52,30 @@ export default function AccountTagEditorModal({
 
     const handleAddTag = (rawTag: string) => {
         setErrorMsg(null);
-        const trimmed = rawTag.trim();
-        if (!trimmed) return;
+        const parsedIncoming = parseTags(rawTag);
+        if (parsedIncoming.length === 0) return;
 
-        if (trimmed.length > 15) {
-            setErrorMsg('标签长度不能超过 15 个字符');
-            return;
+        for (const tag of parsedIncoming) {
+            if (tag.length > 15) {
+                setErrorMsg(t('accounts.tag_editor.error_too_long', '标签长度不能超过 15 个字符'));
+                return;
+            }
         }
 
-        if (tags.length >= 8) {
-            setErrorMsg('最多只能添加 8 个标签');
-            return;
+        let updated = [...tags];
+        for (const tag of parsedIncoming) {
+            if (updated.length >= 8) {
+                setErrorMsg(t('accounts.tag_editor.error_max_limit', '最多只能添加 8 个标签'));
+                break;
+            }
+            if (updated.some(t => t.toLowerCase() === tag.toLowerCase())) {
+                setErrorMsg(t('accounts.tag_editor.error_duplicate', '该标签已存在'));
+                continue;
+            }
+            updated.push(tag);
         }
 
-        if (tags.includes(trimmed)) {
-            setErrorMsg('该标签已存在');
-            return;
-        }
-
-        setTags([...tags, trimmed]);
+        setTags(updated);
         setInputValue('');
     };
 
@@ -97,9 +104,9 @@ export default function AccountTagEditorModal({
     };
 
     const handleAddPreset = (preset: string) => {
-        if (tags.includes(preset)) return;
+        if (tags.some(t => t.toLowerCase() === preset.toLowerCase())) return;
         if (tags.length >= 8) {
-            setErrorMsg('最多只能添加 8 个标签');
+            setErrorMsg(t('accounts.tag_editor.error_max_limit', '最多只能添加 8 个标签'));
             return;
         }
         setErrorMsg(null);
@@ -114,7 +121,7 @@ export default function AccountTagEditorModal({
             await onSave(formatted);
             onClose();
         } catch (err: any) {
-            setErrorMsg(err?.message || '保存标签失败');
+            setErrorMsg(err?.message || t('accounts.tag_editor.save_failed', '保存标签失败'));
         } finally {
             setIsSaving(false);
         }
@@ -132,7 +139,9 @@ export default function AccountTagEditorModal({
                             <Tag className="w-5 h-5" />
                         </div>
                         <div>
-                            <h3 className="text-lg font-bold text-gray-900 dark:text-base-content">管理账号标签</h3>
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-base-content">
+                                {t('accounts.tag_editor.title', '管理账号标签')}
+                            </h3>
                             <p className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[240px]">
                                 {accountName}
                             </p>
@@ -151,12 +160,12 @@ export default function AccountTagEditorModal({
                     {/* Input section */}
                     <div className="space-y-2">
                         <label className="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
-                            添加新标签 ({tags.length}/8)
+                            {t('accounts.tag_editor.add_tag', '添加新标签')} ({tags.length}/8)
                         </label>
                         <div className="flex gap-2">
                             <input
                                 type="text"
-                                placeholder="输入标签名（最多 15 字符）..."
+                                placeholder={t('accounts.tag_editor.placeholder', '输入标签名（最多 15 字符）...')}
                                 value={inputValue}
                                 onChange={(e) => setInputValue(e.target.value)}
                                 onKeyDown={handleKeyDownInput}
@@ -169,7 +178,7 @@ export default function AccountTagEditorModal({
                                 className="btn btn-primary bg-blue-500 hover:bg-blue-600 border-none text-white px-4 gap-1.5"
                             >
                                 <Plus className="w-4 h-4" />
-                                添加
+                                {t('accounts.tag_editor.add_btn', '添加')}
                             </button>
                         </div>
                         {errorMsg && (
@@ -180,11 +189,11 @@ export default function AccountTagEditorModal({
                     {/* Presets */}
                     <div className="space-y-2">
                         <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                            常用快捷标签
+                            {t('accounts.tag_editor.preset_title', '常用快捷标签')}
                         </span>
                         <div className="flex flex-wrap gap-1.5">
                             {PRESET_TAGS.map((preset) => {
-                                const exists = tags.includes(preset);
+                                const exists = tags.some(t => t.toLowerCase() === preset.toLowerCase());
                                 return (
                                     <button
                                         key={preset}
@@ -207,11 +216,11 @@ export default function AccountTagEditorModal({
                     {/* Tag list */}
                     <div className="space-y-2">
                         <span className="text-xs font-semibold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
-                            当前标签列表
+                            {t('accounts.tag_editor.current_title', '当前标签列表')}
                         </span>
                         {tags.length === 0 ? (
                             <div className="text-center py-8 border-2 border-dashed border-gray-200 dark:border-base-300 rounded-xl text-gray-400 dark:text-gray-500 text-sm">
-                                暂无标签，请在上方输入或点击快捷标签添加
+                                {t('accounts.tag_editor.empty', '暂无标签，请在上方输入或点击快捷标签添加')}
                             </div>
                         ) : (
                             <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
@@ -233,7 +242,7 @@ export default function AccountTagEditorModal({
                                                 type="button"
                                                 onClick={() => handleMoveUp(index)}
                                                 disabled={index === 0}
-                                                title="上移"
+                                                title={t('accounts.tag_editor.move_up', '上移')}
                                                 className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 disabled:opacity-30 disabled:cursor-not-allowed rounded"
                                             >
                                                 <ArrowUp className="w-4 h-4" />
@@ -242,7 +251,7 @@ export default function AccountTagEditorModal({
                                                 type="button"
                                                 onClick={() => handleMoveDown(index)}
                                                 disabled={index === tags.length - 1}
-                                                title="下移"
+                                                title={t('accounts.tag_editor.move_down', '下移')}
                                                 className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 disabled:opacity-30 disabled:cursor-not-allowed rounded"
                                             >
                                                 <ArrowDown className="w-4 h-4" />
@@ -250,7 +259,7 @@ export default function AccountTagEditorModal({
                                             <button
                                                 type="button"
                                                 onClick={() => handleRemoveTag(index)}
-                                                title="删除"
+                                                title={t('accounts.tag_editor.delete', '删除')}
                                                 className="p-1 text-red-400 hover:text-red-600 rounded ml-1"
                                             >
                                                 <X className="w-4 h-4" />
@@ -271,7 +280,7 @@ export default function AccountTagEditorModal({
                         onClick={onClose}
                         className="px-4 py-2 bg-gray-100 dark:bg-base-200 text-gray-700 dark:text-gray-300 font-medium rounded-xl hover:bg-gray-200 dark:hover:bg-base-300 transition-colors text-sm disabled:opacity-50"
                     >
-                        取消
+                        {t('common.cancel', '取消')}
                     </button>
                     <button
                         type="button"
@@ -281,7 +290,7 @@ export default function AccountTagEditorModal({
                     >
                         {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
                         <Check className="w-4 h-4" />
-                        保存
+                        {t('common.save', '保存')}
                     </button>
                 </div>
             </div>

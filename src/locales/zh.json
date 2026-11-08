@@ -572,6 +572,22 @@
             "danger_section": "危险操作区",
             "delete": "从管理器删除该账号",
             "delete_desc": "永久移除此账号记录（不影响上游 Google 账号本身）"
+        },
+        "tag_editor": {
+            "title": "管理账号标签",
+            "add_tag": "添加新标签",
+            "placeholder": "输入标签名（最多 15 字符）...",
+            "add_btn": "添加",
+            "preset_title": "常用快捷标签",
+            "current_title": "当前标签列表",
+            "empty": "暂无标签，请在上方输入或点击快捷标签添加",
+            "move_up": "上移",
+            "move_down": "下移",
+            "delete": "删除",
+            "save_failed": "保存标签失败",
+            "error_too_long": "标签长度不能超过 15 个字符",
+            "error_max_limit": "最多只能添加 8 个标签",
+            "error_duplicate": "该标签已存在"
         }
     },
     "settings": {
