@@ -2178,6 +2178,12 @@ pub async fn handle_messages(
                     if handling.disposition.stop_rotation {
                         break;
                     }
+                    crate::proxy::pipeline::rotation::record_attempted_account(
+                        &mut attempted_accounts,
+                        &account_id,
+                        pool_size,
+                        &mut force_rotate,
+                    );
                     continue;
                 }
 
@@ -2195,6 +2201,12 @@ pub async fn handle_messages(
                 // 状态码与其余三条链路对齐为 502，不再把所有错误都当 504。
                 failure_statuses.record(StatusCode::BAD_GATEWAY);
                 token_manager.mark_account_transient_failure(&account_id, 30, &e);
+                crate::proxy::pipeline::rotation::record_attempted_account(
+                    &mut attempted_accounts,
+                    &account_id,
+                    pool_size,
+                    &mut force_rotate,
+                );
                 debug!(
                     "Request failed on attempt {}/{}: {}",
                     attempt + 1,
@@ -3030,13 +3042,12 @@ pub async fn handle_messages(
                 );
                 force_rotate = false;
             } else {
-                force_rotate = true;
-                if pool_size > 1 && attempted_accounts.len() < pool_size {
-                    attempted_accounts.insert(account_id.clone());
-                } else if pool_size > 1 && attempted_accounts.len() >= pool_size {
-                    attempted_accounts.clear();
-                    attempted_accounts.insert(account_id.clone());
-                }
+                crate::proxy::pipeline::rotation::record_attempted_account(
+                    &mut attempted_accounts,
+                    &account_id,
+                    pool_size,
+                    &mut force_rotate,
+                );
             }
             continue;
         } else {

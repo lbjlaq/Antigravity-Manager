@@ -617,6 +617,23 @@ pub fn is_model_not_found_error(status: u16, body: &str) -> bool {
         .is_model_not_found()
 }
 
+/// 记录已尝试账号并触发强制轮换，在账号池全部尝试过时重置排除集合，
+/// 确保后续轮换尝试可以重新考虑号池中的可用账号。
+pub fn record_attempted_account(
+    attempted_accounts: &mut HashSet<String>,
+    account_id: &str,
+    pool_size: usize,
+    force_rotate: &mut bool,
+) {
+    *force_rotate = true;
+    if pool_size > 1 && attempted_accounts.len() < pool_size {
+        attempted_accounts.insert(account_id.to_string());
+    } else if pool_size > 1 {
+        attempted_accounts.clear();
+        attempted_accounts.insert(account_id.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -742,5 +759,29 @@ mod tests {
                 max_ms: 4000
             }
         );
+    }
+
+    #[test]
+    fn record_attempted_account_manages_pool_rotation_and_reset() {
+        let mut attempted = HashSet::new();
+        let mut force_rotate = false;
+        let pool_size = 3;
+
+        record_attempted_account(&mut attempted, "acc-1", pool_size, &mut force_rotate);
+        assert!(force_rotate);
+        assert_eq!(attempted.len(), 1);
+        assert!(attempted.contains("acc-1"));
+
+        record_attempted_account(&mut attempted, "acc-2", pool_size, &mut force_rotate);
+        assert_eq!(attempted.len(), 2);
+        assert!(attempted.contains("acc-2"));
+
+        record_attempted_account(&mut attempted, "acc-3", pool_size, &mut force_rotate);
+        assert_eq!(attempted.len(), 3);
+
+        // When attempted accounts count hits or exceeds pool_size, it resets and retains current account
+        record_attempted_account(&mut attempted, "acc-3", pool_size, &mut force_rotate);
+        assert_eq!(attempted.len(), 1);
+        assert!(attempted.contains("acc-3"));
     }
 }
