@@ -244,6 +244,11 @@
         "account_pool": "Account Pool"
     },
     "accounts": {
+        "action_switch": "Switch",
+        "action_refresh": "Refresh",
+        "action_enable": "Enable",
+        "action_disable": "Disable",
+        "action_more": "More",
         "qos": {
             "suspicious": "Suspected Throttled",
             "suspicious_hint": "Abnormal upstream initial latency detected. Drain mode active, new session allocation paused.",

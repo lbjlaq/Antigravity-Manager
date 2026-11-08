@@ -242,6 +242,11 @@
         "account_pool": "账号池"
     },
     "accounts": {
+        "action_switch": "切换",
+        "action_refresh": "刷新",
+        "action_enable": "启用",
+        "action_disable": "停用",
+        "action_more": "更多",
         "qos": {
             "suspicious": "疑似被限速",
             "suspicious_hint": "上游首包延迟出现异常卡顿，已开启只出不进保护并暂缓新会话分流",
