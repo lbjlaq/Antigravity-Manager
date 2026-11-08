@@ -496,7 +496,11 @@ fn clean_json_schema_recursive(value: &mut Value, is_schema_node: bool, depth: u
             }
 
             if let Some(union_array) = union_to_merge {
-                if let Some(best_branch) = extract_best_schema_from_union(&union_array) {
+                // Discriminated unions (several object branches, e.g. one per `action`)
+                // are merged so no branch's properties or enum values are dropped.
+                let selected = merge_object_union_branches(&union_array)
+                    .or_else(|| extract_best_schema_from_union(&union_array));
+                if let Some(best_branch) = selected {
                     if let Value::Object(branch_obj) = best_branch {
                         // 合并分支属性到当前 map
                         for (k, v) in branch_obj {
@@ -856,6 +860,80 @@ fn extract_best_schema_from_union(union_array: &[Value]) -> Option<Value> {
     }
 
     best_option.cloned()
+}
+
+/// Merge a union whose branches are all object schemas (at least two of them) into one
+/// object schema, instead of keeping a single branch.
+///
+/// - `properties`: union of every branch's properties (first definition wins). For a property
+///   defined in several branches, `enum` values are unioned when every definition has an
+///   `enum` (this keeps every value of a discriminator such as `action`); if any definition
+///   is unconstrained, the merged property is unconstrained too.
+/// - `required`: only fields required by every branch.
+///
+/// Returns `None` unless every branch is an object, so nullable (`T | null`) and mixed-type
+/// unions keep the existing best-branch selection. Branches arrive already cleaned, so a
+/// `{"type": "null"}` branch has been rewritten to a non-object type by then.
+fn merge_object_union_branches(union_array: &[Value]) -> Option<Value> {
+    if union_array.len() < 2 || !union_array.iter().all(|b| score_schema_option(b) == 3) {
+        return None;
+    }
+
+    let mut properties = serde_json::Map::new();
+    let mut required: Option<Vec<Value>> = None;
+
+    for branch in union_array {
+        if let Some(props) = branch.get("properties").and_then(|p| p.as_object()) {
+            for (name, schema) in props {
+                match properties.get_mut(name) {
+                    None => {
+                        properties.insert(name.clone(), schema.clone());
+                    }
+                    // The merged property accepts the union of what each branch accepts:
+                    // union the enums when every definition has one, otherwise leave it
+                    // unconstrained (never narrow a free field to another branch's enum).
+                    Some(existing) => match schema.get("enum").and_then(Value::as_array) {
+                        Some(new_enum) => {
+                            if let Some(existing_enum) =
+                                existing.get_mut("enum").and_then(Value::as_array_mut)
+                            {
+                                for v in new_enum {
+                                    if !existing_enum.contains(v) {
+                                        existing_enum.push(v.clone());
+                                    }
+                                }
+                            }
+                        }
+                        None => {
+                            if let Some(existing_obj) = existing.as_object_mut() {
+                                existing_obj.remove("enum");
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        let branch_required: Vec<Value> = branch
+            .get("required")
+            .and_then(|r| r.as_array())
+            .cloned()
+            .unwrap_or_default();
+        required = Some(match required {
+            None => branch_required,
+            Some(acc) => acc
+                .into_iter()
+                .filter(|r| branch_required.contains(r))
+                .collect(),
+        });
+    }
+
+    let mut merged = serde_json::Map::new();
+    merged.insert("type".to_string(), Value::String("object".to_string()));
+    merged.insert("properties".to_string(), Value::Object(properties));
+    if let Some(req) = required.filter(|r| !r.is_empty()) {
+        merged.insert("required".to_string(), Value::Array(req));
+    }
+    Some(Value::Object(merged))
 }
 
 /// 修正工具调用参数的类型，使其符合 schema 定义
@@ -1253,6 +1331,109 @@ mod tests {
         // type 已存在，不应被 anyOf 中的类型覆盖
         assert_eq!(schema["properties"]["name"]["type"], "string");
         assert!(schema["properties"]["name"].get("anyOf").is_none());
+    }
+
+    #[test]
+    fn test_discriminated_object_union_merged() {
+        // One object branch per `action` (array items), as sent by agent tool schemas.
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "operations": {
+                    "type": "array",
+                    "items": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "action": { "type": "string", "enum": ["create"] },
+                                    "content": { "type": "string" }
+                                },
+                                "required": ["name", "action", "content"]
+                            },
+                            {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "action": { "type": "string", "enum": ["patch"] },
+                                    "old_string": { "type": "string" },
+                                    "new_string": { "type": "string" }
+                                },
+                                "required": ["name", "action", "old_string", "new_string"]
+                            },
+                            {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "action": { "type": "string", "enum": ["delete"] }
+                                },
+                                "required": ["name", "action"]
+                            }
+                        ]
+                    }
+                }
+            },
+            "required": ["operations"]
+        });
+
+        clean_json_schema(&mut schema);
+
+        let items = &schema["properties"]["operations"]["items"];
+        assert!(items.get("anyOf").is_none());
+        assert_eq!(items["type"], "object");
+
+        let actions: Vec<&str> = items["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(actions, vec!["create", "patch", "delete"]);
+
+        for field in ["name", "action", "content", "old_string", "new_string"] {
+            assert!(items["properties"].get(field).is_some(), "missing {field}");
+        }
+
+        let required: Vec<&str> = items["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["name", "action"]);
+    }
+
+    #[test]
+    fn test_object_union_merge_never_narrows_free_field() {
+        // A free string in one branch must stay free, whichever branch comes first.
+        for branches in [
+            json!([
+                { "type": "object", "properties": { "mode": { "type": "string" } } },
+                { "type": "object", "properties": { "mode": { "type": "string", "enum": ["patch"] } } }
+            ]),
+            json!([
+                { "type": "object", "properties": { "mode": { "type": "string", "enum": ["patch"] } } },
+                { "type": "object", "properties": { "mode": { "type": "string" } } }
+            ]),
+        ] {
+            let mut schema = json!({
+                "type": "object",
+                "properties": { "op": { "anyOf": branches } }
+            });
+
+            clean_json_schema(&mut schema);
+
+            let mode = &schema["properties"]["op"]["properties"]["mode"];
+            assert_eq!(mode["type"], "string");
+            assert!(
+                mode.get("enum").is_none(),
+                "free field was narrowed: {mode}"
+            );
+        }
     }
 
     // [NEW TEST] 验证 Issue #815: anyOf 内部属性不丢失
@@ -1912,8 +2093,16 @@ mod tests {
         let target_props = &schema2["properties"]["target"]["properties"];
         assert!(target_props.get("type").is_some());
         assert_eq!(target_props["type"]["type"], "string");
-        assert_eq!(target_props["type"]["enum"], json!(["element"]));
+        // Both object branches are merged: every discriminator value and field survives.
+        assert_eq!(
+            target_props["type"]["enum"],
+            json!(["element", "coordinate"])
+        );
         assert!(target_props["type"].get("const").is_none());
+        for field in ["state_id", "index", "x", "y"] {
+            assert!(target_props.get(field).is_some(), "missing {field}");
+        }
+        assert_eq!(schema2["properties"]["target"]["required"], json!(["type"]));
 
         // 验证没有非合法的 Schema 结构 (如 properties 嵌套了 "element" 标量字符串)
         assert!(target_props["type"].get("properties").is_none());
