@@ -2543,7 +2543,9 @@ mod tests {
         assert!(token_file.exists());
         let file_content = std::fs::read_to_string(&token_file).unwrap();
         let json_val: serde_json::Value = serde_json::from_str(&file_content).unwrap();
-        let scopes = json_val["scopes"].as_array().expect("scopes must be an array");
+        let scopes = json_val["scopes"]
+            .as_array()
+            .expect("scopes must be an array");
         assert!(
             scopes.iter().any(|s| s.as_str() == Some("https://www.googleapis.com/auth/aicode")),
             "acp_token.json must strictly contain https://www.googleapis.com/auth/aicode scope for agy_acp_server"

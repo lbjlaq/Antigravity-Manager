@@ -3,6 +3,13 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.5 (2026-11-08)**:
+        -   **[Multi-Turn Prefix Stability & Multi-Turn KV Cache Preservation] (PR #3889, Ref #3764, #3769, #3867, Thanks to @mclinyeshi, @cubelikeplayDaniel)**:
+            -   **Freeze Leading Injection Boundary Before First Model Turn**: Scoped `leading_injection_boundary` in `src-tauri/src/proxy/mappers/prompt_sanitizer.rs` strictly to the `&contents[..first_model]` pre-model slice. Once the assistant outputs its first turn, `first_model` is fixed for the lifetime of the conversation, eradicating the defect where appending new user turns in Turn 2+ shifted `cur_turn` and retrospectively reclassified Turn 1's user query from `Anchored` to `System` track, completely curing multi-turn KV cache collapses on 100k+ token sessions. (Ref #3764, #3769, #3867, PR #3889)
+            -   **Conservative Pipeline Marker Stripping**: Enhanced `strip_pipeline_markers` to trigger `.trim()` only when actual system prompt end markers or security policies are matched and removed, preserving trailing whitespace in clean user text and preventing hash mutation. (PR #3889)
+        -   **[CI Automation Gate & Rust Code Formatting Alignment] (Thanks to @cubelikeplayDaniel)**:
+            -   **ACP Integration Test Formatting**: Formatted assertion logic in `src-tauri/src/modules/integration.rs` for `test_switch_acp_account_e2e_flow_and_project_id_preservation`, resolving cross-platform CI `cargo fmt` check failures. (Fixes #3842, Ref #3844)
+
     *   **v5.0.4-beta.4 (2026-11-08)**:
         -   **[Antigravity IDE Plugin (antigravity-acp) Account Switching & Active Detection] (Fixes #3842, PR #3844, Thanks to @Al-Taie, @cubelikeplayDaniel)**:
             -   **Seamless IDE Plugin Credential Sync & Process Reload**: Added official Google Antigravity IDE Plugin (`antigravity-acp` / JetBrains & Android Studio) target. Supports atomically persisting selected accounts to `$GEMINI_HOME/antigravity-acp/acp_token.json` and `settings.json`, automatically syncing macOS Keychain credentials (`service="gemini"`, `account="antigravity-acp"`), and gracefully reloading `agy_acp_server`. (Fixes #3842, PR #3844)
