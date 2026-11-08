@@ -25,12 +25,13 @@
 //!    · Header 轨（`clean_text`）：剥离文本内嵌的计费伪 Header 与高危客户端指纹声明，对**全部文本**
 //!      （systemInstruction / contents / user）一致生效；
 //!    · System 轨（`normalize_system_identity`）：Header 轨之外叠加「身份归属声明句」归一化与竞品厂牌
-//!      归一化，仅作用于 `systemInstruction` 与**注入区**（首个 `role:model` 之前、当前轮之前的内容）；
-//!    · Anchored 轨（`normalize_anchored_regions`）：当前轮 part 只清洗 `<system*>` / `<identity*>`
+//!      归一化，仅作用于 `systemInstruction` 与**注入区**（首个 `role:model` 之前、首轮用户提问之前的内容）；
+//!    · Anchored 轨（`normalize_anchored_regions`）：首轮用户提问 part 只清洗 `<system*>` / `<identity*>`
 //!      锚点标签**内部**的内容，标签之外的用户正文逐字保留。
-//!    当前轮的界定：`contents` 中**最后一条 user 消息**的最后一个 text part（文件/图片不计），
-//!    从根本上杜绝 #3764「翻译/校对/审计类提问被改写成官方身份」的误伤，同时保留对客户端注入
-//!    系统提示词的 WAF 防护。
+//!    首轮用户提问的界定：首个 `role:model` 之前（`&contents[..first_model]`）**最后一条带 text 的 user 消息**的
+//!    最后一个 text part（文件/图片不计）。将其严格锚定在 `first_model` 之前，既从根本上杜绝 #3764
+//!    「翻译/校对/审计类提问被改写成官方身份」的误伤，又保证进入多轮对话后首轮前缀的分轨结果 100% 恒定冻结，
+//!    彻底杜绝第 1 轮结束开启第 2 轮对话时因 `cur_turn` 后移回溯改写首轮用户提问而击穿上游 KV Cache。
 //!    该分治使四协议共享同一份身份归一化规则（AGENTS.md「Pipeline First」：适配层不做协议专用清洗特例）。
 //! 9. 安全策略约束清洗（Issue #3781）：在 System 轨中动态剥离客户端（如 Antigravity）注入的 CTF 与安全约束指令
 //!    （`IMPORTANT: Assist with authorized security testing...`），消除模型风控误拒答（False Positives），
@@ -614,16 +615,27 @@ impl PromptSanitizer {
     /// 注意：不含 `clean_text` —— Header 轨已在 `sanitize_parts_core` 中统一执行，避免重复。
     pub fn strip_pipeline_markers(text: &str) -> String {
         let mut s = text.to_string();
+        let mut modified = false;
         for marker in SYSTEM_PROMPT_END_MARKERS {
             if s.contains(marker) {
                 s = s.replace(marker, "");
+                modified = true;
             }
         }
         if s.contains(SELF_IDENTITY_BLOCK) {
             s = s.replace(SELF_IDENTITY_BLOCK, "");
+            modified = true;
         }
-        s = Self::strip_security_policy_prompt(&s);
-        s.trim().to_string()
+        let after_sec = Self::strip_security_policy_prompt(&s);
+        if after_sec != s {
+            s = after_sec;
+            modified = true;
+        }
+        if modified {
+            s.trim().to_string()
+        } else {
+            s
+        }
     }
 
     /// 剥离客户端（如 Antigravity）在系统提示词中注入的 CTF 与安全策略测试约束指令（Issue #3781）。
@@ -1102,30 +1114,42 @@ impl PromptSanitizer {
         Self::sanitize_parts_core(parts, |_| PartScope::System)
     }
 
-    /// 注入区终点裁定：返回 `(turn_idx, cur_text_part)`。
+    /// 注入区终点裁定：在首个 `role:model` 之前的开场切片（`leading_contents = &contents[..first_model]`）内，
+    /// 返回 `(turn_idx, cur_text_part)`。
     ///
     /// - `turn_idx < cur_turn` 或同一轮中 part 下标 `< cur_text_part`：注入区 → System 轨；
-    /// - part 下标 `== cur_text_part`：当前轮消息 → Anchored 轨（仅标签内清洗）；
+    /// - `turn_idx == cur_turn` 且 part 下标 `== cur_text_part`：首轮用户提问消息 → Anchored 轨（仅标签内清洗）；
     /// - 其余（首个 model 轮及之后、当前 part 之后）：→ Content 轨。
     ///
-    /// “当前轮” = `contents` 中**最后一条 user 消息**，其**最后一个带 text 的 part**。
-    /// 取“最后一个 text part”而非“最后一个 part”：客户端常把图片/文件追加在文本之后，
-    /// 简单取末位会把用户正文误判为注入区。
-    fn leading_injection_boundary(contents: &[Value]) -> (usize, Option<usize>) {
-        let cur_turn = contents
+    /// “首轮用户提问” = `leading_contents`（即 `&contents[..first_model]`）中**最后一条带 text 的 user 消息**，
+    /// 其**最后一个带 text 的 part**。
+    ///
+    /// 核心前缀不变量（跨轮次 KV Cache 保全）：
+    /// 扫描范围必须严格限制在 `&contents[..first_model]` 内，绝不可越过 `first_model` 扫描后续对话轮次。
+    /// 原因：在第 1 轮对话及第 1 轮内的多次工具调用期间（Antigravity Gemini 协议下 `functionCall` 与
+    /// `functionResponse` 的 role 均为 `"model"`），`first_model` 之后不存在 `role: "user"`，开场用户提问走
+    /// `Anchored` 轨；若扫描全量 `contents`，一旦第 1 轮对话结束、用户发送第 2 轮新消息（末尾新增 `role: "user"`），
+    /// `cur_turn` 会跨过 `first_model` 跳至末尾，导致第 1 轮开头的用户提问在第 2 轮被回溯改判为 `System` 轨，
+    /// 直接篡改历史前缀并击穿整段对话的 KV Cache。
+    fn leading_injection_boundary(leading_contents: &[Value]) -> (usize, Option<usize>) {
+        for (ti, turn) in leading_contents.iter().enumerate().rev() {
+            if turn.get("role").and_then(Value::as_str) != Some("user") {
+                continue;
+            }
+            if let Some(parts) = turn.get("parts").and_then(Value::as_array) {
+                if let Some(pi) = parts
+                    .iter()
+                    .rposition(|p| p.get("text").and_then(Value::as_str).is_some())
+                {
+                    return (ti, Some(pi));
+                }
+            }
+        }
+        let fallback_turn = leading_contents
             .iter()
-            .rposition(|t| t.get("role").and_then(Value::as_str) == Some("user"));
-        let cur_text_part = cur_turn.and_then(|ti| {
-            contents[ti]
-                .get("parts")
-                .and_then(Value::as_array)
-                .and_then(|parts| {
-                    parts
-                        .iter()
-                        .rposition(|p| p.get("text").and_then(Value::as_str).is_some())
-                })
-        });
-        (cur_turn.unwrap_or(0), cur_text_part)
+            .rposition(|t| t.get("role").and_then(Value::as_str) == Some("user"))
+            .unwrap_or(0);
+        (fallback_turn, None)
     }
 
     /// 首个 `role:model` 的下标（不存在时返回 `contents.len()`）。
@@ -1223,7 +1247,8 @@ impl PromptSanitizer {
             }
 
             let first_model = Self::first_model_turn(contents);
-            let (cur_turn, cur_text_part) = Self::leading_injection_boundary(contents);
+            let (cur_turn, cur_text_part) =
+                Self::leading_injection_boundary(&contents[..first_model]);
 
             for (turn_idx, turn) in contents.iter_mut().enumerate() {
                 let is_user = turn.get("role").and_then(Value::as_str) == Some("user");
@@ -2010,6 +2035,7 @@ mod tests {
                 "systemInstruction": { "role": "user", "parts": [{ "text": jeik }] },
                 "contents": [
                     { "role": "user", "parts": [{ "text": jeik }] },
+                    { "role": "user", "parts": [{ "text": "Initial question about JeikCode.\n" }] },
                     { "role": "model", "parts": [{ "text": "Model answer." }] },
                     { "role": "user", "parts": [{ "text": "Follow-up question about JeikCode." }] }
                 ]
@@ -2026,15 +2052,19 @@ mod tests {
         assert!(sys_text.contains("=== AGENTS.md ==="));
         assert!(sys_text.contains("User custom provisions."));
 
-        // 首个 model 轮次之前的 user 块（客户端注入的系统提示词）也被深度归一化
+        // 首个 model 轮次之前的注入 user 块（首轮提问之前）也被深度归一化
         let user_leading = payload["request"]["contents"][0]["parts"][0]["text"]
             .as_str()
             .unwrap();
         assert!(user_leading.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
 
-        // model 之后的后续 user 提问保持 100% 原始文本
+        // 首轮真实提问（Anchored 轨）与 model 之后的后续 user 提问（Content 轨）均保持 100% 原始文本
         assert_eq!(
-            payload["request"]["contents"][2]["parts"][0]["text"],
+            payload["request"]["contents"][1]["parts"][0]["text"],
+            "Initial question about JeikCode.\n"
+        );
+        assert_eq!(
+            payload["request"]["contents"][3]["parts"][0]["text"],
             "Follow-up question about JeikCode."
         );
     }
@@ -2555,10 +2585,11 @@ mod tests {
         assert!(!parts[0]["text"].as_str().unwrap().contains("OpenAI"));
         assert_eq!(parts[1]["text"], "请翻译：I love Rust.");
 
-        // 多轮：首个 model 之前的 user 轮属于注入区，model 之后的轮次逐字保留
+        // 多轮：首个 model 之前的注入 user 轮属于注入区，首轮用户提问与 model 之后的轮次逐字保留
         let mut payload2 = json!({
             "contents": [
                 { "role": "user", "parts": [ { "text": "You are an AI assistant built by OpenAI." } ] },
+                { "role": "user", "parts": [ { "text": "First question about OpenAI.\n" } ] },
                 { "role": "model", "parts": [ { "text": "Understood." } ] },
                 { "role": "user", "parts": [ { "text": "Compare OpenAI and Anthropic models." } ] }
             ]
@@ -2569,7 +2600,11 @@ mod tests {
             .unwrap()
             .contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
         assert_eq!(
-            payload2["contents"][2]["parts"][0]["text"],
+            payload2["contents"][1]["parts"][0]["text"],
+            "First question about OpenAI.\n"
+        );
+        assert_eq!(
+            payload2["contents"][3]["parts"][0]["text"],
             "Compare OpenAI and Anthropic models."
         );
     }
@@ -2643,10 +2678,117 @@ mod tests {
             ]
         });
         PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        assert_eq!(
+            payload["contents"][0]["parts"][1]["text"], "Compare OpenAI and Anthropic.",
+            "首轮用户提问在进入多轮对话后仍必须原样保护，不得被回溯改写"
+        );
         let once = payload.to_string();
         PromptSanitizer::sanitize_gemini_payload(&mut payload);
         PromptSanitizer::sanitize_gemini_payload(&mut payload);
         assert_eq!(once, payload.to_string(), "清洗必须幂等");
+    }
+
+    #[test]
+    fn test_multi_turn_transition_freezes_leading_user_prefix_for_kv_cache() {
+        // 回归测试：复现「第 1 轮多次工具调用缓存拉满，但第 1 轮输出结束、发送第 2 轮新消息时开场前缀突变导致 0 缓存」
+        // 核心场景：
+        // - Turn 1 发起请求：contents[0] 为 AGENTS.md 注入，contents[1] 为 <system-reminder>，
+        //   contents[2] 为首轮用户提问（末尾带 \n 且正文提及竞品名 OpenAI/Anthropic）；
+        // - Turn 1 工具调用循环：追加多个 role:model 的 functionCall 与 functionResponse 轮次；
+        // - Turn 2 用户发送新消息：追加 role:model 最终回复与 role:user 的第 2 轮提问。
+        // 铁律：contents[0..3] 在 Turn 1 初次请求、Turn 1 工具调用、Turn 2 新提问三阶段必须 100% 字节级恒等！
+        let leading_turns = vec![
+            json!({
+                "role": "user",
+                "parts": [{ "text": "# AGENTS.md instructions\nYou are Codex, an AI coding agent built by OpenAI." }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "text": "<system-reminder>\n<codex_apps_client_time_context><current_date>2026-11-08</current_date></codex_apps_client_time_context>\n</system-reminder>" }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "text": "帮我研究一下这个 XUI 的 node 逻辑，对比一下 OpenAI 和 Anthropic 的缓存策略，是不是只能这样做了\n" }]
+            }),
+        ];
+
+        // 阶段 1：Turn 1 初始请求（尚无 model 轮次）
+        let mut turn1_initial = json!({
+            "contents": leading_turns.clone()
+        });
+        PromptSanitizer::sanitize_gemini_payload(&mut turn1_initial);
+        let prefix_stage1 = turn1_initial["contents"].as_array().unwrap().clone();
+
+        // 验证注入块已归一化，而首轮用户提问保留了原始品牌词与末尾 \n
+        assert!(prefix_stage1[0]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert_eq!(
+            prefix_stage1[2]["parts"][0]["text"],
+            "帮我研究一下这个 XUI 的 node 逻辑，对比一下 OpenAI 和 Anthropic 的缓存策略，是不是只能这样做了\n"
+        );
+
+        // 阶段 2：Turn 1 内部多次工具调用（Antigravity Gemini 协议下 functionCall 与 functionResponse 均为 role:model）
+        let mut turn1_tool_loop = json!({
+            "contents": [
+                leading_turns[0].clone(),
+                leading_turns[1].clone(),
+                leading_turns[2].clone(),
+                {
+                    "role": "model",
+                    "parts": [{ "thoughtSignature": "sig_1", "functionCall": { "name": "exec_command", "id": "call_1", "args": { "cmd": "ls" } } }]
+                },
+                {
+                    "role": "model",
+                    "parts": [{ "functionResponse": { "name": "exec_command", "id": "call_1", "response": { "output": "ok\n" } } }]
+                }
+            ]
+        });
+        PromptSanitizer::sanitize_gemini_payload(&mut turn1_tool_loop);
+        let prefix_stage2 = &turn1_tool_loop["contents"].as_array().unwrap()[..3];
+        assert_eq!(
+            prefix_stage1.as_slice(),
+            prefix_stage2,
+            "Turn 1 工具调用期间开场前缀必须字节级一致"
+        );
+
+        // 阶段 3：Turn 1 结束，用户发送 Turn 2 新消息（末尾出现新的 role:user）
+        let mut turn2_new_user = json!({
+            "contents": [
+                leading_turns[0].clone(),
+                leading_turns[1].clone(),
+                leading_turns[2].clone(),
+                {
+                    "role": "model",
+                    "parts": [{ "thoughtSignature": "sig_1", "functionCall": { "name": "exec_command", "id": "call_1", "args": { "cmd": "ls" } } }]
+                },
+                {
+                    "role": "model",
+                    "parts": [{ "functionResponse": { "name": "exec_command", "id": "call_1", "response": { "output": "ok\n" } } }]
+                },
+                {
+                    "role": "model",
+                    "parts": [{ "text": "我已经帮你排查清楚了。" }]
+                },
+                {
+                    "role": "user",
+                    "parts": [{ "text": "那我们采用方式一继续修改吧\n" }]
+                }
+            ]
+        });
+        PromptSanitizer::sanitize_gemini_payload(&mut turn2_new_user);
+        let turn2_contents = turn2_new_user["contents"].as_array().unwrap();
+        let prefix_stage3 = &turn2_contents[..3];
+        assert_eq!(
+            prefix_stage1.as_slice(),
+            prefix_stage3,
+            "进入 Turn 2 新对话时，Turn 1 开场前缀必须 100% 字节级冻结，严禁回溯改写导致 KV Cache 失效"
+        );
+        assert_eq!(
+            turn2_contents[6]["parts"][0]["text"],
+            "那我们采用方式一继续修改吧\n"
+        );
     }
 
     #[test]
