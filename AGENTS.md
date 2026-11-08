@@ -68,4 +68,4 @@
   - Order side effects to fail before the point of no return: write credentials before killing a process, validate before deleting.
   - Detect broadly, act narrowly: a matcher may recognize a whole class of problems, while its effect stays inside the intended data — not across line breaks, tags, or other clauses. Bound every wait with a timeout.
 
-Maintained by @jeikl
+Maintained by @jeikl & @cubelikeplayDaniel
