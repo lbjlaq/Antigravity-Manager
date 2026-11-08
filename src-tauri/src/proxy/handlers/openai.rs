@@ -2889,7 +2889,7 @@ pub async fn handle_chat_completions(
                             crate::proxy::handlers::common::report_qos_ttft(
                                 &token_manager,
                                 &account_id,
-                                Some(&session_id),
+                                Some(affinity_key.as_str()),
                                 ttft_ms,
                                 is_thinking,
                                 Some(estimated_input_tokens),
@@ -3016,7 +3016,7 @@ pub async fn handle_chat_completions(
                     let ttft_start = effective_attempt_start;
                     let ttft_tm = token_manager.clone();
                     let ttft_account = account_id.clone();
-                    let ttft_session = session_id.clone();
+                    let ttft_session = affinity_key.clone();
                     let ttft_is_thinking = crate::proxy::pipeline::qos::payload_enables_thinking(
                         &gemini_body,
                         Some(&mapped_model),
@@ -4640,6 +4640,7 @@ pub async fn handle_completions(
             &mut gemini_body,
         );
         crate::proxy::mappers::common_utils::ensure_gemini_payload_ends_with_user(&mut gemini_body);
+        let estimated_input_tokens = crate::proxy::pipeline::estimate_tokens(&gemini_body);
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&gemini_body);
         }
@@ -4902,13 +4903,14 @@ pub async fn handle_completions(
                     let ttft_start = effective_attempt_start;
                     let ttft_tm = token_manager.clone();
                     let ttft_account = account_id.clone();
-                    let ttft_session = session_id_str.clone();
+                    let ttft_session = affinity_key.clone();
                     let ttft_is_thinking = crate::proxy::pipeline::qos::payload_enables_thinking(
                         &gemini_body,
                         Some(&mapped_model),
                     ) || openai_req.thinking.is_some()
                         || openai_req.reasoning.is_some()
                         || openai_req.reasoning_effort.is_some();
+                    let ttft_tokens = estimated_input_tokens;
                     let combined_stream =
                         crate::proxy::pipeline::stream_peek::wrap_stream_with_ttft_probe(
                             openai_stream,
@@ -4920,13 +4922,14 @@ pub async fn handle_completions(
                                 )
                             },
                             move |ttft| {
+                                let _ = ttft_seen_cb.set(ttft);
                                 crate::proxy::handlers::common::report_qos_ttft(
                                     &ttft_tm,
                                     &ttft_account,
                                     Some(ttft_session.as_str()),
                                     ttft,
                                     ttft_is_thinking,
-                                    None,
+                                    Some(ttft_tokens),
                                 );
                             },
                         );
@@ -5043,7 +5046,7 @@ pub async fn handle_completions(
                             false,
                             config.request_type == "image_gen",
                             is_thinking,
-                            None,
+                            Some(estimated_input_tokens),
                         ),
                     );
                     match crate::proxy::pipeline::stream_peek::peek_first_data(
@@ -5067,10 +5070,10 @@ pub async fn handle_completions(
                             crate::proxy::handlers::common::report_qos_ttft(
                                 &token_manager,
                                 &account_id,
-                                Some(session_id_str.as_str()),
+                                Some(affinity_key.as_str()),
                                 ttft_ms,
                                 is_thinking,
-                                None,
+                                Some(estimated_input_tokens),
                             );
                             if let Some(effective_item) =
                                 fallback_attempts.iter_mut().find(|a| a.is_effective)

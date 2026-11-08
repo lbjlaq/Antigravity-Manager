@@ -214,16 +214,24 @@ where
     H: Fn(&[u8]) -> bool + Send + 'static,
     P: FnOnce(f64) + Send + 'static,
 {
+    // 捕获当前请求上下文：流式响应返回后 stage_trace_middleware 的 task_local 作用域即退出，
+    // 在首个数据块到达触发 on_first_data 回调时恢复上下文，确保 report_qos_ttft 能读取到
+    // upstream::client 在转出报文上写入的 unified estimated_tokens，避免退化为 uncached_tokens=0。
+    let budget_ctx = crate::proxy::pipeline::budget::current();
     async_stream::stream! {
-        let mut probe = Some(on_first_data);
+        let mut probe = Some((on_first_data, budget_ctx));
         let mut stream = Box::pin(stream);
         while let Some(item) = stream.next().await {
             if probe.is_some() {
                 if let Ok(bytes) = &item {
                     if !bytes.is_empty() && !is_heartbeat(bytes) {
                         let ttft_ms = start.elapsed().as_secs_f64() * 1000.0;
-                        if let Some(cb) = probe.take() {
-                            cb(ttft_ms);
+                        if let Some((cb, ctx)) = probe.take() {
+                            crate::proxy::pipeline::budget::scope_optional(
+                                ctx,
+                                async move { cb(ttft_ms) },
+                            )
+                            .await;
                         }
                     }
                 }
@@ -404,6 +412,50 @@ mod tests {
             hits.load(Ordering::SeqCst),
             1,
             "probe must fire exactly once"
+        );
+    }
+
+    #[tokio::test]
+    async fn ttft_probe_preserves_request_budget_estimated_tokens_after_handler_scope_exits() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::sync::Arc;
+
+        let observed_tokens = Arc::new(AtomicU32::new(0));
+        let observed_cb = Arc::clone(&observed_tokens);
+
+        // 模拟 handler 在 REQUEST_CONTEXT 作用域内写入 estimated_tokens 并构造流，
+        // 随后 handler 返回 Response 退出 budget::scope，再由底层框架在作用域外轮询流。
+        let ctx = crate::proxy::pipeline::budget::RequestContext::new(
+            crate::proxy::pipeline::budget::deadline_now(),
+        );
+        let stream = crate::proxy::pipeline::budget::scope(ctx, async move {
+            crate::proxy::pipeline::budget::set_estimated_tokens(323_863);
+            wrap_stream_with_ttft_probe(
+                stream::iter(vec![
+                    Ok::<Bytes, String>(Bytes::from(": ping\n\n")),
+                    Ok(Bytes::from("data: {\"x\":1}\n\n")),
+                ]),
+                std::time::Instant::now(),
+                |b: &[u8]| b.starts_with(b":"),
+                move |_ms| {
+                    if let Some(tokens) = crate::proxy::pipeline::budget::estimated_tokens() {
+                        observed_cb.store(tokens, Ordering::SeqCst);
+                    }
+                },
+            )
+        })
+        .await;
+
+        // 此时已处于 budget::scope 外部
+        assert_eq!(crate::proxy::pipeline::budget::estimated_tokens(), None);
+
+        futures::pin_mut!(stream);
+        while stream.next().await.is_some() {}
+
+        assert_eq!(
+            observed_tokens.load(Ordering::SeqCst),
+            323_863,
+            "on_first_data callback must retain access to RequestContext estimated_tokens after handler scope exits"
         );
     }
 
