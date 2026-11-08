@@ -123,11 +123,17 @@ struct AccountResponse {
     proxy_disabled_reason: Option<String>,
     proxy_disabled_at: Option<i64>,
     protected_models: Vec<String>,
+    forbidden_models: Vec<String>,
     live_limited_models: HashMap<String, crate::models::account::LiveLimitStatus>,
     validation_blocked: bool,
     validation_blocked_until: Option<i64>,
     validation_blocked_reason: Option<String>,
     validation_url: Option<String>,
+    banned: bool,
+    banned_code: Option<String>,
+    banned_reason: Option<String>,
+    banned_at: Option<i64>,
+    ban_appeal_url: Option<String>,
     quota: Option<QuotaResponse>,
     device_bound: bool,
     last_used: i64,
@@ -138,6 +144,9 @@ struct QuotaResponse {
     models: Vec<ModelQuota>,
     updated_at: Option<i64>,
     subscription_tier: Option<String>,
+    is_forbidden: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    forbidden_reason: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -267,6 +276,8 @@ async fn list_accounts() -> Result<impl IntoResponse, (StatusCode, Json<ErrorRes
                     .collect(),
                 updated_at: Some(q.last_updated),
                 subscription_tier: q.subscription_tier,
+                is_forbidden: q.is_forbidden,
+                forbidden_reason: q.forbidden_reason,
             });
 
             AccountResponse {
@@ -282,11 +293,17 @@ async fn list_accounts() -> Result<impl IntoResponse, (StatusCode, Json<ErrorRes
                 proxy_disabled_reason: acc.proxy_disabled_reason,
                 proxy_disabled_at: acc.proxy_disabled_at,
                 protected_models: acc.protected_models.into_iter().collect(),
+                forbidden_models: acc.forbidden_models.into_iter().collect(),
                 live_limited_models: acc.live_limited_models,
                 validation_blocked: acc.validation_blocked,
                 validation_blocked_until: acc.validation_blocked_until,
                 validation_blocked_reason: acc.validation_blocked_reason,
                 validation_url: acc.validation_url,
+                banned: acc.banned,
+                banned_code: acc.banned_code,
+                banned_reason: acc.banned_reason,
+                banned_at: acc.banned_at,
+                ban_appeal_url: acc.ban_appeal_url,
                 quota,
                 device_bound: acc.device_profile.is_some(),
                 last_used: acc.last_used,
@@ -322,6 +339,8 @@ async fn get_current_account() -> Result<impl IntoResponse, (StatusCode, Json<Er
                 .collect(),
             updated_at: Some(q.last_updated),
             subscription_tier: q.subscription_tier,
+            is_forbidden: q.is_forbidden,
+            forbidden_reason: q.forbidden_reason,
         });
 
         AccountResponse {
@@ -337,11 +356,17 @@ async fn get_current_account() -> Result<impl IntoResponse, (StatusCode, Json<Er
             proxy_disabled_reason: acc.proxy_disabled_reason,
             proxy_disabled_at: acc.proxy_disabled_at,
             protected_models: acc.protected_models.into_iter().collect(),
+            forbidden_models: acc.forbidden_models.into_iter().collect(),
             live_limited_models: acc.live_limited_models,
             validation_blocked: acc.validation_blocked,
             validation_blocked_until: acc.validation_blocked_until,
             validation_blocked_reason: acc.validation_blocked_reason,
             validation_url: acc.validation_url,
+            banned: acc.banned,
+            banned_code: acc.banned_code,
+            banned_reason: acc.banned_reason,
+            banned_at: acc.banned_at,
+            ban_appeal_url: acc.ban_appeal_url,
             quota,
             device_bound: acc.device_profile.is_some(),
             last_used: acc.last_used,
@@ -567,6 +592,7 @@ mod tests {
             proxy_disabled_reason: None,
             proxy_disabled_at: None,
             protected_models: vec!["claude".to_string()],
+            forbidden_models: vec![],
             live_limited_models: HashMap::new(),
             validation_blocked: true,
             validation_blocked_until: Some(1791541969),
@@ -574,6 +600,11 @@ mod tests {
             validation_url: Some(
                 "https://accounts.google.com/signin/continue?flowName=GlifWebSignIn".to_string(),
             ),
+            banned: true,
+            banned_code: Some("TOS_VIOLATION".to_string()),
+            banned_reason: Some("violation of Terms of Service".to_string()),
+            banned_at: Some(1791541969),
+            ban_appeal_url: Some("https://forms.gle/hGzM9MEUv2azZsrb9".to_string()),
             quota: None,
             device_bound: true,
             last_used: 1728000000,
@@ -589,5 +620,11 @@ mod tests {
         assert_eq!(json["validation_blocked_until"], 1791541969);
         assert_eq!(json["priority"], 0);
         assert_eq!(json["is_current"], true);
+        assert_eq!(json["banned"], true);
+        assert_eq!(json["banned_code"], "TOS_VIOLATION");
+        assert_eq!(
+            json["ban_appeal_url"],
+            "https://forms.gle/hGzM9MEUv2azZsrb9"
+        );
     }
 }

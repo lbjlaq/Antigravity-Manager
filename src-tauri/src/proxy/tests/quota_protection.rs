@@ -24,6 +24,7 @@ mod tests {
         ProxyToken {
             account_id: account_id.to_string(),
             priority: crate::models::account::default_priority(),
+            model_priorities: std::collections::HashMap::new(),
             access_token: format!("mock_access_token_{}", account_id),
             refresh_token: format!("mock_refresh_token_{}", account_id),
             expires_in: 3600,
@@ -34,6 +35,7 @@ mod tests {
             subscription_tier: Some("PRO".to_string()),
             remaining_quota,
             protected_models: protected_models.iter().map(|s| s.to_string()).collect(),
+            forbidden_models: std::collections::HashSet::new(),
             health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
@@ -44,6 +46,9 @@ mod tests {
             model_limits: std::collections::HashMap::new(),
             available_models: std::collections::HashSet::new(),
             model_metadata: std::collections::HashMap::new(),
+            model_reset_times: std::collections::HashMap::new(),
+            model_weekly_reset_times: std::collections::HashMap::new(),
+            model_quota_windows: std::collections::HashMap::new(),
         }
     }
 
@@ -1095,6 +1100,7 @@ mod tests {
         ProxyToken {
             account_id: account_id.to_string(),
             priority: crate::models::account::default_priority(),
+            model_priorities: std::collections::HashMap::new(),
             access_token: format!("mock_access_token_{}", account_id),
             refresh_token: format!("mock_refresh_token_{}", account_id),
             expires_in: 3600,
@@ -1105,6 +1111,7 @@ mod tests {
             subscription_tier: Some("PRO".to_string()),
             remaining_quota,
             protected_models: protected_models.iter().map(|s| s.to_string()).collect(),
+            forbidden_models: std::collections::HashSet::new(),
             health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
@@ -1115,6 +1122,9 @@ mod tests {
             model_limits: std::collections::HashMap::new(),
             available_models: std::collections::HashSet::new(),
             model_metadata: std::collections::HashMap::new(),
+            model_reset_times: std::collections::HashMap::new(),
+            model_weekly_reset_times: std::collections::HashMap::new(),
+            model_quota_windows: std::collections::HashMap::new(),
         }
     }
 

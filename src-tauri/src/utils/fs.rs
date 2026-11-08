@@ -37,14 +37,41 @@ fn atomic_replace_file(src: &Path, dst: &Path) -> Result<(), String> {
     const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
     let flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH;
 
-    let result = unsafe { MoveFileExW(src_wide.as_ptr(), dst_wide.as_ptr(), flags) };
-    if result == 0 {
+    // Retry loop for Windows transient file locks (e.g., antivirus scanning, indexers, or rapid concurrent read/write handles).
+    // Error code 5 = ERROR_ACCESS_DENIED, code 32 = ERROR_SHARING_VIOLATION.
+    const MAX_RETRIES: usize = 5;
+    let mut last_err = None;
+
+    for attempt in 0..=MAX_RETRIES {
+        let result = unsafe { MoveFileExW(src_wide.as_ptr(), dst_wide.as_ptr(), flags) };
+        if result != 0 {
+            return Ok(());
+        }
+
         let err = std::io::Error::last_os_error();
+        let code = err.raw_os_error().unwrap_or(0);
+
+        if (code == 5 || code == 32) && attempt < MAX_RETRIES {
+            std::thread::sleep(std::time::Duration::from_millis(5 * (1 << attempt)));
+            last_err = Some(err);
+            continue;
+        }
+
         let _ = std::fs::remove_file(src);
-        return Err(format!("MoveFileExW failed: {}", err));
+        return Err(format!(
+            "MoveFileExW failed after {} attempts: {}",
+            attempt + 1,
+            err
+        ));
     }
 
-    Ok(())
+    let _ = std::fs::remove_file(src);
+    Err(format!(
+        "MoveFileExW failed: {}",
+        last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown error".into())
+    ))
 }
 
 /// Non-Windows: use standard atomic rename

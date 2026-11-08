@@ -1,8 +1,16 @@
+export type ModelPriorityGroup = 'gemini' | 'claude';
+
+export interface ModelPriorities {
+    gemini?: number;
+    claude?: number;
+}
+
 export interface Account {
     id: string;
     email: string;
     name?: string;
     priority?: number;
+    model_priorities?: ModelPriorities;
     token: TokenData;
     device_profile?: DeviceProfile;
     device_history?: DeviceProfileVersion[];
@@ -14,6 +22,8 @@ export interface Account {
     proxy_disabled_reason?: string;
     proxy_disabled_at?: number;
     protected_models?: string[];
+    /** 模型级 403 冻结（只影响对应模型，不影响其他模型） */
+    forbidden_models?: string[];
     live_limited_models?: Record<string, LiveLimitStatus>;
     custom_label?: string;  // 用户自定义标签
     qos_status?: 'suspicious' | 'jailed' | 'probing' | 'half_open' | null; // 运行时 QoS 状态
@@ -22,6 +32,12 @@ export interface Account {
     validation_blocked_until?: number;
     validation_blocked_reason?: string;
     validation_url?: string;
+    /** 上游已确认的账号封禁（如 TOS_VIOLATION），只有生产端点探测恢复后才会清除 */
+    banned?: boolean;
+    banned_code?: string;
+    banned_reason?: string;
+    banned_at?: number;
+    ban_appeal_url?: string;
     created_at: number;
     last_used: number;
 }
@@ -218,6 +234,30 @@ export function checkArgonEligibility(
  */
 export function getTierLabel(tier: 'ultra' | 'pro' | 'enterprise' | 'free'): string {
     return tier.toUpperCase();
+}
+
+export function getEffectiveModelPriority(
+    account: { priority?: number; model_priorities?: ModelPriorities },
+    group: ModelPriorityGroup
+): number {
+    const override = account.model_priorities?.[group];
+    if (typeof override === 'number' && override >= 1 && override <= 100) {
+        return override;
+    }
+    return typeof account.priority === 'number' && account.priority >= 1 && account.priority <= 100
+        ? account.priority
+        : 50;
+}
+
+export function hasCustomModelPriorities(account: {
+    priority?: number;
+    model_priorities?: ModelPriorities;
+}): boolean {
+    if (!account.model_priorities) return false;
+    const base = typeof account.priority === 'number' ? account.priority : 50;
+    const g = account.model_priorities.gemini;
+    const c = account.model_priorities.claude;
+    return (typeof g === 'number' && g !== base) || (typeof c === 'number' && c !== base);
 }
 
 export interface ImportAccountEntry {

@@ -48,13 +48,15 @@ import {
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
+    Zap,
 } from 'lucide-react';
-import { type Account, type ActiveClientsStatus, getAccountTier, hasAccountArgonCapability } from '../../types/account';
+import { type Account, type ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountArgonCapability, hasCustomModelPriorities } from '../../types/account';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 
 import { useConfigStore } from '../../stores/useConfigStore';
 import { useAccountStore } from '../../stores/useAccountStore';
+import { usePedalModeStore } from '../../stores/usePedalModeStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
@@ -62,6 +64,7 @@ import { showToast } from '../common/ToastContainer';
 import { releaseAccountQoSJail } from '../../services/accountService';
 import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
+import { isValidationBlockActive } from '../../utils/accountStatus';
 
 // ============================================================================
 // 类型定义
@@ -232,15 +235,20 @@ function SortableAccountRow({
     const isAcp = activeClients?.acp_account_id === account.id;
     const isRowCurrent = isCurrent || isClassic || isIde || isAgy || isAcp;
 
+    const { active: isPedalActive, targetAccountIds } = usePedalModeStore();
+    const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
+
     return (
         <tr
             ref={setNodeRef}
             style={style as React.CSSProperties}
             className={cn(
                 "group transition-colors border-b border-gray-100 dark:border-base-200",
-                isRowCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
+                isPedaling && "bg-amber-50/50 dark:bg-amber-950/20 border-l-4 border-l-amber-500",
+                !isPedaling && isRowCurrent && "bg-blue-50/50 dark:bg-blue-900/10",
                 isDragging && "bg-blue-100 dark:bg-blue-900/30 shadow-lg",
-                !isDragging && "hover:bg-gray-50 dark:hover:bg-base-200"
+                !isDragging && !isPedaling && "hover:bg-gray-50 dark:hover:bg-base-200",
+                !isDragging && isPedaling && "hover:bg-amber-50/80 dark:hover:bg-amber-950/30"
             )}
         >
             {/* 拖拽手柄 */}
@@ -315,7 +323,11 @@ function AccountRowContent({
 }: AccountRowContentProps) {
     const { t } = useTranslation();
     const { config } = useConfigStore();
+    const { active: isPedalActive, targetAccountIds } = usePedalModeStore();
+    const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
+    const isValidationBlocked = isValidationBlockActive(account);
     const validationBlockedLabel = getValidationBlockedStatusLabel(account.validation_blocked_reason, t);
+    const isBanned = Boolean(account.banned);
 
     // 自定义标签编辑状态
     const [isEditingLabel, setIsEditingLabel] = useState(false);
@@ -434,7 +446,17 @@ function AccountRowContent({
                             </span>
                         )}
 
-                        {account.proxy_disabled && !isDisabled && (
+                        {isBanned && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-red-200/50"
+                                title={account.banned_reason || t('accounts.banned_tooltip', '账号已被上游封禁（违反服务条款），请提交申诉')}
+                            >
+                                <Ban className="w-2.5 h-2.5" />
+                                <span>{t('accounts.banned', '已封禁')}</span>
+                            </span>
+                        )}
+
+                        {account.proxy_disabled && !isDisabled && !isBanned && (
                             <span
                                 className="px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/50 text-orange-700 dark:text-orange-300 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-orange-200/50"
                             >
@@ -443,17 +465,28 @@ function AccountRowContent({
                             </span>
                         )}
 
-                        {account.quota?.is_forbidden && (
+                        {account.quota?.is_forbidden && !isBanned && (
                             <span className="px-2 py-0.5 rounded-md bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-red-200/50">
                                 <Lock className="w-2.5 h-2.5" />
                                 <span>{t('accounts.forbidden')}</span>
                             </span>
                         )}
-                        {account.validation_blocked && (
+                        {isValidationBlocked && (
                             <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-400 text-[10px] font-bold flex items-center gap-1 shadow-sm border border-amber-200/50">
                                 <Clock className="w-2.5 h-2.5" />
                                 <span>{validationBlockedLabel}</span>
                             </span>
+                        )}
+                        {account.forbidden_models && account.forbidden_models.length > 0 && (
+                            account.forbidden_models.map((fm) => (
+                                <span
+                                    key={fm}
+                                    className="px-2 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-[10px] font-bold flex items-center gap-1 shadow-xs border border-rose-200/50 dark:border-rose-900/30"
+                                    title={t('accounts.forbidden_model_tooltip', '该模型已被 403 冻结')}
+                                >
+                                    ❄️ {fm}
+                                </span>
+                            ))
                         )}
                         <QoSStatusBadge
                             status={account.qos_status}
@@ -496,9 +529,35 @@ function AccountRowContent({
                                 );
                             }
                         })()}
-                        {/* 自定义标签 */}
-                        <span className="px-2 py-0.5 rounded-md bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400 text-[10px] font-bold" title={t('accounts.priority_hint')}>
-                            {t('accounts.priority')}: {account.priority ?? 50}
+                        {/* 蹬额度中高亮徽章 */}
+                        {isPedaling && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-800 dark:text-amber-300 text-[10px] font-bold flex items-center gap-1 shadow-xs border border-amber-500/40 animate-pulse motion-reduce:animate-none"
+                                title={t('pedal.account_pedaling_tooltip', '该账号当前处于蹬额度模式，已被设为最高调度优先级 (priority = 1)')}
+                            >
+                                <Zap className="w-2.5 h-2.5 fill-current text-amber-500" />
+                                {t('pedal.account_pedaling_badge', '⚡ 蹬额度中')}
+                            </span>
+                        )}
+                        {/* 优先级 */}
+                        <span
+                            className={cn(
+                                "px-2 py-0.5 rounded-md text-[10px] font-bold",
+                                isPedaling
+                                    ? "bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 border border-amber-300/80 dark:border-amber-700/80 shadow-2xs"
+                                    : hasCustomModelPriorities(account)
+                                        ? "bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50"
+                                        : "bg-gray-100 dark:bg-base-300 text-gray-500 dark:text-gray-400"
+                            )}
+                            title={
+                                hasCustomModelPriorities(account)
+                                    ? `Gemini: ${getEffectiveModelPriority(account, 'gemini')} | Claude: ${getEffectiveModelPriority(account, 'claude')} (${t('accounts.priority')}: ${account.priority ?? 50})`
+                                    : t('accounts.priority_hint')
+                            }
+                        >
+                            {hasCustomModelPriorities(account)
+                                ? `${t('accounts.priority')}: G:${getEffectiveModelPriority(account, 'gemini')} · C:${getEffectiveModelPriority(account, 'claude')}`
+                                : `${t('accounts.priority')}: ${account.priority ?? 50}`}
                         </span>
                         {account.custom_label && !isEditingLabel && (
                             <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-bold shadow-sm border border-orange-200/50 dark:border-orange-800/50">
@@ -572,26 +631,26 @@ function AccountRowContent({
 
             {/* 模型配额列 */}
             <td className="px-3 py-2 align-middle">
-                {isDisabled || account.quota?.is_forbidden || account.validation_blocked ? (
+                {isDisabled || account.banned || account.quota?.is_forbidden || isValidationBlocked ? (
                     <div className={cn(
                         "flex items-center justify-center gap-3 py-1.5 px-4 rounded-xl border group/error",
-                        account.validation_blocked ? "bg-amber-50/50 dark:bg-amber-900/10 border-amber-100/50 dark:border-amber-900/20" : "bg-red-50/50 dark:bg-red-900/10 border-red-100/50 dark:border-red-900/20"
+                        isValidationBlocked && !account.banned ? "bg-amber-50/50 dark:bg-amber-900/10 border-amber-100/50 dark:border-amber-900/20" : "bg-red-50/50 dark:bg-red-900/10 border-red-100/50 dark:border-red-900/20"
                     )}>
                         <div className={cn(
                             "flex items-center gap-1.5",
-                            account.validation_blocked ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
+                            isValidationBlocked && !account.banned ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"
                         )}>
-                            {account.validation_blocked ? <Clock className="w-3.5 h-3.5" /> : (account.quota?.is_forbidden ? <Lock className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />)}
+                            {isValidationBlocked && !account.banned ? <Clock className="w-3.5 h-3.5" /> : (account.banned ? <Ban className="w-3.5 h-3.5" /> : (account.quota?.is_forbidden ? <Lock className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />))}
                             <span className={cn(
                                 "text-[11px] font-bold",
-                                account.validation_blocked ? "text-amber-700/80 dark:text-amber-400" : "text-red-700/80 dark:text-red-400"
+                                isValidationBlocked && !account.banned ? "text-amber-700/80 dark:text-amber-400" : "text-red-700/80 dark:text-red-400"
                             )}>
-                                {account.validation_blocked ? validationBlockedLabel : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg'))}
+                                {isValidationBlocked && !account.banned ? validationBlockedLabel : (account.banned ? t('accounts.banned_msg', '账号已被上游封禁，已停止自动刷新') : (isDisabled ? t('accounts.status.disabled') : t('accounts.forbidden_msg')))}
                             </span>
                         </div>
                         <div className={cn(
                             "w-px h-3",
-                            account.validation_blocked ? "bg-amber-200 dark:bg-amber-800/50" : "bg-red-200 dark:bg-red-800/50"
+                            isValidationBlocked ? "bg-amber-200 dark:bg-amber-800/50" : "bg-red-200 dark:bg-red-800/50"
                         )} />
                         <button
                             onClick={(e) => { e.stopPropagation(); onViewError(); }}
@@ -728,7 +787,7 @@ function AccountRowContent({
                     <button
                         className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isRefreshing || isDisabled) ? 'bg-green-50 dark:bg-green-900/10 text-green-600 dark:text-green-400 cursor-not-allowed' : 'hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'}`}
                         onClick={(e) => { e.stopPropagation(); onRefresh(); }}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : (isRefreshing ? t('common.refreshing') : t('common.refresh'))}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isRefreshing ? t('common.refreshing') : t('accounts.refresh_quota_and_ban', '刷新配额并检测封禁'))}
                         disabled={isRefreshing || isDisabled}
                     >
                         <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -743,12 +802,14 @@ function AccountRowContent({
                     <button
                         className={cn(
                             "p-1.5 rounded-lg transition-all",
+                            isBanned && "opacity-40 cursor-not-allowed",
                             account.proxy_disabled
                                 ? "text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30"
                                 : "text-gray-500 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/30"
                         )}
                         onClick={(e) => { e.stopPropagation(); onToggleProxy(); }}
-                        title={account.proxy_disabled ? t('accounts.enable_proxy') : t('accounts.disable_proxy')}
+                        disabled={isBanned}
+                        title={isBanned ? t('accounts.banned_tooltip', '账号已被上游封禁（违反服务条款），请提交申诉') : (account.proxy_disabled ? t('accounts.enable_proxy') : t('accounts.disable_proxy'))}
                     >
                         {account.proxy_disabled ? (
                             <ToggleRight className="w-3.5 h-3.5" />

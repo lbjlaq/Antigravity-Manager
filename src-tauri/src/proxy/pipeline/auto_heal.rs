@@ -148,6 +148,8 @@ pub struct AutoHealFlags {
     pub retried_tool_choice_conflict: bool,
     /// 已因 503/过载降级过思考预算
     pub retried_with_budget_degraded: bool,
+    /// 已因 503 容量枯竭 (MODEL_CAPACITY_EXHAUSTED) 原地升档为 High
+    pub retried_with_capacity_promoted: bool,
     /// 已因 400 图像解码失败剔除过损坏图片
     pub retried_with_image_omitted: bool,
 }
@@ -181,6 +183,26 @@ pub fn try_auto_heal(
     degraded: &mut Option<Value>,
     flags: &mut AutoHealFlags,
 ) -> Option<AutoHealOutcome> {
+    // 0. 上游容量枯竭 (MODEL_CAPACITY_EXHAUSTED / 503)：原地将 medium/low/tiered 升档为 high 算力通道
+    if crate::proxy::upstream::client::UpstreamClient::is_model_capacity_exhausted(
+        rquest::StatusCode::from_u16(status_code)
+            .unwrap_or(rquest::StatusCode::SERVICE_UNAVAILABLE),
+        error_text,
+    ) && !flags.retried_with_capacity_promoted
+    {
+        if InboundThinkingPipeline::try_promote_to_high_capacity(body) {
+            flags.retried_with_capacity_promoted = true;
+            *degraded = Some(body.clone());
+            tracing::warn!(
+                "[AutoHeal] Upstream 503 MODEL_CAPACITY_EXHAUSTED: promoted tier to HIGH and retrying on same account"
+            );
+            return Some(AutoHealOutcome {
+                kind: "promote_tier_to_high_capacity",
+                delay_ms: 50,
+            });
+        }
+    }
+
     // 1. 上游过载：降级思考预算，避免被调度到高算力集群继续排队
     if crate::proxy::pipeline::UpstreamClassification::is_server_overloaded(status_code, error_text)
         && !flags.retried_with_budget_degraded

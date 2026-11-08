@@ -27,14 +27,8 @@ impl UpstreamClassification {
             return UpstreamClassification::InternalGatewayMessage;
         }
 
-        // 1. 优先排除网关自身内部错误（防自噬死循环）
-        if lower.contains("all accounts limited")
-            || lower.contains("no accounts available")
-            || lower.contains("all accounts failed")
-            || lower.contains("token pool is empty")
-            || lower.contains("all accounts exhausted")
-            || lower.contains("all accounts unhealthy")
-        {
+        // 1. 优先排除网关自身内部错误（防自噬死循环与假 503 误报）
+        if Self::is_internal_gateway_exhaustion(&lower) {
             return UpstreamClassification::InternalGatewayMessage;
         }
 
@@ -99,6 +93,21 @@ impl UpstreamClassification {
         UpstreamClassification::OtherClientError(status)
     }
 
+    /// 统一判定是否为网关内部账号池耗尽/限流错误（杜绝假 503 误报）
+    pub fn is_internal_gateway_exhaustion(lower: &str) -> bool {
+        (lower.contains("all accounts")
+            && (lower.contains("limited")
+                || lower.contains("rate-limited")
+                || lower.contains("rate_limited")
+                || lower.contains("failed")
+                || lower.contains("unhealthy")
+                || lower.contains("exhausted")
+                || lower.contains("suspended")))
+            || lower.contains("no accounts available")
+            || lower.contains("token pool is empty")
+            || lower.contains("no quota accounts")
+    }
+
     /// 该分类是否应该触发 TokenManager 的账号冷却锁定
     pub fn should_lock_account(&self) -> bool {
         matches!(self, UpstreamClassification::RateLimited { .. })
@@ -106,12 +115,12 @@ impl UpstreamClassification {
 
     /// 这个账号不能再被当前会话粘住。401 / 403 / 404 / 429 / 529。
     pub fn abandons_sticky_account(&self) -> bool {
-        match self {
-            UpstreamClassification::RateLimited { .. } => true,
-            UpstreamClassification::ModelNotFound => true,
-            UpstreamClassification::OtherClientError(401 | 403) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            UpstreamClassification::RateLimited { .. }
+                | UpstreamClassification::ModelNotFound
+                | UpstreamClassification::OtherClientError(401 | 403 | 404 | 429)
+        )
     }
 
     /// 该分类是否为模型不存在
@@ -210,6 +219,11 @@ mod tests {
         assert!(unauth.abandons_sticky_account());
         let forbidden = UpstreamClassification::classify(403, "forbidden", None);
         assert!(forbidden.abandons_sticky_account());
+
+        let client_429 = UpstreamClassification::OtherClientError(429);
+        assert!(client_429.abandons_sticky_account());
+        let client_404 = UpstreamClassification::OtherClientError(404);
+        assert!(client_404.abandons_sticky_account());
     }
 
     #[test]

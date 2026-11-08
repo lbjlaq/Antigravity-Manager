@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { Zap, Clock, ShieldAlert, Sparkles } from 'lucide-react';
+import { Zap, Clock, ShieldAlert, Sparkles, Info, Check } from 'lucide-react';
 import { usePedalModeStore } from '../../stores/usePedalModeStore';
 import { useAccountStore } from '../../stores/useAccountStore';
 import { formatTimeRemaining } from '../../utils/format';
@@ -9,15 +9,48 @@ import { formatTimeRemaining } from '../../utils/format';
 export const PedalNoticeModal: React.FC = () => {
     const { t } = useTranslation();
     const { pendingModal, dismissModal, suppressModel, activatePedalMode } = usePedalModeStore();
-    const { accounts, toggleProxyStatus } = useAccountStore();
+    const { accounts, updateAccountPriority } = useAccountStore();
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+    useEffect(() => {
+        if (pendingModal?.candidates) {
+            setSelectedIds(new Set(pendingModal.candidates.map(c => c.accountId)));
+        } else {
+            setSelectedIds(new Set());
+        }
+    }, [pendingModal]);
 
     if (!pendingModal) return null;
 
     const { model, modelLabel, candidates } = pendingModal;
+    const allSelected = candidates.length > 0 && selectedIds.size === candidates.length;
+
+    const toggleCandidate = (accountId: string) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(accountId)) {
+                next.delete(accountId);
+            } else {
+                next.add(accountId);
+            }
+            return next;
+        });
+    };
+
+    const toggleSelectAll = () => {
+        if (allSelected) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(candidates.map(c => c.accountId)));
+        }
+    };
 
     const handleActivate = async () => {
-        const targetIds = candidates.map(c => c.accountId);
-        await activatePedalMode(model, targetIds, accounts, toggleProxyStatus);
+        const targetIds = candidates
+            .filter(c => selectedIds.has(c.accountId))
+            .map(c => c.accountId);
+        if (targetIds.length === 0) return;
+        await activatePedalMode(model, targetIds, accounts, updateAccountPriority);
     };
 
     const handleSuppress = () => {
@@ -25,63 +58,142 @@ export const PedalNoticeModal: React.FC = () => {
     };
 
     return createPortal(
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-amber-500/30 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-black/60 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-500/30 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
                 {/* 头部 */}
                 <div className="flex items-start gap-3">
-                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex-shrink-0">
-                        <Zap className="w-6 h-6 animate-pulse" />
+                    <div className="p-2.5 rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-500/10 dark:text-amber-400 border border-amber-200/80 dark:border-amber-500/30 flex-shrink-0">
+                        <Zap className="w-6 h-6 animate-pulse motion-reduce:animate-none" />
                     </div>
                     <div>
-                        <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                        <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                             <span>{t('pedal.notice_title', '发现即将重置的 {{model}} 周配额！', { model: modelLabel })}</span>
                         </h3>
-                        <p className="text-xs text-slate-400 mt-1">
-                            {t('pedal.notice_desc', '以下账号的周配额在 24 小时内即将重置清零，可启动“蹬额度模式”全力消耗，避免额度作废：')}
+                        <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                            {t('pedal.notice_desc', '以下账号的周配额在 24 小时内即将重置清零，请勾选需要启动“蹬额度模式”全力消耗的账号：')}
                         </p>
                     </div>
                 </div>
 
                 {/* 候选账号列表 */}
-                <div className="space-y-2 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 max-h-56 overflow-y-auto">
-                    {candidates.map(candidate => (
-                        <div
-                            key={candidate.accountId}
-                            className="flex items-center justify-between text-xs py-2 px-2.5 bg-slate-900/90 border border-slate-800 rounded-lg"
-                        >
-                            <div className="flex items-center gap-2 min-w-0 pr-2">
-                                <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
-                                <span className="font-semibold text-slate-200 truncate">{candidate.accountName}</span>
-                                <span className="text-[11px] text-slate-500 font-mono truncate">({candidate.email})</span>
-                            </div>
-                            <div className="flex items-center gap-3 font-mono flex-shrink-0">
-                                <span className="text-amber-400 font-bold">{candidate.percentage}%</span>
-                                <span className="text-slate-400 flex items-center gap-1 text-[11px]">
-                                    <Clock className="w-3 h-3 text-slate-500" />
-                                    {formatTimeRemaining(candidate.resetTime)}
-                                </span>
-                            </div>
+                <div className="space-y-2 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800/80">
+                    {candidates.length > 1 && (
+                        <div className="flex items-center justify-between px-1 pb-1 text-[11px] text-slate-500 dark:text-slate-400">
+                            <span>
+                                {t('pedal.selected_summary', '已选择 {{selected}} / {{total}} 个账号', {
+                                    selected: selectedIds.size,
+                                    total: candidates.length,
+                                })}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={toggleSelectAll}
+                                className="text-amber-600 dark:text-amber-400 hover:underline font-medium cursor-pointer"
+                            >
+                                {allSelected
+                                    ? t('pedal.deselect_all', '取消全选')
+                                    : t('pedal.select_all', '全选')}
+                            </button>
                         </div>
-                    ))}
+                    )}
+                    <div className="space-y-2 max-h-56 overflow-y-auto">
+                        {candidates.map(candidate => {
+                            const isChecked = selectedIds.has(candidate.accountId);
+                            const isFlagshipBadge = candidate.modelBadge?.includes('5.5') || candidate.modelBadge?.includes('Argon');
+                            return (
+                                <div
+                                    key={candidate.accountId}
+                                    role="checkbox"
+                                    aria-checked={isChecked}
+                                    tabIndex={0}
+                                    onClick={() => toggleCandidate(candidate.accountId)}
+                                    onKeyDown={e => {
+                                        if (e.key === ' ' || e.key === 'Enter') {
+                                            e.preventDefault();
+                                            toggleCandidate(candidate.accountId);
+                                        }
+                                    }}
+                                    className={`flex items-center justify-between text-xs py-2 px-2.5 rounded-lg shadow-2xs cursor-pointer select-none transition border ${
+                                        isChecked
+                                            ? 'bg-white dark:bg-slate-900/90 border-amber-300 dark:border-amber-500/40'
+                                            : 'bg-slate-100/60 dark:bg-slate-900/40 border-slate-200/70 dark:border-slate-800/60 opacity-60 hover:opacity-85'
+                                    }`}
+                                >
+                                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                                        <span
+                                            className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 transition border ${
+                                                isChecked
+                                                    ? 'bg-amber-500 border-amber-500 text-slate-950'
+                                                    : 'bg-transparent border-slate-300 dark:border-slate-600'
+                                            }`}
+                                        >
+                                            {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
+                                        </span>
+                                        <span className="font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
+                                            {candidate.accountName}
+                                        </span>
+                                        <span className="text-[11px] text-slate-500 font-mono truncate">
+                                            ({candidate.email})
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2.5 font-mono flex-shrink-0">
+                                        {candidate.modelBadge && (
+                                            <span
+                                                title={candidate.supportedModels?.join(', ') || candidate.modelBadge}
+                                                className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold flex-shrink-0 border ${
+                                                    isFlagshipBadge
+                                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+                                                        : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+                                                }`}
+                                            >
+                                                {candidate.modelBadge}
+                                            </span>
+                                        )}
+                                        <span className="text-amber-600 dark:text-amber-400 font-bold">{candidate.percentage}%</span>
+                                        <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1 text-[11px]">
+                                            <Clock className="w-3 h-3 text-slate-400 dark:text-slate-500" />
+                                            {formatTimeRemaining(candidate.resetTime)}
+                                        </span>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
 
-                {/* 说明说明框 */}
-                <div className="text-xs text-slate-400 bg-amber-500/5 border border-amber-500/10 p-2.5 rounded-lg flex items-start gap-2">
-                    <ShieldAlert className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                {/* 说明框 */}
+                <div className="text-xs text-amber-900 dark:text-amber-300/90 bg-amber-50 dark:bg-amber-500/5 border border-amber-200/80 dark:border-amber-500/10 p-2.5 rounded-lg flex items-start gap-2">
+                    <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
                     <span>
                         {t(
                             'pedal.mode_explanation',
-                            '启动后将临时挂起其他账号，优先消耗以上账号。待额度全部用完 (0%) 或官方重置后，系统将自动恢复其他账号。'
+                            '启动后将优先调度并全力消耗所选账号，保留其他账号以保证会话连贯性与并发弹性。待额度全部用完 (0%) 或官方重置后，系统将自动恢复默认优先级。'
                         )}
                     </span>
                 </div>
 
+                {/* 会话解绑与缓存开销提示框 */}
+                <div className="text-xs text-sky-950 dark:text-sky-200/90 bg-sky-50 dark:bg-sky-950/30 border border-sky-200/80 dark:border-sky-800/50 p-2.5 rounded-lg flex items-start gap-2">
+                    <Info className="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-0.5 leading-relaxed">
+                        <span className="font-semibold text-sky-900 dark:text-sky-200">
+                            {t('pedal.session_unbind_title', '会话解绑与缓存清除提示：')}
+                        </span>
+                        <span>
+                            {t(
+                                'pedal.session_unbind_desc',
+                                '启动将自动解绑当前会话并清除缓存映射，以便旧对话直接切换至待蹬账号。因新账号首次接管需重新建立上游缓存，若不希望初始请求消耗过多待蹬配额，建议先在客户端执行上下文压缩（如 /compact）后再启动。'
+                            )}
+                        </span>
+                    </div>
+                </div>
+
                 {/* 底部按钮栏 */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-800">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
                     <button
                         onClick={handleSuppress}
                         type="button"
-                        className="text-xs text-slate-400 hover:text-rose-400 transition underline underline-offset-2"
+                        className="text-xs text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 transition underline underline-offset-2"
                     >
                         {t('pedal.suppress_button', '不再提示 {{model}} 模型', { model: modelLabel })}
                     </button>
@@ -89,17 +201,21 @@ export const PedalNoticeModal: React.FC = () => {
                         <button
                             onClick={dismissModal}
                             type="button"
-                            className="flex-1 sm:flex-initial px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-medium transition"
+                            className="flex-1 sm:flex-initial px-4 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 text-xs dark:text-slate-300 font-medium transition"
                         >
                             {t('common.cancel', '暂不启动')}
                         </button>
                         <button
                             onClick={handleActivate}
+                            disabled={selectedIds.size === 0}
                             type="button"
-                            className="flex-1 sm:flex-initial px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-xs text-slate-950 font-bold transition shadow-lg shadow-amber-500/20 flex items-center justify-center gap-1.5"
+                            className="flex-1 sm:flex-initial px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-xs text-slate-950 font-bold transition shadow-lg shadow-amber-500/20 flex items-center justify-center gap-1.5"
                         >
                             <Sparkles className="w-3.5 h-3.5 text-slate-950" />
-                            {t('pedal.activate_button', '启动蹬额度模式')}
+                            <span>
+                                {t('pedal.activate_button', '启动蹬额度模式')}
+                                {candidates.length > 1 && selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+                            </span>
                         </button>
                     </div>
                 </div>

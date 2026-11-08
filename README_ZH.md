@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业级 AI 账号管理与协议代理系统 (v5.0.0)
+> 专业级 AI 账号管理与协议代理系统 (v5.0.3)
 
 <div align="center">
   <img src="public/icon.png" width="100" height="100" alt="Antigravity Tools Logo">
@@ -11,7 +11,7 @@
       <img src="https://img.shields.io/github/v/release/lbjlaq/Antigravity-Manager?color=blue&style=flat-square" alt="GitHub release">
     </a>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-5.0.0-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-5.0.3-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -199,6 +199,20 @@ docker run -d --name antigravity-manager \
   lbjlaq/antigravity-manager:latest
 
 # 忘记密钥？执行 docker logs antigravity-manager 或 grep -E '"api_key"|"admin_password"' ~/.antigravity_tools/gui_config.json
+```
+
+### 选项 D: Android Termux 原生无容器部署 (ARM64 纯后端)
+针对 Android 用户与轻量部署场景（例如搭配 SillyTavern / Lumiverse 作为本地 API 代理），我们提供了原生的 `aarch64-linux-android` (Bionic libc) 无界面构建，无需安装 Debian PRoot 或 Docker：
+
+```bash
+# 一键安装至 Termux ($PREFIX/bin/antigravity-server)
+curl -sSL https://raw.githubusercontent.com/lbjlaq/Antigravity-Manager/main/scripts/install-termux.sh | bash
+
+# 运行方式 1: 标准启动（支持手机浏览器访问 Web UI 进行可视化管理）
+antigravity-server
+
+# 运行方式 2: 纯代理极简模式（完全关闭 Web 界面以极致省电 / 防局域网扫描）
+antigravity-server --no-web
 ```
 
 > [!TIP]
@@ -515,7 +529,7 @@ response = client.chat.completions.create(
 
 ## 📝 更新日志
 
-> 最新版本 **v5.0.0**（2026-10-24）：基于纯净同侪校准与阶梯探针的自适应 QoS 调度系统（TTFT 毫秒感知、纯净基线比对、瞬态 Suspicious 打标、粘性会话即刻解绑与后台自愈阶梯探针，解决上游静默降级排队卡死）(Fixes #3720, PR #3725)；官方权威模型全景升级、分级思考传输协议（thinkingLevel vs thinkingBudget）与 Argon 独立配额防穿透隔离，彻底解耦 quotaInfo 过滤门禁消除 503 缺陷，清退废弃代号并标准化各协议上下文与最大输出规格 (Fixes #3735, Fixes #3737)；OpenAI Responses API 结构化输出（responseSchema / text.format）规范化支持、思考预算收敛至 1024 杜绝 30s 硬超时、流水线工具冲突统一治理与出站受控整包解壳 (Fixes #3710, Ref #3723)；Mini 桌面悬浮视窗 macOS 原生真透明与拖拽置顶权限、深浅模式与 12 语种跨窗口毫秒级无感同步、原生 UI 主线程调度彻底根除 Win32 消息循环死锁，首帧同步判定与 React Router 404 兜底 (Fixes #3733, Ref #3718, #3721, Ref #3738, Ref #3741)；官方 Base64 哨兵规范对齐、Claude 全链路 0 哨兵与并发工具严格留空、异构工具切回 Gemini 赋予免检通行证且哨兵零落库；流式巨型工具调用缓冲自动跃迁至 Transition 宽限期赋予 180s 保护，上游响应头看门狗收敛至 30s，接入 FailureStatusTracker 根除 Claude 429 状态码泄漏 (Fixes #3739, Fixes #3713, Ref #3506, Ref #3525, PR #3740, PR #3714)；异步高性能批量流式导入与索引持久化重构（494 账号导入耗时由 28 分钟压缩至 15~20 秒，提速超 60 倍），冷启动读锁解耦秒级直出与本地快照首帧 0ms 水合消除空态闪烁 (Fixes #3726)；系统托盘富文本悬停配额卡片与 macOS 原生状态栏配额标题，Linux 窗口抢占置顶与自动拉起根治，解除经典款切号对 CLI 凭据的覆盖冲突 (Fixes #3719, Fixes #3728, Fixes #3686)；代理池专属绑定防 Direct 源站泄漏加固，集成 Hermes Agent / 本地探针端点（/props, /version），Gemini 协议支持标准 URL Query 传参鉴权，Web/Headless 模式保存配置全量内存热重载（感谢 @cubelikeplayDaniel, @jeikl）。
+> 最新版本 **v5.0.3**（2026-11-06）：配额归因治理与调度内核重构——网关内部限流判据收敛至 `policy::is_internal_gateway_exhaustion` 单一权威源（根除占全量 5xx 92.6% 的 503 归因污染），新增 403 封禁专用归因 `account_forbidden`；将「上游告知的配额耗尽」与自适应熔断彻底解耦（熔断关闭时仍能锁定 `QuotaExhausted` 账号），重试循环引入 `attempted_accounts` 账号排除防反复锤击，并将配额过滤前置于优先级收敛以消除 0 配额高优账号饥饿全池的优先级倒置死锁 (Fixes #3838, #3841, PR #3845)；蹬额度模式由暴力禁用重构为最高调度优先级竞争，保住 Prompt Cache 并自动外溢并发流量 (PR #3840)；超时契约解除 135s/160s 硬截断，首字基准恢复 180s、多模态上限 270s、全局预算统一下沉 pipeline，Codex / Legacy 流式收敛至统一生命周期并补齐思考期自适应跃迁 (Fixes #3816, #3821, Ref #3763)；模型路由确立自定义映射最高优先级、旧版模型硬下线与先映射后判定、号池自适应暗路由与上游物理模型统一收敛至 `X-Upstream-Model` (Fixes #2065, Ref #3764, #3769, #3815)；多模态坏图 400 就地自愈与指纹黑名单、保鲜滑窗默认开启、Responses 协议日志脱敏与视觉 Token 估算 (Fixes #3758, #3824, #3756)；提示词清洗分轨保护用户正文、CTF 策略自适应剥离与 Gzip 入站解压 (Fixes #3764, #3781)；GCP Vertex AI 企业账号与 Project ID 一键获取、Antigravity IDE 2.6.0+ 三级双写切号与进程身份收敛、账号删除一致性、Web/Docker OAuth 与更新设置修复、DeepSeek Harness 一键同步 (Fixes #3823, #3829, #3806, #3802, #3754)；Linux 远程桌面保活、macOS Mini 视窗主线程调度、界面与字体缩放及托盘交互优化 (Fixes #3752, #3757, #3744)；工具签名缓存写入放大治理与 Token 双视角 + TTFT 统计、QoS 死锁修复 (PR #3765, PR #3774, Fixes #3810, #3749)；多智能体根会话归一化与凭据级强粘性、3P 幽灵配额治理 (Fixes #3789, #3809)。
 
 👉 **[查看完整更新日志 CHANGELOG.md →](CHANGELOG.md)**
 

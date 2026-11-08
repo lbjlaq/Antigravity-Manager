@@ -12,11 +12,34 @@ const ENCRYPTED_PREFIX: &str = "ag_enc_";
 const ENCRYPTED_V2_PREFIX: &str = "ag_enc_v2_";
 
 fn get_encryption_key() -> [u8; 32] {
+    #[cfg(not(target_os = "android"))]
     let device_id = machine_uid::get().unwrap_or_else(|_| "default".to_string());
+
+    #[cfg(target_os = "android")]
+    let device_id = get_android_device_id();
+
     let mut key = [0u8; 32];
     let hash = sha2::Sha256::digest(device_id.as_bytes());
     key.copy_from_slice(&hash);
     key
+}
+
+#[cfg(target_os = "android")]
+fn get_android_device_id() -> String {
+    if let Ok(dir) = crate::modules::account::get_data_dir() {
+        let id_file = dir.join("device_id");
+        if let Ok(content) = std::fs::read_to_string(&id_file) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let _ = std::fs::write(&id_file, &new_id);
+        new_id
+    } else {
+        "android_termux_default".to_string()
+    }
 }
 
 pub fn serialize_password<S>(password: &str, serializer: S) -> Result<S::Ok, S::Error>

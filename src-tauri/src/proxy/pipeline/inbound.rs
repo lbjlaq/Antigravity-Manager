@@ -117,6 +117,13 @@ impl InboundThinkingPipeline {
         // 若拆为多个 model 轮次，后续轮次将因缺失独立签名被直接拒收 400。
         Self::merge_consecutive_function_call_turns(contents);
 
+        // 0.15 工具调用与回执相邻性对齐（Pipeline First 统一治理）：
+        // 把夹在 functionCall 轮与 functionResponse 轮之间的纯文本 model 轮折回调用轮：
+        // - Claude 目标：避免把夹层正文当作末尾 assistant prefill 拒收 400；
+        // - Gemini 目标：避免独立夹层 model 轮在紧随其后的那一轮因处于 last_model_idx 被挂上会话签名、
+        //   下一轮不再是末轮又丢失签名，从而造成历史前缀跳变与上下文缓存失效。
+        Self::fold_commentary_between_call_and_response(contents);
+
         // 0.2 统一上下文结构对齐（Pipeline First 统一治理）：
         // 将连续的 user 消息直到下一个 model，统一合并为一个 user 轮次的多个 block (parts)，保持严格顺序。
         // 这彻底消除了 Adapter 层各自为政导致的轮次错位，使得四大协议进入流水线后结构 100% 同构！
@@ -1233,6 +1240,104 @@ impl InboundThinkingPipeline {
         merged_count
     }
 
+    /// 工具调用与回执相邻性对齐（Pipeline First 统一治理）。
+    ///
+    /// 部分客户端会把同一次响应里的过程说明文本落在 functionCall 之后、functionResponse 之前
+    /// （例如 Codex 按 `response.output_item.done` 的到达顺序记录历史，而 message 项在流末尾才闭合），
+    /// 重放时形成 `model[functionCall] → model[text] → user[functionResponse]`。
+    /// Gemini 目标对此宽容；Claude 目标要求 tool_result 紧跟携带 tool_use 的 assistant 轮，
+    /// 夹层正文会让上游判定会话以 assistant 收尾并 400
+    /// （"This model does not support assistant message prefill"）。
+    ///
+    /// 处理方式：把这些夹层纯文本 model 轮的 parts 折回调用轮、插在首个 functionCall 之前，
+    /// 还原模型原始输出顺序 `[thought?, text, functionCall]`。
+    /// 检测宽、动作窄：仅当调用轮之后连续若干纯文本 model 轮、且其后紧跟回执轮时才折叠；
+    /// 含思考、媒体、调用或回执的轮次一律原样保留。
+    ///
+    /// 返回被折叠的 content 数。
+    pub fn fold_commentary_between_call_and_response(contents: &mut Vec<Value>) -> usize {
+        fn is_model(content: &Value) -> bool {
+            matches!(
+                content.get("role").and_then(|r| r.as_str()),
+                Some("model") | Some("assistant")
+            )
+        }
+        fn parts_any(content: &Value, key: &str) -> bool {
+            content
+                .get("parts")
+                .and_then(|p| p.as_array())
+                .is_some_and(|parts| parts.iter().any(|p| p.get(key).is_some()))
+        }
+        fn is_plain_commentary_turn(content: &Value) -> bool {
+            if !is_model(content) {
+                return false;
+            }
+            let Some(parts) = content.get("parts").and_then(|p| p.as_array()) else {
+                return false;
+            };
+            !parts.is_empty()
+                && parts.iter().all(|p| {
+                    p.get("text").is_some_and(Value::is_string)
+                        && !crate::proxy::thinking_store::is_thought_part(p)
+                        && [
+                            "functionCall",
+                            "functionResponse",
+                            "inlineData",
+                            "inline_data",
+                            "fileData",
+                        ]
+                        .iter()
+                        .all(|key| p.get(*key).is_none())
+                })
+        }
+
+        let mut folded = 0usize;
+        let mut i = 0usize;
+        while i < contents.len() {
+            if !(is_model(&contents[i]) && parts_any(&contents[i], "functionCall")) {
+                i += 1;
+                continue;
+            }
+
+            let mut j = i + 1;
+            while j < contents.len() && is_plain_commentary_turn(&contents[j]) {
+                j += 1;
+            }
+            let wedged = j - i - 1;
+            if wedged == 0 || j >= contents.len() || !parts_any(&contents[j], "functionResponse") {
+                i = j.max(i + 1);
+                continue;
+            }
+
+            let moved: Vec<Value> = contents
+                .drain(i + 1..j)
+                .flat_map(
+                    |mut content| match content.get_mut("parts").map(Value::take) {
+                        Some(Value::Array(parts)) => parts,
+                        _ => Vec::new(),
+                    },
+                )
+                .collect();
+            if let Some(parts) = contents[i].get_mut("parts").and_then(|p| p.as_array_mut()) {
+                let insert_at = parts
+                    .iter()
+                    .position(|p| p.get("functionCall").is_some())
+                    .unwrap_or(parts.len());
+                parts.splice(insert_at..insert_at, moved);
+            }
+            folded += wedged;
+            i += 1;
+        }
+
+        if folded > 0 {
+            tracing::debug!(
+                "[InboundPipeline] Folded {} commentary turn(s) wedged between functionCall and functionResponse",
+                folded
+            );
+        }
+        folded
+    }
+
     /// 把工具回执（`functionResponse`）轮的 role 归一化为官方 Antigravity 形态，并将连续回执合并打包。
     ///
     /// **官方形态**（实测与 flows(6) 26,695 次工具抓包逐字核对）：
@@ -1924,6 +2029,102 @@ impl InboundThinkingPipeline {
         }
 
         degraded
+    }
+
+    /// [FIX 503] 当 Gemini 上游返回 503 (MODEL_CAPACITY_EXHAUSTED) 时，
+    /// 说明 medium / low / tiered 算力池已枯竭，原地将模型升档至 high 算力通道并调整 thinkingLevel 为 HIGH。
+    pub fn try_promote_to_high_capacity(body: &mut Value) -> bool {
+        let mut promoted = false;
+
+        let promote_tc = |tc: &mut Value| -> bool {
+            let mut changed = false;
+            if let Some(obj) = tc.as_object_mut() {
+                if let Some(level_val) = obj.get("thinkingLevel") {
+                    if let Some(level) = level_val.as_str() {
+                        if !level.eq_ignore_ascii_case("HIGH") {
+                            obj.insert("thinkingLevel".to_string(), json!("HIGH"));
+                            changed = true;
+                        }
+                    }
+                } else {
+                    obj.insert("thinkingLevel".to_string(), json!("HIGH"));
+                    changed = true;
+                }
+            }
+            changed
+        };
+
+        let check_gc = |gc: &mut Value| -> bool {
+            let mut gc_promoted = false;
+            if let Some(tc) = gc.get_mut("thinkingConfig") {
+                if promote_tc(tc) {
+                    gc_promoted = true;
+                }
+            }
+            if let Some(tc) = gc.get_mut("thinking_config") {
+                if promote_tc(tc) {
+                    gc_promoted = true;
+                }
+            }
+            gc_promoted
+        };
+
+        if let Some(gc) = body.get_mut("generationConfig") {
+            if check_gc(gc) {
+                promoted = true;
+            }
+        }
+        if let Some(gc) = body.get_mut("generation_config") {
+            if check_gc(gc) {
+                promoted = true;
+            }
+        }
+
+        if let Some(req) = body.get_mut("request") {
+            if let Some(gc) = req.get_mut("generationConfig") {
+                if check_gc(gc) {
+                    promoted = true;
+                }
+            }
+            if let Some(gc) = req.get_mut("generation_config") {
+                if check_gc(gc) {
+                    promoted = true;
+                }
+            }
+        }
+
+        // 检查并替换模型名：-medium / -low / -tiered 替换为 -high；裸模型如 gemini-3.8-flash 替换为 gemini-3.8-flash-high
+        let mut promote_model_str = |m_val: &mut Value| {
+            if let Some(m_str) = m_val.as_str() {
+                let lower = m_str.to_lowercase();
+                if lower.ends_with("-medium") {
+                    *m_val = json!(format!("{}-high", &m_str[..m_str.len() - 7]));
+                    promoted = true;
+                } else if lower.ends_with("-low") {
+                    *m_val = json!(format!("{}-high", &m_str[..m_str.len() - 4]));
+                    promoted = true;
+                } else if lower.ends_with("-tiered") {
+                    *m_val = json!(format!("{}-high", &m_str[..m_str.len() - 7]));
+                    promoted = true;
+                } else if (lower.contains("flash") || lower.contains("pro"))
+                    && !lower.ends_with("-high")
+                {
+                    *m_val = json!(format!("{}-high", m_str));
+                    promoted = true;
+                }
+            }
+        };
+
+        if let Some(m) = body.get_mut("model") {
+            promote_model_str(m);
+        }
+        if let Some(req) = body.get_mut("request") {
+            if let Some(m) = req.get_mut("model") {
+                promote_model_str(m);
+            }
+        }
+
+        promoted
     }
 
     /// 统一规范化与对齐四大协议转译后的 Google Request 内部拓扑（Pipeline First 核心归一节点）
@@ -3376,6 +3577,162 @@ mod tests {
 
     fn fc_part(id: &str, name: &str) -> Value {
         json!({"functionCall": {"id": id, "name": name, "args": {}}})
+    }
+
+    // ============ 工具调用与回执相邻性对齐 ============
+
+    /// Codex 形态：过程说明文本落在 functionCall 之后、functionResponse 之前，
+    /// 必须折回调用轮的首个 functionCall 之前，使回执紧跟调用轮。
+    #[test]
+    fn test_fold_commentary_wedged_between_call_and_response() {
+        let mut contents = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [{"text": "plan", "thought": true}]}),
+            json!({"role": "model", "parts": [fc_part("c1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Next I'll create the branch."}]}),
+            json!({"role": "user", "parts": [fr_part("c1", "exec_command")]}),
+        ];
+        let n = InboundThinkingPipeline::fold_commentary_between_call_and_response(&mut contents);
+        assert_eq!(n, 1);
+        assert_eq!(contents.len(), 4);
+        assert_eq!(
+            contents[1]["parts"][0]["thought"], true,
+            "独立思考轮保持不动"
+        );
+        let call_parts = contents[2]["parts"].as_array().unwrap();
+        assert_eq!(call_parts.len(), 2);
+        assert_eq!(call_parts[0]["text"], "Next I'll create the branch.");
+        assert!(call_parts[1].get("functionCall").is_some());
+        assert!(contents[3]["parts"][0].get("functionResponse").is_some());
+    }
+
+    /// 并行调用：多条连续调用轮先被合并，再折叠夹层文本；多段夹层文本保持原有顺序。
+    #[test]
+    fn test_fold_commentary_with_parallel_calls_keeps_text_order() {
+        let mut contents = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [fc_part("c1", "a")]}),
+            json!({"role": "model", "parts": [fc_part("c2", "b")]}),
+            json!({"role": "model", "parts": [{"text": "first"}]}),
+            json!({"role": "model", "parts": [{"text": "second"}]}),
+            json!({"role": "user", "parts": [fr_part("c1", "a")]}),
+            json!({"role": "user", "parts": [fr_part("c2", "b")]}),
+        ];
+        InboundThinkingPipeline::merge_consecutive_function_call_turns(&mut contents);
+        let n = InboundThinkingPipeline::fold_commentary_between_call_and_response(&mut contents);
+        assert_eq!(n, 2);
+        let call_parts = contents[1]["parts"].as_array().unwrap();
+        assert_eq!(call_parts[0]["text"], "first");
+        assert_eq!(call_parts[1]["text"], "second");
+        assert_eq!(call_parts[2]["functionCall"]["id"], "c1");
+        assert_eq!(call_parts[3]["functionCall"]["id"], "c2");
+        assert!(contents[2]["parts"][0].get("functionResponse").is_some());
+    }
+
+    /// 动作窄：调用轮之后不是回执（如工具调用尚未回执、或夹层含思考/媒体）时一律不动。
+    #[test]
+    fn test_fold_commentary_leaves_other_shapes_untouched() {
+        let shapes = vec![
+            // 纯文本收尾，没有后续回执
+            vec![
+                json!({"role": "user", "parts": [{"text": "go"}]}),
+                json!({"role": "model", "parts": [fc_part("c1", "a")]}),
+                json!({"role": "model", "parts": [{"text": "done"}]}),
+            ],
+            // 夹层带思考块
+            vec![
+                json!({"role": "user", "parts": [{"text": "go"}]}),
+                json!({"role": "model", "parts": [fc_part("c1", "a")]}),
+                json!({"role": "model", "parts": [{"text": "hm", "thought": true}]}),
+                json!({"role": "user", "parts": [fr_part("c1", "a")]}),
+            ],
+            // 已是原生顺序
+            vec![
+                json!({"role": "user", "parts": [{"text": "go"}]}),
+                json!({"role": "model", "parts": [{"text": "plan"}, fc_part("c1", "a")]}),
+                json!({"role": "user", "parts": [fr_part("c1", "a")]}),
+            ],
+        ];
+        for mut contents in shapes {
+            let snapshot = contents.clone();
+            let n =
+                InboundThinkingPipeline::fold_commentary_between_call_and_response(&mut contents);
+            assert_eq!(n, 0);
+            assert_eq!(contents, snapshot);
+        }
+    }
+
+    /// 端到端：Claude 目标经完整流水线后，回执轮紧跟调用轮，且末轮为 user。
+    #[test]
+    fn test_claude_pipeline_keeps_tool_result_adjacent_to_tool_use() {
+        let mut contents = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [fc_part("call_1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Creating the branch now."}]}),
+            json!({"role": "user", "parts": [fr_part("call_1", "exec_command")]}),
+        ];
+        InboundThinkingPipeline::process_contents(
+            &mut contents,
+            "claude-opus-5-5-high",
+            false,
+            None,
+            false,
+        );
+        let last = contents.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert!(last["parts"][0].get("functionResponse").is_some());
+        let call_turn = &contents[contents.len() - 2];
+        assert_eq!(call_turn["role"], "model");
+        let call_parts = call_turn["parts"].as_array().unwrap();
+        assert_eq!(call_parts[0]["text"], "Creating the branch now.");
+        assert!(call_parts.iter().any(|p| p.get("functionCall").is_some()));
+    }
+
+    /// 端到端：Gemini 目标同样折叠夹层正文，消除夹层轮在相邻两轮之间签名闪烁导致的前缀缓存失效。
+    #[test]
+    fn test_gemini_pipeline_folds_commentary_and_keeps_prefix_stable() {
+        let sid = "test-gemini-fold-commentary-prefix-stability";
+        let sig = "E".repeat(64);
+        crate::proxy::SignatureCache::global().cache_tool_signature(sid, "call_1", sig.clone());
+        crate::proxy::SignatureCache::global().cache_session_signature(sid, sig.clone(), 1);
+
+        // 第 N 轮（工具刚执行完回传）
+        let mut turn_n = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [fc_part("call_1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Creating the branch now."}]}),
+            json!({"role": "user", "parts": [fr_part("call_1", "exec_command")]}),
+        ];
+        InboundThinkingPipeline::process_contents(
+            &mut turn_n,
+            "gemini-3.8-flash-low",
+            true,
+            Some(sid),
+            false,
+        );
+
+        // 第 N+1 轮（后续轮次继续推进，该工具轮进入历史前缀）
+        let mut turn_n_plus_1 = vec![
+            json!({"role": "user", "parts": [{"text": "go"}]}),
+            json!({"role": "model", "parts": [fc_part("call_1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Creating the branch now."}]}),
+            json!({"role": "user", "parts": [fr_part("call_1", "exec_command")]}),
+            json!({"role": "model", "parts": [{"text": "Branch created.", "thoughtSignature": sig}]}),
+            json!({"role": "user", "parts": [{"text": "next"}]}),
+        ];
+        InboundThinkingPipeline::process_contents(
+            &mut turn_n_plus_1,
+            "gemini-3.8-flash-low",
+            true,
+            Some(sid),
+            false,
+        );
+
+        assert_eq!(
+            &turn_n[..],
+            &turn_n_plus_1[..turn_n.len()],
+            "Gemini 目标在工具回传轮与后续轮次中的历史前缀必须逐字节一致"
+        );
     }
 
     /// 官方形态（回执已在 `role:"model"`）→ 必须完全幂等。

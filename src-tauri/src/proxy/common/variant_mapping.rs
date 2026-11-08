@@ -278,11 +278,12 @@ pub fn resolve_with_tier(
     } else if let Some(et) = explicit_tier {
         et
     } else if is_v3 {
-        VariantTier::Medium
+        // [FIX] 规避上游 Medium/Tiered 容量枯竭危机：裸模型未指定档位时默认对齐官方 High 旗舰算力保障通道
+        VariantTier::High
     } else if let Some(bt) = budget_tokens {
         infer_tier(Some(bt))
     } else {
-        VariantTier::Medium
+        VariantTier::High
     };
 
     // 2. 尝试从已知家族注册表中匹配

@@ -711,18 +711,7 @@ pub fn resolve_custom_model_route(
     original_model: &str,
     custom_mapping: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
-    // 0. API 热更新废弃模型转发 (最高物理优先级，强制纠正)
-    // 如果用户非要用已经被移除的模型，并且官方下发了 fallback path，我们在此拦截并纠正
-    if let Some(forwarded) = DYNAMIC_MODEL_FORWARDING_RULES.get(original_model) {
-        crate::modules::logger::log_info(&format!(
-            "[Router] 官方淘汰重定向: {} -> {}",
-            original_model,
-            forwarded.value()
-        ));
-        return Some(forwarded.value().clone());
-    }
-
-    // 1. 自定义映射匹配 (次高优先级：精确匹配 -> 大小写不敏感匹配 -> 规范化 ID 匹配)
+    // 1. 用户自定义显式映射（最高物理优先级，用户意图绝对大于一切系统规则与动态重定向）
     if let Some(target) = custom_mapping.get(original_model) {
         crate::modules::logger::log_info(&format!(
             "[Router] 精确映射: {} -> {}",
@@ -762,9 +751,6 @@ pub fn resolve_custom_model_route(
     }
 
     // 2. Wildcard match - most specific (highest non-wildcard chars) wins
-    // Note: When multiple patterns have the SAME specificity, HashMap iteration order
-    // determines the result (non-deterministic). Users can avoid this by making patterns
-    // more specific. Future improvement: use IndexMap + frontend sorting for full control.
     let mut best_match: Option<(&str, &str, usize)> = None;
 
     for (pattern, target) in custom_mapping.iter() {
@@ -785,6 +771,16 @@ pub fn resolve_custom_model_route(
             original_model, target, pattern
         ));
         return Some(target.to_string());
+    }
+
+    // 3. API 热更新废弃模型转发（次级兜底：仅在用户未显式自定义该模型时才生效）
+    if let Some(forwarded) = DYNAMIC_MODEL_FORWARDING_RULES.get(original_model) {
+        crate::modules::logger::log_info(&format!(
+            "[Router] 官方淘汰重定向: {} -> {}",
+            original_model,
+            forwarded.value()
+        ));
+        return Some(forwarded.value().clone());
     }
 
     None
@@ -917,15 +913,22 @@ pub fn resolve_model_route_with_effort_and_pool(
             custom
         };
 
-        // 裸模型自定义映射目标继续穿透客户端思考档位（如映射至 claude-opus-5-5 且 effort=high -> claude-opus-5-5-high）
-        if let Some(routed) =
-            crate::proxy::model_specs::resolve_bare_tiered_model_route(&target, client_effort)
-        {
-            crate::modules::logger::log_info(&format!(
-                "[Router] 自定义映射目标依据思考档位路由: {} (target={}, effort={:?}) -> {}",
-                original_model, target, client_effort, routed
-            ));
-            return map_claude_model_to_gemini(&routed);
+        // 仅当客户端显式指定了有效非默认思考等级（如 effort=low/high）时，才允许对自定义目标进行显式等级调整；
+        // 未显式传等级时，100% 遵从用户的映射目标，严禁擅自将自定义目标降级到 tiered 或 medium！
+        let has_explicit_effort = client_effort
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty() && *s != "default")
+            .is_some();
+        if has_explicit_effort {
+            if let Some(routed) =
+                crate::proxy::model_specs::resolve_bare_tiered_model_route(&target, client_effort)
+            {
+                crate::modules::logger::log_info(&format!(
+                    "[Router] 自定义映射目标依据显式思考档位路由: {} (target={}, effort={:?}) -> {}",
+                    original_model, target, client_effort, routed
+                ));
+                return map_claude_model_to_gemini(&routed);
+            }
         }
 
         return map_claude_model_to_gemini(&target);

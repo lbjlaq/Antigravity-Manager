@@ -859,7 +859,10 @@ pub struct UploadTimeoutConfig {
     #[serde(default = "default_connect_secs")]
     pub connect_secs: u64,
 
-    /// 上传带宽（Mbps，默认 2.0，推荐 1-5 Mbps）
+    /// 上传带宽下限（Mbps，默认 0.8，推荐 0.5-5 Mbps）
+    ///
+    /// 语义是「声明的最慢上行」：预算 = 请求体大小 ÷ 该值 × (1 + 额外等待系数)，
+    /// 因此**调大该值会缩短上传预算**；实测比声明值更慢时只会放宽、不会收紧。
     #[serde(default = "default_min_upload_mbps")]
     pub min_upload_mbps: f64,
 

@@ -22,6 +22,7 @@ import CurrentAccount from '../components/dashboard/CurrentAccount';
 import { useAccountStore } from '../stores/useAccountStore';
 import { useConfigStore } from '../stores/useConfigStore';
 import { Account } from '../types/account';
+import { isAccountAbnormal } from '../utils/accountStatus';
 import { DashboardQuotaView } from '../utils/quotaDisplay';
 
 function Dashboard() {
@@ -108,13 +109,9 @@ function Dashboard() {
     const stats = useMemo(() => {
         // 1. 账号生态健康状态分类（风控与启用状态定生死，不以额度定生死）
         // 异常账号：触发 Google 验证码/风控阻断，或配额接口返回 403 Forbidden 封禁
-        const abnormalAccounts = accounts.filter(
-            a => a.validation_blocked || a.quota?.is_forbidden
-        );
+        const abnormalAccounts = accounts.filter(isAccountAbnormal);
         // 全量正常状态账号（彻底剔除风控异常账号）
-        const normalAccounts = accounts.filter(
-            a => !a.validation_blocked && !a.quota?.is_forbidden
-        );
+        const normalAccounts = accounts.filter(a => !isAccountAbnormal(a));
         // 完全被用户手动停用的账号 (disabled 为 true)
         const fullyDisabledAccounts = normalAccounts.filter(
             a => a.disabled
@@ -835,7 +832,9 @@ function Dashboard() {
                             <motion.div
                                 whileHover={{ y: -2 }}
                                 transition={{ duration: 0.15 }}
-                                className="bg-white dark:bg-[#15161b] rounded-2xl p-5 shadow-sm dark:shadow-xl dark:shadow-black/40 border border-gray-100 dark:border-white/[0.10] flex flex-col justify-between"
+                                onClick={() => navigate('/accounts', { state: { filter: 'abnormal' } })}
+                                className="bg-white dark:bg-[#15161b] rounded-2xl p-5 shadow-sm dark:shadow-xl dark:shadow-black/40 border border-gray-100 dark:border-white/[0.10] flex flex-col justify-between cursor-pointer group hover:border-purple-300 dark:hover:border-purple-800/60 transition-colors"
+                                title={t('dashboard.view_abnormal_accounts', '点击前往账号列表查看异常与风控详情')}
                             >
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">

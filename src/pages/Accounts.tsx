@@ -17,6 +17,7 @@ import AccountDetailsDialog from "../components/accounts/AccountDetailsDialog";
 import AccountGrid from "../components/accounts/AccountGrid";
 import AccountTable from "../components/accounts/AccountTable";
 import AddAccountDialog from "../components/accounts/AddAccountDialog";
+import StartupRefreshControl from "../components/accounts/StartupRefreshControl";
 import DeviceFingerprintDialog from "../components/accounts/DeviceFingerprintDialog";
 import ModalDialog from "../components/common/ModalDialog";
 import Pagination from "../components/common/Pagination";
@@ -26,13 +27,15 @@ import { exportAccounts } from "../services/accountService";
 import { useAccountStore } from "../stores/useAccountStore";
 import { useConfigStore } from "../stores/useConfigStore";
 import { Account, getAccountTier, ImportAccountEntry } from "../types/account";
+import { isAccountAbnormal } from "../utils/accountStatus";
 import { cn } from "../utils/cn";
 import { isTauri } from "../utils/env";
 import { request as invoke } from "../utils/request";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
+import { useLocation } from "react-router-dom";
 
-type FilterType = "all" | "pro" | "ultra" | "enterprise" | "free";
+type FilterType = "all" | "pro" | "ultra" | "enterprise" | "free" | "abnormal";
 type ViewMode = "list" | "grid";
 
 
@@ -103,6 +106,16 @@ function Accounts() {
   useEffect(() => {
     localStorage.setItem('accounts_view_mode', viewMode);
   }, [viewMode]);
+
+  const location = useLocation();
+  useEffect(() => {
+    if (location.state && (location.state as any).filter) {
+      const targetFilter = (location.state as any).filter as FilterType;
+      if (['all', 'pro', 'ultra', 'enterprise', 'free', 'abnormal'].includes(targetFilter)) {
+        setFilter(targetFilter);
+      }
+    }
+  }, [location.state]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deviceAccount, setDeviceAccount] = useState<Account | null>(null);
   const [detailsAccount, setDetailsAccount] = useState<Account | null>(null);
@@ -304,12 +317,14 @@ function Accounts() {
       ultra: searchedAccounts.filter((a) => getAccountTier(a) === "ultra").length,
       enterprise: searchedAccounts.filter((a) => getAccountTier(a) === "enterprise").length,
       free: searchedAccounts.filter((a) => getAccountTier(a) === "free").length,
+      abnormal: searchedAccounts.filter(isAccountAbnormal).length,
     };
   }, [searchedAccounts]);
 
   // 过滤和搜索最终结果
   const filteredAccounts = useMemo(() => {
     if (filter === "all") return searchedAccounts;
+    if (filter === "abnormal") return searchedAccounts.filter(isAccountAbnormal);
     return searchedAccounts.filter((a) => getAccountTier(a) === filter);
   }, [searchedAccounts, filter]);
 
@@ -998,9 +1013,37 @@ function Accounts() {
               {filterCounts.free}
             </span>
           </button>
+
+          {/* 异常 / 封禁 */}
+          <button
+            className={cn(
+              "flex px-2 lg:px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all items-center gap-1 lg:gap-1.5 whitespace-nowrap shrink-0",
+              filter === 'abnormal'
+                ? "bg-white dark:bg-base-100 text-rose-600 dark:text-rose-400 shadow-sm ring-1 ring-rose-500/20"
+                : filterCounts.abnormal > 0
+                  ? "text-rose-600 dark:text-rose-400 hover:text-rose-700 hover:bg-rose-50/50 dark:hover:bg-rose-950/20"
+                  : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-base-content hover:bg-white/40"
+            )}
+            onClick={() => setFilter('abnormal')}
+            title={`${t('accounts.filter_abnormal', '异常/封禁')} (${filterCounts.abnormal})`}
+          >
+            <span className="hidden md:inline">{t('accounts.filter_abnormal', '异常')}</span>
+            <span className={cn(
+              "px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors",
+              filter === 'abnormal'
+                ? "bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-400"
+                : filterCounts.abnormal > 0
+                  ? "bg-rose-100/80 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 font-extrabold"
+                  : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
+            )}>
+              {filterCounts.abnormal}
+            </span>
+          </button>
         </div>
 
-        <div className="flex-1 min-w-[8px]"></div>
+        <div className="flex-1 min-w-[8px] flex items-center justify-end">
+          <StartupRefreshControl />
+        </div>
 
         {/* 操作按钮组 */}
         <div className="flex items-center gap-1.5 shrink-0">

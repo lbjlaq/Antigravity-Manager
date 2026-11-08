@@ -167,8 +167,11 @@ pub fn find_model_percentage(quota: &QuotaData, model_pattern: &str) -> Option<i
 /// * `threshold`: 触发阈值百分比 (0-99)。当监控模型配额 <= threshold 时判定为耗尽
 /// * `monitored_models`: 监控模型列表。若非空，任一监控模型低于阈值即判定为耗尽；若为空，则全部核心模型归零才触发
 pub fn is_account_depleted(account: &Account, threshold: i32, monitored_models: &[String]) -> bool {
-    // 1. 禁用或封禁
-    if account.disabled || account.validation_blocked {
+    // 1. 禁用或封禁；验证锁按 until 判断，过期后不再判死。
+    if account.disabled
+        || account.banned
+        || account.is_validation_block_active(chrono::Utc::now().timestamp())
+    {
         return true;
     }
 
@@ -182,7 +185,18 @@ pub fn is_account_depleted(account: &Account, threshold: i32, monitored_models: 
         return true;
     }
 
-    // 4. 用户指定了监控模型：任一监控模型额度 <= threshold 即触发
+    // 4. 模型级 403：只有所有监控模型都被冻结时才判定整号耗尽；
+    //    未配置监控模型时不因单个模型冻结而整号判死。
+    if !account.forbidden_models.is_empty()
+        && !monitored_models.is_empty()
+        && monitored_models
+            .iter()
+            .all(|model| account.is_model_forbidden(model))
+    {
+        return true;
+    }
+
+    // 5. 用户指定了监控模型：任一监控模型额度 <= threshold 即触发
     if !monitored_models.is_empty() {
         for model_id in monitored_models {
             if let Some(pct) = find_model_percentage(q, model_id) {
@@ -194,7 +208,7 @@ pub fn is_account_depleted(account: &Account, threshold: i32, monitored_models: 
         return false;
     }
 
-    // 5. 默认回退逻辑：未指定监控模型时，检查所有 Gemini 核心模型
+    // 6. 默认回退逻辑：未指定监控模型时，检查所有 Gemini 核心模型
     let gemini_models: Vec<_> = q
         .models
         .iter()
@@ -289,12 +303,14 @@ pub fn find_best_candidate(
     threshold: i32,
     monitored_models: &[String],
 ) -> Option<Account> {
+    let now = chrono::Utc::now().timestamp();
     accounts
         .iter()
         .filter(|acc| {
             acc.id != current_id
                 && !acc.disabled
-                && !acc.validation_blocked
+                && !acc.banned
+                && !acc.is_validation_block_active(now)
                 && !is_account_depleted(acc, threshold, monitored_models)
         })
         .max_by_key(|acc| calculate_candidate_score(acc, monitored_models))
@@ -514,6 +530,27 @@ mod tests {
         // 如果用户只监控 flash，90% > 10% -> 不触发
         let monitored_flash = vec!["gemini-3.8-flash".to_string()];
         assert!(!is_account_depleted(&acc, 10, &monitored_flash));
+    }
+
+    #[test]
+    fn test_is_account_depleted_model_forbidden_only_when_all_monitored_models_frozen() {
+        let mut acc = make_test_account("acc1", "a1@test.com", 90, 90, None);
+        acc.forbidden_models.insert("gemini-3.8-flash".to_string());
+
+        // 只监控被冻结的 Gemini 模型 -> 耗尽
+        assert!(is_account_depleted(
+            &acc,
+            10,
+            &["gemini-3.8-flash".to_string()]
+        ));
+        // 监控未被冻结的 Claude -> 不判死
+        assert!(!is_account_depleted(&acc, 10, &["claude".to_string()]));
+        // 同时监控两者：并非全部冻结 -> 不整号判死
+        assert!(!is_account_depleted(
+            &acc,
+            10,
+            &["gemini-3.8-flash".to_string(), "claude".to_string()]
+        ));
     }
 
     #[test]

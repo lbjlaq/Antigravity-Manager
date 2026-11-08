@@ -145,7 +145,7 @@ pub fn start_scheduler(
             let mut tasks_to_run = Vec::new();
 
             for acc in &accounts {
-                if acc.disabled || acc.proxy_disabled {
+                if acc.disabled || acc.proxy_disabled || acc.banned {
                     continue;
                 }
 
@@ -291,6 +291,7 @@ pub fn start_scheduler(
                             &email,
                             100,
                             Some(&acc_id),
+                            false,
                         )
                         .await;
 
@@ -404,6 +405,7 @@ pub async fn trigger_warmup_for_account(account: &Account) {
                                 &account.email,
                                 100,
                                 Some(&account.id),
+                                false,
                             )
                             .await;
 

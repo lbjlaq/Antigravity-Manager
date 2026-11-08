@@ -211,15 +211,20 @@ pub fn is_acp_server_running() -> bool {
         if name.contains("agy_acp_server") {
             return true;
         }
-        let args_match = process
-            .cmd()
-            .iter()
-            .any(|arg| arg.to_string_lossy().to_lowercase().contains("agy_acp_server"));
+        let args_match = process.cmd().iter().any(|arg| {
+            arg.to_string_lossy()
+                .to_lowercase()
+                .contains("agy_acp_server")
+        });
         if args_match {
             return true;
         }
         if let Some(exe) = process.exe() {
-            if exe.to_string_lossy().to_lowercase().contains("agy_acp_server") {
+            if exe
+                .to_string_lossy()
+                .to_lowercase()
+                .contains("agy_acp_server")
+            {
                 return true;
             }
         }

@@ -157,7 +157,7 @@ export const UpdateNotification: React.FC<UpdateNotificationProps> = ({ onClose 
   return (
     <div
       className={`
-        fixed top-6 right-6 z-[100]
+        fixed top-6 right-6 z-[200]
         transition-all duration-500 ease-[cubic-bezier(0.34,1.56,0.64,1)]
         ${isVisible && !isClosing ? 'translate-y-0 opacity-100 scale-100' : '-translate-y-4 opacity-0 scale-95'}
       `}

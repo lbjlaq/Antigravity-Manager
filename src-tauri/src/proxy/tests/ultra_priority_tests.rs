@@ -39,6 +39,7 @@ fn create_test_token(
     ProxyToken {
         account_id: email.to_string(),
         priority: crate::models::account::default_priority(),
+        model_priorities: HashMap::new(),
         access_token: "test_token".to_string(),
         refresh_token: "test_refresh".to_string(),
         expires_in: 3600,
@@ -49,6 +50,7 @@ fn create_test_token(
         subscription_tier: tier.map(|s| s.to_string()),
         remaining_quota,
         protected_models: HashSet::new(),
+        forbidden_models: std::collections::HashSet::new(),
         health_score,
         reset_time,
         weekly_reset_time: None,
@@ -59,6 +61,9 @@ fn create_test_token(
         model_limits: std::collections::HashMap::new(),
         available_models: supported_models.iter().map(|s| s.to_lowercase()).collect(),
         model_metadata: std::collections::HashMap::new(),
+        model_reset_times: HashMap::new(),
+        model_weekly_reset_times: HashMap::new(),
+        model_quota_windows: HashMap::new(),
     }
 }
 

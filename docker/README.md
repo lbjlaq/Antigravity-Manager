@@ -49,6 +49,7 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.localdist.y
 # 啟動容器 (請替换 your-secret-key 為強密鑰)
 docker run -d \
   --name antigravity-manager \
+  --init \
   -p 8045:8045 \
   -e API_KEY=your-api-key \
   -e WEB_PASSWORD=your-login-password \
@@ -58,14 +59,17 @@ docker run -d \
 ```
 
 > [!TIP]
+> **提示**：鏡像 ENTRYPOINT 已內置 `tini`；`docker run --init` 與 compose 的 `init: true` 屬於額外保險，可同時保留，不會衝突。
+
 > **🧪 體驗 Beta / 預覽版鏡像**：
 > 若需使用最新的 Beta 預發布特性，請拉取對應的 Beta 版本 Tag（預發布版本獨立構建發布，不會覆蓋 `latest` 穩定版標籤）：
 > ```bash
 > # 拉取指定 Beta 預發布版本
 > docker pull lbjlaq/antigravity-manager:v4.8.2-beta.0
 > 
-> # 運行 Beta 容器
+> # 運行 Beta 容器 (推薦加 --init)
 > docker run -d --name antigravity-manager-beta \
+>   --init \
 >   -p 8045:8045 \
 >   -e API_KEY=your-api-key \
 >   -e WEB_PASSWORD=your-login-password \

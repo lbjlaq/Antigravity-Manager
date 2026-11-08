@@ -46,6 +46,27 @@ impl AccountService {
         let mut account =
             modules::upsert_account(user_info.email.clone(), user_info.get_display_name(), token)?;
 
+        // 5.1 权威封禁探测：被封禁账号直接落盘并跳过无意义的配额拉取。
+        match modules::quota::probe_account_ban(&token_res.access_token, Some(&account.id)).await {
+            modules::quota::BanProbeOutcome::Banned(info) => {
+                if let Err(e) = modules::account::mark_account_banned(&account.id, &info) {
+                    modules::logger::log_warn(&format!(
+                        "[Service] Failed to persist ban state for {}: {}",
+                        account.email, e
+                    ));
+                }
+                if let Ok(reloaded) = modules::account::load_account(&account.id) {
+                    account = reloaded;
+                }
+                modules::logger::log_warn(&format!(
+                    "[Service] Account {} is banned by upstream: {} - {}",
+                    account.email, info.code, info.message
+                ));
+                return Ok(account);
+            }
+            _ => {}
+        }
+
         // 6. [NEW] 自动获取配额信息（用于刷新时间排序）
         let email_for_log = account.email.clone();
         let access_token = token_res.access_token.clone();

@@ -1426,9 +1426,8 @@ pub fn write_to_acp_credentials(account: &crate::models::Account) -> Result<(), 
     }
 
     let acp_cred = AcpCredentialInfo {
-        client_id:
-            "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-                .to_string(),
+        client_id: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+            .to_string(),
         client_secret: "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".to_string(),
         refresh_token: account.token.refresh_token.clone(),
         token_uri: "https://oauth2.googleapis.com/token".to_string(),
@@ -1623,8 +1622,7 @@ pub fn switch_acp_account(account: &crate::models::Account) -> Result<usize, Str
 
     // 3. Verify stored credentials match
     let stored = read_acp_credentials()?;
-    if account.token.refresh_token.is_empty()
-        || stored.refresh_token != account.token.refresh_token
+    if account.token.refresh_token.is_empty() || stored.refresh_token != account.token.refresh_token
     {
         return Err(
             "Stored ACP IDE Plugin credentials do not match the selected account; the switch was not confirmed."

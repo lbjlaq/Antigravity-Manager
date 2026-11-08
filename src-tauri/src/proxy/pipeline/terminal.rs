@@ -168,6 +168,14 @@ impl FailureStatusTracker {
         self.record(terminal.disposition().status);
     }
 
+    pub fn has_failures(&self) -> bool {
+        self.saw_failure
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.saw_failure
+    }
+
     pub fn final_status(&self) -> StatusCode {
         self.last_non_rate_limit.unwrap_or_else(|| {
             if self.saw_failure {

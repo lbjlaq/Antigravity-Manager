@@ -171,6 +171,8 @@ pub async fn handle_generate(
     let mut force_rotate = false;
     let mut retry_state = RequestRetryState::default();
     let mut retry_credentials: Option<(String, String, String, String, u64)> = None;
+    let mut attempted_accounts: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     let mut image_permit = None;
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
@@ -294,11 +296,12 @@ pub async fn handle_generate(
             }
         } else {
             let mut token_result = token_manager
-                .get_token(
+                .get_token_filtered(
                     &config.request_type,
                     force_rotate,
                     Some(&affinity_key),
                     &config.final_model,
+                    &attempted_accounts,
                 )
                 .await;
 
@@ -310,11 +313,12 @@ pub async fn handle_generate(
                         );
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     token_result = token_manager
-                        .get_token(
+                        .get_token_filtered(
                             &config.request_type,
                             true,
                             Some(&affinity_key),
                             &config.final_model,
+                            &attempted_accounts,
                         )
                         .await;
                 }
@@ -323,6 +327,13 @@ pub async fn handle_generate(
             match token_result {
                 Ok(t) => t,
                 Err(e) => {
+                    if !failure_statuses.is_empty() {
+                        tracing::warn!(
+                            "[{}] All available accounts attempted or exhausted for this request, breaking retry loop to return upstream error",
+                            trace_id
+                        );
+                        break;
+                    }
                     let headers = build_token_error_headers(
                         Some(mapped_model.as_str()),
                         last_email.as_deref(),
@@ -981,8 +992,16 @@ pub async fn handle_generate(
                         tracing::error!("Failed to set validation block: {}", e);
                     }
                 } else {
-                    // 设置 is_forbidden 状态并持久化（仅当真正非人机验证类 403 时才进入永久禁用）
-                    if let Err(e) = token_manager.set_forbidden(&acc_id, &error_text).await {
+                    // 设置 is_forbidden 状态并持久化（同时传入映射前目标模型与改写后实际上游模型，彻底消除动态改写盲区）
+                    if let Err(e) = token_manager
+                        .set_forbidden_with_models(
+                            &acc_id,
+                            &error_text,
+                            Some(&config.final_model),
+                            Some(&mapped_model),
+                        )
+                        .await
+                    {
                         tracing::error!("Failed to set forbidden status: {}", e);
                     }
                 }
@@ -1174,9 +1193,31 @@ pub async fn handle_generate(
                 force_rotate = false;
             } else {
                 force_rotate = true;
+                if pool_size > 1 && attempted_accounts.len() < pool_size {
+                    attempted_accounts.insert(account_id.clone());
+                } else if pool_size > 1 && attempted_accounts.len() >= pool_size {
+                    attempted_accounts.clear();
+                    attempted_accounts.insert(account_id.clone());
+                }
             }
 
             continue;
+        }
+
+        // 上游配额到期 429 报错绝对不改写，保持原汁原味透传
+        if status_code == 429 && crate::proxy::rate_limit::is_quota_depleted_signal(&error_text) {
+            if let Ok(raw_json) = serde_json::from_str::<Value>(&error_text) {
+                return Ok((
+                    status,
+                    [
+                        ("X-Account-Email", email.as_str()),
+                        ("X-Mapped-Model", mapped_model.as_str()),
+                        ("X-Upstream-Model", config.final_model.as_str()),
+                    ],
+                    Json(raw_json),
+                )
+                    .into_response());
+            }
         }
 
         // 404 等由于模型配置或路径错误的 HTTP 异常，直接报错，不进行无效轮换
@@ -1209,6 +1250,15 @@ pub async fn handle_generate(
         last_email.as_deref(),
         &last_error,
     );
+
+    // 上游配额到期 429 报错绝对不改写，保持原汁原味透传
+    if final_status == StatusCode::TOO_MANY_REQUESTS
+        && crate::proxy::rate_limit::is_quota_depleted_signal(&last_error)
+    {
+        if let Ok(raw_json) = serde_json::from_str::<Value>(&last_error) {
+            return Ok((final_status, headers, Json(raw_json)).into_response());
+        }
+    }
 
     let dual_err = crate::proxy::handlers::common::build_dual_track_error(
         "gemini",

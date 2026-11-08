@@ -807,6 +807,7 @@ mod tests {
         ProxyToken {
             account_id: account_id.to_string(),
             priority: 50,
+            model_priorities: HashMap::new(),
             access_token: "token".to_string(),
             refresh_token: "refresh".to_string(),
             expires_in: 3600,
@@ -817,6 +818,7 @@ mod tests {
             subscription_tier: Some(tier.to_string()),
             remaining_quota: Some(100),
             protected_models: HashSet::new(),
+            forbidden_models: std::collections::HashSet::new(),
             health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
@@ -827,6 +829,9 @@ mod tests {
             model_limits: HashMap::new(),
             available_models: HashSet::new(),
             model_metadata: HashMap::new(),
+            model_reset_times: HashMap::new(),
+            model_weekly_reset_times: HashMap::new(),
+            model_quota_windows: HashMap::new(),
         }
     }
 

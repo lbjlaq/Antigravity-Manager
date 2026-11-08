@@ -1,3 +1,4 @@
+use crate::models::AccountBanInfo;
 use crate::models::QuotaData;
 use crate::modules::config;
 use once_cell::sync::Lazy;
@@ -136,6 +137,95 @@ struct Tier {
     name: Option<String>,
     #[allow(dead_code)]
     slug: Option<String>,
+}
+
+/// 账号状态探测结果。
+#[derive(Debug, Clone)]
+pub enum BanProbeOutcome {
+    /// 生产端点明确返回封禁证据。
+    Banned(AccountBanInfo),
+    /// 生产端点返回 2xx，账号当前可用。
+    Healthy,
+    /// 网络错误 / 429 / 5xx 等，无法判断（绝不能据此解封）。
+    Unknown,
+}
+
+/// 生产端点（权威端点）。
+///
+/// Daily/Sandbox 对被 TOS 封禁的账号仍会返回 200 配额数据；只有生产端点会返回
+/// 403 `TOS_VIOLATION`。因此封禁检测必须固定访问这里，不能复用配额端点的 fallback 链。
+const BAN_PROBE_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+
+/// 探测账号是否被上游封禁。
+///
+/// 只把「生产端点 403 + 明确封禁证据」视为封禁；其余情况一律返回 `Unknown`，
+/// 避免网络抖动或临时限流误伤正常账号。
+pub async fn probe_account_ban(access_token: &str, account_id: Option<&str>) -> BanProbeOutcome {
+    let client = create_standard_client(account_id).await;
+    let payload = json!({ "metadata": { "ideType": "ANTIGRAVITY" } });
+
+    let response = client
+        .post(BAN_PROBE_ENDPOINT)
+        .timeout(std::time::Duration::from_secs(15))
+        .bearer_auth(access_token)
+        .header(
+            rquest::header::USER_AGENT,
+            crate::constants::current_egress_user_agent().as_str(),
+        )
+        .json(&payload)
+        .send()
+        .await;
+
+    match response {
+        Ok(response) => {
+            let status = response.status();
+            if status.is_success() {
+                BanProbeOutcome::Healthy
+            } else if status == rquest::StatusCode::FORBIDDEN {
+                let text = response.text().await.unwrap_or_default();
+                let text_lower = text.to_lowercase();
+                // 验证挑战不是账号封禁，交给配额/代理层的验证锁路径处理。
+                // 否则同一份 403 在“配额刷新”和“代理请求”两条路径上会得到不同结论。
+                if text_lower.contains("validation_required")
+                    || text_lower.contains("validation_url")
+                    || text_lower.contains("verify your account")
+                    || text_lower.contains("further action is required")
+                {
+                    tracing::debug!(
+                        account = account_id.unwrap_or("<unknown>"),
+                        "Production endpoint returned a validation challenge; keeping status unknown"
+                    );
+                    return BanProbeOutcome::Unknown;
+                }
+                match AccountBanInfo::classify_upstream(403, &text) {
+                    Some(info) => {
+                        tracing::debug!(
+                            account = account_id.unwrap_or("<unknown>"),
+                            code = %info.code,
+                            "Production endpoint reported an account ban"
+                        );
+                        BanProbeOutcome::Banned(info)
+                    }
+                    None => BanProbeOutcome::Unknown,
+                }
+            } else {
+                tracing::debug!(
+                    account = account_id.unwrap_or("<unknown>"),
+                    %status,
+                    "Ban probe returned a non-authoritative status"
+                );
+                BanProbeOutcome::Unknown
+            }
+        }
+        Err(e) => {
+            tracing::debug!(
+                account = account_id.unwrap_or("<unknown>"),
+                error = %e,
+                "Ban probe failed; keeping the previous ban state"
+            );
+            BanProbeOutcome::Unknown
+        }
+    }
 }
 
 /// Get shared HTTP Client (15s timeout) for pure info fetching (No JA3)
@@ -586,6 +676,44 @@ pub async fn fetch_quota_with_cache(
                         }
 
                         if let Some(group) = matched_group {
+                            // ================================================================
+                            // 【临时观测结论 · 2026-11-05】Argon 各档位的配额桶归属
+                            // ================================================================
+                            // 以下结论来自当日对真实账号的直连上游对照实验（非官方文档，
+                            // 通过“发请求 + 前后快照 remainingFraction + 用 tokens/Δ 反推桶容量”得出）：
+                            //
+                            //   argon-high   : 计量走 gemini-5h + gemini-weekly（通用高算力池，
+                            //                  反推容量约 1.04M tokens）；
+                            //                  但**准入前提仍是 argon 桶 > 0** ——
+                            //                  实测 argon=0 时，5h 即使有 78% 余量，三档依旧全部 429。
+                            //   argon-medium : 计量走 gemini-argon-wtu-weekly（反推容量约 1.55M tokens）。
+                            //   argon-low    : 与 medium 共享同一个 argon 周桶（两者余量同步变动）。
+                            //
+                            // 【当下结论】用 argon 桶判定可用性是**对的**（它同时是 high 的准入闸门）。
+                            // 【重要警告】切勿“优化”成按档位绑定不同桶 —— 那会让 argon=0 但 5h 健康的
+                            //   账号被误判为可用，制造假阳性并触发上游 429。
+                            //
+                            // 【关于 quotaInfo 的坑】上游对 argon-high 下发的 quotaInfo 是“多桶最小值”
+                            //   （当时多为 5h 的值），与 argon 桶余量不一致，属展示口径差异，
+                            //   **不可作为准入判据**，也不建议据此修改展示逻辑。
+                            //
+                            // 【为何暂不动调度算法】
+                            //   1. 观测期间上游行为正在变动：同一账号 argon-high 的 quotaInfo 在
+                            //      十几分钟内从“等于 5h”变成“不等于任一边”，说明官方可能正在调整该字段；
+                            //   2. 现有逻辑在“可用性判定”上是自洽的（argon 桶既是准入也是门禁）；
+                            //   3. 上游未做请求前容量预估（实测允许单次请求超额吃穿最后一点余量，
+                            //      归零后下一次才 429），因此网关侧无论怎么建桶映射都无法完全预判；
+                            //   4. 此映射属易变的“上游内部实现细节”，固化它违背本项目
+                            //      “避免脆弱硬编码、优先通用解法”的约定。
+                            //
+                            // 【后人须知】若未来出现“argon 额度充足但 argon-high 持续 429”或
+                            //   “argon 已归零但 high 仍可用”的现象，请**先重新实测**（切勿直接改代码）：
+                            //   a) 直连 daily-cloudcode-pa 发三档各 2~3 次，记录每次前后
+                            //      retrieveUserQuotaSummary 的每个桶 remainingFraction；
+                            //   b) 用 tokens ÷ ΔremainingFraction 反推桶容量，容量相同则同桶；
+                            //   c) 特别验证 argon=0 时 high 是否仍被拒（这一步能确认准入闸门是否还在）；
+                            //   d) 若上游已改变归属，再同步更新本注释与判定逻辑。
+                            // ================================================================
                             let bucket_5h = group.buckets.iter().find(|b| {
                                 let win = b.window.to_lowercase();
                                 let bid = b.bucket_id.to_lowercase();
@@ -952,14 +1080,26 @@ pub async fn get_valid_token_for_warmup(
         }
     }
 
-    // Fetch project_id
-    let (project_id, _) = fetch_project_id(
-        &account.token.access_token,
-        &account.email,
-        Some(&account.id),
-    )
-    .await;
-    let final_pid = project_id.unwrap_or_else(|| "bamboo-precept-lgxtn".to_string());
+    // 探活只需要 project_id，不需要每次重新拉取订阅等级。已有缓存时直接复用，
+    // 避免自动选号遍历多个候选时重复请求 loadCodeAssist。
+    // 注意：fetch_quota_with_cache 仍必须每次调用 loadCodeAssist 作为 tier 权威源。
+    let final_pid = if let Some(pid) = account
+        .token
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|pid| !pid.is_empty())
+    {
+        pid.to_string()
+    } else {
+        let (project_id, _) = fetch_project_id(
+            &account.token.access_token,
+            &account.email,
+            Some(&account.id),
+        )
+        .await;
+        project_id.unwrap_or_else(|| "bamboo-precept-lgxtn".to_string())
+    };
 
     Ok((account.token.access_token, final_pid))
 }
@@ -971,7 +1111,8 @@ pub async fn warmup_model_directly(
     project_id: &str,
     email: &str,
     percentage: i32,
-    _account_id: Option<&str>,
+    account_id: Option<&str>,
+    probe_intent: bool,
 ) -> bool {
     // Get currently configured proxy port
     let port = config::load_app_config()
@@ -979,12 +1120,16 @@ pub async fn warmup_model_directly(
         .unwrap_or(8045);
 
     let warmup_url = format!("http://127.0.0.1:{}/internal/warmup", port);
-    let body = json!({
+    let mut body = json!({
         "email": email,
         "model": model_name,
         "access_token": access_token,
-        "project_id": project_id
+        "project_id": project_id,
+        "probe_intent": probe_intent
     });
+    if let Some(acc_id) = account_id {
+        body["account_id"] = json!(acc_id);
+    }
 
     // Use a no-proxy client for local loopback requests
     // This prevents Docker environments from routing localhost through external proxies
@@ -1034,10 +1179,10 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
 
     loop {
         let all_accounts = crate::modules::account::list_accounts().unwrap_or_default();
-        // [FIX] 过滤掉禁用反代的账号
+        // [FIX] 过滤掉禁用反代 / 已被上游封禁的账号
         let target_accounts: Vec<_> = all_accounts
             .into_iter()
-            .filter(|a| !a.disabled && !a.proxy_disabled)
+            .filter(|a| !a.disabled && !a.proxy_disabled && !a.banned)
             .collect();
 
         if target_accounts.is_empty() {
@@ -1193,9 +1338,16 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                         for (idx, (id, email, model, token, pid, pct)) in
                             items.into_iter().enumerate()
                         {
-                            let ok =
-                                warmup_model_directly(&token, &model, &pid, &email, pct, Some(&id))
-                                    .await;
+                            let ok = warmup_model_directly(
+                                &token,
+                                &model,
+                                &pid,
+                                &email,
+                                pct,
+                                Some(&id),
+                                false,
+                            )
+                            .await;
                             if ok {
                                 local_success += 1;
                                 let history_key = format!("{}:{}:100", email, model);
@@ -1256,7 +1408,7 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
         .cloned()
         .ok_or_else(|| "Account not found".to_string())?;
 
-    if account_owned.disabled || account_owned.proxy_disabled {
+    if account_owned.disabled || account_owned.proxy_disabled || account_owned.banned {
         return Err("Account is disabled".to_string());
     }
 
@@ -1320,8 +1472,16 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
 
     tokio::spawn(async move {
         for (name, pct) in models_to_warm {
-            if warmup_model_directly(&token, &name, &pid, &email, pct, Some(&account_id_clone))
-                .await
+            if warmup_model_directly(
+                &token,
+                &name,
+                &pid,
+                &email,
+                pct,
+                Some(&account_id_clone),
+                true,
+            )
+            .await
             {
                 let history_key = format!("{}:{}:100", email, name);
                 let now_ts = chrono::Utc::now().timestamp();

@@ -412,7 +412,7 @@ export default function ApiProxy() {
     const loadAccounts = async () => {
         try {
             const accounts = await listAccounts();
-            setAvailableAccounts(accounts.map(a => ({ id: a.id, email: a.email })));
+            setAvailableAccounts(accounts.filter(a => !a.banned).map(a => ({ id: a.id, email: a.email })));
         } catch (error) {
             console.error('Failed to load accounts:', error);
         }

@@ -5,8 +5,8 @@ pub mod quota;
 pub mod token;
 
 pub use account::{
-    Account, AccountExportItem, AccountExportResponse, AccountIndex, AccountSummary,
-    ActiveClientsStatus, BatchImportProgress, BatchImportResult, DeviceProfile,
+    Account, AccountBanInfo, AccountExportItem, AccountExportResponse, AccountIndex,
+    AccountSummary, ActiveClientsStatus, BatchImportProgress, BatchImportResult, DeviceProfile,
     DeviceProfileVersion, ImportAccountEntry,
 };
 pub use config::{AppConfig, CircuitBreakerConfig, QuotaProtectionConfig};

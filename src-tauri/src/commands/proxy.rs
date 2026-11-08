@@ -882,20 +882,25 @@ pub async fn test_model_connectivity(
 
     let accounts = crate::modules::account::list_accounts().unwrap_or_default();
 
-    let (chosen_account, token, pid) = if let Some(ref acc_id) = target_account_id {
-        if !acc_id.is_empty() {
-            let acc = accounts
-                .iter()
-                .find(|a| &a.id == acc_id)
-                .cloned()
-                .ok_or_else(|| "未找到指定的账号".to_string())?;
-            let (t, p) = crate::modules::quota::get_valid_token_for_warmup(&acc).await?;
-            (acc, t, p)
-        } else {
-            pick_auto_test_account(&accounts).await?
-        }
+    let (chosen_account, token, pid) = if let Some(acc_id) = target_account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        let acc = accounts
+            .iter()
+            .find(|a| a.id == acc_id)
+            .cloned()
+            .ok_or_else(|| "未找到指定的账号".to_string())?;
+        let (t, p) = crate::modules::quota::get_valid_token_for_warmup(&acc).await?;
+        (acc, t, p)
     } else {
-        pick_auto_test_account(&accounts).await?
+        // 桌面端探活是诊断入口，允许包含手动禁用反代的账号；
+        // Web 端自动调度走反代号池语义，见 proxy/server.rs。
+        let probe = crate::modules::probe::pick_auto_probe_account(&accounts, &model, true)
+            .await
+            .map_err(|e| e.to_string())?;
+        (probe.account, probe.access_token, probe.project_id)
     };
 
     let warmup_url = format!("http://127.0.0.1:{}/internal/warmup", port);
@@ -904,7 +909,8 @@ pub async fn test_model_connectivity(
         "model": model,
         "access_token": token,
         "project_id": pid,
-        "account_id": chosen_account.id
+        "account_id": chosen_account.id,
+        "probe_intent": true
     });
 
     let client = rquest::Client::builder()
@@ -927,51 +933,6 @@ pub async fn test_model_connectivity(
         .map_err(|e| format!("解析预热检测结果失败: {}", e))?;
 
     Ok(result)
-}
-
-async fn pick_auto_test_account(
-    accounts: &[crate::models::account::Account],
-) -> Result<(crate::models::account::Account, String, String), String> {
-    let candidates: Vec<_> = accounts
-        .iter()
-        .filter(|a| !a.disabled && !a.proxy_disabled)
-        .cloned()
-        .collect();
-
-    if candidates.is_empty() {
-        return Err(
-            "当前没有开启反代的可用账号，请先在账号页面开启至少一个账号的反代，或指定具体账号测试"
-                .to_string(),
-        );
-    }
-
-    // 优先选择配额充足且健康的账号 (按各模型中最高剩余配额从大到小排序)
-    let mut sorted_candidates = candidates;
-    sorted_candidates.sort_by(|a, b| {
-        let quota_a = a
-            .quota
-            .as_ref()
-            .and_then(|q| q.models.iter().map(|m| m.percentage).max())
-            .unwrap_or(0);
-        let quota_b = b
-            .quota
-            .as_ref()
-            .and_then(|q| q.models.iter().map(|m| m.percentage).max())
-            .unwrap_or(0);
-        quota_b.cmp(&quota_a)
-    });
-
-    let mut last_err = None;
-    for acc in sorted_candidates {
-        match crate::modules::quota::get_valid_token_for_warmup(&acc).await {
-            Ok((t, p)) => return Ok((acc, t, p)),
-            Err(e) => {
-                last_err = Some(e);
-            }
-        }
-    }
-
-    Err(last_err.unwrap_or_else(|| "无法获取候选账号的有效凭证".to_string()))
 }
 
 /// 获取当前生效的官方 Hub 指纹信息

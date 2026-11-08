@@ -54,7 +54,7 @@ impl PeekOutcome {
 /// “预算 30s / 阈值 120s”这类跨层错配。
 pub fn adaptive_ttft_secs(estimated_tokens: u32) -> u64 {
     match estimated_tokens {
-        t if t >= 200_000 => 135,
+        t if t >= 200_000 => 150,
         t if t >= 100_000 => 120,
         t if t >= 50_000 => 90,
         t if t >= 20_000 => 60,
@@ -429,7 +429,7 @@ mod tests {
         assert_eq!(peek_budget_secs(false, true, false, None), 90);
         assert_eq!(peek_budget_secs(false, false, true, None), 60);
         assert_eq!(peek_budget_secs(false, false, true, Some(120_000)), 120);
-        assert_eq!(peek_budget_secs(false, false, false, Some(210_000)), 135);
+        assert_eq!(peek_budget_secs(false, false, false, Some(210_000)), 150);
         assert_eq!(peek_budget_secs(false, false, false, None), 30);
     }
 }

@@ -1,10 +1,12 @@
 import { Ban, Lock, Clock, ExternalLink, Copy, FileText, Terminal, ChevronDown, ChevronRight } from 'lucide-react';
 import { Account } from '../../types/account';
+import { isValidationBlockActive } from '../../utils/accountStatus';
 import { formatDate } from '../../utils/format';
 import { useTranslation, Trans } from 'react-i18next';
 import ModalDialog from '../common/ModalDialog';
 import { useState } from 'react';
 import { showToast } from '../common/ToastContainer';
+import { copyToClipboard } from '../../utils/clipboard';
 
 interface AccountErrorDialogProps {
     account: Account | null;
@@ -20,21 +22,30 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
     const isForbidden = !!account.quota?.is_forbidden;
     const isDisabled = Boolean(account.disabled);
     const isProxyDisabled = account.proxy_disabled;
-    const isValidationBlocked = account.validation_blocked;
+    const isValidationBlocked = isValidationBlockActive(account);
+    const isBanned = Boolean(account.banned);
 
-    const rawReason = account.validation_blocked_reason || account.disabled_reason || account.quota?.forbidden_reason || account.proxy_disabled_reason || '';
+    const rawReason = account.banned_reason || account.validation_blocked_reason || account.disabled_reason || account.quota?.forbidden_reason || account.proxy_disabled_reason || '';
 
     // 深度解析解析错误消息
     const extractErrorMessage = (raw: string) => {
         const trimmed = raw.trim();
         if (!trimmed) return raw;
+        const tryParse = (value: string) => {
+            try {
+                return JSON.parse(value);
+            } catch (_) {
+                return null;
+            }
+        };
+        const start = trimmed.indexOf('{');
+        const end = trimmed.lastIndexOf('}');
+        const parsed = tryParse(trimmed) || (start >= 0 && end > start ? tryParse(trimmed.slice(start, end + 1)) : null);
+        if (!parsed) return raw;
         try {
-            const parsed = JSON.parse(trimmed);
             let innerParsed = null;
             if (typeof parsed?.error === 'string') {
-                try {
-                    innerParsed = JSON.parse(parsed.error);
-                } catch (_) { }
+                innerParsed = tryParse(parsed.error);
             }
             // 按照优先级尝试提取消息
             const msg = innerParsed?.error?.message
@@ -52,64 +63,116 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
     const extractActionInfo = (raw: string): { url: string | null, label: string | null } => {
         const isSafeHttpUrl = (urlStr: string) => /^https?:\/\//i.test(urlStr.trim());
 
-        if (account.validation_url && isSafeHttpUrl(account.validation_url)) {
-            return { url: account.validation_url.trim(), label: null };
-        }
+        const decodeUrl = (value: string) => value
+            .replace(/\\u0026/g, '&')
+            .replace(/\\u003d/g, '=')
+            .replace(/\\\//g, '/')
+            .replace(/&amp;/g, '&')
+            .trim();
 
-        const trimmed = raw.trim();
-        try {
-            const parsed = JSON.parse(trimmed);
-            // Google API 返回的链接通常在 metadata 中
-            const metadata = parsed?.error?.details?.[0]?.metadata;
-            let url = metadata?.appeal_url || metadata?.validation_url || parsed?.validation_url || parsed?.appeal_url;
+        const pickFromJson = (parsed: any): { url: string | null, label: string | null } => {
+            const details = parsed?.error?.details || parsed?.details;
+            const metadataList = Array.isArray(details) ? details.map((item: any) => item?.metadata).filter(Boolean) : [];
+            const metadata = metadataList.find((item: any) => item?.appeal_url) || metadataList.find((item: any) => item?.validation_url);
+            let url = metadata?.appeal_url || metadata?.validation_url || parsed?.appeal_url || parsed?.validation_url;
             let label = metadata?.appeal_url_link_text || metadata?.validation_url_link_text || parsed?.appeal_url_link_text || parsed?.validation_url_link_text;
 
             if (!url && typeof parsed?.error === 'string') {
                 try {
                     const innerParsed = JSON.parse(parsed.error);
-                    const innerMeta = innerParsed?.error?.details?.[0]?.metadata;
+                    const innerDetails = innerParsed?.error?.details;
+                    const innerList = Array.isArray(innerDetails) ? innerDetails.map((item: any) => item?.metadata).filter(Boolean) : [];
+                    const innerMeta = innerList.find((item: any) => item?.appeal_url) || innerList.find((item: any) => item?.validation_url);
                     url = innerMeta?.appeal_url || innerMeta?.validation_url;
                     label = innerMeta?.appeal_url_link_text || innerMeta?.validation_url_link_text;
                 } catch (_) { }
             }
 
-            if (url && isSafeHttpUrl(String(url))) {
-                return { url: String(url).trim(), label: label ? String(label) : null };
-            }
-        } catch (_) { }
+            return url ? { url: decodeUrl(String(url)), label: label ? String(label) : null } : { url: null, label: null };
+        };
 
-        // 最后降级到正则匹配
-        const urlRegex = /https:\/\/[^\s"']+/g;
-        const match = raw.match(urlRegex);
-        if (match) {
-            let extracted = match[0];
-            extracted = extracted.replace(/\\u0026/g, '&').replace(/\\"/g, '').replace(/\\/g, '');
-            if (extracted.endsWith(',')) {
-                extracted = extracted.slice(0, -1);
+        const parseRaw = (): { url: string | null, label: string | null } => {
+            const trimmed = raw.trim();
+            const tryParse = (value: string) => {
+                try { return JSON.parse(value); } catch (_) { return null; }
+            };
+            const start = trimmed.indexOf('{');
+            const end = trimmed.lastIndexOf('}');
+            const parsed = tryParse(trimmed)
+                || (start >= 0 && end > start ? tryParse(trimmed.slice(start, end + 1)) : null);
+
+            if (parsed) {
+                const picked = pickFromJson(parsed);
+                if (picked.url && isSafeHttpUrl(picked.url)) {
+                    return picked;
+                }
             }
-            if (isSafeHttpUrl(extracted)) {
-                return { url: extracted.trim(), label: null };
+
+            // 最后降级到正则匹配：容忍 https:\/\/... 转义，且不能在 & 或反斜杠处截断。
+            const appealIndex = raw.indexOf('appeal_url');
+            const validationIndex = raw.indexOf('validation_url');
+            const source = appealIndex >= 0 ? raw.slice(appealIndex) : (validationIndex >= 0 ? raw.slice(validationIndex) : raw);
+            const urlRegex = /https?:\\?\/\\?\/[^\s"']+/g;
+            const match = source.match(urlRegex);
+            if (match) {
+                const extracted = decodeUrl(match[0]).replace(/[,}\])\\.]+$/g, '');
+                if (isSafeHttpUrl(extracted)) {
+                    return { url: extracted.trim(), label: null };
+                }
             }
+            return { url: null, label: null };
+        };
+
+        // 封禁申诉链接优先（新数据中由后端完整提取并持久化）。
+        if (account.ban_appeal_url && isSafeHttpUrl(account.ban_appeal_url)) {
+            return { url: account.ban_appeal_url.trim(), label: null };
         }
-        return { url: null, label: null };
+
+        const rawResult = parseRaw();
+        const storedUrl = account.validation_url && isSafeHttpUrl(account.validation_url)
+            ? account.validation_url.trim()
+            : null;
+
+        // 历史数据里的 validation_url 可能被旧正则截断；当原始报文能解析出更长、
+        // 且以它开头的完整 URL 时，优先使用原始报文中的完整链接。
+        if (rawResult.url && storedUrl && rawResult.url.length > storedUrl.length && rawResult.url.startsWith(storedUrl)) {
+            return rawResult;
+        }
+        if (storedUrl) {
+            return { url: storedUrl, label: rawResult.label };
+        }
+        return rawResult;
     };
 
     const message = extractErrorMessage(rawReason);
     const { url: actionUrl, label: actionLabel } = extractActionInfo(rawReason);
 
     // 识别错误类型
-    const isViolation = rawReason.toLowerCase().includes('terms of service') || rawReason.toLowerCase().includes('violation');
+    const isViolation = isBanned || rawReason.toLowerCase().includes('terms of service') || rawReason.toLowerCase().includes('violation');
     const isVerificationNeeded = !isViolation && (rawReason.toLowerCase().includes('verify your account') || !!account.validation_url);
 
-    // 复制功能
-    const handleCopyUrl = (url: string) => {
-        navigator.clipboard.writeText(url);
-        showToast(t('accounts.validation_url_copied', '验证链接已复制到剪贴板'), 'success');
+    // 复制功能：使用带降级方案的 clipboard 工具，成功后才提示。
+    const handleCopyUrl = async (url: string) => {
+        const success = await copyToClipboard(url);
+        if (success) {
+            showToast(
+                isViolation
+                    ? t('accounts.appeal_url_copied', '申诉链接已复制到剪贴板')
+                    : t('accounts.validation_url_copied', '验证链接已复制到剪贴板'),
+                'success'
+            );
+        } else {
+            showToast(t('accounts.copy_failed', '复制失败，请手动选择链接复制'), 'error');
+        }
     };
 
-    const handleCopyText = (text: string, msg: string) => {
-        navigator.clipboard.writeText(text);
-        showToast(msg, 'success');
+    const handleCopyText = async (text: string, msg: string) => {
+        const success = await copyToClipboard(text);
+        if (success) {
+            showToast(msg, 'success');
+        } else {
+            showToast(t('accounts.copy_failed', '复制失败，请手动选择内容复制'), 'error');
+        }
     };
 
     const renderMessageWithLinks = (text: string) => {
@@ -160,16 +223,21 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
                         {t('accounts.error_status')}
                     </label>
                     <div className="flex flex-wrap gap-2">
+                        {isBanned ? (
+                            <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 text-xs font-bold ring-1 ring-red-200/50 dark:ring-red-900/20">
+                                <Ban className="w-3 h-3" />
+                                {t('accounts.status.banned', '账号已封禁')}
+                            </span>
+                        ) : isViolation ? (
+                            <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 text-xs font-bold ring-1 ring-red-200/50 dark:ring-red-900/20">
+                                <Lock className="w-3 h-3" />
+                                {t('accounts.status.violation_blocked', '由于违规被禁用')}
+                            </span>
+                        ) : null}
                         {isForbidden && !isViolation && !isVerificationNeeded && !isValidationBlocked && (
                             <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 text-xs font-bold ring-1 ring-red-200/50 dark:ring-red-900/20">
                                 <Lock className="w-3 h-3" />
                                 {t('accounts.status.forbidden')}
-                            </span>
-                        )}
-                        {isViolation && (
-                            <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 text-xs font-bold ring-1 ring-red-200/50 dark:ring-red-900/20">
-                                <Lock className="w-3 h-3" />
-                                {t('accounts.status.violation_blocked', '由于违规被禁用')}
                             </span>
                         )}
                         {isDisabled && (
@@ -178,7 +246,7 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
                                 {t('accounts.status.disabled')}
                             </span>
                         )}
-                        {isProxyDisabled && (
+                        {isProxyDisabled && !isBanned && (
                             <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 text-xs font-bold ring-1 ring-orange-200/50 dark:ring-orange-900/20">
                                 <Ban className="w-3 h-3" />
                                 {t('accounts.status.proxy_disabled')}
@@ -217,28 +285,35 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
 
                     {/* Action Buttons for Verification / Appeal */}
                     {actionUrl && !showRaw && (
-                        <div className="mt-3 flex gap-2">
-                            <a
-                                href={actionUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all shadow-md shadow-blue-500/20 active:scale-[0.98]"
-                            >
-                                <ExternalLink className="w-3 h-3" />
-                                {actionLabel || (isViolation ? t('accounts.go_to_appeal', '前往申诉') : t('accounts.click_to_verify', '点击去验证'))}
-                            </a>
-                            <button
-                                onClick={() => handleCopyUrl(actionUrl)}
-                                className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold bg-gray-100 dark:bg-base-300 hover:bg-gray-200 dark:hover:bg-base-200 text-gray-700 dark:text-gray-300 rounded-lg transition-all active:scale-[0.98]"
-                            >
-                                <Copy className="w-3 h-3" />
-                                {isViolation ? t('accounts.copy_appeal_url', '复制申诉链接') : t('accounts.copy_validation_url', '复制验证链接')}
-                            </button>
-                        </div>
+                        <>
+                            <div className="mt-3 flex gap-2">
+                                <a
+                                    href={actionUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-all shadow-md shadow-blue-500/20 active:scale-[0.98]"
+                                >
+                                    <ExternalLink className="w-3 h-3" />
+                                    {actionLabel || (isViolation ? t('accounts.go_to_appeal', '前往申诉') : t('accounts.click_to_verify', '点击去验证'))}
+                                </a>
+                                <button
+                                    onClick={() => handleCopyUrl(actionUrl)}
+                                    className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold bg-gray-100 dark:bg-base-300 hover:bg-gray-200 dark:hover:bg-base-200 text-gray-700 dark:text-gray-300 rounded-lg transition-all active:scale-[0.98]"
+                                    title={actionUrl}
+                                >
+                                    <Copy className="w-3 h-3" />
+                                    {isViolation ? t('accounts.copy_appeal_url', '复制申诉链接') : t('accounts.copy_validation_url', '复制验证链接')}
+                                </button>
+                            </div>
+                            {/* 完整链接明文展示：即使剪贴板受限，也能手动选择完整链接 */}
+                            <div className="mt-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-base-300/50 border border-gray-100 dark:border-base-200 text-[10px] font-mono text-gray-500 dark:text-gray-400 break-all select-all">
+                                {actionUrl}
+                            </div>
+                        </>
                     )}
 
                     {/* Terminal Fix Guide */}
-                    {(isForbidden || isVerificationNeeded) && !showRaw && (
+                    {(isForbidden || isVerificationNeeded) && !isBanned && !showRaw && (
                         <div className="mt-4 border border-blue-100 dark:border-blue-900/40 rounded-xl overflow-hidden shadow-sm">
                             <button
                                 onClick={() => setShowGuide(!showGuide)}

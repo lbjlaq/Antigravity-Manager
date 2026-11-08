@@ -48,11 +48,12 @@ async function runTests() {
     const soonReset = new Date(now + 12 * 3600 * 1000).toISOString(); // 12 hours left
     const farReset = new Date(now + 48 * 3600 * 1000).toISOString();  // 48 hours left
 
-    const makeAccount = (id: string, name: string, geminiWeeklyPct: number, geminiReset: string, claudeWeeklyPct: number, claudeReset: string, disabled = false): Account => ({
+    const makeAccount = (id: string, name: string, geminiWeeklyPct: number, geminiReset: string, claudeWeeklyPct: number, claudeReset: string, disabled = false, priority = 50): Account => ({
         id,
         name,
         email: `${id}@example.com`,
         proxy_disabled: disabled,
+        priority,
         quota: {
             last_updated: now,
             subscription_tier: 'PRO',
@@ -96,11 +97,11 @@ async function runTests() {
         assertEqual(modal?.candidates[1].accountId, 'acc-4', 'Candidate 2 should be acc-4');
     });
 
-    // Test 2: Activate Pedal Mode & Snapshot Isolation
-    await test('2. Activates Pedal Mode, locks non-target accounts, preserves pre-existing disabled state', async () => {
-        const toggled: Array<{ id: string; enable: boolean; reason?: string }> = [];
-        const mockToggle = async (id: string, enable: boolean, reason?: string) => {
-            toggled.push({ id, enable, reason });
+    // Test 2: Activate Pedal Mode & Priority Boost
+    await test('2. Activates Pedal Mode, boosts target accounts to priority 1, leaves other accounts active', async () => {
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
         };
 
         const modal = usePedalModeStore.getState().pendingModal!;
@@ -108,21 +109,22 @@ async function runTests() {
             modal.model,
             modal.candidates.map(c => c.accountId),
             [acc1, acc2, acc3, acc4],
-            mockToggle
+            mockSetPriority
         );
 
         const state = usePedalModeStore.getState();
         assert(state.active === true, 'Pedal mode should be active');
         assertEqual(state.targetModel, 'gemini', 'targetModel should be gemini');
         assert(state.targetAccountIds.includes('acc-3') && state.targetAccountIds.includes('acc-4'), 'target accounts should be acc-3 and acc-4');
-        assertEqual(state.snapshotDisabledIds.length, 1, 'Pre-disabled accounts snapshot should contain acc-2');
-        assertEqual(state.snapshotDisabledIds[0], 'acc-2', 'acc-2 should be in snapshotDisabledIds');
-        assertEqual(state.temporarilyDisabledIds.length, 1, 'acc-1 should be temporarily disabled');
-        assertEqual(state.temporarilyDisabledIds[0], 'acc-1', 'acc-1 should be in temporarilyDisabledIds');
+        assertEqual(state.originalPriorities['acc-3'], 50, 'Original priority for acc-3 should be saved as 50');
+        assertEqual(state.originalPriorities['acc-4'], 50, 'Original priority for acc-4 should be saved as 50');
 
-        // Check toggle calls
-        assert(toggled.some(t => t.id === 'acc-1' && t.enable === false && t.reason === 'pedal_mode_locked'), 'acc-1 was toggled off with pedal_mode_locked');
-        assert(!toggled.some(t => t.id === 'acc-2'), 'acc-2 was not toggled because it was already disabled');
+        // Verify priorities boosted to 1
+        assert(priorities.some(p => p.id === 'acc-3' && p.priority === 1), 'acc-3 priority was boosted to 1');
+        assert(priorities.some(p => p.id === 'acc-4' && p.priority === 1), 'acc-4 priority was boosted to 1');
+        // Non-target accounts acc-1 and acc-2 are NOT modified or disabled
+        assert(!priorities.some(p => p.id === 'acc-1'), 'acc-1 was not touched');
+        assert(!priorities.some(p => p.id === 'acc-2'), 'acc-2 was not touched');
     });
 
     // Test 3: Partial exhaustion does not exit
@@ -130,37 +132,37 @@ async function runTests() {
         const partiallyDrainedAcc3 = makeAccount('acc-3', 'Account 3', 0, soonReset, 80, farReset);
         const stillActiveAcc4 = makeAccount('acc-4', 'Account 4', 15, soonReset, 80, farReset);
 
-        const toggled: Array<{ id: string; enable: boolean }> = [];
-        const mockToggle = async (id: string, enable: boolean) => {
-            toggled.push({ id, enable });
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
         };
 
-        await store.checkAndAutoRecover([acc1, acc2, partiallyDrainedAcc3, stillActiveAcc4], mockToggle);
+        await store.checkAndAutoRecover([acc1, acc2, partiallyDrainedAcc3, stillActiveAcc4], mockSetPriority);
 
         const state = usePedalModeStore.getState();
         assert(state.active === true, 'Pedal mode should remain active because acc-4 still has 15%');
-        assertEqual(toggled.length, 0, 'No accounts should be restored yet');
+        assertEqual(priorities.length, 0, 'No accounts should be restored yet');
     });
 
     // Test 4: Complete exhaustion triggers auto-recovery
-    await test('4. Complete exhaustion (all target accounts at 0%) automatically exits and restores only temporarily disabled accounts', async () => {
+    await test('4. Complete exhaustion (all target accounts at 0%) automatically exits and restores original priorities', async () => {
         const drainedAcc3 = makeAccount('acc-3', 'Account 3', 0, soonReset, 80, farReset);
         const drainedAcc4 = makeAccount('acc-4', 'Account 4', 0, soonReset, 80, farReset);
 
-        const toggled: Array<{ id: string; enable: boolean }> = [];
-        const mockToggle = async (id: string, enable: boolean) => {
-            toggled.push({ id, enable });
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
         };
 
-        await store.checkAndAutoRecover([acc1, acc2, drainedAcc3, drainedAcc4], mockToggle);
+        await store.checkAndAutoRecover([acc1, acc2, drainedAcc3, drainedAcc4], mockSetPriority);
 
         const state = usePedalModeStore.getState();
         assert(state.active === false, 'Pedal mode should have exited');
         assertEqual(state.targetAccountIds.length, 0, 'targetAccountIds should be cleared');
 
-        // Verify restoration: only acc-1 was restored, NOT acc-2
-        assert(toggled.some(t => t.id === 'acc-1' && t.enable === true), 'acc-1 was restored');
-        assert(!toggled.some(t => t.id === 'acc-2'), 'acc-2 was NOT restored (kept user-disabled)');
+        // Verify priority restoration to 50
+        assert(priorities.some(p => p.id === 'acc-3' && p.priority === 50), 'acc-3 priority restored to 50');
+        assert(priorities.some(p => p.id === 'acc-4' && p.priority === 50), 'acc-4 priority restored to 50');
     });
 
     // Test 5: Suppress model prevents re-prompting
@@ -193,21 +195,22 @@ async function runTests() {
             active: true,
             targetModel: 'gemini',
             targetAccountIds: ['acc-ghost'],
-            snapshotDisabledIds: ['acc-2'],
-            temporarilyDisabledIds: ['acc-1'],
+            originalPriorities: { 'acc-ghost': 50 },
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
         });
 
-        const toggled: Array<{ id: string; enable: boolean }> = [];
-        const mockToggle = async (id: string, enable: boolean) => {
-            toggled.push({ id, enable });
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
         };
 
         // Acc-ghost is missing from accounts list
-        await store.checkAndAutoRecover([acc1, acc2], mockToggle);
+        await store.checkAndAutoRecover([acc1, acc2], mockSetPriority);
 
         const state = usePedalModeStore.getState();
         assert(state.active === false, 'Should automatically exit pedal mode');
-        assert(toggled.some(t => t.id === 'acc-1' && t.enable === true), 'acc-1 should be restored');
+        assert(priorities.some(p => p.id === 'acc-ghost' && p.priority === 50), 'acc-ghost priority should be restored to 50');
     });
 
     // Test 8: Official reset time reached (diffHours <= 0) triggers auto-recovery even if quota > 0%
@@ -220,20 +223,22 @@ async function runTests() {
             active: true,
             targetModel: 'gemini',
             targetAccountIds: ['acc-3', 'acc-4'],
-            snapshotDisabledIds: ['acc-2'],
-            temporarilyDisabledIds: ['acc-1'],
+            originalPriorities: { 'acc-3': 50, 'acc-4': 50 },
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
         });
 
-        const toggled: Array<{ id: string; enable: boolean }> = [];
-        const mockToggle = async (id: string, enable: boolean) => {
-            toggled.push({ id, enable });
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
         };
 
-        await store.checkAndAutoRecover([acc1, acc2, expiredAcc3, expiredAcc4], mockToggle);
+        await store.checkAndAutoRecover([acc1, acc2, expiredAcc3, expiredAcc4], mockSetPriority);
 
         const state = usePedalModeStore.getState();
         assert(state.active === false, 'Should automatically exit pedal mode because reset time is reached');
-        assert(toggled.some(t => t.id === 'acc-1' && t.enable === true), 'acc-1 should be restored');
+        assert(priorities.some(p => p.id === 'acc-3' && p.priority === 50), 'acc-3 priority restored to 50');
+        assert(priorities.some(p => p.id === 'acc-4' && p.priority === 50), 'acc-4 priority restored to 50');
     });
 
     // Test 9: Quota data loading / undefined protection prevents premature exit
@@ -243,6 +248,7 @@ async function runTests() {
             name: 'Account 3 (Loading)',
             email: 'acc-3@example.com',
             proxy_disabled: false,
+            priority: 1,
             quota: undefined,
         } as any;
 
@@ -250,20 +256,273 @@ async function runTests() {
             active: true,
             targetModel: 'gemini',
             targetAccountIds: ['acc-3'],
-            snapshotDisabledIds: ['acc-2'],
-            temporarilyDisabledIds: ['acc-1'],
+            originalPriorities: { 'acc-3': 50 },
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
         });
 
-        const toggled: Array<{ id: string; enable: boolean }> = [];
-        const mockToggle = async (id: string, enable: boolean) => {
-            toggled.push({ id, enable });
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
         };
 
-        await store.checkAndAutoRecover([acc1, unreadyAcc3], mockToggle);
+        await store.checkAndAutoRecover([acc1, unreadyAcc3], mockSetPriority);
 
         const state = usePedalModeStore.getState();
         assert(state.active === true, 'Pedal mode must stay active while quota data is loading/unavailable');
-        assertEqual(toggled.length, 0, 'No account should be toggled');
+        assertEqual(priorities.length, 0, 'No account should be toggled');
+    });
+
+    // Test 10: Missing reset_time with positive quota must NOT trigger premature allReset exit
+    await test('10. Missing or unparseable reset_time with remaining quota (>0%) must NOT trigger premature exit', async () => {
+        const accNoResetTime: Account = {
+            id: 'acc-3',
+            name: 'Account 3 (No Reset Time)',
+            email: 'acc-3@example.com',
+            proxy_disabled: false,
+            priority: 1,
+            quota: {
+                last_updated: now,
+                subscription_tier: 'PRO',
+                quota_groups: [
+                    {
+                        display_name: 'Gemini Models',
+                        buckets: [
+                            { bucket_id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.45, reset_time: undefined as any },
+                        ],
+                    },
+                ],
+                models: [],
+            },
+        } as any;
+
+        usePedalModeStore.setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3'],
+            originalPriorities: { 'acc-3': 50 },
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
+        });
+
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
+        };
+
+        await store.checkAndAutoRecover([acc1, accNoResetTime], mockSetPriority);
+
+        const state = usePedalModeStore.getState();
+        assert(state.active === true, 'Pedal mode must remain active when account has 45% quota even without resetTime');
+        assertEqual(priorities.length, 0, 'No priority should be restored while account still has quota');
+    });
+
+    // Test 11: Individual account reaches 0% quota restores its priority without killing pedal mode if others remain
+    await test('11. Individual account reaching 0% quota restores its own priority while other targets remain active', async () => {
+        const drainedAcc3 = makeAccount('acc-3', 'Account 3 Drained', 0, soonReset, 80, farReset, false, 1);
+        const activeAcc4 = makeAccount('acc-4', 'Account 4 Still Active', 25, soonReset, 80, farReset, false, 1);
+
+        usePedalModeStore.setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3', 'acc-4'],
+            originalPriorities: { 'acc-3': 50, 'acc-4': 50 },
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
+        });
+
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
+        };
+
+        await store.checkAndAutoRecover([acc1, drainedAcc3, activeAcc4], mockSetPriority);
+
+        const state = usePedalModeStore.getState();
+        assert(state.active === true, 'Pedal mode must stay active because acc-4 still has 25% quota');
+        assert(priorities.some(p => p.id === 'acc-3' && p.priority === 50), 'acc-3 priority must be restored to 50 upon draining');
+        assert(!priorities.some(p => p.id === 'acc-4'), 'acc-4 priority must NOT be restored while it still has quota');
+    });
+
+    // Test 12: Reset timestamp reached ends the cycle even if the quota snapshot still shows < 90%
+    await test('12. Reset time reached exits pedal mode even when quota snapshot is still below 90%', async () => {
+        const pastReset = new Date(now - 3600 * 1000).toISOString();
+        const resetAcc3 = makeAccount('acc-3', 'Account 3 Reset', 50, pastReset, 80, farReset, false, 1);
+        const resetAcc4 = makeAccount('acc-4', 'Account 4 Reset', 50, pastReset, 80, farReset, false, 1);
+
+        usePedalModeStore.setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3', 'acc-4'],
+            originalPriorities: { 'acc-3': 50, 'acc-4': 50 },
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
+        });
+
+        const priorities: Array<{ id: string; priority: number }> = [];
+        const mockSetPriority = async (id: string, priority: number) => {
+            priorities.push({ id, priority });
+        };
+
+        await store.checkAndAutoRecover([acc1, resetAcc3, resetAcc4], mockSetPriority);
+
+        const state = usePedalModeStore.getState();
+        assert(state.active === false, 'Pedal mode must exit once the official reset timestamp is reached');
+        assert(priorities.some(p => p.id === 'acc-3' && p.priority === 50), 'acc-3 priority must be restored on reset');
+        assert(priorities.some(p => p.id === 'acc-4' && p.priority === 50), 'acc-4 priority must be restored on reset');
+    });
+
+    // Test 13: Per-model priority isolation during Pedal Mode activation and exit
+    await test('13. Scopes Pedal Mode priority boost to target model family while preserving other model family priority', async () => {
+        const customAcc = {
+            ...makeAccount('acc-custom', 'Custom Priority Account', 40, soonReset, 85, farReset, false, 50),
+            model_priorities: { claude: 80 },
+        } as Account;
+
+        const updates: Array<{ id: string; priority: number; modelPriorities?: Record<string, number> }> = [];
+        const mockSetPriority = async (id: string, priority: number, modelPriorities?: any) => {
+            updates.push({ id, priority, modelPriorities });
+        };
+
+        await store.activatePedalMode('gemini', ['acc-custom'], [acc1, customAcc], mockSetPriority);
+
+        assertEqual(updates.length, 1, 'Should update target account once on activate');
+        assertEqual(updates[0].id, 'acc-custom');
+        assertEqual(updates[0].modelPriorities?.gemini, 1, 'Gemini model priority should be boosted to 1');
+        assertEqual(updates[0].modelPriorities?.claude, 80, 'Claude model priority should preserve custom 80');
+
+        updates.length = 0;
+        await store.manualExit(mockSetPriority);
+        assertEqual(updates.length, 1, 'Should restore target account on exit');
+        assertEqual(updates[0].priority, 50, 'Base priority restored to 50');
+        assertEqual(updates[0].modelPriorities?.claude, 80, 'Original Claude priority 80 restored');
+        assertEqual(updates[0].modelPriorities?.gemini, undefined, 'Temporary Gemini override cleared');
+    });
+
+    await test('14. checkAndAutoRecover guards against concurrent/re-entrant executions', async () => {
+        const store = usePedalModeStore.getState();
+        const testDrainedAcc3 = makeAccount('acc-3', 'Account 3', 0, soonReset, 80, farReset);
+        let priorityCalls = 0;
+        const delayedPriorityUpdater = async (_id: string, _p: number) => {
+            priorityCalls++;
+            await new Promise(r => setTimeout(r, 50));
+        };
+        await store.activatePedalMode('gemini', ['acc-3'], [acc1, testDrainedAcc3], delayedPriorityUpdater);
+        priorityCalls = 0;
+
+        // Trigger checkAndAutoRecover twice concurrently with testDrainedAcc3 (which should exit)
+        const p1 = store.checkAndAutoRecover([acc1, testDrainedAcc3], delayedPriorityUpdater);
+        const p2 = store.checkAndAutoRecover([acc1, testDrainedAcc3], delayedPriorityUpdater);
+        await Promise.all([p1, p2]);
+
+        assertEqual(priorityCalls, 1, 'Only one auto-recovery process should execute priority restoration');
+    });
+
+    await test('15. checkAndAutoRecover skips redundant legacyToggle calls when account is already enabled', async () => {
+        const store = usePedalModeStore.getState();
+        const testDrainedAcc3 = makeAccount('acc-3', 'Account 3', 0, soonReset, 80, farReset);
+        let toggleCalls = 0;
+        const mockToggle = async (_id: string, _enable: boolean) => {
+            toggleCalls++;
+        };
+        // Set state with temporarilyDisabledIds where the account in accounts is already proxy_disabled === false
+        (usePedalModeStore as any).setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3'],
+            originalPriorities: { 'acc-3': 50 },
+            temporarilyDisabledIds: ['acc-1'], // acc1 has proxy_disabled: false
+        });
+
+        await store.checkAndAutoRecover([acc1, testDrainedAcc3], async () => {}, mockToggle);
+        assertEqual(toggleCalls, 0, 'legacyToggle should NOT be called if account is already enabled');
+    });
+
+    await test('16. resetPedalModeState cleanly clears state and removes localStorage key', async () => {
+        const store = usePedalModeStore.getState();
+        (usePedalModeStore as any).setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3'],
+            originalPriorities: { 'acc-3': 50 },
+        });
+        localStorage.setItem('antigravity_pedal_mode_state', JSON.stringify({ active: true }));
+
+        await store.resetPedalModeState();
+        const state = usePedalModeStore.getState();
+        assertEqual(state.active, false, 'active should be false');
+        assertEqual(state.targetModel, null, 'targetModel should be null');
+        assertEqual(localStorage.getItem('antigravity_pedal_mode_state'), null, 'localStorage key should be deleted');
+    });
+
+    await test('17. Exposes modelBadge (e.g. Claude 4.6 vs Claude 5.5) on candidates and supports activating a user-selected subset', async () => {
+        const store = usePedalModeStore.getState();
+        store.clearSuppress();
+        usePedalModeStore.setState({ active: false, pendingModal: null });
+
+        const accClaude46: Account = {
+            ...makeAccount('acc-c46', 'Legacy 4.6 Account', 90, farReset, 100, soonReset, false, 50),
+            quota: {
+                last_updated: now,
+                subscription_tier: 'PRO',
+                quota_groups: [
+                    {
+                        display_name: 'Claude and GPT models',
+                        buckets: [
+                            { bucket_id: '3p-weekly', window: 'weekly', remaining_fraction: 1.0, reset_time: soonReset },
+                        ],
+                    },
+                ],
+                models: [
+                    { name: 'claude-sonnet-4-6', percentage: 100, reset_time: soonReset },
+                    { name: 'claude-opus-4-6-thinking', percentage: 100, reset_time: soonReset },
+                ],
+            },
+        } as any;
+
+        const accClaude55: Account = {
+            ...makeAccount('acc-c55', 'Flagship 5.5 Account', 90, farReset, 100, soonReset, false, 50),
+            quota: {
+                last_updated: now,
+                subscription_tier: 'PRO',
+                quota_groups: [
+                    {
+                        display_name: 'Claude and GPT models',
+                        buckets: [
+                            { bucket_id: '3p-weekly', window: 'weekly', remaining_fraction: 1.0, reset_time: soonReset },
+                        ],
+                    },
+                ],
+                models: [
+                    { name: 'claude-opus-5-5-high', percentage: 100, reset_time: soonReset },
+                    { name: 'claude-sonnet-5-5-high', percentage: 100, reset_time: soonReset },
+                ],
+            },
+        } as any;
+
+        store.checkCandidates([accClaude46, accClaude55]);
+        const modal = usePedalModeStore.getState().pendingModal;
+        assert(modal !== null, 'Should pop up Claude pedal modal');
+        assertEqual(modal?.model, 'claude');
+        assertEqual(modal?.candidates.length, 2);
+
+        const c46 = modal?.candidates.find(c => c.accountId === 'acc-c46');
+        const c55 = modal?.candidates.find(c => c.accountId === 'acc-c55');
+        assertEqual(c46?.modelBadge, 'Claude 4.6', 'Candidate 1 must show Claude 4.6 badge');
+        assertEqual(c55?.modelBadge, 'Claude 5.5', 'Candidate 2 must show Claude 5.5 badge');
+
+        // User unchecks acc-c46 and only selects acc-c55
+        const boostedIds: string[] = [];
+        await store.activatePedalMode('claude', ['acc-c55'], [accClaude46, accClaude55], async (id) => {
+            boostedIds.push(id);
+        });
+
+        const activeState = usePedalModeStore.getState();
+        assertEqual(activeState.active, true);
+        assertEqual(activeState.targetAccountIds.length, 1, 'Only selected account should be in targetAccountIds');
+        assertEqual(activeState.targetAccountIds[0], 'acc-c55');
+        assertEqual(boostedIds.length, 1, 'Only selected account should have priority boosted');
+        assertEqual(boostedIds[0], 'acc-c55');
     });
 
     console.log(`\nPedal Mode Tests Summary: ${passed} passed, ${failed} failed.`);

@@ -568,12 +568,10 @@ pub fn build_dual_track_error_with_ua_and_lang(
     let sanitized_error_text = crate::proxy::upstream::client::strip_internal_markers(error_text);
     let error_text = sanitized_error_text.as_str();
     let lower = error_text.to_lowercase();
-    let is_internal_limited = lower.contains("all accounts limited")
-        || lower.contains("no accounts available")
-        || lower.contains("all accounts failed")
-        || lower.contains("token pool is empty")
-        || lower.contains("all accounts exhausted")
-        || lower.contains("all accounts unhealthy");
+    let is_internal_limited =
+        crate::proxy::pipeline::policy::UpstreamClassification::is_internal_gateway_exhaustion(
+            &lower,
+        );
 
     let is_network_error = lower.contains("http request failed")
         || lower.contains("failed to connect")
@@ -593,6 +591,13 @@ pub fn build_dual_track_error_with_ua_and_lang(
 
     let is_not_found = is_model_not_found_error(status_code, error_text);
 
+    // 账号被上游封禁 / 权限拒绝：与「容量耗尽」「模型不存在」严格区分，
+    // 避免 403 被 Claude 协议映射为 503 后与真实容量问题混淆。
+    let is_account_forbidden = lower.contains("tos_violation")
+        || lower.contains("violation of terms of service")
+        || lower.contains("disabled in this account")
+        || (status_code == 403 && lower.contains("permission_denied"));
+
     // 1. 深度解析并反转义上游错误
     let (raw_upstream_msg, parsed_upstream) = parse_raw_upstream_error(error_text);
 
@@ -605,6 +610,16 @@ pub fn build_dual_track_error_with_ua_and_lang(
             Some(effective_lang),
         ) {
         ua_diag
+    } else if is_account_forbidden {
+        (
+            i18n_err.account_forbidden_title.replace("{model}", model),
+            i18n_err
+                .account_forbidden_diag
+                .replace("{error}", &error_text.chars().take(400).collect::<String>()),
+            i18n_err.account_forbidden_sug.to_string(),
+            "permission_error",
+            "account_forbidden",
+        )
     } else if is_internal_limited {
         (
             i18n_err.all_accounts_limited_title.to_string(),

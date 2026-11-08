@@ -2376,6 +2376,8 @@ pub async fn handle_chat_completions(
     let mut last_email: Option<String> = None;
     let mut retry_state = RequestRetryState::default();
     let mut retry_credentials: Option<(String, String, String, String, u64)> = None;
+    let mut attempted_accounts: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     let mut image_permit = None;
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
@@ -2469,11 +2471,12 @@ pub async fn handle_chat_completions(
             }
         } else {
             let mut token_result = token_manager
-                .get_token(
+                .get_token_filtered(
                     &config.request_type,
                     force_rotate,
                     Some(&affinity_key),
                     &mapped_model,
+                    &attempted_accounts,
                 )
                 .await;
 
@@ -2485,11 +2488,12 @@ pub async fn handle_chat_completions(
                         );
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     token_result = token_manager
-                        .get_token(
+                        .get_token_filtered(
                             &config.request_type,
                             true,
                             Some(&affinity_key),
                             &mapped_model,
+                            &attempted_accounts,
                         )
                         .await;
                 }
@@ -2498,6 +2502,13 @@ pub async fn handle_chat_completions(
             match token_result {
                 Ok(t) => t,
                 Err(e) => {
+                    if !failure_statuses.is_empty() {
+                        tracing::warn!(
+                            "[{}] All available accounts attempted or exhausted for this request, breaking retry loop to return upstream error",
+                            trace_id
+                        );
+                        break;
+                    }
                     // [Issue #3414] Attach headers with Retry-After if temporary cooldown exists
                     let headers = crate::proxy::handlers::common::build_token_error_headers(
                         Some(mapped_model.as_str()),
@@ -3461,8 +3472,16 @@ pub async fn handle_chat_completions(
                         tracing::error!("Failed to set validation block: {}", e);
                     }
                 } else {
-                    // 设置 is_forbidden 状态并持久化（仅当真正非人机验证类 403 时才进入永久禁用）
-                    if let Err(e) = token_manager.set_forbidden(&acc_id, &error_text).await {
+                    // 设置 is_forbidden 状态并持久化（同时传入请求模型与映射模型，彻底消除动态改写盲区）
+                    if let Err(e) = token_manager
+                        .set_forbidden_with_models(
+                            &acc_id,
+                            &error_text,
+                            Some(&mapped_model),
+                            Some(&config.final_model),
+                        )
+                        .await
+                    {
                         tracing::error!("Failed to set forbidden status: {}", e);
                     }
                 }
@@ -3508,6 +3527,12 @@ pub async fn handle_chat_completions(
                 force_rotate = false;
             } else {
                 force_rotate = true;
+                if pool_size > 1 && attempted_accounts.len() < pool_size {
+                    attempted_accounts.insert(account_id.clone());
+                } else if pool_size > 1 && attempted_accounts.len() >= pool_size {
+                    attempted_accounts.clear();
+                    attempted_accounts.insert(account_id.clone());
+                }
             }
 
             tracing::warn!(
@@ -4421,6 +4446,8 @@ pub async fn handle_completions(
     let mut last_email: Option<String> = None;
     let mut retry_state = RequestRetryState::default();
     let mut retry_credentials: Option<(String, String, String, String, u64)> = None;
+    let mut attempted_accounts: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     let mut failure_statuses = FailureStatusTracker::default();
     let mut used_attempts = 0;
 
@@ -4492,11 +4519,12 @@ pub async fn handle_completions(
             credentials
         } else {
             let mut token_result = token_manager
-                .get_token(
+                .get_token_filtered(
                     &config.request_type,
                     force_rotate,
                     session_id,
                     &mapped_model,
+                    &attempted_accounts,
                 )
                 .await;
 
@@ -4508,7 +4536,13 @@ pub async fn handle_completions(
                         );
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     token_result = token_manager
-                        .get_token(&config.request_type, true, session_id, &mapped_model)
+                        .get_token_filtered(
+                            &config.request_type,
+                            true,
+                            session_id,
+                            &mapped_model,
+                            &attempted_accounts,
+                        )
                         .await;
                 }
             }
@@ -4516,6 +4550,13 @@ pub async fn handle_completions(
             match token_result {
                 Ok(t) => t,
                 Err(e) => {
+                    if !failure_statuses.is_empty() {
+                        tracing::warn!(
+                            "[{}] All available accounts attempted or exhausted for this request, breaking retry loop to return upstream error",
+                            trace_id
+                        );
+                        break;
+                    }
                     let headers = crate::proxy::handlers::common::build_token_error_headers(
                         Some(mapped_model.as_str()),
                         None,
@@ -5580,6 +5621,14 @@ pub async fn handle_completions(
                 ));
             }
             force_rotate = should_rotate_account(status_code, Some(&strategy));
+            if force_rotate {
+                if pool_size > 1 && attempted_accounts.len() < pool_size {
+                    attempted_accounts.insert(account_id.clone());
+                } else if pool_size > 1 && attempted_accounts.len() >= pool_size {
+                    attempted_accounts.clear();
+                    attempted_accounts.insert(account_id.clone());
+                }
+            }
             continue;
         } else {
             // 不可重试

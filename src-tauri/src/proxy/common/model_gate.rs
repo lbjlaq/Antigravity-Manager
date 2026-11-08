@@ -287,7 +287,7 @@ pub async fn gate_inbound_model(
         return ModelGate::Allow(final_model);
     }
 
-    let allowed =
+    let mut allowed =
         downstream_exposed_models(custom_mapping, token_manager, only_raw_quota_models).await;
     if allowed.is_empty() {
         // 号池有元数据、但全部被基准线过滤（例如只上报了已下线模型）时 fail-open，
@@ -308,28 +308,55 @@ pub async fn gate_inbound_model(
     );
     let strip = |s: &str| model_mapping::strip_tier_suffix(s);
 
-    let exact_allowed = allowed.contains(&final_model);
-    let routed_allowed = allowed.contains(&routed);
+    let mut exact_allowed = allowed.contains(&final_model);
+    let mut routed_allowed = allowed.contains(&routed);
     // 族级兜底：routed 的具体档位可能未被号池上报（例如只报 high/medium/low），
     // 只要同族基底在集合里就视为可用，具体档位由路由层决定。
     // 但仅限“router 真正改写过模型名”的场景（别名 / 裸名→档位）：
     // `-thinking` / `@default` 这类 router 不认识的尾巴不能被 `strip_tier_suffix` 抹平后放行，
     // 否则无效 model-id 会穿透门禁、打到上游并给每个账号写入 900s 熔断。
-    let family_member =
+    let mut family_member =
         if family_fallback_applicable(exact_allowed, routed_allowed, &final_model, &routed) {
             allowed.iter().find(|a| strip(a) == strip(&routed)).cloned()
         } else {
             None
         };
-    let family_allowed = family_member.is_some();
 
-    let exposed = exact_allowed
+    let mut exposed = exact_allowed
         || routed_allowed
-        || family_allowed
+        || family_member.is_some()
         || is_image_family_allowed(&final_model, &allowed)
         || is_image_family_allowed(&routed, &allowed);
+
+    // 新账号可能刚刚导入并带来新的模型授权；拒绝前先自愈刷新一次池快照，
+    // 再按最新 allowed 集合重新判定存在性与族级兜底。
     if !exposed {
-        return ModelGate::NotFound;
+        token_manager.refresh_pool_for_gate_if_stale().await;
+        allowed =
+            downstream_exposed_models(custom_mapping, token_manager, only_raw_quota_models).await;
+        if allowed.is_empty() {
+            tracing::warn!(
+                "[ModelGate] Exposed model set is empty after gate self-heal; fail-open for '{}'",
+                final_model
+            );
+            return ModelGate::Allow(final_model);
+        }
+        exact_allowed = allowed.contains(&final_model);
+        routed_allowed = allowed.contains(&routed);
+        family_member =
+            if family_fallback_applicable(exact_allowed, routed_allowed, &final_model, &routed) {
+                allowed.iter().find(|a| strip(a) == strip(&routed)).cloned()
+            } else {
+                None
+            };
+        exposed = exact_allowed
+            || routed_allowed
+            || family_member.is_some()
+            || is_image_family_allowed(&final_model, &allowed)
+            || is_image_family_allowed(&routed, &allowed);
+        if !exposed {
+            return ModelGate::NotFound;
+        }
     }
 
     // 第二道：用“门禁实际认可的模型名”查整池配额。
@@ -343,8 +370,28 @@ pub async fn gate_inbound_model(
     } else {
         final_model.clone()
     };
-    if token_manager.accounts_with_positive_quota(&quota_model) == 0 {
-        return ModelGate::NoQuota;
+    let accounts_quota = token_manager.accounts_with_positive_quota(&quota_model);
+    let accounts_final = if quota_model != final_model {
+        token_manager.accounts_with_positive_quota(&final_model)
+    } else {
+        accounts_quota
+    };
+    if accounts_quota == 0 && accounts_final == 0 {
+        // 配额刷新/新账号导入会通过异步 reload 队列更新内存池；如果门禁只读
+        // 旧快照就返回 502，而唯一消费 reload 队列的 `get_token_filtered` 又
+        // 永远不可达，就会形成「no quota accounts 卡住 10~15 分钟」的死锁。
+        // 因此在下“整池无配额”结论前，强制刷新一次账号池并复查。
+        token_manager.refresh_pool_for_gate_if_stale().await;
+
+        let retry_quota = token_manager.accounts_with_positive_quota(&quota_model);
+        let retry_final = if quota_model != final_model {
+            token_manager.accounts_with_positive_quota(&final_model)
+        } else {
+            retry_quota
+        };
+        if retry_quota == 0 && retry_final == 0 {
+            return ModelGate::NoQuota;
+        }
     }
 
     ModelGate::Allow(final_model)
@@ -393,7 +440,12 @@ pub async fn gate_inbound_model_exists(
         return ModelGate::Allow(final_model);
     }
     if !allowed.contains(&final_model) && !is_image_family_allowed(&final_model, &allowed) {
-        return ModelGate::NotFound;
+        // 新账号可能刚刚导入并带来新的模型授权；拒绝前先自愈刷新一次池快照。
+        token_manager.refresh_pool_for_gate_if_stale().await;
+        let refreshed = downstream_exposed_models(custom_mapping, token_manager, false).await;
+        if !refreshed.contains(&final_model) && !is_image_family_allowed(&final_model, &refreshed) {
+            return ModelGate::NotFound;
+        }
     }
 
     ModelGate::Allow(final_model)
