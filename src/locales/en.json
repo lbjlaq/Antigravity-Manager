@@ -2476,8 +2476,11 @@
     },
     "pedal": {
         "notice_title": "{{model}} Weekly Quota Resetting Soon!",
-        "notice_desc": "The following accounts have weekly quota resetting within 24 hours. Activate Pedal Quota Mode to prioritize burning them before expiration:",
-        "mode_explanation": "Activating will set these accounts to the highest scheduling priority while keeping other accounts available for session affinity and concurrency spillover. Default priority will be restored automatically once all target quotas reach 0% or reset.",
+        "notice_desc": "The following accounts have weekly quota resetting within 24 hours. Select the accounts you want to prioritize in Pedal Quota Mode:",
+        "selected_summary": "{{selected}} / {{total}} selected",
+        "select_all": "Select All",
+        "deselect_all": "Deselect All",
+        "mode_explanation": "Activating will set the selected accounts to the highest scheduling priority while keeping other accounts available for session affinity and concurrency spillover. Default priority will be restored automatically once all target quotas reach 0% or reset.",
         "suppress_button": "Do not prompt again for {{model}}",
         "activate_button": "Activate Pedal Quota Mode",
         "banner_running": "🚴 Pedal Quota Mode Running ({{model}})",

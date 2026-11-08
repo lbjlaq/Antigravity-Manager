@@ -3,6 +3,19 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.3 (2026-11-08)**:
+        -   **[单账号 Gemini / Claude 模型族独立调度优先级与蹬额度模式自由勾选] (PR #3879, Thanks to @vecyang1, @cubelikeplayDaniel)**:
+            -   **按模型族独立编排调度优先级**: 新增 `Account.model_priorities` 与 `ProxyToken::effective_priority`，支持在单账号内独立设置 `gemini` 与 `claude` 的调度优先级（1–100，未配置时自动继承账号默认优先级），并在账号卡片与表格直观展示 `G:x · C:y` 徽章。(PR #3879)
+            -   **蹬额度模式模型族隔离与账号自由勾选**: 开启蹬额度模式时仅将目标模型族提权至 `1`，保留另一模型族原有优先级，彻底解决跨模型族误抢流问题；弹窗新增各候选账号实际支持的模型代数徽章（如 `Claude 5.5` vs `Claude 4.6`）与复选框勾选功能，支持按需选择要消耗的账号（如跳过 4.6 仅蹬 5.5）。(PR #3879)
+        -   **[Cowork 工具在途压缩避让与粘性会话配额悬殊均衡自愈] (Thanks to @cubelikeplayDaniel)**:
+            -   **回合边界安全自动压缩**: 在 `should_trigger_cowork_auto_compact` 中增加 `is_tool_result_continuation` 工具在途守卫，Agent 工具执行链路未闭合（含 `tool_result`）期间暂缓下发 400 假报警，等待工具链闭环并回到用户新回合边界再优雅触发压缩，根治工具执行中途打崩客户端状态机并弹出 `"Your context window is full"` 模态框的问题。
+            -   **前缀缓存与配额均衡兼顾**: 在粘性会话与 60s 窗口中引入同级优先级配额悬殊迁移（当绑定账号配额 $\le 65\%$ 且池中同级/更高优先级健康账号领先 $\ge 25\%$ 时自动解绑迁移），同时对 401/403/404/429 故障即时解绑。
+        -   **[蹬额度模式重入死循环根除与 Windows 文件锁并发退避] (Fixes #3881, PR #3882, Thanks to @vigarh-netizen, @cubelikeplayDaniel)**:
+            -   **React 状态级联与互斥重入根治**: 在 `usePedalModeStore` 中引入模块级 `isProcessing` 互斥重入锁；在自动恢复与手动退出执行伊始立即重置 `active: false` 并清除本地存储，彻底阻断异步调度期间被外部刷新事件重新误判为激活状态的竞态条件。(Fixes #3881, PR #3882)
+            -   **关键配额指标特征指纹防抖**: 在 `Layout.tsx` 中引入 `prevFingerprintRef` 特征指纹防抖，仅提取账号 ID、代理禁用状态以及 Gemini/Claude 周配额百分比与官方重置时间，账号调度优先级回写不再改变特征指纹，从组件层彻底切断死循环闭环。(Fixes #3881, PR #3882)
+            -   **冗余写盘消除与异常保底重置**: 容错遍历挂起账号时严格比对当前禁用状态，跳过重复写盘；新增 `resetPedalModeState` 保底重置接口，并在 `PedalBanner.tsx` 手动退出增加异常捕获与状态重置降级。(Fixes #3881, PR #3882)
+            -   **Windows 文件系统原子替换瞬态锁指数退避**: 在 `src-tauri/src/utils/fs.rs` 的 `MoveFileExW` 逻辑中针对 `ERROR_ACCESS_DENIED (5)` 与 `ERROR_SHARING_VIOLATION (32)` 增加最大 5 次重试与指数退避（5ms, 10ms, 20ms, 40ms, 80ms），极大提升高频并发原子替换时的抗锁死容错韧性。(Fixes #3881, PR #3882)
+
     *   **v5.0.4-beta.2 (2026-11-08)**:
         -   **[账号状态管理与调度收敛：确立优先级模型、模型级 403 作用域与恢复权威闭环] (Ref #3863, #3865, #3875, commit 9850f750, Thanks to @jeikl, @cubelikeplayDaniel)**:
             -   **状态优先级模型收敛**: 确立 `banned > validation > hard 403 > quota_protection > manual` 统一优先级链条，杜绝账号级封禁被模型级 403 或日配额刷新降级/冲掉，并在读写路径中全链路保持同一套判断逻辑。(Ref #3863, #3875)

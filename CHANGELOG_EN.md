@@ -3,6 +3,19 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.3 (2026-11-08)**:
+        -   **[Per-Account Gemini / Claude Model-Family Priorities & Selective Pedal Mode] (PR #3879, Thanks to @vecyang1, @cubelikeplayDaniel)**:
+            -   **Independent Model-Family Priorities**: Added `Account.model_priorities` and `ProxyToken::effective_priority` to configure independent scheduling priorities (`1–100`) for `gemini` and `claude` per account, with `G:x · C:y` observability badges on account cards and tables. (PR #3879)
+            -   **Pedal Mode Family Isolation & Account Selection**: Pedal Quota Mode now boosts only the target model family's priority to `1` while preserving the other family's priority; `PedalNoticeModal` now displays model generation badges (`Claude 5.5` vs `Claude 4.6`) and checkboxes so users can selectively choose which accounts to exhaust. (PR #3879)
+        -   **[Cowork In-Flight Tool Compaction Deferral & Quota Disparity Migration] (Thanks to @cubelikeplayDaniel)**:
+            -   **Turn-Boundary Safe Auto-Compaction**: Added `is_tool_result_continuation` guard in `should_trigger_cowork_auto_compact` to defer synthetic 400 compaction triggers while tool results are in-flight, preventing client tool state machine crashes and false `"Your context window is full"` modals.
+            -   **Prefix Cache & Quota Equity Balance**: Added same-or-higher priority quota disparity migration in sticky sessions and 60s windows ($\le 65\%$ bound quota with $\ge 25\%$ healthier alternative), alongside immediate unbinding on 401/403/404/429 upstream errors.
+        -   **[Pedal Mode CPU Re-entrancy Loop Elimination & Windows File Lock Backoff] (Fixes #3881, PR #3882, Thanks to @vigarh-netizen, @cubelikeplayDaniel)**:
+            -   **React Cascade & In-Flight Mutex Hardening**: Added module-level `isProcessing` concurrency mutex in `usePedalModeStore`; cleared state (`active: false`) and local storage immediately before awaiting priority restoration, eliminating race conditions where intermediate account updates re-triggered recovery. (Fixes #3881, PR #3882)
+            -   **Quota Metrics Fingerprint Gating**: Introduced `prevFingerprintRef` in `Layout.tsx` tracking only essential quota metrics (account IDs, proxy_disabled, weekly percentages, and reset timestamps). Account priority changes no longer trigger re-evaluation, severing the component re-entrancy loop. (Fixes #3881, PR #3882)
+            -   **Redundant Disk Write Elimination & Safe Reset Action**: Re-enabled accounts in `temporarilyDisabledIds` now check `(!acc || acc.proxy_disabled)` to avoid redundant disk writes; added `resetPedalModeState` action with automated fallback in `PedalBanner.tsx` on error. (Fixes #3881, PR #3882)
+            -   **Windows File System Transient Lock Exponential Backoff**: Enhanced Windows `MoveFileExW` in `src-tauri/src/utils/fs.rs` with up to 5 retries and exponential backoff (5ms, 10ms, 20ms, 40ms, 80ms) on `ERROR_ACCESS_DENIED (5)` and `ERROR_SHARING_VIOLATION (32)` to withstand rapid concurrent atomic replacements. (Fixes #3881, PR #3882)
+
     *   **v5.0.4-beta.2 (2026-11-08)**:
         -   **[Account State Management & Routing Convergence: Priority Hierarchy, Model-Scoped 403 & Recovery Authority] (Ref #3863, #3865, #3875, commit 9850f750, Thanks to @jeikl, @cubelikeplayDaniel)**:
             -   **State Priority Hierarchy**: Established a unified `banned > validation > hard 403 > quota_protection > manual` priority chain, preventing account-level bans from being downgraded or wiped by model-level 403s or daily quota refreshes. (Ref #3863, #3875)

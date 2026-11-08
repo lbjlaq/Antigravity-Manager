@@ -7,6 +7,8 @@ export interface PedalCandidate {
     accountName: string;
     email: string;
     model: PedalTargetModel;
+    modelBadge?: string;
+    supportedModels?: string[];
     percentage: number;
     resetTime: string;
     hoursLeft: number;

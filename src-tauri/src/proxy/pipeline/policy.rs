@@ -115,12 +115,12 @@ impl UpstreamClassification {
 
     /// 这个账号不能再被当前会话粘住。401 / 403 / 404 / 429 / 529。
     pub fn abandons_sticky_account(&self) -> bool {
-        match self {
-            UpstreamClassification::RateLimited { .. } => true,
-            UpstreamClassification::ModelNotFound => true,
-            UpstreamClassification::OtherClientError(401 | 403) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            UpstreamClassification::RateLimited { .. }
+                | UpstreamClassification::ModelNotFound
+                | UpstreamClassification::OtherClientError(401 | 403 | 404 | 429)
+        )
     }
 
     /// 该分类是否为模型不存在
@@ -219,6 +219,11 @@ mod tests {
         assert!(unauth.abandons_sticky_account());
         let forbidden = UpstreamClassification::classify(403, "forbidden", None);
         assert!(forbidden.abandons_sticky_account());
+
+        let client_429 = UpstreamClassification::OtherClientError(429);
+        assert!(client_429.abandons_sticky_account());
+        let client_404 = UpstreamClassification::OtherClientError(404);
+        assert!(client_404.abandons_sticky_account());
     }
 
     #[test]
