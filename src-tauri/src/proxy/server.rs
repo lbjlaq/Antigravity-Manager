@@ -4004,11 +4004,14 @@ async fn admin_sync_account_from_db(
     })?;
     let current_target = index.current_target_ide.as_deref();
     let is_agy = current_target == Some("agy");
+    let is_acp = crate::modules::integration::is_acp_target(current_target);
 
     // 逻辑参考自 sync_account_from_db command
     let credential = if is_agy {
         crate::modules::integration::read_from_system_keyring_only()
             .map(|state| state.refresh_token)
+    } else if is_acp {
+        crate::modules::integration::read_acp_credentials().map(|state| state.refresh_token)
     } else {
         migration::get_refresh_token_from_db(current_target)
     };
@@ -4031,7 +4034,7 @@ async fn admin_sync_account_from_db(
         }
     }
 
-    let account = if is_agy {
+    let account = if is_agy || is_acp {
         let accounts = account::list_accounts().map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

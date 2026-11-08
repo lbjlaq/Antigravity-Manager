@@ -484,6 +484,7 @@
             "batch_warmup_msg": "Вы уверены, что хотите запустить разогрев для выбранных {{count}} аккаунтов немедленно?"
         },
         "switch_to_agy": "Переключить для Antigravity CLI (agy)",
+        "switch_to_acp": "Переключить для плагина IDE Antigravity (ACP)",
         "drag_disabled_during_sort": "Активна сортировка по столбцам; перетаскивание приостановлено",
         "go_to_appeal": "Go to Appeal",
         "copy_appeal_url": "Copy Appeal URL",
@@ -498,6 +499,8 @@
         "client_ide_tooltip": "Текущий аккаунт Antigravity IDE",
         "client_cli": "CLI",
         "client_cli_tooltip": "Текущий аккаунт Antigravity CLI (agy)",
+        "client_acp": "Плагин",
+        "client_acp_tooltip": "Текущий аккаунт плагина IDE Antigravity (ACP)",
         "switch_next_short": "След.",
         "weekly_exhausted_tooltip": "Недельная квота исчерпана, защита активирована",
         "type": {

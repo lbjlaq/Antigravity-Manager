@@ -49,6 +49,8 @@ export interface ActiveClientsStatus {
     ide_email?: string | null;
     agy_account_id?: string | null;
     agy_email?: string | null;
+    acp_account_id?: string | null;
+    acp_email?: string | null;
 }
 
 export interface LiveLimitStatus {

@@ -244,6 +244,11 @@
         "account_pool": "Account Pool"
     },
     "accounts": {
+        "action_switch": "Switch",
+        "action_refresh": "Refresh",
+        "action_enable": "Enable",
+        "action_disable": "Disable",
+        "action_more": "More",
         "qos": {
             "suspicious": "Suspected Throttled",
             "suspicious_hint": "Abnormal upstream initial latency detected. Drain mode active, new session allocation paused.",
@@ -302,6 +307,8 @@
         "client_ide_tooltip": "Active account in Antigravity IDE",
         "client_cli": "CLI",
         "client_cli_tooltip": "Active account in Antigravity CLI (agy)",
+        "client_acp": "Plugin",
+        "client_acp_tooltip": "Active account in Antigravity IDE Plugin (ACP)",
         "disabled": "Disabled",
         "disabled_tooltip": "Account is disabled (e.g. refresh_token revoked/expired). Reauthorize or update token to re-enable.",
         "proxy_disabled": "Proxy Disabled",
@@ -413,7 +420,11 @@
         "quota_window_weekly_short": "Weekly",
         "quota_group_gemini": "Gemini Models",
         "quota_group_claude": "Claude & GPT Models",
+        "quota_group_claude_gpt": "Claude & GPT Models",
         "quota_group_argon": "Gemini 4 Argon",
+        "quota_window_weekly_desc": "7-Day Weekly Quota (WEEKLY)",
+        "quota_window_5h_desc": "5-Hour Rolling Quota (5H)",
+        "quota_window_1h_desc": "1-Hour Rolling Quota (1H)",
         "weekly_exhausted_tooltip": "Weekly quota exhausted (0%); waiting for weekly reset",
         "weekly_constrained_tooltip": "Constrained by weekly limit",
         "weekly_tokens": "Cycle tokens",
@@ -426,7 +437,8 @@
             "title": "Quota Details",
             "model_quota": "Individual Model Quotas",
             "protected_models": "Protected Models",
-            "thinking_budget": "Thinking Budget"
+            "thinking_budget": "Thinking Budget",
+            "group_models_desc": "Models in this group: {{models}}"
         },
         "toast": {
             "proxy_enabled": "Enabled proxy for {{count}} accounts",
@@ -527,6 +539,7 @@
             "batch_warmup_msg": "Are you sure you want to trigger warmup for the selected {{count}} accounts immediately?"
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
+        "switch_to_acp": "Switch to Antigravity IDE Plugin (ACP)",
         "switch_next_short": "Next",
         "project_id": "GCP Project ID",
         "project_id_hint": "Google Cloud Project ID associated with the enterprise/GCP account. Native Antigravity associates or defaults this upon sign-in.",
@@ -535,7 +548,54 @@
         "auto_fetch_project_id": "Auto Fetch",
         "fetching_project_id": "Fetching...",
         "auto_fetch_success": "Successfully fetched Project ID: {{projectId}}",
-        "auto_fetch_failed": "No associated Project ID found on upstream"
+        "auto_fetch_failed": "No associated Project ID found on upstream",
+        "actions_modal": {
+            "title": "Account Actions & Management",
+            "subtitle": "Manage client login, maintenance tools and advanced operations for this account",
+            "clients_section": "Client Quick Switching",
+            "clients": {
+                "ide": "Antigravity IDE (VS Code)",
+                "ide_desc": "Switch this account to IDE client login",
+                "acp": "Antigravity IDE Plugin (ACP - JetBrains)",
+                "acp_desc": "Switch this account to JetBrains / Android Studio plugin",
+                "agy": "Antigravity CLI (agy)",
+                "agy_desc": "Switch this account to CLI terminal tool login",
+                "classic": "Antigravity Classic",
+                "classic_desc": "Switch this account to classic client login"
+            },
+            "maintenance_section": "Maintenance & Tools",
+            "tools": {
+                "tags": "Tag Management",
+                "tags_desc": "Add, remove or reorder tags for this account",
+                "warmup": "Account Warmup",
+                "warmup_desc": "Trigger connectivity probe and warmup quota cycle",
+                "fingerprint": "Device Fingerprint",
+                "fingerprint_desc": "View or modify machineId, devDeviceId and hardware fingerprint",
+                "details": "Account Details",
+                "details_desc": "View detailed quota, model status and raw credential data",
+                "export": "Export Credentials JSON",
+                "export_desc": "Export full authorization credential configuration file for this account"
+            },
+            "danger_section": "Danger Zone",
+            "delete": "Delete Account from Manager",
+            "delete_desc": "Permanently remove this account record (does not affect upstream Google account)"
+        },
+        "tag_editor": {
+            "title": "Manage Account Tags",
+            "add_tag": "Add New Tag",
+            "placeholder": "Enter tag name (max 15 chars)...",
+            "add_btn": "Add",
+            "preset_title": "Preset Quick Tags",
+            "current_title": "Current Tags",
+            "empty": "No tags yet. Enter above or click preset tags to add.",
+            "move_up": "Move Up",
+            "move_down": "Move Down",
+            "delete": "Delete",
+            "save_failed": "Failed to save tags",
+            "error_too_long": "Tag length cannot exceed 15 characters",
+            "error_max_limit": "Maximum 8 tags allowed",
+            "error_duplicate": "Tag already exists"
+        }
     },
     "settings": {
         "save": "Save Settings",

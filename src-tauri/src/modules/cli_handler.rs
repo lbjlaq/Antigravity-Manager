@@ -70,7 +70,7 @@ fn print_cli_help() {
         Flags:\n  \
           --headless         Run as a background headless proxy daemon (no GUI / Wayland display required)\n\n\
         Options for `switch`:\n  \
-          --target <target>  Target client: 'agy' (default), 'ide', or 'classic'\n  \
+          --target <target>  Target client: 'agy' (default), 'acp' ('plugin'), 'ide', or 'classic'\n  \
           -c, --continue     Automatically resume agy conversation via `agy --continue` after switch\n\n\
         Options for `sync`:\n  \
           [app]              Target Agent tool: 'dsh' / 'deepseek-harness' (default), 'claude', 'codex', 'gemini', 'opencode', 'jeikcode', 'grok', or 'all'\n  \
@@ -149,6 +149,10 @@ async fn handle_list_command() -> Result<(), String> {
         status.agy_email.as_deref().unwrap_or("未设置")
     );
     println!(
+        "  • IDE Plugin (ACP):    \x1b[36m{}\x1b[0m",
+        status.acp_email.as_deref().unwrap_or("未设置")
+    );
+    println!(
         "  • Antigravity IDE:     \x1b[36m{}\x1b[0m",
         status.ide_email.as_deref().unwrap_or("未设置")
     );
@@ -195,8 +199,9 @@ async fn handle_list_command() -> Result<(), String> {
 async fn handle_current_command() -> Result<(), String> {
     let status = account::detect_active_clients_status().unwrap_or_default();
     println!(
-        "agy: {}\nide: {}\nclassic: {}",
+        "agy: {}\nacp: {}\nide: {}\nclassic: {}",
         status.agy_email.as_deref().unwrap_or("none"),
+        status.acp_email.as_deref().unwrap_or("none"),
         status.ide_email.as_deref().unwrap_or("none"),
         status.classic_email.as_deref().unwrap_or("none")
     );

@@ -461,6 +461,7 @@
             "batch_warmup_msg": "هل أنت متأكد من إطلاق التنشيط لـ {{count}} حساب المحدد فورًا؟"
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
+        "switch_to_acp": "Switch to Antigravity IDE Plugin (ACP)",
         "drag_disabled_during_sort": "فرز الأعمدة مفعل؛ تم إيقاف السحب مؤقتًا",
         "copy_validation_url": "Copy Verification Link",
         "validation_url_copied": "Verification link copied to clipboard",
@@ -496,6 +497,8 @@
         "client_ide_tooltip": "حساب Antigravity IDE المسجل حالياً",
         "client_cli": "CLI",
         "client_cli_tooltip": "حساب Antigravity CLI (agy) المسجل حالياً",
+        "client_acp": "Plugin",
+        "client_acp_tooltip": "حساب إضافة Antigravity IDE (ACP) المسجل حالياً",
         "switch_next_short": "التالي",
         "weekly_exhausted_tooltip": "تم استنفاد الحصة الأسبوعية، تم تفعيل الحماية التلقائية",
         "type": {

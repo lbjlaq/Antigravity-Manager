@@ -9,6 +9,7 @@ import {
     Laptop,
     Code2,
     Terminal,
+    Blocks,
     ArrowRight,
     HelpCircle
 } from 'lucide-react';
@@ -26,7 +27,7 @@ interface CurrentAccountProps {
     onSwitch?: (targetIde?: string) => void;
 }
 
-type ClientTab = 'classic' | 'ide' | 'agy';
+type ClientTab = 'classic' | 'ide' | 'agy' | 'acp';
 
 function CurrentAccount({
     account,
@@ -41,6 +42,7 @@ function CurrentAccount({
         if (activeClients?.classic_account_id) return 'classic';
         if (activeClients?.ide_account_id) return 'ide';
         if (activeClients?.agy_account_id) return 'agy';
+        if (activeClients?.acp_account_id) return 'acp';
         return 'classic';
     });
 
@@ -52,6 +54,8 @@ function CurrentAccount({
                 return activeClients?.ide_account_id;
             case 'agy':
                 return activeClients?.agy_account_id;
+            case 'acp':
+                return activeClients?.acp_account_id;
         }
     };
 
@@ -79,6 +83,14 @@ function CurrentAccount({
             tooltip: t('accounts.client_cli_tooltip', '当前 Antigravity CLI (agy) 登录账号'),
             activeBg: 'bg-emerald-600 text-white shadow-xs',
             activeDot: 'bg-emerald-400',
+        },
+        {
+            key: 'acp' as ClientTab,
+            label: t('accounts.client_acp', 'Plugin'),
+            icon: Blocks,
+            tooltip: t('accounts.client_acp_tooltip', 'Active account in Antigravity IDE Plugin (ACP)'),
+            activeBg: 'bg-violet-600 text-white shadow-xs',
+            activeDot: 'bg-violet-400',
         },
     ];
 

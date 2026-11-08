@@ -847,11 +847,14 @@ pub async fn sync_account_from_db(
     let index = modules::account::load_account_index()?;
     let current_target = index.current_target_ide.as_deref();
     let is_agy = current_target == Some("agy");
+    let is_acp = modules::integration::is_acp_target(current_target);
 
-    // 1. Read the credential source used by the selected client. For agy, do
-    // not mistake an older file credential for the active keyring account.
+    // 1. Read the credential source used by the selected client. For agy/acp, do
+    // not mistake an older file/DB credential for the active client account.
     let credential = if is_agy {
         modules::integration::read_from_system_keyring_only().map(|state| state.refresh_token)
+    } else if is_acp {
+        modules::integration::read_acp_credentials().map(|state| state.refresh_token)
     } else {
         modules::migration::get_refresh_token_from_db(current_target)
     };
@@ -880,7 +883,7 @@ pub async fn sync_account_from_db(
 
     // 4. For the CLI, reconcile only the matching managed account; importing
     // all local sources could select an unrelated IDE account if refresh fails.
-    let mut account = if is_agy {
+    let mut account = if is_agy || is_acp {
         modules::account::find_agy_account(modules::account::list_accounts()?, &db_refresh_token)?
     } else {
         modules::migration::import_from_db(current_target).await?

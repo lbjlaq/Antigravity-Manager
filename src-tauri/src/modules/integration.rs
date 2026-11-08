@@ -20,6 +20,11 @@ pub trait SystemIntegration: Send + Sync {
     fn show_notification(&self, title: &str, body: &str);
 }
 
+/// Check if `target_ide` refers to the Antigravity ACP IDE Plugin (`antigravity-acp`).
+pub fn is_acp_target(target_ide: Option<&str>) -> bool {
+    matches!(target_ide, Some("acp" | "plugin" | "ide-plugin"))
+}
+
 /// 根据目标参数、进程运行态及可执行文件存在性决策最终切换环境
 pub fn resolve_effective_target(
     target_ide: Option<&str>,
@@ -343,6 +348,25 @@ impl SystemIntegration for DesktopIntegration {
                 )
             };
             self.show_notification("Antigravity CLI", &msg);
+            self.update_tray();
+
+            return Ok(());
+        }
+
+        if is_acp_target(target_ide) {
+            let killed = switch_acp_account(account)?;
+            let msg = if killed > 0 {
+                format!(
+                    "Credentials for {} saved and verified. Restarted {} running agy_acp_server process(es).",
+                    account.email, killed
+                )
+            } else {
+                format!(
+                    "Credentials for {} saved and verified for the Antigravity IDE Plugin (ACP).",
+                    account.email
+                )
+            };
+            self.show_notification("Antigravity IDE Plugin", &msg);
             self.update_tray();
 
             return Ok(());
@@ -1305,11 +1329,308 @@ fn parse_keyring_payload(
         .ok_or_else(|| "Refresh Token not found in keyring payload".to_string())?
         .to_string();
 
+    let project_id = json
+        .get("project_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     Ok(crate::modules::migration::ImportedOAuthState {
         refresh_token,
         is_gcp_tos: true,
-        project_id: None,
+        project_id,
     })
+}
+
+/// Resolve the Antigravity ACP IDE Plugin directory (`$GEMINI_HOME/antigravity-acp` or `~/.gemini/antigravity-acp`).
+fn resolve_acp_dir() -> Result<std::path::PathBuf, String> {
+    if let Ok(gemini_home) = std::env::var("GEMINI_HOME") {
+        let trimmed = gemini_home.trim();
+        if !trimmed.is_empty() {
+            let expanded = if let Some(rest) = trimmed.strip_prefix("~/") {
+                dirs::home_dir()
+                    .ok_or_else(|| "Failed to resolve user home directory".to_string())?
+                    .join(rest)
+            } else if trimmed == "~" {
+                dirs::home_dir()
+                    .ok_or_else(|| "Failed to resolve user home directory".to_string())?
+            } else {
+                std::path::PathBuf::from(trimmed)
+            };
+            return Ok(expanded.join("antigravity-acp"));
+        }
+    }
+
+    let home =
+        dirs::home_dir().ok_or_else(|| "Failed to resolve user home directory".to_string())?;
+    Ok(home.join(".gemini").join("antigravity-acp"))
+}
+
+/// Write Antigravity ACP IDE Plugin (`antigravity-acp`) credentials (`acp_token.json`, `settings.json`, and macOS Keychain).
+pub fn write_to_acp_credentials(account: &crate::models::Account) -> Result<(), String> {
+    let acp_dir = resolve_acp_dir()?;
+    if !acp_dir.exists() {
+        std::fs::create_dir_all(&acp_dir)
+            .map_err(|e| format!("Failed to create antigravity-acp directory: {}", e))?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&acp_dir, std::fs::Permissions::from_mode(0o700));
+    }
+
+    let token_path = acp_dir.join("acp_token.json");
+
+    // Preserve existing project_id if the account does not carry one and the existing file belongs to the same refresh token
+    let existing_project_id = if token_path.exists() {
+        std::fs::read_to_string(&token_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| {
+                let same_rt = v
+                    .get("refresh_token")
+                    .and_then(|r| r.as_str())
+                    .map(|r| r == account.token.refresh_token)
+                    .unwrap_or(false);
+                if same_rt {
+                    v.get("project_id")
+                        .and_then(|p| p.as_str())
+                        .map(|p| p.trim().to_string())
+                        .filter(|p| !p.is_empty())
+                } else {
+                    None
+                }
+            })
+    } else {
+        None
+    };
+
+    let project_id = account
+        .token
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .or(existing_project_id)
+        .unwrap_or_default();
+
+    #[derive(serde::Serialize)]
+    struct AcpCredentialInfo {
+        client_id: String,
+        client_secret: String,
+        refresh_token: String,
+        token_uri: String,
+        scopes: Vec<String>,
+        project_id: String,
+    }
+
+    let acp_cred = AcpCredentialInfo {
+        client_id: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+            .to_string(),
+        client_secret: "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".to_string(),
+        refresh_token: account.token.refresh_token.clone(),
+        token_uri: "https://oauth2.googleapis.com/token".to_string(),
+        scopes: vec![
+            "https://www.googleapis.com/auth/cloud-platform".to_string(),
+            "https://www.googleapis.com/auth/userinfo.email".to_string(),
+            "https://www.googleapis.com/auth/aicode".to_string(),
+        ],
+        project_id,
+    };
+
+    let acp_json = serde_json::to_string(&acp_cred)
+        .map_err(|e| format!("Failed to serialize acp_token.json: {}", e))?;
+
+    crate::utils::fs::write_atomic(&token_path, acp_json.as_bytes())
+        .map_err(|e| format!("Failed to write acp_token.json: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    // Ensure settings.json has auth.type = "oauth-personal" while preserving existing keys (e.g. gcp)
+    let settings_path = acp_dir.join("settings.json");
+    let mut settings_obj = if settings_path.exists() {
+        std::fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .filter(|v| v.is_object())
+            .unwrap_or_else(|| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    if let Some(map) = settings_obj.as_object_mut() {
+        let auth_entry = map
+            .entry("auth".to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        if !auth_entry.is_object() {
+            *auth_entry = serde_json::json!({});
+        }
+        if let Some(auth_map) = auth_entry.as_object_mut() {
+            auth_map.insert(
+                "type".to_string(),
+                serde_json::Value::String("oauth-personal".to_string()),
+            );
+        }
+    }
+
+    if let Ok(mut settings_str) = serde_json::to_string_pretty(&settings_obj) {
+        settings_str.push('\n');
+        let _ = crate::utils::fs::write_atomic(&settings_path, settings_str.as_bytes());
+    }
+
+    // On macOS, agy_acp_server uses the OS Keychain (service="gemini", account="antigravity-acp")
+    // storing the raw JSON string (via ctypes Security framework).
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("security")
+            .args([
+                "delete-generic-password",
+                "-s",
+                "gemini",
+                "-a",
+                "antigravity-acp",
+            ])
+            .output();
+
+        let output = Command::new("security")
+            .args([
+                "add-generic-password",
+                "-s",
+                "gemini",
+                "-a",
+                "antigravity-acp",
+                "-w",
+                &acp_json,
+                "-A",
+            ])
+            .output();
+
+        if let Ok(out) = output {
+            if !out.status.success() {
+                let err_msg = String::from_utf8_lossy(&out.stderr);
+                crate::modules::logger::log_warn(&format!(
+                    "[ACP] macOS Keychain update for antigravity-acp returned non-zero ({}); file store at {:?} is updated.",
+                    err_msg.trim(),
+                    token_path
+                ));
+            }
+        }
+    }
+
+    crate::modules::logger::log_info(&format!(
+        "[ACP] Successfully synced IDE Plugin credentials to {:?} for: {}",
+        token_path, account.email
+    ));
+
+    Ok(())
+}
+
+/// Read the active Antigravity ACP IDE Plugin (`antigravity-acp`) OAuth state.
+pub fn read_acp_credentials() -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = Command::new("security")
+            .args([
+                "find-generic-password",
+                "-s",
+                "gemini",
+                "-a",
+                "antigravity-acp",
+                "-w",
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let secret_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if let Ok(state) = parse_keyring_payload(&secret_str) {
+                    if !state.refresh_token.is_empty() {
+                        return Ok(state);
+                    }
+                }
+            }
+        }
+    }
+
+    let acp_dir = resolve_acp_dir()?;
+    let token_path = acp_dir.join("acp_token.json");
+    if !token_path.exists() {
+        return Err(format!(
+            "No Antigravity ACP credential file found at {:?}",
+            token_path
+        ));
+    }
+
+    let content = fs::read_to_string(&token_path)
+        .map_err(|e| format!("Failed to read acp_token.json: {}", e))?;
+    parse_keyring_payload(&content)
+}
+
+/// Scan all Antigravity ACP IDE Plugin credential files (`acp_token.json` and backups).
+pub fn read_antigravity_acp_credentials() -> Vec<crate::modules::migration::ImportedOAuthState> {
+    let mut states = Vec::new();
+    let mut seen_tokens = std::collections::HashSet::new();
+
+    if let Ok(primary) = read_acp_credentials() {
+        if !primary.refresh_token.is_empty() && seen_tokens.insert(primary.refresh_token.clone()) {
+            states.push(primary);
+        }
+    }
+
+    if let Ok(acp_dir) = resolve_acp_dir() {
+        let candidate_files = [
+            acp_dir.join("acp_token.json"),
+            acp_dir.join("acp_token.json.bak"),
+        ];
+        for path in &candidate_files {
+            if path.exists() {
+                if let Ok(content) = fs::read_to_string(path) {
+                    if let Ok(state) = parse_keyring_payload(&content) {
+                        if !state.refresh_token.is_empty()
+                            && seen_tokens.insert(state.refresh_token.clone())
+                        {
+                            crate::modules::logger::log_info(&format!(
+                                "[ACP-Scan] Discovered Antigravity ACP OAuth state in {:?}",
+                                path
+                            ));
+                            states.push(state);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    states
+}
+
+/// Switch the Antigravity ACP IDE Plugin account, verify persisted credentials, and restart running `agy_acp_server` processes.
+pub fn switch_acp_account(account: &crate::models::Account) -> Result<usize, String> {
+    // 1. Write credentials before killing any running agy_acp_server process
+    write_to_acp_credentials(account)?;
+
+    // 2. Terminate running agy_acp_server processes so the host IDE respawns them with new credentials
+    let killed = process::kill_acp_server_processes();
+    if killed > 0 {
+        // Re-assert credentials after terminating processes to prevent any in-flight refresh race from overwriting acp_token.json
+        let _ = write_to_acp_credentials(account);
+    }
+
+    // 3. Verify stored credentials match
+    let stored = read_acp_credentials()?;
+    if account.token.refresh_token.is_empty() || stored.refresh_token != account.token.refresh_token
+    {
+        return Err(
+            "Stored ACP IDE Plugin credentials do not match the selected account; the switch was not confirmed."
+                .to_string(),
+        );
+    }
+
+    Ok(killed)
 }
 
 /// Headless/Docker 实现：仅执行数据层操作，忽略 UI 和进程控制
@@ -1326,6 +1647,15 @@ impl SystemIntegration for HeadlessIntegration {
                 "Switching to the agy CLI is not supported in headless mode (no host keyring access)."
                     .to_string(),
             );
+        }
+
+        if is_acp_target(_target_ide) {
+            write_to_acp_credentials(account)?;
+            crate::modules::logger::log_info(&format!(
+                "[Headless] ACP IDE Plugin credentials updated for: {}",
+                account.email
+            ));
+            return Ok(());
         }
 
         crate::modules::logger::log_info(&format!(
@@ -1366,6 +1696,11 @@ impl SystemIntegration for CliIntegration {
                     let _ = device::write_profile(&storage_path, profile);
                 }
             }
+            return Ok(());
+        }
+
+        if is_acp_target(target_ide) {
+            let _ = switch_acp_account(account)?;
             return Ok(());
         }
 
@@ -1984,5 +2319,284 @@ mod tests {
             inject_res.is_err(),
             "Injecting token into corrupted DB must return Err gracefully"
         );
+    }
+
+    #[test]
+    fn test_is_acp_target_aliases() {
+        assert!(is_acp_target(Some("acp")));
+        assert!(is_acp_target(Some("plugin")));
+        assert!(is_acp_target(Some("ide-plugin")));
+        assert!(!is_acp_target(Some("ide")));
+        assert!(!is_acp_target(Some("agy")));
+        assert!(!is_acp_target(Some("classic")));
+        assert!(!is_acp_target(None));
+    }
+
+    struct KeychainBackupGuard {
+        #[cfg(target_os = "macos")]
+        service: &'static str,
+        #[cfg(target_os = "macos")]
+        account: &'static str,
+        #[cfg(target_os = "macos")]
+        original_val: Option<String>,
+    }
+
+    impl KeychainBackupGuard {
+        fn new(service: &'static str, account: &'static str) -> Self {
+            #[cfg(target_os = "macos")]
+            {
+                let original_val = Command::new("security")
+                    .args(["find-generic-password", "-s", service, "-a", account, "-w"])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+                Self {
+                    service,
+                    account,
+                    original_val,
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (service, account);
+                Self {}
+            }
+        }
+    }
+
+    impl Drop for KeychainBackupGuard {
+        fn drop(&mut self) {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = Command::new("security")
+                    .args([
+                        "delete-generic-password",
+                        "-s",
+                        self.service,
+                        "-a",
+                        self.account,
+                    ])
+                    .output();
+                if let Some(val) = &self.original_val {
+                    let _ = Command::new("security")
+                        .args([
+                            "add-generic-password",
+                            "-s",
+                            self.service,
+                            "-a",
+                            self.account,
+                            "-w",
+                            val,
+                            "-A",
+                        ])
+                        .output();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_write_and_read_acp_credentials() {
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _keychain_guard = KeychainBackupGuard::new("gemini", "antigravity-acp");
+
+        let tmp_dir = std::env::temp_dir().join(format!("agy_acp_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("GEMINI_HOME", &tmp_dir);
+
+        let token = crate::models::TokenData::new(
+            "ya29.test_access_token".to_string(),
+            "1//test_acp_refresh_token_999".to_string(),
+            3600,
+            Some("acp-user@example.com".to_string()),
+            Some("test-gcp-project-id".to_string()),
+            None,
+            true,
+            None,
+        );
+        let account = crate::models::Account::new(
+            "acc-acp-1".to_string(),
+            "acp-user@example.com".to_string(),
+            token,
+        );
+
+        write_to_acp_credentials(&account).expect("write_to_acp_credentials should succeed");
+
+        let acp_dir = tmp_dir.join("antigravity-acp");
+        let token_path = acp_dir.join("acp_token.json");
+        let settings_path = acp_dir.join("settings.json");
+        assert!(token_path.exists(), "acp_token.json should exist");
+        assert!(settings_path.exists(), "settings.json should exist");
+
+        let settings_json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&settings_path).expect("read settings.json"),
+        )
+        .expect("parse settings.json");
+        assert_eq!(
+            settings_json
+                .get("auth")
+                .and_then(|a| a.get("type"))
+                .and_then(|t| t.as_str()),
+            Some("oauth-personal")
+        );
+
+        let state = read_acp_credentials().expect("read_acp_credentials should succeed");
+        assert_eq!(state.refresh_token, "1//test_acp_refresh_token_999");
+        assert_eq!(state.project_id.as_deref(), Some("test-gcp-project-id"));
+
+        let scanned = read_antigravity_acp_credentials();
+        assert_eq!(scanned.len(), 1);
+        assert_eq!(scanned[0].refresh_token, "1//test_acp_refresh_token_999");
+
+        std::env::remove_var("GEMINI_HOME");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_resolve_account_summary_in_index_acp_round_robin() {
+        let index = crate::models::AccountIndex {
+            version: "2.0".to_string(),
+            accounts: vec![
+                crate::models::AccountSummary {
+                    id: "id-1".to_string(),
+                    email: "user1@example.com".to_string(),
+                    name: None,
+                    disabled: false,
+                    proxy_disabled: false,
+                    protected_models: std::collections::HashSet::new(),
+                    created_at: 0,
+                    last_used: 0,
+                },
+                crate::models::AccountSummary {
+                    id: "id-2".to_string(),
+                    email: "user2@example.com".to_string(),
+                    name: None,
+                    disabled: false,
+                    proxy_disabled: false,
+                    protected_models: std::collections::HashSet::new(),
+                    created_at: 0,
+                    last_used: 0,
+                },
+            ],
+            current_account_id: Some("id-1".to_string()),
+            current_target_ide: Some("acp".to_string()),
+            current_classic_account_id: Some("id-1".to_string()),
+            current_ide_account_id: None,
+            current_agy_account_id: None,
+            current_acp_account_id: Some("id-2".to_string()),
+        };
+
+        let next_for_acp =
+            crate::modules::account::resolve_account_summary_in_index(&index, None, Some("acp"))
+                .expect("resolve next for acp");
+        assert_eq!(next_for_acp.id, "id-1");
+
+        let next_for_plugin_alias = crate::modules::account::resolve_account_summary_in_index(
+            &index,
+            None,
+            Some("ide-plugin"),
+        )
+        .expect("resolve next for ide-plugin");
+        assert_eq!(next_for_plugin_alias.id, "id-1");
+    }
+
+    #[test]
+    fn test_switch_acp_account_e2e_flow_and_project_id_preservation() {
+        let _env_guard = crate::modules::account::SHARED_TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _keychain_guard = KeychainBackupGuard::new("gemini", "antigravity-acp");
+
+        let tmp_dir = std::env::temp_dir().join(format!("agy_acp_e2e_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("GEMINI_HOME", &tmp_dir);
+
+        let token1 = crate::models::TokenData::new(
+            "ya29.test_acp_token_1".to_string(),
+            "1//test_acp_rt_1".to_string(),
+            3600,
+            Some("user1@example.com".to_string()),
+            Some("project-alpha-123".to_string()),
+            None,
+            true,
+            None,
+        );
+        let account1 = crate::models::Account::new(
+            "acc-1".to_string(),
+            "user1@example.com".to_string(),
+            token1,
+        );
+
+        // 1. 切换到 account1
+        let switch_res1 = switch_acp_account(&account1);
+        assert!(switch_res1.is_ok(), "First switch must succeed");
+
+        let state1 = read_acp_credentials().expect("Must read account1 credentials");
+        assert_eq!(state1.refresh_token, "1//test_acp_rt_1");
+        assert_eq!(state1.project_id.as_deref(), Some("project-alpha-123"));
+
+        // 验证物理文件包含 aicode scope
+        let token_file = tmp_dir.join("antigravity-acp").join("acp_token.json");
+        assert!(token_file.exists());
+        let file_content = std::fs::read_to_string(&token_file).unwrap();
+        let json_val: serde_json::Value = serde_json::from_str(&file_content).unwrap();
+        let scopes = json_val["scopes"].as_array().expect("scopes must be an array");
+        assert!(
+            scopes.iter().any(|s| s.as_str() == Some("https://www.googleapis.com/auth/aicode")),
+            "acp_token.json must strictly contain https://www.googleapis.com/auth/aicode scope for agy_acp_server"
+        );
+
+        // 2. 模拟 account1 凭证更新（无显式 project_id 时，必须继承同 refresh_token 已有的 project_id）
+        let token1_no_proj = crate::models::TokenData::new(
+            "ya29.test_acp_token_1_refreshed".to_string(),
+            "1//test_acp_rt_1".to_string(),
+            3600,
+            Some("user1@example.com".to_string()),
+            None, // 没有显式 project_id
+            None,
+            true,
+            None,
+        );
+        let account1_refreshed = crate::models::Account::new(
+            "acc-1".to_string(),
+            "user1@example.com".to_string(),
+            token1_no_proj,
+        );
+        write_to_acp_credentials(&account1_refreshed).expect("credential re-write must succeed");
+        let state1_preserved = read_acp_credentials().expect("Must read refreshed credentials");
+        assert_eq!(
+            state1_preserved.project_id.as_deref(),
+            Some("project-alpha-123"),
+            "Project ID must be preserved when existing file has the same refresh token"
+        );
+
+        // 3. 切换到全新 account2（带不同 project_id）
+        let token2 = crate::models::TokenData::new(
+            "ya29.test_acp_token_2".to_string(),
+            "1//test_acp_rt_2".to_string(),
+            3600,
+            Some("user2@example.com".to_string()),
+            Some("project-beta-456".to_string()),
+            None,
+            true,
+            None,
+        );
+        let account2 = crate::models::Account::new(
+            "acc-2".to_string(),
+            "user2@example.com".to_string(),
+            token2,
+        );
+        let switch_res2 = switch_acp_account(&account2);
+        assert!(switch_res2.is_ok(), "Second switch must succeed");
+
+        let state2 = read_acp_credentials().expect("Must read account2 credentials");
+        assert_eq!(state2.refresh_token, "1//test_acp_rt_2");
+        assert_eq!(state2.project_id.as_deref(), Some("project-beta-456"));
+
+        std::env::remove_var("GEMINI_HOME");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }

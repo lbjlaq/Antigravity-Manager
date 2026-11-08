@@ -563,9 +563,26 @@ export default function AccountDetailsDialog({
                             <div className="flex flex-col gap-4">
                                 {displayGroups.map((group, idx) => (
                                     <div key={idx} className="p-4 rounded-xl border border-blue-100/70 dark:border-blue-900/30 bg-blue-50/20 dark:bg-blue-900/10">
-                                        <div className="font-semibold text-xs text-blue-900 dark:text-blue-300 mb-3 font-mono flex justify-between items-center">
-                                            <span>{group.display_name}</span>
-                                            {group.description && <span className="text-[10px] font-normal opacity-70 truncate max-w-xs">{group.description}</span>}
+                                        <div className="font-semibold text-xs text-blue-900 dark:text-blue-300 mb-3 flex flex-wrap justify-between items-center gap-1.5">
+                                            <span className="font-bold text-sm">
+                                                {(() => {
+                                                    const raw = group.display_name || '';
+                                                    if (raw.includes('Gemini Models')) return t('accounts.quota_group_gemini', 'Gemini 模型');
+                                                    if (raw.includes('Claude and GPT')) return t('accounts.quota_group_claude_gpt', 'Claude 与 GPT 模型');
+                                                    if (raw.includes('Argon')) return t('accounts.quota_group_argon', 'Gemini 4 Argon');
+                                                    return raw;
+                                                })()}
+                                            </span>
+                                            {group.description && (
+                                                <span className="text-[11px] font-normal text-blue-800/80 dark:text-blue-300/80 truncate max-w-md font-mono" title={group.description}>
+                                                    {group.description.startsWith('Models within this group:')
+                                                        ? t('accounts.details.group_models_desc', {
+                                                            defaultValue: '组内包含模型: {{models}}',
+                                                            models: group.description.replace(/^Models within this group:\s*/i, ''),
+                                                        })
+                                                        : group.description}
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                             {(group.buckets || []).map((bucket, bIdx) => {
@@ -576,11 +593,19 @@ export default function AccountDetailsDialog({
                                                         ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 border border-amber-200/50'
                                                         : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-200/50';
 
+                                                const windowLabel = (() => {
+                                                    const w = (bucket.window || '').toUpperCase();
+                                                    if (w === 'WEEKLY') return t('accounts.quota_window_weekly_desc', '7天周配额 (WEEKLY)');
+                                                    if (w === '5H') return t('accounts.quota_window_5h_desc', '5小时配额 (5H)');
+                                                    if (w === '1H') return t('accounts.quota_window_1h_desc', '1小时配额 (1H)');
+                                                    return bucket.window;
+                                                })();
+
                                                 return (
                                                     <div key={bIdx} className="bg-white dark:bg-base-200 p-3 rounded-lg border border-gray-100 dark:border-white/5 shadow-sm">
                                                         <div className="flex justify-between items-center mb-2">
-                                                            <span className="text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wider font-mono">
-                                                                {bucket.window}
+                                                            <span className="text-xs font-bold text-gray-700 dark:text-gray-300 tracking-wider">
+                                                                {windowLabel}
                                                             </span>
                                                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${bColor}`}>
                                                                 {percentage}%

@@ -489,6 +489,7 @@
             "batch_warmup_msg": "Tem certeza de que deseja acionar o aquecimento para as {{count}} contas selecionadas imediatamente?"
         },
         "switch_to_agy": "Alternar para Antigravity CLI (agy)",
+        "switch_to_acp": "Alternar para o plugin do IDE Antigravity (ACP)",
         "warmup_all_triggered": "Tarefa de pré-aquecimento disparada para todas as contas",
         "drag_disabled_during_sort": "A ordenação por coluna está ativa; o arrasto está pausado",
         "quota_group_gemini": "Modelos Gemini",
@@ -502,6 +503,8 @@
         "client_ide_tooltip": "Conta conectada no Antigravity IDE",
         "client_cli": "CLI",
         "client_cli_tooltip": "Conta conectada no Antigravity CLI (agy)",
+        "client_acp": "Plugin",
+        "client_acp_tooltip": "Conta conectada no plugin do IDE Antigravity (ACP)",
         "switch_next_short": "Próximo",
         "weekly_exhausted_tooltip": "Cota semanal esgotada, proteção ativada",
         "type": {

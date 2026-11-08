@@ -525,6 +525,28 @@ async function runTests() {
         assertEqual(boostedIds[0], 'acc-c55');
     });
 
+    // Test 18: Candidate with >=90% remaining quota does NOT trigger immediate auto-recovery upon activation
+    await test('18. Candidate with high remaining quota (e.g. 95%) keeps Pedal Mode active before reset time', async () => {
+        const inFiveHours = new Date(now + 5 * 3600 * 1000).toISOString();
+        const highQuotaAcc = makeAccount('acc-high', 'High Quota Account', 95, inFiveHours, 95, inFiveHours);
+
+        usePedalModeStore.setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-high'],
+            originalPriorities: { 'acc-high': 50 },
+            originalModelPriorities: {},
+            snapshotDisabledIds: [],
+            temporarilyDisabledIds: [],
+        });
+
+        await store.checkAndAutoRecover([acc1, highQuotaAcc], async () => {});
+
+        const state = usePedalModeStore.getState();
+        assert(state.active === true, 'Pedal Mode MUST remain active for accounts with high remaining quota (>90%) before reset time');
+        assertEqual(state.targetAccountIds.length, 1);
+    });
+
     console.log(`\nPedal Mode Tests Summary: ${passed} passed, ${failed} failed.`);
     if (failed > 0) {
         throw new Error(`Pedal Mode tests failed: ${failed}`);
