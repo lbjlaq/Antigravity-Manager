@@ -3,6 +3,19 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.4 (2026-11-08)**:
+        -   **[Antigravity IDE Plugin (antigravity-acp) Account Switching & Active Detection] (Fixes #3842, PR #3844, Thanks to @Al-Taie, @cubelikeplayDaniel)**:
+            -   **Seamless IDE Plugin Credential Sync & Process Reload**: Added official Google Antigravity IDE Plugin (`antigravity-acp` / JetBrains & Android Studio) target. Supports atomically persisting selected accounts to `$GEMINI_HOME/antigravity-acp/acp_token.json` and `settings.json`, automatically syncing macOS Keychain credentials (`service="gemini"`, `account="antigravity-acp"`), and gracefully reloading `agy_acp_server`. (Fixes #3842, PR #3844)
+            -   **Multi-Client State Parity & CLI Alignment**: Extended `AccountIndex` and `ActiveClientsStatus` to discover active ACP accounts; CLI `switch`, `list`, `current` commands and Headless mode now fully support `--target acp`. (Fixes #3842, PR #3844)
+        -   **[2x2 Action Capsule Grid, Single-Modal State Machine & Narrowed Action Column] (Thanks to @cubelikeplayDaniel)**:
+            -   **Compact 2x2 Action Grid**: Restructured action buttons on AccountCard and AccountTable into 2 rows of 2 buttons ([Switch], [Refresh] on top; [Power], [More] on bottom), providing generous touch targets and horizontal breathing room.
+            -   **Narrowed Table Actions Column**: Tightened sticky action column width from `w-[240px]` to `w-[136px]` with `px-1` padding, eliminating excess whitespace.
+            -   **Single-Modal State Machine Navigation**: Unified tertiary Tag Editor directly into `AccountActionsModal` as an internal view state (`menu` ↔ `tags`) with header back navigation, eradicating multi-portal pop/exit animation overlap and flickering.
+            -   **Text Wrapping on Client Cards**: Expanded modal width to `max-w-2xl` and replaced restrictive title truncation with natural multi-line wrapping so titles like `Antigravity IDE 插件 (ACP - JetBrains)` render in full.
+        -   **[Pedal Quota Mode High-Quota Recovery Fix & Quota Groups Localization] (Thanks to @cubelikeplayDaniel)**:
+            -   **Imminent High-Quota Auto-Recovery Defect Resolution**: Eliminated the flawed `pct >= 90` condition in `usePedalModeStore.ts`'s `checkAndAutoRecover`, allowing expiring accounts with 90%–100% remaining quota to pedal without instant auto-cancellation.
+            -   **Quota Groups Comprehensive Localization**: Localized raw upstream Google API strings (`Gemini Models`, `Claude and GPT models`, `Gemini 4 Argon`, `Models within this group`, and sliding windows `WEEKLY`, `5H`, `1H`) in the Account Details dialog.
+
     *   **v5.0.4-beta.3 (2026-11-08)**:
         -   **[Per-Account Gemini / Claude Model-Family Priorities & Selective Pedal Mode] (PR #3879, Thanks to @vecyang1, @cubelikeplayDaniel)**:
             -   **Independent Model-Family Priorities**: Added `Account.model_priorities` and `ProxyToken::effective_priority` to configure independent scheduling priorities (`1–100`) for `gemini` and `claude` per account, with `G:x · C:y` observability badges on account cards and tables. (PR #3879)

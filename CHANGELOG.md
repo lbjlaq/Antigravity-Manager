@@ -3,6 +3,19 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.4 (2026-11-08)**:
+        -   **[支持 Antigravity IDE 插件 (antigravity-acp) 账号切换与状态检测] (Fixes #3842, PR #3844, Thanks to @Al-Taie, @cubelikeplayDaniel)**:
+            -   **IDE 插件凭据无缝同步与进程重载**: 新增官方 Google Antigravity IDE 插件 (`antigravity-acp` / JetBrains & Android Studio) 客户端目标。支持将选定账号原子化写入 `$GEMINI_HOME/antigravity-acp/acp_token.json` 与 `settings.json`，并自动同步 macOS 钥匙串凭据 (`service="gemini"`, `account="antigravity-acp"`)，在优雅重启 `agy_acp_server` 后即时生效。(Fixes #3842, PR #3844)
+            -   **多端状态一致性与 CLI 对齐**: 完善 `AccountIndex` 与 `ActiveClientsStatus` 对 ACP 客户端活跃状态的自动探查与感知；CLI `switch`、`list`、`current` 命令与 Headless 运行模式全面支持 `--target acp`。(Fixes #3842, PR #3844)
+        -   **[账号操作区 2×2 胶囊布局重构、二级弹窗单窗状态机与操作列收窄] (Thanks to @cubelikeplayDaniel)**:
+            -   **紧凑 2×2 四按钮布局**: 账号卡片与列表的操作区全面重构为 2 行 2 列按钮（上排：`[切换]`、`[刷新]`；下排：`[启停]`、`[更多]`），大幅增加各操作按钮的点击靶区与水平呼吸感。
+            -   **表格操作列精确收窄**: 将表格端固定操作列宽从 `w-[240px]` 收敛至贴合按钮的 `w-[136px]`，左右内边距收敛为 `px-1`，彻底消除两侧多余留白。
+            -   **单弹窗内部视图状态机消除层叠**: 将三级标签编辑器内嵌收敛为二级管理弹窗（`AccountActionsModal`）的内部视图状态（`menu` ↔ `tags`），顶部提供平滑返回按钮，彻底根除多层 Modal Portal 弹出/关闭动画重叠卡顿与闪烁。
+            -   **弹窗多端切换卡片文本自适应**: 弹窗宽度扩展为 `max-w-2xl`，去除客户端切换卡片的强行单行截断，文本自然自适应换行，完整呈现 `Antigravity IDE 插件 (ACP - JetBrains)` 及其描述信息。
+        -   **[蹬额度模式高额度临期自愈缺陷修复与配额分组详情全面汉化] (Thanks to @cubelikeplayDaniel)**:
+            -   **临期高额度判定自愈缺陷根治**: 修复 `usePedalModeStore.ts` 的 `checkAndAutoRecover` 中误将 `pct >= 90` 作为重置判定条件的致命缺陷，使剩余 90%–100% 临期待消耗账号能够正常启动蹬额度模式，杜绝启动后瞬间被误判退出。
+            -   **账号详情配额分组全方位汉化**: 在账号详情弹窗的配额分组窗口中，对上游 Google API 的 `Gemini Models`、`Claude and GPT models`、`Gemini 4 Argon`、`Models within this group` 以及 `WEEKLY`、`5H`、`1H` 滑动时间窗口完成全量双语映射与优雅格式化。
+
     *   **v5.0.4-beta.3 (2026-11-08)**:
         -   **[单账号 Gemini / Claude 模型族独立调度优先级与蹬额度模式自由勾选] (PR #3879, Thanks to @vecyang1, @cubelikeplayDaniel)**:
             -   **按模型族独立编排调度优先级**: 新增 `Account.model_priorities` 与 `ProxyToken::effective_priority`，支持在单账号内独立设置 `gemini` 与 `claude` 的调度优先级（1–100，未配置时自动继承账号默认优先级），并在账号卡片与表格直观展示 `G:x · C:y` 徽章。(PR #3879)
