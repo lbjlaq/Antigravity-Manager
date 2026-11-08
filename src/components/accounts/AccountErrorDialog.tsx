@@ -1,5 +1,6 @@
 import { Ban, Lock, Clock, ExternalLink, Copy, FileText, Terminal, ChevronDown, ChevronRight } from 'lucide-react';
 import { Account } from '../../types/account';
+import { isValidationBlockActive } from '../../utils/accountStatus';
 import { formatDate } from '../../utils/format';
 import { useTranslation, Trans } from 'react-i18next';
 import ModalDialog from '../common/ModalDialog';
@@ -21,7 +22,7 @@ export default function AccountErrorDialog({ account, onClose }: AccountErrorDia
     const isForbidden = !!account.quota?.is_forbidden;
     const isDisabled = Boolean(account.disabled);
     const isProxyDisabled = account.proxy_disabled;
-    const isValidationBlocked = account.validation_blocked;
+    const isValidationBlocked = isValidationBlockActive(account);
     const isBanned = Boolean(account.banned);
 
     const rawReason = account.banned_reason || account.validation_blocked_reason || account.disabled_reason || account.quota?.forbidden_reason || account.proxy_disabled_reason || '';

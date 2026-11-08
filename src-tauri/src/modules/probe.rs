@@ -59,7 +59,7 @@ fn max_model_percentage(account: &Account) -> i32 {
 }
 
 /// 候选过滤 + 排序（纯函数，便于 table-driven 单测）：
-/// 1. 只排除确定不可用的账号：disabled / banned / validation_blocked / 403 forbidden；
+/// 1. 只排除确定不可用的账号：disabled / banned / validation_blocked (active) / model forbidden / 403 forbidden；
 /// 2. `include_proxy_disabled=false` 时额外排除手动禁用反代的账号（Web 自动调度语义）；
 /// 3. 按目标模型配额降序，其次按账号最高配额降序，最后按 account_id 稳定排序。
 pub fn rank_probe_candidates<'a>(
@@ -67,12 +67,14 @@ pub fn rank_probe_candidates<'a>(
     model: &str,
     include_proxy_disabled: bool,
 ) -> Vec<&'a Account> {
+    let now = chrono::Utc::now().timestamp();
     let mut candidates: Vec<&Account> = accounts
         .iter()
         .filter(|a| {
             !a.disabled
                 && !a.banned
-                && !a.validation_blocked
+                && !a.is_validation_block_active(now)
+                && !a.is_model_forbidden(model)
                 && !a.quota.as_ref().is_some_and(|q| q.is_forbidden)
                 && (include_proxy_disabled || !a.proxy_disabled)
         })
@@ -174,6 +176,19 @@ mod tests {
 
     #[test]
     fn test_rank_probe_candidates_filters_unavailable_accounts() {
+        let mut model_forbidden = test_account(
+            "model-forbidden",
+            &[("gemini-3.8-flash-high", 100)],
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        model_forbidden
+            .forbidden_models
+            .insert("gemini-3.8-flash-high".to_string());
+
         let accounts = vec![
             test_account(
                 "healthy",
@@ -229,6 +244,7 @@ mod tests {
                 false,
                 true,
             ),
+            model_forbidden,
         ];
 
         let web_ranked = rank_probe_candidates(&accounts, "gemini-3.8-flash-high", false);
@@ -239,6 +255,7 @@ mod tests {
         assert_eq!(desktop_ranked.len(), 2);
         assert!(desktop_ranked.iter().any(|a| a.id == "proxy-disabled"));
         assert!(!desktop_ranked.iter().any(|a| a.id == "banned"));
+        assert!(!desktop_ranked.iter().any(|a| a.id == "model-forbidden"));
     }
 
     #[test]

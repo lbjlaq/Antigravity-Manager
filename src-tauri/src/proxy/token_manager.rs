@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use tokio_util::sync::CancellationToken;
 
+use crate::models::account::{classify_lock_reason, AccountLockKind};
 use crate::proxy::rate_limit::RateLimitTracker;
 use crate::proxy::server::{ImagePermit, ImageScheduler};
 use crate::proxy::sticky_config::StickySessionConfig;
@@ -190,6 +191,7 @@ pub struct ProxyToken {
     pub subscription_tier: Option<String>, // "FREE" | "PRO" | "ULTRA"
     pub remaining_quota: Option<i32>,      // [FIX #563] Remaining quota for priority sorting
     pub protected_models: HashSet<String>, // [NEW #621]
+    pub forbidden_models: HashSet<String>, // [NEW] 模型级 403 冻结（只影响对应模型）
     pub health_score: f32,                 // [NEW] 健康分数 (0.0 - 1.0)
     pub reset_time: Option<i64>,           // [NEW] 配额刷新时间戳（用于排序优化）
     pub weekly_reset_time: Option<i64>, // [NEW] 周配额刷新时间戳（用于临期优先调度 EDF，防止周期重置作废配额）
@@ -225,6 +227,11 @@ impl ProxyToken {
             .get(group)
             .copied()
             .unwrap_or(self.priority)
+    }
+
+    /// 目标模型是否被模型级 403 冻结。账号级封禁/403 由加载阶段处理。
+    pub fn is_model_forbidden(&self, model: &str) -> bool {
+        crate::models::account::is_model_forbidden_by_scopes(model, &self.forbidden_models)
     }
 
     /// 只读配额视图：由现有三套 map 派生，供测试、诊断与后续迁移使用。
@@ -1027,10 +1034,36 @@ impl TokenManager {
                             .get("disabled")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false);
-                        let is_proxy_disabled = acc_json
+                        let is_proxy_disabled = if acc_json
                             .get("proxy_disabled")
                             .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
+                            .unwrap_or(false)
+                        {
+                            let manual = acc_json
+                                .get("manual_proxy_disabled")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let reason = acc_json
+                                .get("proxy_disabled_reason")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let quota_reason = acc_json
+                                .pointer("/quota/forbidden_reason")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            // 审查项 7：若属于可自愈迁移的模型级 403 且非手动禁用，不视为永久禁用，放行至 load_single_account 执行自愈迁移！
+                            if !manual
+                                && (crate::models::account::forbidden_model_scope(reason).is_some()
+                                    || crate::models::account::forbidden_model_scope(quota_reason)
+                                        .is_some())
+                            {
+                                false
+                            } else {
+                                true
+                            }
+                        } else {
+                            false
+                        };
                         is_disabled || is_proxy_disabled
                     } else {
                         true
@@ -1551,33 +1584,7 @@ impl TokenManager {
         let mut account: serde_json::Value =
             serde_json::from_str(&content).map_err(|e| format!("解析 JSON 失败: {}", e))?;
 
-        // [修复 #1344] 先检查账号是否被手动禁用(非配额保护原因)
-        let is_proxy_disabled = account
-            .get("proxy_disabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        let disabled_reason = account
-            .get("proxy_disabled_reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        if is_proxy_disabled && disabled_reason != "quota_protection" {
-            // Account manually disabled
-            tracing::debug!(
-                "Account skipped due to manual disable: {:?} (email={}, reason={})",
-                path,
-                account
-                    .get("email")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("<unknown>"),
-                disabled_reason
-            );
-            return Ok(None);
-        }
-
-        // 上游封禁（TOS_VIOLATION 等）与手动禁用相互独立：即使用户解锁反代开关，
-        // 封禁账号也不得重新进入调度池。
+        // 账号级封禁是最高优先级：banned 先于 proxy_disabled / validation / 403。
         if account
             .get("banned")
             .and_then(|v| v.as_bool())
@@ -1594,7 +1601,7 @@ impl TokenManager {
             return Ok(None);
         }
 
-        // [NEW] Check for validation block (VALIDATION_REQUIRED temporary block)
+        // 验证锁：按 until 判断；过期后只清验证相关状态，不得误清 hard 403。
         if account
             .get("validation_blocked")
             .and_then(|v| v.as_bool())
@@ -1604,11 +1611,18 @@ impl TokenManager {
                 .get("validation_blocked_until")
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
-
             let now = chrono::Utc::now().timestamp();
+            let last_used = account
+                .get("last_used")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(now);
+            let is_val_active = if block_until == 0 {
+                now.saturating_sub(last_used) < 86400
+            } else {
+                now < block_until
+            };
 
-            if now < block_until {
-                // Still blocked
+            if is_val_active {
                 tracing::debug!(
                     "Skipping validation-blocked account: {:?} (email={}, blocked until {})",
                     path,
@@ -1621,40 +1635,378 @@ impl TokenManager {
                         .unwrap_or_else(|| block_until.to_string())
                 );
                 return Ok(None);
+            }
+
+            let is_proxy_disabled = account
+                .get("proxy_disabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let manual_proxy_disabled = account
+                .get("manual_proxy_disabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let proxy_reason = account
+                .get("proxy_disabled_reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let proxy_kind = if is_proxy_disabled {
+                classify_lock_reason(proxy_reason)
             } else {
-                // Block expired - clear it.
-                //
-                // 同时清掉两样容易漏的：
-                //   - quota.is_forbidden：它是 403 缓存的「账号被封」判定，封禁窗口
-                //     一过就该失效；不清它的话刷新会一直跳过这个账号，它永远回不来
-                //     （issue #3630）。
-                //   - validation_url：与 clear_validation_blocked 的清理口径保持一致，
-                //     避免留下「块已清、URL 还在」的残留字段（issue #3631）。
-                account["validation_blocked"] = serde_json::json!(false);
-                account["validation_blocked_until"] = serde_json::json!(0);
-                account["validation_blocked_reason"] = serde_json::Value::Null;
-                account["validation_url"] = serde_json::Value::Null;
+                AccountLockKind::Manual
+            };
+            let quota_is_forbidden = account
+                .pointer("/quota/is_forbidden")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let quota_reason = account
+                .pointer("/quota/forbidden_reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let quota_kind = classify_lock_reason(quota_reason);
+            let keep_hard_lock = matches!(
+                proxy_kind,
+                AccountLockKind::Banned | AccountLockKind::HardForbidden
+            ) || (quota_is_forbidden
+                && matches!(
+                    quota_kind,
+                    AccountLockKind::Banned | AccountLockKind::HardForbidden
+                ));
+
+            account["validation_blocked"] = serde_json::json!(false);
+            account["validation_blocked_until"] = serde_json::json!(0);
+            account["validation_blocked_reason"] = serde_json::Value::Null;
+            account["validation_url"] = serde_json::Value::Null;
+            if !keep_hard_lock {
                 if let Some(q) = account.get_mut("quota").and_then(|v| v.as_object_mut()) {
                     q.insert("is_forbidden".to_string(), serde_json::json!(false));
+                    q.insert("forbidden_reason".to_string(), serde_json::Value::Null);
                 }
+                if proxy_kind == AccountLockKind::Validation {
+                    if manual_proxy_disabled {
+                        account["proxy_disabled"] = serde_json::json!(true);
+                        account["proxy_disabled_reason"] = serde_json::json!("manual");
+                    } else {
+                        account["proxy_disabled"] = serde_json::json!(false);
+                        account["proxy_disabled_reason"] = serde_json::Value::Null;
+                        account["proxy_disabled_at"] = serde_json::Value::Null;
+                    }
+                }
+            }
 
-                update_account_json(path, |latest| {
-                    latest["validation_blocked"] = serde_json::json!(false);
-                    latest["validation_blocked_until"] = serde_json::json!(0);
-                    latest["validation_blocked_reason"] = serde_json::Value::Null;
-                    latest["validation_url"] = serde_json::Value::Null;
+            update_account_json(path, move |latest| {
+                latest["validation_blocked"] = serde_json::json!(false);
+                latest["validation_blocked_until"] = serde_json::json!(0);
+                latest["validation_blocked_reason"] = serde_json::Value::Null;
+                latest["validation_url"] = serde_json::Value::Null;
+                if !keep_hard_lock {
                     if let Some(q) = latest.get_mut("quota").and_then(|v| v.as_object_mut()) {
                         q.insert("is_forbidden".to_string(), serde_json::json!(false));
+                        q.insert("forbidden_reason".to_string(), serde_json::Value::Null);
                     }
-                })
-                .await?;
-                tracing::info!(
-                    "Validation block expired and cleared for account: {}",
-                    account
-                        .get("email")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("<unknown>")
-                );
+                    if proxy_kind == AccountLockKind::Validation {
+                        if manual_proxy_disabled {
+                            latest["proxy_disabled"] = serde_json::json!(true);
+                            latest["proxy_disabled_reason"] = serde_json::json!("manual");
+                        } else {
+                            latest["proxy_disabled"] = serde_json::json!(false);
+                            latest["proxy_disabled_reason"] = serde_json::Value::Null;
+                            latest["proxy_disabled_at"] = serde_json::Value::Null;
+                        }
+                    }
+                }
+            })
+            .await?;
+            tracing::info!(
+                "Validation block expired and cleared for account: {}",
+                account
+                    .get("email")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unknown>")
+            );
+        }
+
+        // 残留/不一致的 quota.is_forbidden：验证类软锁可清；hard 403 与未知原因保守跳过。
+        let mut did_migrate_quota = false;
+        let quota_is_forbidden = account
+            .pointer("/quota/is_forbidden")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if quota_is_forbidden {
+            let quota_reason = account
+                .pointer("/quota/forbidden_reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            match classify_lock_reason(quota_reason) {
+                AccountLockKind::HardForbidden | AccountLockKind::Banned => {
+                    // 自愈检查（审查项 7）：如果 HardForbidden 的 reason 实际上能提取出具体模型 scope，
+                    // 说明是老版本遗留的模型级 403 被误写成账号级！自动迁移到 forbidden_models，不跳过该账号！
+                    let model_scope = crate::models::account::forbidden_model_scope(quota_reason);
+                    if let Some(scope) = model_scope {
+                        let mut forbidden_list: Vec<String> = account
+                            .get("forbidden_models")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if !forbidden_list.contains(&scope) {
+                            forbidden_list.push(scope.clone());
+                        }
+                        account["forbidden_models"] = serde_json::json!(forbidden_list);
+                        if let Some(q) = account.get_mut("quota").and_then(|v| v.as_object_mut()) {
+                            q.insert("is_forbidden".to_string(), serde_json::json!(false));
+                            q.insert("forbidden_reason".to_string(), serde_json::Value::Null);
+                        }
+                        let scope_clone = scope.clone();
+                        update_account_json(path, move |latest| {
+                            let mut fl: Vec<String> = latest
+                                .get("forbidden_models")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str().map(String::from))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            if !fl.contains(&scope_clone) {
+                                fl.push(scope_clone);
+                            }
+                            latest["forbidden_models"] = serde_json::json!(fl);
+                            if let Some(q) = latest.get_mut("quota").and_then(|v| v.as_object_mut())
+                            {
+                                q.insert("is_forbidden".to_string(), serde_json::json!(false));
+                                q.insert("forbidden_reason".to_string(), serde_json::Value::Null);
+                            }
+                        })
+                        .await?;
+                        did_migrate_quota = true;
+                        tracing::info!(
+                            "TokenManager: Migrated legacy model 403 to forbidden_models for account {}",
+                            account
+                                .get("email")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("<unknown>")
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Account skipped due to quota hard 403: {:?} (email={})",
+                            path,
+                            account
+                                .get("email")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("<unknown>")
+                        );
+                        return Ok(None);
+                    }
+                }
+                AccountLockKind::Validation => {
+                    if let Some(q) = account.get_mut("quota").and_then(|v| v.as_object_mut()) {
+                        q.insert("is_forbidden".to_string(), serde_json::json!(false));
+                        q.insert("forbidden_reason".to_string(), serde_json::Value::Null);
+                    }
+                    update_account_json(path, |latest| {
+                        if let Some(q) = latest.get_mut("quota").and_then(|v| v.as_object_mut()) {
+                            q.insert("is_forbidden".to_string(), serde_json::json!(false));
+                            q.insert("forbidden_reason".to_string(), serde_json::Value::Null);
+                        }
+                    })
+                    .await?;
+                }
+                _ => {
+                    tracing::debug!(
+                        "Account skipped due to unresolved quota.is_forbidden: {:?} (email={})",
+                        path,
+                        account
+                            .get("email")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("<unknown>")
+                    );
+                    return Ok(None);
+                }
+            }
+        }
+
+        // proxy_disabled：系统锁（403/验证/封禁）不加载；quota_protection 交给保护逻辑；
+        // 其余视为手动禁用。
+        let is_proxy_disabled = account
+            .get("proxy_disabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let manual_proxy_disabled = account
+            .get("manual_proxy_disabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let disabled_reason = account
+            .get("proxy_disabled_reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if is_proxy_disabled {
+            match classify_lock_reason(disabled_reason) {
+                AccountLockKind::QuotaProtection => {}
+                AccountLockKind::Banned => {
+                    tracing::debug!(
+                        "Account skipped due to banned proxy reason: {:?} (email={}, reason={})",
+                        path,
+                        account
+                            .get("email")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("<unknown>"),
+                        disabled_reason
+                    );
+                    return Ok(None);
+                }
+                AccountLockKind::HardForbidden => {
+                    // 自愈检查（审查项 1 & 7）：
+                    // 仅当 proxy 禁用原因自身明确属于模型级 403 时，才自愈迁移至 forbidden_models。
+                    // 关键守卫：若用户此前明确手动禁用了账号 (manual_proxy_disabled == true)，
+                    // 即使迁移了模型冻结，账号也必须继续保持 proxy_disabled = true，绝不越权恢复用户手动关闭的账号！
+                    let proxy_model_scope =
+                        crate::models::account::forbidden_model_scope(disabled_reason);
+                    let has_migrated_from_quota = did_migrate_quota;
+
+                    if let Some(scope) = proxy_model_scope {
+                        let mut fl: Vec<String> = account
+                            .get("forbidden_models")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        if !fl.contains(&scope) {
+                            fl.push(scope.clone());
+                        }
+                        account["forbidden_models"] = serde_json::json!(fl);
+
+                        if manual_proxy_disabled {
+                            account["proxy_disabled"] = serde_json::json!(true);
+                            account["proxy_disabled_reason"] = serde_json::json!("manual");
+                            let scope_clone = scope.clone();
+                            update_account_json(path, move |latest| {
+                                let mut fl: Vec<String> = latest
+                                    .get("forbidden_models")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                if !fl.contains(&scope_clone) {
+                                    fl.push(scope_clone);
+                                }
+                                latest["forbidden_models"] = serde_json::json!(fl);
+                                latest["proxy_disabled"] = serde_json::json!(true);
+                                latest["proxy_disabled_reason"] = serde_json::json!("manual");
+                            })
+                            .await?;
+                            tracing::info!(
+                                "TokenManager: Migrated legacy model 403 to forbidden_models but kept manual proxy_disabled for account {}",
+                                account
+                                    .get("email")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("<unknown>")
+                            );
+                            return Ok(None);
+                        } else {
+                            account["proxy_disabled"] = serde_json::json!(false);
+                            account["proxy_disabled_reason"] = serde_json::Value::Null;
+                            account["proxy_disabled_at"] = serde_json::Value::Null;
+                            let scope_clone = scope.clone();
+                            update_account_json(path, move |latest| {
+                                let mut fl: Vec<String> = latest
+                                    .get("forbidden_models")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                if !fl.contains(&scope_clone) {
+                                    fl.push(scope_clone);
+                                }
+                                latest["forbidden_models"] = serde_json::json!(fl);
+                                latest["proxy_disabled"] = serde_json::json!(false);
+                                latest["proxy_disabled_reason"] = serde_json::Value::Null;
+                                latest["proxy_disabled_at"] = serde_json::Value::Null;
+                            })
+                            .await?;
+                            if let Some(aid) = account.get("id").and_then(|v| v.as_str()) {
+                                let _ = crate::modules::account::set_account_index_proxy_disabled(
+                                    aid, false,
+                                );
+                            }
+                            tracing::info!(
+                                "TokenManager: Healed legacy proxy_disabled for model-scoped 403 on account {}",
+                                account
+                                    .get("email")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("<unknown>")
+                            );
+                        }
+                    } else if has_migrated_from_quota && !manual_proxy_disabled {
+                        // 审查项 7：proxy_disabled_reason 是泛化的 "Forbidden (403)"，但已在 quota 处成功自愈模型 scope
+                        account["proxy_disabled"] = serde_json::json!(false);
+                        account["proxy_disabled_reason"] = serde_json::Value::Null;
+                        account["proxy_disabled_at"] = serde_json::Value::Null;
+                        update_account_json(path, |latest| {
+                            latest["proxy_disabled"] = serde_json::json!(false);
+                            latest["proxy_disabled_reason"] = serde_json::Value::Null;
+                            latest["proxy_disabled_at"] = serde_json::Value::Null;
+                        })
+                        .await?;
+                        if let Some(aid) = account.get("id").and_then(|v| v.as_str()) {
+                            let _ = crate::modules::account::set_account_index_proxy_disabled(
+                                aid, false,
+                            );
+                        }
+                        tracing::info!(
+                            "TokenManager: Healed generic proxy_disabled associated with migrated model 403 on account {}",
+                            account
+                                .get("email")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("<unknown>")
+                        );
+                    } else {
+                        tracing::debug!(
+                            "Account skipped due to hard 403 proxy reason: {:?} (email={}, reason={})",
+                            path,
+                            account
+                                .get("email")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("<unknown>"),
+                            disabled_reason
+                        );
+                        return Ok(None);
+                    }
+                }
+                AccountLockKind::Validation => {
+                    tracing::debug!(
+                        "Account skipped due to validation proxy reason: {:?} (email={})",
+                        path,
+                        account
+                            .get("email")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("<unknown>")
+                    );
+                    return Ok(None);
+                }
+                AccountLockKind::Manual => {
+                    tracing::debug!(
+                        "Account skipped due to manual disable: {:?} (email={}, reason={})",
+                        path,
+                        account
+                            .get("email")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("<unknown>"),
+                        disabled_reason
+                    );
+                    return Ok(None);
+                }
             }
         }
 
@@ -1760,6 +2112,17 @@ impl TokenManager {
         // 【新增 #621】提取受限模型列表
         let protected_models: HashSet<String> = account
             .get("protected_models")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let forbidden_models: HashSet<String> = account
+            .get("forbidden_models")
             .and_then(|v| v.as_array())
             .map(|arr| {
                 arr.iter()
@@ -2109,6 +2472,7 @@ impl TokenManager {
             subscription_tier,
             remaining_quota,
             protected_models,
+            forbidden_models,
             health_score,
             reset_time,
             weekly_reset_time,
@@ -3697,6 +4061,19 @@ impl TokenManager {
             crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
                 .unwrap_or_else(|| target_model.to_string());
 
+        // 模型级 403 冻结：只排除目标模型，不影响其他模型。
+        tokens_snapshot.retain(|t| !t.is_model_forbidden(target_model));
+        if tokens_snapshot.is_empty() {
+            tracing::warn!(
+                "All candidate accounts are forbidden for model: {}",
+                target_model
+            );
+            return Err(format!(
+                "All accounts are forbidden for model: {}",
+                target_model
+            ));
+        }
+
         // ── 动态模型授权过滤 ────────────────────────────────────────────────
         // 替代旧的硬编码 model_quotas 门禁，改用三步动态匹配：
         //   Step A: 精确命中 available_models（原始 ID，大小写无关）
@@ -5029,8 +5406,9 @@ impl TokenManager {
     pub fn models_with_positive_quota(&self) -> Vec<String> {
         let mut positive: HashSet<String> = HashSet::new();
         for entry in self.tokens.iter() {
-            for (model, quota) in entry.value().model_quotas.iter() {
-                if *quota > 0 {
+            let token = entry.value();
+            for (model, quota) in token.model_quotas.iter() {
+                if *quota > 0 && !token.is_model_forbidden(model) {
                     positive.insert(model.clone());
                 }
             }
@@ -5062,6 +5440,10 @@ impl TokenManager {
             .iter()
             .filter(|entry| {
                 let token = entry.value();
+                // 模型级 403 冻结：该模型不计入可用配额
+                if token.is_model_forbidden(model) {
+                    return false;
+                }
                 // 验证锁定且未过期的账号跳过
                 if token.validation_blocked {
                     if token.validation_blocked_until == 0 || token.validation_blocked_until > now {
@@ -5265,7 +5647,17 @@ impl TokenManager {
         for entry in self.tokens.iter() {
             let token = entry.value();
 
-            // 0. 验证锁定中或禁用状态
+            // 0. 模型级 403 冻结：若目标模型已被冻结，该账号不可用于此模型
+            if token.is_model_forbidden(target_model) {
+                tracing::debug!(
+                    "[Fallback Check] Account {} is forbidden for model {}, skipping",
+                    token.email,
+                    target_model
+                );
+                continue;
+            }
+
+            // 0.1 验证锁定中或禁用状态
             if token.validation_blocked {
                 let now = chrono::Utc::now().timestamp();
                 if token.validation_blocked_until == 0 || token.validation_blocked_until > now {
@@ -7342,13 +7734,17 @@ impl TokenManager {
             let token = entry.value();
 
             for model_id in &token.available_models {
-                all_models.insert(model_id.clone());
+                if !token.is_model_forbidden(model_id) {
+                    all_models.insert(model_id.clone());
+                }
             }
 
             // 持久化文件里的原始 quota 模型 ID（官方 fetchAvailableModels 可用集合）
             if let Some(raw_models) = Self::get_available_models_from_json(&token.account_path) {
                 for model_id in raw_models {
-                    all_models.insert(model_id);
+                    if !token.is_model_forbidden(&model_id) {
+                        all_models.insert(model_id);
+                    }
                 }
             }
         }
@@ -7358,6 +7754,9 @@ impl TokenManager {
     }
 
     /// 获取当前所有可用账号中收集到的官方下发的所有动态模型集合
+    ///
+    /// 注意：本方法用于模型闸门动态感知号池上报过的模型特征并集（供冷启动与结构发现使用）；
+    /// 对外暴露的标准可用模型列表请使用已严格排除 forbidden_models 冻结模型的 `get_all_available_models`。
     pub fn get_all_collected_models(&self) -> std::collections::HashSet<String> {
         let mut all_models = std::collections::HashSet::new();
         for entry in self.tokens.iter() {
@@ -7488,10 +7887,12 @@ impl TokenManager {
         }
 
         // [FIX] 403 人机验证阻断时，同步标记 proxy_disabled = true，确保前端直接展示禁用反代状态并停止参与调度
-        let _ = crate::modules::account::toggle_proxy_status(
+        // 关键防护：此为系统锁调用，manual_intent 必须传 false，严禁把验证阻断写成“用户手动禁用”！
+        let _ = crate::modules::account::toggle_proxy_status_with_intent(
             account_id,
             false,
             Some("validation_required"),
+            false,
         );
 
         let reason_owned = reason.to_string();
@@ -7532,14 +7933,73 @@ impl TokenManager {
 
     /// Set is_forbidden status for an account (called when proxy encounters 403)
     pub async fn set_forbidden(&self, account_id: &str, reason: &str) -> Result<(), String> {
+        self.set_forbidden_with_model(account_id, reason, None)
+            .await
+    }
+
+    pub async fn set_forbidden_with_model(
+        &self,
+        account_id: &str,
+        reason: &str,
+        target_model: Option<&str>,
+    ) -> Result<(), String> {
+        self.set_forbidden_with_models(account_id, reason, target_model, None)
+            .await
+    }
+
+    pub async fn set_forbidden_with_models(
+        &self,
+        account_id: &str,
+        reason: &str,
+        target_model: Option<&str>,
+        alt_model: Option<&str>,
+    ) -> Result<(), String> {
         // [FIX] 调用封装好的模块函数，确保线程安全地更新账号文件和索引
-        crate::modules::account::mark_account_forbidden(account_id, reason)?;
+        let outcome = crate::modules::account::mark_account_forbidden_with_models(
+            account_id,
+            reason,
+            target_model,
+            alt_model,
+        )?;
 
         // Clear sticky session if forbidden
         self.session_accounts.retain(|_, v| *v != account_id);
 
-        // [FIX] 从内存池中移除账号，避免重试时再次选中
-        self.remove_account(account_id);
+        match outcome {
+            crate::modules::account::ForbiddenApplyResult::AccountLocked => {
+                // 账号级 403/封禁：从内存池中移除，避免重试时再次选中
+                self.remove_account(account_id);
+            }
+            crate::modules::account::ForbiddenApplyResult::ModelLocked(scope) => {
+                // 模型级 403：保留账号供其他模型使用，立即冻结当前模型。
+                // mark_account_forbidden 已经触发 reload；这里同步内存 token，
+                // 让本次请求的后续重试立即避开该模型。
+                if let Some(mut token) = self.tokens.get_mut(account_id) {
+                    token.forbidden_models.insert(scope);
+                    if let Some(target) = target_model {
+                        if let Some(target_cleaned) =
+                            crate::models::account::clean_model_token(target)
+                        {
+                            let target_base =
+                                crate::proxy::common::model_mapping::strip_tier_suffix(
+                                    &target_cleaned,
+                                )
+                                .to_lowercase();
+                            token.forbidden_models.insert(target_base);
+                        }
+                    }
+                    if let Some(alt) = alt_model {
+                        if let Some(alt_cleaned) = crate::models::account::clean_model_token(alt) {
+                            let alt_base = crate::proxy::common::model_mapping::strip_tier_suffix(
+                                &alt_cleaned,
+                            )
+                            .to_lowercase();
+                            token.forbidden_models.insert(alt_base);
+                        }
+                    }
+                }
+            }
+        }
 
         tracing::warn!(
             "🚫 Account {} marked as forbidden (403): {}",
@@ -8531,6 +8991,7 @@ mod tests {
             subscription_tier: tier.map(|s| s.to_string()),
             remaining_quota,
             protected_models: HashSet::new(),
+            forbidden_models: std::collections::HashSet::new(),
             health_score,
             reset_time,
             weekly_reset_time: None,
@@ -8545,6 +9006,18 @@ mod tests {
             model_weekly_reset_times: HashMap::new(),
             model_quota_windows: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn test_proxy_token_model_forbidden_matching() {
+        let mut token = create_test_token("forbidden@test.com", Some("PRO"), 1.0, None, Some(100));
+        token
+            .forbidden_models
+            .insert("claude-3-5-sonnet".to_string());
+
+        assert!(token.is_model_forbidden("claude-3-5-sonnet"));
+        assert!(token.is_model_forbidden("claude-3-5-sonnet-thinking"));
+        assert!(!token.is_model_forbidden("gemini-3-pro"));
     }
 
     /// 测试排序比较函数（与 get_token_internal 中的逻辑一致）
@@ -8929,6 +9402,7 @@ mod tests {
             subscription_tier: Some("PRO".to_string()),
             remaining_quota,
             protected_models,
+            forbidden_models: std::collections::HashSet::new(),
             health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
@@ -9567,6 +10041,7 @@ mod tests {
             priority: 0,
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
+            forbidden_models: std::collections::HashSet::new(),
             health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
@@ -9601,6 +10076,7 @@ mod tests {
             priority: 0,
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
+            forbidden_models: std::collections::HashSet::new(),
             health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
@@ -9823,6 +10299,7 @@ mod tests {
             priority: 0,
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
+            forbidden_models: std::collections::HashSet::new(),
             health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
@@ -9899,6 +10376,7 @@ mod tests {
             priority: 0,
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
+            forbidden_models: std::collections::HashSet::new(),
             health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
@@ -10916,6 +11394,7 @@ mod tests {
             subscription_tier: Some("PRO".to_string()),
             remaining_quota: Some(100),
             protected_models: HashSet::new(),
+            forbidden_models: std::collections::HashSet::new(),
             health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,

@@ -22,6 +22,8 @@ export interface Account {
     proxy_disabled_reason?: string;
     proxy_disabled_at?: number;
     protected_models?: string[];
+    /** 模型级 403 冻结（只影响对应模型，不影响其他模型） */
+    forbidden_models?: string[];
     live_limited_models?: Record<string, LiveLimitStatus>;
     custom_label?: string;  // 用户自定义标签
     qos_status?: 'suspicious' | 'jailed' | 'probing' | 'half_open' | null; // 运行时 QoS 状态

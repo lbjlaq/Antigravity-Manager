@@ -992,8 +992,16 @@ pub async fn handle_generate(
                         tracing::error!("Failed to set validation block: {}", e);
                     }
                 } else {
-                    // 设置 is_forbidden 状态并持久化（仅当真正非人机验证类 403 时才进入永久禁用）
-                    if let Err(e) = token_manager.set_forbidden(&acc_id, &error_text).await {
+                    // 设置 is_forbidden 状态并持久化（同时传入映射前目标模型与改写后实际上游模型，彻底消除动态改写盲区）
+                    if let Err(e) = token_manager
+                        .set_forbidden_with_models(
+                            &acc_id,
+                            &error_text,
+                            Some(&config.final_model),
+                            Some(&mapped_model),
+                        )
+                        .await
+                    {
                         tracing::error!("Failed to set forbidden status: {}", e);
                     }
                 }

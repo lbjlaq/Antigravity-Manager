@@ -50,6 +50,7 @@ fn create_test_token(
         subscription_tier: tier.map(|s| s.to_string()),
         remaining_quota,
         protected_models: HashSet::new(),
+        forbidden_models: std::collections::HashSet::new(),
         health_score,
         reset_time,
         weekly_reset_time: None,

@@ -9,6 +9,7 @@ import { request } from '../utils/request';
 const STORAGE_KEY = 'antigravity_pedal_mode_state';
 const SUPPRESS_KEY = 'antigravity_pedal_mode_suppress';
 let dismissedUntil = 0;
+let isProcessing = false;
 
 interface PedalPendingModal {
     model: PedalTargetModel;
@@ -39,6 +40,7 @@ interface PedalModeStore extends PedalModeState {
     dismissModal: () => void;
     suppressModel: (model: PedalTargetModel) => void;
     clearSuppress: () => void;
+    resetPedalModeState: () => void;
 }
 
 const getStoredSuppress = () => {
@@ -225,169 +227,216 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
         },
 
         checkAndAutoRecover: async (accounts, updatePriority, legacyToggle) => {
+            if (isProcessing) return;
             const state = get();
             if (!state.active || !state.targetModel || state.targetAccountIds.length === 0) {
                 return;
             }
 
-            const priorityUpdater = updatePriority || (async (id: string, p: number, mp?: ModelPriorities) => {
-                const { updateAccountPriority } = useAccountStore.getState();
-                if (updateAccountPriority) await updateAccountPriority(id, p, mp);
-            });
+            isProcessing = true;
+            try {
+                const priorityUpdater = updatePriority || (async (id: string, p: number, mp?: ModelPriorities) => {
+                    const { updateAccountPriority } = useAccountStore.getState();
+                    if (updateAccountPriority) await updateAccountPriority(id, p, mp);
+                });
 
-            const targetAccounts = accounts.filter(a => state.targetAccountIds.includes(a.id));
-            if (targetAccounts.length === 0) {
-                // 异常保底：若所有目标账号已被用户删除或移除，立即退出并恢复默认优先级
-                for (const id of state.targetAccountIds) {
-                    const origP = state.originalPriorities?.[id] ?? 50;
-                    const origMp = state.originalModelPriorities?.[id] ?? {};
+                const targetAccounts = accounts.filter(a => state.targetAccountIds.includes(a.id));
+                if (targetAccounts.length === 0) {
+                    const clearedState = {
+                        active: false,
+                        targetModel: null,
+                        targetAccountIds: [],
+                        originalPriorities: {},
+                        originalModelPriorities: {},
+                        snapshotDisabledIds: [],
+                        temporarilyDisabledIds: [],
+                    };
                     try {
-                        await priorityUpdater(id, origP, origMp);
-                    } catch (e) {
-                        console.error('[PedalMode] Failed to restore account priority on empty targets:', id, e);
-                    }
-                }
-                // 容错处理旧版本残留的挂起账号
-                if (legacyToggle && state.temporarilyDisabledIds?.length > 0) {
-                    for (const id of state.temporarilyDisabledIds) {
-                        try { await legacyToggle(id, true); } catch (_) {}
-                    }
-                }
-                const clearedState = {
-                    active: false,
-                    targetModel: null,
-                    targetAccountIds: [],
-                    originalPriorities: {},
-                    originalModelPriorities: {},
-                    snapshotDisabledIds: [],
-                    temporarilyDisabledIds: [],
-                };
-                try {
-                    localStorage.removeItem(STORAGE_KEY);
-                } catch (_) {}
-                set(clearedState);
-                showToast('目标待蹬账号已不存在，已自动退出蹬额度模式并恢复调度优先级');
-                return;
-            }
+                        localStorage.removeItem(STORAGE_KEY);
+                    } catch (_) {}
+                    // 立即重置 Store 状态，防止中间任何异步刷新将自身误判为激活态而重入
+                    set(clearedState);
 
-            // 检查待蹬账号：单个账号用尽时恢复其调度优先级；当所有目标账号用尽或到达重置时间后整体退出
-            let allDrained = true;
-            let allReset = true;
-
-            for (const acc of targetAccounts) {
-                const tier = getAccountTier(acc);
-                const summaries = getGroupQuotaSummaries(acc.quota?.quota_groups, acc.quota?.models, tier);
-                const s = summaries.find(sm => sm.key === state.targetModel);
-
-                // 配额数据未就绪或临时加载失败时，进行保守保护，防止误判为 0% 提前退出
-                if (!s || !s.weekly || s.weekly.percentage === undefined) {
-                    allDrained = false;
-                    allReset = false;
-                    continue;
-                }
-
-                const pct = s.weekly.percentage;
-                const resetTimeStr = s.weekly.resetTime;
-                const resetTimestamp = resetTimeStr ? Date.parse(resetTimeStr) : NaN;
-                const hasValidResetTime = !isNaN(resetTimestamp);
-                const diffHours = hasValidResetTime ? (resetTimestamp - Date.now()) / (3600 * 1000) : 999;
-
-                // 若该账号配额已降至 0%，且该账号仍处于优先级 1 状态，则将其动态恢复至原始优先级
-                // 避免单号用尽后仍作为最高优先级截留非待蹬模型的请求
-                if (pct <= 0) {
-                    const effectiveModelP = acc.model_priorities?.[state.targetModel];
-                    if (acc.priority === 1 || acc.priority === 0 || effectiveModelP === 1) {
-                        const origP = state.originalPriorities?.[acc.id] ?? 50;
-                        const origMp = state.originalModelPriorities?.[acc.id] ?? {};
+                    // 异常保底：若所有目标账号已被用户删除或移除，立即退出并恢复默认优先级
+                    for (const id of state.targetAccountIds) {
+                        const origP = state.originalPriorities?.[id] ?? 50;
+                        const origMp = state.originalModelPriorities?.[id] ?? {};
                         try {
-                            await priorityUpdater(acc.id, origP, origMp);
+                            await priorityUpdater(id, origP, origMp);
                         } catch (e) {
-                            console.error('[PedalMode] Failed to restore single drained account priority:', acc.id, e);
+                            console.error('[PedalMode] Failed to restore account priority on empty targets:', id, e);
                         }
                     }
-                } else {
-                    allDrained = false;
+                    // 容错处理旧版本残留的挂起账号（仅当账号客观处于禁用时才调用，消除重复写盘）
+                    if (legacyToggle && state.temporarilyDisabledIds?.length > 0) {
+                        for (const id of state.temporarilyDisabledIds) {
+                            const acc = accounts.find(a => a.id === id);
+                            if (!acc || acc.proxy_disabled) {
+                                try { await legacyToggle(id, true); } catch (_) {}
+                            }
+                        }
+                    }
+                    await safeClearSessionBindings();
+                    showToast('目标待蹬账号已不存在，已自动退出蹬额度模式并恢复调度优先级');
+                    return;
                 }
 
-                // 该账号是否已刷新/重置：
-                // 1) 周配额已刷新恢复至 90% 以上（无论时间戳如何，配额已实锤刷新）
-                // 2) 具有合法的重置时间戳，且当前时间已经到达或超过官方重置时间 (diffHours <= 0)
-                // 注意：到达官方重置时间即视为本周期结束，不等待下一次配额快照刷新到 90%。
-                const isThisAccountReset = pct >= 90 || (hasValidResetTime && diffHours <= 0);
+                // 检查待蹬账号：单个账号用尽时恢复其调度优先级；当所有目标账号用尽或到达重置时间后整体退出
+                let allDrained = true;
+                let allReset = true;
 
-                // 只要还有任何一个账号未处于已重置状态，就绝不能判定为全部重置
-                if (!isThisAccountReset) {
-                    allReset = false;
+                for (const acc of targetAccounts) {
+                    const tier = getAccountTier(acc);
+                    const summaries = getGroupQuotaSummaries(acc.quota?.quota_groups, acc.quota?.models, tier);
+                    const s = summaries.find(sm => sm.key === state.targetModel);
+
+                    // 配额数据未就绪或临时加载失败时，进行保守保护，防止误判为 0% 提前退出
+                    if (!s || !s.weekly || s.weekly.percentage === undefined) {
+                        allDrained = false;
+                        allReset = false;
+                        continue;
+                    }
+
+                    const pct = s.weekly.percentage;
+                    const resetTimeStr = s.weekly.resetTime;
+                    const resetTimestamp = resetTimeStr ? Date.parse(resetTimeStr) : NaN;
+                    const hasValidResetTime = !isNaN(resetTimestamp);
+                    const diffHours = hasValidResetTime ? (resetTimestamp - Date.now()) / (3600 * 1000) : 999;
+
+                    // 若该账号配额已降至 0%，且该账号仍处于优先级 1 状态，则将其动态恢复至原始优先级
+                    // 避免单号用尽后仍作为最高优先级截留非待蹬模型的请求
+                    if (pct <= 0) {
+                        const effectiveModelP = acc.model_priorities?.[state.targetModel];
+                        if (acc.priority === 1 || acc.priority === 0 || effectiveModelP === 1) {
+                            const origP = state.originalPriorities?.[acc.id] ?? 50;
+                            const origMp = state.originalModelPriorities?.[acc.id] ?? {};
+                            try {
+                                await priorityUpdater(acc.id, origP, origMp);
+                            } catch (e) {
+                                console.error('[PedalMode] Failed to restore single drained account priority:', acc.id, e);
+                            }
+                        }
+                    } else {
+                        allDrained = false;
+                    }
+
+                    const isThisAccountReset = pct >= 90 || (hasValidResetTime && diffHours <= 0);
+                    if (!isThisAccountReset) {
+                        allReset = false;
+                    }
                 }
-            }
 
-            if (allDrained || allReset) {
-                const reason = allDrained ? '周配额已全部用完' : '已到达官方重置时间';
-                // 恢复目标账号的原始调度优先级
-                for (const id of state.targetAccountIds) {
-                    const origP = state.originalPriorities?.[id] ?? 50;
-                    const origMp = state.originalModelPriorities?.[id] ?? {};
+                if (allDrained || allReset) {
+                    const reason = allDrained ? '周配额已全部用完' : '已到达官方重置时间';
+                    const clearedState = {
+                        active: false,
+                        targetModel: null,
+                        targetAccountIds: [],
+                        originalPriorities: {},
+                        originalModelPriorities: {},
+                        snapshotDisabledIds: [],
+                        temporarilyDisabledIds: [],
+                    };
+
                     try {
-                        await priorityUpdater(id, origP, origMp);
-                    } catch (e) {
-                        console.error('[PedalMode] Failed to restore priority:', id, e);
+                        localStorage.removeItem(STORAGE_KEY);
+                    } catch (_) {}
+
+                    // 立即更新 Store 状态，防止中间任何异步事件并发重入
+                    set(clearedState);
+
+                    // 恢复目标账号的原始调度优先级
+                    for (const id of state.targetAccountIds) {
+                        const origP = state.originalPriorities?.[id] ?? 50;
+                        const origMp = state.originalModelPriorities?.[id] ?? {};
+                        try {
+                            await priorityUpdater(id, origP, origMp);
+                        } catch (e) {
+                            console.error('[PedalMode] Failed to restore priority:', id, e);
+                        }
                     }
-                }
-                // 容错处理旧版本残留的挂起账号
-                if (legacyToggle && state.temporarilyDisabledIds?.length > 0) {
-                    for (const id of state.temporarilyDisabledIds) {
-                        try { await legacyToggle(id, true); } catch (_) {}
+
+                    // 容错处理旧版本残留的挂起账号（仅当账号客观处于禁用时才调用）
+                    if (legacyToggle && state.temporarilyDisabledIds?.length > 0) {
+                        for (const id of state.temporarilyDisabledIds) {
+                            const acc = accounts.find(a => a.id === id);
+                            if (!acc || acc.proxy_disabled) {
+                                try { await legacyToggle(id, true); } catch (_) {}
+                            }
+                        }
                     }
+
+                    await safeClearSessionBindings();
+                    showToast(`🎉 待蹬账号${reason}，已自动退出蹬额度模式并恢复调度优先级！`);
                 }
-
-                const clearedState = {
-                    active: false,
-                    targetModel: null,
-                    targetAccountIds: [],
-                    originalPriorities: {},
-                    originalModelPriorities: {},
-                    snapshotDisabledIds: [],
-                    temporarilyDisabledIds: [],
-                };
-
-                try {
-                    localStorage.removeItem(STORAGE_KEY);
-                } catch (_) {}
-
-                await safeClearSessionBindings();
-
-                set(clearedState);
-                showToast(`🎉 待蹬账号${reason}，已自动退出蹬额度模式并恢复调度优先级！`);
+            } finally {
+                isProcessing = false;
             }
         },
 
         manualExit: async (updatePriority, legacyToggle) => {
+            if (isProcessing) return;
             const state = get();
             if (!state.active) return;
 
-            const priorityUpdater = updatePriority || (async (id: string, p: number, mp?: ModelPriorities) => {
-                const { updateAccountPriority } = useAccountStore.getState();
-                if (updateAccountPriority) await updateAccountPriority(id, p, mp);
-            });
+            isProcessing = true;
+            try {
+                const clearedState = {
+                    active: false,
+                    targetModel: null,
+                    targetAccountIds: [],
+                    originalPriorities: {},
+                    originalModelPriorities: {},
+                    snapshotDisabledIds: [],
+                    temporarilyDisabledIds: [],
+                };
 
-            for (const id of state.targetAccountIds) {
-                const origP = state.originalPriorities?.[id] ?? 50;
-                const origMp = state.originalModelPriorities?.[id] ?? {};
                 try {
-                    await priorityUpdater(id, origP, origMp);
-                } catch (e) {
-                    console.error('[PedalMode] Failed to restore account priority manually:', id, e);
-                }
-            }
+                    localStorage.removeItem(STORAGE_KEY);
+                } catch (_) {}
 
-            // 容错处理旧版本残留的挂起账号
-            if (legacyToggle && state.temporarilyDisabledIds?.length > 0) {
-                for (const id of state.temporarilyDisabledIds) {
-                    try { await legacyToggle(id, true); } catch (_) {}
-                }
-            }
+                // 立即退出，避免退出期间任何外部刷新事件引发竞态
+                set(clearedState);
 
-            const clearedState = {
+                const currentAccounts = useAccountStore.getState().accounts || [];
+                const priorityUpdater = updatePriority || (async (id: string, p: number, mp?: ModelPriorities) => {
+                    const { updateAccountPriority } = useAccountStore.getState();
+                    if (updateAccountPriority) await updateAccountPriority(id, p, mp);
+                });
+
+                for (const id of state.targetAccountIds) {
+                    const origP = state.originalPriorities?.[id] ?? 50;
+                    const origMp = state.originalModelPriorities?.[id] ?? {};
+                    try {
+                        await priorityUpdater(id, origP, origMp);
+                    } catch (e) {
+                        console.error('[PedalMode] Failed to restore account priority manually:', id, e);
+                    }
+                }
+
+                // 容错处理旧版本残留的挂起账号（仅对客观处于禁用的账号恢复）
+                if (legacyToggle && state.temporarilyDisabledIds?.length > 0) {
+                    for (const id of state.temporarilyDisabledIds) {
+                        const acc = currentAccounts.find(a => a.id === id);
+                        if (!acc || acc.proxy_disabled) {
+                            try { await legacyToggle(id, true); } catch (_) {}
+                        }
+                    }
+                }
+
+                await safeClearSessionBindings();
+                showToast('已退出“蹬额度模式”，账号已恢复原状');
+            } finally {
+                isProcessing = false;
+            }
+        },
+
+        resetPedalModeState: () => {
+            isProcessing = false;
+            try {
+                localStorage.removeItem(STORAGE_KEY);
+            } catch (_) {}
+            set({
                 active: false,
                 targetModel: null,
                 targetAccountIds: [],
@@ -395,16 +444,9 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                 originalModelPriorities: {},
                 snapshotDisabledIds: [],
                 temporarilyDisabledIds: [],
-            };
-
-            try {
-                localStorage.removeItem(STORAGE_KEY);
-            } catch (_) {}
-
-            await safeClearSessionBindings();
-
-            set(clearedState);
-            showToast('已退出“蹬额度模式”，账号已恢复原状');
+                pendingModal: null,
+            });
+            showToast('已重置蹬额度模式状态');
         },
 
         dismissModal: () => {

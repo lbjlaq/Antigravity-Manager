@@ -286,6 +286,7 @@ struct AccountResponse {
     proxy_disabled_reason: Option<String>,
     proxy_disabled_at: Option<i64>,
     protected_models: Vec<String>,
+    forbidden_models: Vec<String>,
     live_limited_models: HashMap<String, crate::models::account::LiveLimitStatus>,
     /// [NEW] 403 验证阻止状态
     validation_blocked: bool,
@@ -394,6 +395,7 @@ fn to_account_response(
         proxy_disabled_reason: account.proxy_disabled_reason.clone(),
         proxy_disabled_at: account.proxy_disabled_at,
         protected_models: account.protected_models.iter().cloned().collect(),
+        forbidden_models: account.forbidden_models.iter().cloned().collect(),
         live_limited_models: account.live_limited_models.clone(),
         quota: account.quota.as_ref().map(|q| QuotaResponse {
             models: q
@@ -1490,6 +1492,7 @@ async fn admin_list_accounts(
                 proxy_disabled_reason: acc.proxy_disabled_reason,
                 proxy_disabled_at: acc.proxy_disabled_at,
                 protected_models: acc.protected_models.into_iter().collect(),
+                forbidden_models: acc.forbidden_models.into_iter().collect(),
                 live_limited_models: acc.live_limited_models,
                 validation_blocked: acc.validation_blocked,
                 validation_blocked_until: acc.validation_blocked_until,
@@ -1601,6 +1604,7 @@ async fn admin_get_current_account(
                 proxy_disabled_reason: acc.proxy_disabled_reason,
                 proxy_disabled_at: acc.proxy_disabled_at,
                 protected_models: acc.protected_models.into_iter().collect(),
+                forbidden_models: acc.forbidden_models.into_iter().collect(),
                 live_limited_models: acc.live_limited_models,
                 validation_blocked: acc.validation_blocked,
                 validation_blocked_until: acc.validation_blocked_until,
@@ -2669,7 +2673,8 @@ async fn admin_test_model(
         "model": payload.model,
         "access_token": token,
         "project_id": pid,
-        "account_id": chosen_account.id
+        "account_id": chosen_account.id,
+        "probe_intent": true
     });
 
     let client = rquest::Client::builder()

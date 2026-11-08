@@ -20,6 +20,7 @@ import {
     GroupQuotaSummary
 } from '../../utils/quotaDisplay';
 import { getAccountTier, type Account } from '../../types/account';
+import { isAccountAbnormal } from '../../utils/accountStatus';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { GroupQuotaCard } from '../accounts/GroupQuotaCard';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -359,14 +360,14 @@ export default function MiniView() {
 
     const availableAccounts = useMemo(() => {
         return accounts.filter(
-            a => !a.disabled && !a.proxy_disabled && !a.banned && !a.validation_blocked && !a.quota?.is_forbidden
+            a => !a.disabled && !a.proxy_disabled && !isAccountAbnormal(a)
         );
     }, [accounts]);
 
     const activePool = useMemo(() => {
         return availableAccounts.length > 0
             ? availableAccounts
-            : accounts.filter(a => !a.banned && !a.validation_blocked && !a.quota?.is_forbidden);
+            : accounts.filter(a => !isAccountAbnormal(a));
     }, [availableAccounts, accounts]);
 
     const handleSwitchAccount = async (accountId: string) => {
@@ -581,13 +582,13 @@ export default function MiniView() {
     const getTabStatus = (tabKey: 'classic' | 'ide' | 'agy') => {
         const id = getClientAccountId(tabKey);
         if (!id && tabKey === 'classic' && currentAccount) {
-            const isHealthy = !currentAccount.quota?.is_forbidden && !currentAccount.validation_blocked && !currentAccount.disabled && !currentAccount.banned;
+            const isHealthy = !currentAccount.disabled && !isAccountAbnormal(currentAccount);
             return { hasAccount: true, isHealthy };
         }
         if (!id) return { hasAccount: false, isHealthy: false };
         const acc = accounts.find((a) => a.id === id);
         if (!acc) return { hasAccount: false, isHealthy: false };
-        const isHealthy = !acc.quota?.is_forbidden && !acc.validation_blocked && !acc.disabled && !acc.banned;
+        const isHealthy = !acc.disabled && !isAccountAbnormal(acc);
         return { hasAccount: true, isHealthy };
     };
 
@@ -841,7 +842,7 @@ export default function MiniView() {
                             {accounts.map((acc) => {
                                 const isCurrent = acc.id === displayedAccount?.id;
                                 const accTier = getAccountTier(acc);
-                                const isHealthy = !acc.quota?.is_forbidden && !acc.validation_blocked && !acc.disabled && !acc.banned;
+                                const isHealthy = !acc.disabled && !isAccountAbnormal(acc);
 
                                 return (
                                     <button

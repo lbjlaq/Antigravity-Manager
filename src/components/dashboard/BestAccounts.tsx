@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { TrendingUp, ArrowRightLeft, Zap, Laptop, Code2, Terminal } from 'lucide-react';
 import { Account, QuotaGroup, ActiveClientsStatus, getAccountTier } from '../../types/account';
+import { isAccountAbnormal } from '../../utils/accountStatus';
 import { findQuotaModel } from '../../config/modelConfig';
 import { useTranslation } from 'react-i18next';
 
@@ -121,10 +122,15 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
         }
     }, [targetIde, activeClients, currentAccountId]);
 
-    // 1. 获取按“付费账号优先 + 5h 内最多”排序的候选账号
+    // 1. 获取按“付费账号优先 + 5h 内最多”排序的候选账号（严格过滤异常/封禁/403/验证阻断，且目标模型家族未被冻结）
     const geminiSorted = useMemo(() => {
         return accounts
-            .filter(a => a.id !== currentTargetAccountId && !a.disabled && !a.validation_blocked && !a.banned)
+            .filter(a => (
+                a.id !== currentTargetAccountId
+                && !a.disabled
+                && !isAccountAbnormal(a)
+                && !(a.forbidden_models && a.forbidden_models.some(m => m.toLowerCase().includes('gemini')))
+            ))
             .map(a => {
                 const tier = getAccountTier(a);
                 const isPaid = tier === 'ultra' || tier === 'pro';
@@ -147,7 +153,12 @@ function BestAccounts({ accounts, currentAccountId, activeClients, onSwitch }: B
 
     const claudeSorted = useMemo(() => {
         return accounts
-            .filter(a => a.id !== currentTargetAccountId && !a.disabled && !a.validation_blocked && !a.banned)
+            .filter(a => (
+                a.id !== currentTargetAccountId
+                && !a.disabled
+                && !isAccountAbnormal(a)
+                && !(a.forbidden_models && a.forbidden_models.some(m => m.toLowerCase().includes('claude')))
+            ))
             .map(a => {
                 const tier = getAccountTier(a);
                 const isPaid = tier === 'ultra' || tier === 'pro';

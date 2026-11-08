@@ -1111,7 +1111,8 @@ pub async fn warmup_model_directly(
     project_id: &str,
     email: &str,
     percentage: i32,
-    _account_id: Option<&str>,
+    account_id: Option<&str>,
+    probe_intent: bool,
 ) -> bool {
     // Get currently configured proxy port
     let port = config::load_app_config()
@@ -1119,12 +1120,16 @@ pub async fn warmup_model_directly(
         .unwrap_or(8045);
 
     let warmup_url = format!("http://127.0.0.1:{}/internal/warmup", port);
-    let body = json!({
+    let mut body = json!({
         "email": email,
         "model": model_name,
         "access_token": access_token,
-        "project_id": project_id
+        "project_id": project_id,
+        "probe_intent": probe_intent
     });
+    if let Some(acc_id) = account_id {
+        body["account_id"] = json!(acc_id);
+    }
 
     // Use a no-proxy client for local loopback requests
     // This prevents Docker environments from routing localhost through external proxies
@@ -1333,9 +1338,16 @@ pub async fn warm_up_all_accounts() -> Result<String, String> {
                         for (idx, (id, email, model, token, pid, pct)) in
                             items.into_iter().enumerate()
                         {
-                            let ok =
-                                warmup_model_directly(&token, &model, &pid, &email, pct, Some(&id))
-                                    .await;
+                            let ok = warmup_model_directly(
+                                &token,
+                                &model,
+                                &pid,
+                                &email,
+                                pct,
+                                Some(&id),
+                                false,
+                            )
+                            .await;
                             if ok {
                                 local_success += 1;
                                 let history_key = format!("{}:{}:100", email, model);
@@ -1460,8 +1472,16 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
 
     tokio::spawn(async move {
         for (name, pct) in models_to_warm {
-            if warmup_model_directly(&token, &name, &pid, &email, pct, Some(&account_id_clone))
-                .await
+            if warmup_model_directly(
+                &token,
+                &name,
+                &pid,
+                &email,
+                pct,
+                Some(&account_id_clone),
+                true,
+            )
+            .await
             {
                 let history_key = format!("{}:{}:100", email, name);
                 let now_ts = chrono::Utc::now().timestamp();

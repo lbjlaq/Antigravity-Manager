@@ -399,6 +399,62 @@ async function runTests() {
         assertEqual(updates[0].modelPriorities?.gemini, undefined, 'Temporary Gemini override cleared');
     });
 
+    await test('14. checkAndAutoRecover guards against concurrent/re-entrant executions', async () => {
+        const store = usePedalModeStore.getState();
+        const testDrainedAcc3 = makeAccount('acc-3', 'Account 3', 0, soonReset, 80, farReset);
+        let priorityCalls = 0;
+        const delayedPriorityUpdater = async (_id: string, _p: number) => {
+            priorityCalls++;
+            await new Promise(r => setTimeout(r, 50));
+        };
+        await store.activatePedalMode('gemini', ['acc-3'], [acc1, testDrainedAcc3], delayedPriorityUpdater);
+        priorityCalls = 0;
+
+        // Trigger checkAndAutoRecover twice concurrently with testDrainedAcc3 (which should exit)
+        const p1 = store.checkAndAutoRecover([acc1, testDrainedAcc3], delayedPriorityUpdater);
+        const p2 = store.checkAndAutoRecover([acc1, testDrainedAcc3], delayedPriorityUpdater);
+        await Promise.all([p1, p2]);
+
+        assertEqual(priorityCalls, 1, 'Only one auto-recovery process should execute priority restoration');
+    });
+
+    await test('15. checkAndAutoRecover skips redundant legacyToggle calls when account is already enabled', async () => {
+        const store = usePedalModeStore.getState();
+        const testDrainedAcc3 = makeAccount('acc-3', 'Account 3', 0, soonReset, 80, farReset);
+        let toggleCalls = 0;
+        const mockToggle = async (_id: string, _enable: boolean) => {
+            toggleCalls++;
+        };
+        // Set state with temporarilyDisabledIds where the account in accounts is already proxy_disabled === false
+        (usePedalModeStore as any).setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3'],
+            originalPriorities: { 'acc-3': 50 },
+            temporarilyDisabledIds: ['acc-1'], // acc1 has proxy_disabled: false
+        });
+
+        await store.checkAndAutoRecover([acc1, testDrainedAcc3], async () => {}, mockToggle);
+        assertEqual(toggleCalls, 0, 'legacyToggle should NOT be called if account is already enabled');
+    });
+
+    await test('16. resetPedalModeState cleanly clears state and removes localStorage key', async () => {
+        const store = usePedalModeStore.getState();
+        (usePedalModeStore as any).setState({
+            active: true,
+            targetModel: 'gemini',
+            targetAccountIds: ['acc-3'],
+            originalPriorities: { 'acc-3': 50 },
+        });
+        localStorage.setItem('antigravity_pedal_mode_state', JSON.stringify({ active: true }));
+
+        store.resetPedalModeState();
+        const state = usePedalModeStore.getState();
+        assertEqual(state.active, false, 'active should be false');
+        assertEqual(state.targetModel, null, 'targetModel should be null');
+        assertEqual(localStorage.getItem('antigravity_pedal_mode_state'), null, 'localStorage key should be deleted');
+    });
+
     console.log(`\nPedal Mode Tests Summary: ${passed} passed, ${failed} failed.`);
     if (failed > 0) {
         throw new Error(`Pedal Mode tests failed: ${failed}`);

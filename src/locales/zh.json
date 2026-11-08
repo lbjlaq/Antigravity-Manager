@@ -264,6 +264,7 @@
         "pro": "PRO",
         "free": "FREE",
         "filter_abnormal": "异常",
+        "forbidden_model_tooltip": "该模型已被 403 冻结，其他模型仍可调度",
         "edit_label": "编辑标签",
         "custom_label_placeholder": "输入自定义标签",
         "label_updated": "标签已更新",

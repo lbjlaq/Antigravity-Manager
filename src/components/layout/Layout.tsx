@@ -9,18 +9,36 @@ import { usePedalModeStore } from '../../stores/usePedalModeStore';
 import { PedalNoticeModal } from '../pedal/PedalNoticeModal';
 import { PedalBanner } from '../pedal/PedalBanner';
 import MiniView from './MiniView';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { isTauri } from '../../utils/env';
 import { ensureFullViewState } from '../../utils/windowManager';
+import { getAccountTier } from '../../types/account';
+import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 
 function Layout() {
     const { isMiniView } = useViewStore();
     const { accounts, updateAccountPriority, toggleProxyStatus } = useAccountStore();
     const { active, checkCandidates, checkAndAutoRecover } = usePedalModeStore();
+    const prevFingerprintRef = useRef<string>('');
 
-    // 蹬额度模式：账号状态变化或配额刷新时自动检测
+    // 蹬额度模式：账号状态变化或配额刷新时自动检测（基于配额关键指标指纹防抖防重入）
     useEffect(() => {
         if (!accounts || accounts.length === 0) return;
+
+        // 计算只包含账号ID、代理禁用状态以及 Gemini/Claude 配额与重置时间的特征指纹，避免由于调度优先级变更引发死循环
+        const fingerprint = accounts.map(a => {
+            const tier = getAccountTier(a);
+            const summaries = getGroupQuotaSummaries(a.quota?.quota_groups, a.quota?.models, tier);
+            const gemini = summaries.find(s => s.key === 'gemini');
+            const claude = summaries.find(s => s.key === 'claude');
+            return `${a.id}:${a.proxy_disabled ? 1 : 0}:${gemini?.weekly?.percentage ?? ''}:${gemini?.weekly?.resetTime ?? ''}:${claude?.weekly?.percentage ?? ''}:${claude?.weekly?.resetTime ?? ''}`;
+        }).join('|') + `|active:${active}`;
+
+        if (fingerprint === prevFingerprintRef.current) {
+            return;
+        }
+        prevFingerprintRef.current = fingerprint;
+
         if (active) {
             checkAndAutoRecover(accounts, updateAccountPriority, toggleProxyStatus);
         } else {
