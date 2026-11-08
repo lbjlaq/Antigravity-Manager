@@ -420,7 +420,11 @@
         "quota_window_weekly_short": "Weekly",
         "quota_group_gemini": "Gemini Models",
         "quota_group_claude": "Claude & GPT Models",
+        "quota_group_claude_gpt": "Claude & GPT Models",
         "quota_group_argon": "Gemini 4 Argon",
+        "quota_window_weekly_desc": "7-Day Weekly Quota (WEEKLY)",
+        "quota_window_5h_desc": "5-Hour Rolling Quota (5H)",
+        "quota_window_1h_desc": "1-Hour Rolling Quota (1H)",
         "weekly_exhausted_tooltip": "Weekly quota exhausted (0%); waiting for weekly reset",
         "weekly_constrained_tooltip": "Constrained by weekly limit",
         "weekly_tokens": "Cycle tokens",
@@ -433,7 +437,8 @@
             "title": "Quota Details",
             "model_quota": "Individual Model Quotas",
             "protected_models": "Protected Models",
-            "thinking_budget": "Thinking Budget"
+            "thinking_budget": "Thinking Budget",
+            "group_models_desc": "Models in this group: {{models}}"
         },
         "toast": {
             "proxy_enabled": "Enabled proxy for {{count}} accounts",

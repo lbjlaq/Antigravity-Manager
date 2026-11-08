@@ -17,7 +17,6 @@ import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { isValidationBlockActive } from '../../utils/accountStatus';
 import { parseTags } from '../../utils/tagUtils';
 import AccountActionsModal from './AccountActionsModal';
-import AccountTagEditorModal from './AccountTagEditorModal';
 
 interface AccountCardProps {
     account: Account;
@@ -51,7 +50,6 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
 
     // Modal states
     const [isActionsModalOpen, setIsActionsModalOpen] = useState(false);
-    const [isTagEditorOpen, setIsTagEditorOpen] = useState(false);
 
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
@@ -393,8 +391,8 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                 )}
             </div>
 
-            {/* Footer: 4 Capsule Action Buttons */}
-            <div className="grid grid-cols-4 gap-1.5 w-full pt-2 pb-1 border-t border-gray-100 dark:border-base-200">
+            {/* Footer: 4 Action Buttons in 2x2 Grid */}
+            <div className="grid grid-cols-2 gap-1.5 w-full pt-2 pb-1 border-t border-gray-100 dark:border-base-200">
                 {/* 1. 切换 */}
                 <button
                     type="button"
@@ -476,27 +474,13 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                     onViewDetails();
                 }}
                 onExport={onExport}
-                onOpenTagEditor={() => {
-                    setIsActionsModalOpen(false);
-                    setIsTagEditorOpen(true);
-                }}
+                onUpdateLabel={onUpdateLabel}
                 onDelete={() => {
                     setIsActionsModalOpen(false);
                     onDelete();
                 }}
                 isSwitching={isSwitching}
                 isRefreshing={isRefreshing}
-            />
-
-            <AccountTagEditorModal
-                isOpen={isTagEditorOpen}
-                onClose={() => setIsTagEditorOpen(false)}
-                accountName={account.name || account.email}
-                initialLabel={account.custom_label}
-                onSave={async (newLabel) => {
-                    if (onUpdateLabel) await onUpdateLabel(newLabel);
-                    setIsTagEditorOpen(false);
-                }}
             />
         </motion.div>
     );

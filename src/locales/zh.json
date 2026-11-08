@@ -418,7 +418,11 @@
         "quota_window_weekly_short": "周配额",
         "quota_group_gemini": "Gemini 模型",
         "quota_group_claude": "Claude & GPT 模型",
+        "quota_group_claude_gpt": "Claude 与 GPT 模型",
         "quota_group_argon": "Gemini 4 Argon",
+        "quota_window_weekly_desc": "7天周配额 (WEEKLY)",
+        "quota_window_5h_desc": "5小时配额 (5H)",
+        "quota_window_1h_desc": "1小时配额 (1H)",
         "weekly_exhausted_tooltip": "周配额已耗尽 (0%)，等待周重置",
         "weekly_constrained_tooltip": "受到周配额短板压制",
         "weekly_tokens": "本周期 Token",
@@ -431,7 +435,8 @@
             "title": "配额详情",
             "model_quota": "具体模型配额",
             "protected_models": "受保护模型",
-            "thinking_budget": "思考预算"
+            "thinking_budget": "思考预算",
+            "group_models_desc": "组内包含模型: {{models}}"
         },
         "toast": {
             "proxy_enabled": "成功启用 {{count}} 个账号的反代功能",

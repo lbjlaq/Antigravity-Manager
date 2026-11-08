@@ -58,7 +58,6 @@ import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { isValidationBlockActive } from '../../utils/accountStatus';
 import { parseTags } from '../../utils/tagUtils';
 import AccountActionsModal from './AccountActionsModal';
-import AccountTagEditorModal from './AccountTagEditorModal';
 
 // ============================================================================
 // 类型定义
@@ -324,7 +323,6 @@ function AccountRowContent({
     const isBanned = Boolean(account.banned);
 
     const [isActionsModalOpen, setIsActionsModalOpen] = useState(false);
-    const [isTagEditorOpen, setIsTagEditorOpen] = useState(false);
 
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
@@ -662,14 +660,14 @@ function AccountRowContent({
 
             {/* 操作列 */}
             <td className={cn(
-                "px-2 py-1 sticky right-0 z-10 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center align-middle",
+                "px-1 py-1 sticky right-0 w-[136px] min-w-[136px] max-w-[136px] z-10 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center align-middle",
                 // 动态背景色处理
                 isCurrent
                     ? "bg-[#f1f6ff] dark:bg-[#1e2330]" // 接近 blue-50/50 的实色
                     : "bg-white dark:bg-base-100",
                 !isCurrent && "group-hover:bg-gray-50 dark:group-hover:bg-base-200"
             )}>
-                <div className="grid grid-cols-4 gap-1 w-full max-w-[240px] mx-auto">
+                <div className="grid grid-cols-2 gap-1 w-full max-w-[128px] mx-auto">
                     {/* 1. 切换 */}
                     <button
                         className={cn(
@@ -749,27 +747,13 @@ function AccountRowContent({
                         onViewDetails();
                     }}
                     onExport={onExport}
-                    onOpenTagEditor={() => {
-                        setIsActionsModalOpen(false);
-                        setIsTagEditorOpen(true);
-                    }}
+                    onUpdateLabel={onUpdateLabel}
                     onDelete={() => {
                         setIsActionsModalOpen(false);
                         onDelete();
                     }}
                     isSwitching={isSwitching}
                     isRefreshing={isRefreshing}
-                />
-
-                <AccountTagEditorModal
-                    isOpen={isTagEditorOpen}
-                    onClose={() => setIsTagEditorOpen(false)}
-                    accountName={account.name || account.email}
-                    initialLabel={account.custom_label}
-                    onSave={async (newLabel) => {
-                        if (onUpdateLabel) await onUpdateLabel(newLabel);
-                        setIsTagEditorOpen(false);
-                    }}
                 />
             </td>
         </>
@@ -961,7 +945,7 @@ function AccountTable({
                                     )}
                                 </button>
                             </th>
-                            <th className="px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap sticky right-0 w-[240px] bg-gray-50 dark:bg-base-200 z-20 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center">{t('accounts.table.actions')}</th>
+                            <th className="px-1 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap sticky right-0 w-[136px] min-w-[136px] max-w-[136px] bg-gray-50 dark:bg-base-200 z-20 shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.1)] dark:shadow-[-12px_0_12px_-12px_rgba(255,255,255,0.05)] text-center">{t('accounts.table.actions')}</th>
                         </tr >
                     </thead >
                     <SortableContext items={accountIds} strategy={verticalListSortingStrategy}>

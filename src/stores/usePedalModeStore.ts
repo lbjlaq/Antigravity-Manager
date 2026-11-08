@@ -327,7 +327,7 @@ export const usePedalModeStore = create<PedalModeStore>((set, get) => {
                         allDrained = false;
                     }
 
-                    const isThisAccountReset = pct >= 90 || (hasValidResetTime && diffHours <= 0);
+                    const isThisAccountReset = hasValidResetTime && (diffHours <= 0 || diffHours > 24);
                     if (!isThisAccountReset) {
                         allReset = false;
                     }
