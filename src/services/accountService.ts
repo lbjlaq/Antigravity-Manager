@@ -1,13 +1,36 @@
 import i18n from '../i18n';
-import { Account, ActiveClientsStatus, DeviceProfile, DeviceProfileVersion, QuotaData, ImportAccountEntry, BatchImportResult } from '../types/account';
+import { Account, ActiveClientsStatus, DeviceProfile, DeviceProfileVersion, QuotaData, ImportAccountEntry, BatchImportResult, ModelPriorities } from '../types/account';
 export type { ImportAccountEntry, BatchImportResult };
 import { request as invoke } from '../utils/request';
 
-export async function updateAccountPriority(accountId: string, priority: number): Promise<void> {
+export async function updateAccountPriority(
+    accountId: string,
+    priority: number,
+    modelPriorities?: ModelPriorities
+): Promise<void> {
     if (!Number.isInteger(priority) || priority < 1 || priority > 100) {
         throw new Error(i18n.t('accounts.priority_invalid'));
     }
-    await invoke('update_account_priority', { accountId, priority });
+    const normalizedModelPriorities: Record<string, number> | undefined =
+        modelPriorities !== undefined ? {} : undefined;
+    if (modelPriorities && normalizedModelPriorities) {
+        for (const key of ['gemini', 'claude'] as const) {
+            const val = modelPriorities[key];
+            if (val !== undefined && val !== null) {
+                if (!Number.isInteger(val) || val < 1 || val > 100) {
+                    throw new Error(i18n.t('accounts.priority_invalid'));
+                }
+                normalizedModelPriorities[key] = val;
+            }
+        }
+    }
+    await invoke('update_account_priority', {
+        accountId,
+        priority,
+        ...(normalizedModelPriorities !== undefined
+            ? { modelPriorities: normalizedModelPriorities }
+            : {}),
+    });
 }
 
 // 检查环境 (可选)

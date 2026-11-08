@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Account, ActiveClientsStatus } from '../types/account';
+import { Account, ActiveClientsStatus, ModelPriorities } from '../types/account';
 import * as accountService from '../services/accountService';
 
 interface AccountState {
@@ -34,7 +34,7 @@ interface AccountState {
     warmUpAccounts: () => Promise<string>;
     warmUpAccount: (accountId: string) => Promise<string>;
     updateAccountLabel: (accountId: string, label: string) => Promise<void>;
-    updateAccountPriority: (accountId: string, priority: number) => Promise<void>;
+    updateAccountPriority: (accountId: string, priority: number, modelPriorities?: ModelPriorities) => Promise<void>;
     updateAccountProjectId: (accountId: string, projectId: string) => Promise<void>;
     autoFetchAccountProjectId: (accountId: string) => Promise<string>;
 }
@@ -391,11 +391,48 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         }
     },
 
-    updateAccountPriority: async (accountId, priority) => {
-        await accountService.updateAccountPriority(accountId, priority);
+    updateAccountPriority: async (accountId, priority, modelPriorities) => {
+        await accountService.updateAccountPriority(accountId, priority, modelPriorities);
+        const cleanModelPriorities =
+            modelPriorities !== undefined
+                ? Object.fromEntries(
+                      Object.entries(modelPriorities).filter(
+                          ([, v]) => typeof v === 'number' && v >= 1 && v <= 100
+                      )
+                  )
+                : undefined;
         set(state => ({
-            accounts: state.accounts.map(account => account.id === accountId ? { ...account, priority } : account),
-            currentAccount: state.currentAccount?.id === accountId ? { ...state.currentAccount, priority } : state.currentAccount,
+            accounts: state.accounts.map(account =>
+                account.id === accountId
+                    ? {
+                          ...account,
+                          priority,
+                          ...(cleanModelPriorities !== undefined
+                              ? {
+                                    model_priorities:
+                                        Object.keys(cleanModelPriorities).length > 0
+                                            ? cleanModelPriorities
+                                            : undefined,
+                                }
+                              : {}),
+                      }
+                    : account
+            ),
+            currentAccount:
+                state.currentAccount?.id === accountId
+                    ? {
+                          ...state.currentAccount,
+                          priority,
+                          ...(cleanModelPriorities !== undefined
+                              ? {
+                                    model_priorities:
+                                        Object.keys(cleanModelPriorities).length > 0
+                                            ? cleanModelPriorities
+                                            : undefined,
+                                }
+                              : {}),
+                      }
+                    : state.currentAccount,
         }));
     },
 

@@ -372,7 +372,34 @@ async function runTests() {
         assert(priorities.some(p => p.id === 'acc-4' && p.priority === 50), 'acc-4 priority must be restored on reset');
     });
 
-    await test('13. checkAndAutoRecover guards against concurrent/re-entrant executions', async () => {
+    // Test 13: Per-model priority isolation during Pedal Mode activation and exit
+    await test('13. Scopes Pedal Mode priority boost to target model family while preserving other model family priority', async () => {
+        const customAcc = {
+            ...makeAccount('acc-custom', 'Custom Priority Account', 40, soonReset, 85, farReset, false, 50),
+            model_priorities: { claude: 80 },
+        } as Account;
+
+        const updates: Array<{ id: string; priority: number; modelPriorities?: Record<string, number> }> = [];
+        const mockSetPriority = async (id: string, priority: number, modelPriorities?: any) => {
+            updates.push({ id, priority, modelPriorities });
+        };
+
+        await store.activatePedalMode('gemini', ['acc-custom'], [acc1, customAcc], mockSetPriority);
+
+        assertEqual(updates.length, 1, 'Should update target account once on activate');
+        assertEqual(updates[0].id, 'acc-custom');
+        assertEqual(updates[0].modelPriorities?.gemini, 1, 'Gemini model priority should be boosted to 1');
+        assertEqual(updates[0].modelPriorities?.claude, 80, 'Claude model priority should preserve custom 80');
+
+        updates.length = 0;
+        await store.manualExit(mockSetPriority);
+        assertEqual(updates.length, 1, 'Should restore target account on exit');
+        assertEqual(updates[0].priority, 50, 'Base priority restored to 50');
+        assertEqual(updates[0].modelPriorities?.claude, 80, 'Original Claude priority 80 restored');
+        assertEqual(updates[0].modelPriorities?.gemini, undefined, 'Temporary Gemini override cleared');
+    });
+
+    await test('14. checkAndAutoRecover guards against concurrent/re-entrant executions', async () => {
         const store = usePedalModeStore.getState();
         const testDrainedAcc3 = makeAccount('acc-3', 'Account 3', 0, soonReset, 80, farReset);
         let priorityCalls = 0;
@@ -391,7 +418,7 @@ async function runTests() {
         assertEqual(priorityCalls, 1, 'Only one auto-recovery process should execute priority restoration');
     });
 
-    await test('14. checkAndAutoRecover skips redundant legacyToggle calls when account is already enabled', async () => {
+    await test('15. checkAndAutoRecover skips redundant legacyToggle calls when account is already enabled', async () => {
         const store = usePedalModeStore.getState();
         const testDrainedAcc3 = makeAccount('acc-3', 'Account 3', 0, soonReset, 80, farReset);
         let toggleCalls = 0;
@@ -411,7 +438,7 @@ async function runTests() {
         assertEqual(toggleCalls, 0, 'legacyToggle should NOT be called if account is already enabled');
     });
 
-    await test('15. resetPedalModeState cleanly clears state and removes localStorage key', async () => {
+    await test('16. resetPedalModeState cleanly clears state and removes localStorage key', async () => {
         const store = usePedalModeStore.getState();
         (usePedalModeStore as any).setState({
             active: true,

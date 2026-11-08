@@ -807,6 +807,7 @@ mod tests {
         ProxyToken {
             account_id: account_id.to_string(),
             priority: 50,
+            model_priorities: HashMap::new(),
             access_token: "token".to_string(),
             refresh_token: "refresh".to_string(),
             expires_in: 3600,
