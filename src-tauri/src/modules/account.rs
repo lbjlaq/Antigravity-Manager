@@ -162,6 +162,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: Some("id-alpha-111".to_string()),
+            current_acp_account_id: None,
         };
 
         // 1. 纯数字序号 1-based
@@ -189,6 +190,12 @@ mod tests {
         index_at_beta.current_agy_account_id = Some("id-beta-222".to_string());
         let acc6 = resolve_account_summary_in_index(&index_at_beta, None, Some("agy")).unwrap();
         assert_eq!(acc6.id, "id-alpha-111");
+
+        // 7. ACP 顺延轮替：当前是 alpha，顺延挑出 beta
+        let mut index_at_acp = index.clone();
+        index_at_acp.current_acp_account_id = Some("id-alpha-111".to_string());
+        let acc7 = resolve_account_summary_in_index(&index_at_acp, None, Some("acp")).unwrap();
+        assert_eq!(acc7.id, "id-beta-222");
     }
 
     #[test]
@@ -476,6 +483,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: None,
+            current_acp_account_id: None,
         };
 
         // Save the index
@@ -547,6 +555,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: None,
+            current_acp_account_id: None,
         };
         save_account_index_in_dir(dir.path(), &index).unwrap();
 
@@ -565,6 +574,15 @@ mod tests {
         let index = load_account_index_in_dir(dir.path()).unwrap();
         assert_eq!(index.current_account_id, Some("acc-1".to_string()));
         assert_eq!(index.current_target_ide, None);
+
+        // 3. Call set_current_account_id_with_target with Some("acp")
+        set_current_account_id_with_target("acc-1", Some("acp")).unwrap();
+
+        // Load back and verify
+        let index = load_account_index_in_dir(dir.path()).unwrap();
+        assert_eq!(index.current_account_id, Some("acc-1".to_string()));
+        assert_eq!(index.current_target_ide, Some("acp".to_string()));
+        assert_eq!(index.current_acp_account_id, Some("acc-1".to_string()));
 
         // Clean up environment variable
         std::env::remove_var("ABV_DATA_DIR");
@@ -597,6 +615,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: None,
+            current_acp_account_id: None,
         };
         save_account_index_in_dir(dir.path(), &index).unwrap();
 
@@ -722,6 +741,7 @@ mod tests {
             current_classic_account_id: None,
             current_ide_account_id: None,
             current_agy_account_id: None,
+            current_acp_account_id: None,
         };
         save_account_index_in_dir(dir.path(), &index).unwrap();
 
@@ -2633,6 +2653,7 @@ fn try_migrate_legacy_single_file(data_dir: &PathBuf, raw_content: &str) -> Opti
         current_classic_account_id: None,
         current_ide_account_id: None,
         current_agy_account_id: None,
+        current_acp_account_id: None,
     };
 
     // 3. 写入新版规范索引
@@ -2808,6 +2829,7 @@ fn rebuild_index_from_accounts_in_dir(data_dir: &PathBuf) -> Result<AccountIndex
         current_classic_account_id: None,
         current_ide_account_id: None,
         current_agy_account_id: None,
+        current_acp_account_id: None,
     })
 }
 
@@ -3952,6 +3974,7 @@ pub fn set_current_account_id_with_target(
         Some("classic") => index.current_classic_account_id = Some(account_id.to_string()),
         Some("ide") => index.current_ide_account_id = Some(account_id.to_string()),
         Some("agy") => index.current_agy_account_id = Some(account_id.to_string()),
+        Some("acp") => index.current_acp_account_id = Some(account_id.to_string()),
         _ => {
             index.current_classic_account_id = Some(account_id.to_string());
         }
@@ -3959,7 +3982,7 @@ pub fn set_current_account_id_with_target(
     save_account_index(&index)
 }
 
-/// 智能探查并获取经典款、Antigravity IDE、Antigravity CLI 三大客户端当前各自生效的账号状态
+/// 智能探查并获取经典款、Antigravity IDE、Antigravity CLI、Antigravity ACP 四大客户端当前各自生效的账号状态
 pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStatus, String> {
     let index = load_account_index()?;
     let mut status = crate::models::ActiveClientsStatus {
@@ -3969,6 +3992,8 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
         ide_email: None,
         agy_account_id: index.current_agy_account_id.clone(),
         agy_email: None,
+        acp_account_id: index.current_acp_account_id.clone(),
+        acp_email: None,
     };
 
     // [FIX #3726] 针对探测出的外部 refresh_token 进行快速按需匹配（彻底杜绝全量加载数百个小文件与 SQLite 密集查询）
@@ -3990,6 +4015,7 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
             index.current_ide_account_id.as_deref(),
             index.current_classic_account_id.as_deref(),
             index.current_agy_account_id.as_deref(),
+            index.current_acp_account_id.as_deref(),
             index.current_account_id.as_deref(),
         ];
         for candidate_id in candidates.into_iter().flatten() {
@@ -4123,15 +4149,50 @@ pub fn detect_active_clients_status() -> Result<crate::models::ActiveClientsStat
         }
     }
 
+    // 5. 确定 Antigravity IDE Plugin (acp) 当前账号
+    // 5.1 优先读取文件凭据 (~/.gemini/antigravity-acp/acp_token.json)
+    let acp_file_acc = crate::modules::integration::read_acp_token_file()
+        .ok()
+        .and_then(|rt| find_by_rt(&rt));
+
+    // 5.2 回退读取系统钥匙串中 ACP 专属凭据 (service: gemini, account: antigravity-acp)
+    let acp_keyring_acc =
+        crate::modules::integration::read_from_system_keyring_target("gemini", "antigravity-acp")
+            .ok()
+            .and_then(|st| find_by_rt(&st.refresh_token));
+
+    if let Some((ref a_id, ref a_email)) = acp_file_acc {
+        status.acp_account_id = Some(a_id.clone());
+        status.acp_email = Some(a_email.clone());
+    } else if let Some((ref a_id, ref a_email)) = acp_keyring_acc {
+        status.acp_account_id = Some(a_id.clone());
+        status.acp_email = Some(a_email.clone());
+    }
+
+    if status.acp_account_id.is_none() {
+        if let Some(ref id) = index.current_acp_account_id {
+            status.acp_account_id = Some(id.clone());
+            status.acp_email = find_email_by_id(id);
+        }
+    } else if status.acp_email.is_none() {
+        if let Some(ref id) = status.acp_account_id {
+            if let Some(email) = find_email_by_id(id) {
+                status.acp_email = Some(email);
+            }
+        }
+    }
+
     // Fallback if index has current_account_id and current_target_ide
     if status.classic_account_id.is_none()
         && status.ide_account_id.is_none()
         && status.agy_account_id.is_none()
+        && status.acp_account_id.is_none()
     {
         if let Some(ref curr_id) = index.current_account_id {
             match index.current_target_ide.as_deref() {
                 Some("ide") => status.ide_account_id = Some(curr_id.clone()),
                 Some("agy") => status.agy_account_id = Some(curr_id.clone()),
+                Some("acp") => status.acp_account_id = Some(curr_id.clone()),
                 _ => status.classic_account_id = Some(curr_id.clone()),
             }
         }
@@ -4215,6 +4276,10 @@ pub fn resolve_account_summary_in_index(
     let current_id = match target_ide {
         Some("agy") => index
             .current_agy_account_id
+            .as_deref()
+            .or(index.current_account_id.as_deref()),
+        Some("acp") => index
+            .current_acp_account_id
             .as_deref()
             .or(index.current_account_id.as_deref()),
         Some("ide") => index

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Repeat2, Terminal, Zap } from 'lucide-react';
-import { Account, ActiveClientsStatus, getAccountTier, hasAccountArgonCapability } from '../../types/account';
+import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, ToggleLeft, ToggleRight, Fingerprint, Sparkles, Tag, X, Check, Clock, Repeat2, Terminal, Zap, Layers } from 'lucide-react';
+import { Account, ActiveClientsStatus, ClientTarget, getAccountTier, hasAccountArgonCapability } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -24,7 +24,7 @@ interface AccountCardProps {
     activeClients?: ActiveClientsStatus;
     isRefreshing: boolean;
     isSwitching?: boolean;
-    onSwitch: (targetIde?: string) => void;
+    onSwitch: (targetIde?: ClientTarget | string) => void;
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
@@ -53,7 +53,8 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
     const isAgy = activeClients?.agy_account_id === account.id;
-    const isCurrent = propIsCurrent || isClassic || isIde || isAgy;
+    const isAcp = activeClients?.acp_account_id === account.id;
+    const isCurrent = propIsCurrent || isClassic || isIde || isAgy || isAcp;
 
     const handleSaveLabel = () => {
         if (onUpdateLabel) {
@@ -172,7 +173,15 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                                     {t('accounts.client_cli', 'CLI')}
                                 </span>
                             )}
-                            {!isClassic && !isIde && !isAgy && propIsCurrent && (
+                            {isAcp && (
+                                <span
+                                    className="px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[9px] font-bold shadow-sm border border-purple-200/50"
+                                    title={t('accounts.client_acp_tooltip', '当前 Antigravity IDE Plugin (ACP) 登录账号')}
+                                >
+                                    {t('accounts.client_acp', 'ACP')}
+                                </span>
+                            )}
+                            {!isClassic && !isIde && !isAgy && !isAcp && propIsCurrent && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[9px] font-bold shadow-sm border border-blue-200/50">
                                     {t('accounts.current').toUpperCase()}
                                 </span>
@@ -471,6 +480,14 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                         disabled={isSwitching || isDisabled}
                     >
                         <Terminal className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button
+                        className={`p-1.5 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'text-blue-600 bg-blue-50 dark:text-blue-400 dark:bg-blue-900/10 cursor-not-allowed' : 'text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/30'}`}
+                        onClick={(e) => { e.stopPropagation(); onSwitch('acp'); }}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_acp', '切换到 Antigravity IDE Plugin (ACP)'))}
+                        disabled={isSwitching || isDisabled}
+                    >
+                        <Layers className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
                     </button>
                     {onWarmup && (
                         <button

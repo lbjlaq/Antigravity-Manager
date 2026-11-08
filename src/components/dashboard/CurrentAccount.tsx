@@ -9,10 +9,11 @@ import {
     Laptop,
     Code2,
     Terminal,
+    Layers,
     ArrowRight,
     HelpCircle
 } from 'lucide-react';
-import { Account, getAccountTier, ActiveClientsStatus } from '../../types/account';
+import { Account, getAccountTier, ActiveClientsStatus, ClientTarget } from '../../types/account';
 import { useTranslation } from 'react-i18next';
 import { getGroupQuotaSummaries, GroupQuotaSummary } from '../../utils/quotaDisplay';
 import { GroupQuotaCard } from '../accounts/GroupQuotaCard';
@@ -23,10 +24,10 @@ interface CurrentAccountProps {
     accounts?: Account[];
     activeClients?: ActiveClientsStatus;
     quotaView?: string;
-    onSwitch?: (targetIde?: string) => void;
+    onSwitch?: (targetIde?: ClientTarget | string) => void;
 }
 
-type ClientTab = 'classic' | 'ide' | 'agy';
+type ClientTab = ClientTarget;
 
 function CurrentAccount({
     account,
@@ -41,6 +42,7 @@ function CurrentAccount({
         if (activeClients?.classic_account_id) return 'classic';
         if (activeClients?.ide_account_id) return 'ide';
         if (activeClients?.agy_account_id) return 'agy';
+        if (activeClients?.acp_account_id) return 'acp';
         return 'classic';
     });
 
@@ -52,6 +54,8 @@ function CurrentAccount({
                 return activeClients?.ide_account_id;
             case 'agy':
                 return activeClients?.agy_account_id;
+            case 'acp':
+                return activeClients?.acp_account_id;
         }
     };
 
@@ -79,6 +83,14 @@ function CurrentAccount({
             tooltip: t('accounts.client_cli_tooltip', '当前 Antigravity CLI (agy) 登录账号'),
             activeBg: 'bg-emerald-600 text-white shadow-xs',
             activeDot: 'bg-emerald-400',
+        },
+        {
+            key: 'acp' as ClientTab,
+            label: t('accounts.client_acp', 'ACP'),
+            icon: Layers,
+            tooltip: t('accounts.client_acp_tooltip', '当前 Antigravity IDE Plugin (ACP) 登录账号'),
+            activeBg: 'bg-purple-600 text-white shadow-xs',
+            activeDot: 'bg-purple-400',
         },
     ];
 

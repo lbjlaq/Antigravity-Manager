@@ -1,6 +1,6 @@
 import i18n from '../i18n';
-import { Account, ActiveClientsStatus, DeviceProfile, DeviceProfileVersion, QuotaData, ImportAccountEntry, BatchImportResult } from '../types/account';
-export type { ImportAccountEntry, BatchImportResult };
+import { Account, ActiveClientsStatus, ClientTarget, DeviceProfile, DeviceProfileVersion, QuotaData, ImportAccountEntry, BatchImportResult } from '../types/account';
+export type { ImportAccountEntry, BatchImportResult, ClientTarget };
 import { request as invoke } from '../utils/request';
 
 export async function updateAccountPriority(accountId: string, priority: number): Promise<void> {
@@ -55,7 +55,7 @@ export async function deleteAccounts(accountIds: string[]): Promise<void> {
     return await invoke('delete_accounts', { accountIds });
 }
 
-export async function switchAccount(accountId: string, targetIde?: string): Promise<void> {
+export async function switchAccount(accountId: string, targetIde?: ClientTarget | string): Promise<void> {
     return await invoke('switch_account', { accountId, targetIde });
 }
 
@@ -154,7 +154,7 @@ export async function importV1Accounts(): Promise<Account[]> {
     return await invoke('import_v1_accounts');
 }
 
-export async function importFromDb(targetIde?: string): Promise<Account[]> {
+export async function importFromDb(targetIde?: ClientTarget | string): Promise<Account[]> {
     const res = await invoke<any>('import_from_db', { targetIde });
     if (Array.isArray(res)) return res;
     return res ? [res] : [];

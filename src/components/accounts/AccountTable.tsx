@@ -48,8 +48,9 @@ import {
     ArrowUp,
     ArrowDown,
     Zap,
+    Layers,
 } from 'lucide-react';
-import { type Account, type ActiveClientsStatus, getAccountTier, hasAccountArgonCapability } from '../../types/account';
+import { type Account, type ActiveClientsStatus, type ClientTarget, getAccountTier, hasAccountArgonCapability } from '../../types/account';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../utils/cn';
 
@@ -78,7 +79,7 @@ interface AccountTableProps {
     currentAccountId: string | null;
     activeClients?: ActiveClientsStatus;
     switchingAccountId: string | null;
-    onSwitch: (accountId: string, targetIde?: string) => void;
+    onSwitch: (accountId: string, targetIde?: ClientTarget | string) => void;
     onRefresh: (accountId: string) => void;
     onViewDevice: (accountId: string) => void;
     onViewDetails: (accountId: string) => void;
@@ -101,7 +102,7 @@ interface SortableRowProps {
     isSwitching: boolean;
     isDragging?: boolean;
     onSelect: () => void;
-    onSwitch: (targetIde?: string) => void;
+    onSwitch: (targetIde?: ClientTarget | string) => void;
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
@@ -121,7 +122,7 @@ interface AccountRowContentProps {
     isRefreshing: boolean;
     isSwitching: boolean;
     isDisabled: boolean;
-    onSwitch: (targetIde?: string) => void;
+    onSwitch: (targetIde?: ClientTarget | string) => void;
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;
@@ -231,7 +232,8 @@ function SortableAccountRow({
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
     const isAgy = activeClients?.agy_account_id === account.id;
-    const isRowCurrent = isCurrent || isClassic || isIde || isAgy;
+    const isAcp = activeClients?.acp_account_id === account.id;
+    const isRowCurrent = isCurrent || isClassic || isIde || isAgy || isAcp;
 
     const { active: isPedalActive, targetAccountIds } = usePedalModeStore();
     const isPedaling = isPedalActive && targetAccountIds.includes(account.id);
@@ -334,7 +336,8 @@ function AccountRowContent({
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
     const isAgy = activeClients?.agy_account_id === account.id;
-    const isRowActive = isCurrent || isClassic || isIde || isAgy;
+    const isAcp = activeClients?.acp_account_id === account.id;
+    const isRowActive = isCurrent || isClassic || isIde || isAgy || isAcp;
 
     const handleSaveLabel = () => {
         if (onUpdateLabel) {
@@ -421,7 +424,15 @@ function AccountRowContent({
                                 {t('accounts.client_cli', 'CLI')}
                             </span>
                         )}
-                        {!isClassic && !isIde && !isAgy && isCurrent && (
+                        {isAcp && (
+                            <span
+                                className="px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 text-[10px] font-bold shadow-sm border border-purple-200/50 dark:border-purple-800/50"
+                                title={t('accounts.client_acp_tooltip', '当前 Antigravity IDE Plugin (ACP) 登录账号')}
+                            >
+                                {t('accounts.client_acp', 'ACP')}
+                            </span>
+                        )}
+                        {!isClassic && !isIde && !isAgy && !isAcp && isCurrent && (
                             <span className="px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[10px] font-bold shadow-sm border border-blue-200/50 dark:border-blue-800/50">
                                 {t('accounts.current').toUpperCase()}
                             </span>
@@ -746,6 +757,14 @@ function AccountRowContent({
                         disabled={isSwitching || isDisabled}
                     >
                         <Terminal className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
+                    </button>
+                    <button
+                        className={`p-1.5 text-gray-500 dark:text-gray-400 rounded-lg transition-all ${(isSwitching || isDisabled) ? 'bg-blue-50 dark:bg-blue-900/10 text-blue-600 dark:text-blue-400 cursor-not-allowed' : 'hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/30'}`}
+                        onClick={(e) => { e.stopPropagation(); onSwitch('acp'); }}
+                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_acp', '切换到 Antigravity IDE Plugin (ACP)'))}
+                        disabled={isSwitching || isDisabled}
+                    >
+                        <Layers className={`w-3.5 h-3.5 ${isSwitching ? 'animate-spin' : ''}`} />
                     </button>
                     {onWarmup && (
                         <button

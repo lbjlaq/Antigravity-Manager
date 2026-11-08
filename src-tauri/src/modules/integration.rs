@@ -30,12 +30,16 @@ pub fn resolve_effective_target(
 ) -> (bool, Option<&'static str>) {
     let is_explicit_ide = target_ide == Some("ide");
     let is_explicit_classic = target_ide == Some("classic");
+    let is_explicit_acp = target_ide == Some("acp");
 
     if is_explicit_ide {
         return (true, Some("ide"));
     }
     if is_explicit_classic {
         return (false, Some("classic"));
+    }
+    if is_explicit_acp {
+        return (false, Some("acp"));
     }
 
     // target_ide 为 None 或未指定时进行智能环境探查（经典版桌面端优先，严禁仅凭静态 IDE 数据库文件劫持经典版目标）
@@ -348,6 +352,26 @@ impl SystemIntegration for DesktopIntegration {
             return Ok(());
         }
 
+        if target_ide == Some("acp") {
+            write_acp_credentials(account)?;
+            let killed = process::kill_acp_server_processes().unwrap_or(0);
+            let msg = if killed > 0 {
+                format!(
+                    "Credentials for {} saved. Terminated {} agy_acp_server process(es); host IDE will respawn automatically.",
+                    account.email, killed
+                )
+            } else {
+                format!(
+                    "Credentials for {} saved for Antigravity IDE Plugin (ACP).",
+                    account.email
+                )
+            };
+            self.show_notification("Antigravity ACP", &msg);
+            self.update_tray();
+
+            return Ok(());
+        }
+
         // 1. 智能决策：判断目标是 Antigravity IDE (VS Code 定制版) 还是 Antigravity 经典版 (原生桌面端)
         let classic_running = process::is_antigravity_running(None);
         let ide_running = process::is_antigravity_running(Some("ide"));
@@ -528,8 +552,24 @@ impl SystemIntegration for DesktopIntegration {
     }
 }
 
-/// 辅助方法：向宿主操作系统的 Keychain/Credentials Manager 写入 Token
-pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Result<(), String> {
+/// Resolve the base Gemini home directory ($GEMINI_HOME or ~/.gemini)
+pub fn get_gemini_home_dir() -> Result<std::path::PathBuf, String> {
+    if let Ok(val) = std::env::var("GEMINI_HOME") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return Ok(std::path::PathBuf::from(trimmed));
+        }
+    }
+    let home = dirs::home_dir().ok_or_else(|| "Failed to get user home directory".to_string())?;
+    Ok(home.join(".gemini"))
+}
+
+/// 辅助方法：向宿主操作系统的 Keychain/Credentials Manager 写入 Token（支持自定义服务与账号）
+pub(crate) fn write_to_system_keyring_with_service_account(
+    account: &crate::models::Account,
+    service: &str,
+    user_account: &str,
+) -> Result<(), String> {
     // 1. 构建 Token 的 JSON Payload，并将过期时间戳格式化为符合 RFC3339 的带微秒格式
     let expiry_secs = if account.token.expiry_timestamp > 10_000_000_000 {
         account.token.expiry_timestamp / 1000
@@ -575,8 +615,8 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
     .map_err(|e| format!("Failed to serialize keyring JSON: {}", e))?;
 
     crate::modules::logger::log_info(&format!(
-        "[Desktop] Writing token to system credential store for: {}",
-        account.email
+        "[Desktop] Writing token to system credential store for: {} (service: {}, account: {})",
+        account.email, service, user_account
     ));
 
     // 2. 跨平台凭据注入
@@ -589,13 +629,7 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
         // 2.1 macOS Keychain Access
         // 删除旧的
         let _ = Command::new("security")
-            .args([
-                "delete-generic-password",
-                "-s",
-                "gemini",
-                "-a",
-                "antigravity",
-            ])
+            .args(["delete-generic-password", "-s", service, "-a", user_account])
             .output();
 
         // 写入新的 (-A 参数允许所有本地应用免密码、无感直接读取凭据)
@@ -603,9 +637,9 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
             .args([
                 "add-generic-password",
                 "-s",
-                "gemini",
+                service,
                 "-a",
-                "antigravity",
+                user_account,
                 "-w",
                 &full_keyring_value,
                 "-A",
@@ -653,11 +687,11 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
             fn CredDeleteW(target_name: *const u16, type_: u32, flags: u32) -> i32;
         }
 
-        let target = "gemini:antigravity";
-        let user = "antigravity";
+        let target = format!("{}:{}", service, user_account);
+        let user = user_account;
         let secret = payload_json.as_bytes();
 
-        let target_wide: Vec<u16> = std::ffi::OsStr::new(target)
+        let target_wide: Vec<u16> = std::ffi::OsStr::new(&target)
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
@@ -700,10 +734,6 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
     #[cfg(target_os = "linux")]
     {
         // 2.3 Linux Secret Service API
-        // [FIX #3418] 在 Linux GNOME 环境下，Secret Service 往往同时存在 'login' 集合与 'default' 集合。
-        // agy CLI 读取凭据时严格从 'login' 集合检索。若未指定 --collection，secret-tool 会写入 default 集合，
-        // 导致两个集合内容分叉，agy 持续读取到 login 集合中的旧账号。
-        // 此处封装辅助函数：优先写入 login 集合，同时确保与 default 集合同步。
         use std::io::Write;
         use std::sync::mpsc;
 
@@ -714,11 +744,14 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
             cmd.arg("store");
             if let Some(col) = collection_opt {
                 cmd.arg(format!("--collection={}", col));
-                cmd.arg("--label=Password for 'antigravity' on 'gemini'");
+                cmd.arg(format!(
+                    "--label=Password for '{}' on '{}'",
+                    user_account, service
+                ));
             } else {
-                cmd.arg("--label=gemini");
+                cmd.arg(format!("--label={}", service));
             }
-            cmd.args(["service", "gemini", "username", "antigravity"]);
+            cmd.args(["service", service, "username", user_account]);
             cmd.stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
@@ -778,7 +811,7 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
             Ok(())
         };
 
-        // 1. 优先尝试写入 'login' 集合（agy CLI 所需）
+        // 1. 优先尝试写入 'login' 集合
         let login_res = store_to_collection(
             Some("/org/freedesktop/secrets/collection/login"),
             payload_json.as_bytes(),
@@ -787,8 +820,10 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
         // 2. 同时写入默认集合（保证其他依赖 default collection 的系统工具也能读取）
         let default_res = store_to_collection(None, payload_json.as_bytes());
 
-        // 尝试优先同步写入本地文件凭据 (~/.gemini/oauth_creds.json)
-        let _ = write_to_file_credentials(account, false);
+        if user_account == "antigravity" {
+            // 尝试优先同步写入本地文件凭据 (~/.gemini/oauth_creds.json)
+            let _ = write_to_file_credentials(account, false);
+        }
 
         // 若两者均失败，则返回错误；若至少一个成功，则记录并继续
         if login_res.is_err() && default_res.is_err() {
@@ -809,12 +844,165 @@ pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Resul
         "[Desktop] Successfully wrote token to system credential store.",
     );
 
+    Ok(())
+}
+
+/// 辅助方法：向宿主操作系统的 Keychain/Credentials Manager 写入 Token
+pub(crate) fn write_to_system_keyring(account: &crate::models::Account) -> Result<(), String> {
+    write_to_system_keyring_with_service_account(account, "gemini", "antigravity")?;
+
     // 同步写入 ~/.gemini/ 目录下的文件凭据，兼容 SSH 会话、容器环境和无 Keyring/D-Bus 场景
     if let Err(e) = write_to_file_credentials(account, false) {
         crate::modules::logger::log_warn(&format!("[Desktop] File credential sync warning: {}", e));
     }
 
     Ok(())
+}
+
+/// 向指定目录 ($GEMINI_HOME 或测试目录) 下的 antigravity-acp/ 写入 acp_token.json 以及 settings.json
+pub fn write_acp_file_credentials_to_dir(
+    gemini_dir: &std::path::Path,
+    account: &crate::models::Account,
+) -> Result<(), String> {
+    let acp_dir = gemini_dir.join("antigravity-acp");
+    if !acp_dir.exists() {
+        std::fs::create_dir_all(&acp_dir)
+            .map_err(|e| format!("Failed to create antigravity-acp directory: {}", e))?;
+    }
+
+    let (client_id, client_secret) =
+        crate::modules::oauth::get_client_credentials_for_account(&account.token);
+    let scopes = vec![
+        "https://www.googleapis.com/auth/userinfo.email".to_string(),
+        "https://www.googleapis.com/auth/userinfo.profile".to_string(),
+        "https://www.googleapis.com/auth/cloud-platform".to_string(),
+        "openid".to_string(),
+    ];
+    let project_id = account.token.project_id.clone().unwrap_or_default();
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct AcpTokenJson {
+        client_id: String,
+        client_secret: String,
+        refresh_token: String,
+        token_uri: String,
+        scopes: Vec<String>,
+        project_id: String,
+    }
+
+    let token_json = AcpTokenJson {
+        client_id,
+        client_secret,
+        refresh_token: account.token.refresh_token.clone(),
+        token_uri: "https://oauth2.googleapis.com/token".to_string(),
+        scopes,
+        project_id,
+    };
+
+    let token_file_path = acp_dir.join("acp_token.json");
+    let serialized_token = serde_json::to_string_pretty(&token_json)
+        .map_err(|e| format!("Failed to serialize acp_token.json: {}", e))?;
+    std::fs::write(&token_file_path, serialized_token)
+        .map_err(|e| format!("Failed to write acp_token.json: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&token_file_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    // Ensure settings.json has {"auth": {"type": "oauth-personal"}}, preserving any existing settings
+    let settings_path = acp_dir.join("settings.json");
+    let mut settings_val: serde_json::Value = if settings_path.exists() {
+        std::fs::read_to_string(&settings_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_else(|| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    if !settings_val.is_object() {
+        settings_val = serde_json::json!({});
+    }
+
+    if let Some(obj) = settings_val.as_object_mut() {
+        match obj.get_mut("auth") {
+            Some(auth_val) if auth_val.is_object() => {
+                if let Some(auth_obj) = auth_val.as_object_mut() {
+                    auth_obj.insert("type".to_string(), serde_json::json!("oauth-personal"));
+                }
+            }
+            _ => {
+                obj.insert(
+                    "auth".to_string(),
+                    serde_json::json!({ "type": "oauth-personal" }),
+                );
+            }
+        }
+    }
+
+    let serialized_settings = serde_json::to_string_pretty(&settings_val)
+        .map_err(|e| format!("Failed to serialize settings.json: {}", e))?;
+    std::fs::write(&settings_path, serialized_settings)
+        .map_err(|e| format!("Failed to write settings.json: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&settings_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    Ok(())
+}
+
+/// 向 $GEMINI_HOME/antigravity-acp/ 写入 acp_token.json 以及 settings.json
+pub fn write_acp_file_credentials(account: &crate::models::Account) -> Result<(), String> {
+    let gemini_home = get_gemini_home_dir()?;
+    write_acp_file_credentials_to_dir(&gemini_home, account)
+}
+
+/// 同步注入 ACP 凭据（文件凭据 + Keyring gemini:antigravity-acp）
+pub fn write_acp_credentials(account: &crate::models::Account) -> Result<(), String> {
+    write_acp_file_credentials(account)?;
+    if let Err(e) =
+        write_to_system_keyring_with_service_account(account, "gemini", "antigravity-acp")
+    {
+        crate::modules::logger::log_warn(&format!(
+            "[ACP] System keyring write failed: {}, file credentials active",
+            e
+        ));
+    }
+    crate::modules::logger::log_info(&format!(
+        "[ACP] Successfully wrote credentials for {}",
+        account.email
+    ));
+    Ok(())
+}
+
+/// 从指定目录 ($GEMINI_HOME 或测试目录) 下的 antigravity-acp/acp_token.json 读取 refresh_token
+pub fn read_acp_token_file_from_dir(gemini_dir: &std::path::Path) -> Result<String, String> {
+    let path = gemini_dir.join("antigravity-acp").join("acp_token.json");
+    if !path.exists() {
+        return Err("acp_token.json not found".to_string());
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read acp_token.json: {}", e))?;
+    let val: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse acp_token.json: {}", e))?;
+    let rt = val
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "valid refresh_token not found in acp_token.json".to_string())?;
+    Ok(rt.to_string())
+}
+
+/// 读取 $GEMINI_HOME/antigravity-acp/acp_token.json 的 refresh_token
+pub fn read_acp_token_file() -> Result<String, String> {
+    let gemini_home = get_gemini_home_dir()?;
+    read_acp_token_file_from_dir(&gemini_home)
 }
 
 /// 辅助方法：向指定目录同步写入本地文件凭据
@@ -1136,8 +1324,9 @@ fn verify_agy_credentials(expected: &str, stored: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn read_system_credentials(
-    allow_file_fallback: bool,
+pub fn read_from_system_keyring_target(
+    service: &str,
+    user_account: &str,
 ) -> Result<crate::modules::migration::ImportedOAuthState, String> {
     #[cfg(target_os = "macos")]
     {
@@ -1146,20 +1335,15 @@ fn read_system_credentials(
             .args([
                 "find-generic-password",
                 "-s",
-                "gemini",
+                service,
                 "-a",
-                "antigravity",
+                user_account,
                 "-w",
             ])
             .output()
             .map_err(|e| format!("Failed to execute security command: {}", e))?;
 
         if !output.status.success() {
-            if allow_file_fallback {
-                if let Ok(file_state) = read_from_file_credentials() {
-                    return Ok(file_state);
-                }
-            }
             return Err("No credential found in macOS Keychain".to_string());
         }
 
@@ -1215,8 +1399,8 @@ fn read_system_credentials(
             fn CredFree(buffer: *mut std::ffi::c_void);
         }
 
-        let target = "gemini:antigravity";
-        let target_wide: Vec<u16> = std::ffi::OsStr::new(target)
+        let target = format!("{}:{}", service, user_account);
+        let target_wide: Vec<u16> = std::ffi::OsStr::new(&target)
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
@@ -1225,11 +1409,6 @@ fn read_system_credentials(
         unsafe {
             let res = CredReadW(target_wide.as_ptr(), 1, 0, &mut cred_ptr);
             if res == 0 || cred_ptr.is_null() {
-                if allow_file_fallback {
-                    if let Ok(file_state) = read_from_file_credentials() {
-                        return Ok(file_state);
-                    }
-                }
                 return Err("No credential found in Windows Credential Manager".to_string());
             }
 
@@ -1248,16 +1427,11 @@ fn read_system_credentials(
     #[cfg(target_os = "linux")]
     {
         let output = match Command::new("secret-tool")
-            .args(["lookup", "service", "gemini", "username", "antigravity"])
+            .args(["lookup", "service", service, "username", user_account])
             .output()
         {
             Ok(out) => out,
             Err(e) => {
-                if allow_file_fallback {
-                    if let Ok(file_state) = read_from_file_credentials() {
-                        return Ok(file_state);
-                    }
-                }
                 if e.kind() == std::io::ErrorKind::NotFound {
                     return Err(
                         "Linux Secret Service utility 'secret-tool' not found (未检测到 secret-tool 工具)。\n\
@@ -1273,11 +1447,6 @@ fn read_system_credentials(
         };
 
         if !output.status.success() {
-            if allow_file_fallback {
-                if let Ok(file_state) = read_from_file_credentials() {
-                    return Ok(file_state);
-                }
-            }
             return Err("No credential found in Linux secret-tool".to_string());
         }
 
@@ -1287,7 +1456,25 @@ fn read_system_credentials(
 
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
+        let _ = service;
+        let _ = user_account;
         Err("Keyring not supported on this operating system".to_string())
+    }
+}
+
+fn read_system_credentials(
+    allow_file_fallback: bool,
+) -> Result<crate::modules::migration::ImportedOAuthState, String> {
+    match read_from_system_keyring_target("gemini", "antigravity") {
+        Ok(state) => Ok(state),
+        Err(e) => {
+            if allow_file_fallback {
+                if let Ok(file_state) = read_from_file_credentials() {
+                    return Ok(file_state);
+                }
+            }
+            Err(e)
+        }
     }
 }
 
@@ -1328,6 +1515,17 @@ impl SystemIntegration for HeadlessIntegration {
             );
         }
 
+        if _target_ide == Some("acp") {
+            write_acp_file_credentials(account)?;
+            let _ =
+                write_to_system_keyring_with_service_account(account, "gemini", "antigravity-acp");
+            crate::modules::logger::log_info(&format!(
+                "[Headless] ACP Credentials written for {}",
+                account.email
+            ));
+            return Ok(());
+        }
+
         crate::modules::logger::log_info(&format!(
             "[Headless] Account switched in memory: {}",
             account.email
@@ -1365,6 +1563,18 @@ impl SystemIntegration for CliIntegration {
                 if let Some(ref profile) = account.device_profile {
                     let _ = device::write_profile(&storage_path, profile);
                 }
+            }
+            return Ok(());
+        }
+
+        if target_ide == Some("acp") {
+            write_acp_credentials(account)?;
+            let killed = process::kill_acp_server_processes().unwrap_or(0);
+            if killed > 0 {
+                crate::modules::logger::log_info(&format!(
+                    "[CLI] Terminated {} agy_acp_server process(es).",
+                    killed
+                ));
             }
             return Ok(());
         }
@@ -1555,6 +1765,20 @@ mod tests {
         let (is_ide, effective) = resolve_effective_target(Some("ide"), true, false, true, None);
         assert!(is_ide);
         assert_eq!(effective, Some("ide"));
+    }
+
+    #[test]
+    fn test_resolve_effective_target_explicit_acp() {
+        // 显式指定 acp，必须判定为 acp
+        let (is_ide, effective) = resolve_effective_target(
+            Some("acp"),
+            false,
+            true,
+            false,
+            Some("/Applications/Antigravity IDE.app"),
+        );
+        assert!(!is_ide);
+        assert_eq!(effective, Some("acp"));
     }
 
     #[test]
@@ -1984,5 +2208,130 @@ mod tests {
             inject_res.is_err(),
             "Injecting token into corrupted DB must return Err gracefully"
         );
+    }
+
+    #[test]
+    fn test_write_and_read_acp_file_credentials() {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let gemini_dir = temp_dir.path();
+
+        let mut token = crate::models::TokenData::new(
+            "ya29.test-access-token".to_string(),
+            "1//test-refresh-token".to_string(),
+            3600,
+            Some("test-acp@example.com".to_string()),
+            Some("test-gcp-project".to_string()),
+            None,
+            false,
+            None,
+        );
+        token.oauth_client_key = Some("antigravity_personal".to_string());
+
+        let account = crate::models::Account {
+            id: "acp-acc-1".to_string(),
+            email: "test-acp@example.com".to_string(),
+            name: Some("Test ACP".to_string()),
+            priority: None,
+            token,
+            device_profile: None,
+            device_history: None,
+            quota: None,
+            disabled: false,
+            disabled_reason: None,
+            disabled_at: None,
+            proxy_disabled: false,
+            proxy_disabled_reason: None,
+            proxy_disabled_at: None,
+            protected_models: None,
+            forbidden_models: None,
+            live_limited_models: None,
+            custom_label: None,
+            qos_status: None,
+            qos_reset_seconds: None,
+            validation_blocked: false,
+            validation_blocked_until: None,
+            validation_blocked_reason: None,
+            validation_url: None,
+            banned: false,
+            banned_code: None,
+            banned_reason: None,
+            banned_at: None,
+            ban_appeal_url: None,
+            created_at: 1000,
+            last_used: 2000,
+        };
+
+        // Pre-create settings.json with custom non-auth settings and existing auth properties to test preservation
+        let acp_dir = gemini_dir.join("antigravity-acp");
+        std::fs::create_dir_all(&acp_dir).unwrap();
+        let initial_settings = serde_json::json!({
+            "existing_flag": true,
+            "auth": {
+                "type": "custom-old",
+                "keep_field": "val123"
+            }
+        });
+        std::fs::write(
+            acp_dir.join("settings.json"),
+            serde_json::to_string(&initial_settings).unwrap(),
+        )
+        .unwrap();
+
+        // 1. Write ACP file credentials
+        write_acp_file_credentials_to_dir(gemini_dir, &account).unwrap();
+
+        // 2. Validate acp_token.json contents
+        let token_path = acp_dir.join("acp_token.json");
+        assert!(token_path.exists());
+        let token_raw = std::fs::read_to_string(&token_path).unwrap();
+        let token_json: serde_json::Value = serde_json::from_str(&token_raw).unwrap();
+        assert_eq!(
+            token_json.get("refresh_token").and_then(|v| v.as_str()),
+            Some("1//test-refresh-token")
+        );
+        assert_eq!(
+            token_json.get("token_uri").and_then(|v| v.as_str()),
+            Some("https://oauth2.googleapis.com/token")
+        );
+        assert_eq!(
+            token_json.get("project_id").and_then(|v| v.as_str()),
+            Some("test-gcp-project")
+        );
+        let scopes = token_json.get("scopes").and_then(|v| v.as_array()).unwrap();
+        assert!(scopes.iter().any(|s| s.as_str() == Some("openid")));
+
+        // 3. Validate settings.json non-destructive preservation
+        let settings_raw = std::fs::read_to_string(acp_dir.join("settings.json")).unwrap();
+        let settings_json: serde_json::Value = serde_json::from_str(&settings_raw).unwrap();
+        assert_eq!(
+            settings_json
+                .get("auth")
+                .and_then(|a| a.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("oauth-personal")
+        );
+        assert_eq!(
+            settings_json
+                .get("auth")
+                .and_then(|a| a.get("keep_field"))
+                .and_then(|v| v.as_str()),
+            Some("val123")
+        );
+        assert_eq!(
+            settings_json.get("existing_flag").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+
+        // 4. Read back refresh token
+        let rt = read_acp_token_file_from_dir(gemini_dir).unwrap();
+        assert_eq!(rt, "1//test-refresh-token");
+
+        // 5. Blank/whitespace refresh token must error
+        std::fs::write(
+            &token_path,
+            r#"{"refresh_token": "   ", "token_uri": "https://oauth2.googleapis.com/token"}"#,
+        )
+        .unwrap();
+        assert!(read_acp_token_file_from_dir(gemini_dir).is_err());
     }
 }

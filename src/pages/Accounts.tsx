@@ -26,7 +26,7 @@ import { showToast } from "../components/common/ToastContainer";
 import { exportAccounts } from "../services/accountService";
 import { useAccountStore } from "../stores/useAccountStore";
 import { useConfigStore } from "../stores/useConfigStore";
-import { Account, getAccountTier, ImportAccountEntry } from "../types/account";
+import { Account, getAccountTier, ImportAccountEntry, type ClientTarget } from "../types/account";
 import { isAccountAbnormal } from "../utils/accountStatus";
 import { cn } from "../utils/cn";
 import { isTauri } from "../utils/env";
@@ -376,7 +376,7 @@ function Accounts() {
     null,
   );
 
-  const handleSwitch = async (accountId: string, targetIde?: string) => {
+  const handleSwitch = async (accountId: string, targetIde?: ClientTarget | string) => {
     if (loading || switchingAccountId) return;
 
     setSwitchingAccountId(accountId);

@@ -1,5 +1,5 @@
 import { ArrowRightLeft, RefreshCw, Trash2, Download, Info, Lock, Ban, Diamond, Gem, Circle, Clock, ToggleLeft, ToggleRight, Fingerprint } from 'lucide-react';
-import { Account, getAccountTier } from '../../types/account';
+import { Account, ClientTarget, getAccountTier } from '../../types/account';
 import { getQuotaColor, formatTimeRemaining, getTimeRemainingColor } from '../../utils/format';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -14,7 +14,7 @@ interface AccountRowProps {
     isCurrent: boolean;
     isRefreshing: boolean;
     isSwitching?: boolean;
-    onSwitch: (targetIde?: string) => void;
+    onSwitch: (targetIde?: ClientTarget | string) => void;
     onRefresh: () => void;
     onViewDevice: () => void;
     onViewDetails: () => void;

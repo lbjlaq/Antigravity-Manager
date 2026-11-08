@@ -102,6 +102,9 @@ fn kind_matches_target(
     exe_path: &str,
     ide_exe_paths: &std::collections::HashSet<String>,
 ) -> bool {
+    if target_ide == Some("acp") {
+        return false;
+    }
     match kind {
         ClientKind::Ide => target_ide == Some("ide"),
         // 显式配置/扫描到的 IDE 可执行文件绝不当作经典版
@@ -202,6 +205,138 @@ pub fn is_process_running_by_name(target_name: &str) -> bool {
     false
 }
 
+/// Helper to determine if a process is an agy_acp_server process
+pub fn is_acp_server_process(name: &str, exe_path: &str, cmd: &[String]) -> bool {
+    let argv0 = cmd.first().map(|s| s.as_str()).unwrap_or("");
+    if is_manager_or_tools_process(name, exe_path, argv0) {
+        return false;
+    }
+
+    // 1. Primary check on process name / file stem (e.g. agy_acp_server, agy_acp_server.exe, agy_acp_server.par)
+    let name_file = std::path::Path::new(name)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| name.to_lowercase());
+    let name_stem = std::path::Path::new(&name_file)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| name_file.clone());
+
+    if name_stem == "agy_acp_server" || name_file == "agy_acp_server.par" {
+        return true;
+    }
+
+    // 2. Primary check on executable path file stem
+    if !exe_path.is_empty() {
+        let exe_file = std::path::Path::new(exe_path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        let exe_stem = std::path::Path::new(&exe_file)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if exe_stem == "agy_acp_server" || exe_file == "agy_acp_server.par" {
+            return true;
+        }
+    }
+
+    // 3. Check if executed via Python / interpreter wrapper (e.g. python agy_acp_server.par)
+    let is_interpreter = name_stem.starts_with("python")
+        || name_stem == "py"
+        || exe_path.to_lowercase().contains("python");
+
+    if is_interpreter {
+        for arg in cmd {
+            let arg_path = std::path::Path::new(arg);
+            if let Some(file_name) = arg_path.file_name() {
+                let f_str = file_name.to_string_lossy().to_lowercase();
+                if f_str == "agy_acp_server"
+                    || f_str == "agy_acp_server.par"
+                    || f_str == "agy_acp_server.exe"
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 4. Fallback for Unix systems where exe() may be empty: check cmd[0]
+    if let Some(first_arg) = cmd.first() {
+        let arg_path = std::path::Path::new(first_arg);
+        if let Some(file_name) = arg_path.file_name() {
+            let f_str = file_name.to_string_lossy().to_lowercase();
+            let stem = std::path::Path::new(&f_str)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| f_str.clone());
+            if stem == "agy_acp_server" {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if any agy_acp_server process is currently running
+pub fn is_acp_server_running() -> bool {
+    let mut system = System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    for (_pid, process) in system.processes() {
+        let name = process.name().to_string_lossy();
+        let exe = process
+            .exe()
+            .map(|e| e.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let cmd: Vec<String> = process
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect();
+        if is_acp_server_process(&name, &exe, &cmd) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Collect PIDs of all running agy_acp_server processes
+pub fn get_acp_server_pids() -> Vec<u32> {
+    let mut system = System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    let mut pids = Vec::new();
+    for (pid, process) in system.processes() {
+        let name = process.name().to_string_lossy();
+        let exe = process
+            .exe()
+            .map(|e| e.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let cmd: Vec<String> = process
+            .cmd()
+            .iter()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect();
+        if is_acp_server_process(&name, &exe, &cmd) {
+            pids.push(pid.as_u32());
+        }
+    }
+    pids
+}
+
+/// Terminate all agy_acp_server processes so that the host JetBrains / Android Studio IDE can auto-respawn with updated account credentials
+pub fn kill_acp_server_processes() -> Result<usize, String> {
+    let pids = get_acp_server_pids();
+    for pid in &pids {
+        crate::modules::logger::log_info(&format!(
+            "[ACP] Terminating agy_acp_server process (PID: {})",
+            pid
+        ));
+        force_kill_pid(*pid);
+    }
+    Ok(pids.len())
+}
+
 /// Helper process discriminator to filter out sub-processes, audio/gpu/renderers, crashpads, and language servers
 pub(crate) fn is_helper_process(name: &str, args_str: &str, exe_path: &str) -> bool {
     let name_lower = name.to_lowercase();
@@ -250,6 +385,9 @@ pub(crate) fn sanitize_restart_args(args: &[String]) -> Vec<String> {
 
 /// Check if Antigravity is running
 pub fn is_antigravity_running(target_ide: Option<&str>) -> bool {
+    if target_ide == Some("acp") {
+        return is_acp_server_running();
+    }
     let mut system = System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All);
     let ide_exe_paths = get_ide_exe_paths(&system);
@@ -415,6 +553,9 @@ fn get_self_family_pids(system: &sysinfo::System) -> std::collections::HashSet<u
 
 /// Get PIDs of all Antigravity processes (including main and helper processes)
 fn get_antigravity_pids(target_ide: Option<&str>) -> Vec<u32> {
+    if target_ide == Some("acp") {
+        return get_acp_server_pids();
+    }
     let mut system = System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All);
     let ide_exe_paths = get_ide_exe_paths(&system);
@@ -801,6 +942,12 @@ pub fn wait_for_language_server_respawn(target_ide: Option<&str>, timeout_secs: 
 #[cfg_attr(target_os = "windows", allow(unused_variables))]
 pub fn close_antigravity(timeout_secs: u64, target_ide: Option<&str>) -> Result<(), String> {
     crate::modules::logger::log_info(&format!("Closing Antigravity ({:?})...", target_ide));
+
+    if target_ide == Some("acp") {
+        crate::modules::logger::log_info("Closing ACP server...");
+        kill_acp_server_processes()?;
+        return Ok(());
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -2478,5 +2625,69 @@ mod tests {
             ),
             ClientKind::Classic
         );
+    }
+
+    #[test]
+    fn test_is_acp_server_process_matching_and_false_positives() {
+        // 1. Direct binary matches on Windows, Linux, and macOS
+        assert!(is_acp_server_process(
+            "agy_acp_server.exe",
+            r"C:\Users\me\.gemini\antigravity-acp\agy_acp_server.exe",
+            &["agy_acp_server.exe".to_string()]
+        ));
+        assert!(is_acp_server_process(
+            "agy_acp_server",
+            "/home/user/.gemini/antigravity-acp/agy_acp_server",
+            &["agy_acp_server".to_string()]
+        ));
+        assert!(is_acp_server_process(
+            "agy_acp_server.par",
+            "/home/user/.gemini/antigravity-acp/agy_acp_server.par",
+            &["agy_acp_server.par".to_string()]
+        ));
+
+        // 2. Python wrapper running agy_acp_server.par
+        assert!(is_acp_server_process(
+            "python3",
+            "/usr/bin/python3",
+            &[
+                "python3".to_string(),
+                "/home/user/.gemini/antigravity-acp/agy_acp_server.par".to_string()
+            ]
+        ));
+
+        // 3. Fallback when exe is empty (Unix restricted proc)
+        assert!(is_acp_server_process(
+            "agy_acp_server",
+            "",
+            &["/home/user/.gemini/antigravity-acp/agy_acp_server".to_string()]
+        ));
+
+        // 4. MUST NOT falsely match developer shells running grep or commands with agy_acp_server
+        assert!(!is_acp_server_process(
+            "powershell.exe",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            &[
+                "powershell.exe".to_string(),
+                "-c".to_string(),
+                "git grep agy_acp_server".to_string()
+            ]
+        ));
+        assert!(!is_acp_server_process(
+            "bash",
+            "/bin/bash",
+            &[
+                "bash".to_string(),
+                "-c".to_string(),
+                "echo agy_acp_server".to_string()
+            ]
+        ));
+
+        // 5. MUST NOT match Antigravity Manager itself even if path contains agy_acp_server
+        assert!(!is_acp_server_process(
+            "antigravity-tools.exe",
+            r"C:\Projects\agy_acp_server\target\debug\antigravity-tools.exe",
+            &[r"C:\Projects\agy_acp_server\target\debug\antigravity-tools.exe".to_string()]
+        ));
     }
 }

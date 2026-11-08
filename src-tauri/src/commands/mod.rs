@@ -847,10 +847,16 @@ pub async fn sync_account_from_db(
     let index = modules::account::load_account_index()?;
     let current_target = index.current_target_ide.as_deref();
     let is_agy = current_target == Some("agy");
+    let is_acp = current_target == Some("acp");
 
     // 1. Read the credential source used by the selected client. For agy, do
     // not mistake an older file credential for the active keyring account.
-    let credential = if is_agy {
+    let credential = if is_acp {
+        modules::integration::read_acp_token_file().or_else(|_| {
+            modules::integration::read_from_system_keyring_target("gemini", "antigravity-acp")
+                .map(|state| state.refresh_token)
+        })
+    } else if is_agy {
         modules::integration::read_from_system_keyring_only().map(|state| state.refresh_token)
     } else {
         modules::migration::get_refresh_token_from_db(current_target)
@@ -878,9 +884,18 @@ pub async fn sync_account_from_db(
         modules::logger::log_info("检测到新登录账号，正在自动同步...");
     }
 
-    // 4. For the CLI, reconcile only the matching managed account; importing
-    // all local sources could select an unrelated IDE account if refresh fails.
-    let mut account = if is_agy {
+    // 4. For the CLI, reconcile only the matching managed account. For ACP, match
+    // managed account or import the active ACP login.
+    let mut account = if is_acp {
+        if let Some(acc) = modules::account::list_accounts()?
+            .into_iter()
+            .find(|a| !db_refresh_token.is_empty() && a.token.refresh_token == db_refresh_token)
+        {
+            acc
+        } else {
+            modules::migration::import_from_db(current_target).await?
+        }
+    } else if is_agy {
         modules::account::find_agy_account(modules::account::list_accounts()?, &db_refresh_token)?
     } else {
         modules::migration::import_from_db(current_target).await?

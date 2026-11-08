@@ -293,6 +293,8 @@
         "client_ide_tooltip": "当前 Antigravity IDE 客户端登录账号",
         "client_cli": "CLI",
         "client_cli_tooltip": "当前 Antigravity CLI (agy) 登录账号",
+        "client_acp": "ACP",
+        "client_acp_tooltip": "当前 Antigravity IDE Plugin (ACP) 登录账号",
         "disabled": "已禁用",
         "disabled_tooltip": "账号已被禁用（例如 refresh_token 被撤销/过期）。重新授权或更新 Token 后可恢复。",
         "proxy_disabled": "反代已禁用",
@@ -517,7 +519,8 @@
             "batch_warmup_title": "批量手动预热",
             "batch_warmup_msg": "确定要为选中的 {{count}} 个账号立即触发预热吗？"
         },
-        "switch_to_agy": "Switch to Antigravity CLI (agy)",
+        "switch_to_agy": "切换到 Antigravity CLI (agy)",
+        "switch_to_acp": "切换到 Antigravity IDE Plugin (ACP)",
         "switch_next_short": "切下个",
         "project_id": "GCP Project ID",
         "project_id_hint": "企业/GCP 账号关联的 Google Cloud 项目 ID。原生 Antigravity 在登录后会自动关联或使用缺省项目。",

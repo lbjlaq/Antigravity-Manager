@@ -355,6 +355,20 @@ pub fn set_active_oauth_client_key(client_key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Helper to extract (client_id, client_secret) for a token/account.
+pub fn get_client_credentials_for_account(token: &crate::models::TokenData) -> (String, String) {
+    if let Some(ref key) = token.oauth_client_key {
+        if let Ok(client) = select_auth_client(Some(key)) {
+            return (client.client_id, client.client_secret);
+        }
+    }
+    if token.is_gcp_tos {
+        (GCP_CLIENT_ID.to_string(), GCP_CLIENT_SECRET.to_string())
+    } else {
+        (CLIENT_ID.to_string(), CLIENT_SECRET.to_string())
+    }
+}
+
 /// Check whether the resolved OAuth client for `client_key` (or active client when `None`) is the built-in client.
 pub fn is_builtin_oauth_client(client_key: Option<&str>) -> bool {
     select_auth_client(client_key)

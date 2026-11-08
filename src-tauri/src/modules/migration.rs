@@ -393,9 +393,48 @@ pub async fn import_all_local_accounts(target_ide: Option<&str>) -> Result<Vec<A
         }
     }
 
+    // 4. Antigravity IDE Plugin (acp) 凭据 (acp_token.json 与 Keychain gemini:antigravity-acp)
+    if target_ide.is_none() || target_ide == Some("all") || target_ide == Some("acp") {
+        let mut acp_tokens = Vec::new();
+        if let Ok(rt) = integration::read_acp_token_file() {
+            acp_tokens.push(rt);
+        }
+        if let Ok(st) = integration::read_from_system_keyring_target("gemini", "antigravity-acp") {
+            acp_tokens.push(st.refresh_token);
+        }
+        for refresh_token in acp_tokens {
+            if !refresh_token.is_empty() && seen_refresh_tokens.insert(refresh_token.clone()) {
+                crate::modules::logger::log_info(
+                    "Discovered OAuth state in Antigravity ACP credentials",
+                );
+                if let Ok(token_resp) = oauth::refresh_access_token(&refresh_token, None).await {
+                    let email = match oauth::get_user_info(&token_resp.access_token, None).await {
+                        Ok(info) => info.email,
+                        Err(_) => "Unknown".to_string(),
+                    };
+                    let token_data = TokenData::new(
+                        token_resp.access_token,
+                        refresh_token,
+                        token_resp.expires_in,
+                        Some(email.clone()),
+                        None,
+                        None,
+                        false,
+                        token_resp.id_token,
+                    )
+                    .with_oauth_client_key(token_resp.oauth_client_key);
+
+                    if let Ok(acc) = account::upsert_account(email, None, token_data) {
+                        imported_accounts.push(acc);
+                    }
+                }
+            }
+        }
+    }
+
     if imported_accounts.is_empty() {
         return Err(
-            "No login state data found across Antigravity Keyring, IDE/Classic databases, or CLI credentials"
+            "No login state data found across Antigravity Keyring, IDE/Classic databases, CLI credentials, or ACP credentials"
                 .to_string(),
         );
     }
@@ -542,11 +581,17 @@ pub fn extract_oauth_state_from_file(db_path: &PathBuf) -> Result<ImportedOAuthS
 pub fn get_refresh_token_from_db(target_ide: Option<&str>) -> Result<String, String> {
     use crate::modules::integration;
 
-    // 严禁对 IDE 目标查询系统 Keyring：
-    // 系统 Keyring（如 Keychain/Secret Service）专属于原生桌面端 (>= 2.0.0) 或 CLI (agy)，
+    // 严禁对 ACP / IDE 目标查询经典版 Keyring：
+    // 系统 Keyring（如 Keychain/Secret Service gemini:antigravity）专属于原生桌面端 (>= 2.0.0) 或 CLI (agy)，
     // 基于 VS Code 架构的 Antigravity IDE 凭据严格存储在 state.vscdb 中。
-    // 如果 target_ide == Some("ide")，必须直接从 IDE 数据库候选路径读取，
-    // 否则后台自动同步任务会从 Keyring 读取到经典版账号，误判后逆向覆盖 IDE 的当前账号！
+    // 基于 ACP 插件的 Antigravity ACP 凭据严格存储在 acp_token.json 或 Keyring gemini:antigravity-acp 中。
+    if target_ide == Some("acp") {
+        return integration::read_acp_token_file().or_else(|_| {
+            integration::read_from_system_keyring_target("gemini", "antigravity-acp")
+                .map(|state| state.refresh_token)
+        });
+    }
+
     if target_ide != Some("ide") {
         if let Ok(oauth_state) = integration::read_from_system_keyring() {
             return Ok(oauth_state.refresh_token);
@@ -582,6 +627,21 @@ mod tests {
             assert!(
                 result.is_err(),
                 "When no IDE database exists, get_refresh_token_from_db(Some(\"ide\")) must return Err instead of falling back to system keyring"
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_refresh_token_from_db_does_not_leak_keyring_for_acp() {
+        // 当查询 acp 目标凭据时，绝不能返回经典版 Keyring (gemini:antigravity) 的值
+        let result = get_refresh_token_from_db(Some("acp"));
+        let has_acp_file = integration::read_acp_token_file().is_ok();
+        let has_acp_keyring =
+            integration::read_from_system_keyring_target("gemini", "antigravity-acp").is_ok();
+        if !has_acp_file && !has_acp_keyring {
+            assert!(
+                result.is_err(),
+                "get_refresh_token_from_db(Some(\"acp\")) must not leak classic keyring credentials"
             );
         }
     }

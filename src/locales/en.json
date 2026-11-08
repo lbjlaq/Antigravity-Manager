@@ -295,6 +295,8 @@
         "client_ide_tooltip": "Active account in Antigravity IDE",
         "client_cli": "CLI",
         "client_cli_tooltip": "Active account in Antigravity CLI (agy)",
+        "client_acp": "ACP",
+        "client_acp_tooltip": "Active account in Antigravity IDE Plugin (ACP)",
         "disabled": "Disabled",
         "disabled_tooltip": "Account is disabled (e.g. refresh_token revoked/expired). Reauthorize or update token to re-enable.",
         "proxy_disabled": "Proxy Disabled",
@@ -520,6 +522,7 @@
             "batch_warmup_msg": "Are you sure you want to trigger warmup for the selected {{count}} accounts immediately?"
         },
         "switch_to_agy": "Switch to Antigravity CLI (agy)",
+        "switch_to_acp": "Switch to Antigravity IDE Plugin (ACP)",
         "switch_next_short": "Next",
         "project_id": "GCP Project ID",
         "project_id_hint": "Google Cloud Project ID associated with the enterprise/GCP account. Native Antigravity associates or defaults this upon sign-in.",

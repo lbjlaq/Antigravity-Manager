@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import {
     Maximize2, RefreshCw, ShieldAlert, Tag, Users,
-    Laptop, Code2, Terminal, Mail, Gem, Diamond, Circle, HelpCircle,
+    Laptop, Code2, Terminal, Layers, Mail, Gem, Diamond, Circle, HelpCircle,
     ArrowRight, Check, ChevronDown, Shuffle, Power, Feather, Copy, Pin, X,
     Sparkles, Bot
 } from 'lucide-react';
@@ -19,13 +19,13 @@ import {
     getGroupQuotaSummaries,
     GroupQuotaSummary
 } from '../../utils/quotaDisplay';
-import { getAccountTier, type Account } from '../../types/account';
+import { getAccountTier, type Account, type ClientTarget } from '../../types/account';
 import { isAccountAbnormal } from '../../utils/accountStatus';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { GroupQuotaCard } from '../accounts/GroupQuotaCard';
 import { useConfigStore } from '../../stores/useConfigStore';
 
-type MiniTab = 'classic' | 'ide' | 'agy' | 'pool';
+type MiniTab = ClientTarget | 'pool';
 
 interface MiniQuotaRowProps {
     displayName: string;
@@ -131,10 +131,10 @@ export default function MiniView() {
     // 默认是不停留的（Popover 模式），只有用户显式点击图钉才保持常驻悬浮
     const [isPinned, setIsPinned] = useState(false);
 
-    // 默认定位到活跃客户端 Tab，优先 classic/ide/agy，绝不落入 pool
+    // 默认定位到活跃客户端 Tab，优先 classic/ide/agy/acp，绝不落入 pool
     const [activeTab, setActiveTab] = useState<MiniTab>(() => {
         const saved = localStorage.getItem('mini_view_tab');
-        if (saved === 'classic' || saved === 'ide' || saved === 'agy') {
+        if (saved === 'classic' || saved === 'ide' || saved === 'agy' || saved === 'acp') {
             return saved;
         }
         return 'classic';
@@ -172,7 +172,7 @@ export default function MiniView() {
     }, [fetchAccounts, fetchCurrentAccount, loadConfig]);
 
     // Client accounts resolution
-    const getClientAccountId = (tab: 'classic' | 'ide' | 'agy') => {
+    const getClientAccountId = (tab: ClientTarget) => {
         switch (tab) {
             case 'classic':
                 return activeClients?.classic_account_id;
@@ -180,6 +180,8 @@ export default function MiniView() {
                 return activeClients?.ide_account_id;
             case 'agy':
                 return activeClients?.agy_account_id;
+            case 'acp':
+                return activeClients?.acp_account_id;
         }
     };
 
@@ -579,7 +581,7 @@ export default function MiniView() {
         );
     };
 
-    const getTabStatus = (tabKey: 'classic' | 'ide' | 'agy') => {
+    const getTabStatus = (tabKey: ClientTarget) => {
         const id = getClientAccountId(tabKey);
         if (!id && tabKey === 'classic' && currentAccount) {
             const isHealthy = !currentAccount.disabled && !isAccountAbnormal(currentAccount);
@@ -613,6 +615,13 @@ export default function MiniView() {
             icon: Terminal,
             tooltip: t('accounts.client_cli_tooltip', '当前 Antigravity CLI (agy) 登录账号'),
             activeDot: 'bg-emerald-400',
+        },
+        {
+            key: 'acp' as const,
+            label: t('accounts.client_acp', 'ACP'),
+            icon: Layers,
+            tooltip: t('accounts.client_acp_tooltip', '当前 Antigravity IDE Plugin (ACP) 登录账号'),
+            activeDot: 'bg-purple-400',
         },
         {
             key: 'pool' as const,

@@ -64,13 +64,13 @@ fn print_cli_help() {
           import <file>      High-performance batch import accounts from JSON (with auto-backup)\n  \
           export [file]      Fast export all accounts to JSON (default: accounts_export.json)\n  \
           list, ls           List all accounts with active status and quota\n  \
-          current, whoami    Show currently active accounts across clients (IDE / agy CLI)\n  \
+          current, whoami    Show currently active accounts across clients (IDE / agy CLI / ACP)\n  \
           sync [app]         One-click sync proxy URL and API key to Agent tools (dsh, claude, codex, etc.)\n  \
           help               Show this help message\n\n\
         Flags:\n  \
           --headless         Run as a background headless proxy daemon (no GUI / Wayland display required)\n\n\
         Options for `switch`:\n  \
-          --target <target>  Target client: 'agy' (default), 'ide', or 'classic'\n  \
+          -t, --target <tgt> Target client: 'agy' (default), 'ide', 'classic', or 'acp'\n  \
           -c, --continue     Automatically resume agy conversation via `agy --continue` after switch\n\n\
         Options for `sync`:\n  \
           [app]              Target Agent tool: 'dsh' / 'deepseek-harness' (default), 'claude', 'codex', 'gemini', 'opencode', 'jeikcode', 'grok', or 'all'\n  \
@@ -80,6 +80,7 @@ fn print_cli_help() {
           antigravity-tools switch 1                   # Switch to account #1\n  \
           antigravity-tools switch work@gmail.com      # Switch by email or prefix\n  \
           antigravity-tools switch 2 --continue        # Switch to #2 and resume conversation\n  \
+          antigravity-tools switch 1 -t acp            # Switch Antigravity IDE Plugin (ACP) account\n  \
           antigravity-tools sync dsh                   # Sync to DeepSeek Harness (Web GUI & CLI)\n  \
           antigravity-tools sync dsh --model gemini-3.8-flash\n  \
           antigravity-tools sync all                   # Sync to all detected Agent tools\n  \
@@ -97,7 +98,7 @@ async fn handle_switch_command(args: &[String]) -> Result<(), String> {
         let arg = &args[i];
         if arg == "-c" || arg == "--continue" {
             auto_continue = true;
-        } else if arg == "--target" || arg == "--ide" {
+        } else if arg == "--target" || arg == "-t" || arg == "--ide" {
             if i + 1 < args.len() {
                 target_ide = args[i + 1].clone();
                 i += 1;
@@ -153,8 +154,12 @@ async fn handle_list_command() -> Result<(), String> {
         status.ide_email.as_deref().unwrap_or("未设置")
     );
     println!(
-        "  • Antigravity Classic: \x1b[36m{}\x1b[0m\n",
+        "  • Antigravity Classic: \x1b[36m{}\x1b[0m",
         status.classic_email.as_deref().unwrap_or("未设置")
+    );
+    println!(
+        "  • Antigravity ACP:     \x1b[36m{}\x1b[0m\n",
+        status.acp_email.as_deref().unwrap_or("未设置")
     );
 
     println!("序号 | 激活 | 邮箱                         | 别名         | 状态");
@@ -195,10 +200,11 @@ async fn handle_list_command() -> Result<(), String> {
 async fn handle_current_command() -> Result<(), String> {
     let status = account::detect_active_clients_status().unwrap_or_default();
     println!(
-        "agy: {}\nide: {}\nclassic: {}",
+        "agy: {}\nide: {}\nclassic: {}\nacp: {}",
         status.agy_email.as_deref().unwrap_or("none"),
         status.ide_email.as_deref().unwrap_or("none"),
-        status.classic_email.as_deref().unwrap_or("none")
+        status.classic_email.as_deref().unwrap_or("none"),
+        status.acp_email.as_deref().unwrap_or("none")
     );
     Ok(())
 }
