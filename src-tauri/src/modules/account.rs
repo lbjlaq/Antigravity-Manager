@@ -3013,11 +3013,28 @@ pub fn save_account(account: &Account) -> Result<(), String> {
 
 /// Save proxy selection priority using the shared account write lock.
 pub fn update_account_priority(account_id: &str, priority: u8) -> Result<(), String> {
+    update_account_priority_with_models(account_id, priority, None).map(|_| ())
+}
+
+/// Save proxy selection priority and optional per-model-family overrides ("gemini" / "claude").
+pub fn update_account_priority_with_models(
+    account_id: &str,
+    priority: u8,
+    model_priorities: Option<std::collections::HashMap<String, u8>>,
+) -> Result<std::collections::HashMap<String, u8>, String> {
     crate::models::account::validate_priority(priority)?;
+    let validated_model_priorities = match model_priorities {
+        Some(ref mp) => Some(crate::models::account::validate_model_priorities(mp)?),
+        None => None,
+    };
     let _account_write = lock_account_file_updates()?;
     let mut account = load_account(account_id)?;
     account.priority = priority;
-    save_account(&account)
+    if let Some(mp) = validated_model_priorities {
+        account.model_priorities = mp;
+    }
+    save_account(&account)?;
+    Ok(account.model_priorities)
 }
 
 /// Update account GCP Project ID.

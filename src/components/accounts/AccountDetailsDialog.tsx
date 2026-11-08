@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X, Clock, AlertCircle, Bot, Ban, ExternalLink, Copy } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { Account, getAccountTier, getTierLabel } from '../../types/account';
+import { Account, getAccountTier, getTierLabel, ModelPriorities } from '../../types/account';
 import { formatDate, formatTimeRemaining } from '../../utils/format';
 import { useTranslation } from 'react-i18next';
 import { MODEL_CONFIG, sortModels } from '../../config/modelConfig';
@@ -11,7 +11,7 @@ import { copyToClipboard } from '../../utils/clipboard';
 interface AccountDetailsDialogProps {
     account: Account | null;
     onClose: () => void;
-    onUpdatePriority: (accountId: string, priority: number) => Promise<void>;
+    onUpdatePriority: (accountId: string, priority: number, modelPriorities?: ModelPriorities) => Promise<void>;
     onUpdateProjectId?: (accountId: string, projectId: string) => Promise<void>;
     onAutoFetchProjectId?: (accountId: string) => Promise<string>;
 }
@@ -26,6 +26,8 @@ export default function AccountDetailsDialog({
     const { t } = useTranslation();
     const [activeTab, setActiveTab] = useState<'basic' | 'detailed'>('basic');
     const [priorityInput, setPriorityInput] = useState('50');
+    const [geminiPriorityInput, setGeminiPriorityInput] = useState('');
+    const [claudePriorityInput, setClaudePriorityInput] = useState('');
     const [savingPriority, setSavingPriority] = useState(false);
     const [projectIdInput, setProjectIdInput] = useState('');
     const [savingProjectId, setSavingProjectId] = useState(false);
@@ -61,10 +63,35 @@ export default function AccountDetailsDialog({
 
     useEffect(() => {
         setPriorityInput(String(account?.priority ?? 50));
+        setGeminiPriorityInput(
+            account?.model_priorities?.gemini !== undefined
+                ? String(account.model_priorities.gemini)
+                : ''
+        );
+        setClaudePriorityInput(
+            account?.model_priorities?.claude !== undefined
+                ? String(account.model_priorities.claude)
+                : ''
+        );
         setProjectIdInput(account?.token?.project_id || '');
-    }, [account?.id, account?.priority, account?.token?.project_id]);
+    }, [
+        account?.id,
+        account?.priority,
+        account?.model_priorities?.gemini,
+        account?.model_priorities?.claude,
+        account?.token?.project_id,
+    ]);
 
     if (!account) return null;
+
+    const currentGeminiStr =
+        account.model_priorities?.gemini !== undefined ? String(account.model_priorities.gemini) : '';
+    const currentClaudeStr =
+        account.model_priorities?.claude !== undefined ? String(account.model_priorities.claude) : '';
+    const isPriorityDirty =
+        priorityInput.trim() !== String(account.priority ?? 50) ||
+        geminiPriorityInput.trim() !== currentGeminiStr ||
+        claudePriorityInput.trim() !== currentClaudeStr;
 
     const savePriority = async () => {
         const priority = Number(priorityInput);
@@ -72,9 +99,29 @@ export default function AccountDetailsDialog({
             showToast(t('accounts.priority_invalid'), 'error');
             return;
         }
+        const nextModelPriorities: ModelPriorities = {};
+        const gTrim = geminiPriorityInput.trim();
+        if (gTrim !== '') {
+            const gVal = Number(gTrim);
+            if (!Number.isInteger(gVal) || gVal < 1 || gVal > 100) {
+                showToast(t('accounts.priority_invalid'), 'error');
+                return;
+            }
+            nextModelPriorities.gemini = gVal;
+        }
+        const cTrim = claudePriorityInput.trim();
+        if (cTrim !== '') {
+            const cVal = Number(cTrim);
+            if (!Number.isInteger(cVal) || cVal < 1 || cVal > 100) {
+                showToast(t('accounts.priority_invalid'), 'error');
+                return;
+            }
+            nextModelPriorities.claude = cVal;
+        }
+
         setSavingPriority(true);
         try {
-            await onUpdatePriority(account.id, priority);
+            await onUpdatePriority(account.id, priority, nextModelPriorities);
             showToast(t('accounts.priority_updated'), 'success');
         } catch (error) {
             showToast(`${t('common.error')}: ${error}`, 'error');
@@ -216,37 +263,122 @@ export default function AccountDetailsDialog({
                 {/* Content */}
                 <div className="p-6 max-h-[68vh] overflow-y-auto space-y-6">
                     {/* 优先级设置 */}
-                    <div className="p-4 rounded-xl border border-gray-100 dark:border-base-200 bg-gray-50/50 dark:bg-base-200/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                        <div>
-                            <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
-                                <span>{t('accounts.priority')}</span>
-                                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-mono font-bold">
-                                    {account.priority ?? 50}
-                                </span>
+                    <div className="p-4 rounded-xl border border-gray-100 dark:border-base-200 bg-gray-50/50 dark:bg-base-200/40 flex flex-col gap-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                                <div className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex flex-wrap items-center gap-1.5">
+                                    <span>{t('accounts.priority')}</span>
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-mono font-bold">
+                                        {account.priority ?? 50}
+                                    </span>
+                                    {account.model_priorities?.gemini !== undefined && (
+                                        <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-mono font-bold">
+                                            G:{account.model_priorities.gemini}
+                                        </span>
+                                    )}
+                                    {account.model_priorities?.claude !== undefined && (
+                                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-mono font-bold">
+                                            C:{account.model_priorities.claude}
+                                        </span>
+                                    )}
+                                </div>
+                                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500 leading-relaxed max-w-xl">
+                                    {t('accounts.priority_hint')}
+                                </p>
                             </div>
-                            <p className="mt-1 text-xs text-gray-400 dark:text-gray-500 leading-relaxed max-w-md">
-                                {t('accounts.priority_hint')}
-                            </p>
+                            <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                                {(geminiPriorityInput.trim() !== '' || claudePriorityInput.trim() !== '') && (
+                                    <button
+                                        type="button"
+                                        className="btn btn-ghost btn-xs text-gray-500 hover:text-gray-700 dark:text-gray-400"
+                                        disabled={savingPriority}
+                                        onClick={() => {
+                                            setGeminiPriorityInput('');
+                                            setClaudePriorityInput('');
+                                        }}
+                                        title={t('accounts.model_priority_reset_hint', '清空独立模型优先级，全部跟随账号默认优先级')}
+                                    >
+                                        {t('accounts.model_priority_reset', '恢复统一')}
+                                    </button>
+                                )}
+                                <button
+                                    className="btn btn-primary btn-sm px-4"
+                                    onClick={savePriority}
+                                    disabled={savingPriority || !isPriorityDirty}
+                                >
+                                    {savingPriority ? t('common.saving') : t('common.save')}
+                                </button>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
-                            <input
-                                id="account-priority"
-                                type="number"
-                                min={1}
-                                max={100}
-                                step={1}
-                                className="input input-bordered input-sm w-20 text-center font-mono font-bold"
-                                value={priorityInput}
-                                disabled={savingPriority}
-                                onChange={event => setPriorityInput(event.target.value)}
-                            />
-                            <button
-                                className="btn btn-primary btn-sm px-4"
-                                onClick={savePriority}
-                                disabled={savingPriority || priorityInput === String(account.priority ?? 50)}
-                            >
-                                {savingPriority ? t('common.saving') : t('common.save')}
-                            </button>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-gray-200/60 dark:border-base-300/60">
+                            <label className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white dark:bg-base-100 border border-gray-200/80 dark:border-base-300">
+                                <div className="min-w-0">
+                                    <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">
+                                        {t('accounts.priority_default_label', '默认优先级')}
+                                    </div>
+                                    <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                                        {t('accounts.priority_default_sub', '全模型兜底基准')}
+                                    </div>
+                                </div>
+                                <input
+                                    id="account-priority"
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    step={1}
+                                    className="input input-bordered input-xs w-16 text-center font-mono font-bold"
+                                    value={priorityInput}
+                                    disabled={savingPriority}
+                                    onChange={event => setPriorityInput(event.target.value)}
+                                />
+                            </label>
+
+                            <label className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white dark:bg-base-100 border border-gray-200/80 dark:border-base-300">
+                                <div className="min-w-0">
+                                    <div className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                                        {t('accounts.priority_gemini_label', 'Gemini 优先级')}
+                                    </div>
+                                    <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                                        {t('accounts.priority_model_sub', '留空则跟随默认')}
+                                    </div>
+                                </div>
+                                <input
+                                    id="account-priority-gemini"
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    step={1}
+                                    placeholder={priorityInput || '50'}
+                                    className="input input-bordered input-xs w-16 text-center font-mono font-bold"
+                                    value={geminiPriorityInput}
+                                    disabled={savingPriority}
+                                    onChange={event => setGeminiPriorityInput(event.target.value)}
+                                />
+                            </label>
+
+                            <label className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white dark:bg-base-100 border border-gray-200/80 dark:border-base-300">
+                                <div className="min-w-0">
+                                    <div className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+                                        {t('accounts.priority_claude_label', 'Claude 优先级')}
+                                    </div>
+                                    <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                                        {t('accounts.priority_model_sub', '留空则跟随默认')}
+                                    </div>
+                                </div>
+                                <input
+                                    id="account-priority-claude"
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    step={1}
+                                    placeholder={priorityInput || '50'}
+                                    className="input input-bordered input-xs w-16 text-center font-mono font-bold"
+                                    value={claudePriorityInput}
+                                    disabled={savingPriority}
+                                    onChange={event => setClaudePriorityInput(event.target.value)}
+                                />
+                            </label>
                         </div>
                     </div>
 

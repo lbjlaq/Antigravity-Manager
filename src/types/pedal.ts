@@ -1,3 +1,5 @@
+import type { ModelPriorities } from './account';
+
 export type PedalTargetModel = 'gemini' | 'claude';
 
 export interface PedalCandidate {
@@ -15,6 +17,7 @@ export interface PedalModeState {
     targetModel: PedalTargetModel | null;
     targetAccountIds: string[];
     originalPriorities: Record<string, number>;
+    originalModelPriorities?: Record<string, ModelPriorities>;
     snapshotDisabledIds: string[];
     temporarilyDisabledIds: string[];
     suppressNotice: {
