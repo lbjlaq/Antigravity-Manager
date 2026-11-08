@@ -6,7 +6,7 @@ import { useAccountStore } from '../../stores/useAccountStore';
 
 export const PedalBanner: React.FC = () => {
     const { t } = useTranslation();
-    const { active, targetModel, targetAccountIds, manualExit } = usePedalModeStore();
+    const { active, targetModel, targetAccountIds, manualExit, resetPedalModeState } = usePedalModeStore();
     const { accounts, updateAccountPriority, toggleProxyStatus } = useAccountStore();
 
     if (!active || !targetModel) return null;
@@ -15,7 +15,12 @@ export const PedalBanner: React.FC = () => {
     const targetAccounts = accounts.filter(a => targetAccountIds.includes(a.id));
 
     const handleManualExit = async () => {
-        await manualExit(updateAccountPriority, toggleProxyStatus);
+        try {
+            await manualExit(updateAccountPriority, toggleProxyStatus);
+        } catch (e) {
+            console.error('Failed to manually exit pedal mode, resetting state:', e);
+            resetPedalModeState();
+        }
     };
 
     return (
