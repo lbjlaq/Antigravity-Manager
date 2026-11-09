@@ -15,6 +15,10 @@ pub struct AppConfig {
     /// 启动刷新允许的最大账号数；账号数超过该值时跳过启动刷新，0 表示不限制
     #[serde(default = "default_startup_refresh_max_accounts")]
     pub startup_refresh_max_accounts: u32,
+    /// 全量配额刷新的滑动窗口延迟（秒）：账号完成后等待该时间再释放槽位给下一个账号。
+    /// 并发上限固定为 5；0 表示完成后立即让位。
+    #[serde(default = "default_refresh_slide_delay_secs")]
+    pub refresh_slide_delay_secs: f64,
     pub auto_sync: bool,
     pub sync_interval: i32, // minutes
     pub default_export_path: Option<String>,
@@ -71,7 +75,14 @@ fn default_startup_refresh() -> bool {
 }
 
 fn default_startup_refresh_max_accounts() -> u32 {
-    15
+    // 默认不限制：全量刷新已改为滑动窗口（最多 5 并发；每个账号完成后
+    // 按 `refresh_slide_delay_secs` 让位），大号池冷启动也能安全自动刷新；
+    // 需要上限的用户可自行配置非 0 值。
+    0
+}
+
+fn default_refresh_slide_delay_secs() -> f64 {
+    0.2
 }
 
 /// Scheduled warmup configuration
@@ -264,7 +275,8 @@ impl AppConfig {
             auto_refresh: true,
             refresh_interval: 10,
             startup_refresh: true,
-            startup_refresh_max_accounts: 15,
+            startup_refresh_max_accounts: 0,
+            refresh_slide_delay_secs: 0.2,
             auto_sync: false,
             sync_interval: 5,
             default_export_path: None,
@@ -338,7 +350,7 @@ mod tests {
             .remove("startup_refresh_max_accounts");
         let restored: AppConfig = serde_json::from_value(value).unwrap();
         assert!(restored.startup_refresh);
-        assert_eq!(restored.startup_refresh_max_accounts, 15);
+        assert_eq!(restored.startup_refresh_max_accounts, 0);
 
         let mut config = AppConfig::new();
         config.startup_refresh = false;
@@ -347,6 +359,20 @@ mod tests {
         let restored: AppConfig = serde_json::from_str(&saved).unwrap();
         assert!(!restored.startup_refresh);
         assert_eq!(restored.startup_refresh_max_accounts, 0);
+    }
+
+    #[test]
+    fn refresh_slide_delay_defaults_to_0_2_seconds() {
+        let config = AppConfig::new();
+        assert!((config.refresh_slide_delay_secs - 0.2).abs() < f64::EPSILON);
+
+        let mut value = serde_json::to_value(&config).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("refresh_slide_delay_secs");
+        let restored: AppConfig = serde_json::from_value(value).unwrap();
+        assert!((restored.refresh_slide_delay_secs - 0.2).abs() < f64::EPSILON);
     }
 
     #[test]

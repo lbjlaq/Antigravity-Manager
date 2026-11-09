@@ -90,9 +90,11 @@ pub struct LiveLimitStatus {
 
 /// 上游封禁证据（如 TOS_VIOLATION）。
 ///
-/// Daily/Sandbox 配额端点对被封禁账号仍会返回 200，因此不能把「配额刷新成功」
-/// 当作解封依据；只有生产端点（cloudcode-pa.googleapis.com）明确给出封禁原因时
-/// 才写入该结构，并在生产端点恢复 200 后才清除。
+/// 控制面端点（`loadCodeAssist` / `fetchAvailableModels` /
+/// `retrieveUserQuotaSummary` / `countTokens`）对被 TOS 封禁的账号仍会返回 200；
+/// 只有数据面推理端点（`v1internal:generateContent` / `streamGenerateContent`）
+/// 会在鉴权层返回 403。因此封禁探测必须发送最小推理请求，且配额刷新成功
+/// 绝不能作为解封依据；只有数据面探针恢复 2xx 后才可清除封禁。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccountBanInfo {
     /// 上游 reason code，如 `TOS_VIOLATION`。
@@ -319,7 +321,7 @@ impl AccountBanInfo {
 pub(crate) enum AccountLockKind {
     /// 上游确认的账号级封禁（`banned: ...`）。
     Banned,
-    /// 明确的生产端点 403 锁定。
+    /// 明确的账号级 403 锁定。
     HardForbidden,
     /// 人机验证/风控挑战，解除后应允许恢复。
     Validation,
@@ -580,8 +582,8 @@ pub struct Account {
     pub validation_url: Option<String>,
     /// 上游已确认的账号封禁（如 TOS_VIOLATION）。
     ///
-    /// 与 `disabled` / `proxy_disabled` 不同：该状态只由生产端点探测结果驱动，
-    /// 配额刷新成功不会清除它，只有生产端点恢复 200 才会自动解封。
+    /// 与 `disabled` / `proxy_disabled` 不同：该状态只由数据面推理探针的结果驱动，
+    /// 配额刷新成功不会清除它，只有数据面推理探针恢复 2xx 才会自动解封。
     #[serde(default)]
     pub banned: bool,
     /// 封禁原因码（如 `TOS_VIOLATION`）。
@@ -815,8 +817,9 @@ impl Account {
         }
 
         // Daily/Sandbox 配额端点对被封禁与 403 账号仍返回 200；一次成功的配额快照
-        // 不能抵消生产端点确认过的封禁与 403 锁定。
-        // 只有 `clear_account_ban` 或生产端点测活成功 `clear_account_forbidden_and_validation` 才能解除。
+        // 不能抵消数据面推理探针确认过的封禁与 403 锁定。
+        // 只有 `clear_account_ban` 或数据面推理探针 2xx 成功
+        // `clear_account_forbidden_and_validation` 才能解除。
         //
         // 关键防护：即使当前账号碰巧有 validation 锁，既有的 hard 403 / banned 锁也绝对不能被压制遗失。
         let had_hard_lock = self.banned

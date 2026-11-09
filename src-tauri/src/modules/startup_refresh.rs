@@ -3,8 +3,11 @@
 //! [背景] #3726 曾移除前端挂载时的无条件全量刷新，避免应用启动阶段对上游配额接口
 //! 形成并发轰炸。这里把触发点收敛到后端：账号加载就绪后只触发一次，受
 //! `startup_refresh` 配置开关控制，并受 `startup_refresh_max_accounts` 账号数上限
-//! 约束（默认 15，0 表示不限制），且不依赖主窗口 / 页面挂载，桌面端、Web UI
+//! 约束（默认 0 表示不限制），且不依赖主窗口 / 页面挂载，桌面端、Web UI
 //! 与 headless 模式行为一致。
+//!
+//! 实际刷新由 `refresh_all_quotas_logic` 以滑动窗口执行：最多 5 个账号并发；
+//! 每个账号完成后按 `refresh_slide_delay_secs`（默认 0.2 秒）等待后再把槽位让给下一个。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

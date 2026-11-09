@@ -39,6 +39,7 @@ export default function RefreshMenuControl({
     const [subPlacement, setSubPlacement] = useState<'left' | 'inline'>('left');
 
     const [limitDraft, setLimitDraft] = useState('0');
+    const [delayDraft, setDelayDraft] = useState('0.2');
 
     const containerRef = useRef<HTMLDivElement>(null);
     const primaryMenuRef = useRef<HTMLDivElement>(null);
@@ -47,12 +48,20 @@ export default function RefreshMenuControl({
 
     const startupEnabled = config?.startup_refresh !== false;
     const startupLimit = config?.startup_refresh_max_accounts ?? 0;
+    const rawSlideDelay = config?.refresh_slide_delay_secs;
+    const slideDelay = typeof rawSlideDelay === 'number' && Number.isFinite(rawSlideDelay)
+        ? rawSlideDelay
+        : 0.2;
     const autoRefreshEnabled = !!config?.auto_refresh;
     const isQuotaProtectionLocked = !!config?.quota_protection?.enabled;
 
     useEffect(() => {
         setLimitDraft(String(startupLimit));
     }, [startupLimit]);
+
+    useEffect(() => {
+        setDelayDraft(String(Number(slideDelay.toFixed(2))));
+    }, [slideDelay]);
 
     // 计算二级菜单是向左展开还是内联手风琴折叠展开（响应式安全防遮蔽）
     const updatePlacement = useCallback(() => {
@@ -145,6 +154,17 @@ export default function RefreshMenuControl({
         setLimitDraft(String(next));
         if (next !== startupLimit) {
             void persist({ startup_refresh_max_accounts: next });
+        }
+    };
+
+    const commitDelay = () => {
+        const parsed = parseFloat(delayDraft);
+        const next = Number.isFinite(parsed)
+            ? Number(Math.min(Math.max(parsed, 0), 10).toFixed(2))
+            : 0.2;
+        setDelayDraft(String(next));
+        if (next !== slideDelay) {
+            void persist({ refresh_slide_delay_secs: next });
         }
     };
 
@@ -266,7 +286,7 @@ export default function RefreshMenuControl({
                                     : "text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-base-200"
                             )}
                             onClick={toggleSubMenu}
-                            title={t('accounts.startup_refresh_tooltip', '账号加载完成后异步刷新一次全部配额（受账号上限约束）')}
+                            title={t('accounts.startup_refresh_tooltip', '账号加载完成后异步刷新一次全部配额（滑动窗口：最多 5 个账号并发，按配置延迟让位）')}
                         >
                             <div className="flex items-center gap-2 min-w-0">
                                 <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
@@ -356,6 +376,33 @@ export default function RefreshMenuControl({
                                         </div>
                                         <p className="mt-1.5 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
                                             {t('settings.account.startup_refresh_limit_hint', '账号数超过该值时跳过启动刷新，0 为不限制')}
+                                        </p>
+                                    </div>
+
+                                    {/* 滑动窗口延迟输入 */}
+                                    <div className="mt-3 pt-3 border-t border-gray-100 dark:border-base-300">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <label className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                                                {t('settings.account.refresh_slide_delay', '滑动窗口延迟（秒）')}
+                                            </label>
+                                            <input
+                                                type="number"
+                                                className="w-16 px-2 py-1 bg-gray-50 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-blue-600 dark:text-blue-400 text-center"
+                                                min="0"
+                                                max="10"
+                                                step="0.1"
+                                                value={delayDraft}
+                                                onChange={(e) => setDelayDraft(e.target.value)}
+                                                onBlur={commitDelay}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        e.currentTarget.blur();
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                        <p className="mt-1.5 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
+                                            {t('settings.account.refresh_slide_delay_hint', '一个账号刷新完成后等待该秒数再让位给下一个账号；并发上限固定为 5。')}
                                         </p>
                                     </div>
 

@@ -46,53 +46,24 @@ impl AccountService {
         let mut account =
             modules::upsert_account(user_info.email.clone(), user_info.get_display_name(), token)?;
 
-        // 5.1 权威封禁探测：被封禁账号直接落盘并跳过无意义的配额拉取。
-        match modules::quota::probe_account_ban(&token_res.access_token, Some(&account.id)).await {
-            modules::quota::BanProbeOutcome::Banned(info) => {
-                if let Err(e) = modules::account::mark_account_banned(&account.id, &info) {
+        // 5.1 统一刷新入口：内部先发数据面封号探针；
+        // 封号直接落盘并跳过配额，未封号才拉取配额。
+        match modules::account::fetch_quota_with_retry(&mut account).await {
+            Ok(quota) => {
+                if let Err(e) = modules::update_account_quota(&account.id, quota) {
                     modules::logger::log_warn(&format!(
-                        "[Service] Failed to persist ban state for {}: {}",
+                        "[Service] Failed to persist quota for {}: {}",
                         account.email, e
                     ));
                 }
                 if let Ok(reloaded) = modules::account::load_account(&account.id) {
                     account = reloaded;
                 }
-                modules::logger::log_warn(&format!(
-                    "[Service] Account {} is banned by upstream: {} - {}",
-                    account.email, info.code, info.message
-                ));
-                return Ok(account);
-            }
-            _ => {}
-        }
-
-        // 6. [NEW] 自动获取配额信息（用于刷新时间排序）
-        let email_for_log = account.email.clone();
-        let access_token = token_res.access_token.clone();
-        match modules::quota::fetch_quota(&access_token, &email_for_log, Some(&account.id)).await {
-            Ok((quota_data, new_project_id)) => {
-                account.quota = Some(quota_data);
-                if let Some(pid) = new_project_id {
-                    account.token.project_id = Some(pid);
-                }
-                // 保存更新后的账号信息
-                if let Err(e) = modules::account::save_account(&account) {
-                    modules::logger::log_warn(&format!(
-                        "[Service] Failed to save quota for {}: {}",
-                        email_for_log, e
-                    ));
-                } else {
-                    modules::logger::log_info(&format!(
-                        "[Service] Fetched quota for new account: {}",
-                        email_for_log
-                    ));
-                }
             }
             Err(e) => {
                 modules::logger::log_warn(&format!(
-                    "[Service] Failed to fetch quota for {}: {}",
-                    email_for_log, e
+                    "[Service] Unified quota refresh failed for {}: {}",
+                    account.email, e
                 ));
             }
         }

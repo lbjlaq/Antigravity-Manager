@@ -1305,7 +1305,7 @@ mod tests {
         account.quota = Some(q);
         assert!(has_non_model_forbidden_lock(&account));
 
-        // 验证锁不是可由生产 Healthy 清理的账号级 403。
+        // 验证锁不是可由数据面探针 NotBanned 清理的账号级 403。
         let token = TokenData::new(
             "test".into(),
             "test".into(),
@@ -1655,7 +1655,7 @@ mod tests {
         let banned_acc = load_account(acc_id).unwrap();
         assert!(banned_acc.banned);
 
-        // 3. 生产端点解封
+        // 3. 数据面探针解封
         clear_account_ban(acc_id).unwrap();
         let unbanned_acc = load_account(acc_id).unwrap();
         assert!(!unbanned_acc.banned);
@@ -4867,7 +4867,7 @@ pub fn mark_account_forbidden_with_models(
     Ok(outcome)
 }
 
-/// 持久化一次生产端点探测到的封禁状态。
+/// 持久化一次数据面推理探针探测到的封禁状态。
 ///
 /// 返回 `true` 表示状态发生了变化（用于日志/事件抑制）。
 pub fn mark_account_banned(account_id: &str, info: &AccountBanInfo) -> Result<bool, String> {
@@ -4904,7 +4904,7 @@ pub fn mark_account_banned(account_id: &str, info: &AccountBanInfo) -> Result<bo
     Ok(changed)
 }
 
-/// 清除封禁状态（仅在权威生产端点确认恢复 2xx 后调用）。
+/// 清除封禁状态（仅在数据面推理探针确认恢复 2xx 后调用）。
 ///
 /// 只清理由封禁写入的字段；若反代禁用原因是用户手动设置，则保留不动。
 pub fn clear_account_ban(account_id: &str) -> Result<bool, String> {
@@ -5003,7 +5003,7 @@ pub(crate) fn is_forbidden_reason_tied_to_different_model(
 }
 
 /// 判断原因是否带模型级指向。泛化的 `model` 字样也视为模型级，用于保守保留
-/// 账号级 403 锁，避免生产探测 Healthy 时误清一个仍只影响单个模型的 403。
+/// 账号级 403 锁，避免数据面探针 NotBanned 时误清一个仍只影响单个模型的 403。
 fn is_model_scoped_forbidden_reason(reason: &str) -> bool {
     let lower = reason.to_lowercase();
     if lower.contains("validation_required")
@@ -5017,9 +5017,9 @@ fn is_model_scoped_forbidden_reason(reason: &str) -> bool {
     forbidden_model_scope(reason).is_some() || lower.contains("model")
 }
 
-/// 是否存在可由生产端点 Healthy 解除的账号级 403 锁。
+/// 是否存在可由数据面推理探针 `NotBanned` 解除的账号级 403 锁。
 ///
-/// 调用方必须只在 `probe_account_ban` 返回 `Healthy` 时使用；Daily/Sandbox
+/// 调用方必须只在 `probe_account_ban` 返回 `NotBanned` 时使用；Daily/Sandbox
 /// 配额 200 不是权威证据，绝不能走这里。只要 proxy 或 quota 任一来源带模型级
 /// 指向，就保持原锁，等定向测活按模型解除。
 fn has_non_model_forbidden_lock(account: &Account) -> bool {
@@ -5471,13 +5471,43 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         }
     }
 
-    // 1.5 Authoritative ban probe.
+    // 1.4 为数据面探针补齐 project 上下文。
+    // 控制面 loadCodeAssist 对被封禁账号同样返回 200，因此它只用于提供 project，
+    // 绝不能作为封禁判据。
+    let probe_project_id = match account
+        .token
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|pid| !pid.is_empty())
+    {
+        Some(pid) => Some(pid.to_string()),
+        None => {
+            crate::modules::quota::resolve_project_id(
+                &account.token.access_token,
+                &account.email,
+                Some(&account.id),
+            )
+            .await
+        }
+    };
+
+    // 1.5 数据面权威封禁探针：先测封号，未封号才允许继续拉配额。
     //
-    // Daily/Sandbox quota endpoints keep returning 200 for TOS-banned accounts; a successful
-    // quota snapshot is therefore NOT evidence that the account is healthy. Probe the
-    // production endpoint on every refresh and only a confirmed 2xx may clear a ban.
-    match crate::modules::quota::probe_account_ban(&account.token.access_token, Some(&account.id))
-        .await
+    // 控制面 / 配额端点（loadCodeAssist、fetchAvailableModels、
+    // retrieveUserQuotaSummary、countTokens）对被 TOS 封禁的账号仍返回 200，
+    // 只有 v1internal:generateContent 会返回 403 TOS_VIOLATION。
+    // 因此：
+    // - Banned   ⇒ 落盘封禁并直接返回，跳过配额刷新；
+    // - NotBanned ⇒ 可作为解封权威依据，清除封禁后继续拉配额；
+    // - Unknown  ⇒ 保持现状；若账号已封禁，同样跳过配额刷新。
+    match crate::modules::quota::probe_account_ban(
+        &account.token.access_token,
+        probe_project_id.as_deref(),
+        Some(&account.id),
+        Some(&account.email),
+    )
+    .await
     {
         crate::modules::quota::BanProbeOutcome::Banned(info) => {
             apply_ban_state(account, &info, chrono::Utc::now().timestamp());
@@ -5491,7 +5521,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
 
             return Ok(forbidden_quota_for_ban(account, &info));
         }
-        crate::modules::quota::BanProbeOutcome::Healthy => {
+        crate::modules::quota::BanProbeOutcome::NotBanned => {
             if account.banned {
                 match clear_account_ban(&account.id) {
                     Ok(_) => {
@@ -5521,9 +5551,10 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                 }
             }
 
-            // 生产端点 2xx 是账号级 403 的权威恢复证据。Daily/Sandbox 配额 200
-            // 不会进入这个分支，因此普通拉额度无法欺骗解封；模型级 403 由
-            // `has_non_model_forbidden_lock` 保守排除，仍需定向测活按模型解除。
+            // 数据面推理探针 2xx 是账号级封禁/403 的权威恢复证据。
+            // 普通配额 200 不会进入这个分支，因此拉额度无法欺骗解封；
+            // 模型级 403 由 `has_non_model_forbidden_lock` 保守排除，
+            // 仍需定向测活按模型解除。
             if has_non_model_forbidden_lock(account) {
                 clear_non_model_forbidden_state(account);
                 if let Err(e) = save_account(account) {
@@ -5541,7 +5572,7 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
             }
         }
         crate::modules::quota::BanProbeOutcome::Unknown => {
-            // 探测不可用（网络/429/5xx）时保留现状，避免把仍被封禁的账号误放回池。
+            // 探针不可用（网络/429/5xx/非封禁 403）时保留现状，避免把仍被封禁的账号误放回池。
             //
             // 兼容旧版本已经写入 "Forbidden (403): ..." / TOS 文本、但还没有新增
             // `banned` 字段的账号：只要持久化原因里仍带明确封禁证据，就升级为
@@ -5568,15 +5599,23 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     return Ok(forbidden_quota_for_ban(account, &info));
                 }
             }
+
+            // 已封禁账号：探针无法给出权威 2xx 时，配额端点 200 绝不能作为解封依据。
+            // 直接返回持久化封禁状态并跳过配额刷新，避免无意义的配额调用与状态冲刷。
+            if account.banned {
+                if let Some(info) = account.ban_info() {
+                    return Ok(forbidden_quota_for_ban(account, &info));
+                }
+            }
         }
     }
 
-    // 2. Attempt query (pass cached project_id if available to avoid unnecessary loadCodeAssist)
+    // 2. 仅在探针未判定封禁后拉取配额。
     let result: crate::error::AppResult<(QuotaData, Option<String>)> =
         modules::fetch_quota_with_cache(
             &account.token.access_token,
             &account.email,
-            account.token.project_id.as_deref(),
+            probe_project_id.as_deref(),
             Some(&account.id),
         )
         .await;
@@ -5781,19 +5820,27 @@ pub struct RefreshStats {
 /// Core logic to batch refresh all account quotas (decoupled from Tauri status)
 pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     use futures::stream::{self, StreamExt};
-    use std::sync::Arc;
-    use tokio::sync::Semaphore;
 
+    // 滑动窗口：最多 5 个账号并发；任一账号完成后等待配置的延迟，
+    // 再把槽位让给下一个账号；不等待同批其他账号完成。
     const MAX_CONCURRENT: usize = 5;
     let start = std::time::Instant::now();
 
+    let slide_delay_secs = crate::modules::config::load_app_config()
+        .map(|c| c.refresh_slide_delay_secs)
+        .unwrap_or(0.2);
+    let slide_delay_secs = if slide_delay_secs.is_finite() {
+        slide_delay_secs.clamp(0.0, 10.0)
+    } else {
+        0.2
+    };
+    let slide_delay = std::time::Duration::from_secs_f64(slide_delay_secs);
+
     crate::modules::logger::log_info(&format!(
-        "Starting batch refresh of all account quotas (Concurrent mode, max: {})",
-        MAX_CONCURRENT
+        "Starting batch refresh of all account quotas (sliding window: max {} concurrent, slot handoff delay {:.2}s)",
+        MAX_CONCURRENT, slide_delay_secs
     ));
     let accounts = list_accounts()?;
-
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
 
     let filtered_accounts: Vec<_> = accounts
         .into_iter()
@@ -5828,44 +5875,48 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
 
     let total = filtered_accounts.len();
 
-    // [FIX #3726] 使用流式异步消费替代 join_all，内存中同时挂起并运行的任务严格受控为 MAX_CONCURRENT，杜绝内存堆积
-    let mut stream = stream::iter(filtered_accounts)
-        .map(|mut account| {
-            let email = account.email.clone();
-            let account_id = account.id.clone();
-            let permit = semaphore.clone();
-            async move {
-                let _guard = permit.acquire().await.unwrap();
-                crate::modules::logger::log_info(&format!("  - Processing {}", email));
-                match fetch_quota_with_retry(&mut account).await {
-                    Ok(quota) => {
-                        // 批量模式下不在此处反复重写全局大索引 accounts.json (sync_index: false)
-                        match update_account_quota_internal(&account_id, quota, false) {
-                            Ok(updated_acc) => {
-                                crate::modules::logger::log_info(&format!("    Success {}", email));
-                                Ok(updated_acc)
-                            }
-                            Err(e) => {
-                                let msg = format!("Account {}: Save quota failed - {}", email, e);
-                                crate::modules::logger::log_error(&msg);
-                                Err(msg)
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let msg = format!("Account {}: Fetch quota failed - {}", email, e);
-                        crate::modules::logger::log_error(&msg);
-                        Err(msg)
-                    }
-                }
-            }
-        })
-        .buffer_unordered(MAX_CONCURRENT);
-
     let mut success = 0;
     let mut failed = 0;
     let mut details = Vec::new();
     let mut updated_accounts = Vec::new();
+
+    // 滑动窗口：任一账号完成后等待配置的滑动延迟，再释放槽位给下一个账号；
+    // 不等待同批其他账号完成，也不会让任何账号等待整批屏障。
+    let mut stream = stream::iter(filtered_accounts)
+        .map(|mut account| async move {
+            let email = account.email.clone();
+            let account_id = account.id.clone();
+            crate::modules::logger::log_info(&format!("  - Processing {}", email));
+
+            let result = match fetch_quota_with_retry(&mut account).await {
+                Ok(quota) => {
+                    // 批量模式下不在此处反复重写全局大索引 accounts.json (sync_index: false)
+                    match update_account_quota_internal(&account_id, quota, false) {
+                        Ok(updated_acc) => {
+                            crate::modules::logger::log_info(&format!("    Success {}", email));
+                            Ok(updated_acc)
+                        }
+                        Err(e) => {
+                            let msg = format!("Account {}: Save quota failed - {}", email, e);
+                            crate::modules::logger::log_error(&msg);
+                            Err(msg)
+                        }
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("Account {}: Fetch quota failed - {}", email, e);
+                    crate::modules::logger::log_error(&msg);
+                    Err(msg)
+                }
+            };
+
+            // 滑动窗口：账号完成后等待配置的延迟，再把并发槽位让给下一个账号。
+            if !slide_delay.is_zero() {
+                tokio::time::sleep(slide_delay).await;
+            }
+            result
+        })
+        .buffer_unordered(MAX_CONCURRENT);
 
     while let Some(res) = stream.next().await {
         match res {
@@ -6137,38 +6188,12 @@ pub async fn batch_import_accounts_logic(
                     let account_id =
                         existing_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-                    // 3.5 权威封禁探测：批量导入时也立即识别 TOS 封禁，
-                    // 避免 Daily 配额端点 200 让新导入的封禁账号显示为正常。
-                    let ban_info = match crate::modules::quota::probe_account_ban(
-                        &token_res.access_token,
-                        Some(&account_id),
-                    )
-                    .await
-                    {
-                        crate::modules::quota::BanProbeOutcome::Banned(info) => Some(info),
-                        _ => None,
-                    };
-
-                    // 4. [NEW #3726] 探测 Project ID 与拉取完备配额（满血持久化，确保导入完成后冷启动秒加载！）
+                    // 3.5 先解析 project（控制面，被封禁账号也返回 200），
+                    // 供统一刷新入口 fetch_quota_with_retry 使用。
                     let project_id =
                         crate::proxy::project_resolver::fetch_project_id(&token_res.access_token)
                             .await
                             .ok();
-
-                    let quota_res = if ban_info.is_some() {
-                        let mut forbidden = crate::models::QuotaData::new();
-                        forbidden.is_forbidden = true;
-                        forbidden.forbidden_reason =
-                            ban_info.as_ref().map(|info| info.message.clone());
-                        Ok((forbidden, project_id.clone()))
-                    } else {
-                        crate::modules::quota::fetch_quota(
-                            &token_res.access_token,
-                            &real_email,
-                            Some(&account_id),
-                        )
-                        .await
-                    };
 
                     let is_gcp_tos = if crate::modules::oauth::is_gcp_enterprise_client(
                         token_res.oauth_client_key.as_deref(),
@@ -6180,7 +6205,7 @@ pub async fn batch_import_accounts_logic(
                         false
                     };
 
-                    // 5. 构造 TokenData 与 Account（若为既有账号，保留原有偏好与配额数据原地更新，杜绝重复凭据文件！）
+                    // 4. 构造 TokenData 与 Account（若为既有账号，保留原有偏好与配额数据原地更新，杜绝重复凭据文件！）
                     let mut account = if let Ok(mut existing_acc) = load_account(&account_id) {
                         existing_acc.token = crate::models::TokenData::new(
                             token_res.access_token,
@@ -6196,19 +6221,6 @@ pub async fn batch_import_accounts_logic(
                         existing_acc.name = user_info.get_display_name();
                         existing_acc.email = real_email.clone();
                         existing_acc.update_last_used();
-                        if let Ok((quota_data, new_pid)) = quota_res {
-                            existing_acc.quota = Some(quota_data);
-                            if let Some(pid) = new_pid {
-                                existing_acc.token.project_id = Some(pid);
-                            }
-                        }
-                        if let Some(ref info) = ban_info {
-                            apply_ban_state(
-                                &mut existing_acc,
-                                info,
-                                chrono::Utc::now().timestamp(),
-                            );
-                        }
                         existing_acc
                     } else {
                         let token_data = crate::models::TokenData::new(
@@ -6228,19 +6240,28 @@ pub async fn batch_import_accounts_logic(
                             token_data,
                         );
                         new_acc.name = user_info.get_display_name();
-                        if let Ok((quota_data, new_pid)) = quota_res {
-                            new_acc.quota = Some(quota_data);
-                            if let Some(pid) = new_pid {
-                                new_acc.token.project_id = Some(pid);
-                            }
-                        }
-                        if let Some(ref info) = ban_info {
-                            apply_ban_state(&mut new_acc, info, chrono::Utc::now().timestamp());
-                        }
                         new_acc
                     };
 
-                    // 6. 单账号独立写入 accounts/{uuid}.json（零全局锁竞争，同时自动清理同邮箱孤儿文件）
+                    // 4.1 统一刷新入口：内部先发数据面封号探针；
+                    // 封号直接落盘并跳过配额，未封号才拉取配额。
+                    //
+                    // 先落盘，确保 `mark_account_banned` / `clear_account_ban`
+                    // 在导入阶段也能通过 load_account 正常读写。
+                    save_account(&account)?;
+                    match crate::modules::account::fetch_quota_with_retry(&mut account).await {
+                        Ok(quota) => {
+                            account.quota = Some(quota);
+                        }
+                        Err(e) => {
+                            crate::modules::logger::log_warn(&format!(
+                                "⚠️ [Batch Import] Unified quota refresh failed for {}: {}",
+                                account.email, e
+                            ));
+                        }
+                    }
+
+                    // 5. 单账号独立写入 accounts/{uuid}.json（零全局锁竞争，同时自动清理同邮箱孤儿文件）
                     save_account(&account)?;
 
                     let summary = crate::models::AccountSummary {

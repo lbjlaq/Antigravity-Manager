@@ -802,10 +802,11 @@ export const RequestDetailModal: React.FC<RequestDetailModalProps> = ({ log, onC
                                         log.protocol === 'openai' ? 'bg-emerald-600' :
                                         log.protocol === 'anthropic' ? 'bg-amber-600' :
                                         log.protocol === 'gemini' ? 'bg-blue-600' :
+                                        log.protocol === 'ban_probe' ? 'bg-rose-600' :
                                         log.protocol === 'warmup' ? 'bg-orange-600' :
                                         'bg-gray-600'
                                     }`}>
-                                        {log.protocol || '-'}
+                                        {log.protocol === 'ban_probe' ? t('monitor.protocols.ban_probe', 'Ban Probe') : log.protocol === 'warmup' ? t('monitor.protocols.warmup', 'Warmup') : log.protocol || '-'}
                                     </span>
                                 </div>
                                 <div>

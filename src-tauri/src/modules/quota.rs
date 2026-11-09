@@ -140,30 +140,170 @@ struct Tier {
 }
 
 /// 账号状态探测结果。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BanProbeOutcome {
-    /// 生产端点明确返回封禁证据。
+    /// 数据面推理端点明确返回封禁证据。
     Banned(AccountBanInfo),
-    /// 生产端点返回 2xx，账号当前可用。
-    Healthy,
-    /// 网络错误 / 429 / 5xx 等，无法判断（绝不能据此解封）。
+    /// 数据面推理端点返回 2xx：账号当前未被 TOS 封禁。
+    NotBanned,
+    /// 网络错误 / 429 / 5xx / 非封禁类 403 等，无法判断（绝不能据此解封）。
     Unknown,
 }
 
-/// 生产端点（权威端点）。
+/// 数据面推理端点（唯一权威封禁探针）。
 ///
-/// Daily/Sandbox 对被 TOS 封禁的账号仍会返回 200 配额数据；只有生产端点会返回
-/// 403 `TOS_VIOLATION`。因此封禁检测必须固定访问这里，不能复用配额端点的 fallback 链。
-const BAN_PROBE_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
+/// 实测：控制面端点（`loadCodeAssist` / `fetchAvailableModels` /
+/// `retrieveUserQuotaSummary` / `countTokens`）对被 TOS 封禁的账号仍返回 200；
+/// 只有真正的推理入口 `v1internal:generateContent` 会在鉴权层直接返回
+/// `403 PERMISSION_DENIED` + `TOS_VIOLATION`。
+///
+/// 因此封禁探测必须发送一个最小推理请求，且不能复用配额端点或控制面元数据接口。
+const BAN_PROBE_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com/v1internal:generateContent";
+
+/// 探针模型：固定使用官方免费档基线 Flash，确保所有账号都有权限触达鉴权层。
+/// 这里不做用户自定义映射，避免映射到账号无权限的模型产生模型级 403 假阳性。
+const BAN_PROBE_MODEL: &str = "gemini-2.5-flash";
+
+/// 纯函数：把一次探针响应归类为封禁 / 未封禁 / 未知。
+///
+/// 只有「403 + 高置信账号级封禁证据」才算封禁；验证挑战、区域限制、模型级 403、
+/// 429、5xx 等一律保持 `Unknown`，避免误伤正常账号。
+pub(crate) fn classify_ban_probe_response(status: u16, body: &str) -> BanProbeOutcome {
+    if (200..300).contains(&status) {
+        return BanProbeOutcome::NotBanned;
+    }
+    if status != 403 {
+        return BanProbeOutcome::Unknown;
+    }
+
+    let text_lower = body.to_lowercase();
+    // 验证挑战不是账号封禁，交给配额/代理层的验证锁路径处理。
+    // 否则同一份 403 在“配额刷新”和“代理请求”两条路径上会得到不同结论。
+    if text_lower.contains("validation_required")
+        || text_lower.contains("validation_url")
+        || text_lower.contains("verify your account")
+        || text_lower.contains("further action is required")
+    {
+        return BanProbeOutcome::Unknown;
+    }
+    // 区域限制 / 模型级权限拒绝不是 TOS 封禁；`classify_upstream` 只认高置信封禁词，
+    // 这里不需要额外硬编码关键词。
+    match AccountBanInfo::classify_upstream(403, body) {
+        Some(info) => BanProbeOutcome::Banned(info),
+        None => BanProbeOutcome::Unknown,
+    }
+}
+
+/// 把探针结果写入流量日志：成功按「捕获健康请求」开关过滤，异常始终落库。
+fn emit_ban_probe_log(
+    account_email: Option<&str>,
+    account_id: Option<&str>,
+    model: &str,
+    status: u16,
+    duration_ms: u64,
+    request_payload: &serde_json::Value,
+    response_body: &str,
+    outcome: &BanProbeOutcome,
+) {
+    let Some(monitor) = crate::proxy::monitor::global_monitor() else {
+        return;
+    };
+    let is_success = (200..300).contains(&status);
+    if is_success && !crate::proxy::monitor::capture_health_logs_enabled(&monitor) {
+        return;
+    }
+
+    let truncate = |text: &str, max: usize| -> String {
+        if text.chars().count() <= max {
+            text.to_string()
+        } else {
+            text.chars().take(max).collect()
+        }
+    };
+    let error = match outcome {
+        BanProbeOutcome::Banned(info) => Some(format!("{}: {}", info.code, info.message)),
+        BanProbeOutcome::Unknown => Some(format!("Ban probe inconclusive (HTTP {})", status)),
+        BanProbeOutcome::NotBanned => None,
+    };
+
+    let log = crate::proxy::monitor::ProxyRequestLog {
+        id: uuid::Uuid::new_v4().to_string(),
+        timestamp: chrono::Utc::now().timestamp_millis(),
+        method: "POST".to_string(),
+        url: format!("/internal/ban_probe -> {}", model),
+        status,
+        duration: duration_ms,
+        model: Some(model.to_string()),
+        mapped_model: Some(model.to_string()),
+        upstream_model: Some(model.to_string()),
+        account_email: account_email.map(str::to_string),
+        client_ip: Some("127.0.0.1".to_string()),
+        error,
+        request_body: Some(format!(
+            "{{\"type\":\"ban_probe\",\"account_id\":\"{}\",\"model\":\"{}\"}}",
+            account_id.unwrap_or(""),
+            model
+        )),
+        upstream_request_body: Some(truncate(&request_payload.to_string(), 4000)),
+        response_body: Some(truncate(response_body, 4000)),
+        request_headers: None,
+        upstream_request_headers: None,
+        response_headers: None,
+        input_tokens: None,
+        output_tokens: None,
+        cached_tokens: None,
+        reasoning_tokens: None,
+        protocol: Some("ban_probe".to_string()),
+        username: None,
+        session_id: None,
+    };
+    tokio::spawn(async move {
+        monitor.log_request(log).await;
+    });
+}
 
 /// 探测账号是否被上游封禁。
 ///
-/// 只把「生产端点 403 + 明确封禁证据」视为封禁；其余情况一律返回 `Unknown`，
-/// 避免网络抖动或临时限流误伤正常账号。
-pub async fn probe_account_ban(access_token: &str, account_id: Option<&str>) -> BanProbeOutcome {
+/// 发送一个 `maxOutputTokens = 1` 的最小 `generateContent` 请求：
+/// - 2xx ⇒ `NotBanned`（可作为解封权威依据）；
+/// - 403 + TOS 证据 ⇒ `Banned`；
+/// - 其余 ⇒ `Unknown`，必须保持现有封禁状态，绝不能据此解封。
+///
+/// `project_id` 缺失时仍会发请求：封禁账号在鉴权层即被拦截，不影响 403 识别；
+/// 正常账号若因缺少 project 返回 400，会落到 `Unknown`，由后续配额刷新补齐 project 后重试。
+pub async fn probe_account_ban(
+    access_token: &str,
+    project_id: Option<&str>,
+    account_id: Option<&str>,
+    account_email: Option<&str>,
+) -> BanProbeOutcome {
     let client = create_standard_client(account_id).await;
-    let payload = json!({ "metadata": { "ideType": "ANTIGRAVITY" } });
+    // 尽量对齐官方 v1internal 信封：project + requestId + request + model + userAgent。
+    // 缺失 requestId/userAgent 时部分账号会返回 400，导致正常号永远无法得到 2xx，
+    // 从而无法作为解封权威依据。
+    let probe_session = format!("ban_probe_{}", account_id.unwrap_or("unknown"));
+    let official_request_id =
+        crate::proxy::mappers::common_utils::build_official_request_id(&probe_session, 1);
+    let probe_user_agent = match account_email {
+        Some(email)
+            if !email.ends_with("@gmail.com") && !email.ends_with("@googlemail.com") =>
+        {
+            "jetski"
+        }
+        _ => "antigravity",
+    };
+    let payload = json!({
+        "project": project_id,
+        "requestId": official_request_id,
+        "model": BAN_PROBE_MODEL,
+        "userAgent": probe_user_agent,
+        "request": {
+            "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+            "generationConfig": { "maxOutputTokens": 1 }
+        }
+    });
 
+    let started = std::time::Instant::now();
     let response = client
         .post(BAN_PROBE_ENDPOINT)
         .timeout(std::time::Duration::from_secs(15))
@@ -178,44 +318,26 @@ pub async fn probe_account_ban(access_token: &str, account_id: Option<&str>) -> 
 
     match response {
         Ok(response) => {
-            let status = response.status();
-            if status.is_success() {
-                BanProbeOutcome::Healthy
-            } else if status == rquest::StatusCode::FORBIDDEN {
-                let text = response.text().await.unwrap_or_default();
-                let text_lower = text.to_lowercase();
-                // 验证挑战不是账号封禁，交给配额/代理层的验证锁路径处理。
-                // 否则同一份 403 在“配额刷新”和“代理请求”两条路径上会得到不同结论。
-                if text_lower.contains("validation_required")
-                    || text_lower.contains("validation_url")
-                    || text_lower.contains("verify your account")
-                    || text_lower.contains("further action is required")
-                {
-                    tracing::debug!(
-                        account = account_id.unwrap_or("<unknown>"),
-                        "Production endpoint returned a validation challenge; keeping status unknown"
-                    );
-                    return BanProbeOutcome::Unknown;
-                }
-                match AccountBanInfo::classify_upstream(403, &text) {
-                    Some(info) => {
-                        tracing::debug!(
-                            account = account_id.unwrap_or("<unknown>"),
-                            code = %info.code,
-                            "Production endpoint reported an account ban"
-                        );
-                        BanProbeOutcome::Banned(info)
-                    }
-                    None => BanProbeOutcome::Unknown,
-                }
-            } else {
-                tracing::debug!(
-                    account = account_id.unwrap_or("<unknown>"),
-                    %status,
-                    "Ban probe returned a non-authoritative status"
-                );
-                BanProbeOutcome::Unknown
-            }
+            let status = response.status().as_u16();
+            let text = response.text().await.unwrap_or_default();
+            let outcome = classify_ban_probe_response(status, &text);
+            tracing::debug!(
+                account = account_id.unwrap_or("<unknown>"),
+                %status,
+                outcome = ?outcome,
+                "Ban probe completed"
+            );
+            emit_ban_probe_log(
+                account_email,
+                account_id,
+                BAN_PROBE_MODEL,
+                status,
+                started.elapsed().as_millis() as u64,
+                &payload,
+                &text,
+                &outcome,
+            );
+            outcome
         }
         Err(e) => {
             tracing::debug!(
@@ -371,6 +493,18 @@ async fn fetch_project_id(
     }
 
     (None, None)
+}
+
+/// 解析账号的 project_id（控制面查询，被封禁账号同样会返回 200）。
+///
+/// 仅用于给数据面封禁探针补齐 project 上下文：探针必须携带真实 project，
+/// 正常账号才能返回 2xx；被封禁账号无论 project 是否存在都会在鉴权层被 403 拦截。
+pub async fn resolve_project_id(
+    access_token: &str,
+    email: &str,
+    account_id: Option<&str>,
+) -> Option<String> {
+    fetch_project_id(access_token, email, account_id).await.0
 }
 
 /// Unified entry point for fetching account quota
@@ -1554,6 +1688,59 @@ mod tests {
         assert_eq!(
             tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS)[0],
             "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+        );
+    }
+
+    #[test]
+    fn test_ban_probe_classifies_only_high_confidence_tos_403_as_banned() {
+        let tos = r#"{"error":{"code":403,"message":"This service has been disabled in this account for violation of Terms of Service. Please submit an appeal to continue using this product.","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"TOS_VIOLATION","domain":"cloudcode-pa.googleapis.com"}]}}"#;
+        match classify_ban_probe_response(403, tos) {
+            BanProbeOutcome::Banned(info) => {
+                assert_eq!(info.code, "TOS_VIOLATION");
+                assert!(info.message.to_lowercase().contains("terms of service"));
+            }
+            other => panic!("expected Banned, got {:?}", other),
+        }
+
+        // 数据面 2xx：账号未被 TOS 封禁，可作为解封权威依据。
+        assert_eq!(
+            classify_ban_probe_response(200, "{}"),
+            BanProbeOutcome::NotBanned
+        );
+
+        // 验证挑战 / 区域限制 / 模型级权限拒绝一律 Unknown，绝不能据此封号或解封。
+        for body in [
+            r#"{"error":{"code":403,"message":"validation_required"}}"#,
+            r#"{"error":{"code":403,"message":"User location is not supported for the API use."}}"#,
+            r#"{"error":{"code":403,"message":"Model not found or not available for this account"}}"#,
+            r#"{"error":{"code":403,"message":"Permission denied for model gemini-3-pro"}}"#,
+        ] {
+            assert_eq!(
+                classify_ban_probe_response(403, body),
+                BanProbeOutcome::Unknown,
+                "403 without high-confidence TOS evidence must stay Unknown: {body}"
+            );
+        }
+        assert_eq!(
+            classify_ban_probe_response(429, "{}"),
+            BanProbeOutcome::Unknown
+        );
+        assert_eq!(
+            classify_ban_probe_response(500, "{}"),
+            BanProbeOutcome::Unknown
+        );
+        assert_eq!(
+            classify_ban_probe_response(400, "{}"),
+            BanProbeOutcome::Unknown
+        );
+    }
+
+    #[test]
+    fn test_ban_probe_does_not_treat_generic_permission_denied_as_ban() {
+        let body = r#"{"error":{"code":403,"message":"The caller does not have permission","status":"PERMISSION_DENIED"}}"#;
+        assert_eq!(
+            classify_ban_probe_response(403, body),
+            BanProbeOutcome::Unknown
         );
     }
 }

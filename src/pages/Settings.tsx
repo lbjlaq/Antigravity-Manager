@@ -53,7 +53,8 @@ function Settings() {
         auto_refresh: false,
         refresh_interval: 10,
         startup_refresh: true,
-        startup_refresh_max_accounts: 15,
+        startup_refresh_max_accounts: 0,
+        refresh_slide_delay_secs: 0.2,
         auto_sync: false,
         sync_interval: 5,
         auto_switch_classic_depleted: false,
@@ -1034,7 +1035,7 @@ function Settings() {
                                                     className="w-16 px-2 py-1 bg-gray-50 dark:bg-base-200 border border-gray-100 dark:border-base-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-blue-600 dark:text-blue-400"
                                                     min="0"
                                                     max="100000"
-                                                    value={formData.startup_refresh_max_accounts ?? 15}
+                                                    value={formData.startup_refresh_max_accounts ?? 0}
                                                     onChange={(e) => {
                                                         const parsed = parseInt(e.target.value);
                                                         setFormData({

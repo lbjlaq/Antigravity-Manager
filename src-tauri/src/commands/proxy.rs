@@ -136,7 +136,9 @@ pub async fn internal_start_proxy_service(
                 } else {
                     None
                 };
-            *monitor_lock = Some(Arc::new(ProxyMonitor::new(1000, app_handle)));
+            let monitor = Arc::new(ProxyMonitor::new(1000, app_handle));
+            crate::proxy::monitor::register_global_monitor(&monitor);
+            *monitor_lock = Some(monitor);
         }
         // Sync enabled state from config
         if let Some(monitor) = monitor_lock.as_ref() {
@@ -263,7 +265,9 @@ pub async fn ensure_admin_server(
                 } else {
                     None
                 };
-            *monitor_lock = Some(Arc::new(ProxyMonitor::new(1000, app_handle)));
+            let monitor = Arc::new(ProxyMonitor::new(1000, app_handle));
+            crate::proxy::monitor::register_global_monitor(&monitor);
+            *monitor_lock = Some(monitor);
         }
         monitor_lock.as_ref().unwrap().clone()
     };

@@ -412,9 +412,13 @@ const LogTable: React.FC<LogTableProps> = ({
                                                             ? 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800/80'
                                                             : protocolLower === 'gemini'
                                                                 ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800/80'
-                                                                : 'bg-gray-100 text-gray-700 border-gray-200 dark:bg-base-300 dark:text-gray-300 dark:border-base-200'
+                                                                : protocolLower === 'ban_probe'
+                                                                    ? 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800/80'
+                                                                    : protocolLower === 'warmup'
+                                                                        ? 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/50 dark:text-orange-300 dark:border-orange-800/80'
+                                                                        : 'bg-gray-100 text-gray-700 border-gray-200 dark:bg-base-300 dark:text-gray-300 dark:border-base-200'
                                                 }`}>
-                                                    {protocolLower === 'openai' ? 'OpenAI' : protocolLower === 'anthropic' ? 'Claude' : protocolLower === 'gemini' ? 'Gemini' : log.protocol}
+                                                    {protocolLower === 'openai' ? 'OpenAI' : protocolLower === 'anthropic' ? 'Claude' : protocolLower === 'gemini' ? 'Gemini' : protocolLower === 'ban_probe' ? t('monitor.protocols.ban_probe', 'Ban Probe') : protocolLower === 'warmup' ? t('monitor.protocols.warmup', 'Warmup') : log.protocol}
                                                 </span>
                                             ) : null}
                                         </div>
