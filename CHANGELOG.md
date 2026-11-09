@@ -3,6 +3,24 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.6 (2026-11-09)**:
+        -   **[上游权威数据面封禁探针重构与智能长时冷却闭环] (Ref #3863, #3865, #3875, #3895, Thanks to @jeikl, @cubelikeplayDaniel)**:
+            -   **数据面推理探针与标准 Antigravity 报文对齐**: 封禁探针全面升级为最新官方基准模型 `gemini-3.8-flash-low`（彻底淘汰废弃的 `gemini-2.5-flash`），通过 `wrap_request` 生成具备完整 `sessionId`、`systemInstruction`、`generationConfig.thinkingConfig` (LOW)、官方 `requestId` 与 `userAgent` 的正规请求信封，杜绝因结构残缺或废弃模型被 Google WAF 判定异常并抛出 429 RESOURCE_EXHAUSTED。
+            -   **严格 candidates 实体校验与双端点容灾**: 探针采用 `daily-cloudcode-pa` 与 `cloudcode-pa` 双端点互备，请求显式携带 `Connection: close` 避免底层复用被 Google 403 掐断的残缺 TCP 连接引发假 Unknown / 连接重置；2xx 响应严格校验 `candidates` 实体，杜绝代理拦截错误页或空 200 误解封。
+            -   **解封权限严格收敛与未知状态阻断**: 所有刷新入口统一收敛至 `fetch_quota_with_retry`，探针遇到网络超时或未知状态（Unknown）时，已封禁或 Hard 403 账号坚决阻断日配额接口，绝不被配额接口的 200 满配额反向冲刷洗白。
+            -   **智能长时冷却彻底根除 429 限流**: 正常健康账号在后台自动定时刷新时跳过推理探针（至少 6 小时才顺便核验一次），已封禁账号后台冷却 1 小时，单账号手动刷新、导入新号与启动时才强制探测，彻底解决高频刷新消耗推理配额导致的 429 限流。
+            -   **彻底剔除流量日志记录**: 封禁探针作为内部健康检测，完全不进入流量监控数据库和看板，彻底根除 `/internal/ban_probe` 刷屏，还监控面板纯净业务视图。
+        -   **[粘性会话与 60s 窗口彻底移除配额悬殊解绑，锁定最大化 KV 缓存命中率] (PR #3895, Ref #3639, #3893, Thanks to @cubelikeplayDaniel)**:
+            -   **坚守前缀缓存与零悬殊跳号**: 彻底移除模式 A（粘性会话）与模式 B（60s 窗口）中的 `quota_disparity_migration`（配额悬殊主动迁移）与 `migration_min_quota` 计算。只要绑定账号配额 > 0% 且未被限流/封禁，无条件优先复用，杜绝长会话（100k~300k+ tokens）因号池存在高额度账号频繁跳号导致昂贵的前缀预填充缓存（KV Cache）反复失效。(PR #3895)
+            -   **严密容灾边界与中途封禁无缝转移**: 换号时机严格收敛于真正 0% 耗尽、429 配额用尽，或账号在运行中遭遇模型级 403 / TOS 封禁；补齐 `test_sticky_session_unbinds_and_fails_over_when_bound_account_forbidden_or_banned` 防御用例，确保中途封禁依然秒级解绑、无缝切换可用备选账号续杯。(PR #3895)
+        -   **[滑动窗口并发探测容量可配置化、毫秒级启动与静默流式刷新上屏] (Ref #3726, #3871, Thanks to @jeikl, @cubelikeplayDaniel)**:
+            -   **废除账号上限门槛，引入「同时探测账号数」配置**: 移除冷启动“超过 15 个不刷新”硬门槛，新增 `refresh_concurrency`（同时探测账号数，默认 5，范围 1~20）与 `refresh_slide_delay_secs`（滑动窗口延迟，默认 0.2 秒）配置项，在刷新下拉菜单二级面板与设置页均可自由调节。
+            -   **秒级启动探测**: 启动等待时间由 5 秒缩减至 1 秒，配合滑动窗口安全完成全池探测。
+            -   **静默平滑流式刷新上屏**: 后端滑动窗口每完成一个账号立即推送事件，前端采用 100ms 防抖与 `silent` 静默更新模式，不触发全屏 Loading 转圈、不闪烁、不弹窗，账号列表顺滑流式更新最新状态。
+            -   **根治前端连击手误**: 修复 `Accounts.tsx` 单账号刷新连续调用 3 次 `refreshQuota` 的遗留问题，杜绝多线程并发读写状态竞态。
+        -   **[多语言与协议标签全方位对齐]**:
+            -   12 种语言（中、繁、英、日、韩、西、葡、俄、土、越、阿、马）完整同步滑动延迟、同时探测账号数与启动刷新文案。
+
     *   **v5.0.4-beta.5 (2026-11-08)**:
         -   **[跨轮次前缀稳定性与多轮会话 KV 缓存保护] (PR #3889, Ref #3764, #3769, #3867, Thanks to @mclinyeshi, @cubelikeplayDaniel)**:
             -   **锁定首个 model 轮次前的开场注入边界**: 在 `src-tauri/src/proxy/mappers/prompt_sanitizer.rs` 中将 `leading_injection_boundary` 严格限制在 `&contents[..first_model]` 切片内。首轮 assistant 回答生成后，`first_model` 索引终身固定，彻底根治跨轮次新提问到达时，末尾追加新 user 轮次导致 `cur_turn` 漂移回溯将第 1 轮 user 提问从 `Anchored` 轨篡改为 `System` 轨的严重缺陷，杜绝 100k+ 历史上下文 KV 缓存（Prompt Cache）雪崩失效。(Ref #3764, #3769, #3867, PR #3889)
