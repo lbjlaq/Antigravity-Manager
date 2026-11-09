@@ -138,10 +138,11 @@ pub async fn add_account(
         crate::modules::integration::SystemManager::Desktop(app.clone()),
     );
 
-    let mut account = service.add_account(&refresh_token).await?;
+    let account = service.add_account(&refresh_token).await?;
 
-    // 自动刷新配额
-    let _ = internal_refresh_account_quota(&app, &mut account).await;
+    // 配额刷新（含封号探针）已由 AccountService 内部统一走 fetch_quota_with_retry，
+    // 这里只同步托盘与反代账号池，避免重复探针/重复拉取配额。
+    crate::modules::tray::update_tray_menus(&app);
 
     // 重载账号池
     let _ = crate::commands::proxy::reload_proxy_accounts(
@@ -329,8 +330,8 @@ pub async fn fetch_account_quota(
     let mut account =
         modules::load_account(&account_id).map_err(crate::error::AppError::Account)?;
 
-    // 使用带重试的查询 (Shared logic)
-    let mut quota = modules::account::fetch_quota_with_retry(&mut account).await?;
+    // 单账号手动刷新（显式用户意图）：强制执行最新封禁探针
+    let mut quota = modules::account::fetch_quota_with_retry_forced(&mut account).await?;
 
     // 4. 更新账号配额
     modules::update_account_quota(&account_id, quota.clone())

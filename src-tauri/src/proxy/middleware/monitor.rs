@@ -293,12 +293,7 @@ fn should_skip_request_log(
 }
 
 fn should_log_health_checks() -> bool {
-    std::env::var("ABV_LOG_HEALTH_CHECKS")
-        .map(|val| {
-            let v = val.trim().to_ascii_lowercase();
-            v == "1" || v == "true" || v == "yes" || v == "on"
-        })
-        .unwrap_or(false)
+    crate::proxy::monitor::health_log_capture_enabled_by_env()
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {

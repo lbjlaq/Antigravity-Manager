@@ -1,18 +1,17 @@
 //! 应用启动后的异步全量配额刷新。
 //!
-//! [背景] #3726 曾移除前端挂载时的无条件全量刷新，避免应用启动阶段对上游配额接口
-//! 形成并发轰炸。这里把触发点收敛到后端：账号加载就绪后只触发一次，受
-//! `startup_refresh` 配置开关控制，并受 `startup_refresh_max_accounts` 账号数上限
-//! 约束（默认 15，0 表示不限制），且不依赖主窗口 / 页面挂载，桌面端、Web UI
-//! 与 headless 模式行为一致。
+//! 账号加载就绪后单进程触发一次，受 `startup_refresh` 开关控制；
+//! 实际刷新由 `refresh_all_quotas_logic` 以滑动窗口执行，
+//! 并发账号数受 `refresh_concurrency`（默认 5）控制，
+//! 每个账号完成后按 `refresh_slide_delay_secs`（默认 0.2 秒）让位给下一个。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::modules::{account, config, logger};
 
-/// 启动后给前端快照水合、账号索引加载留出的稳定窗口
-const STARTUP_DELAY: Duration = Duration::from_secs(5);
+/// 启动后给前端快照水合、账号索引加载留出的短暂等待
+const STARTUP_DELAY: Duration = Duration::from_secs(1);
 /// 等待账号索引就绪的最长时间
 const ACCOUNT_READY_TIMEOUT: Duration = Duration::from_secs(60);
 /// 账号索引就绪轮询间隔
@@ -20,11 +19,6 @@ const ACCOUNT_READY_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// 单进程只允许触发一次，避免代理重启、多窗口或重复 setup 造成多次全量刷新
 static STARTUP_REFRESH_TRIGGERED: AtomicBool = AtomicBool::new(false);
-
-/// 账号数是否在启动刷新允许范围内；`max_accounts == 0` 表示不限制
-fn within_startup_refresh_limit(account_count: usize, max_accounts: u32) -> bool {
-    max_accounts == 0 || account_count <= max_accounts as usize
-}
 
 /// 在后台等待账号加载就绪，然后异步刷新一次全部账号配额。
 pub fn spawn_startup_quota_refresh(
@@ -85,18 +79,9 @@ pub fn spawn_startup_quota_refresh(
             }
         }
 
-        // 大账号池启动时默认跳过全量探测，避免每次冷启动都对上游形成集中请求；手动刷新不受影响
-        if !within_startup_refresh_limit(account_count, app_config.startup_refresh_max_accounts) {
-            logger::log_info(&format!(
-                "[StartupRefresh] Skipping startup quota refresh: {} accounts exceed the configured limit of {} (manual refresh remains available)",
-                account_count, app_config.startup_refresh_max_accounts
-            ));
-            return;
-        }
-
         logger::log_info(&format!(
-            "[StartupRefresh] {} accounts are ready (limit {}), starting asynchronous refresh of all quotas...",
-            account_count, app_config.startup_refresh_max_accounts
+            "[StartupRefresh] {} accounts are ready, starting asynchronous refresh of all quotas...",
+            account_count
         ));
 
         match crate::commands::refresh_all_quotas_internal(&proxy_state, app_handle).await {
@@ -114,12 +99,10 @@ pub fn spawn_startup_quota_refresh(
 
 #[cfg(test)]
 mod tests {
-    use super::within_startup_refresh_limit;
+    use super::*;
 
     #[test]
-    fn startup_refresh_limit_is_inclusive_and_zero_means_unlimited() {
-        assert!(within_startup_refresh_limit(15, 15));
-        assert!(!within_startup_refresh_limit(16, 15));
-        assert!(within_startup_refresh_limit(500, 0));
+    fn startup_delay_is_one_second() {
+        assert_eq!(STARTUP_DELAY, Duration::from_secs(1));
     }
 }

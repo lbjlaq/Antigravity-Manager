@@ -1665,7 +1665,7 @@ impl InboundThinkingPipeline {
     pub fn configure_inbound_thinking(
         target_model: &str,
         generation_config: &mut Value,
-        _client_switch: ClientThinkingSwitch,
+        client_switch: ClientThinkingSwitch,
         client_effort: Option<&str>,
         client_budget: Option<u64>,
         token: Option<&crate::proxy::token_manager::ProxyToken>,
@@ -1678,6 +1678,14 @@ impl InboundThinkingPipeline {
                 obj.remove("thinking_config");
             }
             return None;
+        }
+
+        if client_switch.is_disabled() {
+            generation_config["thinkingConfig"] = json!({
+                "includeThoughts": false,
+                "thinkingBudget": 0
+            });
+            return Some(0);
         }
 
         // 统一从官方模型结构体中读取权威默认值
@@ -1782,10 +1790,17 @@ impl InboundThinkingPipeline {
         } else if let Some(budget) = official_budget {
             // 预算通道：官方结构体明确声明 thinkingBudget 的模型
             // （今日仅 gemini-2.5-pro=1024、gpt-oss-120b=8192，以及部分未升级账号的 claude-4.6=1024）。
-            generation_config["thinkingConfig"] = if budget == 0 {
+            let effective_budget = if tb_config.control_source
+                == crate::proxy::config::ThinkingControlSource::Client
+            {
+                client_budget.map(|b| b as i64).unwrap_or(budget)
+            } else {
+                budget
+            };
+            generation_config["thinkingConfig"] = if effective_budget == 0 {
                 json!({ "includeThoughts": false, "thinkingBudget": 0 })
             } else {
-                json!({ "includeThoughts": true, "thinkingBudget": budget })
+                json!({ "includeThoughts": true, "thinkingBudget": effective_budget })
             };
         } else if official_info.is_none() {
             // 官方目录未收录的模型（如历史 *-thinking-exp 实验模型）：

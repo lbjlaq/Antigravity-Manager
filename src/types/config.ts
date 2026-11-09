@@ -204,8 +204,10 @@ export interface AppConfig {
     refresh_interval: number;
     /** 启动完成、账号加载就绪后异步刷新一次全部配额 */
     startup_refresh?: boolean;
-    /** 启动刷新允许的最大账号数；超过该值跳过启动刷新，0 表示不限制 */
-    startup_refresh_max_accounts?: number;
+    /** 批量配额刷新与启动探测时的同时探测账号数（滑动窗口容量），默认 5，范围 1~20 */
+    refresh_concurrency?: number;
+    /** 全量配额刷新的滑动窗口延迟（秒）；账号完成后等待该时间再让位给下一个账号 */
+    refresh_slide_delay_secs?: number;
     auto_sync: boolean;
     sync_interval: number;
     auto_switch_classic_depleted?: boolean; // [NEW] 兼容旧版开关

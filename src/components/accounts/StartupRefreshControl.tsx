@@ -16,11 +16,11 @@ export default function StartupRefreshControl() {
     const { t } = useTranslation();
     const { config, saveConfig } = useConfigStore();
     const [isOpen, setIsOpen] = useState(false);
-    const [limitDraft, setLimitDraft] = useState('15');
+    const [limitDraft, setLimitDraft] = useState('5');
     const containerRef = useRef<HTMLDivElement>(null);
 
     const enabled = config?.startup_refresh !== false;
-    const limit = config?.startup_refresh_max_accounts ?? 15;
+    const limit = config?.refresh_concurrency ?? 5;
 
     useEffect(() => {
         setLimitDraft(String(limit));
@@ -61,18 +61,16 @@ export default function StartupRefreshControl() {
 
     const commitLimit = () => {
         const parsed = parseInt(limitDraft, 10);
-        const next = Number.isNaN(parsed) ? 15 : Math.min(Math.max(parsed, 0), 100000);
+        const next = Number.isNaN(parsed) ? 5 : Math.min(Math.max(parsed, 1), 20);
         setLimitDraft(String(next));
         if (next !== limit) {
-            void persist({ startup_refresh_max_accounts: next });
+            void persist({ refresh_concurrency: next });
         }
     };
 
     const limitLabel = !enabled
         ? t('accounts.startup_refresh_off', '关')
-        : limit === 0
-            ? '∞'
-            : `≤${limit}`;
+        : `${limit}并`;
 
     return (
         <div ref={containerRef} className="relative shrink-0">
@@ -132,13 +130,13 @@ export default function StartupRefreshControl() {
                     <div className="mt-4 pt-4 border-t border-gray-100 dark:border-base-300">
                         <div className="flex items-center gap-2">
                             <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                {t('settings.account.startup_refresh_limit')}
+                                {t('settings.account.refresh_concurrency', '同时探测账号数')}
                             </label>
                             <input
                                 type="number"
                                 className="w-20 px-2 py-1.5 bg-gray-50 dark:bg-base-200 border border-gray-100 dark:border-base-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-bold text-blue-600 dark:text-blue-400"
-                                min="0"
-                                max="100000"
+                                min="1"
+                                max="20"
                                 value={limitDraft}
                                 onChange={(e) => setLimitDraft(e.target.value)}
                                 onBlur={commitLimit}
@@ -150,7 +148,7 @@ export default function StartupRefreshControl() {
                             />
                         </div>
                         <p className="mt-2 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
-                            {t('settings.account.startup_refresh_limit_hint')}
+                            {t('settings.account.refresh_concurrency_hint', '批量配额刷新与启动探测时的同时探测账号数（滑动窗口容量），默认 5，范围 1~20。')}
                         </p>
                     </div>
                 </div>

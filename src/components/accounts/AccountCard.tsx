@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { RefreshCw, Lock, Ban, Diamond, Gem, Zap, Circle, Clock, Repeat2, Tag, Power, MoreHorizontal } from 'lucide-react';
+import { RefreshCw, Lock, Ban, Diamond, Gem, Zap, Circle, Clock, Tag, Power, MoreHorizontal, BookCopy, Check, Trash2 } from 'lucide-react';
 import { Account, ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountArgonCapability, hasCustomModelPriorities } from '../../types/account';
 import { cn } from '../../utils/cn';
 import { useTranslation } from 'react-i18next';
@@ -10,7 +10,9 @@ import { usePedalModeStore } from '../../stores/usePedalModeStore';
 import { GroupQuotaCard } from './GroupQuotaCard';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { showToast } from '../common/ToastContainer';
-import { releaseAccountQoSJail } from '../../services/accountService';
+import { exportAccounts, releaseAccountQoSJail } from '../../services/accountService';
+import { copyToClipboard } from '../../utils/clipboard';
+import AccountSwitchMenu from './AccountSwitchMenu';
 import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
@@ -50,6 +52,27 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
 
     // Modal states
     const [isActionsModalOpen, setIsActionsModalOpen] = useState(false);
+    const [isCopied, setIsCopied] = useState(false);
+
+    const handleCopyCredentials = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            const response = await exportAccounts([account.id]);
+            if (response.accounts && response.accounts.length > 0) {
+                const content = JSON.stringify(response.accounts, null, 2);
+                const ok = await copyToClipboard(content);
+                if (ok) {
+                    setIsCopied(true);
+                    showToast(t('accounts.credentials_copied', '账号凭据已复制到剪贴板'), 'success');
+                    setTimeout(() => setIsCopied(false), 1500);
+                }
+            } else {
+                showToast(t('accounts.no_credentials_found', '未获取到账号凭据'), 'warning');
+            }
+        } catch (err) {
+            showToast(`${t('common.error')}: ${err}`, 'error');
+        }
+    };
 
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
@@ -121,12 +144,37 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
                     onClick={(e) => e.stopPropagation()}
                 />
                 <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-                    <h3 className={cn(
-                        "font-semibold text-sm truncate w-full",
-                        isCurrent ? "text-blue-700 dark:text-blue-400" : "text-gray-900 dark:text-base-content"
-                    )} title={account.email}>
-                        {account.email}
-                    </h3>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                        <h3 className={cn(
+                            "font-semibold text-sm truncate flex-1",
+                            isCurrent ? "text-blue-700 dark:text-blue-400" : "text-gray-900 dark:text-base-content"
+                        )} title={account.email}>
+                            {account.email}
+                        </h3>
+                        <button
+                            type="button"
+                            onClick={handleCopyCredentials}
+                            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-base-200 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors shrink-0"
+                            title={t('accounts.copy_credentials_tooltip', '复制账号凭据 (JSON)')}
+                        >
+                            {isCopied ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                            ) : (
+                                <BookCopy className="w-3.5 h-3.5" />
+                            )}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDelete();
+                            }}
+                            className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/30 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors shrink-0"
+                            title={t('accounts.delete_account_tooltip', '删除此账号')}
+                        >
+                            <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
                     <div className="flex items-center justify-between w-full gap-2">
                         <div className="flex items-center gap-1.5 flex-wrap">
                             {isClassic && (
@@ -393,22 +441,15 @@ function AccountCard({ account, selected, onSelect, isCurrent: propIsCurrent, ac
 
             {/* Footer: 4 Action Buttons in 2x2 Grid */}
             <div className="grid grid-cols-2 gap-1.5 w-full pt-2 pb-1 border-t border-gray-100 dark:border-base-200">
-                {/* 1. 切换 */}
-                <button
-                    type="button"
-                    disabled={isSwitching || isDisabled || isBanned}
-                    onClick={(e) => { e.stopPropagation(); onSwitch('ide'); }}
-                    className={cn(
-                        "flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-all",
-                        (isSwitching || isDisabled || isBanned)
-                            ? "bg-gray-100 dark:bg-base-200 text-gray-400 dark:text-gray-600 cursor-not-allowed"
-                            : "bg-gray-50 hover:bg-blue-50 dark:bg-base-200/50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 border border-gray-200/60 dark:border-base-300"
-                    )}
-                    title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_ide', '切换到 Antigravity IDE'))}
-                >
-                    <Repeat2 className={cn("w-3.5 h-3.5", isSwitching && "animate-spin")} />
-                    <span>{t('accounts.action_switch', '切换')}</span>
-                </button>
+                {/* 1. 切换（点击向上展开 4 个客户端微标选项） */}
+                <AccountSwitchMenu
+                    accountId={account.id}
+                    disabled={Boolean(isDisabled || isBanned)}
+                    isSwitching={isSwitching}
+                    activeClients={activeClients}
+                    onSwitch={onSwitch}
+                    size="md"
+                />
 
                 {/* 2. 刷新 */}
                 <button

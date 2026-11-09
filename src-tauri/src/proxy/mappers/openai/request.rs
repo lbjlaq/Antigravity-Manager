@@ -1432,7 +1432,7 @@ mod tests {
             Some(10240)
         );
 
-        // 4. 客户端控制模式下从 reasoning.max_tokens 提取 client_budget
+        // 4. 网关模式下从官方模型目录结构体读取权威默认值 (-1)
         crate::proxy::config::update_thinking_budget_config(
             crate::proxy::config::ThinkingBudgetConfig {
                 control_source: crate::proxy::config::ThinkingControlSource::Client,
@@ -1445,7 +1445,7 @@ mod tests {
         );
         assert_eq!(
             body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
-            8000
+            -1
         );
     }
 
@@ -1546,7 +1546,7 @@ mod tests {
         let _lock = crate::proxy::config::TEST_CONFIG_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        for model in ["gemini-3.1-pro-high", "gemini-2.5-pro"] {
+        for model in ["gemini-3.1-pro-high", "gemini-3.1-pro-low"] {
             assert!(!crate::proxy::model_specs::is_tiered_flash_model(model));
             let body = tiered_request_body(model, Some("low"));
             let thinking = &body["request"]["generationConfig"]["thinkingConfig"];
@@ -1631,8 +1631,12 @@ mod tests {
         let (body, _, _, _) =
             transform_openai_request(&req_flash_disabled, "test-p", "gemini-3-flash", None);
         assert_eq!(
-            body["request"]["generationConfig"]["thinkingConfig"]["thinkingLevel"],
-            "HIGH"
+            body["request"]["generationConfig"]["thinkingConfig"]["includeThoughts"],
+            false
+        );
+        assert_eq!(
+            body["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            0
         );
 
         // 4. 等级通道模型：客户端传自定义 budget_tokens 也被忽略，仍发官方等级
@@ -1897,16 +1901,13 @@ mod tests {
             ..Default::default()
         };
 
-        // 验证针对 Gemini 模型即使是 Custom 模式也会被修正为 24576
+        // 验证针对 Gemini 模型在 Custom 模式下注入自定义预算
         let (result, _sid, _msg_count, _) =
             transform_openai_request(&req, "test-v", "gemini-2.0-flash-thinking", None);
         let budget = result["request"]["generationConfig"]["thinkingConfig"]["thinkingBudget"]
             .as_i64()
             .unwrap();
-        assert_eq!(
-            budget, 24576,
-            "Gemini custom budget must be capped to 24576"
-        );
+        assert_eq!(budget, 32000, "Gemini custom budget should be 32000");
 
         // 验证非 Gemini 模型（如 Claude 原生路径，假设映射后名不含 gemini）则不应截断
         // 注意：这里的 transform_openai_request 第三个参数是 mapped_model
@@ -2118,11 +2119,11 @@ mod tests {
         };
 
         let (result, _sid, _msg_count, _) =
-            transform_openai_request(&req, "test-p", "gemini-3-pro-high-thinking", None);
+            transform_openai_request(&req, "test-p", "gemini-3.1-pro-high", None);
         let gen_config = &result["request"]["generationConfig"];
         let max_output_tokens = gen_config["maxOutputTokens"].as_i64().unwrap();
-        // budget(10001) + overhead(32768) = 42769
-        assert_eq!(max_output_tokens, 42769);
+        // 官方物理硬顶 safe_limit = 65535
+        assert_eq!(max_output_tokens, 65535);
 
         // Verify thinkingBudget
         let budget = gen_config["thinkingConfig"]["thinkingBudget"]
@@ -2172,16 +2173,11 @@ mod tests {
             transform_openai_request(&req, "test-p", "gemini-2.0-flash-thinking-exp", None);
         let gen_config = &result["request"]["generationConfig"];
 
-        // Should be capped at 24576
-        let budget = gen_config["thinkingConfig"]["thinkingBudget"]
-            .as_i64()
-            .unwrap();
-        assert_eq!(budget, 24576);
-
-        // Max output tokens should be adjusted based on capped budget (24576 + 8192)
-        // budget(24576) + overhead(32768) = 57344
-        let max_output_tokens = gen_config["maxOutputTokens"].as_i64().unwrap();
-        assert_eq!(max_output_tokens, 57344);
+        // 默认自适应模式下，未收录的 exp 模型不显式下发固定 thinkingBudget
+        assert!(
+            gen_config["thinkingConfig"].get("thinkingBudget").is_none(),
+            "Adaptive 模式下不显式下发 thinkingBudget"
+        );
     }
     #[test]
     fn test_vertex_ai_drops_sentinel_injection() {
@@ -2629,8 +2625,9 @@ mod tests {
             .as_object()
             .expect("Should have generationConfig in request payload");
 
-        // 客户端直接控制模式显式关闭思考：彻底不填任何转出报文的谷歌思考块字段和预算
-        assert!(gen_config.get("thinkingConfig").is_none());
+        // 客户端显式传 budget_tokens=0 时关闭思考
+        assert_eq!(gen_config["thinkingConfig"]["includeThoughts"], false);
+        assert_eq!(gen_config["thinkingConfig"]["thinkingBudget"], 0);
     }
 
     #[test]
@@ -2765,10 +2762,9 @@ mod tests {
             .expect("Should have generationConfig in request payload");
         let thinking_config = gen_config["thinkingConfig"].as_object().unwrap();
 
-        // 网关权威控制模式下，具名档位模型的等级由模型档位决定（medium → MEDIUM）
-        assert_eq!(thinking_config.get("thinkingLevel"), Some(&json!("MEDIUM")));
-        assert_eq!(thinking_config.get("includeThoughts"), Some(&json!(true)));
-        assert!(thinking_config.get("thinkingBudget").is_none());
+        // 客户端显式传 budget_tokens=0 触发 ClientThinkingSwitch::Disabled，关闭思考
+        assert_eq!(thinking_config.get("includeThoughts"), Some(&json!(false)));
+        assert_eq!(thinking_config.get("thinkingBudget"), Some(&json!(0)));
     }
 
     #[test]

@@ -288,9 +288,21 @@
         "priority_updated": "Priority updated",
         "add_account": "Add Account",
         "refresh_all": "Refresh All",
+        "refresh_now": "Refresh Now",
+        "refresh_menu_tooltip": "Refresh options & auto-refresh settings",
+        "credentials_copied": "Account credentials copied to clipboard",
+        "copy_credentials_tooltip": "Copy account credentials (JSON)",
+        "delete_account_tooltip": "Delete this account",
+        "no_credentials_found": "No account credentials found",
+        "copy_selected_credentials": "Copy All Credentials",
+        "copy_selected_credentials_tooltip": "Copy all selected account credentials (JSON)",
+        "selected_credentials_copied": "Copied {{count}} account credentials to clipboard",
+        "switch_menu_tooltip": "Select target client (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "Select Client",
+        "current_active_client": "Account currently active in this client",
         "startup_refresh_short": "On Startup",
         "startup_refresh_off": "Off",
-        "startup_refresh_tooltip": "Asynchronously refresh all quotas once after accounts finish loading (subject to the account limit).",
+        "startup_refresh_tooltip": "Asynchronously refresh all quotas once after accounts finish loading (sliding window: up to 5 concurrent, configurable slot handoff delay).",
         "refresh_selected": "Refresh ({{count}})",
         "export_selected": "Export ({{count}})",
         "import_json": "Import",
@@ -441,8 +453,10 @@
             "group_models_desc": "Models in this group: {{models}}"
         },
         "toast": {
-            "proxy_enabled": "Enabled proxy for {{count}} accounts",
-            "proxy_disabled": "Disabled proxy for {{count}} accounts"
+            "proxy_enabled": "Successfully enabled proxy for {{count}} accounts",
+            "proxy_disabled": "Successfully disabled proxy for {{count}} accounts",
+            "proxy_enabled_single": "Proxy enabled",
+            "proxy_disabled_single": "Proxy disabled"
         },
         "type": {
             "personal": "Personal Account",
@@ -556,12 +570,20 @@
             "clients": {
                 "ide": "Antigravity IDE (VS Code)",
                 "ide_desc": "Switch this account to IDE client login",
+                "ide_short": "IDE",
+                "ide_tooltip": "Switch to Antigravity IDE",
                 "acp": "Antigravity IDE Plugin (ACP - JetBrains)",
                 "acp_desc": "Switch this account to JetBrains / Android Studio plugin",
+                "acp_short": "JEB",
+                "acp_tooltip": "Switch to JEB / JetBrains (ACP)",
                 "agy": "Antigravity CLI (agy)",
                 "agy_desc": "Switch this account to CLI terminal tool login",
-                "classic": "Antigravity Classic",
-                "classic_desc": "Switch this account to classic client login"
+                "agy_short": "AGY CLI",
+                "agy_tooltip": "Switch to AGY CLI (agy)",
+                "classic": "Antigravity",
+                "classic_desc": "Switch this account to Antigravity client login",
+                "classic_short": "Antigravity",
+                "classic_tooltip": "Switch to Antigravity client"
             },
             "maintenance_section": "Maintenance & Tools",
             "tools": {
@@ -648,10 +670,13 @@
             "title": "Account Settings",
             "auto_refresh": "Background Auto Refresh",
             "auto_refresh_desc": "Automatically refresh all account quotas in the background. This is required for quota protection and smart warmup.",
+            "auto_refresh_locked_hint": "Quota protection is enabled; background auto-refresh is kept permanently active",
             "startup_refresh": "Refresh on Startup",
-            "startup_refresh_desc": "Asynchronously refresh all account quotas once after the app starts and accounts finish loading.",
-            "startup_refresh_limit": "Startup Refresh Account Limit",
-            "startup_refresh_limit_hint": "Skip the startup refresh when the account count exceeds this value. 0 means unlimited. Manual Refresh All is unaffected.",
+            "startup_refresh_desc": "Asynchronously refresh all account quotas once after the app starts and accounts finish loading. Probe accounts concurrently using a sliding window; each slot is handed over after the configured delay.",
+            "refresh_concurrency": "Concurrent Probe Accounts",
+            "refresh_concurrency_hint": "Number of accounts probed simultaneously during batch and startup refresh (sliding window capacity). Default: 5, range: 1~20.",
+            "refresh_slide_delay": "Sliding Window Delay (sec)",
+            "refresh_slide_delay_hint": "After an account finishes refreshing, wait this many seconds before handing its slot to the next account. Capped by concurrent probe accounts.",
             "always_on": "Always On",
             "refresh_interval": "Refresh Interval (minutes)",
             "auto_sync": "Auto Sync Current Account",
@@ -1894,6 +1919,10 @@
     "monitor": {
         "page_title": "API Monitor Dashboard",
         "page_subtitle": "Real-time request logging and analysis",
+        "protocols": {
+            "ban_probe": "Ban Probe",
+            "warmup": "Warmup"
+        },
         "open_monitor": "Open Monitor",
         "input": "Input",
         "output": "Output",

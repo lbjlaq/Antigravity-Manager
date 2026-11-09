@@ -2842,7 +2842,7 @@ mod tests {
         assert!(gen_config.get("topK").is_none());
 
         let max_output_tokens = gen_config["maxOutputTokens"].as_i64().unwrap();
-        assert_eq!(max_output_tokens, 24576);
+        assert_eq!(max_output_tokens, 65536);
     }
 
     #[test]

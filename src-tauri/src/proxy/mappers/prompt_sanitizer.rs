@@ -197,6 +197,46 @@ static RE_KNOWN_CLIENT_DECLARATION: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+/// 结构化身份声明句归一化正则（针对现代 Agent 采用的 Markdown 列表项与键值对身份声明，如 `- Identity: ...`）。
+///
+/// 匹配形态：
+/// ```text
+/// - Identity: JeikCode AI coding Agent, provided by Jeik, running on your underlying model.
+///   → - Identity: You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+/// * Identity: OpenCode AI assistant, built by ...
+///   → * Identity: You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+/// Identity: Claude Code, Anthropic's official CLI...
+///   → Identity: You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+/// - 身份：JeikCode AI 编程助手，由 Jeik 提供，运行于底层模型。
+///   → - 身份: You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+/// ```
+///
+/// 防误杀与结构保护铁律：
+/// 1. 严格限定在单行内（`^[ \t]*...[^\r\n]*`），绝不跨行，不破坏后续独立的 `- Language:` 等业务指令；
+/// 2. 深度保护代码块（``` 与行内 `），代码块内部 100% 豁免；
+/// 3. 保留前缀（`caps[1]`），确保外层 Markdown 列表排版结构完好无损。
+static RE_STRUCTURED_IDENTITY_DECLARATION: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(concat!(
+        r"(?im)",
+        // 组 1：行首及前缀（支持可选的列表符号 - * • 以及属性名 identity/role/name/agent/身份/角色/名称）
+        r"(^[ \t]*[-*•]?[ \t]*(?:identity|role|name|agent|身份|角色|名称)\s*[:：][ \t]*)",
+        // 组 2：身份主体内容（必须包含归属/宿主特征动词，或已知客户端/Harness指纹）
+        r"([^\r\n]*(?:",
+        // 归属/运行宿主动词
+        r"\b(?:created|built|made|developed|designed|trained|powered|maintained|published|released|provided|authored|written)\s+(?:by|on|upon|at|for)\b",
+        r"|\bby\s+[a-z0-9_\-]+",
+        r"|\bbased\s+on\b",
+        r"|\brunning\s+(?:inside|in|within|on)\b",
+        r"|\bintegrated\s+(?:into|in)\b",
+        r"|(?:由|开发|制作|构建|训练|推出|基于|运行[在于])",
+        // 已知客户端与平台特征
+        r"|\b(?:jeikcode|opencode|openclaw|claude(?:\s+code|\s+agent)?|cursor|cascade|codeium|cline|roo\s+code|aider|kilocode|hermes|codex|devin|dsh)\b",
+        r"|\b[\w'\-]+(?:code|studio|claw)\b",
+        r")[^\r\n]*)"
+    ))
+    .unwrap()
+});
+
 /// 文本内嵌 data URL 的头部（`data:<mime>[;param]*;base64,`），负载部分由线性扫描截取，
 /// 避免 `{N,}` 计数重复在 regex 引擎中展开成超大 NFA。
 static RE_TEXT_DATA_URL_HEADER: Lazy<Regex> = Lazy::new(|| {
@@ -296,6 +336,15 @@ const IDENTITY_FAST_MARKERS: &[&str] = &[
     "通义",
     "豆包",
     "混元",
+    // 结构化身份特征标记
+    "identity:",
+    "identity：",
+    "- identity",
+    "role:",
+    "role：",
+    "- role",
+    "身份:",
+    "身份：",
     // 中文特征标记
     "由",
     "基于",
@@ -409,10 +458,11 @@ impl PromptSanitizer {
     /// 代码块（``` 与行内 `）内的身份文本 100% 豁免，头部窗口之后的原文逐字保留。
     /// 归一化一段文本内部的所有身份归属声明句、已知客户端开场白与竞品厂牌为官方 Antigravity / Google 声明
     fn normalize_text_identity(text: &str) -> String {
+        let matches_structured = RE_STRUCTURED_IDENTITY_DECLARATION.is_match(text);
         let matches_broad = RE_IDENTITY_DECLARATION.is_match(text);
         let matches_known = RE_KNOWN_CLIENT_DECLARATION.is_match(text);
         let matches_brands = RE_COMPETITOR_BRANDS.is_match(text);
-        if !matches_broad && !matches_known && !matches_brands {
+        if !matches_structured && !matches_broad && !matches_known && !matches_brands {
             return text.to_string();
         }
 
@@ -425,18 +475,26 @@ impl PromptSanitizer {
         });
 
         // 步骤 2：归一化身份声明句（逗号续写场景保留逗号，避免出现 ", ," 或 ", and" 断裂）
+        // 2.0 结构化身份声明归一化（Markdown 列表项与键值对形态，保留外层列表结构）
+        let pass0 = RE_STRUCTURED_IDENTITY_DECLARATION.replace_all(
+            &protected_text,
+            |caps: &regex::Captures| {
+                let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                format!("{}{}", prefix, OFFICIAL_ANTIGRAVITY_IDENTITY)
+            },
+        );
+
         // 2.1 广谱归属声明归一化
-        let pass1 =
-            RE_IDENTITY_DECLARATION.replace_all(&protected_text, |caps: &regex::Captures| {
-                // 两道后置护栏：疑问句与跨子句桥接都不属于身份声明
-                if !Self::is_identity_declaration(caps) {
-                    return caps[0].to_string();
-                }
-                match caps.get(2).map(|m| m.as_str()).unwrap_or("") {
-                    "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
-                    _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
-                }
-            });
+        let pass1 = RE_IDENTITY_DECLARATION.replace_all(&pass0, |caps: &regex::Captures| {
+            // 两道后置护栏：疑问句与跨子句桥接都不属于身份声明
+            if !Self::is_identity_declaration(caps) {
+                return caps[0].to_string();
+            }
+            match caps.get(2).map(|m| m.as_str()).unwrap_or("") {
+                "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
+                _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
+            }
+        });
 
         // 2.2 知名特定客户端开场白归一化（如 Claude Code CLI 开场白、*code、*studio、*claw、pi 等）
         let pass2 = RE_KNOWN_CLIENT_DECLARATION.replace_all(&pass1, |caps: &regex::Captures| {
@@ -2871,5 +2929,110 @@ mod tests {
         assert!(!text.contains("C2 frameworks"));
         assert!(text.contains("# Harness"));
         assert!(text.contains("Please fix the gateway bug."));
+    }
+
+    #[test]
+    fn test_normalize_structured_identity_declarations() {
+        // 结构化 Markdown 列表与键值对形态（包括英文与中文、带前缀符号与不带）
+        let cases = [
+            (
+                "- Identity: JeikCode AI coding Agent, provided by Jeik, running on your underlying model.",
+                format!("- Identity: {OFFICIAL_ANTIGRAVITY_IDENTITY}"),
+            ),
+            (
+                "* Identity: OpenCode AI assistant, built by Community.",
+                format!("* Identity: {OFFICIAL_ANTIGRAVITY_IDENTITY}"),
+            ),
+            (
+                "Identity: Claude Code, Anthropic's official CLI for Claude.",
+                format!("Identity: {OFFICIAL_ANTIGRAVITY_IDENTITY}"),
+            ),
+            (
+                "- Role: Cursor agent integrated into Cursor editor.",
+                format!("- Role: {OFFICIAL_ANTIGRAVITY_IDENTITY}"),
+            ),
+            (
+                "- 身份：JeikCode AI 编程助手，由 Jeik 提供，运行于底层模型。",
+                format!("- 身份：{OFFICIAL_ANTIGRAVITY_IDENTITY}"),
+            ),
+        ];
+
+        for (raw, expected) in cases {
+            let out = PromptSanitizer::normalize_system_identity(raw);
+            assert_eq!(out, expected);
+        }
+    }
+
+    #[test]
+    fn test_user_reported_new_agent_environment_template() {
+        let raw_environment = concat!(
+            "<environment>\n",
+            "## Identity & Interaction\n",
+            "- Identity: JeikCode AI coding Agent, provided by Jeik, running on your underlying model.\n",
+            "- Language: Always answer in the language used by the user.\n",
+            "- Model identity: When asked about your model identity, answer based on your actual underlying model code.\n",
+            "- No proactive configuration reads: When the user asks about current tools, MCP, Skills, rules, what we have discussed, or similar, answer directly from the interaction history visible in your current context and from the visible `<available_skills>`, `<mcp_server_instructions>`, `<system_rules>`, `<memory>`, `<user_preferences>`, `<project_instructions>`, etc. Read configuration proactively only when the user explicitly asks to inspect the configured models, query session file records, troubleshoot JeikCode logs, or makes another equally explicit request.\n\n",
+            "## Configuration Directories\n",
+            "- Global configuration, sessions, and logs live under `~/.jeikcode/`; project configuration lives under `./` or `./.jeikcode/`. Do not read configuration proactively unless the user has a clear intent for you to do so.\n",
+            "- Preference and rule files (for example, `AGENTS.md`, `JEIKCODE.md`, `CLAUDE.md`, `rules.md`, `glossary.md`, `dbwords.md`, `memory.md`) take effect immediately upon modification. When the user asks you to change project standards, only scan and modify `./AGENTS.md`.\n\n",
+            "## PRECEDENCE:\n",
+            "- Content inside `<system_rules>`: default system rules.\n",
+            "- Content inside `<user_preferences>` or `<memory>`: global user preferences.\n",
+            "- Content inside `<project_instructions>`: project standards and constraints.\n",
+            "- When the rule sets do not conflict, all three apply simultaneously.\n",
+            "- When they conflict, apply the precedence `project_instructions >> memory > user_preferences > system_rules`.\n",
+            "- When a rule governs normative work directed at others (for example, opinions on others' work, requests, code review, coding standards, or PR review), apply only the public `project_instructions` rules; do not include user personal preferences from `user_preferences`, `memory`, etc. In all other cases, determine the effective scope of each rule by whether the work conflicts.\n",
+            "- Tool invocation precedence: when built-in tools, Skills, and MCP tools can all solve the user's problem, invoke them in this strict order: `Skills > MCP > Built-in Tools > Custom Scripts`.\n\n",
+            "## Runtime Environment\n",
+            "- Platform: Windows 11 Pro (x64, AMD64).\n",
+            "- Project working directory: `E:/code/jeikcode`.\n",
+            "- Git branch: `beta`.\n",
+            "- Command habit: On Windows, use forward slashes \"/\" in all scenarios, and locate executables with `where`.\n",
+            "- Temp files: use `\"$TMPDIR\"` instead of hardcoding `/tmp`; it works for shell-internal paths and as an argument to native Windows programs (python / node / curl, etc.); use `\"$TMPDIR_WIN\"` for nested non-bash shells.\n",
+            "- Desktop: use `\"$DESKTOP\"` instead of assuming ~/Desktop; it honors a relocated or redirected desktop; `\"$DESKTOP_WIN\"` is the equivalent alias.\n",
+            "</environment>"
+        );
+
+        let mut payload = json!({
+            "systemInstruction": {
+                "parts": [
+                    { "text": raw_environment }
+                ]
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        { "text": "Help me write a Python script." }
+                    ]
+                }
+            ]
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+
+        let sys_text = payload["systemInstruction"]["parts"][0]["text"]
+            .as_str()
+            .unwrap();
+
+        // 1. 验证身份已被成功归一化为官方 Antigravity 身份
+        assert!(sys_text.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(sys_text.contains(&format!("- Identity: {OFFICIAL_ANTIGRAVITY_IDENTITY}")));
+
+        // 2. 验证第三方身份归属指纹已彻底清除
+        assert!(!sys_text.contains("JeikCode AI coding Agent"));
+        assert!(!sys_text.contains("provided by Jeik"));
+
+        // 3. 验证 XML 标签与业务指令完好保留 (Zero Delimiter Touch)
+        assert!(sys_text.contains("<environment>"));
+        assert!(sys_text.contains("</environment>"));
+        assert!(sys_text.contains("## Identity & Interaction"));
+        assert!(sys_text.contains("- Language: Always answer in the language used by the user."));
+        assert!(sys_text.contains("- Model identity: When asked about your model identity, answer based on your actual underlying model code."));
+        assert!(sys_text.contains("## Configuration Directories"));
+        assert!(sys_text.contains("~/.jeikcode/"));
+        assert!(sys_text.contains("## PRECEDENCE:"));
+        assert!(sys_text.contains("## Runtime Environment"));
+        assert!(sys_text.contains("E:/code/jeikcode"));
     }
 }

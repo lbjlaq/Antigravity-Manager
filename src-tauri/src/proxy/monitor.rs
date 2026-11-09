@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 use tauri::Emitter;
 use tokio::sync::{RwLock, Semaphore};
 
@@ -360,6 +360,38 @@ pub struct ProxyMonitor {
     app_handle: Option<tauri::AppHandle>,
 }
 
+/// 全局监控器弱引用：后台模块（配额刷新、封禁探针等）不在 Axum 请求上下文中，
+/// 无法拿到 AppState，需要通过该注册表把探针异常写入同一份流量日志。
+static GLOBAL_MONITOR: OnceLock<Weak<ProxyMonitor>> = OnceLock::new();
+
+/// 注册全局监控器（进程内仅首次生效；反代停止后监控器仍由 ProxyServiceState 持有）。
+pub fn register_global_monitor(monitor: &Arc<ProxyMonitor>) {
+    let _ = GLOBAL_MONITOR.set(Arc::downgrade(monitor));
+}
+
+/// 获取全局监控器；未初始化或已被释放时返回 None。
+pub fn global_monitor() -> Option<Arc<ProxyMonitor>> {
+    GLOBAL_MONITOR.get().and_then(|weak| weak.upgrade())
+}
+
+/// 健康 / 探针类请求是否允许写入流量日志。
+///
+/// 默认只记录异常；打开面板「捕获健康请求」胶囊或设置
+/// `ABV_LOG_HEALTH_CHECKS=true` 后，成功的健康探针也完整落库。
+pub fn capture_health_logs_enabled(monitor: &ProxyMonitor) -> bool {
+    monitor.is_capture_health_logs() || health_log_capture_enabled_by_env()
+}
+
+/// 仅按环境变量判断是否捕获健康日志（供 Axum 中间件等无 monitor 引用的场景复用）。
+pub fn health_log_capture_enabled_by_env() -> bool {
+    std::env::var("ABV_LOG_HEALTH_CHECKS")
+        .map(|val| {
+            let v = val.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        })
+        .unwrap_or(false)
+}
+
 impl ProxyMonitor {
     pub fn new(max_logs: usize, app_handle: Option<tauri::AppHandle>) -> Self {
         // Initialize DB
@@ -516,8 +548,9 @@ impl ProxyMonitor {
             return;
         }
         tracing::info!("[Monitor] Logging request: {} {}", log.method, log.url);
-        // Update stats
-        {
+        // 封禁探针是后台健康探测，不属于业务请求：保留流量日志供排障，但不计入成功率统计。
+        let is_health_probe = log.protocol.as_deref() == Some("ban_probe");
+        if !is_health_probe {
             let mut stats = self.stats.write().await;
             stats.total_requests += 1;
             if log.status >= 200 && log.status < 400 {

@@ -4,7 +4,6 @@ import {
   Download,
   LayoutGrid,
   List,
-  RefreshCw,
   Search,
   Sparkles,
   ToggleLeft,
@@ -17,7 +16,7 @@ import AccountDetailsDialog from "../components/accounts/AccountDetailsDialog";
 import AccountGrid from "../components/accounts/AccountGrid";
 import AccountTable from "../components/accounts/AccountTable";
 import AddAccountDialog from "../components/accounts/AddAccountDialog";
-import StartupRefreshControl from "../components/accounts/StartupRefreshControl";
+import RefreshMenuControl from "../components/accounts/RefreshMenuControl";
 import DeviceFingerprintDialog from "../components/accounts/DeviceFingerprintDialog";
 import ModalDialog from "../components/common/ModalDialog";
 import Pagination from "../components/common/Pagination";
@@ -121,10 +120,7 @@ function Accounts() {
   const [detailsAccount, setDetailsAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isBatchDelete, setIsBatchDelete] = useState(false);
-  const [toggleProxyConfirm, setToggleProxyConfirm] = useState<{
-    accountId: string;
-    enable: boolean;
-  } | null>(null);
+
   const [isWarmupConfirmOpen, setIsWarmupConfirmOpen] = useState(false);
   const [isWarmuping, setIsWarmuping] = useState(false);
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
@@ -403,8 +399,6 @@ function Accounts() {
     });
     try {
       await refreshQuota(accountId);
-      await refreshQuota(accountId);
-      await refreshQuota(accountId);
       showToast(t("common.success"), "success");
     } catch (error) {
       showToast(`${t("common.error")}: ${error}`, "error");
@@ -458,27 +452,23 @@ function Accounts() {
     }
   };
 
-  const handleToggleProxy = (accountId: string, currentlyDisabled: boolean) => {
-    setToggleProxyConfirm({ accountId, enable: currentlyDisabled });
-  };
-
-  const executeToggleProxy = async () => {
-    if (!toggleProxyConfirm) return;
-
+  const handleToggleProxy = async (accountId: string, currentlyDisabled: boolean) => {
     try {
+      const nextEnable = currentlyDisabled;
       await toggleProxyStatus(
-        toggleProxyConfirm.accountId,
-        toggleProxyConfirm.enable,
-        toggleProxyConfirm.enable
-          ? undefined
-          : t("accounts.proxy_disabled_reason_manual"),
+        accountId,
+        nextEnable,
+        nextEnable ? undefined : t("accounts.proxy_disabled_reason_manual"),
       );
-      showToast(t("common.success"), "success");
+      showToast(
+        nextEnable
+          ? t("accounts.toast.proxy_enabled_single", { defaultValue: "已启用反代" })
+          : t("accounts.toast.proxy_disabled_single", { defaultValue: "已停用反代" }),
+        "success",
+      );
     } catch (error) {
       console.error("[Accounts] Toggle proxy status failed:", error);
       showToast(`${t("common.error")}: ${error}`, "error");
-    } finally {
-      setToggleProxyConfirm(null);
     }
   };
 
@@ -1041,9 +1031,7 @@ function Accounts() {
           </button>
         </div>
 
-        <div className="flex-1 min-w-[8px] flex items-center justify-end">
-          <StartupRefreshControl />
-        </div>
+        <div className="flex-1 min-w-[8px]" />
 
         {/* 操作按钮组 */}
         <div className="flex items-center gap-1.5 shrink-0">
@@ -1094,27 +1082,11 @@ function Accounts() {
             </>
           )}
 
-          <button
-            className={`px-2.5 py-2 bg-blue-500 text-white text-xs font-medium rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-1.5 shadow-sm ${isRefreshing ? "opacity-70 cursor-not-allowed" : ""}`}
-            onClick={handleRefreshClick}
-            disabled={isRefreshing}
-            title={
-              selectedIds.size > 0
-                ? t("accounts.refresh_selected", { count: selectedIds.size })
-                : t("accounts.refresh_all")
-            }
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`}
-            />
-            <span className="hidden xl:inline">
-              {isRefreshing
-                ? t("common.loading")
-                : selectedIds.size > 0
-                  ? t("accounts.refresh_selected", { count: selectedIds.size })
-                  : t("accounts.refresh_all")}
-            </span>
-          </button>
+          <RefreshMenuControl
+            onRefresh={handleRefreshClick}
+            isRefreshing={isRefreshing}
+            selectedCount={selectedIds.size}
+          />
 
           <button
             className={`px-2.5 py-2 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors flex items-center gap-1.5 shadow-sm ${isWarmuping ? "opacity-70 cursor-not-allowed" : ""}`}
@@ -1306,23 +1278,7 @@ function Accounts() {
         onCancel={() => setIsRefreshConfirmOpen(false)}
       />
 
-      {toggleProxyConfirm && (
-        <ModalDialog
-          isOpen={!!toggleProxyConfirm}
-          onCancel={() => setToggleProxyConfirm(null)}
-          onConfirm={executeToggleProxy}
-          title={
-            toggleProxyConfirm.enable
-              ? t("accounts.dialog.enable_proxy_title")
-              : t("accounts.dialog.disable_proxy_title")
-          }
-          message={
-            toggleProxyConfirm.enable
-              ? t("accounts.dialog.enable_proxy_msg")
-              : t("accounts.dialog.disable_proxy_msg")
-          }
-        />
-      )}
+
 
       <ModalDialog
         isOpen={isWarmupConfirmOpen}

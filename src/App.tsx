@@ -165,12 +165,15 @@ function App() {
       })
     );
 
-    // 监听后端全量刷新事件 (Command / Scheduler)
+    // 监听后端全量/流式刷新事件 (Command / Scheduler)
+    let syncTimer: ReturnType<typeof setTimeout> | null = null;
     unlistenPromises.push(
       listen('accounts://refreshed', () => {
-        console.log('[App] Backend triggered quota refresh, syncing UI...');
-        fetchCurrentAccount();
-        fetchAccounts();
+        if (syncTimer) clearTimeout(syncTimer);
+        syncTimer = setTimeout(() => {
+          fetchCurrentAccount();
+          fetchAccounts(true);
+        }, 100);
       })
     );
 

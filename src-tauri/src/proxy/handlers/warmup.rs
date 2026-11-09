@@ -769,13 +769,13 @@ mod tests {
     fn test_warmup_model_route_resolution() {
         let mut custom_mapping = HashMap::new();
 
-        // 裸模型 gemini-3.8-flash 必须被映射为具备官方实体的具名档位 (gemini-3.8-flash-tiered)
+        // 裸模型 gemini-3.8-flash 必须被映射为具备官方实体的具名档位（默认对齐 high 旗舰算力通道）
         let mapped_flash = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
             "gemini-3.8-flash",
             &custom_mapping,
             None,
         );
-        assert_eq!(mapped_flash, "gemini-3.8-flash-tiered");
+        assert_eq!(mapped_flash, "gemini-3.8-flash-high");
 
         // 已带档位的具名模型保持不变
         let mapped_high = crate::proxy::common::model_mapping::resolve_model_route_with_effort(

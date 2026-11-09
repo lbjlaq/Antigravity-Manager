@@ -267,13 +267,14 @@ mod tests {
 
     #[tokio::test]
     async fn large_body_replay_is_capped_but_small_body_is_not() {
-        scope(RequestContext::new(deadline_now()), async {
+        let threshold = replay_guard_threshold_bytes();
+        scope(RequestContext::new(deadline_now()), async move {
             // 大 body：前 MAX_LARGE_BODY_UPSTREAM_CALLS 次放行，超额则拒绝
             for _ in 0..MAX_LARGE_BODY_UPSTREAM_CALLS {
-                assert!(register_upstream_call(REPLAY_GUARD_BODY_BYTES).is_ok());
+                assert!(register_upstream_call(threshold).is_ok());
             }
             assert_eq!(
-                register_upstream_call(REPLAY_GUARD_BODY_BYTES),
+                register_upstream_call(threshold),
                 Err(MAX_LARGE_BODY_UPSTREAM_CALLS + 1),
                 "large-body upstream call beyond limit must be blocked"
             );
@@ -281,7 +282,7 @@ mod tests {
         .await;
 
         scope(RequestContext::new(deadline_now()), async {
-            // 小 body（如低于 4MB 的常规请求）：不设次数上限
+            // 小 body（如常规请求）：不设次数上限
             for _ in 0..20 {
                 assert!(register_upstream_call(1024).is_ok());
             }
@@ -293,19 +294,20 @@ mod tests {
     async fn fork_shares_deadline_but_resets_replay_counter() {
         // 并行子任务（如一次生成 n 张图）共享同一个截止时刻，但重放计数必须各算各的：
         // 否则第 4 张图就会被“大 body 重放上限”误拦。
+        let threshold = replay_guard_threshold_bytes();
         let parent = RequestContext::new(deadline_now());
         let child = parent.fork();
         assert_eq!(child.deadline, parent.deadline);
 
         scope(parent, async move {
             for _ in 0..MAX_LARGE_BODY_UPSTREAM_CALLS {
-                assert!(register_upstream_call(REPLAY_GUARD_BODY_BYTES).is_ok());
+                assert!(register_upstream_call(threshold).is_ok());
             }
-            assert!(register_upstream_call(REPLAY_GUARD_BODY_BYTES).is_err());
+            assert!(register_upstream_call(threshold).is_err());
 
-            scope(child, async {
+            scope(child, async move {
                 for _ in 0..MAX_LARGE_BODY_UPSTREAM_CALLS {
-                    assert!(register_upstream_call(REPLAY_GUARD_BODY_BYTES).is_ok());
+                    assert!(register_upstream_call(threshold).is_ok());
                 }
             })
             .await;

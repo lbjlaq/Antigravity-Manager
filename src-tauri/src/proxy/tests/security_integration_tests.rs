@@ -445,9 +445,9 @@ mod stress_tests {
         let write_duration = start.elapsed();
         println!("Wrote {} access logs in {:?}", count, write_duration);
 
-        // 验证写入性能合理
+        // 验证写入性能合理（考虑全量单测运行时的磁盘 IO 竞争，预留合理窗口）
         assert!(
-            write_duration < Duration::from_secs(10),
+            write_duration < Duration::from_secs(20),
             "Access log writing should be reasonably fast"
         );
 

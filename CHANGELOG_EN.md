@@ -3,6 +3,24 @@
 > Complete version history for Antigravity Tools. Return to project home at [README.md](README.md).
 
 *   **Version History**:
+    *   **v5.0.4-beta.6 (2026-11-09)**:
+        -   **[Authoritative Data-Plane Ban Probe Refactor & Long-Interval Cooldown Loop] (Ref #3863, #3865, #3875, #3895, Thanks to @jeikl, @cubelikeplayDaniel)**:
+            -   **Data-Plane Inference Probe Aligned with Authentic Antigravity Packets**: Upgraded ban probe to the latest official baseline model `gemini-3.8-flash-low` (deprecating `gemini-2.5-flash`). Structured the probe via `wrap_request` with complete `sessionId`, `systemInstruction`, `generationConfig.thinkingConfig` (LOW), official `requestId`, and `userAgent` envelopes, preventing Google WAF from rejecting incomplete probe structures with 429 RESOURCE_EXHAUSTED.
+            -   **Strict candidates Entity Verification & Dual-Endpoint Failover**: Backed ban probes with dual endpoints (`daily-cloudcode-pa` and `cloudcode-pa`), enforcing `Connection: close` to prevent reusing severed TCP keepalive sockets after 403 blocks. Required `candidates` structure in 2xx responses to eliminate proxy intercept error pages or empty 200s from falsely clearing bans.
+            -   **Ban Authority Convergence & Unknown-State Interception**: Converged all quota refresh pathways into `fetch_quota_with_retry`. When probe returns Unknown or network timeouts occur, banned or Hard-403 accounts strictly bypass the quota summary endpoint, preventing 200 responses from washing away ban states.
+            -   **Smart Long-Interval Cooldown Eliminating 429 Throttling**: Healthy accounts bypass inference probes during automated background refreshes (probing at most once every 6 hours), while banned accounts cool down for 1 hour. Full probes run only upon manual card clicks, imports, or startup, eradicating 429 rate limits caused by excessive probing.
+            -   **Zero Traffic Log Pollution**: Excluded ban probes from `ProxyRequestLog` and monitor tables, keeping the dashboard exclusively dedicated to real user chat traffic.
+        -   **[Eliminate Quota Disparity Unbinding in Sticky Session & 60s Window to Preserve KV Cache] (PR #3895, Ref #3639, #3893, Thanks to @cubelikeplayDaniel)**:
+            -   **Preserve Prefix Cache Across Positive Quota**: Completely removed `quota_disparity_migration` and `migration_min_quota` across Mode A (Sticky Session) and Mode B (60s Window). Accounts with quota > 0% are unconditionally reused without premature hopping, preserving expensive prefill KV cache in 100k~300k+ token sessions. (PR #3895)
+            -   **Strict Failover Boundaries & Runtime Ban Escape**: Constrained unbinding to 0% exhaustion, upstream 429s, or runtime 403 / TOS bans. Added `test_sticky_session_unbinds_and_fails_over_when_bound_account_forbidden_or_banned` to guarantee seamless failover to backup accounts upon runtime bans. (PR #3895)
+        -   **[Configurable Sliding-Window Probe Concurrency, 1s Startup & Silent Streaming UI Sync] (Ref #3726, #3871, Thanks to @jeikl, @cubelikeplayDaniel)**:
+            -   **Abolish Account Threshold & Introduce Concurrent Probes Configuration**: Replaced the 15-account hard limit with `refresh_concurrency` (default 5, range 1~20) and `refresh_slide_delay_secs` (default 0.2s), configurable in both settings and the refresh dropdown menu.
+            -   **1-Second Fast Startup Probing**: Reduced startup delay from 5s to 1s, safely verifying all accounts through the sliding window.
+            -   **Silent Streaming UI Updates**: Broadcasts progress as each account finishes, paired with 100ms debouncing and silent store hydration to eliminate screen jitter, full-page loading spinners, and toast flooding.
+            -   **Eradicate Rapid-Fire Refresh Bug**: Fixed an issue in `Accounts.tsx` where single account refresh triggered `refreshQuota` 3 times sequentially.
+        -   **[Comprehensive Multi-Language & Protocol Badge Alignment]**:
+            -   Synchronized sliding delay, concurrency, and startup refresh descriptions across 12 languages (AR, EN, ES, JA, KO, MY, PT, RU, TR, VI, ZH, ZH-TW).
+
     *   **v5.0.4-beta.5 (2026-11-08)**:
         -   **[Multi-Turn Prefix Stability & Multi-Turn KV Cache Preservation] (PR #3889, Ref #3764, #3769, #3867, Thanks to @mclinyeshi, @cubelikeplayDaniel)**:
             -   **Freeze Leading Injection Boundary Before First Model Turn**: Scoped `leading_injection_boundary` in `src-tauri/src/proxy/mappers/prompt_sanitizer.rs` strictly to the `&contents[..first_model]` pre-model slice. Once the assistant outputs its first turn, `first_model` is fixed for the lifetime of the conversation, eradicating the defect where appending new user turns in Turn 2+ shifted `cur_turn` and retrospectively reclassified Turn 1's user query from `Anchored` to `System` track, completely curing multi-turn KV cache collapses on 100k+ token sessions. (Ref #3764, #3769, #3867, PR #3889)
