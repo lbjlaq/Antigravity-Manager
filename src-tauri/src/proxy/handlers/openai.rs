@@ -2701,17 +2701,45 @@ pub async fn handle_chat_completions(
                         handling.terminal.as_str(),
                         crate::proxy::upstream::client::strip_internal_markers(&e)
                     );
-                    if handling.disposition.abandon_sticky_account {
+                    // [CacheFirst] 终态都不是账号故障：调度模式统一由 pipeline 裁决，
+                    // CacheFirst 下绝不解绑 / 换号（换号必然丢失上游 KV 缓存），只在当前账号原地重放一次。
+                    let terminal_plan = retry_state.plan_terminal(
+                        &account_id,
+                        handling.disposition,
+                        token_manager.get_scheduling_mode().await
+                            == crate::proxy::sticky_config::SchedulingMode::CacheFirst,
+                        config.request_type != "image_gen",
+                    );
+                    if terminal_plan.abandon_sticky_account {
                         token_manager.abandon_session(&affinity_key, &account_id);
                         tracing::debug!(
-                            "[OpenAI] Unbound session {} from account {} due to terminal {}",
+                            "Unbound session {} from account {} due to terminal {}",
                             affinity_key,
                             email,
                             handling.terminal.as_str()
                         );
                     }
-                    if handling.disposition.stop_rotation {
-                        break;
+                    match terminal_plan.next {
+                        crate::proxy::pipeline::TerminalNextStep::Stop => break,
+                        crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
+                            tracing::info!(
+                                "[CacheFirst] Upstream terminal {} on bound account {} (attempt {}/{}): keeping session {} bound and retrying the same account in-place to preserve KV cache",
+                                handling.terminal.as_str(),
+                                email,
+                                attempt + 1,
+                                max_attempts,
+                                affinity_key
+                            );
+                            retry_credentials = Some((
+                                access_token.clone(),
+                                project_id.clone(),
+                                email.clone(),
+                                account_id.clone(),
+                                0,
+                            ));
+                            continue;
+                        }
+                        crate::proxy::pipeline::TerminalNextStep::Rotate => {}
                     }
                     crate::proxy::pipeline::rotation::record_attempted_account(
                         &mut attempted_accounts,
@@ -4772,17 +4800,45 @@ pub async fn handle_completions(
                         handling.terminal.as_str(),
                         crate::proxy::upstream::client::strip_internal_markers(&e)
                     );
-                    if handling.disposition.abandon_sticky_account {
+                    // [CacheFirst] 终态都不是账号故障：调度模式统一由 pipeline 裁决，
+                    // CacheFirst 下绝不解绑 / 换号（换号必然丢失上游 KV 缓存），只在当前账号原地重放一次。
+                    let terminal_plan = retry_state.plan_terminal(
+                        &account_id,
+                        handling.disposition,
+                        token_manager.get_scheduling_mode().await
+                            == crate::proxy::sticky_config::SchedulingMode::CacheFirst,
+                        config.request_type != "image_gen",
+                    );
+                    if terminal_plan.abandon_sticky_account {
                         token_manager.abandon_session(&affinity_key, &account_id);
                         tracing::debug!(
-                            "[Codex] Unbound session {} from account {} due to terminal {}",
+                            "Unbound session {} from account {} due to terminal {}",
                             affinity_key,
                             email,
                             handling.terminal.as_str()
                         );
                     }
-                    if handling.disposition.stop_rotation {
-                        break;
+                    match terminal_plan.next {
+                        crate::proxy::pipeline::TerminalNextStep::Stop => break,
+                        crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
+                            tracing::info!(
+                                "[CacheFirst] Upstream terminal {} on bound account {} (attempt {}/{}): keeping session {} bound and retrying the same account in-place to preserve KV cache",
+                                handling.terminal.as_str(),
+                                email,
+                                attempt + 1,
+                                max_attempts,
+                                affinity_key
+                            );
+                            retry_credentials = Some((
+                                access_token.clone(),
+                                project_id.clone(),
+                                email.clone(),
+                                account_id.clone(),
+                                0,
+                            ));
+                            continue;
+                        }
+                        crate::proxy::pipeline::TerminalNextStep::Rotate => {}
                     }
                     crate::proxy::pipeline::rotation::record_attempted_account(
                         &mut attempted_accounts,

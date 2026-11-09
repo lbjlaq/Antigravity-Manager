@@ -414,6 +414,9 @@ struct PhasedSendOutcome {
     bytes_sent: usize,
     /// 上传阶段耗时（仅当上传确实完成时有值）
     upload_elapsed: Option<std::time::Duration>,
+    /// 失败是否由看门狗预算（上传 / 首字节 / 总预算）掐断；
+    /// `false` 表示底层传输自身报错（连接复位、GOAWAY、SendRequest 等）
+    budget_exhausted: bool,
 }
 
 /// 邮箱脱敏：只显示前3位 + *** + @域名前2位 + ***
@@ -437,7 +440,7 @@ pub fn mask_email(email: &str) -> String {
 // 这里保留同名导出，保证既有调用点（含单测）无需改动。
 pub use crate::proxy::pipeline::terminal::{
     FIRST_BYTE_STAGE_TERMINAL_MARKER, GATEWAY_BUDGET_TERMINAL_MARKER, REPLAY_CAP_TERMINAL_MARKER,
-    UPLOAD_STAGE_TERMINAL_MARKER,
+    TRANSPORT_RESET_TERMINAL_MARKER, UPLOAD_STAGE_TERMINAL_MARKER,
 };
 
 /// 判断上游错误是否为“大体积上传阶段终止、不应再跨账号重传”的终态失败
@@ -1090,6 +1093,7 @@ impl UpstreamClient {
                         stage,
                         bytes_sent: sent,
                         upload_elapsed,
+                        budget_exhausted: false,
                     };
                 }
                 _ = ticker.tick() => {
@@ -1139,6 +1143,7 @@ impl UpstreamClient {
                                 stage: SendStage::AwaitFirstByte,
                                 bytes_sent: sent,
                                 upload_elapsed,
+                                budget_exhausted: true,
                             };
                         }
                     } else {
@@ -1156,6 +1161,7 @@ impl UpstreamClient {
                                 stage: SendStage::Upload,
                                 bytes_sent: sent,
                                 upload_elapsed: None,
+                                budget_exhausted: true,
                             };
                         }
                         if let Some(transfer_elapsed) = progress.elapsed_since_first_byte() {
@@ -1173,6 +1179,7 @@ impl UpstreamClient {
                                     stage: SendStage::Upload,
                                     bytes_sent: sent,
                                     upload_elapsed: None,
+                                    budget_exhausted: true,
                                 };
                             }
                         }
@@ -1193,6 +1200,7 @@ impl UpstreamClient {
                                 stage: SendStage::AwaitFirstByte,
                                 bytes_sent: sent,
                                 upload_elapsed,
+                                budget_exhausted: true,
                             };
                         }
                         return PhasedSendOutcome {
@@ -1204,6 +1212,7 @@ impl UpstreamClient {
                             stage: SendStage::Upload,
                             bytes_sent: sent,
                             upload_elapsed: None,
+                            budget_exhausted: true,
                         };
                     }
                 }
@@ -1745,6 +1754,7 @@ impl UpstreamClient {
                                 stage: SendStage::Completed,
                                 bytes_sent: body_bytes.len(),
                                 upload_elapsed: None,
+                                budget_exhausted: false,
                             },
                             Err(_) => PhasedSendOutcome {
                                 result: Err(format!(
@@ -1754,6 +1764,7 @@ impl UpstreamClient {
                                 stage: SendStage::AwaitFirstByte,
                                 bytes_sent: 0,
                                 upload_elapsed: None,
+                                budget_exhausted: true,
                             },
                         }
                     }
@@ -1762,6 +1773,7 @@ impl UpstreamClient {
                 let send_stage = outcome.stage;
                 let sent_bytes = outcome.bytes_sent;
                 let upload_elapsed = outcome.upload_elapsed;
+                let budget_exhausted = outcome.budget_exhausted;
                 let response = outcome.result;
 
                 match response {
@@ -1935,7 +1947,16 @@ impl UpstreamClient {
                             && !has_next_for_send_stage
                             && !is_sandbox
                         {
-                            Some(crate::proxy::pipeline::terminal::UpstreamTerminal::FirstByte)
+                            // 只有看门狗真的等满首字节预算才算「上游慢」；
+                            // 预算内的底层断连（共享连接复位 / GOAWAY / SendRequest）单独归类，
+                            // 避免把网络抖动误报成 first_byte_timeout。
+                            if budget_exhausted {
+                                Some(crate::proxy::pipeline::terminal::UpstreamTerminal::FirstByte)
+                            } else {
+                                Some(
+                                    crate::proxy::pipeline::terminal::UpstreamTerminal::TransportReset,
+                                )
+                            }
                         } else if send_stage == SendStage::Upload
                             && !is_sandbox
                             && (!has_next_for_send_stage || terminal_large_body_failure)
@@ -2009,7 +2030,7 @@ impl UpstreamClient {
                                 body_len = body_bytes.len(),
                                 first_byte_budget_secs,
                                 terminal = terminal.as_str(),
-                                "Terminal upstream failure: suppressing endpoint fallback and cross-account replay"
+                                "Terminal upstream failure: suppressing endpoint fallback (account replay decided by scheduling mode)"
                             );
                             break;
                         }
