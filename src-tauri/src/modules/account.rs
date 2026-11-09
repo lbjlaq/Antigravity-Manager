@@ -5931,9 +5931,6 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
                 }
             };
 
-            // 实时通知前端该账号状态已更新，使封禁徽章/配额条秒级刷新呈现
-            crate::modules::log_bridge::emit_accounts_refreshed();
-
             // 滑动窗口：账号完成后等待配置的延迟，再把并发槽位让给下一个账号。
             if !slide_delay.is_zero() {
                 tokio::time::sleep(slide_delay).await;
