@@ -4,7 +4,6 @@ import {
   Download,
   LayoutGrid,
   List,
-  RefreshCw,
   Search,
   Sparkles,
   ToggleLeft,
@@ -17,7 +16,7 @@ import AccountDetailsDialog from "../components/accounts/AccountDetailsDialog";
 import AccountGrid from "../components/accounts/AccountGrid";
 import AccountTable from "../components/accounts/AccountTable";
 import AddAccountDialog from "../components/accounts/AddAccountDialog";
-import StartupRefreshControl from "../components/accounts/StartupRefreshControl";
+import RefreshMenuControl from "../components/accounts/RefreshMenuControl";
 import DeviceFingerprintDialog from "../components/accounts/DeviceFingerprintDialog";
 import ModalDialog from "../components/common/ModalDialog";
 import Pagination from "../components/common/Pagination";
@@ -1041,9 +1040,7 @@ function Accounts() {
           </button>
         </div>
 
-        <div className="flex-1 min-w-[8px] flex items-center justify-end">
-          <StartupRefreshControl />
-        </div>
+        <div className="flex-1 min-w-[8px]" />
 
         {/* 操作按钮组 */}
         <div className="flex items-center gap-1.5 shrink-0">
@@ -1094,27 +1091,11 @@ function Accounts() {
             </>
           )}
 
-          <button
-            className={`px-2.5 py-2 bg-blue-500 text-white text-xs font-medium rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-1.5 shadow-sm ${isRefreshing ? "opacity-70 cursor-not-allowed" : ""}`}
-            onClick={handleRefreshClick}
-            disabled={isRefreshing}
-            title={
-              selectedIds.size > 0
-                ? t("accounts.refresh_selected", { count: selectedIds.size })
-                : t("accounts.refresh_all")
-            }
-          >
-            <RefreshCw
-              className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`}
-            />
-            <span className="hidden xl:inline">
-              {isRefreshing
-                ? t("common.loading")
-                : selectedIds.size > 0
-                  ? t("accounts.refresh_selected", { count: selectedIds.size })
-                  : t("accounts.refresh_all")}
-            </span>
-          </button>
+          <RefreshMenuControl
+            onRefresh={handleRefreshClick}
+            isRefreshing={isRefreshing}
+            selectedCount={selectedIds.size}
+          />
 
           <button
             className={`px-2.5 py-2 bg-orange-500 text-white text-xs font-medium rounded-lg hover:bg-orange-600 transition-colors flex items-center gap-1.5 shadow-sm ${isWarmuping ? "opacity-70 cursor-not-allowed" : ""}`}
