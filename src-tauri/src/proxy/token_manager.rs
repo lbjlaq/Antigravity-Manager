@@ -4639,14 +4639,14 @@ impl TokenManager {
                                 self.session_accounts.remove(sid);
                             }
                         } else {
-                            // 3. 账号可用且未被标记为尝试失败，优先复用（无论 Balance 还是 CacheFirst，配额 > 0% 且未限流时绝不主动解绑，坚决保护上游 KV 缓存）
+                            // 3. 账号可用且未被标记为尝试失败，优先复用（无论 Balance 还是 CacheFirst，配额 > 0% 且未被限流、未被封禁/模型冻结时绝不主动解绑，坚决保护上游 KV 缓存）
                             tracing::info!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
                             target_token = Some(bound_token.clone());
                             need_update_last_used =
                                 Some((bound_token.account_id.clone(), std::time::Instant::now()));
                         }
                     } else {
-                        // 绑定的账号已不存在（可能被删除），解绑
+                        // 绑定的账号已不可用（已被删除、被上游封禁、或当前目标模型已被 403 冻结移出候选池），安全自动解绑
                         tracing::debug!(
                             "Sticky Session: Bound account not found for session {}, unbinding",
                             sid
@@ -10834,6 +10834,109 @@ mod tests {
             "配额高于 65% 时必须坚守复用以最大化前缀缓存命中率"
         );
         assert_eq!(email, "acc1@test.com");
+    }
+
+    #[tokio::test]
+    async fn test_sticky_session_unbinds_and_fails_over_when_bound_account_forbidden_or_banned() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc1_id = "acc_bound_forbidden";
+        let acc2_id = "acc_healthy_alt";
+
+        let acc1_path = accounts_dir.join(format!("{}.json", acc1_id));
+        let acc2_path = accounts_dir.join(format!("{}.json", acc2_id));
+
+        std::fs::write(&acc1_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&acc2_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let target_model = "gemini-4-argon";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(norm_target.clone(), 80); // 即使有 80% 配额
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(norm_target.clone(), 90);
+
+        let mut token1 =
+            create_test_token("bound_forbidden@test.com", Some("PRO"), 1.0, None, Some(80));
+        token1.account_id = acc1_id.to_string();
+        token1.account_path = acc1_path.clone();
+        token1.model_quotas = quotas1;
+
+        let mut token2 =
+            create_test_token("healthy_alt@test.com", Some("PRO"), 1.0, None, Some(90));
+        token2.account_id = acc2_id.to_string();
+        token2.account_path = acc2_path;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc1_id.to_string(), token1);
+        manager.tokens.insert(acc2_id.to_string(), token2);
+
+        let session_id = "test-session-failover-forbidden";
+        // 初始将会话绑定至 acc1
+        manager.commit_session(session_id, acc1_id);
+
+        // 场景 1：acc1 遭遇模型级 403 冻结（进入 forbidden_models），即使配额为 80% 也必须立即解绑并切号到 acc2
+        if let Some(mut t1) = manager.tokens.get_mut(acc1_id) {
+            t1.forbidden_models.insert(norm_target.clone());
+        }
+
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .expect("Token acquisition must failover to healthy account when bound account is forbidden");
+
+        assert_eq!(
+            selected_id, acc2_id,
+            "绑定账号即使配额 > 0%，一旦目标模型被 403 冻结，必须无缝解绑并故障转移至健康账号"
+        );
+        assert_eq!(email, "healthy_alt@test.com");
+        assert_eq!(
+            manager.session_accounts.get(session_id).unwrap().as_str(),
+            acc2_id,
+            "会话必须被自动重新绑定至健康的候选账号 acc2"
+        );
+
+        // 场景 2：acc1 在运行期被上游 TOS 封禁（写入 banned）并从内存池移除
+        // 再次将新会话绑定至 acc1
+        let session_id_banned = "test-session-failover-banned";
+        manager.commit_session(session_id_banned, acc1_id);
+
+        // 模拟账号被踢出内存调度池且磁盘标记 banned
+        manager.remove_account(acc1_id);
+        std::fs::write(&acc1_path, r#"{"disabled":false,"banned":true}"#).unwrap();
+
+        let (_token2, _project_id2, email2, selected_id2, _wait2) = manager
+            .get_token_filtered(
+                "chat",
+                false,
+                Some(session_id_banned),
+                target_model,
+                &excluded,
+            )
+            .await
+            .expect("Token acquisition must failover when bound account is purged/banned");
+
+        assert_eq!(
+            selected_id2, acc2_id,
+            "绑定账号被封禁移出号池后，必须无缝解绑并切换到下一个可用账号"
+        );
+        assert_eq!(email2, "healthy_alt@test.com");
+        assert_eq!(
+            manager
+                .session_accounts
+                .get(session_id_banned)
+                .unwrap()
+                .as_str(),
+            acc2_id
+        );
     }
 
     #[tokio::test]
