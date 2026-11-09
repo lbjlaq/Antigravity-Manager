@@ -38,7 +38,7 @@ export default function RefreshMenuControl({
     // 二级菜单展开定位：'left' 为向左浮动（默认），'inline' 为窄屏下在菜单内部手风琴式折叠展开
     const [subPlacement, setSubPlacement] = useState<'left' | 'inline'>('left');
 
-    const [limitDraft, setLimitDraft] = useState('0');
+    const [concurrencyDraft, setConcurrencyDraft] = useState('5');
     const [delayDraft, setDelayDraft] = useState('0.2');
 
     const containerRef = useRef<HTMLDivElement>(null);
@@ -47,7 +47,7 @@ export default function RefreshMenuControl({
     const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const startupEnabled = config?.startup_refresh !== false;
-    const startupLimit = config?.startup_refresh_max_accounts ?? 0;
+    const concurrency = config?.refresh_concurrency ?? 5;
     const rawSlideDelay = config?.refresh_slide_delay_secs;
     const slideDelay = typeof rawSlideDelay === 'number' && Number.isFinite(rawSlideDelay)
         ? rawSlideDelay
@@ -56,8 +56,8 @@ export default function RefreshMenuControl({
     const isQuotaProtectionLocked = !!config?.quota_protection?.enabled;
 
     useEffect(() => {
-        setLimitDraft(String(startupLimit));
-    }, [startupLimit]);
+        setConcurrencyDraft(String(concurrency));
+    }, [concurrency]);
 
     useEffect(() => {
         setDelayDraft(String(Number(slideDelay.toFixed(2))));
@@ -148,12 +148,12 @@ export default function RefreshMenuControl({
         }
     };
 
-    const commitLimit = () => {
-        const parsed = parseInt(limitDraft, 10);
-        const next = Number.isNaN(parsed) ? 0 : Math.min(Math.max(parsed, 0), 100000);
-        setLimitDraft(String(next));
-        if (next !== startupLimit) {
-            void persist({ startup_refresh_max_accounts: next });
+    const commitConcurrency = () => {
+        const parsed = parseInt(concurrencyDraft, 10);
+        const next = Number.isNaN(parsed) ? 5 : Math.min(Math.max(parsed, 1), 20);
+        setConcurrencyDraft(String(next));
+        if (next !== concurrency) {
+            void persist({ refresh_concurrency: next });
         }
     };
 
@@ -170,9 +170,7 @@ export default function RefreshMenuControl({
 
     const limitBadgeText = !startupEnabled
         ? t('accounts.startup_refresh_off', '关')
-        : startupLimit === 0
-            ? '∞'
-            : `≤${startupLimit}`;
+        : `${concurrency}并`;
 
     const buttonLabel = isRefreshing
         ? t('common.loading')
@@ -353,20 +351,20 @@ export default function RefreshMenuControl({
                                         </label>
                                     </div>
 
-                                    {/* 账号上限输入 */}
+                                    {/* 同时探测账号数输入 */}
                                     <div className="mt-3 pt-3 border-t border-gray-100 dark:border-base-300">
                                         <div className="flex items-center justify-between gap-2">
                                             <label className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
-                                                {t('settings.account.startup_refresh_limit', '启动刷新账号上限')}
+                                                {t('settings.account.refresh_concurrency', '同时探测账号数')}
                                             </label>
                                             <input
                                                 type="number"
                                                 className="w-16 px-2 py-1 bg-gray-50 dark:bg-base-200 border border-gray-200 dark:border-base-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-blue-600 dark:text-blue-400 text-center"
-                                                min="0"
-                                                max="100000"
-                                                value={limitDraft}
-                                                onChange={(e) => setLimitDraft(e.target.value)}
-                                                onBlur={commitLimit}
+                                                min="1"
+                                                max="20"
+                                                value={concurrencyDraft}
+                                                onChange={(e) => setConcurrencyDraft(e.target.value)}
+                                                onBlur={commitConcurrency}
                                                 onKeyDown={(e) => {
                                                     if (e.key === 'Enter') {
                                                         e.currentTarget.blur();
@@ -375,7 +373,7 @@ export default function RefreshMenuControl({
                                             />
                                         </div>
                                         <p className="mt-1.5 text-[10px] leading-relaxed text-gray-400 dark:text-gray-500">
-                                            {t('settings.account.startup_refresh_limit_hint', '账号数超过该值时跳过启动刷新，0 为不限制')}
+                                            {t('settings.account.refresh_concurrency_hint', '批量刷新与启动探测时的同时探测账号数（滑动窗口容量），默认 5，范围 1~20。')}
                                         </p>
                                     </div>
 

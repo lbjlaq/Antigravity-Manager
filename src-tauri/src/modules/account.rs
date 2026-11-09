@@ -5603,8 +5603,25 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
             // 已封禁账号：探针无法给出权威 2xx 时，配额端点 200 绝不能作为解封依据。
             // 直接返回持久化封禁状态并跳过配额刷新，避免无意义的配额调用与状态冲刷。
             if account.banned {
-                if let Some(info) = account.ban_info() {
-                    return Ok(forbidden_quota_for_ban(account, &info));
+                let info = account
+                    .ban_info()
+                    .unwrap_or_else(|| crate::models::AccountBanInfo {
+                        code: "BANNED".to_string(),
+                        message: "Account remains banned".to_string(),
+                        appeal_url: account.ban_appeal_url.clone(),
+                    });
+                return Ok(forbidden_quota_for_ban(account, &info));
+            }
+
+            // 既有 Hard 403 锁定的账号同理：探针未知时绝不调用日配额端点，防止被 200 冲刷。
+            if let Some(ref q) = account.quota {
+                if q.is_forbidden {
+                    let kind = crate::models::account::classify_lock_reason(
+                        q.forbidden_reason.as_deref().unwrap_or(""),
+                    );
+                    if kind == crate::models::account::AccountLockKind::HardForbidden {
+                        return Ok(q.clone());
+                    }
                 }
             }
         }
@@ -5820,13 +5837,17 @@ pub struct RefreshStats {
 /// Core logic to batch refresh all account quotas (decoupled from Tauri status)
 pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
     use futures::stream::{self, StreamExt};
-
-    // 滑动窗口：最多 5 个账号并发；任一账号完成后等待配置的延迟，
-    // 再把槽位让给下一个账号；不等待同批其他账号完成。
-    const MAX_CONCURRENT: usize = 5;
     let start = std::time::Instant::now();
 
-    let slide_delay_secs = crate::modules::config::load_app_config()
+    let app_cfg = crate::modules::config::load_app_config().ok();
+    let max_concurrent = app_cfg
+        .as_ref()
+        .map(|c| c.refresh_concurrency)
+        .unwrap_or(5)
+        .clamp(1, 20) as usize;
+
+    let slide_delay_secs = app_cfg
+        .as_ref()
         .map(|c| c.refresh_slide_delay_secs)
         .unwrap_or(0.2);
     let slide_delay_secs = if slide_delay_secs.is_finite() {
@@ -5838,7 +5859,7 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
 
     crate::modules::logger::log_info(&format!(
         "Starting batch refresh of all account quotas (sliding window: max {} concurrent, slot handoff delay {:.2}s)",
-        MAX_CONCURRENT, slide_delay_secs
+        max_concurrent, slide_delay_secs
     ));
     let accounts = list_accounts()?;
 
@@ -5910,13 +5931,16 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
                 }
             };
 
+            // 实时通知前端该账号状态已更新，使封禁徽章/配额条秒级刷新呈现
+            crate::modules::log_bridge::emit_accounts_refreshed();
+
             // 滑动窗口：账号完成后等待配置的延迟，再把并发槽位让给下一个账号。
             if !slide_delay.is_zero() {
                 tokio::time::sleep(slide_delay).await;
             }
             result
         })
-        .buffer_unordered(MAX_CONCURRENT);
+        .buffer_unordered(max_concurrent);
 
     while let Some(res) = stream.next().await {
         match res {

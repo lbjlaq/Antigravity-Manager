@@ -150,7 +150,7 @@ pub enum BanProbeOutcome {
     Unknown,
 }
 
-/// 数据面推理端点（唯一权威封禁探针）。
+/// 数据面推理端点（权威封禁探针：Daily 主力 + Prod 兜底互备）。
 ///
 /// 实测：控制面端点（`loadCodeAssist` / `fetchAvailableModels` /
 /// `retrieveUserQuotaSummary` / `countTokens`）对被 TOS 封禁的账号仍返回 200；
@@ -158,7 +158,10 @@ pub enum BanProbeOutcome {
 /// `403 PERMISSION_DENIED` + `TOS_VIOLATION`。
 ///
 /// 因此封禁探测必须发送一个最小推理请求，且不能复用配额端点或控制面元数据接口。
-const BAN_PROBE_ENDPOINT: &str = "https://cloudcode-pa.googleapis.com/v1internal:generateContent";
+const BAN_PROBE_ENDPOINTS: [&str; 2] = [
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent",
+    "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+];
 
 /// 探针模型：固定使用官方免费档基线 Flash，确保所有账号都有权限触达鉴权层。
 /// 这里不做用户自定义映射，避免映射到账号无权限的模型产生模型级 403 假阳性。
@@ -166,11 +169,15 @@ const BAN_PROBE_MODEL: &str = "gemini-2.5-flash";
 
 /// 纯函数：把一次探针响应归类为封禁 / 未封禁 / 未知。
 ///
-/// 只有「403 + 高置信账号级封禁证据」才算封禁；验证挑战、区域限制、模型级 403、
-/// 429、5xx 等一律保持 `Unknown`，避免误伤正常账号。
+/// 只有「403 + 高置信账号级封禁证据」才算封禁；
+/// 2xx 必须包含真实的 Google 模型响应结构（`candidates`），避免代理拦截页或假 200 误解封；
+/// 验证挑战、区域限制、模型级 403、429、5xx 等一律保持 `Unknown`，避免误伤正常账号。
 pub(crate) fn classify_ban_probe_response(status: u16, body: &str) -> BanProbeOutcome {
     if (200..300).contains(&status) {
-        return BanProbeOutcome::NotBanned;
+        if body.contains("\"candidates\"") {
+            return BanProbeOutcome::NotBanned;
+        }
+        return BanProbeOutcome::Unknown;
     }
     if status != 403 {
         return BanProbeOutcome::Unknown;
@@ -302,50 +309,67 @@ pub async fn probe_account_ban(
     });
 
     let started = std::time::Instant::now();
-    let response = client
-        .post(BAN_PROBE_ENDPOINT)
-        .timeout(std::time::Duration::from_secs(15))
-        .bearer_auth(access_token)
-        .header(
-            rquest::header::USER_AGENT,
-            crate::constants::current_egress_user_agent().as_str(),
-        )
-        .json(&payload)
-        .send()
-        .await;
+    let mut last_outcome = BanProbeOutcome::Unknown;
 
-    match response {
-        Ok(response) => {
-            let status = response.status().as_u16();
-            let text = response.text().await.unwrap_or_default();
-            let outcome = classify_ban_probe_response(status, &text);
-            tracing::debug!(
-                account = account_id.unwrap_or("<unknown>"),
-                %status,
-                outcome = ?outcome,
-                "Ban probe completed"
-            );
-            emit_ban_probe_log(
-                account_email,
-                account_id,
-                BAN_PROBE_MODEL,
-                status,
-                started.elapsed().as_millis() as u64,
-                &payload,
-                &text,
-                &outcome,
-            );
-            outcome
-        }
-        Err(e) => {
-            tracing::debug!(
-                account = account_id.unwrap_or("<unknown>"),
-                error = %e,
-                "Ban probe failed; keeping the previous ban state"
-            );
-            BanProbeOutcome::Unknown
+    for ep_url in BAN_PROBE_ENDPOINTS {
+        let response = client
+            .post(ep_url)
+            .timeout(std::time::Duration::from_secs(15))
+            .bearer_auth(access_token)
+            .header(
+                rquest::header::USER_AGENT,
+                crate::constants::current_egress_user_agent().as_str(),
+            )
+            // 显式声明 Connection: close，禁止复用 Google 403 封号后被切断的 TCP 连接，
+            // 彻底根除短时连续探测时的 UNEXPECTED_EOF / 假 Unknown 异常
+            .header(rquest::header::CONNECTION, "close")
+            .json(&payload)
+            .send()
+            .await;
+
+        match response {
+            Ok(response) => {
+                let status = response.status().as_u16();
+                let text = response.text().await.unwrap_or_default();
+                let outcome = classify_ban_probe_response(status, &text);
+                tracing::debug!(
+                    account = account_id.unwrap_or("<unknown>"),
+                    endpoint = ep_url,
+                    %status,
+                    outcome = ?outcome,
+                    "Ban probe completed"
+                );
+                emit_ban_probe_log(
+                    account_email,
+                    account_id,
+                    BAN_PROBE_MODEL,
+                    status,
+                    started.elapsed().as_millis() as u64,
+                    &payload,
+                    &text,
+                    &outcome,
+                );
+                match outcome {
+                    BanProbeOutcome::Banned(_) | BanProbeOutcome::NotBanned => return outcome,
+                    BanProbeOutcome::Unknown => {
+                        last_outcome = outcome;
+                        continue;
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    account = account_id.unwrap_or("<unknown>"),
+                    endpoint = ep_url,
+                    error = %e,
+                    "Ban probe endpoint failed, trying next"
+                );
+                continue;
+            }
         }
     }
+
+    last_outcome
 }
 
 /// Get shared HTTP Client (15s timeout) for pure info fetching (No JA3)
@@ -1683,10 +1707,23 @@ mod tests {
             other => panic!("expected Banned, got {:?}", other),
         }
 
-        // 数据面 2xx：账号未被 TOS 封禁，可作为解封权威依据。
+        // 数据面 2xx 且包含 candidates：账号未被 TOS 封禁，可作为解封权威依据。
+        assert_eq!(
+            classify_ban_probe_response(
+                200,
+                r#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}"#
+            ),
+            BanProbeOutcome::NotBanned
+        );
+
+        // 假 200（如代理报错页、空白页等）绝不作为解封依据，必须保持 Unknown。
         assert_eq!(
             classify_ban_probe_response(200, "{}"),
-            BanProbeOutcome::NotBanned
+            BanProbeOutcome::Unknown
+        );
+        assert_eq!(
+            classify_ban_probe_response(200, "<html>Proxy Error</html>"),
+            BanProbeOutcome::Unknown
         );
 
         // 验证挑战 / 区域限制 / 模型级权限拒绝一律 Unknown，绝不能据此封号或解封。

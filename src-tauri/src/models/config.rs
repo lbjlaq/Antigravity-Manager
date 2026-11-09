@@ -12,9 +12,9 @@ pub struct AppConfig {
     /// 启动完成、账号加载就绪后，异步刷新一次全部账号配额
     #[serde(default = "default_startup_refresh")]
     pub startup_refresh: bool,
-    /// 启动刷新允许的最大账号数；账号数超过该值时跳过启动刷新，0 表示不限制
-    #[serde(default = "default_startup_refresh_max_accounts")]
-    pub startup_refresh_max_accounts: u32,
+    /// 批量配额刷新与启动探测时的同时探测账号数（滑动窗口容量），默认 5，范围 1~20
+    #[serde(default = "default_refresh_concurrency")]
+    pub refresh_concurrency: u32,
     /// 全量配额刷新的滑动窗口延迟（秒）：账号完成后等待该时间再释放槽位给下一个账号。
     /// 并发上限固定为 5；0 表示完成后立即让位。
     #[serde(default = "default_refresh_slide_delay_secs")]
@@ -74,11 +74,8 @@ fn default_startup_refresh() -> bool {
     true
 }
 
-fn default_startup_refresh_max_accounts() -> u32 {
-    // 默认不限制：全量刷新已改为滑动窗口（最多 5 并发；每个账号完成后
-    // 按 `refresh_slide_delay_secs` 让位），大号池冷启动也能安全自动刷新；
-    // 需要上限的用户可自行配置非 0 值。
-    0
+fn default_refresh_concurrency() -> u32 {
+    5
 }
 
 fn default_refresh_slide_delay_secs() -> f64 {
@@ -275,7 +272,7 @@ impl AppConfig {
             auto_refresh: true,
             refresh_interval: 10,
             startup_refresh: true,
-            startup_refresh_max_accounts: 0,
+            refresh_concurrency: 5,
             refresh_slide_delay_secs: 0.2,
             auto_sync: false,
             sync_interval: 5,
@@ -344,21 +341,18 @@ mod tests {
         let config = AppConfig::new();
         let mut value = serde_json::to_value(&config).unwrap();
         value.as_object_mut().unwrap().remove("startup_refresh");
-        value
-            .as_object_mut()
-            .unwrap()
-            .remove("startup_refresh_max_accounts");
+        value.as_object_mut().unwrap().remove("refresh_concurrency");
         let restored: AppConfig = serde_json::from_value(value).unwrap();
         assert!(restored.startup_refresh);
-        assert_eq!(restored.startup_refresh_max_accounts, 0);
+        assert_eq!(restored.refresh_concurrency, 5);
 
         let mut config = AppConfig::new();
         config.startup_refresh = false;
-        config.startup_refresh_max_accounts = 0;
+        config.refresh_concurrency = 10;
         let saved = serde_json::to_string(&config).unwrap();
         let restored: AppConfig = serde_json::from_str(&saved).unwrap();
         assert!(!restored.startup_refresh);
-        assert_eq!(restored.startup_refresh_max_accounts, 0);
+        assert_eq!(restored.refresh_concurrency, 10);
     }
 
     #[test]

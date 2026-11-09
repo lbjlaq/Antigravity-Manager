@@ -399,8 +399,6 @@ function Accounts() {
     });
     try {
       await refreshQuota(accountId);
-      await refreshQuota(accountId);
-      await refreshQuota(accountId);
       showToast(t("common.success"), "success");
     } catch (error) {
       showToast(`${t("common.error")}: ${error}`, "error");

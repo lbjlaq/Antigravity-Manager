@@ -53,7 +53,7 @@ function Settings() {
         auto_refresh: false,
         refresh_interval: 10,
         startup_refresh: true,
-        startup_refresh_max_accounts: 0,
+        refresh_concurrency: 5,
         refresh_slide_delay_secs: 0.2,
         auto_sync: false,
         sync_interval: 5,
@@ -1029,22 +1029,22 @@ function Settings() {
                                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{t('settings.account.startup_refresh_desc')}</p>
                                         {formData.startup_refresh !== false && (
                                             <div className="mt-2 flex flex-wrap items-center gap-2">
-                                                <label className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('settings.account.startup_refresh_limit')}</label>
+                                                <label className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('settings.account.refresh_concurrency')}</label>
                                                 <input
                                                     type="number"
                                                     className="w-16 px-2 py-1 bg-gray-50 dark:bg-base-200 border border-gray-100 dark:border-base-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-xs font-bold text-blue-600 dark:text-blue-400"
-                                                    min="0"
-                                                    max="100000"
-                                                    value={formData.startup_refresh_max_accounts ?? 0}
+                                                    min="1"
+                                                    max="20"
+                                                    value={formData.refresh_concurrency ?? 5}
                                                     onChange={(e) => {
                                                         const parsed = parseInt(e.target.value);
                                                         setFormData({
                                                             ...formData,
-                                                            startup_refresh_max_accounts: Number.isNaN(parsed) ? 0 : Math.min(Math.max(parsed, 0), 100000),
+                                                            refresh_concurrency: Number.isNaN(parsed) ? 5 : Math.min(Math.max(parsed, 1), 20),
                                                         });
                                                     }}
                                                 />
-                                                <span className="text-[11px] text-gray-500 dark:text-gray-400">{t('settings.account.startup_refresh_limit_hint')}</span>
+                                                <span className="text-[11px] text-gray-500 dark:text-gray-400">{t('settings.account.refresh_concurrency_hint')}</span>
                                             </div>
                                         )}
                                     </div>
