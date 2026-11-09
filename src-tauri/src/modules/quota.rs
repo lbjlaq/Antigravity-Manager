@@ -115,6 +115,7 @@ struct LoadProjectResponse {
     paid_tier: Option<Tier>,
     #[serde(rename = "allowedTiers")]
     allowed_tiers: Option<Vec<Tier>>,
+    #[allow(dead_code)]
     #[serde(rename = "ineligibleTiers")]
     ineligible_tiers: Option<Vec<IneligibleTier>>,
 }

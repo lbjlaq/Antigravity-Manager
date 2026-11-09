@@ -300,7 +300,7 @@ pub fn determine_retry_strategy_adaptive(
             // 但若明确包含 multi-day/跨小时超长重置延迟 (如 quotaResetDelay: 68h / retryDelay > 30min)，则明确属于周期硬配额耗尽。
             let is_long_delay = parsed_delay
                 .as_ref()
-                .map(|d| d.actual_wait_ms() > 1800_000)
+                .map(|d| d.actual_wait_ms() > 1_800_000)
                 .unwrap_or(false);
             let is_hard_quota_exhausted = (parsed_delay.is_none() || is_long_delay)
                 && (lower.contains("exceeded your current quota")
@@ -342,7 +342,7 @@ pub fn determine_retry_strategy_adaptive(
             }
 
             // [FIX #3329, #3409] 关键防线：微间隙优先原地 GraceRetry (Micro-gap Grace Retry First)
-            // 若上游返回了明确且极短的重置延迟 (<= 2500ms，例如 Google 图像生成典型的 1.17s quotaResetDelay)
+            // 若上游返回了明确且极短的重置延迟 (<= 5000ms，例如 Google 图像生成典型的 1.17s quotaResetDelay 或 3s reset delay)
             // 且该账号本轮尚未执行过 GraceRetry：
             // 绝不能在第 1 轮就无脑 50ms 闪电切号！
             // 因为 50ms 闪电切号会在 300ms 内把全池所有账号全部轮询打一遍，并将它们全部作为 RateLimitExceeded 封锁进入 RateLimitTracker，
@@ -350,9 +350,9 @@ pub fn determine_retry_strategy_adaptive(
             // 优先在当前账号原地等待 actual_ms (如 1.37s) 并在上游配额刚恢复的瞬间重试，即可原地满血复活，完全避免全池被连坐封死！
             if let Some(delay) = parsed_delay {
                 let actual_ms = delay.actual_wait_ms();
-                if actual_ms <= 2500 && allow_grace_retry {
+                if actual_ms <= 5000 && allow_grace_retry {
                     tracing::info!(
-                        "[Retry] Multi-account 429 micro-gap ({}ms <= 2500ms): applying GraceRetry on current account instead of fast-rotating to protect pool",
+                        "[Retry] Multi-account 429 micro-gap ({}ms <= 5000ms): applying GraceRetry on current account instead of fast-rotating to protect pool",
                         actual_ms
                     );
                     return RetryStrategy::GraceRetry(Duration::from_millis(actual_ms));

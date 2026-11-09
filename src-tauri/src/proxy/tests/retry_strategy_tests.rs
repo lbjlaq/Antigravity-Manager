@@ -187,9 +187,9 @@ fn test_adaptive_retry_single_account_waits_quota_reset_delay() {
 #[test]
 fn test_adaptive_retry_multi_account_round_1_fast_rotates() {
     use crate::proxy::handlers::common::determine_retry_strategy_adaptive;
-    let err_json = r#"{"error":{"message":"Resource has been exhausted","details":[{"quotaResetDelay":"4s"}]}}"#;
+    let err_json = r#"{"error":{"message":"Resource has been exhausted","details":[{"quotaResetDelay":"6s"}]}}"#;
 
-    // 多账号 Round 1 (attempt = 0, pool_size = 3): 匀速轮换 (150ms)，优先切向号池中其他健康账号并留出微冷却
+    // 多账号 Round 1 (attempt = 0, pool_size = 3): 间隙大于 5s (> 5000ms) 时匀速轮换 (150ms)，优先切向号池中other健康账号
     let strategy = determine_retry_strategy_adaptive(429, err_json, None, false, true, 0, 3);
     match strategy {
         RetryStrategy::FixedDelay(d) => assert_eq!(d, Duration::from_millis(150)),
@@ -440,13 +440,34 @@ fn test_adaptive_retry_multi_account_round_1_micro_gap_takes_grace_retry_issue_3
     }"#;
 
     // 多账号 Round 1 (attempt = 0, pool_size = 6):
-    // 遇到微间隙 (<= 2500ms，此处 1174ms + 200ms buffer = 1374ms)，
+    // 遇到微间隙 (<= 5000ms，此处 1174ms + 200ms buffer = 1374ms)，
     // 绝不能在第 1 轮就 50ms 闪电切号导致 300ms 内全池 6 个账号全被打穿锁入冷却！
     // 必须优先在当前账号执行 GraceRetry(1374ms)，精准命中 1.17s 后的配额刷新，原地满血复活！
     let s = determine_retry_strategy_adaptive(429, imagen_429, None, false, true, 0, 6);
     match s {
         RetryStrategy::GraceRetry(d) => assert_eq!(d, Duration::from_millis(1374)),
         other => panic!("Expected GraceRetry(1374ms), got {:?}", other),
+    }
+
+    // 测试 3.2s 间隙（<= 5000ms 阈值内，如 3s quotaResetDelay + 200ms buffer = 3200ms）：
+    // 确保现在能成功触发 GraceRetry 而非冷启动切号
+    let error_3s = r#"{
+        "error": {
+            "code": 429,
+            "message": "Quota exceeded",
+            "details": [{
+                "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                "retryDelay": "3s"
+            }]
+        }
+    }"#;
+    let s_3s = determine_retry_strategy_adaptive(429, error_3s, None, false, true, 0, 6);
+    match s_3s {
+        RetryStrategy::GraceRetry(d) => assert_eq!(d, Duration::from_millis(3200)),
+        other => panic!(
+            "Expected GraceRetry(3200ms) for 3s gap under 5000ms threshold, got {:?}",
+            other
+        ),
     }
 
     // 当该账号的 GraceRetry 已被消耗 (allow_grace_retry = false)：

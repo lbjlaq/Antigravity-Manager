@@ -113,12 +113,6 @@ static RE_SECURITY_CTF_POLICY: Lazy<Regex> = Lazy::new(|| {
 // Agent 客户端数以千计且会持续出现，无法穷举，因此归一化必须**广谱**：只要一句自我介绍同时具备
 // 「身份开场白 + 身份名词 + 归属/版本声明」三要素，就整体归一化为中性身份，而非只处理已知厂商。
 
-/// 身份归一化扫描窗口：扫描每个系统提示词块的前 8 句或前 1500 字符。
-/// 扩展窗口能够可靠穿透前置插件上下文/环境垫片（如 OpenClaw 的 plugin-injected context），
-/// 同时限制在头部以确保正文（文档、代码注释、用户需求）中的正常引用 100% 不被误伤。
-const IDENTITY_SCAN_MAX_SENTENCES: usize = 8;
-const IDENTITY_SCAN_MAX_CHARS: usize = 1500;
-
 /// 官方原生 Antigravity 助手身份声明（完全对齐官方 Antigravity IDE 提示词模板）
 pub const OFFICIAL_ANTIGRAVITY_IDENTITY: &str =
     "You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.";
@@ -406,37 +400,6 @@ impl PromptSanitizer {
         let normalized = RE_MULTI_NEWLINE.replace_all(&restored, "\n\n");
 
         normalized.trim().to_string()
-    }
-
-    /// 计算系统提示词的**头部窗口**：返回从开头起、跨越前 `IDENTITY_SCAN_MAX_SENTENCES` 句或 `IDENTITY_SCAN_MAX_CHARS` 字符的切片。
-    /// 句界 = `.` `!` `?` `。` `！` `？`，或**空行**（连续两个 `\n`，兼容 `\r\n`）；普通折行不计为句界。
-    fn identity_head_region(text: &str) -> &str {
-        let mut sentence_count = 0usize;
-        let mut prev_newline = false;
-
-        for (idx, ch) in text.char_indices() {
-            let is_newline = ch == '\n';
-            let is_terminator = matches!(ch, '.' | '!' | '?' | '。' | '！' | '？');
-
-            if is_terminator || (is_newline && prev_newline) {
-                sentence_count += 1;
-                if sentence_count >= IDENTITY_SCAN_MAX_SENTENCES {
-                    return &text[..idx + ch.len_utf8()];
-                }
-            }
-
-            if is_newline {
-                prev_newline = true;
-            } else if ch != '\r' {
-                prev_newline = false;
-            }
-
-            if idx >= IDENTITY_SCAN_MAX_CHARS {
-                return &text[..idx + ch.len_utf8()];
-            }
-        }
-
-        text
     }
 
     /// System 轨：把系统提示词头部窗口内的「身份归属声明句」与已知客户端开场白归一化为官方 Antigravity 身份。

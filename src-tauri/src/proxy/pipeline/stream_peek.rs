@@ -394,7 +394,7 @@ mod tests {
 
         let hits = Arc::new(AtomicUsize::new(0));
         let hits_cb = Arc::clone(&hits);
-        let mut stream = wrap_stream_with_ttft_probe(
+        let stream = wrap_stream_with_ttft_probe(
             stream::iter(vec![
                 Ok::<Bytes, String>(Bytes::from(": ping\n\n")),
                 Ok(Bytes::from("data: {\"x\":1}\n\n")),

@@ -16,12 +16,10 @@ use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; // [NEW] Import Adapt
 use crate::proxy::debug_logger;
 use crate::proxy::mappers::claude::{
     clean_cache_control_from_messages, create_claude_sse_stream,
-    filter_invalid_thinking_blocks_with_family, merge_consecutive_messages,
-    models::{Message, MessageContent},
+    filter_invalid_thinking_blocks_with_family, merge_consecutive_messages, models::MessageContent,
     transform_response, ClaudeRequest,
 };
 use crate::proxy::mappers::context_manager::ContextManager;
-use crate::proxy::mappers::gemini::SUMMARY_REQUEST_TIMEOUT_SECS;
 use crate::proxy::model_specs;
 use crate::proxy::pipeline::timing::{TimingBuilderExt, TimingHeaders};
 use crate::proxy::server::AppState;
@@ -639,68 +637,6 @@ fn extract_thinking_hint(body: &Value) -> ThinkingHint {
     hint
 }
 
-const MAX_RETRY_ATTEMPTS: usize = 3;
-
-// ===== Layer 3: XML Summary Prompt Template =====
-// Borrowed from Practical-Guide-to-Context-Engineering + Claude Code official practice
-// This prompt generates a structured 8-section XML summary for context compression
-const CONTEXT_SUMMARY_PROMPT: &str = r#"You are a context compression specialist. Your task is to create a structured XML snapshot of the conversation history.
-
-This snapshot will become the Agent's ONLY memory of the past. All key details, plans, errors, and user instructions MUST be preserved.
-
-First, think through the entire history in a private <scratchpad>. Review the user's overall goal, the agent's actions, tool outputs, file modifications, and any unresolved issues. Identify every piece of information critical for future actions.
-
-After reasoning, generate the final <state_snapshot> XML object. Information must be extremely dense. Omit any irrelevant conversational filler.
-
-The structure MUST be as follows:
-
-<state_snapshot>
-  <overall_goal>
-    <!-- Describe the user's high-level goal in one concise sentence -->
-  </overall_goal>
-
-  <technical_context>
-    <!-- Tech stack: frameworks, languages, toolchain, dependency versions -->
-  </technical_context>
-
-  <file_system_state>
-    <!-- List files that were created, read, modified, or deleted. Note their status -->
-  </file_system_state>
-
-  <code_changes>
-    <!-- Key code snippets (preserve function signatures and important logic) -->
-  </code_changes>
-
-  <debugging_history>
-    <!-- List all errors encountered, with stack traces, and how they were fixed -->
-  </debugging_history>
-
-  <current_plan>
-    <!-- Step-by-step plan. Mark completed steps -->
-  </current_plan>
-
-  <user_preferences>
-    <!-- User's work preferences for this project (test commands, code style, etc.) -->
-  </user_preferences>
-
-  <key_decisions>
-    <!-- Critical architectural decisions and design choices -->
-  </key_decisions>
-
-  <latest_thinking_signature>
-    <!-- [CRITICAL] Preserve the last valid thinking signature -->
-    <!-- Format: base64-encoded signature string -->
-    <!-- This MUST be copied exactly as-is, no modifications -->
-  </latest_thinking_signature>
-</state_snapshot>
-
-**IMPORTANT**:
-1. Code snippets must be complete, including function signatures and key logic
-2. Error messages must be preserved verbatim, including line numbers and stacks
-3. File paths must use absolute paths
-4. The thinking signature must be copied exactly, no modifications
-"#;
-
 // ===== Jitter Configuration (REMOVED) =====
 // Jitter was causing connection instability, reverted to fixed delays
 // const JITTER_FACTOR: f64 = 0.2;
@@ -840,6 +776,7 @@ mod variant_tests {
     }
 }
 
+#[cfg(test)]
 fn apply_variant(
     request: &mut ClaudeRequest,
     effort_tier: Option<crate::proxy::common::variant_mapping::VariantTier>,
@@ -1736,13 +1673,10 @@ pub async fn handle_messages(
     // [Stage Timing] 阶段耗时度量变量 (毫秒，保留微秒级浮点精度)
     let clean_micros = clean_start.elapsed().as_micros() as u64;
     let clean_ms: f64 = clean_micros as f64 / 1000.0;
-    let mut norm_ms: f64 = 0.0;
-    let mut think_fill_ms: f64 = 0.0;
     // TTFT 单源口径：仅记录“首个上游数据块”；流式发头时写 -1。
     // 响应头耗时单独用 headers_ms 表达，不再冒充 TTFT。
     let mut ttft_ms: f64 = crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS;
     let mut headers_ms: f64 = 0.0;
-    let mut fallback_overhead_ms: f64 = 0.0;
 
     // [Pipeline Budget] 请求级截止时刻由中间件注入（`pipeline::budget`），
     // 单次上游调用的硬上限已下沉到 `upstream::client`，循环闸门统一用 `budget::exhausted()`；
@@ -1819,7 +1753,7 @@ pub async fn handle_messages(
 
         drop(image_permit.take());
         // [Rotation] GraceRetry 优先复用上一轮的账号凭据，避免重新选号导致粘性丢失
-        let mut token_result = if let Some(creds) = retry_credentials.take() {
+        let token_result = if let Some(creds) = retry_credentials.take() {
             Ok(creds)
         } else if config.request_type == "image_gen" {
             match token_manager
@@ -2037,8 +1971,8 @@ pub async fn handle_messages(
 
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         let tf_micros = transform_timing.think_fill_micros;
-        norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
-        think_fill_ms = tf_micros as f64 / 1000.0;
+        let norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
+        let think_fill_ms = tf_micros as f64 / 1000.0;
 
         if let Some(ref recorder) = upstream_recorder {
             recorder.set_value(&gemini_body);
@@ -2230,7 +2164,7 @@ pub async fn handle_messages(
 
         let effective_attempt_start = call_result.effective_attempt_start;
         let mut fallback_attempts = call_result.fallback_attempts.clone();
-        fallback_overhead_ms = call_result.fallback_overhead_s() * 1000.0;
+        let fallback_overhead_ms = call_result.fallback_overhead_s() * 1000.0;
 
         // [NEW] 记录端点降级日志到 debug 文件
         if call_result.has_fallback() && debug_logger::is_enabled(&debug_cfg) {
@@ -2862,13 +2796,7 @@ pub async fn handle_messages(
                 )
                 .await;
         }
-        if classification.abandons_sticky_account() {
-            token_manager.abandon_session(&affinity_key, &account_id);
-            debug!(
-                "[{}] Unbound session {} from account {} due to status {}",
-                trace_id, affinity_key, email, status_code
-            );
-        }
+        // (Removed premature abandon_session; moved to rotation or terminal failure)
 
         // [Pipeline Auto-Heal] 503 过载 / 400 tool_choice 冲突 / 400 损坏图片：
         // 三者均是对已转出的 Gemini 报文的原地修复，统一在同账号重试（换号只会重蹈覆车）。
@@ -3042,6 +2970,13 @@ pub async fn handle_messages(
                 );
                 force_rotate = false;
             } else {
+                if classification.abandons_sticky_account() {
+                    token_manager.abandon_session(&affinity_key, &account_id);
+                    tracing::debug!(
+                        "[Claude] Unbound session {} from account {} due to account rotation (status {})",
+                        affinity_key, email, status_code
+                    );
+                }
                 crate::proxy::pipeline::rotation::record_attempted_account(
                     &mut attempted_accounts,
                     &account_id,
@@ -3052,6 +2987,13 @@ pub async fn handle_messages(
             continue;
         } else {
             // 不可重试的错误，直接返回双轨制友好报文
+            if classification.abandons_sticky_account() {
+                token_manager.abandon_session(&affinity_key, &account_id);
+                tracing::debug!(
+                    "[Claude] Unbound session {} from account {} due to non-retryable error (status {})",
+                    affinity_key, email, status_code
+                );
+            }
             error!(
                 "[{}] Non-retryable error {}: {}",
                 trace_id, status_code, error_text
@@ -3656,274 +3598,6 @@ fn create_warmup_response(request: &ClaudeRequest, is_stream: bool) -> Response 
             Json(response),
         )
             .into_response()
-    }
-}
-
-// ===== [Helper] Synchronous Upstream Call =====
-// Reusable function for making non-streaming calls to Gemini API
-// Used by Layer 3 and potentially other internal operations
-
-/// Call Gemini API synchronously and return the response text
-///
-/// This is used for internal operations that need to wait for a complete response,
-/// such as generating summaries or other background tasks.
-async fn call_gemini_sync(
-    model: &str,
-    request: &ClaudeRequest,
-    token_manager: &Arc<crate::proxy::TokenManager>,
-    upstream: &Arc<crate::proxy::upstream::client::UpstreamClient>,
-    trace_id: &str,
-) -> Result<String, String> {
-    // Get token and transform request
-    let (access_token, project_id, _, account_id, _wait_ms) = token_manager
-        .get_token("gemini", false, None, model)
-        .await
-        .map_err(|e| format!("Failed to get account: {}", e))?;
-
-    let token_obj = token_manager.get_token_by_id(&account_id);
-    let gemini_body = crate::proxy::mappers::claude::transform_claude_request_in(
-        request,
-        &project_id,
-        false,
-        Some(account_id.as_str()),
-        trace_id,
-        token_obj.as_ref(),
-    )
-    .map_err(|e| format!("Failed to transform request: {}", e))?;
-
-    // 走共享的辅助调用通道：复用主请求路径的客户端（含按账号代理池）、
-    // 端点顺序（Daily → Sandbox → Prod）、URL 形状与回退判定。
-    //
-    // 历史实现把 `transform_claude_request_in` 产出的**已包装 cloudcode 信封**
-    // （内含 project / request / model / userAgent / requestId / requestType）
-    // POST 到 `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
-    // —— host 与形状双双不符。实测该 host 对 Antigravity 账号恒返回
-    // 403 `ACCESS_TOKEN_SCOPE_INSUFFICIENT`（token 不具备公共 Generative Language API 权限），
-    // 因此该后台摘要从未成功过。
-    debug!(
-        "[{}] Calling {} via cloudcode v1internal for summary",
-        trace_id, model
-    );
-
-    let gemini_response = upstream
-        .call_v1_internal_auxiliary(
-            "generateContent",
-            &access_token,
-            gemini_body,
-            Some(account_id.as_str()),
-            SUMMARY_REQUEST_TIMEOUT_SECS,
-        )
-        .await?;
-
-    // 上游返回 `{"response": {...}}` 包装体，必须先解包。
-    let unwrapped = crate::proxy::mappers::gemini::unwrap_response(&gemini_response);
-
-    // 只拼接「非思考 part」的文本：前面可能存在 `{"thought": true, "text": ""}` 的空块，
-    // 直接取 `parts[0].text` 会拿到空串并把空摘要当成功。
-    unwrapped
-        .get("candidates")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("content"))
-        .and_then(|c| c.get("parts"))
-        .and_then(|parts| parts.as_array())
-        .map(|parts| {
-            parts
-                .iter()
-                .filter(|part| !crate::proxy::thinking_store::is_thought_part(part))
-                .filter_map(|part| part.get("text").and_then(|t| t.as_str()))
-                .collect::<String>()
-        })
-        .filter(|text| !text.trim().is_empty())
-        .ok_or_else(|| "Failed to extract text from response".to_string())
-}
-
-// ===== [Layer 3] Fork Conversation + XML Summary =====
-// This is the ultimate context compression strategy
-// Borrowed from Practical-Guide-to-Context-Engineering + Claude Code official practice
-
-/// Try to compress context by generating an XML summary and forking the conversation
-///
-/// This function:
-/// 1. Extracts the last valid thinking signature
-/// 2. Calls a cheap model (gemini-3.1-flash-lite via internal-background-task) to generate XML summary
-/// 3. Creates a new message sequence with summary as prefix
-/// 4. Preserves the signature in the summary
-/// 5. Returns the forked request
-///
-/// Returns Ok(forked_request) on success, Err(error_message) on failure
-async fn try_compress_with_summary(
-    original_request: &ClaudeRequest,
-    trace_id: &str,
-    token_manager: &Arc<crate::proxy::TokenManager>,
-    upstream: &Arc<crate::proxy::upstream::client::UpstreamClient>,
-) -> Result<ClaudeRequest, String> {
-    info!(
-        "[{}] [Layer-3] Starting context compression with XML summary",
-        trace_id
-    );
-
-    // 1. Extract last valid signature
-    let last_signature = ContextManager::extract_last_valid_signature(&original_request.messages);
-
-    if let Some(ref sig) = last_signature {
-        debug!(
-            "[{}] [Layer-3] Extracted signature (len: {})",
-            trace_id,
-            sig.len()
-        );
-    }
-
-    // 2. Build summary request
-    let mut summary_messages = original_request.messages.clone();
-
-    // Add instruction to include signature in summary
-    let signature_instruction = if let Some(ref sig) = last_signature {
-        format!("\n\n**CRITICAL**: The last thinking signature is:\n```\n{}\n```\nYou MUST include this EXACTLY in the <latest_thinking_signature> section.", sig)
-    } else {
-        "\n\n**Note**: No thinking signature found in history. Leave <latest_thinking_signature> empty.".to_string()
-    };
-
-    // Append summary request as the last user message
-    summary_messages.push(Message {
-        role: "user".to_string(),
-        content: MessageContent::String(format!(
-            "{}{}",
-            CONTEXT_SUMMARY_PROMPT, signature_instruction
-        )),
-    });
-
-    // 兜底简单任务模型完全由当前号池动态推导（优先最新 flash-low，其次无后缀 flash），绝不硬编码
-    let background_model =
-        crate::proxy::common::model_gate::pick_background_model_from_pool(token_manager.as_ref())
-            .ok_or_else(|| "No flash model available in the current quota pool".to_string())?;
-
-    let summary_request = ClaudeRequest {
-        model: background_model.to_string(),
-        messages: summary_messages,
-        system: None,
-        stream: false,
-        max_tokens: Some(8000),
-        temperature: Some(0.3),
-        tools: None,
-        thinking: None,
-        metadata: None,
-        top_p: None,
-        top_k: None,
-        output_config: None,
-        size: None,
-        quality: None,
-        tool_choice: None,
-    };
-
-    debug!(
-        "[{}] [Layer-3] Calling {} for summary generation",
-        trace_id, background_model
-    );
-
-    // 3. Call upstream using helper function (reuse existing infrastructure)
-    let xml_summary = call_gemini_sync(
-        &background_model,
-        &summary_request,
-        token_manager,
-        upstream,
-        trace_id,
-    )
-    .await?;
-
-    info!(
-        "[{}] [Layer-3] Generated XML summary (len: {} chars)",
-        trace_id,
-        xml_summary.len()
-    );
-
-    // 4. Create forked conversation with summary as prefix
-    // Wrap text inside a ContentBlock::Text and attach cache_control to freeze it in upstream's Prompt Cache
-    let mut forked_messages = vec![
-        Message {
-            role: "user".to_string(),
-            content: MessageContent::Array(vec![
-                crate::proxy::mappers::claude::models::ContentBlock::Text {
-                    text: format!(
-                        "Context has been compressed. Here is the structured summary of our conversation history:\n\n{}",
-                        xml_summary
-                    ),
-                }
-            ]),
-        },
-        Message {
-            role: "assistant".to_string(),
-            content: MessageContent::String(
-                "I have reviewed the compressed context summary. I understand the current state and will continue from here.".to_string()
-            ),
-        },
-    ];
-
-    // 5. Append the user's latest message (if exists and is not the summary request)
-    if let Some(last_msg) = original_request.messages.last() {
-        if last_msg.role == "user" {
-            // Check if it's not the summary instruction we just added
-            if !matches!(&last_msg.content, MessageContent::String(s) if s.contains(CONTEXT_SUMMARY_PROMPT))
-            {
-                forked_messages.push(last_msg.clone());
-            }
-        }
-    }
-
-    info!(
-        "[{}] [Layer-3] Fork successful: {} messages → {} messages",
-        trace_id,
-        original_request.messages.len(),
-        forked_messages.len()
-    );
-
-    // 6. Return forked request
-    Ok(ClaudeRequest {
-        model: original_request.model.clone(),
-        messages: forked_messages,
-        system: original_request.system.clone(),
-        stream: original_request.stream,
-        max_tokens: original_request.max_tokens,
-        temperature: original_request.temperature,
-        tools: original_request.tools.clone(),
-        thinking: original_request.thinking.clone(),
-        metadata: original_request.metadata.clone(),
-        top_p: original_request.top_p,
-        top_k: original_request.top_k,
-        output_config: original_request.output_config.clone(),
-        size: original_request.size.clone(),
-        quality: original_request.quality.clone(),
-        tool_choice: original_request.tool_choice.clone(),
-    })
-}
-
-/// Injects cache_control ephemeral trigger to first message's content block if it's the XML summary
-fn inject_cache_control_to_forked_summary(body: &mut serde_json::Value) {
-    if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
-        if !messages.is_empty() {
-            let first_msg = &mut messages[0];
-            if let Some(content) = first_msg.get_mut("content") {
-                if let Some(content_arr) = content.as_array_mut() {
-                    if !content_arr.is_empty() {
-                        let is_summary = content_arr[0]
-                            .get("text")
-                            .and_then(|t| t.as_str())
-                            .map(|s| s.contains("Context has been compressed"))
-                            .unwrap_or(false);
-
-                        if is_summary {
-                            if let Some(obj) = content_arr[0].as_object_mut() {
-                                obj.insert(
-                                    "cache_control".to_string(),
-                                    serde_json::json!({
-                                        "type": "ephemeral"
-                                    }),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 

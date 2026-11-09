@@ -3167,7 +3167,6 @@ pub fn upsert_account(
     let mut index = load_account_index()?;
 
     let norm_email = email.trim().to_lowercase();
-    let norm_rt = token.refresh_token.trim().to_string();
 
     // 幂等查找：按邮箱（忽略大小写）或凭据查找已有账号 ID
     let existing_account_id = index
@@ -6181,7 +6180,7 @@ pub async fn batch_import_accounts_logic(
                     };
 
                     // 5. 构造 TokenData 与 Account（若为既有账号，保留原有偏好与配额数据原地更新，杜绝重复凭据文件！）
-                    let mut account = if let Ok(mut existing_acc) = load_account(&account_id) {
+                    let account = if let Ok(mut existing_acc) = load_account(&account_id) {
                         existing_acc.token = crate::models::TokenData::new(
                             token_res.access_token,
                             rt,

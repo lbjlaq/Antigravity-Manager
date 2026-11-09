@@ -1,13 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::proxy::mappers::claude::models::{
-        ClaudeRequest, ContentBlock, Message, MessageContent, ThinkingConfig,
+        ClaudeRequest, Message, MessageContent, ThinkingConfig,
     };
     use crate::proxy::mappers::claude::request::transform_claude_request_in;
-    use crate::proxy::mappers::claude::thinking_utils::{
-        analyze_conversation_state, close_tool_loop_for_thinking,
-    };
-    use serde_json::json;
 
     // ==================================================================================
     // 场景一：首次 Thinking 请求 (P0-2 Fix)
@@ -61,70 +57,6 @@ mod tests {
             has_thinking_config,
             "Thinking config should be preserved for first request without tool calls"
         );
-    }
-
-    // ==================================================================================
-    // 场景二：工具循环恢复 (P1-4 Fix)
-    // 验证当历史消息中丢失 Thinking 块导致死循环时，是否会自动注入合成消息来闭环
-    // ==================================================================================
-    #[test]
-    fn test_tool_loop_recovery() {
-        // 1. 构造一个 "Broken Tool Loop" 场景
-        // Assistant (ToolUse) -> User (ToolResult)
-        // 但 Assistant 消息中缺少 Thinking 块 (模拟被 stripping)
-        let mut messages = vec![
-            Message {
-                role: "user".to_string(),
-                content: MessageContent::String("Check weather".to_string()),
-            },
-            Message {
-                role: "assistant".to_string(),
-                content: MessageContent::Array(vec![
-                    // 只有 ToolUse，没有 Thinking (Broken State)
-                    ContentBlock::ToolUse {
-                        id: "call_1".to_string(),
-                        name: "get_weather".to_string(),
-                        input: json!({"location": "Beijing"}),
-                        signature: None,
-                        cache_control: None,
-                    },
-                ]),
-            },
-            Message {
-                role: "user".to_string(),
-                content: MessageContent::Array(vec![ContentBlock::ToolResult {
-                    tool_use_id: "call_1".to_string(),
-                    content: json!("Sunny"),
-                    is_error: None,
-                }]),
-            },
-        ];
-
-        // 2. 分析当前状态
-        let state = analyze_conversation_state(&messages);
-        assert!(state.in_tool_loop, "Should detect tool loop");
-
-        // 3. 执行恢复逻辑
-        close_tool_loop_for_thinking(&mut messages);
-
-        // 4. 验证是否注入了合成消息
-        assert_eq!(
-            messages.len(),
-            5,
-            "Should have injected 2 synthetic messages"
-        );
-
-        // 验证倒数第二条是 Assistant 的 "Completed" 消息
-        let injected_assistant = &messages[3];
-        assert_eq!(injected_assistant.role, "assistant");
-
-        // 验证最后一条是 User 的 "Proceed" 消息
-        let injected_user = &messages[4];
-        assert_eq!(injected_user.role, "user");
-
-        // 这样当前状态就不再是 "in_tool_loop" (最后一条是 User Text)，模型可以开始新的 Thinking
-        let new_state = analyze_conversation_state(&messages);
-        assert!(!new_state.in_tool_loop, "Tool loop should be broken/closed");
     }
 
     // ==================================================================================

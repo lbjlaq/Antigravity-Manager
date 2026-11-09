@@ -979,7 +979,7 @@ impl UpstreamClient {
     pub fn calculate_first_byte_wait_secs(
         media_kind: PayloadMediaKind,
         attempt_idx: usize,
-        cfg: &crate::proxy::config::UploadTimeoutConfig,
+        _cfg: &crate::proxy::config::UploadTimeoutConfig,
         stream_cfg: &crate::proxy::config::StreamTimeoutConfig,
         body_len: usize,
         is_capacity_exhausted: bool,

@@ -350,7 +350,6 @@ impl Drop for InFlightGuard {
 
 pub struct TokenManager {
     tokens: Arc<DashMap<String, ProxyToken>>, // account_id -> ProxyToken
-    current_index: Arc<AtomicUsize>,
     last_used_account: Arc<tokio::sync::Mutex<Option<(String, std::time::Instant)>>>,
     data_dir: PathBuf,
     rate_limit_tracker: Arc<RateLimitTracker>, // 新增: 限流跟踪器
@@ -410,7 +409,6 @@ impl TokenManager {
     pub fn new(data_dir: PathBuf) -> Self {
         Self {
             tokens: Arc::new(DashMap::new()),
-            current_index: Arc::new(AtomicUsize::new(0)),
             last_used_account: Arc::new(tokio::sync::Mutex::new(None)),
             data_dir,
             rate_limit_tracker: Arc::new(RateLimitTracker::new()),
@@ -7212,18 +7210,38 @@ impl TokenManager {
             |acc_id| rate_limiter.is_rate_limited(acc_id, None),
         );
 
-        let is_cache_first = self
-            .sticky_config
-            .try_read()
-            .map(|c| c.mode == crate::proxy::sticky_config::SchedulingMode::CacheFirst)
-            .unwrap_or(false);
+        let allow_in_place_wait = match &action {
+            crate::proxy::qos_guardian::QoSAction::TriggerJailedAndUnbind {
+                wait_duration, ..
+            } => {
+                let wd = *wait_duration;
+                self.sticky_config
+                    .try_read()
+                    .map(|c| {
+                        c.mode == crate::proxy::sticky_config::SchedulingMode::CacheFirst
+                            || (c.max_wait_seconds > 0 && wd.as_secs() <= c.max_wait_seconds)
+                    })
+                    .unwrap_or(false)
+            }
+            crate::proxy::qos_guardian::QoSAction::HalfOpenFailed { wait_duration, .. } => {
+                let wd = *wait_duration;
+                self.sticky_config
+                    .try_read()
+                    .map(|c| {
+                        c.mode == crate::proxy::sticky_config::SchedulingMode::CacheFirst
+                            || (c.max_wait_seconds > 0 && wd.as_secs() <= c.max_wait_seconds)
+                    })
+                    .unwrap_or(false)
+            }
+            _ => false,
+        };
 
         match action {
             crate::proxy::qos_guardian::QoSAction::TriggerJailedAndUnbind {
                 level,
                 wait_duration,
             } => {
-                if !is_cache_first {
+                if !allow_in_place_wait {
                     if let Some(sid) = session_id {
                         self.unbind_session(sid);
                     }
@@ -7233,14 +7251,14 @@ impl TokenManager {
                     account_id,
                     level,
                     wait_duration,
-                    !is_cache_first
+                    !allow_in_place_wait
                 );
             }
             crate::proxy::qos_guardian::QoSAction::HalfOpenFailed {
                 escalated_level,
                 wait_duration,
             } => {
-                if !is_cache_first {
+                if !allow_in_place_wait {
                     if let Some(sid) = session_id {
                         self.unbind_session(sid);
                     }
@@ -7250,7 +7268,7 @@ impl TokenManager {
                     account_id,
                     escalated_level,
                     wait_duration,
-                    !is_cache_first
+                    !allow_in_place_wait
                 );
             }
             _ => {}

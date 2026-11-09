@@ -641,64 +641,6 @@ pub async fn update_model_mapping(
     Ok(())
 }
 
-fn join_base_url(base: &str, path: &str) -> String {
-    let base = base.trim_end_matches('/');
-    let path = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("/{}", path)
-    };
-    format!("{}{}", base, path)
-}
-
-fn extract_model_ids(value: &serde_json::Value) -> Vec<String> {
-    let mut out = Vec::new();
-
-    fn push_from_item(out: &mut Vec<String>, item: &serde_json::Value) {
-        match item {
-            serde_json::Value::String(s) => out.push(s.to_string()),
-            serde_json::Value::Object(map) => {
-                if let Some(id) = map.get("id").and_then(|v| v.as_str()) {
-                    out.push(id.to_string());
-                } else if let Some(name) = map.get("name").and_then(|v| v.as_str()) {
-                    out.push(name.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    match value {
-        serde_json::Value::Array(arr) => {
-            for item in arr {
-                push_from_item(&mut out, item);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            if let Some(data) = map.get("data") {
-                if let serde_json::Value::Array(arr) = data {
-                    for item in arr {
-                        push_from_item(&mut out, item);
-                    }
-                }
-            }
-            if let Some(models) = map.get("models") {
-                match models {
-                    serde_json::Value::Array(arr) => {
-                        for item in arr {
-                            push_from_item(&mut out, item);
-                        }
-                    }
-                    other => push_from_item(&mut out, other),
-                }
-            }
-        }
-        _ => {}
-    }
-
-    out
-}
-
 /// 获取当前调度配置
 #[tauri::command]
 pub async fn get_proxy_scheduling_config(

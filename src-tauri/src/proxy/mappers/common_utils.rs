@@ -502,6 +502,7 @@ pub fn image_aspect_ratio_from_size(size: &str) -> Option<&'static str> {
     None
 }
 
+#[cfg(test)]
 fn calculate_aspect_ratio_from_size(size: &str) -> &'static str {
     image_aspect_ratio_from_size(size).unwrap_or("1:1")
 }

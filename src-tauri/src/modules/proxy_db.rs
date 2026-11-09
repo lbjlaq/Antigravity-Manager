@@ -237,11 +237,6 @@ fn open_thinking_db_at(db_path: &PathBuf) -> Result<Connection, String> {
     Ok(conn)
 }
 
-fn open_thinking_db() -> Result<Connection, String> {
-    let db_path = get_thinking_db_path()?;
-    open_thinking_db_at(&db_path)
-}
-
 static THINKING_DB: OnceLock<Mutex<Option<(PathBuf, Connection)>>> = OnceLock::new();
 
 pub struct ThinkingDbGuard(MutexGuard<'static, Option<(PathBuf, Connection)>>);

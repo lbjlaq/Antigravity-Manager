@@ -861,6 +861,7 @@ impl RateLimitTracker {
     }
 
     /// 从错误消息 body 中解析重置时间
+    #[cfg(test)]
     fn parse_retry_time_from_body(&self, body: &str) -> Option<u64> {
         crate::proxy::upstream::retry::parse_retry_delay(body, None)
             .map(|delay_ms| delay_ms.saturating_add(999) / 1000)
