@@ -717,6 +717,15 @@ impl QoSGuardian {
         );
     }
 
+    /// 将处于小黑屋或探测中的账号转入 HalfOpen 缓刑观察期（用于 CacheFirst 原地等待冷却后恢复本会话复用）
+    pub fn promote_to_half_open(&self, account_id: &str) {
+        let level = match self.get_state(account_id) {
+            AccountQoSState::Jailed { level, .. } | AccountQoSState::Probing { level, .. } => level,
+            _ => return,
+        };
+        self.mark_probe_passed(account_id, level);
+    }
+
     /// 探针失败升级阶梯 (关键：从 0 开始重新计时)
     pub fn mark_probe_failed(&self, account_id: &str, current_level: usize) -> (usize, Duration) {
         let next_level = (current_level + 1).min(self.ladder_intervals.len() - 1);

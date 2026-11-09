@@ -4458,6 +4458,7 @@ impl TokenManager {
 
             // ===== 【核心】粘性会话与智能调度逻辑 =====
             let mut target_token: Option<ProxyToken> = None;
+            let mut migration_min_quota: Option<(i32, ProxyToken)> = None;
 
             // 归一化目标模型名为标准 ID，用于配额保护检查
             let normalized_target =
@@ -4516,6 +4517,8 @@ impl TokenManager {
                                     > 0
                         });
 
+                        // 仅统计真正可被 select_with_p2c 立即选中的纯健康且空闲候选账号（排除 in_flight > 0 的在途忙号与 Suspicious/HalfOpen 账号），
+                        // 防止因看到无法被选中的高配额“海市蜃楼”账号而错误解绑当前会话，引发低配额账号间无限“踢皮球”死循环。
                         let max_same_or_higher_priority_quota = tokens_snapshot
                             .iter()
                             .filter(|t| {
@@ -4523,12 +4526,13 @@ impl TokenManager {
                                     && !attempted.contains(&t.account_id)
                                     && t.effective_priority(target_model, &normalized_target)
                                         <= bound_eff_priority
+                                    && self.get_in_flight(&t.account_id) == 0
                                     && !self
                                         .rate_limit_tracker
                                         .is_rate_limited(&t.account_id, Some(&normalized_target))
                                     && !(quota_protection_enabled
                                         && t.protected_models.contains(&normalized_target))
-                                    && !self.qos_guardian.is_jailed_or_probing(&t.account_id)
+                                    && self.qos_guardian.is_healthy(&t.account_id)
                                     && !(t.validation_blocked
                                         && (t.validation_blocked_until == 0
                                             || t.validation_blocked_until
@@ -4543,7 +4547,10 @@ impl TokenManager {
                             .max()
                             .unwrap_or(0);
 
-                        let quota_disparity_migration = bound_quota <= 65
+                        // CacheFirst（缓存优先）模式下严格锁定当前绑定账号以保护上游 KV Cache，只要配额 > 0% 且未限流/封禁，绝不因配额差距主动解绑迁移。
+                        let quota_disparity_migration = scheduling.mode
+                            != SchedulingMode::CacheFirst
+                            && bound_quota <= 65
                             && max_same_or_higher_priority_quota > 0
                             && max_same_or_higher_priority_quota >= bound_quota.saturating_add(25);
 
@@ -4561,20 +4568,6 @@ impl TokenManager {
                                 bound_token.email
                             );
                             self.session_accounts.remove(sid);
-                        } else if is_qos_jailed {
-                            tracing::warn!(
-                                "Sticky Session: Bound account {} is JAILED in QoS Guardian, unbinding and switching.",
-                                bound_token.email
-                            );
-                            self.session_accounts.remove(sid);
-                        } else if reset_sec > 0 {
-                            // 【修复 Issue #284】立即解绑并切换账号，不再阻塞等待
-                            // 原因：阻塞等待会导致并发请求时客户端 socket 超时 (UND_ERR_SOCKET)
-                            tracing::debug!(
-                                "Sticky Session: Bound account {} is rate-limited for {} ({}s), unbinding and switching.",
-                                bound_token.email, normalized_target, reset_sec
-                            );
-                            self.session_accounts.remove(sid);
                         } else if bound_zero_quota && has_healthy_alternative {
                             // [FIX #3639] 粘性绑定的账号目标模型额度已归零且号池有可用账号，无缝解绑并自动迁移至健康账号
                             tracing::info!(
@@ -4584,26 +4577,6 @@ impl TokenManager {
                             );
                             self.session_accounts.remove(sid);
                             attempted.insert(bound_token.account_id.clone());
-                        } else if quota_disparity_migration {
-                            // 兼顾上游前缀缓存 (Prefix Caching) 与号池负载均衡：当绑定账号额度降至 65% 以下且同级/更高优先级池中有显著健康账号 (领先 >= 25%) 时主动迁移
-                            tracing::info!(
-                                "Sticky Session: Bound account {} quota is {}% for model {} (pool best: {}%), migrating to healthy account for quota equity",
-                                bound_token.email,
-                                bound_quota,
-                                normalized_target,
-                                max_same_or_higher_priority_quota
-                            );
-                            self.session_accounts.remove(sid);
-                            attempted.insert(bound_token.account_id.clone());
-                        } else if !attempted.contains(&bound_id)
-                            && !(quota_protection_enabled
-                                && bound_token.protected_models.contains(&normalized_target))
-                        {
-                            // 3. 账号可用且未被标记为尝试失败，优先复用
-                            tracing::info!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
-                            target_token = Some(bound_token.clone());
-                            need_update_last_used =
-                                Some((bound_token.account_id.clone(), std::time::Instant::now()));
                         } else if quota_protection_enabled
                             && bound_token.protected_models.contains(&normalized_target)
                         {
@@ -4613,6 +4586,117 @@ impl TokenManager {
                             // [FIX] 绑定的账号在当前轮次请求中已尝试失败，立即解绑避免死锁
                             tracing::debug!("Sticky Session: Bound account {} already attempted in current request, unbinding", bound_token.email);
                             self.session_accounts.remove(sid);
+                        } else if is_qos_jailed {
+                            if scheduling.mode == SchedulingMode::CacheFirst {
+                                // CacheFirst（缓存优先）：触发限速小黑屋时绝不解绑会话换号，按最大等待时长原地精准等待冷却后继续复用，保住昂贵 KV Cache
+                                let rem_secs = self
+                                    .qos_guardian
+                                    .get_jailed_remaining_seconds(&bound_token.account_id)
+                                    .unwrap_or(0);
+                                let capped_wait = if scheduling.max_wait_seconds > 0 {
+                                    rem_secs.min(scheduling.max_wait_seconds)
+                                } else {
+                                    0
+                                };
+                                let wait_secs =
+                                    match crate::proxy::pipeline::budget::remaining_secs() {
+                                        Some(rem_budget) => {
+                                            capped_wait.min(rem_budget.saturating_sub(30))
+                                        }
+                                        None => capped_wait,
+                                    };
+                                if wait_secs > 0 {
+                                    tracing::info!(
+                                        "Sticky Session (CacheFirst): Bound account {} is in QoS Jail ({}s remaining), waiting {}s in-place to preserve session binding and KV cache...",
+                                        bound_token.email,
+                                        rem_secs,
+                                        wait_secs
+                                    );
+                                    tokio::time::sleep(std::time::Duration::from_secs(wait_secs))
+                                        .await;
+                                }
+                                self.qos_guardian
+                                    .promote_to_half_open(&bound_token.account_id);
+                                tracing::info!(
+                                    "Sticky Session: Successfully reusing bound account {} for session {} after QoS wait",
+                                    bound_token.email,
+                                    sid
+                                );
+                                target_token = Some(bound_token.clone());
+                                need_update_last_used = Some((
+                                    bound_token.account_id.clone(),
+                                    std::time::Instant::now(),
+                                ));
+                            } else {
+                                tracing::warn!(
+                                    "Sticky Session: Bound account {} is JAILED in QoS Guardian, unbinding and switching.",
+                                    bound_token.email
+                                );
+                                self.session_accounts.remove(sid);
+                            }
+                        } else if reset_sec > 0 {
+                            if scheduling.mode == SchedulingMode::CacheFirst
+                                && reset_sec <= scheduling.max_wait_seconds
+                            {
+                                // CacheFirst（缓存优先）：当限流冷却时长 <= max_wait_seconds 时原地精准等待，绝不解绑换号丢失缓存
+                                let wait_secs =
+                                    match crate::proxy::pipeline::budget::remaining_secs() {
+                                        Some(rem_budget) => {
+                                            reset_sec.min(rem_budget.saturating_sub(30))
+                                        }
+                                        None => reset_sec,
+                                    };
+                                if wait_secs > 0 {
+                                    tracing::info!(
+                                        "Sticky Session (CacheFirst): Bound account {} is rate-limited for {} ({}s <= max_wait {}s), waiting {}s in-place to preserve session binding and KV cache...",
+                                        bound_token.email,
+                                        normalized_target,
+                                        reset_sec,
+                                        scheduling.max_wait_seconds,
+                                        wait_secs
+                                    );
+                                    tokio::time::sleep(std::time::Duration::from_secs(wait_secs))
+                                        .await;
+                                }
+                                self.rate_limit_tracker
+                                    .clear_model(&key, &normalized_target);
+                                self.rate_limit_tracker.clear_account_only(&key);
+                                tracing::info!(
+                                    "Sticky Session: Successfully reusing bound account {} for session {} after rate-limit wait",
+                                    bound_token.email,
+                                    sid
+                                );
+                                target_token = Some(bound_token.clone());
+                                need_update_last_used = Some((
+                                    bound_token.account_id.clone(),
+                                    std::time::Instant::now(),
+                                ));
+                            } else {
+                                tracing::debug!(
+                                    "Sticky Session: Bound account {} is rate-limited for {} ({}s), unbinding and switching.",
+                                    bound_token.email, normalized_target, reset_sec
+                                );
+                                self.session_accounts.remove(sid);
+                            }
+                        } else if quota_disparity_migration {
+                            // 兼顾上游前缀缓存 (Prefix Caching) 与号池负载均衡：当非 CacheFirst 模式下绑定账号额度降至 65% 以下且同级/更高优先级池中有显著健康空闲账号 (领先 >= 25%) 时主动迁移
+                            tracing::info!(
+                                "Sticky Session: Bound account {} quota is {}% for model {} (pool best: {}%), migrating to healthy account for quota equity",
+                                bound_token.email,
+                                bound_quota,
+                                normalized_target,
+                                max_same_or_higher_priority_quota
+                            );
+                            self.session_accounts.remove(sid);
+                            attempted.insert(bound_token.account_id.clone());
+                            migration_min_quota =
+                                Some((bound_quota.saturating_add(25), bound_token.clone()));
+                        } else {
+                            // 3. 账号可用且未被标记为尝试失败，优先复用
+                            tracing::info!("Sticky Session: Successfully reusing bound account {} for session {}", bound_token.email, sid);
+                            target_token = Some(bound_token.clone());
+                            need_update_last_used =
+                                Some((bound_token.account_id.clone(), std::time::Instant::now()));
                         }
                     } else {
                         // 绑定的账号已不存在（可能被删除），解绑
@@ -4683,15 +4767,14 @@ impl TokenManager {
                                                 target_model,
                                                 &normalized_target,
                                             ) <= found_eff_priority
+                                            && self.get_in_flight(&t.account_id) == 0
                                             && !self.rate_limit_tracker.is_rate_limited(
                                                 &t.account_id,
                                                 Some(&normalized_target),
                                             )
                                             && !(quota_protection_enabled
                                                 && t.protected_models.contains(&normalized_target))
-                                            && !self
-                                                .qos_guardian
-                                                .is_jailed_or_probing(&t.account_id)
+                                            && self.qos_guardian.is_healthy(&t.account_id)
                                             && !(t.validation_blocked
                                                 && (t.validation_blocked_until == 0
                                                     || t.validation_blocked_until
@@ -4706,7 +4789,9 @@ impl TokenManager {
                                     .max()
                                     .unwrap_or(0);
 
-                                let disparity_migration = last_quota <= 65
+                                let disparity_migration = scheduling.mode
+                                    != SchedulingMode::CacheFirst
+                                    && last_quota <= 65
                                     && max_alt_quota > 0
                                     && max_alt_quota >= last_quota.saturating_add(25);
 
@@ -4752,6 +4837,8 @@ impl TokenManager {
                                         found.email, last_quota, normalized_target, max_alt_quota
                                     );
                                     attempted.insert(account_id.clone());
+                                    migration_min_quota =
+                                        Some((last_quota.saturating_add(25), found.clone()));
                                 } else if !self
                                     .is_rate_limited(&found.account_id, Some(&normalized_target))
                                     .await
@@ -4788,7 +4875,8 @@ impl TokenManager {
 
                 // 若无锁定或带有 session_id（会话首次分配），使用 P2C 均衡选择账号
                 if target_token.is_none() {
-                    // 先过滤出未限流的账号
+                    // 先过滤出未限流的账号；若本次是配额悬殊迁移，严格限制候选账号配额 >= min_q，
+                    // 杜绝 P2C 或分流上限把会话反而降级分配给另一个低配额账号。
                     let mut non_limited: Vec<ProxyToken> = Vec::new();
                     for t in &tokens_snapshot {
                         if !self
@@ -4796,6 +4884,17 @@ impl TokenManager {
                             .await
                             && !self.qos_guardian.is_jailed_or_probing(&t.account_id)
                         {
+                            if let Some((min_q, _)) = &migration_min_quota {
+                                let q = t
+                                    .model_quotas
+                                    .get(&normalized_target)
+                                    .or_else(|| t.model_quotas.get(target_model))
+                                    .copied()
+                                    .unwrap_or(0);
+                                if q < *min_q {
+                                    continue;
+                                }
+                            }
                             non_limited.push(t.clone());
                         }
                     }
@@ -4809,6 +4908,12 @@ impl TokenManager {
                         target_token = Some(selected.clone());
                         need_update_last_used =
                             Some((selected.account_id.clone(), std::time::Instant::now()));
+                    } else if let Some((_, fallback)) = migration_min_quota.take() {
+                        // 若受 max_spillover_accounts 等限制导致高配额候选未能被选出，回退保留原绑定账号以保护缓存
+                        attempted.remove(&fallback.account_id);
+                        target_token = Some(fallback.clone());
+                        need_update_last_used =
+                            Some((fallback.account_id.clone(), std::time::Instant::now()));
                     }
                 }
             } else if target_token.is_none() {
@@ -5496,13 +5601,21 @@ impl TokenManager {
             crate::proxy::rate_limit::RateLimitReason::ServerError,
             None,
         );
-        // 主动解除绑定到该故障账号的粘性会话，使后续请求即刻迁移至其他健康账号
-        self.session_accounts.retain(|_, v| *v != resolved_id);
+        // 非 CacheFirst 模式下主动解除绑定到该故障账号的粘性会话；CacheFirst 模式下保留会话绑定以便后续请求在 max_wait_seconds 内精准等待复用
+        let is_cache_first = self
+            .sticky_config
+            .try_read()
+            .map(|c| c.mode == crate::proxy::sticky_config::SchedulingMode::CacheFirst)
+            .unwrap_or(false);
+        if !is_cache_first {
+            self.session_accounts.retain(|_, v| *v != resolved_id);
+        }
         tracing::warn!(
             account_id = %resolved_id,
             cooldown_secs = %effective_secs,
+            session_unbound = !is_cache_first,
             reason = %reason,
-            "Account marked with transient failure cooldown in rate limit tracker and unbound from sticky sessions"
+            "Account marked with transient failure cooldown in rate limit tracker"
         );
     }
 
@@ -7240,33 +7353,45 @@ impl TokenManager {
             |acc_id| rate_limiter.is_rate_limited(acc_id, None),
         );
 
+        let is_cache_first = self
+            .sticky_config
+            .try_read()
+            .map(|c| c.mode == crate::proxy::sticky_config::SchedulingMode::CacheFirst)
+            .unwrap_or(false);
+
         match action {
             crate::proxy::qos_guardian::QoSAction::TriggerJailedAndUnbind {
                 level,
                 wait_duration,
             } => {
-                if let Some(sid) = session_id {
-                    self.unbind_session(sid);
+                if !is_cache_first {
+                    if let Some(sid) = session_id {
+                        self.unbind_session(sid);
+                    }
                 }
                 tracing::warn!(
-                    "🚨 [QoS Guardian] Account {} jailed to Level {} (wait {:?}), active session unbound",
+                    "🚨 [QoS Guardian] Account {} jailed to Level {} (wait {:?}), session_unbound={}",
                     account_id,
                     level,
-                    wait_duration
+                    wait_duration,
+                    !is_cache_first
                 );
             }
             crate::proxy::qos_guardian::QoSAction::HalfOpenFailed {
                 escalated_level,
                 wait_duration,
             } => {
-                if let Some(sid) = session_id {
-                    self.unbind_session(sid);
+                if !is_cache_first {
+                    if let Some(sid) = session_id {
+                        self.unbind_session(sid);
+                    }
                 }
                 tracing::warn!(
-                    "💥 [QoS Guardian] Account {} Half-Open probe probation failed. Escalated to Level {} ({:?})",
+                    "💥 [QoS Guardian] Account {} Half-Open probe probation failed. Escalated to Level {} ({:?}), session_unbound={}",
                     account_id,
                     escalated_level,
-                    wait_duration
+                    wait_duration,
+                    !is_cache_first
                 );
             }
             _ => {}
@@ -10912,6 +11037,194 @@ mod tests {
             "60s 窗口必须跳过额度偏低的账号并选拔健康满额账号"
         );
         assert_eq!(email, "acc2@test.com");
+    }
+
+    #[tokio::test]
+    async fn test_cache_first_mode_preserves_sticky_session_without_quota_disparity_migration() {
+        use crate::proxy::sticky_config::{SchedulingMode, StickySessionConfig};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc1_id = "acc_bound_50";
+        let acc2_id = "acc_idle_100";
+
+        let acc1_path = accounts_dir.join(format!("{}.json", acc1_id));
+        let acc2_path = accounts_dir.join(format!("{}.json", acc2_id));
+
+        std::fs::write(&acc1_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&acc2_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        manager
+            .update_sticky_config(StickySessionConfig {
+                mode: SchedulingMode::CacheFirst,
+                max_wait_seconds: 60,
+                max_spillover_accounts: 0,
+                affinity_scope: crate::proxy::sticky_config::AffinityScope::Session,
+            })
+            .await;
+
+        let target_model = "gemini-4-argon";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(norm_target.clone(), 50);
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(norm_target.clone(), 100);
+
+        let mut token1 = create_test_token("acc1@test.com", Some("PRO"), 1.0, None, Some(50));
+        token1.account_id = acc1_id.to_string();
+        token1.account_path = acc1_path;
+        token1.model_quotas = quotas1;
+
+        let mut token2 = create_test_token("acc2@test.com", Some("PRO"), 1.0, None, Some(100));
+        token2.account_id = acc2_id.to_string();
+        token2.account_path = acc2_path;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc1_id.to_string(), token1);
+        manager.tokens.insert(acc2_id.to_string(), token2);
+
+        let session_id = "test-session-cache-first-strict";
+        manager.commit_session(session_id, acc1_id);
+
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .expect("CacheFirst must reuse bound account even when pool has higher quota account");
+
+        assert_eq!(
+            selected_id, acc1_id,
+            "CacheFirst 模式下即使绑定账号配额 50% <= 65% 且池中有 100% 账号，也必须坚守绑定账号以保护 KV 缓存"
+        );
+        assert_eq!(email, "acc1@test.com");
+        assert_eq!(
+            manager.session_accounts.get(session_id).unwrap().as_str(),
+            acc1_id
+        );
+
+        // 进一步验证：CacheFirst 模式下即使触发限速小黑屋 (QoS Jailed)，也绝不解绑会话换下一个账号，而是原地等待后继续复用
+        manager.set_qos_auto_jail(true);
+        manager
+            .update_sticky_config(StickySessionConfig {
+                mode: SchedulingMode::CacheFirst,
+                max_wait_seconds: 1,
+                max_spillover_accounts: 0,
+                affinity_scope: crate::proxy::sticky_config::AffinityScope::Session,
+            })
+            .await;
+        // 连续两次慢首字触发 QoS Jailed
+        manager.record_qos_ttft(acc1_id, Some(session_id), "PRO", 50_000.0, false, Some(100));
+        manager.record_qos_ttft(acc1_id, Some(session_id), "PRO", 50_000.0, false, Some(100));
+        assert!(
+            manager.qos_guardian.is_jailed_or_probing(acc1_id),
+            "acc1 应已进入 QoS 小黑屋"
+        );
+        assert_eq!(
+            manager
+                .session_accounts
+                .get(session_id)
+                .map(|v| v.clone())
+                .as_deref(),
+            Some(acc1_id),
+            "CacheFirst 模式下进入 QoS 小黑屋时绝不能解除会话绑定"
+        );
+
+        let (_token, _project_id, email_after_jail, selected_after_jail, _wait) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .expect("CacheFirst must wait in-place and reuse bound account when QoS jailed");
+        assert_eq!(
+            selected_after_jail, acc1_id,
+            "CacheFirst 模式下触发限速小黑屋后必须原地等待并继续复用原绑定账号，不得切换到 acc2"
+        );
+        assert_eq!(email_after_jail, "acc1@test.com");
+        assert!(
+            manager.qos_guardian.is_half_open(acc1_id),
+            "CacheFirst 原地等待结束后账号应转入 HalfOpen 观察缓刑期继续服务本会话"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_balance_mode_quota_disparity_migration_ignores_busy_or_suspicious_phantom_bait() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc_bound_51 = "acc_1_bound_51";
+        let acc_low_49 = "acc_2_low_49";
+        let acc_busy_82 = "acc_3_busy_82";
+
+        for id in [acc_bound_51, acc_low_49, acc_busy_82] {
+            let p = accounts_dir.join(format!("{}.json", id));
+            std::fs::write(&p, r#"{"disabled":false}"#).unwrap();
+        }
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        let target_model = "gemini-4-argon";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let make_tok = |id: &str, email: &str, q: i32| {
+            let mut quotas = HashMap::new();
+            quotas.insert(norm_target.clone(), q);
+            let mut t = create_test_token(email, Some("PRO"), 1.0, None, Some(q));
+            t.account_id = id.to_string();
+            t.account_path = accounts_dir.join(format!("{}.json", id));
+            t.model_quotas = quotas;
+            t
+        };
+
+        manager.tokens.insert(
+            acc_bound_51.to_string(),
+            make_tok(acc_bound_51, "mcl51@test.com", 51),
+        );
+        manager.tokens.insert(
+            acc_low_49.to_string(),
+            make_tok(acc_low_49, "che49@test.com", 49),
+        );
+        manager.tokens.insert(
+            acc_busy_82.to_string(),
+            make_tok(acc_busy_82, "ity82@test.com", 82),
+        );
+
+        let session_id = "test-session-no-ping-pong";
+        manager.commit_session(session_id, acc_bound_51);
+        let excluded = HashSet::new();
+
+        // 1. 当 82% 的账号处于 in_flight > 0（正在服务另一条并发任务）时，
+        // 绝不能将其视为可用高配额候选解绑 51% 账号并降级跳到 49% 账号！
+        {
+            let _busy_guard = manager.acquire_in_flight(acc_busy_82);
+            let (_tok, _pid, email, selected_id, _w) = manager
+                .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+                .await
+                .unwrap();
+            assert_eq!(
+                selected_id, acc_bound_51,
+                "当 82% 账号正忙 (in_flight > 0) 时不得解绑 51% 账号去换 49% 账号引发踢皮球"
+            );
+            assert_eq!(email, "mcl51@test.com");
+        }
+
+        // 2. 当 82% 的账号释放并发锁 (in_flight == 0) 且处于 Healthy 时，
+        // 51% 账号才可以安全迁移，且必须精确迁移至 82% 账号（绝不能误抽中 49% 账号）。
+        let (_tok, _pid, email, selected_id, _w) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .unwrap();
+        assert_eq!(
+            selected_id, acc_busy_82,
+            "当 82% 账号空闲健康时，必须精准迁移至 82% 账号而非 49% 账号"
+        );
+        assert_eq!(email, "ity82@test.com");
     }
 
     #[tokio::test]
