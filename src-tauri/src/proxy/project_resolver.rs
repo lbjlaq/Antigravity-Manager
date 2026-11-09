@@ -114,32 +114,30 @@ mod tests {
             std::time::Duration::from_secs(60),
         );
 
-        // 默认顺序为 Daily -> Sandbox -> Prod
+        // 默认顺序为 Daily -> Prod -> Sandbox（沙箱备用端点永远排在主端点之后）
         assert_eq!(
             tracker.get_ordered_endpoints(&LOAD_PROJECT_ENDPOINTS),
             vec![
                 "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-                "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
                 "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+                "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
             ]
         );
 
-        // 模拟 Daily 故障
+        // 模拟 Daily 故障：健康的 Prod 主端点升至首位，Daily 排次位探活，Sandbox 兜底
         tracker.mark_failure("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist");
         let ordered = tracker.get_ordered_endpoints(&LOAD_PROJECT_ENDPOINTS);
         assert_eq!(
             ordered[0],
-            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist"
-        );
-
-        // 模拟 Sandbox 也故障
-        tracker.mark_failure(
-            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist",
-        );
-        let ordered = tracker.get_ordered_endpoints(&LOAD_PROJECT_ENDPOINTS);
-        assert_eq!(
-            ordered[0],
             "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+        );
+        assert_eq!(
+            ordered[1],
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+        );
+        assert_eq!(
+            ordered[2],
+            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist"
         );
     }
 }

@@ -2990,7 +2990,7 @@ mod tests {
             ),
             (
                 "- 身份：JeikCode AI 编程助手，由 Jeik 提供，运行于底层模型。",
-                format!("- 身份: {OFFICIAL_ANTIGRAVITY_IDENTITY}"),
+                format!("- 身份：{OFFICIAL_ANTIGRAVITY_IDENTITY}"),
             ),
         ];
 

@@ -1012,7 +1012,11 @@ mod tests {
                 .to_rfc3339()
         };
         serde_json::from_value(serde_json::json!({
-            "models": [], "last_updated": observed,
+            "models": [
+                {"name": "claude-sonnet-4-6", "percentage": 100, "reset_time": iso(reset)},
+                {"name": "gemini-pro", "percentage": 100, "reset_time": iso(reset)}
+            ],
+            "last_updated": observed,
             "quota_groups": [
                 {"display_name": "Gemini Models", "buckets": [
                     {"bucket_id": "gemini-weekly", "window": "weekly", "remaining_fraction": fraction,

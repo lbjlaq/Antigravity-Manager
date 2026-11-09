@@ -285,9 +285,7 @@ pub async fn probe_account_ban(
     let official_request_id =
         crate::proxy::mappers::common_utils::build_official_request_id(&probe_session, 1);
     let probe_user_agent = match account_email {
-        Some(email)
-            if !email.ends_with("@gmail.com") && !email.ends_with("@googlemail.com") =>
-        {
+        Some(email) if !email.ends_with("@gmail.com") && !email.ends_with("@googlemail.com") => {
             "jetski"
         }
         _ => "antigravity",
@@ -1659,24 +1657,7 @@ mod tests {
         // 标记 Daily 故障（如日常请求中发生超时或连接失败）
         tracker.mark_failure("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist");
 
-        // 所有相关接口都应自动跳过 Daily，优先尝试备用的 Sandbox
-        assert_eq!(
-            tracker.get_ordered_endpoints(&CLOUD_CODE_LOAD_PROJECT_ENDPOINTS)[0],
-            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist"
-        );
-        assert_eq!(
-            tracker.get_ordered_endpoints(&QUOTA_API_ENDPOINTS)[0],
-            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels"
-        );
-        assert_eq!(
-            tracker.get_ordered_endpoints(&QUOTA_SUMMARY_ENDPOINTS)[0],
-            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary"
-        );
-
-        // 若 Sandbox 也发生故障，所有接口自动降级到 Prod 兜底
-        tracker.mark_failure(
-            "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
-        );
+        // 所有相关接口自动跳过 Daily，优先尝试健康的主端点 Prod（沙箱备用端点永远排在主端点之后）
         assert_eq!(
             tracker.get_ordered_endpoints(&CLOUD_CODE_LOAD_PROJECT_ENDPOINTS)[0],
             "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"

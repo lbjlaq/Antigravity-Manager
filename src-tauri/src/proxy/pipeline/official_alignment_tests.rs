@@ -415,7 +415,7 @@ mod tests {
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.8-flash", &empty_mapping, None),
-            "gemini-3.8-flash-tiered"
+            "gemini-3.8-flash-high"
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.8-flash", &empty_mapping, Some("low")),
@@ -433,7 +433,7 @@ mod tests {
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-4-argon", &empty_mapping, None),
-            "gemini-4-argon-medium"
+            "gemini-4-argon-high"
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-opus-5-5", &empty_mapping, Some("high")),
@@ -620,7 +620,7 @@ mod tests {
         // 严格断言满足 Google v1internal 铁律：maxOutputTokens > thinkingBudget
         assert!(max_tokens > budget);
         assert_eq!(max_tokens, 64000);
-        assert_eq!(budget, 62976);
+        assert_eq!(budget, 1024);
 
         // 验证 Gemini Wrapper 层在模型限额截断时的联动缩减
         let body = json!({
@@ -648,7 +648,7 @@ mod tests {
             .unwrap();
         assert!(wrapped_max > wrapped_budget);
         assert_eq!(wrapped_max, 64000);
-        assert_eq!(wrapped_budget, 62976);
+        assert_eq!(wrapped_budget, 1024);
     }
 
     #[test]
@@ -689,14 +689,14 @@ mod tests {
         let max_tokens = gc["maxOutputTokens"].as_i64().unwrap();
         let budget = gc["thinkingConfig"]["thinkingBudget"].as_i64().unwrap();
 
-        // 验证：用户的思考预算 16384 被 100% 完整保留，没有被粗暴砍掉！
-        assert_eq!(budget, 16384);
-        // 验证：maxOutputTokens 被智能提升，且满足 Google 协议硬约束：maxOutputTokens > thinkingBudget
+        // 验证：网关权威模型目录预算 1024 被 100% 完整保留
+        assert_eq!(budget, 1024);
+        // 验证：maxOutputTokens 满足 Google 协议硬约束：maxOutputTokens > thinkingBudget
         assert!(max_tokens > budget);
         assert!(max_tokens <= 64000);
-        assert_eq!(max_tokens, 16384 + 1024);
+        assert_eq!(max_tokens, 4096);
 
-        // 验证 Gemini Wrapper 层同样保全用户的思考预算
+        // 验证 Gemini Wrapper 层同样保全官方模型结构体预算
         let body = json!({
             "model": "claude-sonnet-4-6",
             "generationConfig": {
@@ -720,9 +720,9 @@ mod tests {
         let wrapped_budget = wrapped_gc["thinkingConfig"]["thinkingBudget"]
             .as_i64()
             .unwrap();
-        assert_eq!(wrapped_budget, 16384);
+        assert_eq!(wrapped_budget, 1024);
         assert!(wrapped_max > wrapped_budget as u64);
-        assert_eq!(wrapped_max, 16384 + 1024);
+        assert_eq!(wrapped_max, 4096);
     }
 
     #[test]
@@ -761,10 +761,10 @@ mod tests {
 
         let max_tokens1 = gc1["maxOutputTokens"].as_i64().unwrap();
         let budget1 = gc1["thinkingConfig"]["thinkingBudget"].as_i64().unwrap();
-        assert_eq!(max_tokens1, 1024);
-        assert_eq!(budget1, 0, "6倍反差且m<=1024时思考预算应压缩为0以秒回");
+        assert_eq!(max_tokens1, 2048);
+        assert_eq!(budget1, 1024);
 
-        // 场景 2: 客户端明确传 m=1500，思考预算 t=9000 (>= 6*m) -> 预算压缩为 1500 - 1024 = 476
+        // 场景 2: 客户端传 m=1500，官方预算为 1024 (m > 1024) -> 满足约束，原样保留
         let mut gc2 = json!({
             "maxOutputTokens": 1500
         });
@@ -780,10 +780,10 @@ mod tests {
         let max_tokens2 = gc2["maxOutputTokens"].as_i64().unwrap();
         let budget2 = gc2["thinkingConfig"]["thinkingBudget"].as_i64().unwrap();
         assert_eq!(max_tokens2, 1500);
-        assert_eq!(budget2, 476, "6倍反差且m>1024时思考预算应压缩为 m - 1024");
+        assert_eq!(budget2, 1024);
         assert!(max_tokens2 > budget2);
 
-        // 场景 3: 验证 Gemini Wrapper 层同样遵守 6 倍极速压缩规则
+        // 场景 3: 验证 Gemini Wrapper 层对等级通道模型按等级注入
         let body = json!({
             "model": "gemini-3.8-flash-high",
             "generationConfig": {
@@ -804,12 +804,9 @@ mod tests {
         );
         let wrapped_gc = &wrapped["request"]["generationConfig"];
         let wrapped_max = wrapped_gc["maxOutputTokens"].as_u64().unwrap();
-        let wrapped_budget = wrapped_gc["thinkingConfig"]["thinkingBudget"]
-            .as_i64()
-            .unwrap();
         assert_eq!(wrapped_max, 1024);
-        assert_eq!(wrapped_budget, 0);
-        assert_eq!(wrapped_gc["thinkingConfig"]["includeThoughts"], false);
+        assert_eq!(wrapped_gc["thinkingConfig"]["thinkingLevel"], "HIGH");
+        assert_eq!(wrapped_gc["thinkingConfig"]["includeThoughts"], true);
     }
 
     #[test]
@@ -822,17 +819,17 @@ mod tests {
 
         let _lock = TEST_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut tb = ThinkingBudgetConfig::default();
-        tb.flash_mode = ThinkingBudgetMode::Custom;
-        tb.flash_low = 0;
+        tb.mode = ThinkingBudgetMode::Custom;
+        tb.custom_value = 0;
         update_thinking_budget_config(tb);
 
         let mut gc = json!({});
         InboundThinkingPipeline::configure_inbound_thinking(
             "gemini-3.8-flash-low",
             &mut gc,
-            ClientThinkingSwitch::Default,
+            ClientThinkingSwitch::Disabled,
             None,
-            None,
+            Some(0),
             None,
         );
 

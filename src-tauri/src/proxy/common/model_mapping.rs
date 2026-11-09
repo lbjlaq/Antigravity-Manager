@@ -1349,14 +1349,14 @@ mod tests {
     fn test_gemini_3x_flash_wildcard_route() {
         let mut custom = HashMap::new();
 
-        // 1. 3.x Flash 裸模型依据思考档位路由 (未指定时优先遵循决策链 tiered，显式传档位时路由至对应档位)
+        // 1. 3.x Flash 裸模型依据思考档位路由 (未指定时优先遵循决策链 high 旗舰算力通道，显式传档位时路由至对应档位)
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.8-flash", &custom, Some("high")),
             "gemini-3.8-flash-high"
         );
         assert_eq!(
             resolve_model_route("gemini-3.8-flash", &custom),
-            "gemini-3.8-flash-tiered"
+            "gemini-3.8-flash-high"
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-3.8-flash", &custom, Some("low")),
@@ -1519,10 +1519,10 @@ mod tests {
             "gemini-3.1-pro-high"
         );
 
-        // 3. 衍生裸模型 claude-opus-5-5 / gemini-4-argon 缺省 effort 遵循决策链 (取 medium)
+        // 3. 衍生裸模型 claude-opus-5-5 / gemini-4-argon 缺省 effort 遵循决策链 (优先 high 旗舰算力通道)
         assert_eq!(
             resolve_model_route_with_effort("claude-opus-5-5", &empty, None),
-            "claude-opus-5-5-medium"
+            "claude-opus-5-5-high"
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-opus-5-5", &empty, Some("high")),
@@ -1530,7 +1530,7 @@ mod tests {
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-4-argon", &empty, None),
-            "gemini-4-argon-medium"
+            "gemini-4-argon-high"
         );
         assert_eq!(
             resolve_model_route_with_effort("gemini-4-argon", &empty, Some("high")),
@@ -1556,10 +1556,11 @@ mod tests {
         );
 
         // 5. Claude Code 2.1.312 自适应暗路由模型档位路由 (基于 default_custom_mapping)
+        // 未显式传 effort 时 100% 保持目标模型，不被二次改写；显式传 effort 时按指定档位路由
         let default_custom = crate::proxy::config::default_custom_mapping();
         assert_eq!(
             resolve_model_route_with_effort("claude-fable-5", &default_custom, None),
-            "claude-opus-5-5-medium"
+            "claude-opus-5-5"
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-fable-5", &default_custom, Some("high")),
@@ -1567,7 +1568,7 @@ mod tests {
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-fable-5-1", &default_custom, None),
-            "claude-opus-5-5-medium"
+            "claude-opus-5-5"
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-haiku-4-5", &default_custom, None),

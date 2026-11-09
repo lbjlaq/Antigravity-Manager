@@ -582,9 +582,16 @@ pub fn resolve_custom_budget(
         return None;
     }
 
+    let is_claude = resolve_alias(model).to_lowercase().contains("claude");
+    let effective_mode = if is_claude {
+        &tb_config.claude_mode
+    } else {
+        &tb_config.mode
+    };
+
     // 官方目录未收录的模型：不再维护任何按系列 / 档位的硬编码预算表。
     // 仅当用户显式选择 Custom 模式时，才使用用户配置的数字；否则保持自适应（None）。
-    if tb_config.mode != ThinkingBudgetMode::Custom {
+    if *effective_mode != ThinkingBudgetMode::Custom {
         return None;
     }
 
@@ -677,13 +684,17 @@ mod tests {
             pick_optimal_default_tier(&tiers(&["extra-low", "low", "high"])),
             Some("high".to_string())
         );
-        // 有 medium / tiered 时仍按优先级
+        // 默认档位翻转为 High 优先（彻底规避上游 Medium/Tiered 容量枯竭与超时风暴）
         assert_eq!(
             pick_optimal_default_tier(&tiers(&["low", "medium", "high"])),
-            Some("medium".to_string())
+            Some("high".to_string())
         );
         assert_eq!(
             pick_optimal_default_tier(&tiers(&["tiered", "high"])),
+            Some("high".to_string())
+        );
+        assert_eq!(
+            pick_optimal_default_tier(&tiers(&["tiered", "medium"])),
             Some("tiered".to_string())
         );
         assert_eq!(
