@@ -256,6 +256,16 @@
         "refresh_all": "Muat Semula Semua",
         "refresh_now": "Muat Semula Sekarang",
         "refresh_menu_tooltip": "Pilihan muat semula dan tetapan muat semula automatik",
+        "credentials_copied": "Kelayakan akaun disalin ke papan keratan",
+        "copy_credentials_tooltip": "Salin kelayakan akaun (JSON)",
+        "delete_account_tooltip": "Padam akaun ini",
+        "no_credentials_found": "Tiada kelayakan akaun ditemui",
+        "copy_selected_credentials": "Salin Semua Kelayakan",
+        "copy_selected_credentials_tooltip": "Salin kelayakan semua akaun yang dipilih (JSON)",
+        "selected_credentials_copied": "Kelayakan {{count}} akaun telah disalin",
+        "switch_menu_tooltip": "Pilih klien sasaran (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "Pilih Klien",
+        "current_active_client": "Akaun kini aktif dalam klien ini",
         "startup_refresh_short": "Mula",
         "startup_refresh_off": "Tutup",
         "startup_refresh_tooltip": "Muat semula semua kuota sekali secara tak segerak selepas akaun selesai dimuatkan (tetingkap gelongsor: maksimum 5 akaun serentak, kelewatan penyerahan slot boleh dikonfigurasi).",
@@ -367,7 +377,9 @@
         },
         "toast": {
             "proxy_enabled": "Proksi diaktifkan untuk {{count}} akaun",
-            "proxy_disabled": "Proksi dinyahaktifkan untuk {{count}} akaun"
+            "proxy_disabled": "Proksi dinyahaktifkan untuk {{count}} akaun",
+            "proxy_enabled_single": "Proksi diaktifkan",
+            "proxy_disabled_single": "Proksi dinyahaktifkan"
         },
         "add": {
             "title": "Tambah Akaun",

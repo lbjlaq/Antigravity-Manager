@@ -33,13 +33,15 @@ import {
     Sparkles,
     Tag,
     Clock,
-    Repeat2,
     ArrowUpDown,
     ArrowUp,
     ArrowDown,
     Zap,
     Power,
     MoreHorizontal,
+    BookCopy,
+    Check,
+    Trash2,
 } from 'lucide-react';
 import { type Account, type ActiveClientsStatus, getAccountTier, getEffectiveModelPriority, hasAccountArgonCapability, hasCustomModelPriorities } from '../../types/account';
 import { useTranslation } from 'react-i18next';
@@ -52,7 +54,9 @@ import { GroupQuotaCard } from './GroupQuotaCard';
 import { getGroupQuotaSummaries } from '../../utils/quotaDisplay';
 import { getValidationBlockedStatusLabel } from './accountValidationStatus';
 import { showToast } from '../common/ToastContainer';
-import { releaseAccountQoSJail } from '../../services/accountService';
+import { exportAccounts, releaseAccountQoSJail } from '../../services/accountService';
+import { copyToClipboard } from '../../utils/clipboard';
+import AccountSwitchMenu from './AccountSwitchMenu';
 import { QoSStatusBadge } from './QoSStatusBadge';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
 import { isValidationBlockActive } from '../../utils/accountStatus';
@@ -323,6 +327,27 @@ function AccountRowContent({
     const isBanned = Boolean(account.banned);
 
     const [isActionsModalOpen, setIsActionsModalOpen] = useState(false);
+    const [isCopied, setIsCopied] = useState(false);
+
+    const handleCopyCredentials = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            const response = await exportAccounts([account.id]);
+            if (response.accounts && response.accounts.length > 0) {
+                const content = JSON.stringify(response.accounts, null, 2);
+                const ok = await copyToClipboard(content);
+                if (ok) {
+                    setIsCopied(true);
+                    showToast(t('accounts.credentials_copied', '账号凭据已复制到剪贴板'), 'success');
+                    setTimeout(() => setIsCopied(false), 1500);
+                }
+            } else {
+                showToast(t('accounts.no_credentials_found', '未获取到账号凭据'), 'warning');
+            }
+        } catch (err) {
+            showToast(`${t('common.error')}: ${err}`, 'error');
+        }
+    };
 
     const isClassic = activeClients?.classic_account_id === account.id;
     const isIde = activeClients?.ide_account_id === account.id;
@@ -365,12 +390,37 @@ function AccountRowContent({
             {/* 邮箱列 */}
             <td className="px-2 py-1.5 align-middle max-w-[320px]">
                 <div className="flex flex-col gap-1 min-w-0">
-                    <span className={cn(
-                        "font-medium text-sm break-all transition-colors",
-                        isRowActive ? "text-blue-700 dark:text-blue-400" : "text-gray-900 dark:text-base-content"
-                    )} title={account.email}>
-                        {account.email}
-                    </span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                        <span className={cn(
+                            "font-medium text-sm break-all transition-colors",
+                            isRowActive ? "text-blue-700 dark:text-blue-400" : "text-gray-900 dark:text-base-content"
+                        )} title={account.email}>
+                            {account.email}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={handleCopyCredentials}
+                            className="p-1 rounded hover:bg-gray-100 dark:hover:bg-base-200 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors shrink-0"
+                            title={t('accounts.copy_credentials_tooltip', '复制账号凭据 (JSON)')}
+                        >
+                            {isCopied ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                            ) : (
+                                <BookCopy className="w-3.5 h-3.5" />
+                            )}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onDelete();
+                            }}
+                            className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/30 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors shrink-0"
+                            title={t('accounts.delete_account_tooltip', '删除此账号')}
+                        >
+                            <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                         {isClassic && (
@@ -668,21 +718,15 @@ function AccountRowContent({
                 !isCurrent && "group-hover:bg-gray-50 dark:group-hover:bg-base-200"
             )}>
                 <div className="grid grid-cols-2 gap-1 w-full max-w-[128px] mx-auto">
-                    {/* 1. 切换 */}
-                    <button
-                        className={cn(
-                            "flex items-center justify-center gap-0.5 px-1 py-1 rounded-lg text-xs font-semibold transition-all shadow-xs",
-                            (isSwitching || isDisabled || isBanned)
-                                ? "bg-gray-100 dark:bg-base-200 text-gray-400 dark:text-gray-500 cursor-not-allowed border border-gray-200 dark:border-base-300"
-                                : "bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-200/60 dark:border-blue-800/40 active:scale-95"
-                        )}
-                        onClick={(e) => { e.stopPropagation(); onSwitch('ide'); }}
-                        disabled={isSwitching || isDisabled || isBanned}
-                        title={isDisabled ? t('accounts.disabled_tooltip') : (isSwitching ? t('common.loading') : t('accounts.switch_to_ide', '切换到 Antigravity IDE'))}
-                    >
-                        <Repeat2 className={cn("w-3 h-3 flex-shrink-0", isSwitching && "animate-spin")} />
-                        <span className="truncate">{t('accounts.action_switch', '切换')}</span>
-                    </button>
+                    {/* 1. 切换（点击向上展开 4 个客户端微标选项） */}
+                    <AccountSwitchMenu
+                        accountId={account.id}
+                        disabled={Boolean(isDisabled || isBanned)}
+                        isSwitching={isSwitching}
+                        activeClients={activeClients}
+                        onSwitch={onSwitch}
+                        size="sm"
+                    />
 
                     {/* 2. 刷新 */}
                     <button
@@ -856,6 +900,32 @@ function AccountTable({
     const accountIds = useMemo(() => sortedAccounts.map(a => a.id), [sortedAccounts]);
     const activeAccount = useMemo(() => sortedAccounts.find(a => a.id === activeId), [sortedAccounts, activeId]);
 
+    const [isCopyingSelected, setIsCopyingSelected] = useState(false);
+    const handleCopySelectedCredentials = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (selectedIds.size === 0 || isCopyingSelected) return;
+        try {
+            setIsCopyingSelected(true);
+            const response = await exportAccounts(Array.from(selectedIds));
+            if (response.accounts && response.accounts.length > 0) {
+                const content = JSON.stringify(response.accounts, null, 2);
+                const ok = await copyToClipboard(content);
+                if (ok) {
+                    showToast(t('accounts.selected_credentials_copied', {
+                        count: response.accounts.length,
+                        defaultValue: `已复制 ${response.accounts.length} 个账号凭据到剪贴板`,
+                    }), 'success');
+                }
+            } else {
+                showToast(t('accounts.no_credentials_found', '未获取到账号凭据'), 'warning');
+            }
+        } catch (err) {
+            showToast(`${t('common.error')}: ${err}`, 'error');
+        } finally {
+            setIsCopyingSelected(false);
+        }
+    };
+
     const handleDragStart = (event: DragStartEvent) => {
         if (isSortingActive) return;
         setActiveId(event.active.id as string);
@@ -908,7 +978,23 @@ function AccountTable({
                                     onChange={onToggleAll}
                                 />
                             </th>
-                            <th className="px-2 py-1 text-left rtl:text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider w-[300px] whitespace-nowrap">{t('accounts.table.email')}</th>
+                            <th className="px-2 py-1 text-left rtl:text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider w-[300px] whitespace-nowrap">
+                                <div className="flex items-center gap-2">
+                                    <span>{t('accounts.table.email')}</span>
+                                    {selectedIds.size > 0 && (
+                                        <button
+                                            type="button"
+                                            onClick={handleCopySelectedCredentials}
+                                            disabled={isCopyingSelected}
+                                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-medium normal-case bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 border border-blue-200 dark:border-blue-800/60 shadow-xs transition-colors"
+                                            title={t('accounts.copy_selected_credentials_tooltip', '复制所有选中账号凭据 (JSON)')}
+                                        >
+                                            <BookCopy className="w-3 h-3" />
+                                            <span>{t('accounts.copy_selected_credentials', '复制所有凭据')} ({selectedIds.size})</span>
+                                        </button>
+                                    )}
+                                </div>
+                            </th>
                             <th className="px-2 py-1 text-left rtl:text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider min-w-[340px] whitespace-nowrap">
                                 <button
                                     type="button"

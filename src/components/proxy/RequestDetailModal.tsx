@@ -465,7 +465,7 @@ export const TimingDiagnosticsCard: React.FC<TimingDiagnosticsCardProps> = ({ ti
             </div>
 
             {isExpanded && (
-                <div className="p-3 space-y-2.5 font-mono text-xs">
+                <div className="p-3 space-y-2.5 font-mono text-xs max-h-[380px] md:max-h-[460px] overflow-y-auto">
                     {totalSec > 0 && (
                         <div className="space-y-1">
                             <div className="h-2 w-full bg-gray-200/80 dark:bg-base-300 rounded-full flex overflow-hidden shadow-inner">
@@ -579,7 +579,7 @@ export const TimingDiagnosticsCard: React.FC<TimingDiagnosticsCardProps> = ({ ti
                                                                     <span className="font-semibold text-rose-900 dark:text-rose-200">
                                                                         {t('monitor.timing.raw_error_payload', '报文')}: 
                                                                     </span>
-                                                                    <span className="font-mono bg-rose-500/10 px-1 py-0.5 rounded ml-1 leading-relaxed">
+                                                                    <span className="font-mono bg-rose-500/10 px-1 py-0.5 rounded ml-1 leading-relaxed max-h-36 overflow-y-auto block mt-0.5">
                                                                         {att.error}
                                                                     </span>
                                                                 </div>

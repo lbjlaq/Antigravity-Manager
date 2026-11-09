@@ -258,6 +258,16 @@
         "refresh_all": "Actualizar Todas",
         "refresh_now": "Actualizar ahora",
         "refresh_menu_tooltip": "Opciones de actualización y configuración de actualización automática",
+        "credentials_copied": "Credenciales de la cuenta copiadas al portapapeles",
+        "copy_credentials_tooltip": "Copiar credenciales de la cuenta (JSON)",
+        "delete_account_tooltip": "Eliminar esta cuenta",
+        "no_credentials_found": "No se encontraron credenciales de la cuenta",
+        "copy_selected_credentials": "Copiar todas las credenciales",
+        "copy_selected_credentials_tooltip": "Copiar credenciales de todas las cuentas seleccionadas (JSON)",
+        "selected_credentials_copied": "Se copiaron las credenciales de {{count}} cuentas al portapapeles",
+        "switch_menu_tooltip": "Seleccionar cliente de destino (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "Seleccionar cliente",
+        "current_active_client": "Cuenta activa en este cliente",
         "startup_refresh_short": "Al iniciar",
         "startup_refresh_off": "Off",
         "startup_refresh_tooltip": "Actualiza asíncronamente todas las cuotas una vez que las cuentas terminan de cargarse (ventana deslizante: máx. 5 cuentas concurrentes, cesión de ranura con retardo configurable).",
@@ -390,7 +400,9 @@
         },
         "toast": {
             "proxy_enabled": "Proxy habilitado para {{count}} cuentas",
-            "proxy_disabled": "Proxy deshabilitado para {{count}} cuentas"
+            "proxy_disabled": "Proxy deshabilitado para {{count}} cuentas",
+            "proxy_enabled_single": "Proxy habilitado",
+            "proxy_disabled_single": "Proxy deshabilitado"
         },
         "add": {
             "title": "Agregar Cuenta",

@@ -288,6 +288,16 @@
         "refresh_all": "刷新所有",
         "refresh_now": "立即刷新",
         "refresh_menu_tooltip": "刷新选项与自动刷新设置",
+        "credentials_copied": "账号凭据已复制到剪贴板",
+        "copy_credentials_tooltip": "复制账号凭据 (JSON)",
+        "delete_account_tooltip": "删除此账号",
+        "no_credentials_found": "未获取到账号凭据",
+        "copy_selected_credentials": "复制所有凭据",
+        "copy_selected_credentials_tooltip": "复制所有选中账号凭据 (JSON)",
+        "selected_credentials_copied": "已复制 {{count}} 个账号凭据到剪贴板",
+        "switch_menu_tooltip": "选择切换目标客户端 (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "选择切换客户端",
+        "current_active_client": "当前正在使用该账号",
         "startup_refresh_short": "启动刷新",
         "startup_refresh_off": "关",
         "startup_refresh_tooltip": "账号加载完成后异步刷新一次全部配额（滑动窗口：最多 5 个账号并发，按配置延迟让位）",
@@ -442,7 +452,9 @@
         },
         "toast": {
             "proxy_enabled": "成功启用 {{count}} 个账号的反代功能",
-            "proxy_disabled": "成功禁用 {{count}} 个账号的反代功能"
+            "proxy_disabled": "成功禁用 {{count}} 个账号的反代功能",
+            "proxy_enabled_single": "已启用反代",
+            "proxy_disabled_single": "已停用反代"
         },
         "type": {
             "personal": "个人账号 (Personal)",
@@ -556,12 +568,20 @@
             "clients": {
                 "ide": "Antigravity IDE (VS Code 版)",
                 "ide_desc": "一键切换此账号到 IDE 客户端登录",
+                "ide_short": "IDE",
+                "ide_tooltip": "切换到 Antigravity IDE",
                 "acp": "Antigravity IDE 插件 (ACP - JetBrains)",
                 "acp_desc": "一键切换此账号到 JetBrains / Android Studio 插件",
+                "acp_short": "JEB",
+                "acp_tooltip": "切换到 JEB / JetBrains (ACP)",
                 "agy": "Antigravity CLI (agy)",
                 "agy_desc": "一键切换此账号到命令行工具登录",
-                "classic": "Antigravity 经典版",
-                "classic_desc": "一键切换此账号到经典版客户端"
+                "agy_short": "AGY CLI",
+                "agy_tooltip": "切换到 AGY 命令行 (agy)",
+                "classic": "Antigravity",
+                "classic_desc": "一键切换此账号到 Antigravity 客户端",
+                "classic_short": "Antigravity",
+                "classic_tooltip": "切换到 Antigravity 客户端"
             },
             "maintenance_section": "账号维护与工具",
             "tools": {

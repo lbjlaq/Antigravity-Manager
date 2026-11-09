@@ -258,6 +258,16 @@
         "refresh_all": "Обновить все",
         "refresh_now": "Обновить сейчас",
         "refresh_menu_tooltip": "Параметры обновления и настройки автообновления",
+        "credentials_copied": "Учетные данные аккаунта скопированы в буфер обмена",
+        "copy_credentials_tooltip": "Копировать учетные данные аккаунта (JSON)",
+        "delete_account_tooltip": "Удалить этот аккаунт",
+        "no_credentials_found": "Учетные данные аккаунта не найдены",
+        "copy_selected_credentials": "Копировать все данные",
+        "copy_selected_credentials_tooltip": "Копировать учетные данные всех выбранных аккаунтов (JSON)",
+        "selected_credentials_copied": "Скопированы данные {{count}} аккаунтов",
+        "switch_menu_tooltip": "Выберите целевой клиент (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "Выбрать клиент",
+        "current_active_client": "Аккаунт активен в этом клиенте",
         "startup_refresh_short": "При запуске",
         "startup_refresh_off": "Выкл.",
         "startup_refresh_tooltip": "Один раз асинхронно обновлять все квоты после загрузки аккаунтов (скользящее окно: не более 5 аккаунтов одновременно, передача слота с настраиваемой задержкой).",
@@ -390,7 +400,9 @@
         },
         "toast": {
             "proxy_enabled": "Включен прокси для {{count}} аккаунтов",
-            "proxy_disabled": "Отключен прокси для {{count}} аккаунтов"
+            "proxy_disabled": "Отключен прокси для {{count}} аккаунтов",
+            "proxy_enabled_single": "Прокси включен",
+            "proxy_disabled_single": "Прокси отключен"
         },
         "add": {
             "title": "Добавить аккаунт",

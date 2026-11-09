@@ -260,6 +260,16 @@
         "refresh_all": "重新整理所有",
         "refresh_now": "立即重新整理",
         "refresh_menu_tooltip": "重新整理選項與自動重新整理設定",
+        "credentials_copied": "帳號憑據已複製到剪貼簿",
+        "copy_credentials_tooltip": "複製帳號憑據 (JSON)",
+        "delete_account_tooltip": "刪除此帳號",
+        "no_credentials_found": "未取得帳號憑據",
+        "copy_selected_credentials": "複製所有憑據",
+        "copy_selected_credentials_tooltip": "複製所有選取帳號憑據 (JSON)",
+        "selected_credentials_copied": "已複製 {{count}} 個帳號憑據到剪貼簿",
+        "switch_menu_tooltip": "選擇切換目標客戶端 (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "選擇切換客戶端",
+        "current_active_client": "目前正在使用該帳號",
         "startup_refresh_short": "啟動重整",
         "startup_refresh_off": "關",
         "startup_refresh_tooltip": "帳號載入完成後非同步重新整理一次全部配額（滑動視窗：最多 5 個帳號並發，按設定延遲讓位）",
@@ -378,7 +388,9 @@
         },
         "toast": {
             "proxy_enabled": "成功啟用 {{count}} 個帳號的反向代理功能",
-            "proxy_disabled": "成功停用 {{count}} 個帳號的反向代理功能"
+            "proxy_disabled": "成功停用 {{count}} 個帳號的反向代理功能",
+            "proxy_enabled_single": "已啟用反代",
+            "proxy_disabled_single": "已停用反代"
         },
         "add": {
             "title": "新增新帳號",

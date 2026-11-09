@@ -120,10 +120,7 @@ function Accounts() {
   const [detailsAccount, setDetailsAccount] = useState<Account | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [isBatchDelete, setIsBatchDelete] = useState(false);
-  const [toggleProxyConfirm, setToggleProxyConfirm] = useState<{
-    accountId: string;
-    enable: boolean;
-  } | null>(null);
+
   const [isWarmupConfirmOpen, setIsWarmupConfirmOpen] = useState(false);
   const [isWarmuping, setIsWarmuping] = useState(false);
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
@@ -457,27 +454,23 @@ function Accounts() {
     }
   };
 
-  const handleToggleProxy = (accountId: string, currentlyDisabled: boolean) => {
-    setToggleProxyConfirm({ accountId, enable: currentlyDisabled });
-  };
-
-  const executeToggleProxy = async () => {
-    if (!toggleProxyConfirm) return;
-
+  const handleToggleProxy = async (accountId: string, currentlyDisabled: boolean) => {
     try {
+      const nextEnable = currentlyDisabled;
       await toggleProxyStatus(
-        toggleProxyConfirm.accountId,
-        toggleProxyConfirm.enable,
-        toggleProxyConfirm.enable
-          ? undefined
-          : t("accounts.proxy_disabled_reason_manual"),
+        accountId,
+        nextEnable,
+        nextEnable ? undefined : t("accounts.proxy_disabled_reason_manual"),
       );
-      showToast(t("common.success"), "success");
+      showToast(
+        nextEnable
+          ? t("accounts.toast.proxy_enabled_single", { defaultValue: "已启用反代" })
+          : t("accounts.toast.proxy_disabled_single", { defaultValue: "已停用反代" }),
+        "success",
+      );
     } catch (error) {
       console.error("[Accounts] Toggle proxy status failed:", error);
       showToast(`${t("common.error")}: ${error}`, "error");
-    } finally {
-      setToggleProxyConfirm(null);
     }
   };
 
@@ -1287,23 +1280,7 @@ function Accounts() {
         onCancel={() => setIsRefreshConfirmOpen(false)}
       />
 
-      {toggleProxyConfirm && (
-        <ModalDialog
-          isOpen={!!toggleProxyConfirm}
-          onCancel={() => setToggleProxyConfirm(null)}
-          onConfirm={executeToggleProxy}
-          title={
-            toggleProxyConfirm.enable
-              ? t("accounts.dialog.enable_proxy_title")
-              : t("accounts.dialog.disable_proxy_title")
-          }
-          message={
-            toggleProxyConfirm.enable
-              ? t("accounts.dialog.enable_proxy_msg")
-              : t("accounts.dialog.disable_proxy_msg")
-          }
-        />
-      )}
+
 
       <ModalDialog
         isOpen={isWarmupConfirmOpen}

@@ -257,6 +257,16 @@
         "refresh_all": "Tümünü Yenile",
         "refresh_now": "Şimdi Yenile",
         "refresh_menu_tooltip": "Yenileme seçenekleri ve otomatik yenileme ayarları",
+        "credentials_copied": "Hesap kimlik bilgileri panoya kopyalandı",
+        "copy_credentials_tooltip": "Hesap kimlik bilgilerini kopyala (JSON)",
+        "delete_account_tooltip": "Bu hesabı sil",
+        "no_credentials_found": "Hesap kimlik bilgisi bulunamadı",
+        "copy_selected_credentials": "Tüm Kimlik Bilgilerini Kopyala",
+        "copy_selected_credentials_tooltip": "Seçilen tüm hesapların kimlik bilgilerini kopyala (JSON)",
+        "selected_credentials_copied": "{{count}} hesabın kimlik bilgileri kopyalandı",
+        "switch_menu_tooltip": "Hedef istemciyi seçin (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "İstemci Seçin",
+        "current_active_client": "Bu istemcide şu anda aktif",
         "startup_refresh_short": "Başlangıçta",
         "startup_refresh_off": "Kapalı",
         "startup_refresh_tooltip": "Hesaplar yüklendikten sonra tüm kotaları bir kez arka planda yenile (kayan pencere: en fazla 5 eşzamanlı hesap, yapılandırılabilir slot devir gecikmesi).",
@@ -359,7 +369,9 @@
         },
         "toast": {
             "proxy_enabled": "{{count}} hesap için proxy etkinleştirildi",
-            "proxy_disabled": "{{count}} hesap için proxy devre dışı bırakıldı"
+            "proxy_disabled": "{{count}} hesap için proxy devre dışı bırakıldı",
+            "proxy_enabled_single": "Proxy etkinleştirildi",
+            "proxy_disabled_single": "Proxy devre dışı bırakıldı"
         },
         "add": {
             "title": "Hesap Ekle",

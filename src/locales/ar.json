@@ -256,6 +256,16 @@
         "refresh_all": "تحديث الكل",
         "refresh_now": "تحديث الآن",
         "refresh_menu_tooltip": "خيارات التحديث وإعدادات التحديث التلقائي",
+        "credentials_copied": "تم نسخ بيانات اعتماد الحساب إلى الحافظة",
+        "copy_credentials_tooltip": "نسخ بيانات الاعتماد (JSON)",
+        "delete_account_tooltip": "حذف هذا الحساب",
+        "no_credentials_found": "لم يتم العثور على بيانات الاعتماد",
+        "copy_selected_credentials": "نسخ جميع البيانات",
+        "copy_selected_credentials_tooltip": "نسخ بيانات اعتماد جميع الحسابات المحددة (JSON)",
+        "selected_credentials_copied": "تم نسخ بيانات {{count}} حساب إلى الحافظة",
+        "switch_menu_tooltip": "اختر العميل المستهدف (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "اختيار العميل",
+        "current_active_client": "الحساب نشط حاليًا في هذا العميل",
         "startup_refresh_short": "عند البدء",
         "startup_refresh_off": "إيقاف",
         "startup_refresh_tooltip": "تحديث جميع الحصص مرة واحدة في الخلفية بعد اكتمال تحميل الحسابات (نافذة منزلقة: 5 حسابات متزامنة كحد أقصى، مع تأخير قابل للتكوين لتمرير الفتحة).",
@@ -367,7 +377,9 @@
         },
         "toast": {
             "proxy_enabled": "تم تفعيل الوكيل لـ {{count}} حساب",
-            "proxy_disabled": "تم تعطيل الوكيل لـ {{count}} حساب"
+            "proxy_disabled": "تم تعطيل الوكيل لـ {{count}} حساب",
+            "proxy_enabled_single": "تم تفعيل الوكيل",
+            "proxy_disabled_single": "تم تعطيل الوكيل"
         },
         "add": {
             "title": "إضافة حساب",

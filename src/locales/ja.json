@@ -258,6 +258,16 @@
         "refresh_all": "すべて更新",
         "refresh_now": "今すぐ更新",
         "refresh_menu_tooltip": "更新オプションと自動更新設定",
+        "credentials_copied": "アカウントの認証情報をクリップボードにコピーしました",
+        "copy_credentials_tooltip": "認証情報をコピー (JSON)",
+        "delete_account_tooltip": "このアカウントを削除",
+        "no_credentials_found": "アカウントの認証情報が見つかりません",
+        "copy_selected_credentials": "すべての認証情報をコピー",
+        "copy_selected_credentials_tooltip": "選択したすべてのアカウントの認証情報をコピー (JSON)",
+        "selected_credentials_copied": "{{count}} 件のアカウント認証情報をコピーしました",
+        "switch_menu_tooltip": "切り替え先クライアントを選択 (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "切り替え先クライアントを選択",
+        "current_active_client": "このクライアントで現在アクティブです",
         "startup_refresh_short": "起動時更新",
         "startup_refresh_off": "オフ",
         "startup_refresh_tooltip": "アカウント読み込み完了後に全クォータを一度非同期更新します（スライディングウィンドウ：最大 5 アカウント同時、設定した遅延で枠を譲渡）。",
@@ -390,7 +400,9 @@
         },
         "toast": {
             "proxy_enabled": "{{count}} 個のアカウントのプロキシを有効にしました",
-            "proxy_disabled": "{{count}} 個のアカウントのプロキシを無効にしました"
+            "proxy_disabled": "{{count}} 個のアカウントのプロキシを無効にしました",
+            "proxy_enabled_single": "プロキシを有効にしました",
+            "proxy_disabled_single": "プロキシを無効にしました"
         },
         "add": {
             "title": "アカウント追加",

@@ -257,6 +257,16 @@
         "refresh_all": "Làm mới Tất cả",
         "refresh_now": "Làm mới ngay",
         "refresh_menu_tooltip": "Tùy chọn làm mới và cài đặt tự động làm mới",
+        "credentials_copied": "Đã sao chép thông tin xác thực vào khay nhớ tạm",
+        "copy_credentials_tooltip": "Sao chép thông tin xác thực (JSON)",
+        "delete_account_tooltip": "Xóa tài khoản này",
+        "no_credentials_found": "Không tìm thấy thông tin xác thực tài khoản",
+        "copy_selected_credentials": "Sao chép tất cả thông tin",
+        "copy_selected_credentials_tooltip": "Sao chép thông tin xác thực của tất cả tài khoản đã chọn (JSON)",
+        "selected_credentials_copied": "Đã sao chép thông tin của {{count}} tài khoản",
+        "switch_menu_tooltip": "Chọn ứng dụng mục tiêu (Antigravity / IDE / JEB / AGY CLI)",
+        "switch_target_label": "Chọn ứng dụng",
+        "current_active_client": "Hiện đang hoạt động trong ứng dụng này",
         "startup_refresh_short": "Làm mới khi khởi động",
         "startup_refresh_off": "Tắt",
         "startup_refresh_tooltip": "Tự động làm mới tất cả hạn mức một lần sau khi tải xong tài khoản (cửa sổ trượt: tối đa 5 tài khoản đồng thời, độ trễ nhường vị trí có thể cấu hình).",
@@ -364,7 +374,9 @@
         },
         "toast": {
             "proxy_enabled": "Đã bật proxy cho {{count}} tài khoản",
-            "proxy_disabled": "Đã tắt proxy cho {{count}} tài khoản"
+            "proxy_disabled": "Đã tắt proxy cho {{count}} tài khoản",
+            "proxy_enabled_single": "Đã bật proxy",
+            "proxy_disabled_single": "Đã tắt proxy"
         },
         "add": {
             "title": "Thêm Tài khoản",

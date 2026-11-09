@@ -850,7 +850,7 @@ export const VirtualizedPayloadViewer: React.FC<VirtualizedPayloadViewerProps> =
             </div>
 
             {/* Optional Header Section (Timing or Headers) */}
-            <div className="shrink-0 bg-gray-50 dark:bg-base-200 border-b border-gray-200 dark:border-base-300">
+            <div className="shrink-0 max-h-[55vh] overflow-y-auto bg-gray-50 dark:bg-base-200 border-b border-gray-200 dark:border-base-300">
                 {timingNode}
 
                 {!hideHeadersSection && prettyHeaders && (
