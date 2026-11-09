@@ -4595,10 +4595,10 @@ impl TokenManager {
                                 self.session_accounts.remove(sid);
                             }
                         } else if reset_sec > 0 {
-                            if scheduling.mode == SchedulingMode::CacheFirst
+                            if scheduling.max_wait_seconds > 0
                                 && reset_sec <= scheduling.max_wait_seconds
                             {
-                                // CacheFirst（缓存优先）：当限流冷却时长 <= max_wait_seconds 时原地精准等待，绝不解绑换号丢失缓存
+                                // 当限流冷却时长 <= max_wait_seconds 时原地精准等待（支持 Balance 与 CacheFirst），绝不解绑换号丢失缓存
                                 let wait_secs =
                                     match crate::proxy::pipeline::budget::remaining_secs() {
                                         Some(rem_budget) => {
@@ -4608,7 +4608,7 @@ impl TokenManager {
                                     };
                                 if wait_secs > 0 {
                                     tracing::info!(
-                                        "Sticky Session (CacheFirst): Bound account {} is rate-limited for {} ({}s <= max_wait {}s), waiting {}s in-place to preserve session binding and KV cache...",
+                                        "Sticky Session: Bound account {} is rate-limited for {} ({}s <= max_wait {}s), waiting {}s in-place to preserve session binding and KV cache...",
                                         bound_token.email,
                                         normalized_target,
                                         reset_sec,
@@ -4681,8 +4681,6 @@ impl TokenManager {
                                     .unwrap_or(100);
                                 let last_zero_quota = last_quota <= 0;
 
-                                let found_eff_priority =
-                                    found.effective_priority(target_model, &normalized_target);
                                 let has_healthy_alt = tokens_snapshot.iter().any(|t| {
                                     &t.account_id != account_id
                                         && !attempted.contains(&t.account_id)
@@ -4705,24 +4703,6 @@ impl TokenManager {
                                             > 0
                                 });
 
-                                let has_higher_priority_alt = tokens_snapshot.iter().any(|t| {
-                                    &t.account_id != account_id
-                                        && !attempted.contains(&t.account_id)
-                                        && !self.qos_guardian.is_jailed_or_probing(&t.account_id)
-                                        && !self.rate_limit_tracker.is_rate_limited(
-                                            &t.account_id,
-                                            Some(&normalized_target),
-                                        )
-                                        && !(quota_protection_enabled
-                                            && t.protected_models.contains(&normalized_target))
-                                        && Self::has_candidate_quota_admission(
-                                            t,
-                                            &normalized_target,
-                                        )
-                                        && t.effective_priority(target_model, &normalized_target)
-                                            < found_eff_priority
-                                });
-
                                 let is_qos_jailed =
                                     self.qos_guardian.is_jailed_or_probing(&found.account_id);
                                 if is_qos_jailed {
@@ -4736,11 +4716,6 @@ impl TokenManager {
                                         found.email, normalized_target
                                     );
                                     attempted.insert(account_id.clone());
-                                } else if has_higher_priority_alt {
-                                    tracing::debug!(
-                                        "60s Window: Last account {} has lower effective priority ({}) for model {}, yielding to higher-priority account",
-                                        found.email, found_eff_priority, normalized_target
-                                    );
                                 } else if !self
                                     .is_rate_limited(&found.account_id, Some(&normalized_target))
                                     .await
@@ -11086,6 +11061,184 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_balance_mode_waits_in_place_for_transient_rate_limit() {
+        use crate::proxy::sticky_config::{SchedulingMode, StickySessionConfig};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc1_id = "acc_balance_bound_rl";
+        let acc2_id = "acc_balance_alt_free";
+
+        let acc1_path = accounts_dir.join(format!("{}.json", acc1_id));
+        let acc2_path = accounts_dir.join(format!("{}.json", acc2_id));
+
+        std::fs::write(&acc1_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&acc2_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+        manager
+            .update_sticky_config(StickySessionConfig {
+                mode: SchedulingMode::Balance,
+                max_wait_seconds: 2,
+                max_spillover_accounts: 0,
+                affinity_scope: crate::proxy::sticky_config::AffinityScope::Session,
+            })
+            .await;
+
+        let target_model = "gemini-4-argon";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(norm_target.clone(), 70);
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(norm_target.clone(), 100);
+
+        let mut token1 = create_test_token("acc1@test.com", Some("PRO"), 1.0, None, Some(70));
+        token1.account_id = acc1_id.to_string();
+        token1.account_path = acc1_path;
+        token1.model_quotas = quotas1;
+
+        let mut token2 = create_test_token("acc2@test.com", Some("PRO"), 1.0, None, Some(100));
+        token2.account_id = acc2_id.to_string();
+        token2.account_path = acc2_path;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc1_id.to_string(), token1);
+        manager.tokens.insert(acc2_id.to_string(), token2);
+
+        let session_id = "test-session-balance-in-place-wait";
+        manager.commit_session(session_id, acc1_id);
+
+        // 1. 设置短期限流 (1秒)，reset_sec (1s) <= max_wait_seconds (2s)
+        // 无论 Balance 还是 CacheFirst，只要 reset_sec <= max_wait_seconds，必须原地精准等待并复用绑定账号，保住 KV 缓存
+        manager.rate_limit_tracker.set_lockout_until(
+            acc1_id,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(1),
+            crate::proxy::rate_limit::RateLimitReason::RateLimitExceeded,
+            Some(norm_target.clone()),
+        );
+
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .expect("Balance mode must wait in-place and reuse bound account when reset_sec <= max_wait_seconds");
+
+        assert_eq!(
+            selected_id, acc1_id,
+            "Balance 模式下当限流冷却时长 <= max_wait_seconds 时必须原地等待并复用绑定账号，绝不得解绑切号"
+        );
+        assert_eq!(email, "acc1@test.com");
+        assert_eq!(
+            manager.session_accounts.get(session_id).unwrap().as_str(),
+            acc1_id,
+            "会话绑定必须被保留"
+        );
+
+        // 2. 当限流冷却时长 > max_wait_seconds 时，必须解绑并切换到池中健康账号
+        manager.rate_limit_tracker.set_lockout_until(
+            acc1_id,
+            std::time::SystemTime::now() + std::time::Duration::from_secs(10),
+            crate::proxy::rate_limit::RateLimitReason::RateLimitExceeded,
+            Some(norm_target.clone()),
+        );
+
+        let (_token_switched, _, email_switched, selected_switched, _) = manager
+            .get_token_filtered("chat", false, Some(session_id), target_model, &excluded)
+            .await
+            .expect("Balance mode should switch when reset_sec > max_wait_seconds");
+
+        assert_eq!(
+            selected_switched, acc2_id,
+            "限流冷却时长 (10s) 超过 max_wait_seconds (2s) 时应解绑并切换到 acc2"
+        );
+        assert_eq!(email_switched, "acc2@test.com");
+        assert!(
+            manager
+                .session_accounts
+                .get(session_id)
+                .map(|v| v.clone())
+                .as_deref()
+                != Some(acc1_id),
+            "原账号绑定应已被解除"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_60s_window_retains_account_even_if_higher_priority_alt_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let accounts_dir = temp_dir.path().join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let acc1_id = "acc_mode_b_p1";
+        let acc2_id = "acc_mode_b_p0";
+
+        let acc1_path = accounts_dir.join(format!("{}.json", acc1_id));
+        let acc2_path = accounts_dir.join(format!("{}.json", acc2_id));
+
+        std::fs::write(&acc1_path, r#"{"disabled":false}"#).unwrap();
+        std::fs::write(&acc2_path, r#"{"disabled":false}"#).unwrap();
+
+        let manager = TokenManager::new(temp_dir.path().to_path_buf());
+
+        let target_model = "gemini-4-argon";
+        let norm_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model)
+                .unwrap_or_else(|| target_model.to_string());
+
+        let mut quotas1 = HashMap::new();
+        quotas1.insert(norm_target.clone(), 80);
+
+        let mut quotas2 = HashMap::new();
+        quotas2.insert(norm_target.clone(), 100);
+
+        // acc1: priority 1 (静态优先级低)
+        let mut token1 = create_test_token("acc1@test.com", Some("PRO"), 1.0, None, Some(80));
+        token1.account_id = acc1_id.to_string();
+        token1.account_path = acc1_path;
+        token1.priority = 1;
+        token1.model_quotas = quotas1;
+
+        // acc2: priority 0 (静态优先级更高)
+        let mut token2 = create_test_token("acc2@test.com", Some("PRO"), 1.0, None, Some(100));
+        token2.account_id = acc2_id.to_string();
+        token2.account_path = acc2_path;
+        token2.priority = 0;
+        token2.model_quotas = quotas2;
+
+        manager.tokens.insert(acc1_id.to_string(), token1);
+        manager.tokens.insert(acc2_id.to_string(), token2);
+
+        // 模拟 60s 窗口内上一请求使用了 acc1
+        {
+            let mut last_used = manager.last_used_account.lock().await;
+            *last_used = Some((acc1_id.to_string(), std::time::Instant::now()));
+        }
+
+        // 无 session_id 请求（模式 B 60s 全局锁定）
+        // 即使号池存在静态优先级更高 (priority 0) 的 acc2，
+        // 只要 acc1 额度 > 0% 且未限流，60s 窗口内必须坚决复用 acc1，杜绝静态优先级抢占破坏 KV 缓存
+        let excluded = HashSet::new();
+        let (_token, _project_id, email, selected_id, _wait) = manager
+            .get_token_filtered("chat", false, None, target_model, &excluded)
+            .await
+            .expect(
+                "60s window should retain last used account even if higher priority account exists",
+            );
+
+        assert_eq!(
+            selected_id, acc1_id,
+            "Mode B 60s 窗口内必须复用最近账号以保住 KV 缓存，严禁因池中存在静态高优先级账号而发生抢占切换"
+        );
+        assert_eq!(email, "acc1@test.com");
+    }
+
+    #[tokio::test]
     async fn test_preferred_account_auto_failover_when_zero_quota_issue_3639() {
         let temp_dir = tempfile::tempdir().unwrap();
         let accounts_dir = temp_dir.path().join("accounts");
@@ -13051,8 +13204,24 @@ mod tests {
         assert_eq!(id_claude, "acc_personal");
         assert_eq!(tok_claude, "tok_personal");
 
-        // 2. Immediately requesting Gemini (even within the 60s stateless window) yields to `acc_pool`
+        // 2. Immediately requesting Gemini (within the 60s stateless window) retains `acc_personal`
+        // even though `acc_pool` has higher priority (50 < 80), to preserve KV cache!
+        let (tok_gemini_retained, _, _, id_gemini_retained, _) = manager
+            .get_token("gemini", false, None, gemini_model)
+            .await
+            .unwrap();
+        assert_eq!(
+            id_gemini_retained, "acc_personal",
+            "Mode B 60s window must retain last used account even if another account has higher priority"
+        );
+        assert_eq!(tok_gemini_retained, "tok_personal");
+
+        // 3. When outside the 60s window (or window reset), requesting Gemini yields to `acc_pool`
         // because `acc_personal` has effective Gemini priority 80 > `acc_pool` priority 50.
+        {
+            let mut last_used = manager.last_used_account.lock().await;
+            *last_used = None;
+        }
         let (tok_gemini, _, _, id_gemini, _) = manager
             .get_token("gemini", false, None, gemini_model)
             .await
@@ -13060,7 +13229,11 @@ mod tests {
         assert_eq!(id_gemini, "acc_pool");
         assert_eq!(tok_gemini, "tok_pool");
 
-        // 3. Hot-updating model priorities via TokenManager flips Gemini priority to 1 on `acc_personal`
+        // 4. Hot-updating model priorities via TokenManager flips Gemini priority to 1 on `acc_personal`
+        {
+            let mut last_used = manager.last_used_account.lock().await;
+            *last_used = None;
+        }
         let mut updated_map = HashMap::new();
         updated_map.insert("claude".to_string(), 1);
         updated_map.insert("gemini".to_string(), 1);
