@@ -5401,6 +5401,20 @@ fn demote_model_scoped_quota(account: &mut Account, mut quota: QuotaData) -> Quo
 
 /// Quota query with retry (moved from commands to modules for reuse)
 pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppResult<QuotaData> {
+    fetch_quota_with_retry_ext(account, false).await
+}
+
+/// 强制进行权威数据面封禁探针的配额刷新（供单账号手动刷新、添加新账号、批量导入等显式用户意图使用）
+pub async fn fetch_quota_with_retry_forced(
+    account: &mut Account,
+) -> crate::error::AppResult<QuotaData> {
+    fetch_quota_with_retry_ext(account, true).await
+}
+
+pub async fn fetch_quota_with_retry_ext(
+    account: &mut Account,
+    force_probe: bool,
+) -> crate::error::AppResult<QuotaData> {
     use crate::error::AppError;
     use crate::modules::oauth;
 
@@ -5492,92 +5506,115 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
         }
     };
 
-    // 1.5 数据面权威封禁探针：先测封号，未封号才允许继续拉配额。
-    //
-    // 控制面 / 配额端点（loadCodeAssist、fetchAvailableModels、
-    // retrieveUserQuotaSummary、countTokens）对被 TOS 封禁的账号仍返回 200，
-    // 只有 v1internal:generateContent 会返回 403 TOS_VIOLATION。
-    // 因此：
-    // - Banned   ⇒ 落盘封禁并直接返回，跳过配额刷新；
-    // - NotBanned ⇒ 可作为解封权威依据，清除封禁后继续拉配额；
-    // - Unknown  ⇒ 保持现状；若账号已封禁，同样跳过配额刷新。
-    match crate::modules::quota::probe_account_ban(
-        &account.token.access_token,
-        probe_project_id.as_deref(),
-        Some(&account.id),
-        Some(&account.email),
-    )
-    .await
-    {
-        crate::modules::quota::BanProbeOutcome::Banned(info) => {
-            apply_ban_state(account, &info, chrono::Utc::now().timestamp());
+    // 1.5 数据面权威封禁探针（长时智能冷却）：
+    // - 强制探测（force_probe = true）：单账号手动刷新、添加新号、批量导入时无条件执行；
+    // - 已封禁账号（account.banned）：冷却 1 小时（3600 秒），防止后台定时刷新每几分钟去轰炸 Google 导致 429；
+    // - 正常健康账号（!account.banned）：日常后台自动定时刷新只拉轻量配额接口（retrieveUserQuotaSummary），
+    //   探针至少间隔 6 小时（21600 秒）才做一次常规确认。运行时若遭遇封禁，实际请求会当场返回 403 触发禁用，绝不漏判！
+    let now = chrono::Utc::now().timestamp();
+    let should_probe = if force_probe {
+        true
+    } else if account.banned {
+        account
+            .last_ban_probed_at
+            .map_or(true, |ts| now.saturating_sub(ts) >= 3600)
+    } else {
+        account
+            .last_ban_probed_at
+            .map_or(true, |ts| now.saturating_sub(ts) >= 21600)
+    };
 
-            if let Err(e) = mark_account_banned(&account.id, &info) {
-                modules::logger::log_warn(&format!(
-                    "Failed to persist ban state for {}: {}",
-                    account.email, e
-                ));
-            }
+    if should_probe {
+        account.last_ban_probed_at = Some(now);
 
-            return Ok(forbidden_quota_for_ban(account, &info));
-        }
-        crate::modules::quota::BanProbeOutcome::NotBanned => {
-            if account.banned {
-                match clear_account_ban(&account.id) {
-                    Ok(_) => {
-                        account.banned = false;
-                        account.banned_code = None;
-                        account.banned_reason = None;
-                        account.banned_at = None;
-                        account.ban_appeal_url = None;
-                        if account
-                            .proxy_disabled_reason
-                            .as_deref()
-                            .map_or(false, |reason| reason.starts_with("banned:"))
-                        {
-                            account.proxy_disabled = false;
-                            account.proxy_disabled_reason = None;
-                            account.proxy_disabled_at = None;
-                        }
-                        if let Some(ref mut quota) = account.quota {
-                            quota.is_forbidden = false;
-                            quota.forbidden_reason = None;
-                        }
-                    }
-                    Err(e) => modules::logger::log_warn(&format!(
-                        "Failed to clear ban state for {}: {}",
-                        account.email, e
-                    )),
-                }
-            }
+        match crate::modules::quota::probe_account_ban(
+            &account.token.access_token,
+            probe_project_id.as_deref(),
+            Some(&account.id),
+            Some(&account.email),
+        )
+        .await
+        {
+            crate::modules::quota::BanProbeOutcome::Banned(info) => {
+                apply_ban_state(account, &info, now);
 
-            // 数据面推理探针 2xx 是账号级封禁/403 的权威恢复证据。
-            // 普通配额 200 不会进入这个分支，因此拉额度无法欺骗解封；
-            // 模型级 403 由 `has_non_model_forbidden_lock` 保守排除，
-            // 仍需定向测活按模型解除。
-            if has_non_model_forbidden_lock(account) {
-                clear_non_model_forbidden_state(account);
-                if let Err(e) = save_account(account) {
+                if let Err(e) = mark_account_banned(&account.id, &info) {
                     modules::logger::log_warn(&format!(
-                        "Failed to persist recovered 403 state for {}: {}",
+                        "Failed to persist ban state for {}: {}",
                         account.email, e
                     ));
                 }
-                crate::proxy::server::trigger_account_reload(&account.id);
-                crate::modules::log_bridge::emit_accounts_refreshed();
-                modules::logger::log_info(&format!(
-                    "✅ [Probe] Account {} recovered from account-level 403 lock",
-                    account.email
-                ));
+
+                return Ok(forbidden_quota_for_ban(account, &info));
             }
-        }
-        crate::modules::quota::BanProbeOutcome::Unknown => {
-            // 探针不可用（网络/429/5xx/非封禁 403）时保留现状，避免把仍被封禁的账号误放回池。
-            //
-            // 兼容旧版本已经写入 "Forbidden (403): ..." / TOS 文本、但还没有新增
-            // `banned` 字段的账号：只要持久化原因里仍带明确封禁证据，就升级为
-            // banned 状态，避免随后 Daily 配额 200 把这条封禁记录清掉。
-            if !account.banned {
+            crate::modules::quota::BanProbeOutcome::NotBanned => {
+                if account.banned {
+                    match clear_account_ban(&account.id) {
+                        Ok(_) => {
+                            account.banned = false;
+                            account.banned_code = None;
+                            account.banned_reason = None;
+                            account.banned_at = None;
+                            account.ban_appeal_url = None;
+                            if account
+                                .proxy_disabled_reason
+                                .as_deref()
+                                .map_or(false, |reason| reason.starts_with("banned:"))
+                            {
+                                account.proxy_disabled = false;
+                                account.proxy_disabled_reason = None;
+                                account.proxy_disabled_at = None;
+                            }
+                            if let Some(ref mut quota) = account.quota {
+                                quota.is_forbidden = false;
+                                quota.forbidden_reason = None;
+                            }
+                        }
+                        Err(e) => modules::logger::log_warn(&format!(
+                            "Failed to clear ban state for {}: {}",
+                            account.email, e
+                        )),
+                    }
+                }
+
+                // 数据面推理探针 2xx 是账号级封禁/403 的权威恢复证据。
+                // 普通配额 200 不会进入这个分支，因此拉额度无法欺骗解封；
+                // 模型级 403 由 `has_non_model_forbidden_lock` 保守排除，
+                // 仍需定向测活按模型解除。
+                if has_non_model_forbidden_lock(account) {
+                    clear_non_model_forbidden_state(account);
+                    if let Err(e) = save_account(account) {
+                        modules::logger::log_warn(&format!(
+                            "Failed to persist recovered 403 state for {}: {}",
+                            account.email, e
+                        ));
+                    }
+                    crate::proxy::server::trigger_account_reload(&account.id);
+                    crate::modules::log_bridge::emit_accounts_refreshed();
+                    modules::logger::log_info(&format!(
+                        "✅ [Probe] Account {} recovered from account-level 403 lock",
+                        account.email
+                    ));
+                }
+            }
+            crate::modules::quota::BanProbeOutcome::Unknown => {
+                // 探针不可用（网络/429/5xx/非封禁 403）时保留现状，避免把仍被封禁的账号误放回池。
+                // 已封禁账号：探针未返回权威 2xx，坚决阻断日配额接口，绝不被配额 200 反向洗白！
+                if account.banned {
+                    let info =
+                        account
+                            .ban_info()
+                            .unwrap_or_else(|| crate::models::AccountBanInfo {
+                                code: "BANNED".to_string(),
+                                message: "Account remains banned".to_string(),
+                                appeal_url: account.ban_appeal_url.clone(),
+                            });
+                    return Ok(forbidden_quota_for_ban(account, &info));
+                }
+
+                // 兼容旧版本已经写入 "Forbidden (403): ..." / TOS 文本、但还没有新增
+                // `banned` 字段的账号：只要持久化原因里仍带明确封禁证据，就升级为
+                // banned 状态，避免随后 Daily 配额 200 把这条封禁记录清掉。
                 let legacy_info = {
                     let reason = account.proxy_disabled_reason.as_deref().or_else(|| {
                         account
@@ -5585,11 +5622,11 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                             .as_ref()
                             .and_then(|q| q.forbidden_reason.as_deref())
                     });
-                    reason.and_then(AccountBanInfo::classify_text)
+                    reason.and_then(crate::models::AccountBanInfo::classify_text)
                 };
 
                 if let Some(info) = legacy_info {
-                    apply_ban_state(account, &info, chrono::Utc::now().timestamp());
+                    apply_ban_state(account, &info, now);
                     if let Err(e) = mark_account_banned(&account.id, &info) {
                         modules::logger::log_warn(&format!(
                             "Failed to upgrade legacy ban state for {}: {}",
@@ -5598,33 +5635,30 @@ pub async fn fetch_quota_with_retry(account: &mut Account) -> crate::error::AppR
                     }
                     return Ok(forbidden_quota_for_ban(account, &info));
                 }
-            }
 
-            // 已封禁账号：探针无法给出权威 2xx 时，配额端点 200 绝不能作为解封依据。
-            // 直接返回持久化封禁状态并跳过配额刷新，避免无意义的配额调用与状态冲刷。
-            if account.banned {
-                let info = account
-                    .ban_info()
-                    .unwrap_or_else(|| crate::models::AccountBanInfo {
-                        code: "BANNED".to_string(),
-                        message: "Account remains banned".to_string(),
-                        appeal_url: account.ban_appeal_url.clone(),
-                    });
-                return Ok(forbidden_quota_for_ban(account, &info));
-            }
-
-            // 既有 Hard 403 锁定的账号同理：探针未知时绝不调用日配额端点，防止被 200 冲刷。
-            if let Some(ref q) = account.quota {
-                if q.is_forbidden {
-                    let kind = crate::models::account::classify_lock_reason(
-                        q.forbidden_reason.as_deref().unwrap_or(""),
-                    );
-                    if kind == crate::models::account::AccountLockKind::HardForbidden {
-                        return Ok(q.clone());
+                // 既有 Hard 403 锁定的账号同理：探针未知时绝不调用日配额端点，防止被 200 冲刷。
+                if let Some(ref q) = account.quota {
+                    if q.is_forbidden {
+                        let kind = crate::models::account::classify_lock_reason(
+                            q.forbidden_reason.as_deref().unwrap_or(""),
+                        );
+                        if kind == crate::models::account::AccountLockKind::HardForbidden {
+                            return Ok(q.clone());
+                        }
                     }
                 }
             }
         }
+    } else if account.banned {
+        // 在长时冷却期内且已被封禁的账号：直接返回封禁配额，跳过无意义的配额与探针请求
+        let info = account
+            .ban_info()
+            .unwrap_or_else(|| crate::models::AccountBanInfo {
+                code: "BANNED".to_string(),
+                message: "Account remains banned".to_string(),
+                appeal_url: account.ban_appeal_url.clone(),
+            });
+        return Ok(forbidden_quota_for_ban(account, &info));
     }
 
     // 2. 仅在探针未判定封禁后拉取配额。
@@ -5930,6 +5964,9 @@ pub async fn refresh_all_quotas_logic() -> Result<RefreshStats, String> {
                     Err(msg)
                 }
             };
+
+            // 实时通知前端流式更新该账号状态（前端采用静默防抖更新，不闪烁、不弹窗、不全屏转圈）
+            crate::modules::log_bridge::emit_accounts_refreshed();
 
             // 滑动窗口：账号完成后等待配置的延迟，再把并发槽位让给下一个账号。
             if !slide_delay.is_zero() {
@@ -6264,13 +6301,14 @@ pub async fn batch_import_accounts_logic(
                         new_acc
                     };
 
-                    // 4.1 统一刷新入口：内部先发数据面封号探针；
+                    // 4.1 统一刷新入口：批量导入新账号时强制执行一次数据面封号探针；
                     // 封号直接落盘并跳过配额，未封号才拉取配额。
                     //
                     // 先落盘，确保 `mark_account_banned` / `clear_account_ban`
                     // 在导入阶段也能通过 load_account 正常读写。
                     save_account(&account)?;
-                    match crate::modules::account::fetch_quota_with_retry(&mut account).await {
+                    match crate::modules::account::fetch_quota_with_retry_forced(&mut account).await
+                    {
                         Ok(quota) => {
                             account.quota = Some(quota);
                         }

@@ -10,7 +10,7 @@ interface AccountState {
     error: string | null;
 
     // Actions
-    fetchAccounts: () => Promise<void>;
+    fetchAccounts: (silent?: boolean) => Promise<void>;
     fetchCurrentAccount: () => Promise<void>;
     fetchActiveClients: () => Promise<void>;
     addAccount: (email: string, refreshToken: string) => Promise<void>;
@@ -89,8 +89,10 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     loading: false,
     error: null,
 
-    fetchAccounts: async () => {
-        set({ loading: true, error: null });
+    fetchAccounts: async (silent = false) => {
+        if (!silent) {
+            set({ loading: true, error: null });
+        }
         try {
             console.log('[Store] Fetching accounts...');
             const [accounts, activeClients] = await Promise.all([
@@ -101,10 +103,12 @@ export const useAccountStore = create<AccountState>((set, get) => ({
                 localStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(accounts));
                 localStorage.setItem(ACTIVE_CLIENTS_CACHE_KEY, JSON.stringify(activeClients));
             } catch (_) {}
-            set({ accounts, activeClients, loading: false });
+            set({ accounts, activeClients, ...(silent ? {} : { loading: false }) });
         } catch (error) {
             console.error('[Store] Fetch accounts failed:', error);
-            set({ error: String(error), loading: false });
+            if (!silent) {
+                set({ error: String(error), loading: false });
+            }
         }
     },
 

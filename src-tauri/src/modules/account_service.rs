@@ -46,9 +46,9 @@ impl AccountService {
         let mut account =
             modules::upsert_account(user_info.email.clone(), user_info.get_display_name(), token)?;
 
-        // 5.1 统一刷新入口：内部先发数据面封号探针；
+        // 5.1 统一刷新入口：添加新账号时强制执行一次数据面封号探针；
         // 封号直接落盘并跳过配额，未封号才拉取配额。
-        match modules::account::fetch_quota_with_retry(&mut account).await {
+        match modules::account::fetch_quota_with_retry_forced(&mut account).await {
             Ok(quota) => {
                 if let Err(e) = modules::update_account_quota(&account.id, quota) {
                     modules::logger::log_warn(&format!(

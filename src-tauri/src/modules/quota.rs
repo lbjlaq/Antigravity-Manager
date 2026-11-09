@@ -163,9 +163,10 @@ const BAN_PROBE_ENDPOINTS: [&str; 2] = [
     "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
 ];
 
-/// 探针模型：固定使用官方免费档基线 Flash，确保所有账号都有权限触达鉴权层。
-/// 这里不做用户自定义映射，避免映射到账号无权限的模型产生模型级 403 假阳性。
-const BAN_PROBE_MODEL: &str = "gemini-2.5-flash";
+/// 探针模型：使用官方最新基准轻量级模型 gemini-3.8-flash-low，彻底淘汰 gemini-2.5-flash，
+/// 结合完整的 Antigravity 正式转出请求体（含 systemInstruction 与 thinkingConfig），
+/// 确保与真实客户端出站报文 100% 结构一致，杜绝因报文残缺/模型废弃被上游 WAF 误限流 (429 RESOURCE_EXHAUSTED)。
+const BAN_PROBE_MODEL: &str = "gemini-3.8-flash-low";
 
 /// 纯函数：把一次探针响应归类为封禁 / 未封禁 / 未知。
 ///
@@ -201,74 +202,6 @@ pub(crate) fn classify_ban_probe_response(status: u16, body: &str) -> BanProbeOu
     }
 }
 
-/// 把探针结果写入流量日志：成功按「捕获健康请求」开关过滤，异常始终落库。
-fn emit_ban_probe_log(
-    account_email: Option<&str>,
-    account_id: Option<&str>,
-    model: &str,
-    status: u16,
-    duration_ms: u64,
-    request_payload: &serde_json::Value,
-    response_body: &str,
-    outcome: &BanProbeOutcome,
-) {
-    let Some(monitor) = crate::proxy::monitor::global_monitor() else {
-        return;
-    };
-    let is_success = (200..300).contains(&status);
-    if is_success && !crate::proxy::monitor::capture_health_logs_enabled(&monitor) {
-        return;
-    }
-
-    let truncate = |text: &str, max: usize| -> String {
-        if text.chars().count() <= max {
-            text.to_string()
-        } else {
-            text.chars().take(max).collect()
-        }
-    };
-    let error = match outcome {
-        BanProbeOutcome::Banned(info) => Some(format!("{}: {}", info.code, info.message)),
-        BanProbeOutcome::Unknown => Some(format!("Ban probe inconclusive (HTTP {})", status)),
-        BanProbeOutcome::NotBanned => None,
-    };
-
-    let log = crate::proxy::monitor::ProxyRequestLog {
-        id: uuid::Uuid::new_v4().to_string(),
-        timestamp: chrono::Utc::now().timestamp_millis(),
-        method: "POST".to_string(),
-        url: format!("/internal/ban_probe -> {}", model),
-        status,
-        duration: duration_ms,
-        model: Some(model.to_string()),
-        mapped_model: Some(model.to_string()),
-        upstream_model: Some(model.to_string()),
-        account_email: account_email.map(str::to_string),
-        client_ip: Some("127.0.0.1".to_string()),
-        error,
-        request_body: Some(format!(
-            "{{\"type\":\"ban_probe\",\"account_id\":\"{}\",\"model\":\"{}\"}}",
-            account_id.unwrap_or(""),
-            model
-        )),
-        upstream_request_body: Some(truncate(&request_payload.to_string(), 4000)),
-        response_body: Some(truncate(response_body, 4000)),
-        request_headers: None,
-        upstream_request_headers: None,
-        response_headers: None,
-        input_tokens: None,
-        output_tokens: None,
-        cached_tokens: None,
-        reasoning_tokens: None,
-        protocol: Some("ban_probe".to_string()),
-        username: None,
-        session_id: None,
-    };
-    tokio::spawn(async move {
-        monitor.log_request(log).await;
-    });
-}
-
 /// 探测账号是否被上游封禁。
 ///
 /// 发送一个 `maxOutputTokens = 1` 的最小 `generateContent` 请求：
@@ -282,33 +215,44 @@ pub async fn probe_account_ban(
     access_token: &str,
     project_id: Option<&str>,
     account_id: Option<&str>,
-    account_email: Option<&str>,
+    _account_email: Option<&str>,
 ) -> BanProbeOutcome {
     let client = create_standard_client(account_id).await;
-    // 尽量对齐官方 v1internal 信封：project + requestId + request + model + userAgent。
-    // 缺失 requestId/userAgent 时部分账号会返回 400，导致正常号永远无法得到 2xx，
-    // 从而无法作为解封权威依据。
-    let probe_session = format!("ban_probe_{}", account_id.unwrap_or("unknown"));
-    let official_request_id =
-        crate::proxy::mappers::common_utils::build_official_request_id(&probe_session, 1);
-    let probe_user_agent = match account_email {
-        Some(email) if !email.ends_with("@gmail.com") && !email.ends_with("@googlemail.com") => {
-            "jetski"
-        }
-        _ => "antigravity",
-    };
-    let payload = json!({
-        "project": project_id,
-        "requestId": official_request_id,
+    // 使用官方 wrap_request 生成 100% 完整的 Antigravity 正式出站报文（含 sessionId,
+    // systemInstruction, generationConfig.thinkingConfig, 官方 requestId 与 userAgent），
+    // 彻底解决报文结构不完整被 Google WAF 判定为异常流量导致 429 RESOURCE_EXHAUSTED 的缺陷。
+    let session_id = format!(
+        "ban_probe_{}_{}",
+        chrono::Utc::now().timestamp_millis(),
+        &uuid::Uuid::new_v4().to_string()[..8]
+    );
+
+    let base_request = json!({
         "model": BAN_PROBE_MODEL,
-        "userAgent": probe_user_agent,
-        "request": {
-            "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
-            "generationConfig": { "maxOutputTokens": 1 }
-        }
+        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+        "systemInstruction": {
+            "role": "user",
+            "parts": [{ "text": "You are Antigravity, a helpful assistant." }]
+        },
+        "generationConfig": {
+            "maxOutputTokens": 32000,
+            "thinkingConfig": {
+                "includeThoughts": true,
+                "thinkingLevel": "LOW"
+            }
+        },
+        "session_id": session_id
     });
 
-    let started = std::time::Instant::now();
+    let payload = crate::proxy::mappers::gemini::wrapper::wrap_request(
+        &base_request,
+        project_id.unwrap_or(""),
+        BAN_PROBE_MODEL,
+        account_id,
+        Some(&session_id),
+        None,
+    );
+
     let mut last_outcome = BanProbeOutcome::Unknown;
 
     for ep_url in BAN_PROBE_ENDPOINTS {
@@ -339,16 +283,7 @@ pub async fn probe_account_ban(
                     outcome = ?outcome,
                     "Ban probe completed"
                 );
-                emit_ban_probe_log(
-                    account_email,
-                    account_id,
-                    BAN_PROBE_MODEL,
-                    status,
-                    started.elapsed().as_millis() as u64,
-                    &payload,
-                    &text,
-                    &outcome,
-                );
+                // 封禁探针为纯后台健康诊断，绝不写入流量日志，保持监控面板清爽纯净
                 match outcome {
                     BanProbeOutcome::Banned(_) | BanProbeOutcome::NotBanned => return outcome,
                     BanProbeOutcome::Unknown => {

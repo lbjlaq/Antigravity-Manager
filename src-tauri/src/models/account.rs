@@ -598,6 +598,9 @@ pub struct Account {
     /// 封禁申诉链接（若上游提供）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ban_appeal_url: Option<String>,
+    /// 上次执行数据面封禁探针的时间戳
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_ban_probed_at: Option<i64>,
     pub created_at: i64,
     pub last_used: i64,
     /// 绑定的代理 ID (None = 使用全局代理池)
@@ -649,6 +652,7 @@ impl Account {
             banned_reason: None,
             banned_at: None,
             ban_appeal_url: None,
+            last_ban_probed_at: None,
             created_at: now,
             last_used: now,
             proxy_id: None,
