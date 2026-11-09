@@ -1072,10 +1072,10 @@ impl UpstreamClient {
                             observe_upload_throughput(bps);
                         }
                     }
-                    let stage = if finished {
-                        SendStage::Completed
-                    } else {
-                        SendStage::Upload
+                    let stage = match res {
+                        Ok(_) => SendStage::Completed,
+                        Err(_) if finished => SendStage::AwaitFirstByte,
+                        Err(_) => SendStage::Upload,
                     };
                     if let Err(ref err) = res {
                         tracing::debug!(
@@ -1235,7 +1235,11 @@ impl UpstreamClient {
         let (upload_budget_secs, budget_source) =
             Self::calculate_upload_budget_secs(body_len, cfg, observed_bps);
 
-        let large_body = body_len >= cfg.large_body_threshold_bytes();
+        let estimated_tokens = crate::proxy::pipeline::budget::estimated_tokens()
+            .unwrap_or_else(|| estimate_payload_tokens(body_len));
+        let large_body = body_len >= cfg.large_body_threshold_bytes()
+            || body_len >= 1024 * 1024
+            || estimated_tokens >= 30_000;
         let max_endpoints = V1_INTERNAL_BASE_URL_FALLBACKS.len();
         let endpoint_attempt_limit = if large_body {
             cfg.large_body_endpoint_attempts.clamp(1, max_endpoints)
@@ -1663,7 +1667,7 @@ impl UpstreamClient {
                 } else {
                     0
                 };
-                let first_byte_budget_secs = Self::calculate_first_byte_wait_secs(
+                let mut first_byte_budget_secs = Self::calculate_first_byte_wait_secs(
                     media_kind,
                     idx,
                     &upload_cfg,
@@ -1672,6 +1676,11 @@ impl UpstreamClient {
                     is_capacity_exhausted,
                 )
                 .min(remaining_budget.saturating_sub(reserve_for_fallback).max(5));
+                // 备用端点（idx > 0，如 Sandbox）仅作为降级尝试，其首字节等待预算封顶 45s，
+                // 严防慢端点或非美地区网络假死吃空整条请求的剩余预算，确保账号池能够及时轮换。
+                if idx > 0 {
+                    first_byte_budget_secs = first_byte_budget_secs.min(45);
+                }
                 // [Fixes #3821] 上传阶段优先保证传输所需时间（按体积/实测速度自适应），
                 // 仅预留最小探活时间给首字节阶段，彻底避免首字预算（如 145s）倒挂倒扣导致大请求体（如 28.9MB）被掐死在 15s；
                 // 全链路总时间依然受 hard_deadline 刚性硬保护。
@@ -2713,6 +2722,16 @@ mod tests {
         assert_eq!(big_plan.endpoint_attempt_limit, 1);
         assert_eq!(big_plan.stall_secs, 45);
         assert!(big_plan.total_budget_secs >= big_plan.upload_budget_secs);
+
+        // 大上下文 (>=30k tokens 或 >=1MB) 同样被识别为大请求，仅允许 1 个端点以抑制无效重传
+        let large_context_plan = UpstreamClient::plan_upstream_timeouts_with_observed(
+            PayloadMediaKind::TextChat,
+            1024 * 1024,
+            &cfg,
+            None,
+        );
+        assert!(large_context_plan.large_body);
+        assert_eq!(large_context_plan.endpoint_attempt_limit, 1);
     }
 
     #[test]

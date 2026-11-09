@@ -15,7 +15,8 @@ pub use crate::proxy::pipeline::rotation::{
     apply_retry_strategy, calculate_max_retry_attempts, clamp_retry_after_for_claude,
     determine_retry_strategy, determine_retry_strategy_adaptive,
     determine_retry_strategy_with_grace, extract_retry_after_seconds, is_model_not_found_error,
-    next_rotation_attempt, should_rotate_account, RequestRetryState, RetryStrategy,
+    next_rotation_attempt, record_attempted_account, should_rotate_account, RequestRetryState,
+    RetryStrategy,
 };
 
 /// 请求内「结构化失败状态」聚合器已下沉到 `pipeline::terminal`（协议无关）。

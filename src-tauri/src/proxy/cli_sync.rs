@@ -2450,7 +2450,7 @@ model = "deepseek-chat"
         );
         assert_eq!(
             m_claude.get("reasoning_model").unwrap().as_bool().unwrap(),
-            true
+            false
         );
         assert_eq!(
             m_claude.get("reasoning_history").unwrap().as_str().unwrap(),

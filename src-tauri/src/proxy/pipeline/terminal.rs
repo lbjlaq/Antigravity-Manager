@@ -102,7 +102,11 @@ impl UpstreamTerminal {
     /// - 重放上限是“我们主动不再重传”，与时间无关，用 503 表达“稍后重试”。
     /// - 四者都不罚账号：前三种是“等得不够久”，重放上限是“我们主动止损”，都不是账号故障。
     /// - 首字节超时、上传中断与全局预算耗尽时，虽然不惩罚账号，但解绑当前会话粘性绑定（abandon_sticky_account = true），
-    ///   确保客户端下一次发起重试请求时能够自动调度到号池中的其他健康账号，彻底消除“卡在同一账号循环死等”问题。
+    ///   确保客户端或后续轮换能够自动调度到号池中的其他健康账号，彻底消除“卡在同一账号循环死等”问题。
+    /// - 轮换控制（stop_rotation）：
+    ///   * 全局总预算耗尽（GlobalBudget）或重放上限（ReplayCap）时彻底终止轮换（stop_rotation = true）；
+    ///   * 首字节中断/超时（FirstByte）与上传异常（Upload）发生时，谷歌未完成生成不扣减额度，且请求预算若有结余，
+    ///     允许网关在号池内安全轮换至后续健康账号（stop_rotation = false），避免单账号网络抖动或集群假死直接导致整条请求死掉。
     pub fn disposition(self) -> TerminalDisposition {
         TerminalDisposition {
             status: match self {
@@ -110,7 +114,7 @@ impl UpstreamTerminal {
                 Self::ReplayCap => StatusCode::SERVICE_UNAVAILABLE,
             },
             penalize_account: false,
-            stop_rotation: true,
+            stop_rotation: matches!(self, Self::GlobalBudget | Self::ReplayCap),
             abandon_sticky_account: matches!(
                 self,
                 Self::FirstByte | Self::Upload | Self::GlobalBudget
@@ -372,12 +376,16 @@ mod tests {
                 "{terminal:?}"
             );
             assert!(!disposition.penalize_account, "{terminal:?}");
-            assert!(disposition.stop_rotation, "{terminal:?}");
             assert!(
                 disposition.abandon_sticky_account,
                 "all time-like terminals must abandon sticky account: {terminal:?}"
             );
         }
+
+        // 仅全局预算耗尽与重放上限强制终止账号轮换；首字节与上传异常允许在预算结余时轮换至后续健康账号
+        assert!(!UpstreamTerminal::FirstByte.disposition().stop_rotation);
+        assert!(!UpstreamTerminal::Upload.disposition().stop_rotation);
+        assert!(UpstreamTerminal::GlobalBudget.disposition().stop_rotation);
 
         // 重放上限不是时间问题，用 503 表达“稍后重试”，同样不罚账号
         let replay = UpstreamTerminal::ReplayCap.disposition();
