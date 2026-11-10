@@ -35,7 +35,6 @@ use crate::modules::account;
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; // [NEW] Adapter Registry
 use crate::proxy::session_manager::SessionManager;
 use axum::http::HeaderMap;
-use std::collections::VecDeque;
 use std::io;
 use tokio::task::JoinSet;
 use tokio::time::Duration;
@@ -1999,11 +1998,8 @@ mod variant_tests {
 
 fn codex_ledger_from_body(
     body: &Value,
-) -> (
-    Option<crate::proxy::mappers::openai::interaction_ledger::InteractionLedger>,
-    VecDeque<String>,
-) {
-    let ledger = crate::proxy::mappers::openai::interaction_ledger::build_codex_interaction_ledger(
+) -> Option<crate::proxy::mappers::openai::interaction_ledger::InteractionLedger> {
+    crate::proxy::mappers::openai::interaction_ledger::build_codex_interaction_ledger(
         body.get("input"),
         body.get("instructions").and_then(|v| v.as_str()),
         body.get("session_id")
@@ -2012,20 +2008,7 @@ fn codex_ledger_from_body(
         body.get("previous_response_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-    );
-
-    let mut markers = VecDeque::new();
-    if let Some(ledger) = &ledger {
-        for step in ledger.turns.iter().flat_map(|turn| turn.steps.iter()) {
-            if step.raw_item.get("type").and_then(|v| v.as_str()) != Some("instructions") {
-                markers.push_back(
-                    crate::proxy::mappers::openai::interaction_ledger::step_marker(step),
-                );
-            }
-        }
-    }
-
-    (ledger, markers)
+    )
 }
 
 fn responses_routing_session_id(
@@ -2064,12 +2047,6 @@ fn strip_codex_step_markers(content: &str) -> String {
         res.push('\n');
     }
     res
-}
-
-fn prefix_with_step_marker(_marker: Option<String>, content: String) -> String {
-    // Step markers are useful in debug ledgers, but must not be visible to
-    // Gemini. If they enter the prompt, the model learns to emit them as text.
-    strip_codex_step_markers(&content)
 }
 
 pub async fn handle_chat_completions(
@@ -2571,11 +2548,6 @@ pub async fn handle_chat_completions(
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         let norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
         let think_fill_ms = tf_micros as f64 / 1000.0;
-        let _ =
-            crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
-                &mut gemini_body,
-                &mapped_model,
-            );
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
             &mut gemini_body,
         );
@@ -3768,7 +3740,7 @@ pub async fn handle_completions(
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
-        let (interaction_ledger, mut step_markers) = codex_ledger_from_body(&body);
+        let interaction_ledger = codex_ledger_from_body(&body);
         let input_items = body
             .as_object_mut()
             .and_then(|obj| obj.remove("input"))
@@ -3842,7 +3814,6 @@ pub async fn handle_completions(
         {
             for mut item in input_items {
                 let item_type = responses_input_item_type(&item).to_string();
-                let step_marker = step_markers.pop_front();
                 if item_type == "custom_tool_call"
                     && item.get("status").and_then(|v| v.as_str()) == Some("incomplete")
                 {
@@ -3885,18 +3856,18 @@ pub async fn handle_completions(
 
                         // 构造消息内容：如果有图像则使用数组格式
                         let mut message = if image_parts.is_empty() {
-                            let content = prefix_with_step_marker(step_marker, joined_text);
+                            let content = strip_codex_step_markers(&joined_text);
                             json!({
                                 "role": role,
                                 "content": content
                             })
                         } else {
                             let mut content_blocks: Vec<Value> = Vec::new();
-                            let marker_text = prefix_with_step_marker(step_marker, joined_text);
-                            if !marker_text.is_empty() {
+                            let clean_text = strip_codex_step_markers(&joined_text);
+                            if !clean_text.is_empty() {
                                 content_blocks.push(json!({
                                     "type": "text",
-                                    "text": marker_text
+                                    "text": clean_text
                                 }));
                             }
                             content_blocks.extend(image_parts);
@@ -4070,7 +4041,7 @@ pub async fn handle_completions(
                             "shell".to_string()
                         };
 
-                        output_str = prefix_with_step_marker(step_marker, output_str);
+                        output_str = strip_codex_step_markers(&output_str);
                         let output_content =
                             build_responses_tool_output_content(output_str, output_media);
 
@@ -4642,11 +4613,6 @@ pub async fn handle_completions(
         let norm_total_micros = norm_start.elapsed().as_micros() as u64;
         let norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
         let think_fill_ms = tf_micros as f64 / 1000.0;
-        let _ =
-            crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
-                &mut gemini_body,
-                &mapped_model,
-            );
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
             &mut gemini_body,
         );
@@ -7933,7 +7899,7 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
-    let (interaction_ledger, mut step_markers) = codex_ledger_from_body(&body);
+    let interaction_ledger = codex_ledger_from_body(&body);
     let input_items = body
         .as_object_mut()
         .and_then(|obj| obj.remove("input"))
@@ -8001,7 +7967,6 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
     {
         for mut item in input_items {
             let item_type = responses_input_item_type(&item).to_string();
-            let step_marker = step_markers.pop_front();
             if item_type == "custom_tool_call"
                 && item.get("status").and_then(|v| v.as_str()) == Some("incomplete")
             {
@@ -8028,13 +7993,13 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
                     }
 
                     if image_parts.is_empty() {
-                        let content = prefix_with_step_marker(step_marker, joined_text);
+                        let content = strip_codex_step_markers(&joined_text);
                         messages.push(json!({ "role": role, "content": content }));
                     } else {
                         let mut content_blocks = Vec::new();
-                        let marker_text = prefix_with_step_marker(step_marker, joined_text);
-                        if !marker_text.is_empty() {
-                            content_blocks.push(json!({ "type": "text", "text": marker_text }));
+                        let clean_text = strip_codex_step_markers(&joined_text);
+                        if !clean_text.is_empty() {
+                            content_blocks.push(json!({ "type": "text", "text": clean_text }));
                         }
                         content_blocks.extend(image_parts);
                         messages.push(json!({ "role": role, "content": content_blocks }));
@@ -8137,7 +8102,7 @@ fn convert_codex_to_openai_request(mut body: Value) -> Value {
                         None => "shell".to_string(),
                     };
 
-                    output_str = prefix_with_step_marker(step_marker, output_str);
+                    output_str = strip_codex_step_markers(&output_str);
                     let output_content =
                         build_responses_tool_output_content(output_str, output_media);
 

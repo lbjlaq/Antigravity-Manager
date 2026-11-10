@@ -1959,11 +1959,6 @@ pub async fn handle_messages(
             );
         }
 
-        let _ =
-            crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
-                &mut gemini_body,
-                &mapped_model,
-            );
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
             &mut gemini_body,
         );

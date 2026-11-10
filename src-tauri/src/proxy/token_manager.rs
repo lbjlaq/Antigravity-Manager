@@ -192,7 +192,6 @@ pub struct ProxyToken {
     pub remaining_quota: Option<i32>,      // [FIX #563] Remaining quota for priority sorting
     pub protected_models: HashSet<String>, // [NEW #621]
     pub forbidden_models: HashSet<String>, // [NEW] 模型级 403 冻结（只影响对应模型）
-    pub health_score: f32,                 // [NEW] 健康分数 (0.0 - 1.0)
     pub reset_time: Option<i64>,           // [NEW] 配额刷新时间戳（用于排序优化）
     pub weekly_reset_time: Option<i64>, // [NEW] 周配额刷新时间戳（用于临期优先调度 EDF，防止周期重置作废配额）
     pub validation_blocked: bool, // [NEW] Check for validation block (VALIDATION_REQUIRED temporary block)
@@ -356,7 +355,6 @@ pub struct TokenManager {
     sticky_config: Arc<tokio::sync::RwLock<StickySessionConfig>>, // 新增：调度配置
     session_accounts: Arc<DashMap<String, String>>, // 新增：会话与账号映射 (SessionID -> AccountID)
     preferred_account_id: Arc<tokio::sync::RwLock<Option<String>>>, // [FIX #820] 优先使用的账号ID（固定账号模式）
-    health_scores: Arc<DashMap<String, f32>>,                       // account_id -> health_score
     circuit_breaker_config: Arc<tokio::sync::RwLock<crate::models::CircuitBreakerConfig>>, // [NEW] 熔断配置缓存
 
     // [NEW] 按账号分配的同步刷新锁。
@@ -415,7 +413,6 @@ impl TokenManager {
             sticky_config: Arc::new(tokio::sync::RwLock::new(StickySessionConfig::default())),
             session_accounts: Arc::new(DashMap::new()),
             preferred_account_id: Arc::new(tokio::sync::RwLock::new(None)), // [FIX #820]
-            health_scores: Arc::new(DashMap::new()),
             circuit_breaker_config: Arc::new(tokio::sync::RwLock::new(
                 crate::models::CircuitBreakerConfig::default(),
             )),
@@ -1309,7 +1306,6 @@ impl TokenManager {
         if self.tokens.remove(account_id).is_some() {
             tracing::info!("[Proxy] Removed account {} from memory cache", account_id);
         }
-        self.health_scores.remove(account_id);
         self.rate_limit_tracker.clear(account_id);
         self.refresh_locks.remove(account_id);
         self.invalid_grant_failures.remove(account_id);
@@ -2130,12 +2126,6 @@ impl TokenManager {
             })
             .unwrap_or_default();
 
-        let health_score = self
-            .health_scores
-            .get(&account_id)
-            .map(|v| *v)
-            .unwrap_or(1.0);
-
         // [NEW] 提取最近的配额刷新时间（用于排序优化：刷新时间越近优先级越高）
         let reset_time = self.extract_earliest_reset_time(&account);
         // [NEW] 提取周配额刷新时间（来自 retrieveUserQuotaSummary 的 weekly/7d 窗口，用于临期优先消耗）
@@ -2471,7 +2461,6 @@ impl TokenManager {
             remaining_quota,
             protected_models,
             forbidden_models,
-            health_score,
             reset_time,
             weekly_reset_time,
             validation_blocked: account
@@ -4217,16 +4206,7 @@ impl TokenManager {
                 return quota_cmp;
             }
 
-            // Priority 2: Health score (higher is better)
-            let health_cmp = b
-                .health_score
-                .partial_cmp(&a.health_score)
-                .unwrap_or(std::cmp::Ordering::Equal);
-            if health_cmp != std::cmp::Ordering::Equal {
-                return health_cmp;
-            }
-
-            // Priority 3: Reset time (earlier is better) [Fix #3570]
+            // Priority 2: Reset time (earlier is better) [Fix #3570]
             let reset_a = a.reset_time.unwrap_or(i64::MAX);
             let reset_b = b.reset_time.unwrap_or(i64::MAX);
             let reset_cmp = reset_a.cmp(&reset_b);
@@ -4234,7 +4214,7 @@ impl TokenManager {
                 return reset_cmp;
             }
 
-            // Priority 4: Deterministic fallback (Tie-breaker for strict total order)
+            // Priority 3: Deterministic fallback (Tie-breaker for strict total order)
             a.account_id.cmp(&b.account_id)
         });
 
@@ -4245,7 +4225,7 @@ impl TokenManager {
             tokens_snapshot
                 .iter()
                 .map(|t| format!(
-                    "{}(quota={}%, reset={:?}, health={:.2})",
+                    "{}(quota={}%, reset={:?})",
                     t.email,
                     t.model_quotas.get(&normalized_target).copied().unwrap_or(0),
                     t.reset_time.map(|ts| {
@@ -4257,7 +4237,6 @@ impl TokenManager {
                             "now".to_string()
                         }
                     }),
-                    t.health_score
                 ))
                 .collect::<Vec<_>>()
         );
@@ -7142,24 +7121,6 @@ impl TokenManager {
         self.reload_all_accounts().await.map(|_| ())
     }
 
-    /// 记录请求成功，增加健康分
-    pub fn record_success(&self, account_id: &str) {
-        self.health_scores
-            .entry(account_id.to_string())
-            .and_modify(|s| *s = (*s + 0.05).min(1.0))
-            .or_insert(1.0);
-        tracing::debug!("📈 Health score increased for account {}", account_id);
-    }
-
-    /// 记录请求失败，降低健康分
-    pub fn record_failure(&self, account_id: &str) {
-        self.health_scores
-            .entry(account_id.to_string())
-            .and_modify(|s| *s = (*s - 0.2).max(0.0))
-            .or_insert(0.8);
-        tracing::warn!("📉 Health score decreased for account {}", account_id);
-    }
-
     /// 获取当前 QoS 守卫实例
     pub fn get_qos_guardian(&self) -> Arc<crate::proxy::qos_guardian::QoSGuardian> {
         self.qos_guardian.clone()
@@ -9081,7 +9042,7 @@ mod tests {
     fn create_test_token(
         email: &str,
         tier: Option<&str>,
-        health_score: f32,
+        _health_score: f32,
         reset_time: Option<i64>,
         remaining_quota: Option<i32>,
     ) -> ProxyToken {
@@ -9100,7 +9061,6 @@ mod tests {
             remaining_quota,
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score,
             reset_time,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -9141,16 +9101,7 @@ mod tests {
             return tier_cmp;
         }
 
-        // Second: compare by health score (higher is better)
-        let health_cmp = b
-            .health_score
-            .partial_cmp(&a.health_score)
-            .unwrap_or(Ordering::Equal);
-        if health_cmp != Ordering::Equal {
-            return health_cmp;
-        }
-
-        // Third: compare by reset time (earlier/closer is better) [Fix #3570]
+        // Second: compare by reset time (earlier/closer is better) [Fix #3570]
         let reset_a = a.reset_time.unwrap_or(i64::MAX);
         let reset_b = b.reset_time.unwrap_or(i64::MAX);
         let reset_cmp = reset_a.cmp(&reset_b);
@@ -9158,7 +9109,7 @@ mod tests {
             return reset_cmp;
         }
 
-        // Fourth: compare by remaining quota percentage (higher is better)
+        // Third: compare by remaining quota percentage (higher is better)
         let quota_a = a.remaining_quota.unwrap_or(0);
         let quota_b = b.remaining_quota.unwrap_or(0);
         let quota_cmp = quota_b.cmp(&quota_a);
@@ -9198,16 +9149,6 @@ mod tests {
         assert_eq!(compare_tokens(&advanced, &free), Ordering::Less);
         assert_eq!(compare_tokens(&ultra, &free), Ordering::Less);
         assert_eq!(compare_tokens(&free, &ultra), Ordering::Greater);
-    }
-
-    #[test]
-    fn test_sorting_health_score_priority() {
-        // 同等级下，健康分高的优先
-        let high_health = create_test_token("high@test.com", Some("PRO"), 1.0, None, Some(50));
-        let low_health = create_test_token("low@test.com", Some("PRO"), 0.5, None, Some(50));
-
-        assert_eq!(compare_tokens(&high_health, &low_health), Ordering::Less);
-        assert_eq!(compare_tokens(&low_health, &high_health), Ordering::Greater);
     }
 
     #[test]
@@ -9342,7 +9283,7 @@ mod tests {
     fn test_full_sorting_integration() {
         let now = chrono::Utc::now().timestamp();
 
-        let mut tokens = vec![
+        let mut tokens = [
             create_test_token(
                 "free_high@test.com",
                 Some("FREE"),
@@ -9351,9 +9292,9 @@ mod tests {
                 Some(90),
             ),
             create_test_token(
-                "pro_low_health@test.com",
+                "pro_high_quota_soon@test.com",
                 Some("PRO"),
-                0.5,
+                1.0,
                 Some(now + 1800),
                 Some(90),
             ),
@@ -9384,14 +9325,14 @@ mod tests {
 
         // 预期顺序:
         // 1. ULTRA (最高等级，即使刷新时间最远)
-        // 2. PRO + 高健康分 + 30分钟后刷新
-        // 3. PRO + 高健康分 + 5小时后刷新
-        // 4. PRO + 低健康分
+        // 2. PRO + 30分钟后刷新 + 高配额 (90%)
+        // 3. PRO + 30分钟后刷新 + 低配额 (50%)
+        // 4. PRO + 5小时后刷新 (90%)
         // 5. FREE (最低等级，即使配额最高)
         assert_eq!(tokens[0].email, "ultra@test.com");
-        assert_eq!(tokens[1].email, "pro_soon@test.com");
-        assert_eq!(tokens[2].email, "pro_late@test.com");
-        assert_eq!(tokens[3].email, "pro_low_health@test.com");
+        assert_eq!(tokens[1].email, "pro_high_quota_soon@test.com");
+        assert_eq!(tokens[2].email, "pro_soon@test.com");
+        assert_eq!(tokens[3].email, "pro_late@test.com");
         assert_eq!(tokens[4].email, "free_high@test.com");
     }
 
@@ -9511,7 +9452,6 @@ mod tests {
             remaining_quota,
             protected_models,
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -9804,16 +9744,7 @@ mod tests {
                 return quota_cmp;
             }
 
-            // Priority 2: Health score
-            let health_cmp = b
-                .health_score
-                .partial_cmp(&a.health_score)
-                .unwrap_or(Ordering::Equal);
-            if health_cmp != Ordering::Equal {
-                return health_cmp;
-            }
-
-            // Priority 3: Tier (for non-high-end models)
+            // Priority 2: Tier (for non-high-end models)
             if !requires_ultra {
                 let tier_cmp =
                     tier_priority(&a.subscription_tier).cmp(&tier_priority(&b.subscription_tier));
@@ -10150,7 +10081,6 @@ mod tests {
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -10185,7 +10115,6 @@ mod tests {
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -10408,7 +10337,6 @@ mod tests {
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -10485,7 +10413,6 @@ mod tests {
             model_priorities: HashMap::new(),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
@@ -12123,7 +12050,6 @@ mod tests {
             remaining_quota: Some(100),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,

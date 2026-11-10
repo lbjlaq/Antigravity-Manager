@@ -393,11 +393,6 @@ pub async fn handle_generate(
         let norm_ms = norm_total_micros.saturating_sub(tf_micros) as f64 / 1000.0;
         let think_fill_ms = tf_micros as f64 / 1000.0;
 
-        let _ =
-            crate::proxy::mappers::context_manager::ContextManager::apply_post_transit_context_mgmt(
-                &mut wrapped_body,
-                &mapped_model,
-            );
         crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::sanitize_gemini_payload(
             &mut wrapped_body,
         );

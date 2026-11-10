@@ -828,7 +828,6 @@ mod tests {
             remaining_quota: Some(100),
             protected_models: HashSet::new(),
             forbidden_models: std::collections::HashSet::new(),
-            health_score: 1.0,
             reset_time: None,
             weekly_reset_time: None,
             validation_blocked: false,
