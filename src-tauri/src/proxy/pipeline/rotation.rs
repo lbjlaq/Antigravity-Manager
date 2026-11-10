@@ -42,7 +42,7 @@ pub enum RetryStrategy {
 #[derive(Debug, Default)]
 pub struct RequestRetryState {
     grace_retried_accounts: HashSet<String>,
-    /// 已在本次请求内因上游终态原地重放过的账号（CacheFirst 每账号至多一次）
+    /// 已在本次请求内因上游终态原地重放过的账号（每账号每请求至多一次）
     terminal_retried_accounts: HashSet<String>,
 }
 
@@ -50,18 +50,18 @@ impl RequestRetryState {
     /// 上游终态（首字节 / 上传 / 传输层断连 / 全局预算 / 重放上限）后的统一裁决
     ///
     /// 四个协议适配器共用：调度模式只在这里参与决策，适配器只执行返回的计划。
-    /// - `cache_first`：当前调度模式是否为 CacheFirst；
-    /// - `allow_same_account`：调用方能否安全复用当前凭证原地重放
-    ///   （例如生图需要重新申请并发许可，不走原地重放）。
+    /// - `mode`：当前调度模式；
+    /// - `cache_bound`：请求是否承载上游 KV 缓存（文本对话为真；生图为假，
+    ///   不走原地重放，CacheFirst 下换号重试但不解绑原会话绑定）。
     pub fn plan_terminal(
         &mut self,
         account_id: &str,
         disposition: crate::proxy::pipeline::terminal::TerminalDisposition,
-        cache_first: bool,
-        allow_same_account: bool,
+        mode: crate::proxy::sticky_config::SchedulingMode,
+        cache_bound: bool,
     ) -> crate::proxy::pipeline::terminal::TerminalRetryPlan {
-        let available = allow_same_account && !self.terminal_retried_accounts.contains(account_id);
-        let plan = disposition.plan(cache_first, available);
+        let retry_left = !self.terminal_retried_accounts.contains(account_id);
+        let plan = disposition.plan(mode, cache_bound, retry_left);
         if plan.next == crate::proxy::pipeline::terminal::TerminalNextStep::RetrySameAccount {
             self.terminal_retried_accounts
                 .insert(account_id.to_string());
@@ -663,31 +663,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cache_first_terminal_retries_same_account_only_once_per_request() {
+    fn terminal_retries_same_account_only_once_per_request() {
         use crate::proxy::pipeline::terminal::{TerminalNextStep, UpstreamTerminal};
-        let mut state = RequestRetryState::default();
+        use crate::proxy::sticky_config::SchedulingMode;
         let d = UpstreamTerminal::TransportReset.disposition();
 
-        let first = state.plan_terminal("acc-1", d, true, true);
+        // CacheFirst：原地重放一次，之后终止，全程绝不解绑、绝不换号
+        let mut state = RequestRetryState::default();
+        let first = state.plan_terminal("acc-1", d, SchedulingMode::CacheFirst, true);
         assert_eq!(first.next, TerminalNextStep::RetrySameAccount);
         assert!(!first.abandon_sticky_account);
-
-        // 同一账号第二次终态：不再原地重放，也绝不解绑、绝不换号
-        let second = state.plan_terminal("acc-1", d, true, true);
+        let second = state.plan_terminal("acc-1", d, SchedulingMode::CacheFirst, true);
         assert_eq!(second.next, TerminalNextStep::Stop);
         assert!(!second.abandon_sticky_account);
 
-        // 调用方禁止原地重放（如生图）：直接终止，保留绑定
+        // CacheFirst 生图：不原地重放，换号但保留原会话绑定
         let mut state = RequestRetryState::default();
-        let image = state.plan_terminal("acc-1", d, true, false);
-        assert_eq!(image.next, TerminalNextStep::Stop);
+        let image = state.plan_terminal("acc-1", d, SchedulingMode::CacheFirst, false);
+        assert_eq!(image.next, TerminalNextStep::Rotate);
         assert!(!image.abandon_sticky_account);
 
-        // 非 CacheFirst：保持既有换号语义
+        // Balance：传输层断连先原地重连一次，用完后回到解绑 + 换号
         let mut state = RequestRetryState::default();
-        let balance = state.plan_terminal("acc-1", d, false, true);
-        assert_eq!(balance.next, TerminalNextStep::Rotate);
-        assert!(balance.abandon_sticky_account);
+        let first = state.plan_terminal("acc-1", d, SchedulingMode::Balance, true);
+        assert_eq!(first.next, TerminalNextStep::RetrySameAccount);
+        assert!(!first.abandon_sticky_account);
+        let second = state.plan_terminal("acc-1", d, SchedulingMode::Balance, true);
+        assert_eq!(second.next, TerminalNextStep::Rotate);
+        assert!(second.abandon_sticky_account);
+        // 换到新账号后仍各自拥有一次原地重连额度
+        let other = state.plan_terminal("acc-2", d, SchedulingMode::Balance, true);
+        assert_eq!(other.next, TerminalNextStep::RetrySameAccount);
+
+        // PerformanceFirst：不建立会话绑定，传输层断连直接换号（既有语义）
+        let mut state = RequestRetryState::default();
+        let perf = state.plan_terminal("acc-1", d, SchedulingMode::PerformanceFirst, true);
+        assert_eq!(perf.next, TerminalNextStep::Rotate);
     }
 
     #[test]

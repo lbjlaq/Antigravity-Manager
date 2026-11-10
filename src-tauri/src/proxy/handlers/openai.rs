@@ -2701,13 +2701,12 @@ pub async fn handle_chat_completions(
                         handling.terminal.as_str(),
                         crate::proxy::upstream::client::strip_internal_markers(&e)
                     );
-                    // [CacheFirst] 终态都不是账号故障：调度模式统一由 pipeline 裁决，
-                    // CacheFirst 下绝不解绑 / 换号（换号必然丢失上游 KV 缓存），只在当前账号原地重放一次。
+                    // 终态都不是账号故障：解绑 / 换号 / 原地重放统一由 pipeline 按调度模式裁决。
+                    // CacheFirst 下文本请求绝不解绑 / 换号；Balance 下传输层断连先原地重连一次。
                     let terminal_plan = retry_state.plan_terminal(
                         &account_id,
                         handling.disposition,
-                        token_manager.get_scheduling_mode().await
-                            == crate::proxy::sticky_config::SchedulingMode::CacheFirst,
+                        token_manager.get_scheduling_mode().await,
                         config.request_type != "image_gen",
                     );
                     if terminal_plan.abandon_sticky_account {
@@ -2723,7 +2722,7 @@ pub async fn handle_chat_completions(
                         crate::proxy::pipeline::TerminalNextStep::Stop => break,
                         crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
                             tracing::info!(
-                                "[CacheFirst] Upstream terminal {} on bound account {} (attempt {}/{}): keeping session {} bound and retrying the same account in-place to preserve KV cache",
+                                "Upstream terminal {} on account {} (attempt {}/{}): keeping session {} bound and retrying the same account in-place to preserve KV cache",
                                 handling.terminal.as_str(),
                                 email,
                                 attempt + 1,
@@ -4800,13 +4799,12 @@ pub async fn handle_completions(
                         handling.terminal.as_str(),
                         crate::proxy::upstream::client::strip_internal_markers(&e)
                     );
-                    // [CacheFirst] 终态都不是账号故障：调度模式统一由 pipeline 裁决，
-                    // CacheFirst 下绝不解绑 / 换号（换号必然丢失上游 KV 缓存），只在当前账号原地重放一次。
+                    // 终态都不是账号故障：解绑 / 换号 / 原地重放统一由 pipeline 按调度模式裁决。
+                    // CacheFirst 下文本请求绝不解绑 / 换号；Balance 下传输层断连先原地重连一次。
                     let terminal_plan = retry_state.plan_terminal(
                         &account_id,
                         handling.disposition,
-                        token_manager.get_scheduling_mode().await
-                            == crate::proxy::sticky_config::SchedulingMode::CacheFirst,
+                        token_manager.get_scheduling_mode().await,
                         config.request_type != "image_gen",
                     );
                     if terminal_plan.abandon_sticky_account {
@@ -4822,7 +4820,7 @@ pub async fn handle_completions(
                         crate::proxy::pipeline::TerminalNextStep::Stop => break,
                         crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
                             tracing::info!(
-                                "[CacheFirst] Upstream terminal {} on bound account {} (attempt {}/{}): keeping session {} bound and retrying the same account in-place to preserve KV cache",
+                                "Upstream terminal {} on account {} (attempt {}/{}): keeping session {} bound and retrying the same account in-place to preserve KV cache",
                                 handling.terminal.as_str(),
                                 email,
                                 attempt + 1,
