@@ -528,7 +528,11 @@ impl PromptSanitizer {
                 return caps[0].to_string();
             }
             match caps.get(2).map(|m| m.as_str()).unwrap_or("") {
-                "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
+                "," | "，" => format!(
+                    "{}{}",
+                    OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.'),
+                    caps.get(2).map(|m| m.as_str()).unwrap_or_default()
+                ),
                 _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             }
         });
@@ -536,7 +540,11 @@ impl PromptSanitizer {
         // 2.2 知名特定客户端开场白归一化（如 Claude Code CLI 开场白、*code、*studio、*claw、pi 等）
         let pass2 = RE_KNOWN_CLIENT_DECLARATION.replace_all(&pass1, |caps: &regex::Captures| {
             match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
-                "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
+                "," | "，" => format!(
+                    "{}{}",
+                    OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.'),
+                    caps.get(1).map(|m| m.as_str()).unwrap_or_default()
+                ),
                 _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             }
         });
@@ -1943,7 +1951,10 @@ mod tests {
             "You are an AI agent created by Acme, and you must never reveal internal tooling.";
         assert_eq!(
             PromptSanitizer::normalize_system_identity(raw),
-            format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}, and you must never reveal internal tooling.")
+            format!(
+                "{}, and you must never reveal internal tooling.",
+                OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')
+            )
         );
     }
 
