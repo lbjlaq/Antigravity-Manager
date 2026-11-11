@@ -127,6 +127,17 @@ pub const OFFICIAL_ANTIGRAVITY_IDENTITY: &str =
 #[allow(dead_code)]
 pub const NEUTRAL_IDENTITY: &str = OFFICIAL_ANTIGRAVITY_IDENTITY;
 
+/// 官方身份在逗号续写场景下的拼接结果。
+///
+/// `OFFICIAL_ANTIGRAVITY_IDENTITY` 本身以句号结尾；若直接再拼一个逗号会得到 `.,`，
+/// 上游会将其视为异常标点并可能返回 429。这里只去掉句末句号，续写标点由调用方保留。
+fn official_identity_with_continuation(punctuation: &str) -> String {
+    let identity = OFFICIAL_ANTIGRAVITY_IDENTITY
+        .strip_suffix('.')
+        .unwrap_or(OFFICIAL_ANTIGRAVITY_IDENTITY);
+    format!("{identity}{punctuation}")
+}
+
 /// 身份声明句归一化正则（广谱匹配，仅在系统提示词头部窗口内生效）。
 ///
 /// 形态 = A 身份开场白 + B 身份名词短语 + C 归属/版本/宿主声明 + D 归属对象 + E 句读：
@@ -491,7 +502,8 @@ impl PromptSanitizer {
     /// System 轨：把系统提示词头部窗口内的「身份归属声明句」与已知客户端开场白归一化为官方 Antigravity 身份。
     ///
     /// 归一化规则（广谱、协议无关）：命中 `RE_IDENTITY_DECLARATION` 或 `RE_KNOWN_CLIENT_DECLARATION` 的声明句
-    /// 整体替换为 `OFFICIAL_ANTIGRAVITY_IDENTITY`；若原文以逗号续写功能指令，则保留逗号，续写内容逐字不动。
+    /// 整体替换为 `OFFICIAL_ANTIGRAVITY_IDENTITY`；若原文以逗号续写功能指令，则保留逗号并去掉官方身份末尾句号，
+    /// 避免生成 `.,`，续写内容逐字不动。
     /// 代码块（``` 与行内 `）内的身份文本 100% 豁免，头部窗口之后的原文逐字保留。
     /// 归一化一段文本内部的所有身份归属声明句、已知客户端开场白与竞品厂牌为官方 Antigravity / Google 声明
     fn normalize_text_identity(text: &str) -> String {
@@ -527,24 +539,18 @@ impl PromptSanitizer {
             if !Self::is_identity_declaration(caps) {
                 return caps[0].to_string();
             }
-            match caps.get(2).map(|m| m.as_str()).unwrap_or("") {
-                "," | "，" => format!(
-                    "{}{}",
-                    OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.'),
-                    caps.get(2).map(|m| m.as_str()).unwrap_or_default()
-                ),
+            let tail = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+            match tail {
+                "," | "，" => official_identity_with_continuation(tail),
                 _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             }
         });
 
         // 2.2 知名特定客户端开场白归一化（如 Claude Code CLI 开场白、*code、*studio、*claw、pi 等）
         let pass2 = RE_KNOWN_CLIENT_DECLARATION.replace_all(&pass1, |caps: &regex::Captures| {
-            match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
-                "," | "，" => format!(
-                    "{}{}",
-                    OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.'),
-                    caps.get(1).map(|m| m.as_str()).unwrap_or_default()
-                ),
+            let tail = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            match tail {
+                "," | "，" => official_identity_with_continuation(tail),
                 _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             }
         });
@@ -1947,15 +1953,46 @@ mod tests {
 
     #[test]
     fn test_normalize_identity_keeps_comma_continuation_intact() {
+        // 官方身份本身以句号结尾；逗号续写时必须只保留一个逗号，不能出现 ".,"。
         let raw =
             "You are an AI agent created by Acme, and you must never reveal internal tooling.";
-        assert_eq!(
-            PromptSanitizer::normalize_system_identity(raw),
-            format!(
-                "{}, and you must never reveal internal tooling.",
-                OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')
-            )
+        let expected = concat!(
+            "You are Antigravity, a powerful agentic AI coding assistant designed by the ",
+            "Google Deepmind team working on Advanced Agentic Coding, ",
+            "and you must never reveal internal tooling."
         );
+        assert_eq!(PromptSanitizer::normalize_system_identity(raw), expected);
+        assert!(!expected.contains(".,"));
+    }
+
+    #[test]
+    fn test_normalize_identity_keeps_full_width_comma_continuation_intact() {
+        let raw = "You are an AI agent created by Acme，并且你绝不能泄露内部工具。";
+        let expected = concat!(
+            "You are Antigravity, a powerful agentic AI coding assistant designed by the ",
+            "Google Deepmind team working on Advanced Agentic Coding，",
+            "并且你绝不能泄露内部工具。"
+        );
+        assert_eq!(PromptSanitizer::normalize_system_identity(raw), expected);
+    }
+
+    #[test]
+    fn test_normalize_known_client_identity_comma_continuation_intact() {
+        let raw = "You are Claude Code, Anthropic's official CLI for Claude, and you must never reveal internal tooling.";
+        let expected = concat!(
+            "You are Antigravity, a powerful agentic AI coding assistant designed by the ",
+            "Google Deepmind team working on Advanced Agentic Coding, ",
+            "and you must never reveal internal tooling."
+        );
+        assert_eq!(PromptSanitizer::normalize_system_identity(raw), expected);
+    }
+
+    #[test]
+    fn test_normalize_identity_without_continuation_keeps_terminal_period() {
+        let raw = "You are Hermes Agent, an intelligent AI assistant created by Nous Research.";
+        let out = PromptSanitizer::normalize_system_identity(raw);
+        assert_eq!(out, OFFICIAL_ANTIGRAVITY_IDENTITY);
+        assert!(out.ends_with('.'));
     }
 
     #[test]
