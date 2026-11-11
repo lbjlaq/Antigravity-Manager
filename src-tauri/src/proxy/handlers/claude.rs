@@ -1885,24 +1885,22 @@ pub async fn handle_messages(
                 } else {
                     e
                 };
-                let headers =
-                    crate::proxy::handlers::common::build_token_error_headers_for_protocol(
-                        "claude",
-                        Some(mapped_model.as_str()),
-                        None,
-                        &safe_message,
-                    );
-                let dual_err = crate::proxy::handlers::common::build_dual_track_error(
-                    "claude",
-                    StatusCode::SERVICE_UNAVAILABLE.as_u16(),
-                    mapped_model.as_str(),
-                    &safe_message,
-                );
+                let status =
+                    crate::proxy::handlers::common::resolve_token_error_status(&safe_message);
                 crate::proxy::stage_trace::StageTrace::alert_current_error(
                     "gateway_local",
-                    format!("token_unavailable status=503 reason={}", safe_message),
+                    format!(
+                        "token_unavailable status={} reason={}",
+                        status.as_u16(),
+                        safe_message
+                    ),
                 );
-                return (StatusCode::SERVICE_UNAVAILABLE, headers, Json(dual_err)).into_response();
+                return crate::proxy::handlers::common::build_token_error_response(
+                    "claude",
+                    mapped_model.as_str(),
+                    None,
+                    &safe_message,
+                );
             }
         };
 
@@ -2877,7 +2875,12 @@ pub async fn handle_messages(
                 .into_response();
         }
 
-        if classification.should_lock_account() {
+        if classification.should_lock_account_on_attempt(
+            status_code,
+            &error_text,
+            retry_after.as_deref(),
+            attempt,
+        ) {
             token_manager
                 .mark_rate_limited_async_baseline(
                     &email,

@@ -354,6 +354,16 @@ pub fn build_token_error_headers_for_protocol<'a>(
             headers.insert(axum::http::header::RETRY_AFTER, val);
         }
     }
+
+    // [Fixes #3908] 明确标识错误来源：网关账号池冷却 vs 上游拒绝。
+    if crate::proxy::pipeline::policy::UpstreamClassification::is_internal_gateway_exhaustion(
+        &error_text.to_lowercase(),
+    ) {
+        headers.insert(
+            HeaderName::from_static("x-gateway-error-source"),
+            HeaderValue::from_static("gateway_pool"),
+        );
+    }
     headers
 }
 
@@ -364,6 +374,38 @@ pub fn build_token_error_headers<'a>(
     error_text: &str,
 ) -> axum::http::HeaderMap {
     build_token_error_headers_for_protocol("common", mapped_model, account_email, error_text)
+}
+
+/// 首轮获取账号失败（网关账号池冷却 vs 无可用账号）的统一状态码裁决：
+/// - 网关账号池全员冷却（`is_internal_gateway_exhaustion`）返回 `429 TOO_MANY_REQUESTS`；
+/// - 其余无可用账号或刷新失败返回 `503 SERVICE_UNAVAILABLE`。
+pub fn resolve_token_error_status(error_text: &str) -> axum::http::StatusCode {
+    if crate::proxy::pipeline::policy::UpstreamClassification::is_internal_gateway_exhaustion(
+        &error_text.to_lowercase(),
+    ) {
+        axum::http::StatusCode::TOO_MANY_REQUESTS
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+/// 统一构造首轮获取账号失败（网关账号池冷却 / 无可用账号）的双轨制协议响应
+pub fn build_token_error_response(
+    protocol: &str,
+    mapped_model: &str,
+    account_email: Option<&str>,
+    error_text: &str,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let status = resolve_token_error_status(error_text);
+    let headers = build_token_error_headers_for_protocol(
+        protocol,
+        Some(mapped_model),
+        account_email,
+        error_text,
+    );
+    let dual_err = build_dual_track_error(protocol, status.as_u16(), mapped_model, error_text);
+    (status, headers, axum::Json(dual_err)).into_response()
 }
 
 fn map_status_code_to_gemini_status(status_code: u16) -> &'static str {
@@ -691,6 +733,7 @@ pub fn build_dual_track_error_with_ua_and_lang(
 
     let gateway_error_obj = serde_json::json!({
         "error_code": err_code,
+        "source": if is_internal_limited { "gateway_pool" } else { "upstream" },
         "model": model,
         "is_server_error": false,
         "diagnosis": diagnosis,
@@ -1073,10 +1116,41 @@ mod retry_after_tests {
         let raw_err = "All accounts limited. Wait 30s.";
         let claude_res = build_dual_track_error("claude", 429, "gemini-2.5-flash", raw_err);
         assert_eq!(claude_res["error"]["code"], "all_accounts_limited");
+        assert_eq!(
+            claude_res["error"]["gateway_error"]["source"],
+            "gateway_pool"
+        );
         assert!(claude_res["error"]["message"]
             .as_str()
             .unwrap()
             .contains("网关调度受限"));
+    }
+
+    #[test]
+    fn test_build_dual_track_error_upstream_source() {
+        let raw_err = r#"{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}"#;
+        let res = build_dual_track_error("claude", 429, "gemini-2.5-flash", raw_err);
+        assert_eq!(res["error"]["gateway_error"]["source"], "upstream");
+    }
+
+    #[test]
+    fn test_token_error_headers_mark_gateway_pool_source() {
+        let headers =
+            build_token_error_headers(None, None, "All accounts rate-limited. Cooldown wait 27s.");
+        assert_eq!(
+            headers
+                .get("x-gateway-error-source")
+                .and_then(|v| v.to_str().ok()),
+            Some("gateway_pool")
+        );
+        assert_eq!(
+            resolve_token_error_status("All accounts rate-limited. Cooldown wait 27s."),
+            axum::http::StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            resolve_token_error_status("No accounts available"),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]

@@ -553,6 +553,9 @@ pub async fn save_config(
     );
     crate::proxy::update_thinking_budget_config(config.proxy.thinking_budget.clone());
     crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
+    crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+        &config.proxy.prompt_rewrite,
+    );
     crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
     crate::proxy::update_multimodal_config(config.proxy.multimodal.clone());
     crate::proxy::update_stream_timeout_config(config.proxy.stream_timeouts.clone());
@@ -605,6 +608,9 @@ pub async fn save_config(
         crate::proxy::update_thinking_budget_config(config.proxy.thinking_budget.clone());
         // [NEW] 更新全局系统提示词配置
         crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+            &config.proxy.prompt_rewrite,
+        );
         // [NEW] 更新全局图像思维模式配置
         crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
         crate::proxy::update_multimodal_config(config.proxy.multimodal.clone());

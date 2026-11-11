@@ -334,17 +334,12 @@ pub async fn handle_generate(
                         );
                         break;
                     }
-                    let headers = build_token_error_headers(
-                        Some(mapped_model.as_str()),
+                    return Ok(crate::proxy::handlers::common::build_token_error_response(
+                        "gemini",
+                        mapped_model.as_str(),
                         last_email.as_deref(),
                         &e,
-                    );
-                    return Ok((
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        headers,
-                        format!("Token error: {}", e),
-                    )
-                        .into_response());
+                    ));
                 }
             }
         };
@@ -1169,7 +1164,12 @@ pub async fn handle_generate(
             }
         }
 
-        let should_mark_limited = classification.should_lock_account();
+        let should_mark_limited = classification.should_lock_account_on_attempt(
+            status_code,
+            &error_text,
+            retry_after.as_deref(),
+            attempt,
+        );
         let needs_quota_refresh = if should_mark_limited {
             token_manager
                 .mark_rate_limited_fast(

@@ -2123,6 +2123,9 @@ async fn admin_save_config(
     // 同步全局内存配置（热更新思考预算、系统提示词、图像思考模式与审计策略）
     crate::proxy::update_thinking_budget_config(new_config.proxy.thinking_budget.clone());
     crate::proxy::update_global_system_prompt_config(new_config.proxy.global_system_prompt.clone());
+    crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+        &new_config.proxy.prompt_rewrite,
+    );
     crate::proxy::update_image_thinking_mode(new_config.proxy.image_thinking_mode.clone());
     crate::proxy::update_multimodal_config(new_config.proxy.multimodal.clone());
     crate::proxy::update_stream_timeout_config(new_config.proxy.stream_timeouts.clone());

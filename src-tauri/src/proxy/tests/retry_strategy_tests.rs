@@ -224,14 +224,15 @@ fn test_adaptive_retry_multi_account_round_2_large_gap_rotates_if_more_than_two_
 }
 
 #[test]
-fn test_adaptive_retry_request_level_429_rotates_full_pool_then_aborts() {
+fn test_adaptive_retry_request_level_429_grace_retries_first_attempt_then_rotates() {
     use crate::proxy::handlers::common::determine_retry_strategy_adaptive;
     // 请求级速率限制（无具体配额枯竭关键字，无明确重置时间）
     let request_level_429 =
         r#"{"error":{"code":429,"message":"Rate limit exceeded: too many concurrent requests."}}"#;
 
     let pool_size = 3;
-    // 允许第一轮全池每一个账号均获得 1 次执行尝试 (attempt 0, 1, 2: 150ms)
+    // [Fixes #3901] attempt 0 先原地 GraceRetry，避免 150ms 把全池逐一写入冷却；
+    // 后续 attempt 才允许 150ms 轮换寻找其他健康账号。
     for attempt in 0..pool_size {
         let s = determine_retry_strategy_adaptive(
             429,
@@ -242,12 +243,20 @@ fn test_adaptive_retry_request_level_429_rotates_full_pool_then_aborts() {
             attempt,
             pool_size,
         );
-        assert_eq!(
-            s,
-            RetryStrategy::FixedDelay(Duration::from_millis(150)),
-            "Attempt {} should fast rotate in round 1",
-            attempt
-        );
+        if attempt == 0 {
+            assert_eq!(
+                s,
+                RetryStrategy::GraceRetry(Duration::from_millis(1500)),
+                "Attempt 0 should grace-retry on the same account to protect the pool"
+            );
+        } else {
+            assert_eq!(
+                s,
+                RetryStrategy::FixedDelay(Duration::from_millis(150)),
+                "Attempt {} should fast rotate after the first grace retry",
+                attempt
+            );
+        }
     }
 
     // 第二轮 (attempt 3..6): 支持阶梯退避重试以等待账号恢复
@@ -332,7 +341,8 @@ fn test_adaptive_retry_google_resource_exhausted_rotates_full_pool_then_aborts()
         r#"{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota)."}}"#;
 
     let pool_size = 5;
-    // 全池每一个账号 (attempt 0..5) 均获得 1 次执行机会以吸收初始 burst token 限流
+    // [Fixes #3901] attempt 0 先原地 GraceRetry，避免 150ms 把全池逐一写入冷却；
+    // 后续 attempt 才允许 150ms 轮换。
     for attempt in 0..pool_size {
         let s = determine_retry_strategy_adaptive(
             429,
@@ -343,12 +353,20 @@ fn test_adaptive_retry_google_resource_exhausted_rotates_full_pool_then_aborts()
             attempt,
             pool_size,
         );
-        assert_eq!(
-            s,
-            RetryStrategy::FixedDelay(Duration::from_millis(150)),
-            "Attempt {} should fast rotate",
-            attempt
-        );
+        if attempt == 0 {
+            assert_eq!(
+                s,
+                RetryStrategy::GraceRetry(Duration::from_millis(1500)),
+                "Attempt 0 should grace-retry on the same account to protect the pool"
+            );
+        } else {
+            assert_eq!(
+                s,
+                RetryStrategy::FixedDelay(Duration::from_millis(150)),
+                "Attempt {} should fast rotate after the first grace retry",
+                attempt
+            );
+        }
     }
 
     // attempt 10 (attempt == pool_size * 2): 两轮全池 150ms 切号与退避均遇 429 后，触发快速失败 (fail-fast)，
@@ -456,5 +474,29 @@ fn test_adaptive_retry_multi_account_round_1_micro_gap_takes_grace_retry_issue_3
         s_fallback,
         RetryStrategy::FixedDelay(Duration::from_millis(150)),
         "GraceRetry 已消耗时应顺畅回退至全池轮换"
+    );
+}
+
+#[test]
+fn test_structured_quota_failure_fast_rotates_even_with_generic_message() {
+    use crate::proxy::handlers::common::determine_retry_strategy_adaptive;
+    let body = r#"{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generate_content_free_tier_requests"}]}]}}"#;
+    let s = determine_retry_strategy_adaptive(429, body, None, false, true, 0, 3);
+    assert_eq!(
+        s,
+        RetryStrategy::FixedDelay(Duration::from_millis(50)),
+        "structured QuotaFailure must fast-rotate even if the message is generic"
+    );
+}
+
+#[test]
+fn test_structured_rate_limit_reason_uses_grace_retry_even_with_quota_words() {
+    use crate::proxy::handlers::common::determine_retry_strategy_adaptive;
+    let body = r#"{"error":{"code":429,"message":"Quota exceeded for requests per minute.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED","domain":"googleapis.com"}]}}"#;
+    let s = determine_retry_strategy_adaptive(429, body, None, false, true, 0, 3);
+    assert_eq!(
+        s,
+        RetryStrategy::GraceRetry(Duration::from_millis(1500)),
+        "structured rate-limit reason must be treated as request-level"
     );
 }
