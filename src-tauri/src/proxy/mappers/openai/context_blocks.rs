@@ -16,12 +16,7 @@ pub fn build_system_instruction_parts(
         if instruction.trim().is_empty() {
             continue;
         }
-        let enhanced =
-            crate::proxy::mappers::common_utils::enhance_gemini_skills_prompt(instruction);
-        if enhanced.trim().is_empty() {
-            continue;
-        }
-        parts.push(json!({ "text": enhanced }));
+        parts.push(json!({ "text": instruction }));
     }
 
     if let Some(prompt) = global_prompt.map(str::trim).filter(|s| !s.is_empty()) {
@@ -78,5 +73,18 @@ mod tests {
         let parts = build_system_instruction_parts(&["  ".into(), "keep".into(), "".into()], None);
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0]["text"], "keep");
+    }
+
+    #[test]
+    fn preserves_skills_blocks_verbatim_without_injecting_shell_command() {
+        let skills_prompt = "<skills>\n  <skill id=\"my-tool\">read doc</skill>\n</skills>";
+        let parts = build_system_instruction_parts(&[skills_prompt.into()], None);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["text"], skills_prompt);
+
+        let serialized = serde_json::to_string(&parts).unwrap();
+        assert!(!serialized.contains("shell_command"));
+        assert!(!serialized.contains("CRITICAL INSTRUCTION FOR GEMINI"));
+        assert!(!serialized.contains("Get-Content"));
     }
 }

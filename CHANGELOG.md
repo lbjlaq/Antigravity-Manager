@@ -3,6 +3,21 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.7 (2026-11-12)**:
+        -   **[上游 WAF 429 身份改写根治、请求级限流防连坐与风控提示词清理方案] (Fixes #3904, #3908, #3901, #3915, Ref #3903, #3912, PR #3913, Thanks to @jeikl, @cubelikeplayDaniel, @lbjlaq, @sinderson123-afk, @JeikCode)**:
+            -   **单例身份不变量与多重身份清理**: 跨 `systemInstruction.parts` 全局去重，仅保留首处官方 Antigravity 身份；彻底清除 DSH/pi/OpenCode 等客户端多重身份声明叠加生成的纯空白与重复身份片段，杜绝多身份混合带 tools 时被 Google WAF 判定异常并抛出 429 RESOURCE_EXHAUSTED。(Fixes #3904, #3908)
+            -   **版本号识别优化与同位语标点规整**: 版本 token 优先匹配完整版本号（如 `gemini-3.8-flash-low`，彻底根除被截断为 `gemini-3` 并残留 `8-flash-low model.` 的缺陷）；规范化 AG 声明后的 ASCII 逗号与同位语续写为句号（`AG, a coding agent harness.` $\to$ `AG. a coding agent harness.`），折叠处理畸形标点（如 `.,`、`。，`），消除上游 WAF 触发特征。(Fixes #3908, #3915)
+            -   **请求级 429 防连坐与智能宽限重试**: 失败计数粒度细化至账号+模型（account + model），避免单一模型限流波及全号；首轮 429 遭遇无 `retryDelay` 的请求级限流时原地执行 GraceRetry 且不锁定账号；新增 `request_429_grace_ms`（首轮请求 429 宽限延迟，默认 1500ms，范围 200–10000ms，支持环境变量 `ABV_REQUEST_429_GRACE_MS` 与热更新）；网关全池冷却规范返回 429 状态码与 `all_accounts_limited`，并通过 `gateway_error.source` 标明来源；优先解析 `QuotaFailure`、`RetryInfo`、`ErrorInfo` 结构化信号，与轮换策略协同。(Fixes #3901)
+            -   **风控提示词清理方案（Prompt Rewrite）与内置推荐预设**: 反代设置新增「风控提示词清理方案」配置与编辑面板，支持单行通配符 `*` 与 `\n/\r/\t/\\/\*` 转义，空替换即为删除，仅作用于首个真实 user 之前的 System 轨并豁免代码块与思考块；默认内置并支持一键载入 6 套实战推荐规则（OpenCode 同位语、DSH 身份声明、WorkBuddy 身份声明、Codex CLI 身份指纹、Anthropic Billing 计费头元数据等），支持规则热重载与配置导入导出。(Ref #3903, #3913)
+            -   **全语言国际化覆盖与多目标编译修复**: 针对提示词清理规则与宽限延迟等新配置项补齐 12 种语言完整国际化覆盖；在 `Cargo.toml` 中显式指定 `default-run = "antigravity-tools"`，彻底消除多 bin 目标时 `cargo run` 或 `tauri dev` 编译报错问题。(Ref #3913)
+        -   **[粘性会话连接重置原地重试与缓存锁定保护] (PR #3899, Ref #3821, #3893, #3639, Thanks to @mclinyeshi)**:
+            -   **区分底层连接重置与首字超时**: 准确区分预算内底层 TCP 连接中断（如 daily 端点 `client error (SendRequest)`）与真正的首字超时，将预算内断流归类为 `TransportReset`（502）且不惩罚账号，避免被误判为超时故障。(PR #3899, Ref #3821)
+            -   **CacheFirst 模式原地重试与会话缓存锁定**: 在 CacheFirst 调度模式下遭遇 TransportReset 坚决不解绑账号，在原地重试 1 次并维持会话绑定，彻底根除长会话因瞬间断流漂移至其他账号导致昂贵的前缀预填充缓存（KV Cache）雪崩失效的问题；Balance 模式下原地重试 1 次失败后才触发换号容灾；CacheFirst 下生图请求（不携带 KV 缓存）遭遇故障时允许平滑轮换账号且不解绑会话原有的文本绑定。(PR #3899)
+        -   **[身份改写标点清洗与续写保护] (PR #3902, Ref #3508, Thanks to @ThermalEng, @JeikCode)**:
+            -   **规整身份声明后续标点拼接**: 仅当官方身份声明紧跟逗号续写时才剥离末尾句号，彻底消除清洗后出现 `.,` 双标点异常，在非续写路径严格保留句号；强化全角逗号与已知客户端开场白的单元测试防御覆盖。(PR #3902, Ref #3508)
+        -   **[OpenAI 协议提示词纯净透传与遗留技能伪指令清除] (Fixes #3914, Thanks to @l10kai)**:
+            -   **拔除遗留技能提示词劫持**: 彻底移除 `enhance_gemini_skills_prompt` 硬编码逻辑，不再无条件劫持 OpenAI 兼容协议（`/v1/chat/completions` 与 `/v1/responses`）中的 `</skills>` 及 `</skills_instructions>` XML 标签；消除向非 Codex 客户端注入虚构的 `shell_command` 工具及 Windows PowerShell 命令的错误伪指令，彻底恢复系统提示词原样纯净透传，杜绝主流 Agent 客户端（Oh My Pi、Cline、Roo Code 等）发生指令冲突与工具调用幻觉。(Fixes #3914)
+
     *   **v5.0.4-beta.6 (2026-11-09)**:
         -   **[上游权威数据面封禁探针重构与智能长时冷却闭环] (Ref #3863, #3865, #3875, #3895, Thanks to @jeikl, @cubelikeplayDaniel)**:
             -   **数据面推理探针与标准 Antigravity 报文对齐**: 封禁探针全面升级为最新官方基准模型 `gemini-3.8-flash-low`（彻底淘汰废弃的 `gemini-2.5-flash`），通过 `wrap_request` 生成具备完整 `sessionId`、`systemInstruction`、`generationConfig.thinkingConfig` (LOW)、官方 `requestId` 与 `userAgent` 的正规请求信封，杜绝因结构残缺或废弃模型被 Google WAF 判定异常并抛出 429 RESOURCE_EXHAUSTED。
