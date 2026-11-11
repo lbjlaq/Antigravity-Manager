@@ -1634,4 +1634,32 @@ mod tests {
         assert_eq!(normalize_proxy_url(""), "");
         assert_eq!(normalize_proxy_url("   "), "");
     }
+
+    #[test]
+    fn upload_timeout_config_roundtrip_and_normalization() {
+        let cfg = UploadTimeoutConfig {
+            connect_secs: 0,
+            min_upload_mbps: 0.0,
+            extra_wait_ratio: 99.0,
+            stall_secs: 1,
+            header_wait_secs: 999,
+            large_body_threshold_mb: 0,
+            large_body_endpoint_attempts: 0,
+        };
+        let normalized = cfg.clone().normalized();
+        assert_eq!(normalized.connect_secs, 3);
+        assert_eq!(normalized.min_upload_mbps, 0.1);
+        assert_eq!(normalized.extra_wait_ratio, 10.0);
+        assert_eq!(normalized.stall_secs, 5);
+        assert_eq!(normalized.header_wait_secs, 600);
+        assert_eq!(normalized.large_body_threshold_mb, 1);
+        assert_eq!(normalized.large_body_endpoint_attempts, 1);
+
+        // 配置必须完整 round-trip；缺失字段回退默认值，不得静默丢字段。
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: UploadTimeoutConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+        let partial: UploadTimeoutConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(partial, UploadTimeoutConfig::default());
+    }
 }

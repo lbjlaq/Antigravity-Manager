@@ -36,6 +36,10 @@ pub async fn service_status_middleware(
     };
 
     if !running {
+        tracing::warn!(
+            path = %request.uri().path(),
+            "Proxy service is currently disabled; returning 503 (service_status, not upstream)"
+        );
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "Proxy service is currently disabled".to_string(),

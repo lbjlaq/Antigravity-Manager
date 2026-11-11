@@ -1001,6 +1001,107 @@ pub struct FirstByteTimeouts {
     pub cap: u64,
 }
 
+/// 单个 body 样本在当前配置下实际生效的上传预算。
+#[derive(serde::Serialize)]
+pub struct EffectiveTimeoutSample {
+    pub label: String,
+    pub body_len: usize,
+    pub upload_budget_secs: u64,
+    pub large_body: bool,
+    pub endpoint_attempt_limit: usize,
+}
+
+/// 超时配置的“配置值 + 生效值 + 来源”快照，供前端显示单一真源。
+#[derive(serde::Serialize)]
+pub struct EffectiveTimeoutConfig {
+    pub upload: crate::proxy::config::UploadTimeoutConfig,
+    pub stream: crate::proxy::config::StreamTimeoutConfig,
+    /// 被环境变量覆盖的字段名（用于前端提示“界面值 ≠ 生效值”）。
+    pub env_overridden: Vec<String>,
+    pub samples: Vec<EffectiveTimeoutSample>,
+    pub global_budget_secs: u64,
+    pub replay_guard_threshold_mb: u64,
+}
+
+#[tauri::command]
+pub fn get_effective_timeout_config() -> EffectiveTimeoutConfig {
+    use crate::proxy::upstream::client::{
+        current_upload_throughput_bps, PayloadMediaKind, UpstreamClient,
+    };
+
+    let upload = crate::proxy::get_upload_timeout_config();
+    let stream = crate::proxy::get_stream_timeout_config();
+    let observed = current_upload_throughput_bps();
+
+    let env_keys = [
+        ("ANTIGRAVITY_TIMEOUT_CONNECT_SECS", "connect_secs"),
+        ("ANTIGRAVITY_TIMEOUT_UPLOAD_MIN_MBPS", "min_upload_mbps"),
+        (
+            "ANTIGRAVITY_TIMEOUT_UPLOAD_EXTRA_WAIT_RATIO",
+            "extra_wait_ratio",
+        ),
+        ("ANTIGRAVITY_TIMEOUT_UPLOAD_STALL_SECS", "stall_secs"),
+        (
+            "ANTIGRAVITY_TIMEOUT_LARGE_BODY_MB",
+            "large_body_threshold_mb",
+        ),
+        (
+            "ANTIGRAVITY_TIMEOUT_LARGE_BODY_ENDPOINT_ATTEMPTS",
+            "large_body_endpoint_attempts",
+        ),
+        ("ANTIGRAVITY_TIMEOUT_TTFT_SECS", "initial_ttft_secs"),
+        ("ANTIGRAVITY_TIMEOUT_TRANSITION_SECS", "transition_secs"),
+        (
+            "ANTIGRAVITY_TIMEOUT_STREAMING_SLIDING_SECS",
+            "streaming_sliding_secs",
+        ),
+        (
+            "ANTIGRAVITY_GATEWAY_REQUEST_BUDGET_SECS",
+            "gateway_request_budget_secs",
+        ),
+    ];
+    let env_overridden = env_keys
+        .iter()
+        .filter(|(key, _)| std::env::var(*key).is_ok())
+        .map(|(_, field)| (*field).to_string())
+        .collect();
+
+    let samples = [
+        ("512KB", 512 * 1024usize),
+        ("1MB", 1024 * 1024usize),
+        ("2MB", 2 * 1024 * 1024usize),
+        ("8MB", 8 * 1024 * 1024usize),
+        ("47MB", 47 * 1024 * 1024usize),
+    ]
+    .into_iter()
+    .map(|(label, body_len)| {
+        let plan = UpstreamClient::plan_upstream_timeouts_with_observed(
+            PayloadMediaKind::TextChat,
+            body_len,
+            &upload,
+            observed,
+        );
+        EffectiveTimeoutSample {
+            label: label.to_string(),
+            body_len,
+            upload_budget_secs: plan.upload_budget_secs,
+            large_body: plan.large_body,
+            endpoint_attempt_limit: plan.endpoint_attempt_limit,
+        }
+    })
+    .collect();
+
+    EffectiveTimeoutConfig {
+        upload,
+        stream,
+        env_overridden,
+        samples,
+        global_budget_secs: crate::proxy::pipeline::budget::gateway_request_budget_secs(),
+        replay_guard_threshold_mb: (crate::proxy::pipeline::budget::replay_guard_threshold_bytes()
+            / (1024 * 1024)) as u64,
+    }
+}
+
 #[tauri::command]
 pub fn get_effective_first_byte_timeouts() -> FirstByteTimeouts {
     use crate::proxy::upstream::client::{PayloadMediaKind, UpstreamClient};
