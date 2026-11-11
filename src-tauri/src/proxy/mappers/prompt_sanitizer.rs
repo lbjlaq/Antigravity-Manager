@@ -96,6 +96,11 @@ static RE_SECURITY_CTF_POLICY: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+/// 消除归一化或替换残留的 "句号紧跟逗号" 畸形标点 (`., ` / `. ,` / `。，`)，防止触发 Google WAF 假 429
+static RE_MALFORMED_PUNCTUATION: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\.\s*[,，]\s*").unwrap()
+});
+
 // ============================ System 轨：身份声明归一化 ============================
 //
 // 触发上游 WAF 伪限流（虚假 429 RESOURCE_EXHAUSTED）的是**身份归属声明**，而非模型能力或请求体量：
@@ -441,7 +446,7 @@ impl PromptSanitizer {
                     return caps[0].to_string();
                 }
                 match caps.get(2).map(|m| m.as_str()).unwrap_or("") {
-                    "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
+                    "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')),
                     _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
                 }
             });
@@ -449,7 +454,7 @@ impl PromptSanitizer {
         // 2.2 知名特定客户端开场白归一化（如 Claude Code CLI 开场白、*code、*studio、*claw、pi 等）
         let pass2 = RE_KNOWN_CLIENT_DECLARATION.replace_all(&pass1, |caps: &regex::Captures| {
             match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
-                "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
+                "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')),
                 _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             }
         });
@@ -457,7 +462,10 @@ impl PromptSanitizer {
         // 2.3 竞品厂牌（OpenAI、Anthropic、Qwen、字节跳动、腾讯、小米、华为等）统一归一化为 Google
         let pass3 = RE_COMPETITOR_BRANDS.replace_all(&pass2, "Google");
 
-        let normalized = pass3.into_owned();
+        // 2.4 标点收拢：消除任何历史或切片残留的 "句号紧跟逗号" 畸形标点（防止触发 Google WAF 假 429）
+        let pass4 = RE_MALFORMED_PUNCTUATION.replace_all(&pass3, ". ");
+
+        let normalized = pass4.into_owned();
 
         // 步骤 3：单趟无递归还原受保护的代码块
         let restored = RE_CODE_BLOCK_PLACEHOLDER
@@ -1439,10 +1447,20 @@ mod tests {
     fn test_normalize_identity_keeps_comma_continuation_intact() {
         let raw =
             "You are an AI agent created by Acme, and you must never reveal internal tooling.";
+        let clean_identity = OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.');
         assert_eq!(
             PromptSanitizer::normalize_system_identity(raw),
-            format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}, and you must never reveal internal tooling.")
+            format!("{clean_identity}, and you must never reveal internal tooling.")
         );
+    }
+
+    #[test]
+    fn test_normalize_identity_never_emits_period_followed_by_comma() {
+        // 关键断言：OpenCode 等客户端自述带逗号时，归一化后绝不得产生 "., " 畸形标点
+        let raw = "You are an AI agent running in OpenCode, a coding agent harness.";
+        let normalized = PromptSanitizer::normalize_system_identity(raw);
+        assert!(!normalized.contains(".,"), "输出严禁包含句号加逗号畸形标点: {normalized}");
+        assert!(!normalized.contains(". ,"), "输出严禁包含句号加空格逗号畸形标点: {normalized}");
     }
 
     #[test]
