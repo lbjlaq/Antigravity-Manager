@@ -57,6 +57,6 @@ pub use stream_peek::{
 pub use terminal::{
     apply_terminal, classify as classify_terminal_error, gate_exhausted, protocol_status,
     record_first_byte_timeout, strip_markers, FailureStatusTracker, TerminalDisposition,
-    TerminalHandling, UpstreamTerminal,
+    TerminalHandling, TerminalNextStep, TerminalRetryPlan, UpstreamTerminal,
 };
 pub use usage::CanonicalUsage;

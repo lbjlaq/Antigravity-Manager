@@ -2165,18 +2165,44 @@ pub async fn handle_messages(
                     upstream_req_start.elapsed().as_secs_f64(),
                     |err| token_manager.mark_account_transient_failure(&account_id, 30, err),
                 ) {
-                    if handling.disposition.abandon_sticky_account {
+                    // 终态都不是账号故障：解绑 / 换号 / 原地重放统一由 pipeline 按调度模式裁决。
+                    // CacheFirst 下文本请求绝不解绑 / 换号；Balance 下传输层断连先原地重连一次。
+                    let terminal_plan = retry_state.plan_terminal(
+                        &account_id,
+                        handling.disposition,
+                        token_manager.get_scheduling_mode().await,
+                        config.request_type != "image_gen",
+                    );
+                    if terminal_plan.abandon_sticky_account {
                         token_manager.abandon_session(&affinity_key, &account_id);
                         tracing::debug!(
-                            "[{}] Unbound session {} from account {} due to terminal {}",
-                            trace_id,
+                            "Unbound session {} from account {} due to terminal {}",
                             affinity_key,
                             email,
                             handling.terminal.as_str()
                         );
                     }
-                    if handling.disposition.stop_rotation {
-                        break;
+                    match terminal_plan.next {
+                        crate::proxy::pipeline::TerminalNextStep::Stop => break,
+                        crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
+                            tracing::info!(
+                                "Upstream terminal {} on account {} (attempt {}/{}): keeping session {} bound and retrying the same account in-place to preserve KV cache",
+                                handling.terminal.as_str(),
+                                email,
+                                attempt + 1,
+                                max_attempts,
+                                affinity_key
+                            );
+                            retry_credentials = Some((
+                                access_token.clone(),
+                                project_id.clone(),
+                                email.clone(),
+                                account_id.clone(),
+                                0,
+                            ));
+                            continue;
+                        }
+                        crate::proxy::pipeline::TerminalNextStep::Rotate => {}
                     }
                     crate::proxy::pipeline::rotation::record_attempted_account(
                         &mut attempted_accounts,
