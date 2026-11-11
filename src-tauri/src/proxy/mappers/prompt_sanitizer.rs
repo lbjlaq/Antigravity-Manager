@@ -244,6 +244,15 @@ static RE_OFFICIAL_IDENTITY_APPOSITIVE: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+/// 折叠由于正则替换、同位语拼接或切词遗留的畸形复合标点（如 `.,`、`. ,`、`。，` 等）。
+/// 解决 Issue #3915：避免上游 WAF 识别出 `Advanced Agentic Coding., a coding agent harness.` 中的 `.,` 报 429。
+static RE_MALFORMED_PUNCTUATION: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"([.。])\s*([,，])\s*").unwrap());
+
+/// 剥离独立注入在系统提示词中的 Anthropic billing 元数据头行。
+static RE_ANTHROPIC_BILLING_HEADER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?im)^[ \t]*x-anthropic-billing-header:[^\r\n]*(?:\r?\n)?").unwrap());
+
 /// 身份声明句归一化正则（广谱匹配，仅在 System 轨生效；全量扫描，代码块豁免）。
 ///
 /// 形态 = A 身份开场白 + B 身份名词短语 + C 归属/版本/宿主声明 + D 归属对象 + E 句读：
@@ -783,7 +792,10 @@ impl PromptSanitizer {
         // 2.3 竞品厂牌（OpenAI、Anthropic、Qwen、字节跳动、腾讯、小米、华为等）统一归一化为 Google
         let pass3 = RE_COMPETITOR_BRANDS.replace_all(&pass2b, "Google");
 
-        let normalized = pass3.into_owned();
+        // 2.4 防御性标点折叠（Issue #3915）：消除由于拼接或切词遗留的 `.,` / `. ,` / `。，` 畸形复合标点
+        let pass4 = RE_MALFORMED_PUNCTUATION.replace_all(&pass3, ". ");
+
+        let normalized = pass4.into_owned();
 
         // 步骤 3：单趟无递归还原受保护的代码块
         let restored = RE_CODE_BLOCK_PLACEHOLDER
@@ -1063,6 +1075,13 @@ impl PromptSanitizer {
         if s.contains(SELF_IDENTITY_BLOCK) {
             s = s.replace(SELF_IDENTITY_BLOCK, "");
             modified = true;
+        }
+        if s.contains("x-anthropic-billing-header") {
+            let after_billing = RE_ANTHROPIC_BILLING_HEADER.replace_all(&s, "");
+            if after_billing != s {
+                s = after_billing.into_owned();
+                modified = true;
+            }
         }
         let after_sec = Self::strip_security_policy_prompt(&s);
         if after_sec != s {
@@ -3912,5 +3931,69 @@ mod tests {
         assert!(!normalize_identity_effective(true, Some("false")));
         assert!(normalize_identity_effective(true, Some("on")));
         assert!(!normalize_identity_effective(false, None));
+    }
+
+    #[test]
+    fn test_issue_3915_malformed_period_comma_punctuation_collapsed() {
+        // Issue #3915: 验证拼接或切词产生的 `.,` 或 `. ,` 畸形标点必须被折叠为 `. `
+        let input = "You are an AI agent running in OpenCode, a coding agent harness. Advanced Agentic Coding., a coding agent harness.";
+        let out = PromptSanitizer::normalize_system_identity(input);
+        assert!(!out.contains(".,"), "不得包含 ., 标点: {out}");
+        assert!(!out.contains(". ,"), "不得包含 . , 标点: {out}");
+        assert!(!out.contains("。，"), "不得包含 。， 标点: {out}");
+    }
+
+    #[test]
+    fn test_strip_anthropic_billing_header() {
+        let raw = "x-anthropic-billing-header: cc_version=2.1.28; client=claude_code\nYou are a helpful assistant.";
+        let cleaned = PromptSanitizer::strip_pipeline_markers(raw);
+        assert!(
+            !cleaned.contains("x-anthropic-billing-header"),
+            "billing header 必须被剥离"
+        );
+        assert!(cleaned.contains("You are a helpful assistant."));
+    }
+
+    #[test]
+    fn test_recommended_preset_rules_execution() {
+        use crate::proxy::config::PromptRewriteConfig;
+
+        let preset_config = PromptRewriteConfig {
+            enabled: true,
+            normalize_identity: true,
+            rules: PromptRewriteConfig::recommended_preset_rules(),
+        };
+
+        let compiled = PromptSanitizer::compile_prompt_rewrite_rules(&preset_config);
+
+        // 1. OpenCode 整行清除
+        let opencode_raw = "You are an AI agent running in OpenCode, a coding agent harness.\nHelp user write code.";
+        let rewritten = PromptSanitizer::rewrite_text_with_rules(opencode_raw, &compiled)
+            .unwrap_or_else(|| opencode_raw.to_string());
+        assert!(!rewritten.contains("OpenCode"));
+        assert!(rewritten.contains("Help user write code."));
+
+        // 2. DSH 身份整行清除
+        let dsh_raw = "You are an AI agent powered by DeepSeek Harness.\nYou are a coding agent powered by the gemini-3.8-flash-high model.\nDo tasks.";
+        let rewritten_dsh = PromptSanitizer::rewrite_text_with_rules(dsh_raw, &compiled)
+            .unwrap_or_else(|| dsh_raw.to_string());
+        assert!(!rewritten_dsh.contains("DeepSeek Harness"));
+        assert!(!rewritten_dsh.contains("gemini-3.8-flash-high"));
+        assert!(rewritten_dsh.contains("Do tasks."));
+
+        // 3. WorkBuddy 指纹清除
+        let wb_raw = "Prefix.\n*WorkBuddy environment initialized*\nSuffix.";
+        let rewritten_wb = PromptSanitizer::rewrite_text_with_rules(wb_raw, &compiled)
+            .unwrap_or_else(|| wb_raw.to_string());
+        assert!(!rewritten_wb.contains("WorkBuddy"));
+        assert!(rewritten_wb.contains("Prefix."));
+        assert!(rewritten_wb.contains("Suffix."));
+
+        // 4. Anthropic billing header 清除
+        let billing_raw = "x-anthropic-billing-header: test\nSystem prompt.";
+        let rewritten_billing = PromptSanitizer::rewrite_text_with_rules(billing_raw, &compiled)
+            .unwrap_or_else(|| billing_raw.to_string());
+        assert!(!rewritten_billing.contains("x-anthropic-billing-header"));
+        assert!(rewritten_billing.contains("System prompt."));
     }
 }

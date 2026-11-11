@@ -32,7 +32,7 @@ import {
     AlertTriangle,
     ShieldAlert
 } from 'lucide-react';
-import { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig } from '../types/config';
+import { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig, RECOMMENDED_PROMPT_REWRITE_PRESETS } from '../types/config';
 import HelpTooltip from '../components/common/HelpTooltip';
 import ModalDialog from '../components/common/ModalDialog';
 import { showToast } from '../components/common/ToastContainer';
@@ -2793,7 +2793,7 @@ print(response.choices[0].message.content)`;
                         {activeMenuTab === 'guard' && (
                             <div className="p-4">
                                 <PromptRewriteSettings
-                                    config={appConfig.proxy.prompt_rewrite || { enabled: false, normalize_identity: true, rules: [] }}
+                                    config={appConfig.proxy.prompt_rewrite || { enabled: true, normalize_identity: true, rules: RECOMMENDED_PROMPT_REWRITE_PRESETS }}
                                     onChange={(config) => updateProxyConfig({ prompt_rewrite: config })}
                                 />
                             </div>

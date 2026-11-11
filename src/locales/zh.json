@@ -1817,6 +1817,8 @@
             "enabled": "启用",
             "empty": "还没有清理规则，点击下方新增。",
             "add_rule": "新增清理规则",
+            "load_presets": "载入官方推荐预设",
+            "load_presets_confirm": "这将在保留现有自定义规则的同时，自动补齐官方推荐的风控预设规则，是否继续？",
             "match": "匹配内容",
             "replace": "替换为",
             "match_placeholder": "匹配内容，例如：You are *",

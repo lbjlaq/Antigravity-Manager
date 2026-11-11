@@ -1,8 +1,12 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Maximize2, Plus, Trash2, X } from "lucide-react";
-import { PromptRewriteConfig, PromptRewriteRule } from "../../types/config";
+import { Maximize2, Plus, Sparkles, Trash2, X } from "lucide-react";
+import {
+    PromptRewriteConfig,
+    PromptRewriteRule,
+    RECOMMENDED_PROMPT_REWRITE_PRESETS,
+} from "../../types/config";
 
 interface PromptRewriteSettingsProps {
     config: PromptRewriteConfig;
@@ -10,9 +14,9 @@ interface PromptRewriteSettingsProps {
 }
 
 const DEFAULT_CONFIG: PromptRewriteConfig = {
-    enabled: false,
+    enabled: true,
     normalize_identity: true,
-    rules: [],
+    rules: RECOMMENDED_PROMPT_REWRITE_PRESETS,
 };
 
 function createRule(): PromptRewriteRule {
@@ -71,6 +75,25 @@ export default function PromptRewriteSettings({
 
     const removeRule = (index: number) => {
         onChange({ ...config, rules: rules.filter((_, i) => i !== index) });
+    };
+
+    const loadRecommendedPresets = () => {
+        if (rules.length > 0) {
+            const confirmed = window.confirm(
+                t("proxy.prompt_rewrite.load_presets_confirm", {
+                    defaultValue: "这将在保留现有自定义规则的同时，自动补齐官方推荐的风控预设规则，是否继续？",
+                })
+            );
+            if (!confirmed) return;
+        }
+        const existingPatterns = new Set(rules.map((r) => r.pattern.trim()));
+        const toAdd = RECOMMENDED_PROMPT_REWRITE_PRESETS.filter(
+            (p) => !existingPatterns.has(p.pattern.trim())
+        );
+        onChange({
+            ...config,
+            rules: [...rules, ...toAdd],
+        });
     };
 
     const applyEditing = () => {
@@ -234,16 +257,28 @@ export default function PromptRewriteSettings({
                         );
                     })}
 
-                    <button
-                        type="button"
-                        onClick={addRule}
-                        className="w-full py-2 rounded-lg border border-dashed border-gray-300 dark:border-base-300 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50/40 dark:hover:bg-amber-900/10 transition-colors flex items-center justify-center gap-1.5"
-                    >
-                        <Plus size={14} />
-                        {t("proxy.prompt_rewrite.add_rule", {
-                            defaultValue: "新增清理规则",
-                        })}
-                    </button>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                            type="button"
+                            onClick={addRule}
+                            className="py-2 rounded-lg border border-dashed border-gray-300 dark:border-base-300 text-xs font-semibold text-gray-500 dark:text-gray-400 hover:border-amber-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50/40 dark:hover:bg-amber-900/10 transition-colors flex items-center justify-center gap-1.5"
+                        >
+                            <Plus size={14} />
+                            {t("proxy.prompt_rewrite.add_rule", {
+                                defaultValue: "新增清理规则",
+                            })}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={loadRecommendedPresets}
+                            className="py-2 rounded-lg border border-dashed border-amber-300 dark:border-amber-700/50 text-xs font-semibold text-amber-600 dark:text-amber-400 hover:border-amber-500 hover:bg-amber-50/60 dark:hover:bg-amber-900/20 transition-colors flex items-center justify-center gap-1.5"
+                        >
+                            <Sparkles size={14} />
+                            {t("proxy.prompt_rewrite.load_presets", {
+                                defaultValue: "载入官方推荐预设",
+                            })}
+                        </button>
+                    </div>
 
                     <div className="rounded-lg bg-gray-50/80 dark:bg-base-200/50 border border-gray-100 dark:border-base-300 p-3 space-y-1">
                         <p className="text-[10px] text-gray-500 dark:text-gray-400 whitespace-pre-wrap">

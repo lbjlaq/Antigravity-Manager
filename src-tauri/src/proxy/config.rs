@@ -491,24 +491,79 @@ pub struct PromptRewriteRule {
     pub enabled: bool,
 }
 
+impl PromptRewriteRule {
+    pub fn new(
+        id: impl Into<String>,
+        pattern: impl Into<String>,
+        replacement: impl Into<String>,
+        enabled: bool,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            pattern: pattern.into(),
+            replacement: replacement.into(),
+            enabled,
+        }
+    }
+}
+
 /// 风控提示词清理方案
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptRewriteConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// 是否启用内置身份归一化（默认 true）。关闭后保留客户端原始身份句，只执行用户自定义规则。
     #[serde(default = "default_true")]
     pub normalize_identity: bool,
-    #[serde(default)]
+    #[serde(default = "PromptRewriteConfig::recommended_preset_rules")]
     pub rules: Vec<PromptRewriteRule>,
+}
+
+impl PromptRewriteConfig {
+    /// 官方推荐的内置风控预设规则集（经过生产环境与 WAF 实测验证）
+    pub fn recommended_preset_rules() -> Vec<PromptRewriteRule> {
+        vec![
+            PromptRewriteRule::new(
+                "preset-opencode",
+                "You are an AI agent running in OpenCode*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new(
+                "preset-dsh-identity",
+                "You are an AI agent powered by DeepSeek Harness*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new(
+                "preset-dsh-model",
+                "You are a coding agent powered by *gemini*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new("preset-workbuddy", "*WorkBuddy*", "", true),
+            PromptRewriteRule::new(
+                "preset-codex-intro",
+                "*the codex cli is an open*source project*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new(
+                "preset-anthropic-billing",
+                "*x-anthropic-billing-header:*",
+                "",
+                true,
+            ),
+        ]
+    }
 }
 
 impl Default for PromptRewriteConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             normalize_identity: true,
-            rules: Vec::new(),
+            rules: Self::recommended_preset_rules(),
         }
     }
 }

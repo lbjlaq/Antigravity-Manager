@@ -287,6 +287,20 @@ pub fn parse_and_migrate_config(content: &str) -> Result<(AppConfig, bool), Stri
             }
         }
 
+        // 自动迁移/初始化 prompt_rewrite 配置：若旧配置中缺失该字段，则注入默认开启并搭载官方推荐预设
+        if let Some(proxy_obj) = proxy.as_object_mut() {
+            if !proxy_obj.contains_key("prompt_rewrite") {
+                let default_prompt_rewrite =
+                    serde_json::to_value(crate::proxy::config::PromptRewriteConfig::default())
+                        .unwrap_or(serde_json::Value::Null);
+                if !default_prompt_rewrite.is_null() {
+                    proxy_obj.insert("prompt_rewrite".to_string(), default_prompt_rewrite);
+                    tracing::info!("Initializing default prompt_rewrite config (enabled with recommended presets)");
+                    modified = true;
+                }
+            }
+        }
+
         if modified {
             proxy.as_object_mut().unwrap().insert(
                 "custom_mapping".to_string(),

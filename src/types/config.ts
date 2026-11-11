@@ -163,6 +163,46 @@ export interface PromptRewriteConfig {
     rules: PromptRewriteRule[];
 }
 
+/** 官方推荐风控预设规则集（经过生产环境与 WAF 实测验证） */
+export const RECOMMENDED_PROMPT_REWRITE_PRESETS: PromptRewriteRule[] = [
+    {
+        id: "preset-opencode",
+        pattern: "You are an AI agent running in OpenCode*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-dsh-identity",
+        pattern: "You are an AI agent powered by DeepSeek Harness*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-dsh-model",
+        pattern: "You are a coding agent powered by *gemini*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-workbuddy",
+        pattern: "*WorkBuddy*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-codex-intro",
+        pattern: "*the codex cli is an open*source project*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-anthropic-billing",
+        pattern: "*x-anthropic-billing-header:*",
+        replacement: "",
+        enabled: true,
+    },
+];
+
 export interface DebugLoggingConfig {
     enabled: boolean;
     output_dir?: string;

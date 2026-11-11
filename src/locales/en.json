@@ -1823,6 +1823,8 @@
             "enabled": "Enabled",
             "empty": "No cleanup rules yet. Add one below.",
             "add_rule": "Add cleanup rule",
+            "load_presets": "Load Recommended Presets",
+            "load_presets_confirm": "This will append official recommended WAF preset rules while keeping your existing custom rules. Continue?",
             "match": "Match",
             "replace": "Replace with",
             "match_placeholder": "Match text, e.g. You are *",
