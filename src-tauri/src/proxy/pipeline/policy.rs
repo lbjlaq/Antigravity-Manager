@@ -17,6 +17,19 @@ pub enum UpstreamClassification {
     OtherClientError(u16),
 }
 
+/// 429 结构化 details 信号（优先于消息关键词）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Structured429Signal {
+    /// 请求级限流 / 资源耗尽
+    RequestLevel,
+    /// 账号级硬配额耗尽
+    HardQuota,
+    /// 明确的重试延迟（RetryInfo）
+    ExplicitDelay,
+    /// 有 details 但无法识别
+    Unknown,
+}
+
 impl UpstreamClassification {
     /// 统一分类器：协议无关，全局唯一真理
     pub fn classify(status: u16, body: &str, retry_after_header: Option<&str>) -> Self {
@@ -111,6 +124,115 @@ impl UpstreamClassification {
     /// 该分类是否应该触发 TokenManager 的账号冷却锁定
     pub fn should_lock_account(&self) -> bool {
         matches!(self, UpstreamClassification::RateLimited { .. })
+    }
+
+    /// 无 retryDelay / Retry-After 的请求级 429（Google 通用 RESOURCE_EXHAUSTED）。
+    /// 它不是账号级硬配额枯竭；首轮不应把账号打入冷却，否则小账号池会被逐一连坐。
+    pub fn is_request_level_429_without_retry_delay(
+        status: u16,
+        body: &str,
+        retry_after_header: Option<&str>,
+    ) -> bool {
+        if status != 429 || retry_after_header.is_some() {
+            return false;
+        }
+        // 明确 retryDelay / quotaResetDelay：不是“无延迟”形态。
+        if crate::proxy::upstream::retry::parse_retry_delay(body, retry_after_header).is_some() {
+            return false;
+        }
+        // 结构化 details 优先：QuotaFailure → 硬配额；RateLimit/ErrorInfo → 请求级。
+        if let Some(signal) = Self::structured_429_signal(body) {
+            return matches!(
+                signal,
+                Structured429Signal::RequestLevel | Structured429Signal::Unknown
+            );
+        }
+        // 无结构化 details 时的兜底关键词表（与 rotation.rs 的既有判定保持一致）。
+        let lower = body.to_lowercase();
+        let is_hard_quota = lower.contains("exceeded your current quota")
+            || lower.contains("insufficient_quota")
+            || lower.contains("weekly quota")
+            || lower.contains("daily quota")
+            || lower.contains("per day")
+            || lower.contains("individual quota")
+            || lower.contains("quotaresetdelay");
+        !is_hard_quota
+    }
+
+    /// 解析 429 body 中的结构化 details：
+    /// - `QuotaFailure` / quota 类 reason → `HardQuota`
+    /// - `RetryInfo` → `ExplicitDelay`
+    /// - `ErrorInfo` 的 rate-limit / resource-exhausted reason → `RequestLevel`
+    /// - details 存在但无法识别 → `Unknown`
+    /// - 无 details → None（回退关键词表）
+    pub(crate) fn structured_429_signal(body: &str) -> Option<Structured429Signal> {
+        let value: serde_json::Value = serde_json::from_str(body).ok()?;
+        let error = value.get("error").unwrap_or(&value);
+        let details = error.get("details")?.as_array()?;
+        if details.is_empty() {
+            return None;
+        }
+
+        let mut has_quota_failure = false;
+        let mut has_retry_info = false;
+        let mut has_rate_limit = false;
+        for detail in details {
+            let type_lower = detail
+                .get("@type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let reason_lower = detail
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+
+            if type_lower.contains("quotafailure")
+                || reason_lower.contains("quota_exhausted")
+                || reason_lower.contains("daily_limit")
+                || reason_lower.contains("weekly_limit")
+                || reason_lower.contains("individual_quota")
+                || reason_lower.contains("quota_exceeded")
+            {
+                has_quota_failure = true;
+            }
+            if type_lower.contains("retryinfo") {
+                has_retry_info = true;
+            }
+            if reason_lower.contains("rate_limit")
+                || reason_lower.contains("resource_exhausted")
+                || reason_lower.contains("rate_exceeded")
+                || reason_lower.contains("throttled")
+            {
+                has_rate_limit = true;
+            }
+        }
+
+        if has_quota_failure {
+            Some(Structured429Signal::HardQuota)
+        } else if has_retry_info {
+            Some(Structured429Signal::ExplicitDelay)
+        } else if has_rate_limit {
+            Some(Structured429Signal::RequestLevel)
+        } else {
+            // details 存在但不是已知的硬配额信号：按请求级处理，避免误锁账号。
+            Some(Structured429Signal::Unknown)
+        }
+    }
+
+    /// 带 attempt 的冷却锁定裁决：请求级无延迟 429 的首轮不锁账号，
+    /// 让 Rotation 的 GraceRetry 有机会原地恢复；从第二轮起恢复正常锁定。
+    pub fn should_lock_account_on_attempt(
+        &self,
+        status: u16,
+        body: &str,
+        retry_after_header: Option<&str>,
+        attempt: usize,
+    ) -> bool {
+        self.should_lock_account()
+            && !(attempt == 0
+                && Self::is_request_level_429_without_retry_delay(status, body, retry_after_header))
     }
 
     /// 这个账号不能再被当前会话粘住。401 / 403 / 404 / 429 / 529。
@@ -302,5 +424,52 @@ mod tests {
         assert_eq!(no_quota, UpstreamClassification::InternalGatewayMessage);
         assert!(!no_quota.should_lock_account());
         assert!(!no_quota.abandons_sticky_account());
+    }
+
+    #[test]
+    fn test_request_level_429_first_attempt_does_not_lock_account() {
+        let body = r#"{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}"#;
+        assert!(UpstreamClassification::is_request_level_429_without_retry_delay(429, body, None));
+        let classification = UpstreamClassification::classify(429, body, None);
+        assert!(!classification.should_lock_account_on_attempt(429, body, None, 0));
+        assert!(classification.should_lock_account_on_attempt(429, body, None, 1));
+
+        let hard_quota = "You have exceeded your current quota.";
+        assert!(
+            !UpstreamClassification::is_request_level_429_without_retry_delay(
+                429, hard_quota, None
+            )
+        );
+        let hard = UpstreamClassification::classify(429, hard_quota, None);
+        assert!(hard.should_lock_account_on_attempt(429, hard_quota, None, 0));
+
+        assert!(
+            !UpstreamClassification::is_request_level_429_without_retry_delay(429, body, Some("5"))
+        );
+    }
+
+    #[test]
+    fn test_structured_429_details_take_priority_over_message_keywords() {
+        // QuotaFailure details → 硬配额，即使 message 是通用 429 文案
+        let quota = r#"{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaMetric":"generate_content_free_tier_requests"}]}]}}"#;
+        assert!(
+            !UpstreamClassification::is_request_level_429_without_retry_delay(429, quota, None)
+        );
+
+        // ErrorInfo rate-limit reason → 请求级，即使 message 里带 quota 字样
+        let rate = r#"{"error":{"code":429,"message":"Quota exceeded for requests per minute.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RATE_LIMIT_EXCEEDED","domain":"googleapis.com"}]}}"#;
+        assert!(UpstreamClassification::is_request_level_429_without_retry_delay(429, rate, None));
+
+        // RetryInfo 带明确延迟 → 不属于“无延迟”形态
+        let retry = r#"{"error":{"code":429,"message":"Resource has been exhausted","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"2s"}]}}"#;
+        assert!(
+            !UpstreamClassification::is_request_level_429_without_retry_delay(429, retry, None)
+        );
+
+        // 无 details 时仍走关键词兜底
+        let bare = r#"{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}"#;
+        assert!(UpstreamClassification::is_request_level_429_without_retry_delay(429, bare, None));
+        let hard = "You have exceeded your current quota.";
+        assert!(!UpstreamClassification::is_request_level_429_without_retry_delay(429, hard, None));
     }
 }

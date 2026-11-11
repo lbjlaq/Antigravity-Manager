@@ -19,10 +19,20 @@
 //! 新代码请直接引用本模块。
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::proxy::pipeline::policy::{Structured429Signal, UpstreamClassification};
 use tokio::time::sleep;
 use tracing::{debug, info};
+
+/// 请求级 429（无 retryDelay）首轮原地 GraceRetry 等待时间（毫秒）。
+static REQUEST_429_GRACE_MS: AtomicU64 = AtomicU64::new(1500);
+
+/// 更新请求级 429 GraceRetry 等待时间（由调度配置热更新）。
+pub fn set_request_429_grace_ms(ms: u64) {
+    REQUEST_429_GRACE_MS.store(ms.clamp(200, 10_000), Ordering::Relaxed);
+}
 
 /// 重试策略枚举
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,19 +336,36 @@ pub fn determine_retry_strategy_adaptive(
                 .as_ref()
                 .map(|d| d.actual_wait_ms() > 1800_000)
                 .unwrap_or(false);
-            let is_hard_quota_exhausted = (parsed_delay.is_none() || is_long_delay)
-                && (lower.contains("exceeded your current quota")
-                    || lower.contains("insufficient_quota")
-                    || lower.contains("credits")
-                    || lower.contains("zero_quota")
-                    || lower.contains("weekly quota")
-                    || lower.contains("daily quota")
-                    || lower.contains("per day")
-                    || lower.contains("individual quota")
-                    || lower.contains("quotaresetdelay")
-                    || (lower.contains("quota_exhausted")
-                        && (!lower.contains("resource has been exhausted")
-                            || lower.contains("quotaresetdelay"))));
+            // [Fixes #3901] 结构化 429 信号优先于消息关键词：
+            // - QuotaFailure → 账号级硬配额，快速切号；
+            // - RetryInfo / 请求级 / 未知 details → 不作为硬配额，交给后续 GraceRetry/轮换逻辑；
+            // - 无结构化 details 时才回退到关键词表。
+            let structured_429 = if status_code == 429 {
+                UpstreamClassification::structured_429_signal(error_text)
+            } else {
+                None
+            };
+            let is_hard_quota_exhausted = match structured_429 {
+                Some(Structured429Signal::HardQuota) => true,
+                Some(Structured429Signal::RequestLevel)
+                | Some(Structured429Signal::ExplicitDelay)
+                | Some(Structured429Signal::Unknown) => false,
+                None => {
+                    (parsed_delay.is_none() || is_long_delay)
+                        && (lower.contains("exceeded your current quota")
+                            || lower.contains("insufficient_quota")
+                            || lower.contains("credits")
+                            || lower.contains("zero_quota")
+                            || lower.contains("weekly quota")
+                            || lower.contains("daily quota")
+                            || lower.contains("per day")
+                            || lower.contains("individual quota")
+                            || lower.contains("quotaresetdelay")
+                            || (lower.contains("quota_exhausted")
+                                && (!lower.contains("resource has been exhausted")
+                                    || lower.contains("quotaresetdelay"))))
+                }
+            };
 
             // 多账号环境下，账号级硬配额枯竭在第一轮立即切换下一个账号（50ms 闪电切号，避免 CPU 空转并快速恢复响应）
             if is_hard_quota_exhausted && attempt < pool_size {
@@ -363,6 +390,17 @@ pub fn determine_retry_strategy_adaptive(
                     attempt
                 );
                 return RetryStrategy::NoRetry;
+            }
+
+            // [Fixes #3901] 无 retryDelay 的请求级 429：首轮先原地短退避，严禁 150ms 全池轮换。
+            // 否则一个小账号池会在数百毫秒内被逐一写入 5s/15s/30s 冷却，演变为全池连坐 503。
+            if is_request_level_429 && attempt == 0 && allow_grace_retry {
+                let grace_ms = REQUEST_429_GRACE_MS.load(Ordering::Relaxed);
+                tracing::info!(
+                    "[Retry] Request-level 429 without retryDelay: GraceRetry on current account ({}ms) to protect the pool",
+                    grace_ms
+                );
+                return RetryStrategy::GraceRetry(Duration::from_millis(grace_ms));
             }
 
             // [FIX #3329, #3409] 关键防线：微间隙优先原地 GraceRetry (Micro-gap Grace Retry First)

@@ -3857,9 +3857,21 @@ impl TokenManager {
                         }
 
                         if busy_accounts.is_empty() {
+                            let is_cooldown =
+                                crate::proxy::pipeline::policy::UpstreamClassification::is_internal_gateway_exhaustion(
+                                    &selection_error.to_lowercase(),
+                                );
                             return Err((
-                                StatusCode::SERVICE_UNAVAILABLE,
-                                format!("Token error: {}", selection_error),
+                                if is_cooldown {
+                                    StatusCode::TOO_MANY_REQUESTS
+                                } else {
+                                    StatusCode::SERVICE_UNAVAILABLE
+                                },
+                                if is_cooldown {
+                                    selection_error
+                                } else {
+                                    format!("Token error: {}", selection_error)
+                                },
                             ));
                         }
                         break;
@@ -4886,9 +4898,10 @@ impl TokenManager {
                         })
                         .min();
 
-                    // Layer 1: 如果最短等待时间 <= 5秒, 执行物理冷却延迟（留出冷却时间，杜绝频繁反复触发）
+                    // Layer 1: 最短等待时间 <= 配置阈值时执行物理冷却延迟（默认 60s，上限 60s）
                     if let Some(wait_sec) = min_wait {
-                        if wait_sec <= 5 {
+                        let max_physical_wait_secs = scheduling.max_wait_seconds.clamp(1, 60);
+                        if wait_sec <= max_physical_wait_secs {
                             let wait_ms = (wait_sec as f64 * 1000.0) as u64 + 100;
                             tracing::warn!(
                                 "All accounts rate-limited but shortest wait is {}s. Applying {}ms physical cooldown delay...",
@@ -4934,12 +4947,11 @@ impl TokenManager {
                                 ));
                             }
                         } else {
-                            // 当等待时间 > 5s 时，不进行本地死等，坚决返回冷却等待错误，
-                            // 让上层协议（Claude Code / HTTP 429 Retry-After）主动进行客户端退避，
-                            // 严禁 0ms 乐观重置暴力清空限流标记导致多对话瞬态打穿 Google 上游（Fixes #3506）
+                            // 当等待时间超过配置阈值时，不进行本地死等，返回冷却等待错误，
+                            // 让上层协议（Claude Code / HTTP 429 Retry-After）主动进行客户端退避。
                             tracing::warn!(
-                                "All accounts rate-limited with wait {}s > 5s. Demanding client cooldown backoff.",
-                                wait_sec
+                                "All accounts rate-limited with wait {}s > {}s. Demanding client cooldown backoff.",
+                                wait_sec, max_physical_wait_secs
                             );
                             return Err(format!(
                                 "All accounts rate-limited. Cooldown wait {}s.",
@@ -7010,6 +7022,9 @@ impl TokenManager {
 
     /// 更新调度配置
     pub async fn update_sticky_config(&self, new_config: StickySessionConfig) {
+        crate::proxy::pipeline::rotation::set_request_429_grace_ms(
+            new_config.resolve_request_429_grace_ms(),
+        );
         let mut config = self.sticky_config.write().await;
         *config = new_config;
         tracing::debug!("Scheduling configuration updated: {:?}", *config);
@@ -11023,6 +11038,7 @@ mod tests {
             .update_sticky_config(StickySessionConfig {
                 mode: SchedulingMode::CacheFirst,
                 max_wait_seconds: 60,
+                request_429_grace_ms: 1500,
                 max_spillover_accounts: 0,
                 affinity_scope: crate::proxy::sticky_config::AffinityScope::Session,
             })
@@ -11077,6 +11093,7 @@ mod tests {
             .update_sticky_config(StickySessionConfig {
                 mode: SchedulingMode::CacheFirst,
                 max_wait_seconds: 1,
+                request_429_grace_ms: 1500,
                 max_spillover_accounts: 0,
                 affinity_scope: crate::proxy::sticky_config::AffinityScope::Session,
             })

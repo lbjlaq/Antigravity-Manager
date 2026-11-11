@@ -2509,21 +2509,12 @@ pub async fn handle_chat_completions(
                         );
                         break;
                     }
-                    // [Issue #3414] Attach headers with Retry-After if temporary cooldown exists
-                    let headers = crate::proxy::handlers::common::build_token_error_headers(
-                        Some(mapped_model.as_str()),
+                    return Ok(crate::proxy::handlers::common::build_token_error_response(
+                        "openai",
+                        mapped_model.as_str(),
                         None,
                         &e,
-                    );
-                    let dual_err = crate::proxy::handlers::common::build_dual_track_error(
-                        "openai",
-                        StatusCode::SERVICE_UNAVAILABLE.as_u16(),
-                        mapped_model.as_str(),
-                        &e,
-                    );
-                    return Ok(
-                        (StatusCode::SERVICE_UNAVAILABLE, headers, Json(dual_err)).into_response()
-                    );
+                    ));
                 }
             }
         };
@@ -3462,7 +3453,12 @@ pub async fn handle_chat_completions(
             }
         }
 
-        let should_mark_limited = classification.should_lock_account();
+        let should_mark_limited = classification.should_lock_account_on_attempt(
+            status_code,
+            &error_text,
+            retry_after.as_deref(),
+            attempt,
+        );
         let needs_quota_refresh = if should_mark_limited {
             token_manager
                 .mark_rate_limited_fast(
@@ -4595,17 +4591,17 @@ pub async fn handle_completions(
                         );
                         break;
                     }
-                    let headers = crate::proxy::handlers::common::build_token_error_headers(
-                        Some(mapped_model.as_str()),
+                    let protocol = if is_responses_api {
+                        "responses"
+                    } else {
+                        "openai"
+                    };
+                    return crate::proxy::handlers::common::build_token_error_response(
+                        protocol,
+                        mapped_model.as_str(),
                         None,
                         &e,
                     );
-                    return (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        headers,
-                        format!("Token error: {}", e),
-                    )
-                        .into_response();
                 }
             }
         };
@@ -5646,7 +5642,12 @@ pub async fn handle_completions(
                 .into_response();
         }
 
-        if classification.should_lock_account() {
+        if classification.should_lock_account_on_attempt(
+            status_code,
+            &error_text,
+            retry_after.as_deref(),
+            attempt,
+        ) {
             let needs_quota_refresh = token_manager
                 .mark_rate_limited_fast(
                     &email,

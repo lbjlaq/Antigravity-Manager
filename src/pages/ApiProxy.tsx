@@ -29,9 +29,10 @@ import {
     ChevronDown,
     Eye,
     EyeOff,
-    AlertTriangle
+    AlertTriangle,
+    ShieldAlert
 } from 'lucide-react';
-import { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig } from '../types/config';
+import { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig, RECOMMENDED_PROMPT_REWRITE_PRESETS } from '../types/config';
 import HelpTooltip from '../components/common/HelpTooltip';
 import ModalDialog from '../components/common/ModalDialog';
 import { showToast } from '../components/common/ToastContainer';
@@ -43,6 +44,7 @@ import { listAccounts } from '../services/accountService';
 import { motion } from 'framer-motion';
 import CircuitBreaker from '../components/settings/CircuitBreaker';
 import GlobalSystemPrompt from '../components/settings/GlobalSystemPrompt';
+import PromptRewriteSettings from '../components/settings/PromptRewriteSettings';
 import ImageThinkingMode from '../components/settings/ImageThinkingMode';
 import ThinkingBudget from '../components/settings/ThinkingBudget';
 import MultimodalSettings from '../components/settings/MultimodalSettings';
@@ -171,7 +173,7 @@ export default function ApiProxy() {
     });
 
     const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
-    const [activeMenuTab, setActiveMenuTab] = useState<'settings' | 'models' | 'cli' | 'protocols'>('settings');
+    const [activeMenuTab, setActiveMenuTab] = useState<'settings' | 'models' | 'guard' | 'cli' | 'protocols'>('settings');
     const [configLoading, setConfigLoading] = useState(true);
     const [configError, setConfigError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
@@ -2061,6 +2063,18 @@ print(response.choices[0].message.content)`;
                                 </button>
                                 <button
                                     type="button"
+                                    onClick={() => setActiveMenuTab('guard')}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                                        activeMenuTab === 'guard'
+                                            ? 'bg-white dark:bg-base-100 text-amber-600 dark:text-amber-400 shadow-xs'
+                                            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                                    }`}
+                                >
+                                    <ShieldAlert size={14} className={activeMenuTab === 'guard' ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400'} />
+                                    {t('proxy.prompt_rewrite.title', { defaultValue: '风控提示词清理方案' })}
+                                </button>
+                                <button
+                                    type="button"
                                     onClick={() => setActiveMenuTab('cli')}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
                                         activeMenuTab === 'cli'
@@ -2775,6 +2789,16 @@ print(response.choices[0].message.content)`;
                             </div>
                         )}
 
+                        {/* TAB: 风控提示词清理方案 (guard) */}
+                        {activeMenuTab === 'guard' && (
+                            <div className="p-4">
+                                <PromptRewriteSettings
+                                    config={appConfig.proxy.prompt_rewrite || { enabled: true, normalize_identity: true, rules: RECOMMENDED_PROMPT_REWRITE_PRESETS }}
+                                    onChange={(config) => updateProxyConfig({ prompt_rewrite: config })}
+                                />
+                            </div>
+                        )}
+
                         {/* TAB 3: CLI 一键配置 (cli) */}
                         {activeMenuTab === 'cli' && (
                             <div className="p-4">
@@ -2886,6 +2910,27 @@ print(response.choices[0].message.content)`;
                                                     <span>0s</span>
                                                     <span>300s</span>
                                                 </div>
+                                            </div>
+
+                                            <div className="bg-gray-50/70 dark:bg-base-200 rounded-xl p-4 border border-gray-100 dark:border-base-300">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <label className="text-xs font-medium text-gray-700 dark:text-gray-300 inline-flex items-center gap-1">
+                                                        {t('proxy.config.scheduling.request_429_grace_ms', { defaultValue: '请求级 429 原地等待' })}
+                                                        <HelpTooltip text={t('proxy.config.scheduling.request_429_grace_ms_tooltip', { defaultValue: '无 retryDelay 的请求级 429 首轮在当前账号原地等待的时间；默认 1500ms，范围 200–10000ms。' })} />
+                                                    </label>
+                                                    <span className="text-xs font-mono text-indigo-600 font-bold">
+                                                        {appConfig.proxy.scheduling?.request_429_grace_ms ?? 1500}ms
+                                                    </span>
+                                                </div>
+                                                <input
+                                                    type="number"
+                                                    min={200}
+                                                    max={10000}
+                                                    step={100}
+                                                    value={appConfig.proxy.scheduling?.request_429_grace_ms ?? 1500}
+                                                    onChange={(e) => updateSchedulingConfig({ request_429_grace_ms: Math.max(200, Math.min(10000, parseInt(e.target.value) || 1500)) })}
+                                                    className="w-full px-3 py-1.5 border border-gray-300 dark:border-base-300 rounded-lg bg-white dark:bg-base-200 text-xs font-mono text-gray-900 dark:text-base-content focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                                                />
                                             </div>
 
                                             <div className="bg-gray-50/70 dark:bg-base-200 rounded-xl p-4 border border-gray-100 dark:border-base-300">

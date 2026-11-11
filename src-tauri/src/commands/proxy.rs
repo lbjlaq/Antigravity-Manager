@@ -312,6 +312,12 @@ pub async fn ensure_admin_server(
     crate::proxy::update_thinking_budget_config(config.thinking_budget.clone());
     // [NEW] 初始化全局系统提示词配置
     crate::proxy::update_global_system_prompt_config(config.global_system_prompt.clone());
+    crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+        &config.prompt_rewrite,
+    );
+    crate::proxy::pipeline::rotation::set_request_429_grace_ms(
+        config.scheduling.resolve_request_429_grace_ms(),
+    );
     // [NEW] 初始化全局图像思维模式配置
     crate::proxy::update_image_thinking_mode(config.image_thinking_mode.clone());
     crate::proxy::update_multimodal_config(config.multimodal.clone());
