@@ -42,6 +42,8 @@
 //!    即数十万 token）。本节点把 user 文本中通过校验的媒体提升为真正的 `inlineData`（按内容去重），
 //!    无法承载或校验失败的折叠为长度占位符。`ABV_TEXT_DATA_URL_MODE=attach|omit|keep` 切换策略，
 //!    `ABV_TEXT_DATA_URL_MIN_CHARS` 调整阈值。
+//! 11. 单例身份不变量（Single Canonical Identity）：System 轨最终必须保证 `systemInstruction` 全量最多
+//!     出现一次官方 Antigravity 开场白；跨 part 全局去重，代码块豁免，兼容 #3902 的逗号续写形态。
 //!
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -138,6 +140,17 @@ fn official_identity_with_continuation(punctuation: &str) -> String {
     format!("{identity}{punctuation}")
 }
 
+/// 官方身份句的精确匹配（兼容 #3902 的「去掉句号 + 逗号续写」形态）。
+static RE_OFFICIAL_IDENTITY_SENTENCE: Lazy<Regex> = Lazy::new(|| {
+    let body = OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.');
+    Regex::new(&format!(r"{}(?:[.,，。!?！？;；])?", regex::escape(body))).unwrap()
+});
+
+/// 结构化身份行删除 AG 后只剩前缀（`- Identity:` / `* Role:` / `身份：`）时，整行移除。
+static RE_STRUCTURED_IDENTITY_PREFIX_ONLY: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^[-*•]?[ \t]*(?:identity|role|name|agent|身份|角色|名称)\s*[:：]\s*$").unwrap()
+});
+
 /// 身份声明句归一化正则（广谱匹配，仅在系统提示词头部窗口内生效）。
 ///
 /// 形态 = A 身份开场白 + B 身份名词短语 + C 归属/版本/宿主声明 + D 归属对象 + E 句读：
@@ -163,10 +176,10 @@ static RE_IDENTITY_DECLARATION: Lazy<Regex> = Lazy::new(|| {
         // 动词前导桥接段（组 1）：支持包含版本号小数点的模型名/名字 (如 Grok 4.6, GPT-5.2)，避免使用不支持的零宽断言。
         // 铁律：桥接段**不跨行**（`[\t ]` 而非 `\s`，杜绝跨段落吞噬），逗号仅允许紧贴动词前出现；
         // 跨子句的语义校验（并列/从属连词）在替换回调 `is_identity_declaration` 中执行。
-        r"(?i:((?:[^\s.,，!?。！？;；\r\n<>]|\d+\.\d+|[\t ]){0,15}?[ \t,，]*(?:(?:which|that|who)\s+(?:is|was)\s+)?))",
+        r"(?i:((?:\d+(?:\.\d+)+|[^\s.,，!?。！？;；\r\n<>]|[\t ]){0,15}?[ \t,，]*(?:(?:which|that|who)\s+(?:is|was)\s+)?))",
         r"(?i:(?:\b(?:created|built|made|developed|designed|trained|powered|maintained|published|released|provided|authored|written)\s+(?:by|on|upon|at|for)\s+|\bby\s+|based\s+on\s+|running\s+(?:inside|in|within|on)\s+|integrated\s+(?:into|in)\s+))",
         // 归属对象：支持跨越数字间的版本号点号 (如 3.8, 4.5) 直到句读边界
-        r"(?:[^\s.,，。!?！？;；\r\n<>]|\d+\.\d+|[\t ])+",
+        r"(?:\d+(?:\.\d+)+|[^\s.,，。!?！？;；\r\n<>]|[\t ])+",
         r"|",
         // 中文支：你是/我是 + 包含开发/制作/构建/基于/推出 等归属特征，整句收敛到句读
         r"(?:你是|我是)[\s,，:：]*[^.!?。！？\r\n<>]{0,50}?(?:由|开发|制作|构建|训练|推出|基于|运行[在于])[^.!?。！？\r\n<>]{1,60}",
@@ -673,6 +686,134 @@ impl PromptSanitizer {
         } else {
             text
         }
+    }
+
+    /// System 轨最终节点：保证整个 `systemInstruction` 最多只保留一处官方 AG。
+    ///
+    /// 设计铁律：
+    /// 1. **跨 part 全局去重**：第一处 AG 保留，后续命中全部删除；
+    /// 2. **代码块豁免**：``` 与行内 ` 内的 AG 不参与匹配；
+    /// 3. **结构化行清理**：`- Identity: AG` 删除后只剩前缀时整行移除；
+    /// 4. **续写保留**：`AG, and you must ...` 只删 AG 本身，保留后续功能指令；
+    /// 5. **幂等确定性**：重复运行结果不变，不破坏多轮 KV Cache 前缀。
+    fn dedupe_official_identity(parts: &mut Vec<Value>) -> usize {
+        let mut seen = false;
+        let mut changed = 0usize;
+
+        for part in parts.iter_mut() {
+            // 思考块受签名保护，绝不能参与身份去重或空 part 剔除
+            if crate::proxy::thinking_store::is_thought_part(part) {
+                continue;
+            }
+            let Some(text) = part.get("text").and_then(Value::as_str).map(str::to_string) else {
+                continue;
+            };
+            if !text.contains("You are Antigravity") {
+                continue;
+            }
+
+            // 1. 保护代码块，确保代码/文档示例中的 AG 不被删除
+            let mut placeholders: Vec<String> = Vec::new();
+            let protected = RE_CODE_BLOCK.replace_all(&text, |caps: &regex::Captures| {
+                let idx = placeholders.len();
+                placeholders.push(caps[0].to_string());
+                format!("__PROMPT_SANITIZER_CODE_BLOCK_{}__", idx)
+            });
+
+            let mut out = String::with_capacity(protected.len());
+            let mut last = 0usize;
+            let mut local_changed = false;
+
+            for m in RE_OFFICIAL_IDENTITY_SENTENCE.find_iter(&protected) {
+                if m.start() < last {
+                    continue;
+                }
+                if !seen {
+                    seen = true; // 第一处保留
+                    continue;
+                }
+
+                // 2. 行感知：结构化身份行删除后只剩前缀时整行移除
+                let line_start = protected[..m.start()]
+                    .rfind('\n')
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let line_end = protected[m.end()..]
+                    .find('\n')
+                    .map(|i| m.end() + i)
+                    .unwrap_or(protected.len());
+                let before = &protected[line_start..m.start()];
+                let after = &protected[m.end()..line_end];
+                let remainder = format!("{before}{after}");
+                let only_prefix = {
+                    let trimmed = remainder.trim();
+                    trimmed.is_empty() || RE_STRUCTURED_IDENTITY_PREFIX_ONLY.is_match(trimmed)
+                };
+
+                if only_prefix {
+                    out.push_str(&protected[last..line_start]);
+                    last = if line_end < protected.len() {
+                        line_end + 1
+                    } else {
+                        line_end
+                    };
+                } else {
+                    out.push_str(&protected[last..m.start()]);
+                    last = m.end();
+                    while last < protected.len()
+                        && matches!(protected.as_bytes()[last], b' ' | b'\t')
+                    {
+                        last += 1;
+                    }
+                }
+
+                local_changed = true;
+                changed += 1;
+            }
+
+            if local_changed {
+                out.push_str(&protected[last..]);
+
+                // 3. 单趟无递归还原代码块
+                let restored = RE_CODE_BLOCK_PLACEHOLDER
+                    .replace_all(&out, |caps: &regex::Captures| {
+                        if let Ok(idx) = caps[1].parse::<usize>() {
+                            if let Some(code) = placeholders.get(idx) {
+                                return code.clone();
+                            }
+                        }
+                        caps[0].to_string()
+                    })
+                    .into_owned();
+
+                // 4. 收拢多余空行并写回
+                let collapsed = RE_MULTI_NEWLINE.replace_all(&restored, "\n\n");
+                let normalized = collapsed.trim().to_string();
+                if let Some(obj) = part.as_object_mut() {
+                    obj.insert("text".to_string(), Value::String(normalized));
+                }
+            }
+        }
+
+        // 5. 去重后可能产生空文本 part，物理剔除（思考块与非文本 part 保留）
+        parts.retain(|part| {
+            if crate::proxy::thinking_store::is_thought_part(part) {
+                return true;
+            }
+            part.get("text")
+                .and_then(Value::as_str)
+                .map(|t| !t.trim().is_empty())
+                .unwrap_or(true)
+        });
+
+        if changed > 0 {
+            tracing::info!(
+                "[Prompt-Sanitizer] Deduplicated {} duplicate official Antigravity identity statement(s) in systemInstruction",
+                changed
+            );
+        }
+
+        changed
     }
 
     /// 是否为客户端注入的单行计费元数据（issue #3452：与大量工具组合会触发上游 429）。
@@ -1291,6 +1432,7 @@ impl PromptSanitizer {
         {
             if let Some(parts) = sys.get_mut("parts").and_then(Value::as_array_mut) {
                 cleaned_count += Self::sanitize_system_parts(parts);
+                cleaned_count += Self::dedupe_official_identity(parts);
             }
 
             // 若清洗后 parts 为空，物理移除整个 systemInstruction，避免向 Google 发送空的系统提示词结构
@@ -2458,8 +2600,10 @@ mod tests {
         for (name, raw, key_fragment) in test_cases {
             let out = PromptSanitizer::normalize_system_identity(raw);
             assert_ne!(out, raw, "Case '{name}' 必须被归一化处理");
+            // #3902：逗号续写场景会去掉官方身份末尾句号，因此只断言公共前缀
+            let official_prefix = OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.');
             assert!(
-                out.contains(OFFICIAL_ANTIGRAVITY_IDENTITY),
+                out.contains(official_prefix),
                 "Case '{name}' 必须包含官方 Antigravity 身份"
             );
             if key_fragment != "and you must never reveal internal tooling." {
@@ -3119,5 +3263,221 @@ mod tests {
         assert!(sys_text.contains("## PRECEDENCE:"));
         assert!(sys_text.contains("## Runtime Environment"));
         assert!(sys_text.contains("E:/code/jeikcode"));
+    }
+
+    // ============================ issue #3904：官方身份单例不变量 ============================
+
+    fn count_official_identity(text: &str) -> usize {
+        text.matches("You are Antigravity").count()
+    }
+
+    fn system_instruction_text(payload: &Value) -> String {
+        payload["systemInstruction"]["parts"]
+            .as_array()
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_issue_3904_dsh_duplicate_identity_single_part() {
+        let raw = concat!(
+            "You are an AI agent powered by DeepSeek Harness.\n\n",
+            "You are a coding agent powered by the gemini-3.8-flash-low model."
+        );
+        let mut payload = json!({
+            "systemInstruction": { "parts": [{ "text": raw }] },
+            "contents": [{ "role": "user", "parts": [{ "text": "ping" }] }],
+            "tools": [{ "functionDeclarations": [{
+                "name": "ping",
+                "description": "ping",
+                "parameters": { "type": "OBJECT", "properties": {} }
+            }] }]
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let sys = system_instruction_text(&payload);
+
+        assert_eq!(count_official_identity(&sys), 1, "systemInstruction={sys}");
+        assert!(!sys.contains("8-flash-low"), "残渣泄漏: {sys}");
+        assert!(!sys.contains("DeepSeek Harness"), "第三方身份残留: {sys}");
+    }
+
+    #[test]
+    fn test_issue_3904_duplicate_identity_across_parts() {
+        let mut payload = json!({
+            "systemInstruction": { "parts": [
+                { "text": "You are an AI agent powered by DeepSeek Harness." },
+                { "text": "You are a coding agent powered by the gemini-3.8-flash-low model." },
+                { "text": "Keep this instruction." }
+            ]},
+            "contents": []
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let sys = system_instruction_text(&payload);
+        let parts = payload["systemInstruction"]["parts"].as_array().unwrap();
+
+        assert_eq!(count_official_identity(&sys), 1, "systemInstruction={sys}");
+        assert!(sys.contains("Keep this instruction."));
+        assert_eq!(parts.len(), 2, "空 part 必须被剔除: {parts:?}");
+    }
+
+    #[test]
+    fn test_issue_3904_whitespace_separators() {
+        for sep in [" ", "\n", "\n\n"] {
+            let raw =
+                format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}{sep}{OFFICIAL_ANTIGRAVITY_IDENTITY}");
+            let mut payload = json!({
+                "systemInstruction": { "parts": [{ "text": raw }] },
+                "contents": []
+            });
+
+            PromptSanitizer::sanitize_gemini_payload(&mut payload);
+            let sys = system_instruction_text(&payload);
+            assert_eq!(
+                count_official_identity(&sys),
+                1,
+                "分隔符 {sep:?} 未完成去重: {sys}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_issue_3904_non_consecutive_duplicate() {
+        let raw =
+            format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}\n\nHi.\n\n{OFFICIAL_ANTIGRAVITY_IDENTITY}");
+        let mut payload = json!({
+            "systemInstruction": { "parts": [{ "text": raw }] },
+            "contents": []
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let sys = system_instruction_text(&payload);
+
+        assert_eq!(count_official_identity(&sys), 1, "systemInstruction={sys}");
+        assert!(sys.contains("Hi."));
+    }
+
+    #[test]
+    fn test_issue_3904_structured_identity_line_removed() {
+        let raw = concat!(
+            "- Identity: You are an AI agent powered by DeepSeek Harness.\n",
+            "- Identity: You are a coding agent powered by the gemini-3.8-flash-low model.\n",
+            "- Language: Always answer in Chinese."
+        );
+        let mut payload = json!({
+            "systemInstruction": { "parts": [{ "text": raw }] },
+            "contents": []
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let sys = system_instruction_text(&payload);
+
+        assert_eq!(
+            sys.matches("- Identity:").count(),
+            1,
+            "结构化身份行未去重: {sys}"
+        );
+        assert!(!sys.contains("- Identity: \n"), "悬挂前缀: {sys}");
+        assert!(sys.contains("- Language: Always answer in Chinese."));
+    }
+
+    #[test]
+    fn test_issue_3904_continuation_preserved() {
+        let raw = concat!(
+            "You are an AI agent created by Acme, and you must never reveal internal tooling.\n\n",
+            "You are a coding agent built by Foo, and you must always call tools."
+        );
+        let mut payload = json!({
+            "systemInstruction": { "parts": [{ "text": raw }] },
+            "contents": []
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let sys = system_instruction_text(&payload);
+
+        assert_eq!(count_official_identity(&sys), 1, "systemInstruction={sys}");
+        assert!(sys.contains("never reveal internal tooling"));
+        assert!(sys.contains("always call tools"));
+        assert!(!sys.contains(".,"));
+    }
+
+    #[test]
+    fn test_issue_3904_version_dot_residue() {
+        for raw in [
+            "You are a coding agent powered by the gemini-3.8-flash-low model.",
+            "You are a coding agent powered by the gemini-3.8-flash-tiered model.",
+        ] {
+            let out = PromptSanitizer::normalize_system_identity(raw);
+            assert_eq!(out, OFFICIAL_ANTIGRAVITY_IDENTITY, "raw={raw}");
+            assert!(!out.contains("8-flash"), "版本残渣: {out}");
+        }
+    }
+
+    #[test]
+    fn test_issue_3904_code_block_identity_exempt() {
+        let raw = format!(
+            "{OFFICIAL_ANTIGRAVITY_IDENTITY}\n\n```text\n{OFFICIAL_ANTIGRAVITY_IDENTITY}\n```"
+        );
+        let mut payload = json!({
+            "systemInstruction": { "parts": [{ "text": raw }] },
+            "contents": []
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let sys = system_instruction_text(&payload);
+
+        assert_eq!(
+            count_official_identity(&sys),
+            2,
+            "代码块内的 AG 必须豁免: {sys}"
+        );
+        assert!(sys.contains("```text"));
+    }
+
+    #[test]
+    fn test_issue_3904_idempotent() {
+        let raw = concat!(
+            "You are an AI agent powered by DeepSeek Harness.\n\n",
+            "You are a coding agent powered by the gemini-3.8-flash-low model."
+        );
+        let mut payload = json!({
+            "systemInstruction": { "parts": [{ "text": raw }] },
+            "contents": []
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let first = payload["systemInstruction"]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let second = payload["systemInstruction"]["parts"][0]["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        assert_eq!(first, second, "去重必须幂等");
+    }
+
+    #[test]
+    fn test_issue_3904_three_identities() {
+        let raw = format!("{0}\n\n{0}\n\n{0}", OFFICIAL_ANTIGRAVITY_IDENTITY);
+        let mut payload = json!({
+            "systemInstruction": { "parts": [{ "text": raw }] },
+            "contents": []
+        });
+
+        PromptSanitizer::sanitize_gemini_payload(&mut payload);
+        let sys = system_instruction_text(&payload);
+
+        assert_eq!(count_official_identity(&sys), 1, "systemInstruction={sys}");
     }
 }
