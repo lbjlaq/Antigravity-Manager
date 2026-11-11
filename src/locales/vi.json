@@ -1401,7 +1401,7 @@
             "first_byte_effective": "Đang áp dụng: văn bản/mã {{text}}s　hình ảnh {{image}}s　video {{video}}s　phụ trợ {{aux}}s",
             "section_stream": "③ Token đầu và xuất liên tục",
             "stream_desc": "Chờ header và token đầu tiên đã được gộp thành một độ trễ byte đầu duy nhất: được phép chuyển endpoint trước HTTP 200, sau đó chỉ kết thúc an toàn.",
-            "auto_summary": "Ví dụ: chờ tối đa = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}} giây;"
+            "auto_summary": "Ví dụ: chờ tối đa = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} giây;"
         },
         "example": {
             "title": "Ví dụ Sử dụng",

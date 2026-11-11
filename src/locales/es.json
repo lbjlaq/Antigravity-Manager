@@ -1354,7 +1354,7 @@
             "first_byte_effective": "Vigente ahora: texto/código {{text}}s　imagen {{image}}s　vídeo {{video}}s　auxiliar {{aux}}s",
             "section_stream": "③ Primer token y salida continua",
             "stream_desc": "La espera de cabeceras y el primer token son una única latencia de primer byte: el cambio de endpoint se permite antes de HTTP 200 y después solo se finaliza de forma segura.",
-            "auto_summary": "Ej.: espera máxima = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}} s;"
+            "auto_summary": "Ej.: espera máxima = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} s;"
         },
         "cloudflared": {
             "title": "Acceso Público (Cloudflared)",

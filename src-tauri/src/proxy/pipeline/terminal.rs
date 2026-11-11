@@ -24,8 +24,11 @@
 use crate::proxy::sticky_config::SchedulingMode;
 use axum::http::StatusCode;
 
-/// 上传阶段被截断（上传停滞 / 上传预算耗尽 / 大 body 单次尝试策略）
+/// 上传阶段被截断（底层传输错误 / 大 body 单次尝试策略）
 pub const UPLOAD_STAGE_TERMINAL_MARKER: &str = "[upstream_upload_stage_terminal]";
+
+/// 上传阶段持续无进展（stall 看门狗触发；不是固定预算耗尽）
+pub const UPLOAD_STALLED_TERMINAL_MARKER: &str = "[upstream_upload_stalled_terminal]";
 
 /// 统一首字延迟耗尽（上游排队 / 大上下文 prefill 慢，**不是账号故障**）
 pub const FIRST_BYTE_STAGE_TERMINAL_MARKER: &str = "[upstream_first_byte_terminal]";
@@ -41,8 +44,9 @@ pub const REPLAY_CAP_TERMINAL_MARKER: &str = "[upstream_replay_cap_terminal]";
 pub const TRANSPORT_RESET_TERMINAL_MARKER: &str = "[upstream_transport_reset_terminal]";
 
 /// 全部内部标记：写给客户端前逐一剔除
-pub const ALL_TERMINAL_MARKERS: [&str; 5] = [
+pub const ALL_TERMINAL_MARKERS: [&str; 6] = [
     UPLOAD_STAGE_TERMINAL_MARKER,
+    UPLOAD_STALLED_TERMINAL_MARKER,
     FIRST_BYTE_STAGE_TERMINAL_MARKER,
     GATEWAY_BUDGET_TERMINAL_MARKER,
     REPLAY_CAP_TERMINAL_MARKER,
@@ -57,8 +61,10 @@ pub const ALL_TERMINAL_MARKERS: [&str; 5] = [
 pub enum UpstreamTerminal {
     /// 首字节预算耗尽：上游排队或大上下文 prefill 慢
     FirstByte,
-    /// 上传阶段被截断：重传只会再把同一份大 body 从头传一遍
+    /// 上传阶段被截断：底层传输错误或大 body 单次尝试策略
     Upload,
+    /// 上传阶段持续无进展：stall 看门狗触发（不是固定上传预算）
+    UploadStalled,
     /// 全局请求预算耗尽：整条请求已经到点
     GlobalBudget,
     /// 大 body 重放次数达到上限：护栏主动拒绝
@@ -82,6 +88,9 @@ pub struct TerminalDisposition {
     pub abandon_sticky_account: bool,
     /// 会话粘性模式（CacheFirst / Balance）下是否先在当前账号原地重连一次（与账号无关的传输层故障）
     pub retry_same_account_first: bool,
+    /// 是否允许在本次请求内换到其他账号重放同一份 body。
+    /// 上传阶段（Upload / UploadStalled）为 false：换号只会把同一份 body 再传一遍。
+    pub cross_account_replay_allowed: bool,
 }
 
 impl UpstreamTerminal {
@@ -90,6 +99,7 @@ impl UpstreamTerminal {
         match self {
             Self::FirstByte => "first_byte_timeout",
             Self::Upload => "upload_aborted",
+            Self::UploadStalled => "upload_stalled",
             Self::GlobalBudget => "gateway_budget_exhausted",
             Self::ReplayCap => "replay_cap_reached",
             Self::TransportReset => "transport_reset",
@@ -101,6 +111,7 @@ impl UpstreamTerminal {
         match self {
             Self::FirstByte => FIRST_BYTE_STAGE_TERMINAL_MARKER,
             Self::Upload => UPLOAD_STAGE_TERMINAL_MARKER,
+            Self::UploadStalled => UPLOAD_STALLED_TERMINAL_MARKER,
             Self::GlobalBudget => GATEWAY_BUDGET_TERMINAL_MARKER,
             Self::ReplayCap => REPLAY_CAP_TERMINAL_MARKER,
             Self::TransportReset => TRANSPORT_RESET_TERMINAL_MARKER,
@@ -113,12 +124,14 @@ impl UpstreamTerminal {
     ///   `DEADLINE_EXCEEDED` 处理，不再出现“Claude 504、其余 502”的双口径。
     /// - 重放上限是“我们主动不再重传”，与时间无关，用 503 表达“稍后重试”。
     /// - 四者都不罚账号：前三种是“等得不够久”，重放上限是“我们主动止损”，都不是账号故障。
-    /// - 首字节超时、上传中断与全局预算耗尽时，虽然不惩罚账号，但解绑当前会话粘性绑定（abandon_sticky_account = true），
+    /// - 首字节超时与全局预算耗尽时，虽然不惩罚账号，但解绑当前会话粘性绑定（abandon_sticky_account = true），
     ///   确保客户端或后续轮换能够自动调度到号池中的其他健康账号，彻底消除“卡在同一账号循环死等”问题。
-    /// - 轮换控制（stop_rotation）：
-    ///   * 全局总预算耗尽（GlobalBudget）或重放上限（ReplayCap）时彻底终止轮换（stop_rotation = true）；
-    ///   * 首字节中断/超时（FirstByte）与上传异常（Upload）发生时，谷歌未完成生成不扣减额度，且请求预算若有结余，
-    ///     允许网关在号池内安全轮换至后续健康账号（stop_rotation = false），避免单账号网络抖动或集群假死直接导致整条请求死掉。
+    /// - 上传阶段（Upload / UploadStalled）属于传输层问题，不是账号故障：
+    ///   * 不跨账号重放同一份 body（cross_account_replay_allowed = false），否则只会反复重传并放大拥塞；
+    ///   * 不解绑粘性绑定（abandon_sticky_account = false），避免把网络抖动误伤为会话迁移；
+    ///   * 允许同账号原地重连一次（retry_same_account_first = true），随后 Stop。
+    /// - 轮换控制（stop_rotation）：全局总预算耗尽 / 重放上限时彻底终止轮换；
+    ///   首字节超时仍允许在预算结余时换号（避免单账号集群假死导致整条请求死掉）。
     /// - 传输层断连（TransportReset）不是时间问题，也不是账号故障，回 502；不罚号，
     ///   且在会话粘性模式（CacheFirst / Balance）下先在当前账号原地重连一次
     ///   （`retry_same_account_first`），避免网络抖动被当成账号故障触发故障转移、丢失 KV 缓存。
@@ -127,7 +140,9 @@ impl UpstreamTerminal {
     pub fn disposition(self) -> TerminalDisposition {
         TerminalDisposition {
             status: match self {
-                Self::FirstByte | Self::Upload | Self::GlobalBudget => StatusCode::GATEWAY_TIMEOUT,
+                Self::FirstByte | Self::Upload | Self::UploadStalled | Self::GlobalBudget => {
+                    StatusCode::GATEWAY_TIMEOUT
+                }
                 Self::ReplayCap => StatusCode::SERVICE_UNAVAILABLE,
                 Self::TransportReset => StatusCode::BAD_GATEWAY,
             },
@@ -135,9 +150,13 @@ impl UpstreamTerminal {
             stop_rotation: matches!(self, Self::GlobalBudget | Self::ReplayCap),
             abandon_sticky_account: matches!(
                 self,
-                Self::FirstByte | Self::Upload | Self::GlobalBudget | Self::TransportReset
+                Self::FirstByte | Self::GlobalBudget | Self::TransportReset
             ),
-            retry_same_account_first: matches!(self, Self::TransportReset),
+            retry_same_account_first: matches!(
+                self,
+                Self::Upload | Self::UploadStalled | Self::TransportReset
+            ),
+            cross_account_replay_allowed: !matches!(self, Self::Upload | Self::UploadStalled),
         }
     }
 }
@@ -173,11 +192,13 @@ impl TerminalDisposition {
     /// 裁决顺序：
     /// 1. `stop_rotation`（全局预算 / 重放上限）直接终止；CacheFirst 下绝不解绑。
     /// 2. 承载缓存且仍有额度时原地重放一次：CacheFirst 覆盖全部可继续终态；
-    ///    Balance 只覆盖传输层断连（`retry_same_account_first`）；
-    ///    PerformanceFirst 不建立会话绑定，不原地重放。
-    /// 3. CacheFirst：文本请求额度用完即终止并保留绑定，客户端重试仍命中同一账号；
+    ///    Balance 覆盖传输层断连与上传阶段失败（`retry_same_account_first`）；
+    ///    PerformanceFirst 不建立会话绑定，但上传阶段仍允许一次同账号重连。
+    /// 3. 不允许跨账号重放的终态（Upload / UploadStalled）：同账号额度用完后直接 Stop，
+    ///    不再把同一份 body 换号重传；PerformanceFirst 文本上传同样先重连一次，额度用完 Stop。
+    /// 4. CacheFirst：文本请求额度用完即终止并保留绑定，客户端重试仍命中同一账号；
     ///    生图请求换号重试但不解绑原会话绑定。
-    /// 4. Balance / PerformanceFirst：保持 #3821 的既有语义——按 `abandon_sticky_account` 解绑并换号。
+    /// 5. Balance / PerformanceFirst：其余终态保持 #3821 的既有语义——按 `abandon_sticky_account` 解绑并换号。
     pub fn plan(
         self,
         mode: SchedulingMode,
@@ -186,6 +207,10 @@ impl TerminalDisposition {
     ) -> TerminalRetryPlan {
         let cache_first = mode == SchedulingMode::CacheFirst;
         let sticky_session = mode != SchedulingMode::PerformanceFirst;
+        // 上传阶段是传输层问题：即使 PerformanceFirst 没有会话绑定，也允许一次同账号重连，
+        // 避免为了“换号”而把同一份 body 再传一遍。
+        let transport_same_account_retry =
+            self.retry_same_account_first && !self.cross_account_replay_allowed;
         if self.stop_rotation {
             return TerminalRetryPlan {
                 next: TerminalNextStep::Stop,
@@ -194,10 +219,18 @@ impl TerminalDisposition {
         }
         if cache_bound
             && same_account_retry_left
-            && (cache_first || (sticky_session && self.retry_same_account_first))
+            && (cache_first
+                || (sticky_session && self.retry_same_account_first)
+                || transport_same_account_retry)
         {
             return TerminalRetryPlan {
                 next: TerminalNextStep::RetrySameAccount,
+                abandon_sticky_account: false,
+            };
+        }
+        if !self.cross_account_replay_allowed {
+            return TerminalRetryPlan {
+                next: TerminalNextStep::Stop,
                 abandon_sticky_account: false,
             };
         }
@@ -228,6 +261,9 @@ pub fn classify(error_text: &str) -> Option<UpstreamTerminal> {
     }
     if error_text.contains(REPLAY_CAP_TERMINAL_MARKER) {
         return Some(UpstreamTerminal::ReplayCap);
+    }
+    if error_text.contains(UPLOAD_STALLED_TERMINAL_MARKER) {
+        return Some(UpstreamTerminal::UploadStalled);
     }
     if error_text.contains(UPLOAD_STAGE_TERMINAL_MARKER) {
         return Some(UpstreamTerminal::Upload);
@@ -448,6 +484,10 @@ mod tests {
             Some(UpstreamTerminal::Upload)
         );
         assert_eq!(
+            classify(&format!("{}boom", UPLOAD_STALLED_TERMINAL_MARKER)),
+            Some(UpstreamTerminal::UploadStalled)
+        );
+        assert_eq!(
             classify(&format!("{}boom", GATEWAY_BUDGET_TERMINAL_MARKER)),
             Some(UpstreamTerminal::GlobalBudget)
         );
@@ -468,6 +508,7 @@ mod tests {
         for terminal in [
             UpstreamTerminal::FirstByte,
             UpstreamTerminal::Upload,
+            UpstreamTerminal::UploadStalled,
             UpstreamTerminal::GlobalBudget,
         ] {
             let disposition = terminal.disposition();
@@ -478,15 +519,45 @@ mod tests {
                 "{terminal:?}"
             );
             assert!(!disposition.penalize_account, "{terminal:?}");
+        }
+
+        // 首字节 / 全局预算仍解绑；上传阶段是传输层问题，不跨账号重放也不解绑
+        assert!(
+            UpstreamTerminal::FirstByte
+                .disposition()
+                .abandon_sticky_account
+        );
+        assert!(
+            UpstreamTerminal::GlobalBudget
+                .disposition()
+                .abandon_sticky_account
+        );
+        for terminal in [UpstreamTerminal::Upload, UpstreamTerminal::UploadStalled] {
+            let d = terminal.disposition();
             assert!(
-                disposition.abandon_sticky_account,
-                "all time-like terminals must abandon sticky account: {terminal:?}"
+                !d.stop_rotation,
+                "{terminal:?} must allow one in-place retry"
+            );
+            assert!(
+                !d.abandon_sticky_account,
+                "{terminal:?} must keep the sticky binding"
+            );
+            assert!(
+                d.retry_same_account_first,
+                "{terminal:?} must retry the same account first"
+            );
+            assert!(
+                !d.cross_account_replay_allowed,
+                "{terminal:?} must never replay across accounts"
             );
         }
 
-        // 仅全局预算耗尽与重放上限强制终止账号轮换；首字节与上传异常允许在预算结余时轮换至后续健康账号
+        let first_byte = UpstreamTerminal::FirstByte.disposition();
+        assert!(first_byte.abandon_sticky_account);
+        assert!(!first_byte.retry_same_account_first);
+        assert!(first_byte.cross_account_replay_allowed);
+
         assert!(!UpstreamTerminal::FirstByte.disposition().stop_rotation);
-        assert!(!UpstreamTerminal::Upload.disposition().stop_rotation);
         assert!(UpstreamTerminal::GlobalBudget.disposition().stop_rotation);
 
         // 重放上限不是时间问题，用 503 表达“稍后重试”，同样不罚账号
@@ -506,14 +577,13 @@ mod tests {
     }
 
     #[test]
-    fn non_cache_first_plan_keeps_legacy_rotation_for_timeouts() {
-        for terminal in [UpstreamTerminal::FirstByte, UpstreamTerminal::Upload] {
-            let plan = terminal
-                .disposition()
-                .plan(SchedulingMode::Balance, true, true);
-            assert_eq!(plan.next, TerminalNextStep::Rotate, "{terminal:?}");
-            assert!(plan.abandon_sticky_account, "{terminal:?}");
-        }
+    fn non_cache_first_plan_keeps_legacy_rotation_for_first_byte() {
+        let terminal = UpstreamTerminal::FirstByte;
+        let plan = terminal
+            .disposition()
+            .plan(SchedulingMode::Balance, true, true);
+        assert_eq!(plan.next, TerminalNextStep::Rotate);
+        assert!(plan.abandon_sticky_account);
         let plan =
             UpstreamTerminal::GlobalBudget
                 .disposition()
@@ -541,10 +611,9 @@ mod tests {
     }
 
     #[test]
-    fn performance_first_keeps_legacy_rotation_for_every_terminal() {
+    fn performance_first_keeps_legacy_rotation_for_non_upload_terminals() {
         for terminal in [
             UpstreamTerminal::FirstByte,
-            UpstreamTerminal::Upload,
             UpstreamTerminal::TransportReset,
         ] {
             let plan = terminal
@@ -560,6 +629,7 @@ mod tests {
         for terminal in [
             UpstreamTerminal::FirstByte,
             UpstreamTerminal::Upload,
+            UpstreamTerminal::UploadStalled,
             UpstreamTerminal::TransportReset,
         ] {
             let first = terminal
@@ -591,13 +661,20 @@ mod tests {
     fn cache_first_image_rotates_without_unbinding() {
         for terminal in [
             UpstreamTerminal::FirstByte,
-            UpstreamTerminal::Upload,
             UpstreamTerminal::TransportReset,
         ] {
             let plan = terminal
                 .disposition()
                 .plan(SchedulingMode::CacheFirst, false, true);
             assert_eq!(plan.next, TerminalNextStep::Rotate, "{terminal:?}");
+            assert!(!plan.abandon_sticky_account, "{terminal:?}");
+        }
+        // 上传阶段不跨账号重放：生图也直接 Stop，但保留原会话绑定。
+        for terminal in [UpstreamTerminal::Upload, UpstreamTerminal::UploadStalled] {
+            let plan = terminal
+                .disposition()
+                .plan(SchedulingMode::CacheFirst, false, true);
+            assert_eq!(plan.next, TerminalNextStep::Stop, "{terminal:?}");
             assert!(!plan.abandon_sticky_account, "{terminal:?}");
         }
         let plan = UpstreamTerminal::GlobalBudget.disposition().plan(
@@ -610,10 +687,49 @@ mod tests {
     }
 
     #[test]
+    fn upload_terminals_retry_same_account_once_then_stop_without_unbind() {
+        for terminal in [UpstreamTerminal::Upload, UpstreamTerminal::UploadStalled] {
+            for mode in [SchedulingMode::CacheFirst, SchedulingMode::Balance] {
+                let first = terminal.disposition().plan(mode, true, true);
+                assert_eq!(
+                    first.next,
+                    TerminalNextStep::RetrySameAccount,
+                    "{terminal:?}/{mode:?}"
+                );
+                assert!(!first.abandon_sticky_account, "{terminal:?}/{mode:?}");
+
+                let second = terminal.disposition().plan(mode, true, false);
+                assert_eq!(second.next, TerminalNextStep::Stop, "{terminal:?}/{mode:?}");
+                assert!(!second.abandon_sticky_account, "{terminal:?}/{mode:?}");
+            }
+
+            // PerformanceFirst 没有粘性绑定，但上传阶段仍允许一次同账号重连；
+            // 额度用完直接 Stop，绝不跨账号重放。
+            let perf_first =
+                terminal
+                    .disposition()
+                    .plan(SchedulingMode::PerformanceFirst, true, true);
+            assert_eq!(
+                perf_first.next,
+                TerminalNextStep::RetrySameAccount,
+                "{terminal:?}"
+            );
+            assert!(!perf_first.abandon_sticky_account, "{terminal:?}");
+            let perf_second =
+                terminal
+                    .disposition()
+                    .plan(SchedulingMode::PerformanceFirst, true, false);
+            assert_eq!(perf_second.next, TerminalNextStep::Stop, "{terminal:?}");
+            assert!(!perf_second.abandon_sticky_account, "{terminal:?}");
+        }
+    }
+
+    #[test]
     fn strip_markers_removes_every_internal_marker() {
         let text = format!(
-            "{}a {}b {}c {}d {}e",
+            "{}a {}b {}c {}d {}e {}f",
             UPLOAD_STAGE_TERMINAL_MARKER,
+            UPLOAD_STALLED_TERMINAL_MARKER,
             FIRST_BYTE_STAGE_TERMINAL_MARKER,
             GATEWAY_BUDGET_TERMINAL_MARKER,
             REPLAY_CAP_TERMINAL_MARKER,

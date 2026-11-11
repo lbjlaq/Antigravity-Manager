@@ -1113,11 +1113,17 @@ pub async fn handle_generate(
         }
 
         if classification.is_model_not_found() {
-            // [Pipeline Policy] 单模型临时熔断 + 是否换号的决策已下沉；这里只构造协议响应。
-            let can_rotate =
-                crate::proxy::pipeline::policy::apply_model_not_found(attempt, pool_size, || {
-                    token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900))
-                });
+            // [Pipeline Policy] UA 门禁短路 + 单模型临时熔断 + 是否换号的决策已下沉；这里只构造协议响应。
+            let custom_ua = state.upstream.get_user_agent_override().await;
+            let can_rotate = crate::proxy::pipeline::policy::apply_model_not_found_with_ua(
+                &mapped_model,
+                status_code,
+                &error_text,
+                custom_ua.as_deref(),
+                attempt,
+                pool_size,
+                || token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900)),
+            );
 
             if can_rotate {
                 tracing::warn!(
@@ -1132,11 +1138,12 @@ pub async fn handle_generate(
                 "[Gemini] Target model [{}] not found on upstream (HTTP {}). Pool exhausted without account-level lockout.",
                 mapped_model, status_code
             );
-            let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+            let dual_err = crate::proxy::handlers::common::build_dual_track_error_with_ua(
                 "gemini",
                 status_code,
                 &mapped_model,
                 &error_text,
+                custom_ua.as_deref(),
             );
             return Ok((
                 StatusCode::from_u16(status_code).unwrap_or(StatusCode::NOT_FOUND),

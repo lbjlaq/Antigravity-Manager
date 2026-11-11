@@ -912,6 +912,7 @@ pub fn run() {
             commands::proxy::detect_remote_hub_fingerprint,
             commands::proxy::check_hub_update,
             commands::proxy::get_effective_first_byte_timeouts,
+            commands::proxy::get_effective_timeout_config,
             commands::proxy::clear_proxy_rate_limit,
             commands::proxy::clear_all_proxy_rate_limits,
             // Proxy Pool Binding commands

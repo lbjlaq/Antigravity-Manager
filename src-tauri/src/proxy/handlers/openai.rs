@@ -3405,11 +3405,17 @@ pub async fn handle_chat_completions(
         }
 
         if classification.is_model_not_found() {
-            // [Pipeline Policy] 单模型临时熔断 + 是否换号的决策已下沉
-            let can_rotate =
-                crate::proxy::pipeline::policy::apply_model_not_found(attempt, pool_size, || {
-                    token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900))
-                });
+            // [Pipeline Policy] UA 门禁短路 + 单模型临时熔断 + 是否换号的决策已下沉
+            let custom_ua = state.upstream.get_user_agent_override().await;
+            let can_rotate = crate::proxy::pipeline::policy::apply_model_not_found_with_ua(
+                &mapped_model,
+                status_code,
+                &error_text,
+                custom_ua.as_deref(),
+                attempt,
+                pool_size,
+                || token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900)),
+            );
 
             if can_rotate {
                 tracing::warn!(
@@ -3424,11 +3430,12 @@ pub async fn handle_chat_completions(
                 "[{}] Pipeline: Target model [{}] not found on upstream (HTTP {}). Pool exhausted without account-level lockout.",
                 trace_id, mapped_model, status_code
             );
-            let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+            let dual_err = crate::proxy::handlers::common::build_dual_track_error_with_ua(
                 "openai",
                 status_code,
                 &mapped_model,
                 &error_text,
+                custom_ua.as_deref(),
             );
             return Ok((
                 StatusCode::from_u16(status_code).unwrap_or(StatusCode::NOT_FOUND),
@@ -5607,11 +5614,17 @@ pub async fn handle_completions(
         // [FIX Corrupted Image] 已由 `pipeline::auto_heal::try_auto_heal` 统一处理（见上）
 
         if classification.is_model_not_found() {
-            // [Pipeline Policy] 单模型临时熔断 + 是否换号的决策已下沉（与 chat 路径同构）
-            let can_rotate =
-                crate::proxy::pipeline::policy::apply_model_not_found(attempt, pool_size, || {
-                    token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900))
-                });
+            // [Pipeline Policy] UA 门禁短路 + 单模型临时熔断 + 是否换号的决策已下沉（与 chat 路径同构）
+            let custom_ua = state.upstream.get_user_agent_override().await;
+            let can_rotate = crate::proxy::pipeline::policy::apply_model_not_found_with_ua(
+                &mapped_model,
+                status_code,
+                &error_text,
+                custom_ua.as_deref(),
+                attempt,
+                pool_size,
+                || token_manager.mark_model_unsupported(&account_id, &mapped_model, Some(900)),
+            );
             if can_rotate {
                 tracing::warn!(
                     "[{}] 上游报错模型不可用 (HTTP {})，已标记账号 {} 对模型 [{}] 临时熔断，继续换号重试 ({}/{})...",
@@ -5629,11 +5642,12 @@ pub async fn handle_completions(
             } else {
                 "openai"
             };
-            let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+            let dual_err = crate::proxy::handlers::common::build_dual_track_error_with_ua(
                 protocol,
                 status_code,
                 &mapped_model,
                 &error_text,
+                custom_ua.as_deref(),
             );
             return Response::builder()
                 .status(StatusCode::from_u16(status_code).unwrap_or(StatusCode::NOT_FOUND))

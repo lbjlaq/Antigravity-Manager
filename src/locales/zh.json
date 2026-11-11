@@ -1430,8 +1430,11 @@
             "header_wait_title": "首响应头超时 (秒)",
             "header_wait_desc": "0 = 使用内置值：首选端点 30 秒 / 备用端点 25 秒；填非 0 时只作为下限往上抬。",
             "large_body_desc": "超过阈值的文件默认只发一次，避免反复重传占满上行。",
+            "large_body_desc_v2": "超过该字节阈值的请求最多只尝试配置的端点数；账号轮换另计。",
             "large_body_threshold_title": "大文件阈值 (MB)",
             "endpoint_attempts_title": "最多尝试次数",
+            "endpoint_attempts_title_v2": "最多端点尝试次数",
+            "account_retry_note": "账号轮换另计：按号池大小通常 4~12 次；本项只限制端点尝试次数。",
             "toast_reset": "已恢复超时默认值",
             "btn_reset": "恢复默认值",
             "btn_save": "保存超时设置"
@@ -1453,7 +1456,9 @@
             "first_byte_effective": "当前生效（基准上限 {{cap}}s）：常规 {{text}}s　图片 {{image}}s　视频 {{video}}s　辅助 {{aux}}s",
             "section_stream": "③ 首字与连续输出",
             "stream_desc": "首响应头与首个输出 token 已合并为统一首字延迟：未收到 200 前可切换端点；收到 200 后只安全收尾，不再切换。",
-            "auto_summary": "例：最大等待时间= 47MB ÷ {{mbps}}Mbps ×1.4 ≈ {{big}} 秒；"
+            "auto_summary": "例：最大等待时间= 47MB ÷ {{mbps}}Mbps ×{{factor}} ≈ {{big}} 秒；",
+            "effective_upload_title": "当前生效值（含环境变量与归一化）",
+            "effective_upload_env_overridden": "环境变量覆盖：{{fields}}"
         },
         "cloudflared": {
             "title": "公网访问 (Cloudflared)",
