@@ -104,6 +104,7 @@ impl UpstreamClassification {
                 || lower.contains("exhausted")
                 || lower.contains("suspended")))
             || lower.contains("no accounts available")
+            || lower.contains("no available accounts")
             || lower.contains("token pool is empty")
             || lower.contains("no quota accounts")
     }

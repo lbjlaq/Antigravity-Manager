@@ -2881,6 +2881,82 @@ impl TokenManager {
         }
     }
 
+
+    /// 扫描磁盘上的账号文件，统计封禁/禁用/可用数量（用于池空诊断）
+    /// 返回 (banned, disabled, available)
+    fn scan_pool_disk_state(&self) -> (usize, usize, usize) {
+        let accounts_dir = self.resolved_data_dir().join("accounts");
+        let mut banned = 0usize;
+        let mut disabled = 0usize;
+        let mut available = 0usize;
+
+        let Ok(entries) = std::fs::read_dir(&accounts_dir) else {
+            return (0, 0, 0);
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(account) = serde_json::from_str::<serde_json::Value>(&content) else {
+                continue;
+            };
+            // 封禁账号：上游 403 (TOS_VIOLATION 等) 由 mark_account_forbidden 标记 quota.is_forbidden=true
+            let is_banned = account
+                .pointer("/quota/is_forbidden")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let reason = account
+                .get("proxy_disabled_reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let is_disabled = account
+                .get("disabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                || (account
+                    .get("proxy_disabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    && reason != "quota_protection");
+            if is_banned {
+                banned += 1;
+            } else if is_disabled {
+                disabled += 1;
+            } else {
+                available += 1;
+            }
+        }
+        (banned, disabled, available)
+    }
+
+    /// 池空时返回可区分原因的诊断错误，避免误导用户"等待冷却"
+    /// (#3919: 全池 banned 后应明确提示封禁而非 429 "Token pool is empty")
+    fn empty_pool_error(&self) -> String {
+        let (banned, disabled, available) = self.scan_pool_disk_state();
+        if banned > 0 {
+            format!(
+                "No available accounts: all pool accounts are banned or disabled (available: {}, banned: {}, disabled: {}). Banned accounts (upstream 403, e.g. TOS_VIOLATION) will NOT recover by waiting for cooldown - check the Accounts page and submit an appeal.",
+                available, banned, disabled
+            )
+        } else if available == 0 && disabled > 0 {
+            format!(
+                "No available accounts: all {} account(s) are disabled (banned: 0, disabled: {}). Re-enable accounts in the Accounts page.",
+                disabled, disabled
+            )
+        } else if available > 0 {
+            format!(
+                "Token pool is empty: {} usable account(s) exist on disk but none are loaded into the proxy pool - refresh the account pool.",
+                available
+            )
+        } else {
+            "Token pool is empty: no accounts configured. Add accounts in the Accounts page.".to_string()
+        }
+    }
+
     /// 内部实现：获取 Token 的核心逻辑
     async fn get_token_internal(
         &self,
@@ -2908,7 +2984,7 @@ impl TokenManager {
         tokens_snapshot.retain(|token| !excluded_accounts.contains(&token.account_id));
         let mut total = tokens_snapshot.len();
         if total == 0 {
-            return Err("Token pool is empty".to_string());
+            return Err(self.empty_pool_error());
         }
 
         // [NEW] 1. 动态能力过滤 (Capability-First Dynamic Discovery)
@@ -2985,7 +3061,7 @@ impl TokenManager {
                             target_model
                         ));
                     }
-                    return Err("Token pool is empty".to_string());
+                    return Err(self.empty_pool_error());
                 }
 
                 // 排除处于该模型临时熔断期的账号
@@ -3083,7 +3159,7 @@ impl TokenManager {
                     target_model
                 ));
             }
-            return Err("Token pool is empty".to_string());
+            return Err(self.empty_pool_error());
         }
 
         tokens_snapshot.sort_by(|a, b| {
@@ -3236,7 +3312,7 @@ impl TokenManager {
                             }
 
                             if total == 0 {
-                                return Err("Token pool is empty".to_string());
+                                return Err(self.empty_pool_error());
                             }
                         }
                         OnDiskAccountState::Unknown => {
@@ -3248,7 +3324,7 @@ impl TokenManager {
                             tokens_snapshot.retain(|t| t.account_id != preferred_token.account_id);
                             total = tokens_snapshot.len();
                             if total == 0 {
-                                return Err("Token pool is empty".to_string());
+                                return Err(self.empty_pool_error());
                             }
                         }
                         OnDiskAccountState::Enabled => {
@@ -6781,6 +6857,173 @@ mod tests {
     use super::*;
     use std::cmp::Ordering;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_empty_pool_error_reports_banned_accounts_instead_of_generic_429() {
+        // Issue #3919: 全池 banned 后应返回明确的封禁诊断，而非误导性的 "Token pool is empty"
+        let tmp_root = std::env::temp_dir().join(format!(
+            "antigravity-token-manager-test-empty-pool-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+        let now = chrono::Utc::now().timestamp();
+
+        // 2 banned (403 TOS_VIOLATION), 1 disabled (manual), 0 available.
+        let banned_json = serde_json::json!({
+            "id": "acc1",
+            "email": "a@test.com",
+            "token": {
+                "access_token": "atk",
+                "refresh_token": "rtk",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "disabled": false,
+            "proxy_disabled": true,
+            "proxy_disabled_reason": "Forbidden (403): TOS_VIOLATION",
+            "quota": { "is_forbidden": true, "forbidden_reason": "TOS_VIOLATION" },
+            "created_at": now,
+            "last_used": now
+        });
+        std::fs::write(
+            accounts_dir.join("acc1.json"),
+            serde_json::to_string_pretty(&banned_json).unwrap(),
+        )
+        .unwrap();
+        let banned2 = {
+            let mut j = banned_json.clone();
+            j["id"] = serde_json::Value::String("acc2".into());
+            j["email"] = serde_json::Value::String("b@test.com".into());
+            j
+        };
+        std::fs::write(
+            accounts_dir.join("acc2.json"),
+            serde_json::to_string_pretty(&banned2).unwrap(),
+        )
+        .unwrap();
+        let disabled_json = serde_json::json!({
+            "id": "acc3",
+            "email": "c@test.com",
+            "token": {
+                "access_token": "atk3",
+                "refresh_token": "rtk3",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "disabled": false,
+            "proxy_disabled": true,
+            "proxy_disabled_reason": "manual",
+            "created_at": now,
+            "last_used": now
+        });
+        std::fs::write(
+            accounts_dir.join("acc3.json"),
+            serde_json::to_string_pretty(&disabled_json).unwrap(),
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        // All accounts are banned/disabled on disk, so nothing loads into the pool.
+        manager.load_accounts().await.unwrap();
+        assert_eq!(manager.tokens.len(), 0);
+
+        let err = manager
+            .get_token("gemini", false, None, "gemini-1.5-flash")
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.contains("No available accounts"),
+            "error should classify the pool state, got: {}",
+            err
+        );
+        assert!(
+            err.contains("banned: 2"),
+            "error should report banned count, got: {}",
+            err
+        );
+        assert!(
+            err.contains("disabled: 1"),
+            "error should report disabled count, got: {}",
+            err
+        );
+        assert!(
+            err.contains("will NOT recover by waiting"),
+            "error should warn that cooldown will not help, got: {}",
+            err
+        );
+        assert!(
+            !err.starts_with("Token pool is empty"),
+            "banned-pool error must not be the generic empty message, got: {}",
+            err
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_empty_pool_error_reports_disabled_only_pool() {
+        // Pool with only manually disabled accounts: should point to re-enabling, not cooldown.
+        let tmp_root = std::env::temp_dir().join(format!(
+            "antigravity-token-manager-test-disabled-pool-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let disabled_json = serde_json::json!({
+            "id": "acc1",
+            "email": "a@test.com",
+            "token": {
+                "access_token": "atk",
+                "refresh_token": "rtk",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "disabled": false,
+            "proxy_disabled": true,
+            "proxy_disabled_reason": "manual",
+            "created_at": now,
+            "last_used": now
+        });
+        std::fs::write(
+            accounts_dir.join("acc1.json"),
+            serde_json::to_string_pretty(&disabled_json).unwrap(),
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        manager.load_accounts().await.unwrap();
+
+        let err = manager
+            .get_token("gemini", false, None, "gemini-1.5-flash")
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("all 1 account(s) are disabled"),
+            "error should report disabled-only pool, got: {}",
+            err
+        );
+        assert!(
+            err.contains("banned: 0"),
+            "disabled-only pool must not be reported as banned, got: {}",
+            err
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    #[tokio::test]
+    async fn test_internal_gateway_exhaustion_classifier_recognizes_new_banned_pool_error() {
+        // 防递归自锁门禁必须识别新的池空诊断文案（policy.rs 同步扩展）
+        let lower = "no available accounts: all pool accounts are banned or disabled (banned: 3)"
+            .to_lowercase();
+        assert!(crate::proxy::pipeline::UpstreamClassification::is_internal_gateway_exhaustion(&lower));
+        assert!(!crate::proxy::pipeline::UpstreamClassification::is_internal_gateway_exhaustion(
+            "some totally unrelated upstream error"
+        ));
+    }
 
     fn weekly_quota_account(now: i64) -> serde_json::Value {
         let reset = |seconds| {
