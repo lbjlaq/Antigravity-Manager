@@ -62,8 +62,7 @@ static RE_WAF_TRIGGER_HEADERS: Lazy<Regex> = Lazy::new(|| {
 });
 
 /// 防御性畸形标点收拢正则（issue #3915）：坍缩「句号紧跟逗号」（`.,` / `.，`）畸形序列
-static RE_MALFORMED_PUNCTUATION: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\.[,，]").unwrap());
+static RE_MALFORMED_PUNCTUATION: Lazy<Regex> = Lazy::new(|| Regex::new(r"\.[,，]").unwrap());
 /// 连续多余空行收拢正则（剥离元数据后若产生 3 个及以上连续换行，收拢为 2 个换行以保持自然段落）
 static RE_MULTI_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
 
@@ -444,10 +443,9 @@ impl PromptSanitizer {
                     return caps[0].to_string();
                 }
                 match caps.get(2).map(|m| m.as_str()).unwrap_or("") {
-                    "," | "，" => format!(
-                        "{},",
-                        OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')
-                    ),
+                    "," | "，" => {
+                        format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.'))
+                    }
                     _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
                 }
             });
@@ -455,10 +453,7 @@ impl PromptSanitizer {
         // 2.2 知名特定客户端开场白归一化（如 Claude Code CLI 开场白、*code、*studio、*claw、pi 等）
         let pass2 = RE_KNOWN_CLIENT_DECLARATION.replace_all(&pass1, |caps: &regex::Captures| {
             match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
-                "," | "，" => format!(
-                    "{},",
-                    OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')
-                ),
+                "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')),
                 _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             }
         });
