@@ -343,6 +343,22 @@ where
                             }
                         }
                         None => {
+                            // [FIX #3911] EOF 判空前优先冲刷尾部残余缓冲区：
+                            // 上游最后一条完整 JSON 行可能未携带尾随换行符（网络分片悬挂），
+                            // 若该尾帧包含首个正文/工具调用，先行冲刷可避免下方 !has_content()
+                            // 守卫将其误判为无内容中断而丢弃。
+                            if !buffer.is_empty() {
+                                let line_str = String::from_utf8_lossy(&buffer);
+                                let line = line_str.trim();
+                                if !line.is_empty() {
+                                    let chunks = handler.process_line(line);
+                                    for out_chunk in chunks {
+                                        yield Ok(out_chunk);
+                                    }
+                                }
+                                buffer.clear();
+                            }
+
                             // [关键契约守卫] 若上游到达 EOF 时未处于终止态，且从未产生任何正文或工具调用（无论是否产生了思考）：
                             // 严禁作为正常 EOF 终结或伪造收尾帧！如实作为 Err 透传底层中断，
                             // 促使 Claude Code 等客户端状态机捕获 ConnectionLost 并自动触发原生重试。
@@ -967,6 +983,90 @@ mod tests {
         assert!(
             error_propagated,
             "Must propagate Err on premature stream EOF to trigger client native retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_eof_flushes_trailing_buffer_before_content_guard() {
+        // [FIX #3911] 思考帧后，最后一个包含正文的完整 JSON 行未携带尾随换行符：
+        // EOF 判空前必须先冲刷尾部缓冲区，否则尾帧被丢弃并误报 thinking-without-content 中断。
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: thinking_chunk\n"));
+            // 尾帧：完整正文数据行，但无尾随换行符
+            yield Ok::<_, String>(Bytes::from("data: final content without newline"));
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config = StreamLifecycleConfig::new("test", "test_fn", "trace_eof_tail_flush".to_string())
+            .with_timeouts(5, 5, 5);
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        let mut error_propagated = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
+                Err(e) => {
+                    error_propagated = true;
+                    eprintln!("unexpected error: {}", e);
+                }
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(
+            full_output.contains("processed:data: final content without newline"),
+            "Trailing content frame without newline must be flushed and parsed at EOF"
+        );
+        assert!(
+            !full_output.contains("thinking without content"),
+            "Must NOT misreport thinking-without-content interruption when tail frame carries first content"
+        );
+        assert!(
+            full_output.contains("[finalized]"),
+            "Must finalize normally after tail content is processed"
+        );
+        assert!(
+            !error_propagated,
+            "Stream must NOT propagate Err when tail frame contains first content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_thinking_only_eof_still_propagates_error() {
+        // 对照：纯思考后直接 EOF，无任何残余缓冲内容——保持原有失败处理不变。
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: thinking_chunk\n"));
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config = StreamLifecycleConfig::new("test", "test_fn", "trace_thinking_only_eof".to_string())
+            .with_timeouts(5, 5, 5);
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        let mut error_propagated = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
+                Err(_) => {
+                    error_propagated = true;
+                }
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(
+            full_output.contains("processed:data: thinking_chunk"),
+            "Thinking frame must be parsed normally"
+        );
+        assert!(
+            error_propagated,
+            "Thinking-only EOF without content must still propagate Err (existing failure semantics)"
+        );
+        assert!(
+            !full_output.contains("[finalized]"),
+            "Must NOT emit finalize on thinking-only EOF without content"
         );
     }
 }
