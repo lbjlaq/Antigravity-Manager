@@ -16,8 +16,7 @@ pub fn build_system_instruction_parts(
         if instruction.trim().is_empty() {
             continue;
         }
-        let enhanced =
-            crate::proxy::mappers::common_utils::enhance_gemini_skills_prompt(instruction);
+        let enhanced = instruction;
         if enhanced.trim().is_empty() {
             continue;
         }
@@ -71,6 +70,20 @@ mod tests {
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0]["text"], "client block");
         assert_eq!(parts[1]["text"], "global extra\n\n");
+    }
+
+    #[test]
+    fn passes_through_skills_prompts_untouched() {
+        // Regression for #3914: the gateway must never hijack the generic
+        // `</skills>` tag or inject shell_command/PowerShell pseudo-instructions.
+        let prompt = "<skills>read SKILL.md</skills>\nTo \"open and read its SKILL.md completely\" use your tools.\n</skills_instructions>";
+        let parts = build_system_instruction_parts(&[prompt.into()], None);
+        assert_eq!(parts.len(), 1);
+        let text = parts[0]["text"].as_str().unwrap();
+        assert_eq!(text, prompt);
+        assert!(!text.contains("shell_command"));
+        assert!(!text.contains("PowerShell"));
+        assert!(!text.contains("CRITICAL INSTRUCTION FOR GEMINI"));
     }
 
     #[test]
