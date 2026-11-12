@@ -653,6 +653,9 @@ pub struct ThinkingBudgetConfig {
     /// 旧默认值 16384 已迁移为官方 -1。置位后不再重复改写用户后来手选的 16384。
     #[serde(default)]
     pub flash_high_legacy_migrated: bool,
+    /// 旧默认值 32768 已迁移为官方 -1。置位后配置迁移不再重复落盘改写 gui_config.json。
+    #[serde(default)]
+    pub thinking_budget_32k_legacy_migrated: bool,
     #[serde(default = "default_flash_tiered")]
     pub flash_tiered: i32, // 默认 -1
 
@@ -747,6 +750,7 @@ impl Default for ThinkingBudgetConfig {
             flash_medium: default_flash_medium(),
             flash_high: default_flash_high(),
             flash_high_legacy_migrated: false,
+            thinking_budget_32k_legacy_migrated: false,
             flash_tiered: default_flash_tiered(),
 
             pro_mode: default_thinking_budget_mode(),
