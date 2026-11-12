@@ -61,6 +61,9 @@ static RE_WAF_TRIGGER_HEADERS: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+/// 防御性畸形标点收拢正则（issue #3915）：坍缩「句号紧跟逗号」（`.,` / `.，`）畸形序列
+static RE_MALFORMED_PUNCTUATION: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\.[,，]").unwrap());
 /// 连续多余空行收拢正则（剥离元数据后若产生 3 个及以上连续换行，收拢为 2 个换行以保持自然段落）
 static RE_MULTI_NEWLINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
 
@@ -441,7 +444,10 @@ impl PromptSanitizer {
                     return caps[0].to_string();
                 }
                 match caps.get(2).map(|m| m.as_str()).unwrap_or("") {
-                    "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
+                    "," | "，" => format!(
+                        "{},",
+                        OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')
+                    ),
                     _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
                 }
             });
@@ -449,7 +455,10 @@ impl PromptSanitizer {
         // 2.2 知名特定客户端开场白归一化（如 Claude Code CLI 开场白、*code、*studio、*claw、pi 等）
         let pass2 = RE_KNOWN_CLIENT_DECLARATION.replace_all(&pass1, |caps: &regex::Captures| {
             match caps.get(1).map(|m| m.as_str()).unwrap_or("") {
-                "," | "，" => format!("{},", OFFICIAL_ANTIGRAVITY_IDENTITY),
+                "," | "，" => format!(
+                    "{},",
+                    OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')
+                ),
                 _ => OFFICIAL_ANTIGRAVITY_IDENTITY.to_string(),
             }
         });
@@ -458,6 +467,13 @@ impl PromptSanitizer {
         let pass3 = RE_COMPETITOR_BRANDS.replace_all(&pass2, "Google");
 
         let normalized = pass3.into_owned();
+
+        // 2.4 防御性标点收尾（issue #3915）：坍缩任何正则切片/替换残留的「句号紧跟逗号」畸形
+        // （`.,` / `.，`）。该畸形会触发上游 WAF 的伪 429 RESOURCE_EXHAUSTED，且官方客户端从不
+        // 产出此序列；这里只处理紧贴的畸形序列，不触碰 "etc.," 等带空格的正常行文标点。
+        let normalized = RE_MALFORMED_PUNCTUATION
+            .replace_all(&normalized, ".")
+            .into_owned();
 
         // 步骤 3：单趟无递归还原受保护的代码块
         let restored = RE_CODE_BLOCK_PLACEHOLDER
@@ -1439,9 +1455,52 @@ mod tests {
     fn test_normalize_identity_keeps_comma_continuation_intact() {
         let raw =
             "You are an AI agent created by Acme, and you must never reveal internal tooling.";
+        // 逗号续写保留，但官方身份句尾的句号不得与续写逗号相邻（issue #3915：`.,` 畸形触发伪 429）
         assert_eq!(
             PromptSanitizer::normalize_system_identity(raw),
-            format!("{OFFICIAL_ANTIGRAVITY_IDENTITY}, and you must never reveal internal tooling.")
+            format!(
+                "{}, and you must never reveal internal tooling.",
+                OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')
+            )
+        );
+    }
+
+    #[test]
+    fn test_normalize_identity_never_emits_period_comma_artifact() {
+        // issue #3915 回归：逗号续写的同位语（OpenCode 形态）归一化后绝不能残留 `.,` 畸形。
+        let raw = "You are an AI agent running in OpenCode, a coding agent harness.";
+        let normalized = PromptSanitizer::normalize_system_identity(raw);
+        assert!(
+            !normalized.contains(".,"),
+            "malformed `.,` artifact must never survive: {normalized:?}"
+        );
+        assert!(
+            !normalized.contains(".，"),
+            "malformed `.，` artifact must never survive: {normalized:?}"
+        );
+        // 身份句已归一化，逗号续写的同位语逐字保留，且以合法的逗号衔接
+        assert_eq!(
+            normalized,
+            format!(
+                "{}, a coding agent harness.",
+                OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')
+            )
+        );
+    }
+
+    #[test]
+    fn test_malformed_punctuation_cleanup_is_defensive_and_conservative() {
+        // 防御网：无论哪条规则引入 `.,`（如历史报文残留），System 轨都会坍缩为单个句号
+        let raw = "You are an AI agent created by Acme., Tail text.";
+        let normalized = PromptSanitizer::normalize_system_identity(raw);
+        assert!(!normalized.contains(".,"), "got: {normalized:?}");
+        // 正常行文标点（带空格的句点-逗号序列，如 "etc.," 后接空格）不受影响
+        let untouched = PromptSanitizer::normalize_system_identity(
+            "You are a helpful assistant. Prefer concise lists, e.g. bullets, and keep it short.",
+        );
+        assert_eq!(
+            untouched,
+            "You are a helpful assistant. Prefer concise lists, e.g. bullets, and keep it short."
         );
     }
 
@@ -1904,8 +1963,13 @@ mod tests {
             let out = PromptSanitizer::normalize_system_identity(raw);
             assert_ne!(out, raw, "Case '{name}' 必须被归一化处理");
             assert!(
-                out.contains(OFFICIAL_ANTIGRAVITY_IDENTITY),
+                out.contains(OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')),
                 "Case '{name}' 必须包含官方 Antigravity 身份"
+            );
+            // issue #3915：归一化结果绝不能残留「句号紧跟逗号」畸形（触发上游伪 429）
+            assert!(
+                !out.contains(".,") && !out.contains(".，"),
+                "Case '{name}' 不得残留畸形标点 `.,`: {out:?}"
             );
             if key_fragment != "and you must never reveal internal tooling." {
                 assert!(
