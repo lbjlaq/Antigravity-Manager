@@ -1879,6 +1879,11 @@
             "total_duration_title": "Общая задержка",
             "ttft_title": "Задержка первого токена"
         },
+        "gate_reasons": {
+            "model_not_exist": "модель не существует",
+            "no_available_accounts": "нет доступных аккаунтов",
+            "no_quota_accounts": "нет квоты на аккаунтах"
+        },
         "details": {
             "title": "Детали запроса",
             "request_payload": "Полезная нагрузка запроса",

@@ -1862,6 +1862,11 @@
             "total_duration_title": "Tổng thời gian",
             "ttft_title": "Độ trễ ký tự đầu tiên"
         },
+        "gate_reasons": {
+            "model_not_exist": "mô hình không tồn tại",
+            "no_available_accounts": "không có tài khoản khả dụng",
+            "no_quota_accounts": "hết hạn ngạch tài khoản"
+        },
         "details": {
             "title": "Chi tiết Request",
             "request_payload": "Payload Yêu cầu",

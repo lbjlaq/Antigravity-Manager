@@ -1864,6 +1864,11 @@
             "total_duration_title": "Toplam Gecikme",
             "ttft_title": "İlk Belirteç Gecikmesi"
         },
+        "gate_reasons": {
+            "model_not_exist": "model mevcut değil",
+            "no_available_accounts": "kullanılabilir hesap yok",
+            "no_quota_accounts": "kotalı hesap yok"
+        },
         "details": {
             "title": "İstek Detayları",
             "request_payload": "İstek Yükü",

@@ -1902,6 +1902,12 @@ pub fn is_model_available_now(id: &str) -> bool {
     }
 }
 
+/// 返回网关静态核心旗舰模型列表的所有模型 ID（不含配额池实时裁剪）。
+/// 供入站模型闸门区分“已知但当前无可用账号 (503)”与“不存在模型 (404)”。
+pub fn all_core_gateway_model_ids() -> Vec<&'static str> {
+    CORE_GATEWAY_MODELS.iter().map(|m| m.id).collect()
+}
+
 /// 导出网关核心模型（仅保留当前账号池官方真实可用的模型；冷启动时回退全量）
 pub fn get_core_gateway_models() -> Vec<CoreModel> {
     let snapshot = AVAILABLE_MODEL_IDS

@@ -1847,6 +1847,11 @@
             "total_duration_title": "Latência total",
             "ttft_title": "Latência do primeiro token"
         },
+        "gate_reasons": {
+            "model_not_exist": "modelo inexistente",
+            "no_available_accounts": "sem contas disponíveis",
+            "no_quota_accounts": "sem contas com cota"
+        },
         "details": {
             "title": "Detalhes da Solicitação",
             "request_payload": "Carga da Solicitação",

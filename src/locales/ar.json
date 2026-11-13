@@ -1814,6 +1814,11 @@
             "total_duration_title": "إجمالي الوقت",
             "ttft_title": "زمن استجابة أول رمز"
         },
+        "gate_reasons": {
+            "model_not_exist": "النموذج غير موجود",
+            "no_available_accounts": "لا توجد حسابات متاحة",
+            "no_quota_accounts": "لا توجد حسابات بحصة"
+        },
         "details": {
             "title": "تفاصيل الطلب",
             "request_payload": "حمولة الطلب",

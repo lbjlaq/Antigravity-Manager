@@ -1805,6 +1805,11 @@
             "total_duration_title": "စုစုပေါင်း ကြာချိန်",
             "ttft_title": "ပထမဆုံး တိုကင် ကြာချိန်"
         },
+        "gate_reasons": {
+            "model_not_exist": "မော်ဒယ် မရှိပါ",
+            "no_available_accounts": "အသုံးပြုနိုင်သော အကောင့် မရှိပါ",
+            "no_quota_accounts": "ခွဲတမ်းကုန်ဆုံးပါပြီ"
+        },
         "details": {
             "title": "Butiran Permintaan",
             "request_payload": "Payload Permintaan",
