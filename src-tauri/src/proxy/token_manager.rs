@@ -7429,34 +7429,12 @@ impl TokenManager {
         }
     }
 
-    /// 评估单次请求的 TTFT 并驱动 QoS 状态机流转
-    pub fn record_qos_ttft(
+    fn handle_qos_action(
         &self,
         account_id: &str,
         session_id: Option<&str>,
-        tier: &str,
-        ttft_ms: f64,
-        is_deep_thinking: bool,
-        input_tokens: Option<u32>,
+        action: crate::proxy::qos_guardian::QoSAction,
     ) {
-        let all_tokens: Vec<ProxyToken> = self
-            .tokens
-            .iter()
-            .map(|entry| entry.value().clone())
-            .collect();
-        let rate_limiter = self.rate_limit_tracker.clone();
-
-        let action = self.qos_guardian.record_and_evaluate(
-            account_id,
-            session_id,
-            tier,
-            ttft_ms,
-            is_deep_thinking,
-            input_tokens,
-            &all_tokens,
-            |acc_id| rate_limiter.is_rate_limited(acc_id, None),
-        );
-
         let is_cache_first = self
             .sticky_config
             .try_read()
@@ -7500,6 +7478,144 @@ impl TokenManager {
             }
             _ => {}
         }
+    }
+
+    /// 评估单次请求的 TTFT 并驱动 QoS 状态机流转
+    pub fn record_qos_ttft(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        input_tokens: Option<u32>,
+    ) {
+        let all_tokens: Vec<ProxyToken> = self
+            .tokens
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        let rate_limiter = self.rate_limit_tracker.clone();
+
+        let action = self.qos_guardian.record_and_evaluate(
+            account_id,
+            session_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            input_tokens,
+            &all_tokens,
+            |acc_id| rate_limiter.is_rate_limited(acc_id, None),
+        );
+        self.handle_qos_action(account_id, session_id, action);
+    }
+
+    /// 两阶段 QoS 评估 Phase 1（首包到达）：返回 `true` 表示已当场落锤（无需 Phase 2 重复裁决）
+    pub fn record_qos_phase1_ttft(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        input_tokens: Option<u32>,
+    ) -> bool {
+        let all_tokens: Vec<ProxyToken> = self
+            .tokens
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        let rate_limiter = self.rate_limit_tracker.clone();
+
+        match self.qos_guardian.evaluate_pre_usage(
+            account_id,
+            session_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            input_tokens,
+            &all_tokens,
+            |acc_id| rate_limiter.is_rate_limited(acc_id, None),
+        ) {
+            crate::proxy::qos_guardian::PreUsageQoSOutcome::Evaluated(action) => {
+                self.handle_qos_action(account_id, session_id, action);
+                true
+            }
+            crate::proxy::qos_guardian::PreUsageQoSOutcome::Deferred => false,
+        }
+    }
+
+    /// 两阶段 QoS 评估 Phase 2：使用上游 `usageMetadata` 真实缓存实数完成核销
+    pub fn record_qos_with_usage(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        total_input_tokens: u32,
+        uncached_tokens: u32,
+    ) {
+        let all_tokens: Vec<ProxyToken> = self
+            .tokens
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        let rate_limiter = self.rate_limit_tracker.clone();
+
+        let action = self.qos_guardian.reconcile_with_usage(
+            account_id,
+            session_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            total_input_tokens,
+            uncached_tokens,
+            &all_tokens,
+            |acc_id| rate_limiter.is_rate_limited(acc_id, None),
+        );
+        self.handle_qos_action(account_id, session_id, action);
+    }
+
+    /// 两阶段 QoS 评估 Phase 2 兜底（流结束前未收到 `usageMetadata`）
+    pub fn record_qos_without_usage(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        input_tokens: Option<u32>,
+    ) {
+        let all_tokens: Vec<ProxyToken> = self
+            .tokens
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        let rate_limiter = self.rate_limit_tracker.clone();
+
+        let action = self.qos_guardian.reconcile_without_usage(
+            account_id,
+            session_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            input_tokens,
+            &all_tokens,
+            |acc_id| rate_limiter.is_rate_limited(acc_id, None),
+        );
+        self.handle_qos_action(account_id, session_id, action);
+    }
+
+    /// 刷新会话上下文水位（Phase 1 已裁决后补充权威 total_input_tokens）
+    pub fn update_qos_watermark(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        total_input_tokens: u32,
+    ) {
+        self.qos_guardian
+            .update_watermark(account_id, session_id, Some(total_input_tokens));
     }
 
     /// 启动 QoS 自动阶梯探针巡检协程（每 5 秒扫描一次）
