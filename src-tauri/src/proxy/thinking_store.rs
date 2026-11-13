@@ -3550,7 +3550,20 @@ pub fn compute_causal_anchor(turn: Option<&Value>) -> String {
     };
 
     let mut hasher = Sha256::new();
-    let role = content.get("role").and_then(|r| r.as_str()).unwrap_or("");
+    let raw_role = content.get("role").and_then(|r| r.as_str()).unwrap_or("");
+    let parts_opt = content.get("parts").and_then(|p| p.as_array());
+    // normalize_function_response_roles() flips Gemini tool-response turns from "user" to "model"
+    // after hydrate/finalize. Canonicalize pure functionResponse turns to "user" so outbound
+    // capture and next-turn inbound restore compute identical causal anchors.
+    let is_fr_turn_without_fc = parts_opt.is_some_and(|parts| {
+        parts.iter().any(|p| p.get("functionResponse").is_some())
+            && !parts.iter().any(|p| p.get("functionCall").is_some())
+    });
+    let role = if is_fr_turn_without_fc {
+        "user"
+    } else {
+        raw_role
+    };
     hasher.update(role.as_bytes());
     hasher.update([0xff]);
 
@@ -6878,5 +6891,22 @@ mod signature_placement_tests {
         );
 
         let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&store_key);
+    }
+
+    #[test]
+    fn test_compute_causal_anchor_is_invariant_to_function_response_role_normalization() {
+        let user_role_fr = json!({
+            "role": "user",
+            "parts": [{ "functionResponse": { "name": "bash", "response": { "output": "ok" } } }]
+        });
+        let model_role_fr = json!({
+            "role": "model",
+            "parts": [{ "functionResponse": { "name": "bash", "response": { "output": "ok" } } }]
+        });
+        assert_eq!(
+            compute_causal_anchor(Some(&user_role_fr)),
+            compute_causal_anchor(Some(&model_role_fr)),
+            "functionResponse turn causal anchor must match across user/model role normalization"
+        );
     }
 }
