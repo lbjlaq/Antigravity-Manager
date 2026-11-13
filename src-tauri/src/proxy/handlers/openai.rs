@@ -11,8 +11,9 @@ use tracing::{debug, error, info}; // Import Engine trait for encode method
 
 use crate::proxy::mappers::gemini::SUMMARY_REQUEST_TIMEOUT_SECS;
 use crate::proxy::mappers::openai::{
-    transform_openai_request, transform_openai_request_with_session, transform_openai_response,
-    OpenAIContent, OpenAIContentBlock, OpenAIMessage, OpenAIRequest, OpenAIResponse,
+    transform_openai_request, transform_openai_request_with_session,
+    transform_openai_response_with_anchor, OpenAIContent, OpenAIContentBlock, OpenAIMessage,
+    OpenAIRequest, OpenAIResponse,
 };
 use crate::proxy::pipeline::timing::{TimingBuilderExt, TimingHeaders};
 // use crate::proxy::upstream::client::UpstreamClient; // 通过 state 获取
@@ -3233,7 +3234,11 @@ pub async fn handle_chat_completions(
                 .await
                 .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Parse error: {}", e)))?;
 
-            crate::proxy::thinking_store::capture_gemini_response(&session_id, &gemini_resp);
+            crate::proxy::thinking_store::capture_gemini_response_with_preceding(
+                &session_id,
+                &gemini_resp,
+                preceding_turn_anchor.as_ref(),
+            );
 
             // [CACHE] 从 Gemini 响应中提取缓存信息，关闭反馈循环
             // 兼容两种格式: cachedContentTokenCount (旧), total_cached_tokens (新)
@@ -3259,11 +3264,12 @@ pub async fn handle_chat_completions(
                 }
             }
 
-            let openai_response = transform_openai_response(
+            let openai_response = transform_openai_response_with_anchor(
                 &gemini_resp,
                 Some(&session_id),
                 message_count,
                 Some(&client_tool_names),
+                Some(&causal_anchor),
             );
             if debug_logger::is_enabled(&debug_cfg) {
                 let converted_response = serde_json::to_value(&openai_response)
@@ -4945,7 +4951,7 @@ pub async fn handle_completions(
                 if client_wants_stream {
                     let mut session_completion_rx = None;
                     let mut openai_stream = if is_codex_style {
-                        use crate::proxy::mappers::openai::streaming::create_codex_sse_stream;
+                        use crate::proxy::mappers::openai::streaming::create_codex_sse_stream_with_anchor;
                         let completion_tx = if store_response {
                             let (tx, rx) = tokio::sync::oneshot::channel();
                             session_completion_rx = Some(rx);
@@ -4953,7 +4959,7 @@ pub async fn handle_completions(
                         } else {
                             None
                         };
-                        create_codex_sse_stream(
+                        create_codex_sse_stream_with_anchor(
                             gemini_stream,
                             openai_req.model.clone(),
                             session_id_str.clone(),
@@ -4962,14 +4968,16 @@ pub async fn handle_completions(
                             response_id_for_save.clone(),
                             completion_tx,
                             store_response,
+                            Some(causal_anchor),
                         )
                     } else {
-                        use crate::proxy::mappers::openai::streaming::create_legacy_sse_stream;
-                        create_legacy_sse_stream(
+                        use crate::proxy::mappers::openai::streaming::create_legacy_sse_stream_with_anchor;
+                        create_legacy_sse_stream_with_anchor(
                             gemini_stream,
                             openai_req.model.clone(),
                             session_id,
                             message_count,
+                            Some(causal_anchor),
                         )
                     };
 
@@ -5418,13 +5426,18 @@ pub async fn handle_completions(
                 }
             };
 
-            crate::proxy::thinking_store::capture_gemini_response(&session_id_str, &gemini_resp);
+            crate::proxy::thinking_store::capture_gemini_response_with_preceding(
+                &session_id_str,
+                &gemini_resp,
+                preceding_turn_anchor.as_ref(),
+            );
 
-            let chat_resp = transform_openai_response(
+            let chat_resp = transform_openai_response_with_anchor(
                 &gemini_resp,
                 Some(&signature_session_id_str),
                 1,
                 Some(&client_tool_names),
+                Some(&causal_anchor),
             );
 
             let is_responses_api = is_responses_api_path(uri.path());

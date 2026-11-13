@@ -796,6 +796,20 @@ where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
     E: std::fmt::Display + Send + 'static,
 {
+    create_legacy_sse_stream_with_anchor(gemini_stream, model, session_id, message_count, None)
+}
+
+pub fn create_legacy_sse_stream_with_anchor<S, E>(
+    gemini_stream: Pin<Box<S>>,
+    model: String,
+    session_id: String,
+    message_count: usize,
+    causal_anchor: Option<String>,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
     let charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let mut rng = rand::thread_rng();
     let random_str: String = (0..28)
@@ -804,6 +818,12 @@ where
             charset.chars().nth(idx).unwrap()
         })
         .collect();
+
+    let thinking_acc = if let Some(ref a) = causal_anchor {
+        crate::proxy::thinking_store::TurnAccumulator::with_anchor(a)
+    } else {
+        crate::proxy::thinking_store::TurnAccumulator::new()
+    };
 
     let trace_info = format!(
         "model={} session={} messages={}",
@@ -816,7 +836,7 @@ where
         session_id,
         message_count,
         final_usage: None,
-        thinking_acc: crate::proxy::thinking_store::TurnAccumulator::new(),
+        thinking_acc,
         has_content: false,
         has_thinking: false,
         is_thinking_active: false,
@@ -965,6 +985,7 @@ impl CodexResponsesStreamHandler {
             tokio::sync::oneshot::Sender<(Vec<Value>, tokio::sync::oneshot::Sender<()>)>,
         >,
         cache_tool_calls: bool,
+        causal_anchor: Option<String>,
     ) -> Self {
         let item_id_prefix = uuid::Uuid::new_v4().simple().to_string();
         let message_item_id = format!("msg_{}_0", &item_id_prefix[..16]);
@@ -992,7 +1013,11 @@ impl CodexResponsesStreamHandler {
             emitted_tool_calls: std::collections::HashSet::new(),
             accumulated_text: String::new(),
             accumulated_thinking: String::new(),
-            thinking_acc: crate::proxy::thinking_store::TurnAccumulator::new(),
+            thinking_acc: if let Some(ref a) = causal_anchor {
+                crate::proxy::thinking_store::TurnAccumulator::with_anchor(a)
+            } else {
+                crate::proxy::thinking_store::TurnAccumulator::new()
+            },
             has_thinking: false,
             has_seen_tool_calls: false,
             final_finish_reason: None,
@@ -1733,12 +1758,43 @@ pub fn create_codex_sse_stream<S, E>(
     model: String,
     session_id: String,
     message_count: usize,
+    assistant_turn_index: usize,
+    response_id: String,
+    completion_tx: Option<
+        tokio::sync::oneshot::Sender<(Vec<Value>, tokio::sync::oneshot::Sender<()>)>,
+    >,
+    cache_tool_calls: bool,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    create_codex_sse_stream_with_anchor(
+        gemini_stream,
+        model,
+        session_id,
+        message_count,
+        assistant_turn_index,
+        response_id,
+        completion_tx,
+        cache_tool_calls,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_codex_sse_stream_with_anchor<S, E>(
+    gemini_stream: Pin<Box<S>>,
+    model: String,
+    session_id: String,
+    message_count: usize,
     _assistant_turn_index: usize,
     response_id: String,
     completion_tx: Option<
         tokio::sync::oneshot::Sender<(Vec<Value>, tokio::sync::oneshot::Sender<()>)>,
     >,
     cache_tool_calls: bool,
+    causal_anchor: Option<String>,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
@@ -1755,6 +1811,7 @@ where
         response_id,
         completion_tx,
         cache_tool_calls,
+        causal_anchor,
     );
     let config = StreamLifecycleConfig::new("openai-codex", "create_codex_sse_stream", trace_info);
     run_stream_lifecycle(gemini_stream, handler, config)
@@ -3016,5 +3073,68 @@ mod tests {
             vec!["stop".to_string()],
             "Completed stream must not emit duplicate finish_reason"
         );
+    }
+
+    #[tokio::test]
+    async fn test_codex_stream_with_anchor_keeps_identical_plain_text_turns_distinct() {
+        let session_id = format!("test-codex-approval-{}", uuid::Uuid::new_v4());
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&session_id);
+
+        let user1 = json!({ "role": "user", "parts": [{ "text": "Approve request 1" }] });
+        let user2 = json!({ "role": "user", "parts": [{ "text": "Approve request 2" }] });
+        let anchor1 = crate::proxy::thinking_store::compute_causal_anchor(Some(&user1));
+        let anchor2 = crate::proxy::thinking_store::compute_causal_anchor(Some(&user2));
+        let sig1 = format!("EsID{}", "1".repeat(56));
+        let sig2 = format!("EtgD{}", "2".repeat(56));
+
+        for (resp_id, anchor, sig) in [
+            ("resp-1", anchor1, sig1.clone()),
+            ("resp-2", anchor2, sig2.clone()),
+        ] {
+            let sse_line = format!(
+                "data: {}
+
+",
+                json!({
+                    "candidates": [{
+                        "finishReason": "STOP",
+                        "content": {
+                            "parts": [{
+                                "text": r#"{"outcome":"allow"}"#,
+                                "thoughtSignature": sig
+                            }]
+                        }
+                    }]
+                })
+            );
+            let mock_stream = futures::stream::iter(vec![Ok::<_, String>(Bytes::from(sse_line))]);
+            let mut stream = create_codex_sse_stream_with_anchor(
+                Box::pin(mock_stream),
+                "gemini-4-hydrogen-low".to_string(),
+                session_id.clone(),
+                1,
+                0,
+                resp_id.to_string(),
+                None,
+                true,
+                Some(anchor),
+            );
+            while let Some(_item) = stream.next().await {}
+        }
+
+        let mut contents = vec![
+            user1,
+            json!({ "role": "model", "parts": [{ "text": r#"{"outcome":"allow"}"# }] }),
+            user2,
+            json!({ "role": "model", "parts": [{ "text": r#"{"outcome":"allow"}"# }] }),
+        ];
+        let restored = crate::proxy::thinking_store::ThinkingStore::global()
+            .restore_gemini_contents(&session_id, &mut contents);
+        assert_eq!(restored, 2);
+        assert_eq!(contents[1]["parts"][0]["thoughtSignature"], sig1);
+        assert_eq!(contents[3]["parts"][0]["thoughtSignature"], sig2);
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&session_id);
+        crate::proxy::thinking_store::ThinkingStore::global().end_session(&session_id);
     }
 }

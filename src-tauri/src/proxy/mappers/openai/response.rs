@@ -52,6 +52,22 @@ pub fn transform_openai_response(
     message_count: usize,
     client_tool_names: Option<&std::collections::HashSet<String>>,
 ) -> OpenAIResponse {
+    transform_openai_response_with_anchor(
+        gemini_response,
+        session_id,
+        message_count,
+        client_tool_names,
+        None,
+    )
+}
+
+pub fn transform_openai_response_with_anchor(
+    gemini_response: &Value,
+    session_id: Option<&str>,
+    message_count: usize,
+    client_tool_names: Option<&std::collections::HashSet<String>>,
+    causal_anchor: Option<&str>,
+) -> OpenAIResponse {
     let empty_set = std::collections::HashSet::new();
     let client_tool_names = client_tool_names.unwrap_or(&empty_set);
 
@@ -192,7 +208,13 @@ pub fn transform_openai_response(
                     }
                 }
                 if let Some(sid) = session_id {
-                    crate::proxy::thinking_store::capture_gemini_parts(sid, parts);
+                    if let Some(anchor) = causal_anchor {
+                        crate::proxy::thinking_store::capture_gemini_parts_with_anchor(
+                            sid, parts, anchor,
+                        );
+                    } else {
+                        crate::proxy::thinking_store::capture_gemini_parts(sid, parts);
+                    }
                 }
             }
 
