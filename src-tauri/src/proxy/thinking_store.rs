@@ -95,6 +95,7 @@ pub struct ThinkingRecord {
     #[allow(dead_code)]
     pub tool_names: Vec<String>,
     pub visible: String,
+    pub context_anchor: String,
 }
 
 #[derive(Debug)]
@@ -232,25 +233,39 @@ impl ThinkingStore {
             let merge_last = entry
                 .turns
                 .last()
-                .is_some_and(|last| last.fingerprint == rec.fingerprint);
+                .is_some_and(|last| can_merge_records(last, &rec));
 
             if merge_last {
-                let (stronger, old_text_bytes) = {
+                let (stronger, old_text_bytes, preserved_anchor) = {
                     let last = entry.turns.last().expect("merge_last");
+                    let preserved_anchor = if normalize_context_anchor(&rec.context_anchor)
+                        .is_none()
+                        && normalize_context_anchor(&last.context_anchor).is_some()
+                    {
+                        Some(last.context_anchor.clone())
+                    } else {
+                        None
+                    };
                     (
                         rec.thought.len() >= last.thought.len()
                             || rec.signature.as_ref().map(|s| s.len()).unwrap_or(0)
                                 > last.signature.as_ref().map(|s| s.len()).unwrap_or(0),
                         last.thought.len() + last.visible.len(),
+                        preserved_anchor,
                     )
                 };
                 if stronger {
+                    let mut merged_rec = rec;
+                    if let Some(anchor) = preserved_anchor {
+                        merged_rec.context_anchor = anchor;
+                    }
+                    let merged_bytes = record_bytes(&merged_rec);
                     entry.bytes = entry.bytes.saturating_sub(old_text_bytes);
                     {
                         let last_arc = entry.turns.last_mut().expect("merge_last");
-                        *Arc::make_mut(last_arc) = rec;
+                        *Arc::make_mut(last_arc) = merged_rec;
                     }
-                    entry.bytes = entry.bytes.saturating_add(rec_bytes);
+                    entry.bytes = entry.bytes.saturating_add(merged_bytes);
                     entry.turns.last().cloned()
                 } else {
                     None
@@ -277,7 +292,7 @@ impl ThinkingStore {
         };
 
         if let Some(saved) = persist {
-            if let Err(e) = crate::modules::proxy_db::save_thinking_record(
+            if let Err(e) = crate::modules::proxy_db::save_thinking_record_with_anchor(
                 store_key,
                 &saved.fingerprint,
                 &saved.thought,
@@ -285,6 +300,7 @@ impl ThinkingStore {
                 &saved.tool_ids,
                 &saved.tool_names,
                 &saved.visible,
+                Some(&saved.context_anchor),
             ) {
                 tracing::warn!(
                     "[ThinkingStore] Failed to persist record for {}: {}",
@@ -353,6 +369,7 @@ impl ThinkingStore {
                     tool_ids: p.tool_ids,
                     tool_names: p.tool_names,
                     visible: p.visible,
+                    context_anchor: p.context_anchor,
                 };
                 entry.bytes += record_bytes(&rec);
                 entry.turns.push(Arc::new(rec));
@@ -447,7 +464,7 @@ impl ThinkingStore {
             }
             if let Some((idx, rec)) = to_upgrade.last() {
                 if *idx + 1 == existing.len() {
-                    let _ = crate::modules::proxy_db::save_thinking_record(
+                    let _ = crate::modules::proxy_db::save_thinking_record_with_anchor(
                         store_key,
                         &rec.fingerprint,
                         &rec.thought,
@@ -455,6 +472,7 @@ impl ThinkingStore {
                         &rec.tool_ids,
                         &rec.tool_names,
                         &rec.visible,
+                        Some(&rec.context_anchor),
                     );
                 }
             }
@@ -495,6 +513,7 @@ impl ThinkingStore {
             tool_names: Vec<String>,
             existing_thought: String,
             existing_sig: Option<String>,
+            context_anchor: String,
             fp: String,
             matched_record_idx: Option<usize>,
             already_complete: bool,
@@ -549,6 +568,7 @@ impl ThinkingStore {
                 tool_names,
                 existing_thought,
                 existing_sig,
+                context_anchor: anchor,
                 fp: String::new(),
                 matched_record_idx: None,
                 already_complete,
@@ -579,6 +599,80 @@ impl ThinkingStore {
                 .entry(rec.fingerprint.as_str())
                 .or_default()
                 .push(rec_idx);
+        }
+
+        // Pre-pass: 已被客户端完整回传的轮次先在 used[] 中认领自己的记录，避免后续相同文本的未完整轮次误抢早期记录
+        for turn in model_turns.iter_mut() {
+            if !turn.already_complete {
+                continue;
+            }
+            if let Some(ref sig) = turn.existing_sig {
+                let norm = normalize_signature_for_comparison(sig);
+                if let Some(&rec_idx) = by_sig.get(norm.as_ref()) {
+                    if !used[rec_idx] {
+                        used[rec_idx] = true;
+                        continue;
+                    }
+                }
+            }
+            if !turn.tool_ids.is_empty() {
+                let mut claimed = false;
+                for id in &turn.tool_ids {
+                    let norm = crate::proxy::common::utils::normalize_tool_id(id);
+                    if let Some(idxs) = by_tool
+                        .get(norm.as_ref())
+                        .or_else(|| by_tool.get(id.as_str()))
+                    {
+                        if let Some(&rec_idx) = idxs.iter().find(|&&i| {
+                            !used[i]
+                                && (turn.tool_names.is_empty()
+                                    || records[i].tool_names.is_empty()
+                                    || turn.tool_names == records[i].tool_names)
+                        }) {
+                            used[rec_idx] = true;
+                            claimed = true;
+                            break;
+                        }
+                    }
+                }
+                if claimed {
+                    continue;
+                }
+            }
+            if turn.fp.is_empty() {
+                turn.fp = fingerprint(&turn.visible, &turn.tool_ids, &turn.tool_names);
+            }
+            if let Some(idxs) = by_fp.get(turn.fp.as_str()) {
+                let turn_anchor = normalize_context_anchor(&turn.context_anchor);
+                let matched_idx = if let Some(anchor) = turn_anchor {
+                    idxs.iter().copied().find(|&i| {
+                        !used[i]
+                            && normalize_context_anchor(&records[i].context_anchor) == Some(anchor)
+                            && (turn.existing_thought.is_empty()
+                                || records[i].thought.is_empty()
+                                || records[i].thought == turn.existing_thought)
+                    })
+                } else {
+                    None
+                }
+                .or_else(|| {
+                    if turn.existing_thought.is_empty() {
+                        None
+                    } else {
+                        idxs.iter().copied().find(|&i| {
+                            !used[i]
+                                && !context_anchors_conflict(
+                                    &records[i].context_anchor,
+                                    &turn.context_anchor,
+                                )
+                                && records[i].thought == turn.existing_thought
+                        })
+                    }
+                });
+                if let Some(rec_idx) = matched_idx {
+                    used[rec_idx] = true;
+                }
+            }
         }
 
         // Phase 0: 真实签名直查（最高优先级：客户端历史若自带真实签名，直接精确反向匹配）
@@ -648,7 +742,7 @@ impl ThinkingStore {
             }
         }
 
-        // Phase 2: 完整指纹匹配（正向保序匹配，杜绝修剪后逆向滑窗相位错位）
+        // Phase 2: 完整指纹匹配（优先因果锚点精确对齐，仅回退未绑定锚点的旧记录，杜绝同文本多轮相位错位）
         for turn in model_turns.iter_mut() {
             if turn.already_complete || turn.matched_record_idx.is_some() {
                 continue;
@@ -660,7 +754,8 @@ impl ThinkingStore {
             let Some(idxs) = by_fp.get(turn.fp.as_str()) else {
                 continue;
             };
-            if let Some(&rec_idx) = idxs.iter().find(|&&i| {
+            let turn_anchor = normalize_context_anchor(&turn.context_anchor);
+            let base_match = |i: usize| -> bool {
                 if used[i] {
                     return false;
                 }
@@ -675,7 +770,30 @@ impl ThinkingStore {
                     }
                 }
                 true
-            }) {
+            };
+            let matched = if let Some(anchor) = turn_anchor {
+                idxs.iter()
+                    .copied()
+                    .find(|&i| {
+                        base_match(i)
+                            && normalize_context_anchor(&records[i].context_anchor) == Some(anchor)
+                    })
+                    .or_else(|| {
+                        idxs.iter().copied().find(|&i| {
+                            base_match(i)
+                                && normalize_context_anchor(&records[i].context_anchor).is_none()
+                        })
+                    })
+            } else {
+                idxs.iter()
+                    .copied()
+                    .find(|&i| {
+                        base_match(i)
+                            && normalize_context_anchor(&records[i].context_anchor).is_none()
+                    })
+                    .or_else(|| idxs.iter().copied().find(|&i| base_match(i)))
+            };
+            if let Some(rec_idx) = matched {
                 turn.matched_record_idx = Some(rec_idx);
                 used[rec_idx] = true;
             }
@@ -714,9 +832,15 @@ impl ThinkingStore {
                 if turn.norm_visible.is_empty() {
                     continue;
                 }
+                let turn_anchor = normalize_context_anchor(&turn.context_anchor);
+                let mut fallback_idx: Option<usize> = None;
                 for (rec_idx, rec) in records.iter().enumerate() {
                     let rec_has_tools = !rec.tool_ids.is_empty() || !rec.tool_names.is_empty();
-                    if used[rec_idx] || rec_has_tools || rec_norms[rec_idx].is_empty() {
+                    if used[rec_idx]
+                        || rec_has_tools
+                        || rec_norms[rec_idx].is_empty()
+                        || context_anchors_conflict(&rec.context_anchor, &turn.context_anchor)
+                    {
                         continue;
                     }
                     let norm_rec = &rec_norms[rec_idx];
@@ -730,9 +854,24 @@ impl ThinkingStore {
                         || (norm_rec.len() >= 10 && norm_vis.ends_with(norm_rec))
                         || (thought_matches_prefix && norm_vis.ends_with(norm_rec))
                     {
+                        let rec_anchor = normalize_context_anchor(&rec.context_anchor);
+                        if turn_anchor.is_some() && rec_anchor == turn_anchor {
+                            turn.matched_record_idx = Some(rec_idx);
+                            used[rec_idx] = true;
+                            fallback_idx = None;
+                            break;
+                        } else if fallback_idx.is_none() {
+                            fallback_idx = Some(rec_idx);
+                            if turn_anchor.is_none() && rec_anchor.is_none() {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if turn.matched_record_idx.is_none() {
+                    if let Some(rec_idx) = fallback_idx {
                         turn.matched_record_idx = Some(rec_idx);
                         used[rec_idx] = true;
-                        break;
                     }
                 }
             }
@@ -772,6 +911,7 @@ impl ThinkingStore {
                             tool_ids: persisted.tool_ids,
                             tool_names: persisted.tool_names,
                             visible: persisted.visible,
+                            context_anchor: persisted.context_anchor,
                         });
                     }
                 }
@@ -797,18 +937,23 @@ impl ThinkingStore {
                                 tool_ids: persisted.tool_ids,
                                 tool_names: persisted.tool_names,
                                 visible: persisted.visible,
+                                context_anchor: persisted.context_anchor,
                             });
                             break;
                         }
                     }
                 }
             } else if fetched_rec.is_none() && !turn.visible.trim().is_empty() {
-                // 2. 纯文本轮次精准穿透点查 (利用 idx_thinking_rec_fp 索引)
+                // 2. 纯文本轮次精准穿透点查 (结合因果锚点防同文本多轮串台)
                 if turn.fp.is_empty() {
                     turn.fp = fingerprint(&turn.visible, &turn.tool_ids, &turn.tool_names);
                 }
                 if let Ok(Some(persisted)) =
-                    crate::modules::proxy_db::load_thinking_by_fingerprint(store_key, &turn.fp)
+                    crate::modules::proxy_db::load_thinking_by_fingerprint_with_anchor(
+                        store_key,
+                        &turn.fp,
+                        Some(&turn.context_anchor),
+                    )
                 {
                     fetched_rec = Some(ThinkingRecord {
                         fingerprint: persisted.fingerprint,
@@ -817,6 +962,7 @@ impl ThinkingStore {
                         tool_ids: persisted.tool_ids,
                         tool_names: persisted.tool_names,
                         visible: persisted.visible,
+                        context_anchor: persisted.context_anchor,
                     });
                 }
             }
@@ -848,6 +994,10 @@ impl ThinkingStore {
                             }
                             let r_has_tools = !r.tool_ids.is_empty() || !r.tool_names.is_empty();
                             !r_has_tools
+                                && !context_anchors_conflict(
+                                    &r.context_anchor,
+                                    &last_turn.context_anchor,
+                                )
                         })
                     {
                         last_turn.matched_record_idx = Some(last_unused_rec_idx);
@@ -1550,6 +1700,11 @@ impl TurnAccumulator {
 
     fn into_record(self) -> ThinkingRecord {
         let fp = fingerprint(&self.visible, &self.tool_ids, &self.tool_names);
+        let context_anchor = if self.context_anchor.trim().is_empty() {
+            "root".to_string()
+        } else {
+            self.context_anchor
+        };
         ThinkingRecord {
             fingerprint: fp,
             thought: self.thought,
@@ -1557,6 +1712,7 @@ impl TurnAccumulator {
             tool_ids: self.tool_ids,
             tool_names: self.tool_names,
             visible: self.visible,
+            context_anchor,
         }
     }
 
@@ -3164,6 +3320,54 @@ fn record_bytes(rec: &ThinkingRecord) -> usize {
     rec.thought.len() + rec.signature.as_ref().map(|s| s.len()).unwrap_or(0) + rec.visible.len()
 }
 
+fn normalize_context_anchor(anchor: &str) -> Option<&str> {
+    let trimmed = anchor.trim();
+    if trimmed.is_empty() || trimmed == "root" {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn context_anchors_conflict(a: &str, b: &str) -> bool {
+    match (normalize_context_anchor(a), normalize_context_anchor(b)) {
+        (Some(x), Some(y)) => x != y,
+        _ => false,
+    }
+}
+
+fn has_conflicting_real_signatures(a: &ThinkingRecord, b: &ThinkingRecord) -> bool {
+    match (
+        a.signature.as_deref().filter(|s| is_real_signature(s)),
+        b.signature.as_deref().filter(|s| is_real_signature(s)),
+    ) {
+        (Some(sa), Some(sb)) => !signatures_match(sa, sb),
+        _ => false,
+    }
+}
+
+fn can_merge_records(last: &ThinkingRecord, rec: &ThinkingRecord) -> bool {
+    if last.fingerprint != rec.fingerprint {
+        return false;
+    }
+    let last_has_tools = !last.tool_ids.is_empty() || !last.tool_names.is_empty();
+    let rec_has_tools = !rec.tool_ids.is_empty() || !rec.tool_names.is_empty();
+    if last_has_tools != rec_has_tools {
+        return false;
+    }
+    if context_anchors_conflict(&last.context_anchor, &rec.context_anchor) {
+        return false;
+    }
+    if has_conflicting_real_signatures(last, rec) {
+        let last_anchored = normalize_context_anchor(&last.context_anchor).is_some();
+        let rec_anchored = normalize_context_anchor(&rec.context_anchor).is_some();
+        if last_anchored || rec_anchored || rec.thought.len() <= last.thought.len() {
+            return false;
+        }
+    }
+    true
+}
+
 fn is_stronger_record(new: &ThinkingRecord, old: &ThinkingRecord) -> bool {
     new.thought.len() > old.thought.len()
         || new.signature.as_ref().map(|s| s.len()).unwrap_or(0)
@@ -3207,6 +3411,11 @@ fn match_existing_record(
             continue;
         }
         if ex.fingerprint != rec.fingerprint {
+            continue;
+        }
+        if context_anchors_conflict(&ex.context_anchor, &rec.context_anchor)
+            || has_conflicting_real_signatures(ex, rec)
+        {
             continue;
         }
         let ex_has_tools = !ex.tool_ids.is_empty() || !ex.tool_names.is_empty();
@@ -3502,6 +3711,7 @@ mod tests {
             tool_ids,
             tool_names,
             visible: visible.to_string(),
+            context_anchor: "root".to_string(),
         }
     }
 
@@ -3714,6 +3924,7 @@ mod tests {
                 tool_ids: tool_ids.clone(),
                 tool_names: tool_names.clone(),
                 visible: "I will read both files in parallel".to_string(),
+                context_anchor: "root".to_string(),
             },
         );
 
@@ -3771,6 +3982,7 @@ mod tests {
             tool_ids: vec!["call_persisted_999".to_string()],
             tool_names: vec!["bash".to_string()],
             visible: "Persisted visible text".to_string(),
+            context_anchor: "root".to_string(),
         };
 
         let db_res = crate::modules::proxy_db::save_thinking_record(
@@ -4214,6 +4426,7 @@ mod tests {
                 tool_ids: vec![],
                 tool_names: vec![],
                 visible: "visible answer".to_string(),
+                context_anchor: "root".to_string(),
             },
         );
         store.record(
@@ -4225,6 +4438,7 @@ mod tests {
                 tool_ids: vec![],
                 tool_names: vec![],
                 visible: "visible answer".to_string(),
+                context_anchor: "root".to_string(),
             },
         );
         assert!(
@@ -4989,6 +5203,7 @@ mod tests {
                 tool_ids: vec![],
                 tool_names: vec![],
                 visible: "Gemini visible text".to_string(),
+                context_anchor: "root".to_string(),
             },
         );
 
@@ -5765,6 +5980,7 @@ mod signature_placement_tests {
                 tool_ids: vec!["call_573077".to_string()],
                 tool_names: vec!["default_api:read".to_string()],
                 visible: String::new(),
+                context_anchor: "root".to_string(),
             },
         );
 
@@ -6519,5 +6735,148 @@ mod signature_placement_tests {
             "Store keys must remain isolated for each sub-session"
         );
         assert_ne!(scope1.client_id, scope2.client_id);
+    }
+
+    #[test]
+    fn test_consecutive_identical_plain_text_turns_preserve_own_signatures() {
+        let store_key = format!("t:approval-plain-{}", uuid::Uuid::new_v4());
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&store_key);
+        let store = ThinkingStore::new();
+
+        let user1 = json!({ "role": "user", "parts": [{ "text": "Approve tool exec #1" }] });
+        let user2 = json!({ "role": "user", "parts": [{ "text": "Approve tool exec #2" }] });
+        let user3 = json!({ "role": "user", "parts": [{ "text": "Approve tool exec #3" }] });
+
+        let anchor1 = compute_causal_anchor(Some(&user1));
+        let anchor2 = compute_causal_anchor(Some(&user2));
+        let anchor3 = compute_causal_anchor(Some(&user3));
+
+        let sig1 = format!("EsID{}", "1".repeat(56));
+        let sig2 = format!("EtgD{}", "2".repeat(56));
+        let sig3 = format!("EuID{}", "3".repeat(56));
+
+        for (anchor, sig) in [(&anchor1, &sig1), (&anchor2, &sig2), (&anchor3, &sig3)] {
+            let mut acc = TurnAccumulator::with_anchor(anchor);
+            acc.ingest_part(&json!({
+                "text": r#"{"outcome":"allow"}"#,
+                "thoughtSignature": sig
+            }));
+            store.record(&store_key, acc.into_record());
+        }
+
+        let stats = store.session_stats(&store_key).unwrap();
+        assert_eq!(
+            stats.0, 3,
+            "Three plain-text approval turns with identical text must not collide or overwrite"
+        );
+
+        let build_history = || {
+            vec![
+                user1.clone(),
+                json!({ "role": "model", "parts": [{ "text": r#"{"outcome":"allow"}"# }] }),
+                user2.clone(),
+                json!({ "role": "model", "parts": [{ "text": r#"{"outcome":"allow"}"# }] }),
+                user3.clone(),
+                json!({ "role": "model", "parts": [{ "text": r#"{"outcome":"allow"}"# }] }),
+                json!({ "role": "user", "parts": [{ "text": "Approve tool exec #4" }] }),
+            ]
+        };
+
+        // 1. Warm RAM restore
+        let mut warm_contents = build_history();
+        let restored_warm = store.restore_gemini_contents(&store_key, &mut warm_contents);
+        assert_eq!(restored_warm, 3);
+        assert_eq!(warm_contents[1]["parts"][0]["thoughtSignature"], sig1);
+        assert_eq!(warm_contents[3]["parts"][0]["thoughtSignature"], sig2);
+        assert_eq!(warm_contents[5]["parts"][0]["thoughtSignature"], sig3);
+
+        // 2. Cold L2 SQLite restore (if DB is initialized in test env)
+        if crate::modules::proxy_db::load_thinking_records(&store_key)
+            .map(|r| r.len() == 3)
+            .unwrap_or(false)
+        {
+            store.clear();
+            let mut cold_contents = build_history();
+            let restored_cold = store.restore_gemini_contents(&store_key, &mut cold_contents);
+            assert_eq!(restored_cold, 3);
+            assert_eq!(cold_contents[1]["parts"][0]["thoughtSignature"], sig1);
+            assert_eq!(cold_contents[3]["parts"][0]["thoughtSignature"], sig2);
+            assert_eq!(cold_contents[5]["parts"][0]["thoughtSignature"], sig3);
+        }
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&store_key);
+    }
+
+    #[test]
+    fn test_missing_early_identical_plain_text_turn_does_not_phase_shift_later_turns() {
+        let store_key = format!("t:approval-no-shift-{}", uuid::Uuid::new_v4());
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&store_key);
+        let store = ThinkingStore::new();
+
+        let user1 = json!({ "role": "user", "parts": [{ "text": "Approve step 1" }] });
+        let user2 = json!({ "role": "user", "parts": [{ "text": "Approve step 2" }] });
+        let user3 = json!({ "role": "user", "parts": [{ "text": "Approve step 3" }] });
+
+        let anchor2 = compute_causal_anchor(Some(&user2));
+        let anchor3 = compute_causal_anchor(Some(&user3));
+        let sig2 = format!("EsID{}", "a".repeat(56));
+        let sig3 = format!("EtgD{}", "b".repeat(56));
+
+        // Turn 1 was never stored; only Turn 2 and Turn 3 exist.
+        for (anchor, sig) in [(&anchor2, &sig2), (&anchor3, &sig3)] {
+            let mut acc = TurnAccumulator::with_anchor(anchor);
+            acc.ingest_part(&json!({
+                "text": r#"{"outcome":"allow"}"#,
+                "thoughtSignature": sig
+            }));
+            store.record(&store_key, acc.into_record());
+        }
+
+        let mut contents = vec![
+            user1,
+            json!({ "role": "model", "parts": [{ "text": r#"{"outcome":"allow"}"# }] }),
+            user2,
+            json!({ "role": "model", "parts": [{ "text": r#"{"outcome":"allow"}"# }] }),
+            user3,
+            json!({ "role": "model", "parts": [{ "text": r#"{"outcome":"allow"}"# }] }),
+        ];
+
+        let restored = store.restore_gemini_contents(&store_key, &mut contents);
+        assert_eq!(restored, 2);
+        assert!(
+            contents[1]["parts"][0].get("thoughtSignature").is_none(),
+            "Turn 1 must not steal Turn 2's anchored signature"
+        );
+        assert_eq!(contents[3]["parts"][0]["thoughtSignature"], sig2);
+        assert_eq!(contents[5]["parts"][0]["thoughtSignature"], sig3);
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&store_key);
+    }
+
+    #[test]
+    fn test_identical_anchor_distinct_signatures_do_not_overwrite() {
+        let store_key = format!("t:same-anchor-diff-sig-{}", uuid::Uuid::new_v4());
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&store_key);
+        let store = ThinkingStore::new();
+
+        let repeated_user = json!({ "role": "user", "parts": [{ "text": "continue" }] });
+        let anchor = compute_causal_anchor(Some(&repeated_user));
+        let sig1 = format!("EsID{}", "x".repeat(56));
+        let sig2 = format!("EtgD{}", "y".repeat(56));
+
+        for (thought, sig) in [("short", &sig1), ("slightly longer thought", &sig2)] {
+            let mut acc = TurnAccumulator::with_anchor(&anchor);
+            acc.ingest_part(&json!({ "thought": true, "text": thought }));
+            acc.ingest_part(&json!({ "text": "ok", "thoughtSignature": sig }));
+            store.record(&store_key, acc.into_record());
+        }
+
+        let stats = store.session_stats(&store_key).unwrap();
+        assert_eq!(
+            stats.0, 2,
+            "Distinct real signatures with causal anchor must not overwrite each other"
+        );
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&store_key);
     }
 }
