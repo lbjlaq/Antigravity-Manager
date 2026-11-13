@@ -49,8 +49,8 @@ pub use rotation::{
     apply_retry_strategy, calculate_max_retry_attempts, clamp_retry_after_for_claude,
     decide_rotation, determine_retry_strategy, determine_retry_strategy_adaptive,
     determine_retry_strategy_with_grace, extract_retry_after_seconds, is_model_not_found_error,
-    next_rotation_attempt, scheduling_allows_grace, should_rotate_account, RequestRetryState,
-    RetryStrategy, RotationDecision,
+    next_rotation_attempt, scheduling_allows_grace, should_rotate_account, HttpRetryPlan,
+    RequestRetryState, RetryStrategy, RotationDecision,
 };
 pub use stream_lifecycle::{run_stream_lifecycle, ProtocolStreamHandler, StreamLifecycleConfig};
 pub use stream_peek::{

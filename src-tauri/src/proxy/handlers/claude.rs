@@ -712,7 +712,7 @@ The structure MUST be as follows:
 
 // ===== 统一退避策略模块 =====
 // 移除本地重复定义，使用 common 中的统一实现
-use super::common::{apply_retry_strategy, should_rotate_account, RetryStrategy};
+use super::common::{apply_retry_strategy, RetryStrategy};
 
 // ===== 退避策略模块结束 =====
 
@@ -2853,6 +2853,7 @@ pub async fn handle_messages(
             );
 
             if can_rotate {
+                token_manager.abandon_session(&affinity_key, &account_id);
                 tracing::warn!(
                     "[{}] 上游报错模型不可用 (HTTP {})，已标记账号 {} 对模型 [{}] 临时熔断，继续换号重试 ({}/{})...",
                     trace_id, status_code, email, request_with_mapped.model, attempt, pool_size
@@ -2899,13 +2900,6 @@ pub async fn handle_messages(
                     Some(&request_with_mapped.model),
                 )
                 .await;
-        }
-        if classification.abandons_sticky_account() {
-            token_manager.abandon_session(&affinity_key, &account_id);
-            debug!(
-                "[{}] Unbound session {} from account {} due to status {}",
-                trace_id, affinity_key, email, status_code
-            );
         }
 
         // [Pipeline Auto-Heal] 503 过载 / 400 tool_choice 冲突 / 400 损坏图片：
@@ -3033,15 +3027,10 @@ pub async fn handle_messages(
             continue; // 重试:下一轮 transform 时读取新代数,派生全新 sessionId
         }
 
-        // 调度模式只表达“是否接受在当前账号原地等待”，由有状态裁决器保证每账号仅一次；
-        // 档位表（退避时长/换号判定）不随调度模式变化。
-        let allow_grace = crate::proxy::pipeline::rotation::scheduling_allows_grace(
-            token_manager.get_scheduling_mode().await,
-            pool_size,
-        );
-
-        // 确定重试策略：传入当前 attempt 与 pool_size，执行智能自适应裁决
-        let retry_strategy = retry_state.determine_strategy_adaptive_with_policy(
+        let sticky_cfg = token_manager.get_sticky_config().await;
+        let allow_grace =
+            crate::proxy::pipeline::rotation::scheduling_allows_grace(sticky_cfg.mode, pool_size);
+        let http_plan = retry_state.plan_http_retry(
             &account_id,
             status_code,
             &error_text,
@@ -3049,12 +3038,24 @@ pub async fn handle_messages(
             retried_without_thinking,
             attempt,
             pool_size,
+            sticky_cfg.mode,
+            config.request_type != "image_gen",
+            sticky_cfg.max_wait_seconds,
             allow_grace,
+            &classification,
         );
+
+        if http_plan.abandon_sticky_account {
+            token_manager.abandon_session(&affinity_key, &account_id);
+            debug!(
+                "[{}] Unbound session {} from account {} due to status {}",
+                trace_id, affinity_key, email, status_code
+            );
+        }
 
         // 执行退避
         if apply_retry_strategy(
-            retry_strategy.clone(),
+            http_plan.strategy.clone(),
             attempt,
             max_attempts,
             status_code,
@@ -3062,30 +3063,30 @@ pub async fn handle_messages(
         )
         .await
         {
-            // [Rotation] GraceRetry 复用同一账号凭据：不重新选号，也不消耗轮换次数
-            if matches!(retry_strategy, RetryStrategy::GraceRetry(_)) {
-                retry_credentials = Some((
-                    access_token.clone(),
-                    project_id.clone(),
-                    email.clone(),
-                    account_id.clone(),
-                    0,
-                ));
-            }
-            // 判断是否需要轮换账号
-            if !should_rotate_account(status_code, Some(&retry_strategy)) {
-                debug!(
-                    "[{}] Keeping same account for status {} (Grace Retry or Server Issue)",
-                    trace_id, status_code
-                );
-                force_rotate = false;
-            } else {
-                crate::proxy::pipeline::rotation::record_attempted_account(
-                    &mut attempted_accounts,
-                    &account_id,
-                    pool_size,
-                    &mut force_rotate,
-                );
+            match http_plan.next {
+                crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
+                    debug!(
+                        "[{}] Keeping same account {} for status {} (CacheFirst/Grace in-place retry)",
+                        trace_id, email, status_code
+                    );
+                    force_rotate = false;
+                    retry_credentials = Some((
+                        access_token.clone(),
+                        project_id.clone(),
+                        email.clone(),
+                        account_id.clone(),
+                        0,
+                    ));
+                }
+                crate::proxy::pipeline::TerminalNextStep::Rotate => {
+                    crate::proxy::pipeline::rotation::record_attempted_account(
+                        &mut attempted_accounts,
+                        &account_id,
+                        pool_size,
+                        &mut force_rotate,
+                    );
+                }
+                crate::proxy::pipeline::TerminalNextStep::Stop => break,
             }
             continue;
         } else {
