@@ -623,9 +623,6 @@ pub async fn fetch_quota_with_cache(
                 // Use debug level for detailed info to avoid console noise
                 tracing::debug!("Quota API returned {} models", quota_response.models.len());
 
-                // 动态更新官方全量模型结构体目录缓存
-                crate::models::OfficialModelCatalog::update(quota_response.models.clone());
-
                 // 提取该账号在官方 fetchAvailableModels 中真实披露支持的推荐/专用模型集合：
                 // 1. agentModelSorts (Recommended 核心模型列表，如 gemini-4-argon-*, gemini-3.8-flash-*, claude-opus-5-5-*, claude-sonnet-5-5-* 或 claude-*-4-6, gpt-oss-120b-medium)
                 // 2. imageGenerationModelIds (图像生成模型，如 gemini-3.1-flash-image)
@@ -650,6 +647,13 @@ pub async fn fetch_quota_with_cache(
                 }
                 // [2026-10-29] 不再向官方可用集合里注入任何“字典存在但未开通”的模型（如 gemini-3.1-flash-lite），
                 // 对外模型列表严格等于 fetchAvailableModels 的可用集合。
+
+                // 使用在线官方推荐结构同步动态目录（替换静态快照推荐列表并刷新模型规格）
+                crate::models::OfficialModelCatalog::sync_live_catalog(
+                    Some(email),
+                    quota_response.models.clone(),
+                    &official_supported_ids,
+                );
 
                 // Parse deprecated model routing rules
                 if let Some(deprecated) = quota_response.deprecated_model_ids {

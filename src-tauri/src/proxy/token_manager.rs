@@ -1127,8 +1127,44 @@ impl TokenManager {
         // 清空内存中的模型级 900s 临时熔断，避免新导入或已恢复配额的账号
         // 继续被历史冷却卡住 15 分钟。
         self.unsupported_models.clear();
+        let _ = self.get_all_available_models();
 
         Ok(count)
+    }
+
+    /// 彻底卸载账号并异步清理需要 `.await` 写锁的粘性/优先/末次选中缓存
+    pub async fn remove_account_and_clear_locks(&self, account_id: &str) {
+        self.remove_account(account_id);
+        {
+            let mut preferred = self.preferred_account_id.write().await;
+            if preferred.as_deref() == Some(account_id) {
+                *preferred = None;
+                tracing::info!(
+                    "[Proxy] Cleared preferred account status for {}",
+                    account_id
+                );
+            }
+        }
+        {
+            let mut last_used = self.last_used_account.lock().await;
+            if matches!(&*last_used, Some((ref id, _)) if id == account_id) {
+                *last_used = None;
+            }
+        }
+    }
+
+    /// 手动重新启用账号反代时清理运行期拦截态（QoS 隔离、401/project_id 失败计数、模型临时熔断、内存限流锁定）
+    pub fn prepare_manual_enable(&self, account_id: &str) {
+        self.qos_guardian.release_from_jail(account_id);
+        self.invalid_grant_failures.remove(account_id);
+        self.project_id_failures.remove(account_id);
+        self.clear_unsupported_models_for_account(account_id);
+        self.clear_rate_limit_memory(account_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_token_for_test(&self, token: ProxyToken) {
+        self.tokens.insert(token.account_id.clone(), token);
     }
 
     /// 重新加载指定账号（用于配额更新后的实时同步）
@@ -1138,7 +1174,7 @@ impl TokenManager {
             .join("accounts")
             .join(format!("{}.json", account_id));
         if !path.exists() {
-            self.remove_account(account_id);
+            self.remove_account_and_clear_locks(account_id).await;
             return Err(format!("账号文件不存在: {:?}", path));
         }
 
@@ -1155,7 +1191,7 @@ impl TokenManager {
                             .any(|acc| acc.get("id").and_then(|v| v.as_str()) == Some(account_id));
                         // [FIX #3806, #3808] 若 accounts.json 存在但该账号已被删除，仅从内存调度池卸载，不删物理文件，并返回 Ok(())
                         if !in_index {
-                            self.remove_account(account_id);
+                            self.remove_account_and_clear_locks(account_id).await;
                             tracing::info!(
                                 "[Proxy] Account {} is not in accounts.json index, removed from proxy pool",
                                 account_id
@@ -1185,7 +1221,7 @@ impl TokenManager {
                         && Self::get_account_state_on_disk(&path).await
                             == OnDiskAccountState::Disabled
                     {
-                        self.remove_account(account_id);
+                        self.remove_account_and_clear_locks(account_id).await;
                         return Ok(());
                     }
                 }
@@ -1201,13 +1237,14 @@ impl TokenManager {
                 self.tokens.insert(account_id.to_string(), token);
 
                 self.sync_image_scheduler_accounts();
+                let _ = self.get_all_available_models();
                 Ok(())
             }
             Ok(None) => {
                 // [FIX] 账号被禁用或不可用时，从内存池中彻底移除 (Issue #1565)
                 // load_single_account returning None means the account should be skipped in its
                 // current state (disabled / proxy_disabled / quota_protection / validation_blocked...).
-                self.remove_account(account_id);
+                self.remove_account_and_clear_locks(account_id).await;
                 Ok(())
             }
             Err(e) => Err(format!("同步账号失败: {}", e)),
@@ -1223,6 +1260,7 @@ impl TokenManager {
         for entry in self.tokens.iter() {
             self.reconcile_recovered_quota_locks(entry.key(), entry.value());
         }
+        let _ = self.get_all_available_models();
 
         Ok(count)
     }
@@ -1317,7 +1355,10 @@ impl TokenManager {
         self.invalid_grant_failures.remove(account_id);
         self.project_id_locks.remove(account_id);
         self.project_id_failures.remove(account_id);
+        self.invalid_grant_failures.remove(account_id);
         self.in_flight_requests.remove(account_id);
+        self.clear_unsupported_models_for_account(account_id);
+        self.qos_guardian.release_from_jail(account_id);
         self.session_accounts.retain(|_, v| v != account_id);
         if let Ok(mut preferred) = self.preferred_account_id.try_write() {
             if preferred.as_deref() == Some(account_id) {
@@ -1329,6 +1370,7 @@ impl TokenManager {
             }
         }
         self.sync_image_scheduler_accounts();
+        let _ = self.get_all_available_models();
     }
 
     /// 根据账号 ID 获取完整的 ProxyToken 对象 (v4.1.29)
@@ -14226,5 +14268,110 @@ mod tests {
             manager.accounts_with_positive_quota("gemini-3.8-flash-high"),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn test_disable_and_manual_enable_clear_locks_and_jail() {
+        let data_dir =
+            std::env::temp_dir().join(format!("abv_tm_toggle_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let manager = TokenManager::new(data_dir.clone());
+
+        let mut available = HashSet::new();
+        available.insert("gemini-4-hydrogen-high".to_string());
+        let tok = ProxyToken {
+            account_id: "acc-toggle".to_string(),
+            priority: 0,
+            model_priorities: HashMap::new(),
+            access_token: "ya29.toggle".to_string(),
+            refresh_token: "1//toggle".to_string(),
+            expires_in: 3600,
+            timestamp: chrono::Utc::now().timestamp() + 3600,
+            email: "toggle@example.com".to_string(),
+            account_path: data_dir.join("acc-toggle.json"),
+            project_id: Some("proj-toggle".to_string()),
+            subscription_tier: None,
+            remaining_quota: Some(100),
+            protected_models: HashSet::new(),
+            forbidden_models: HashSet::new(),
+            health_score: 1.0,
+            reset_time: None,
+            weekly_reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: HashMap::new(),
+            model_limits: HashMap::new(),
+            available_models: available,
+            model_metadata: HashMap::new(),
+            model_reset_times: HashMap::new(),
+            model_weekly_reset_times: HashMap::new(),
+            model_quota_windows: HashMap::new(),
+        };
+        manager.tokens.insert("acc-toggle".to_string(), tok);
+        manager
+            .set_preferred_account(Some("acc-toggle".to_string()))
+            .await;
+        {
+            let mut last_used = manager.last_used_account.lock().await;
+            *last_used = Some(("acc-toggle".to_string(), std::time::Instant::now()));
+        }
+        manager
+            .session_accounts
+            .insert("sess-1".to_string(), "acc-toggle".to_string());
+        manager.mark_model_unsupported("acc-toggle", "gemini-4-hydrogen-high", Some(900));
+        manager
+            .invalid_grant_failures
+            .insert("acc-toggle".to_string(), 1);
+        manager
+            .project_id_failures
+            .insert("acc-toggle".to_string(), std::time::Instant::now());
+
+        // Async removal must clear tokens, last_used_account, preferred_account_id,
+        // session_accounts, and unsupported breakers cleanly.
+        manager.remove_account_and_clear_locks("acc-toggle").await;
+        assert!(!manager.tokens.contains_key("acc-toggle"));
+        assert!(manager.get_preferred_account().await.is_none());
+        assert!(manager.last_used_account.lock().await.is_none());
+        assert!(!manager.session_accounts.contains_key("sess-1"));
+        assert!(!manager.is_model_unsupported("acc-toggle", "gemini-4-hydrogen-high"));
+        assert!(!manager.invalid_grant_failures.contains_key("acc-toggle"));
+        assert!(!manager.project_id_failures.contains_key("acc-toggle"));
+
+        // Manual re-enable must immediately release QoS jail, transient rate limits, failure counters, and model breakers.
+        manager.qos_guardian.set_auto_jail_enabled(true);
+        manager.qos_guardian.states.insert(
+            "acc-toggle".to_string(),
+            crate::proxy::qos_guardian::AccountQoSState::Jailed {
+                level: 1,
+                jailed_at: std::time::Instant::now(),
+                current_wait: std::time::Duration::from_secs(600),
+            },
+        );
+        manager.mark_model_unsupported("acc-toggle", "gemini-4-hydrogen-high", Some(900));
+        manager.rate_limit_tracker.set_lockout_until(
+            "acc-toggle",
+            std::time::SystemTime::now() + std::time::Duration::from_secs(120),
+            crate::proxy::rate_limit::RateLimitReason::QuotaExhausted,
+            Some("gemini-4-hydrogen-high".to_string()),
+        );
+        manager
+            .invalid_grant_failures
+            .insert("acc-toggle".to_string(), 2);
+        manager
+            .project_id_failures
+            .insert("acc-toggle".to_string(), std::time::Instant::now());
+
+        assert!(manager.qos_guardian.is_jailed_or_probing("acc-toggle"));
+        manager.prepare_manual_enable("acc-toggle");
+        assert!(!manager.qos_guardian.is_jailed_or_probing("acc-toggle"));
+        assert!(!manager.is_model_unsupported("acc-toggle", "gemini-4-hydrogen-high"));
+        assert!(!manager
+            .rate_limit_tracker
+            .is_rate_limited("acc-toggle", Some("gemini-4-hydrogen-high")));
+        assert!(!manager.invalid_grant_failures.contains_key("acc-toggle"));
+        assert!(!manager.project_id_failures.contains_key("acc-toggle"));
+
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 }

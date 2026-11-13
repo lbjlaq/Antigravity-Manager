@@ -60,6 +60,55 @@ impl ProxyServiceState {
             starting: Arc::new(AtomicBool::new(false)),
         }
     }
+
+    /// 获取当前所有活跃 AxumServer（按 TokenManager 指针去重，统一覆盖 instance 与 admin_server）
+    pub async fn active_axum_servers(&self) -> Vec<crate::proxy::AxumServer> {
+        let mut servers: Vec<crate::proxy::AxumServer> = Vec::new();
+        {
+            let instance_lock = self.instance.read().await;
+            if let Some(instance) = instance_lock.as_ref() {
+                servers.push(instance.axum_server.clone());
+            }
+        }
+        {
+            let admin_lock = self.admin_server.read().await;
+            if let Some(admin) = admin_lock.as_ref() {
+                let seen = servers
+                    .iter()
+                    .any(|s| Arc::ptr_eq(&s.token_manager, &admin.axum_server.token_manager));
+                if !seen {
+                    servers.push(admin.axum_server.clone());
+                }
+            }
+        }
+        servers
+    }
+
+    /// 获取主用 AxumServer（优先 instance，其次 admin_server）
+    pub async fn primary_axum_server(&self) -> Option<crate::proxy::AxumServer> {
+        {
+            let instance_lock = self.instance.read().await;
+            if let Some(instance) = instance_lock.as_ref() {
+                return Some(instance.axum_server.clone());
+            }
+        }
+        {
+            let admin_lock = self.admin_server.read().await;
+            if let Some(admin) = admin_lock.as_ref() {
+                return Some(admin.axum_server.clone());
+            }
+        }
+        None
+    }
+
+    /// 获取当前所有去重后的 TokenManager 实例
+    pub async fn active_token_managers(&self) -> Vec<Arc<TokenManager>> {
+        self.active_axum_servers()
+            .await
+            .into_iter()
+            .map(|s| s.token_manager)
+            .collect()
+    }
 }
 
 /// 启动反代服务 (Tauri 命令)
@@ -190,17 +239,14 @@ pub async fn internal_start_proxy_service(
         tracing::info!("🔒 [FIX #820] Fixed account mode restored: {}", account_id);
     }
 
-    // 3. 加載賬號
+    // 3. 加載賬號（即使当前 0 个启用账号也完成反代状态与实例初始化，
+    // 避免后续在管理界面启用/刷新账号时陷入 instance=None 的分裂状态）
     let active_accounts = token_manager.load_accounts().await.unwrap_or(0);
 
     if active_accounts == 0 {
-        tracing::warn!("沒有可用賬號，反代邏輯將暫停，請通過管理界面添加。");
-        return Ok(ProxyStatus {
-            running: false,
-            port: config.port,
-            base_url: format!("http://127.0.0.1:{}", config.port),
-            active_accounts: 0,
-        });
+        tracing::warn!(
+            "当前没有可用账号，反代服务已就绪但将按第一道门禁返回无可用账号状态，请通过管理界面启用或添加账号。"
+        );
     }
 
     let mut instance_lock = state.instance.write().await;
@@ -340,15 +386,32 @@ pub async fn ensure_admin_server(
 pub async fn stop_proxy_service(state: State<'_, ProxyServiceState>) -> Result<(), String> {
     let mut instance_lock = state.instance.write().await;
 
-    if instance_lock.is_none() {
-        return Err("服务未运行".to_string());
-    }
-
     // 停止 Axum 服务器 (仅逻辑停止，不杀死进程)
     if let Some(instance) = instance_lock.take() {
         instance.token_manager.abort_background_tasks().await;
         instance.axum_server.set_running(false).await;
         // 已移除 instance.axum_server.stop() 调用，防止杀死 Admin Server
+    } else {
+        let admin_lock = state.admin_server.read().await;
+        let stopped_admin = if let Some(admin) = admin_lock.as_ref() {
+            let running = *admin.axum_server.is_running.read().await;
+            if running {
+                admin
+                    .axum_server
+                    .token_manager
+                    .abort_background_tasks()
+                    .await;
+                admin.axum_server.set_running(false).await;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if !stopped_admin {
+            return Err("服务未运行".to_string());
+        }
     }
 
     // [FIX desktop] 对齐 Web/Docker admin_stop_proxy_service (#1166):
@@ -365,47 +428,71 @@ pub async fn stop_proxy_service(state: State<'_, ProxyServiceState>) -> Result<(
     Ok(())
 }
 
-/// 获取反代服务状态
-#[tauri::command]
-pub async fn get_proxy_status(state: State<'_, ProxyServiceState>) -> Result<ProxyStatus, String> {
+pub(crate) fn snapshot_proxy_status(state: &ProxyServiceState) -> ProxyStatus {
     // 优先检查启动标志，避免被写锁阻塞
     if state.starting.load(Ordering::SeqCst) {
-        return Ok(ProxyStatus {
+        return ProxyStatus {
             running: false, // 逻辑上还没运行
             port: 0,
             base_url: "starting".to_string(), // 给前端标识
             active_accounts: 0,
-        });
+        };
     }
 
-    // 使用 try_read 避免在该命令中产生产生排队延迟
+    // 使用 try_read 避免在该命令中产生排队延迟
     let lock_res = state.instance.try_read();
 
     match lock_res {
         Ok(instance_lock) => match instance_lock.as_ref() {
-            Some(instance) => Ok(ProxyStatus {
+            Some(instance) => ProxyStatus {
                 running: true,
                 port: instance.config.port,
                 base_url: format!("http://127.0.0.1:{}", instance.config.port),
                 active_accounts: instance.token_manager.len(),
-            }),
-            None => Ok(ProxyStatus {
-                running: false,
-                port: 0,
-                base_url: String::new(),
-                active_accounts: 0,
-            }),
+            },
+            None => {
+                if let Ok(admin_lock) = state.admin_server.try_read() {
+                    if let Some(admin) = admin_lock.as_ref() {
+                        let running = admin
+                            .axum_server
+                            .is_running
+                            .try_read()
+                            .map(|g| *g)
+                            .unwrap_or(false);
+                        if running {
+                            return ProxyStatus {
+                                running: true,
+                                port: admin.axum_server.port,
+                                base_url: format!("http://127.0.0.1:{}", admin.axum_server.port),
+                                active_accounts: admin.axum_server.token_manager.len(),
+                            };
+                        }
+                    }
+                }
+                ProxyStatus {
+                    running: false,
+                    port: 0,
+                    base_url: String::new(),
+                    active_accounts: 0,
+                }
+            }
         },
         Err(_) => {
             // 如果拿不到锁，说明正在进行写操作（可能是正在启动或停止中）
-            Ok(ProxyStatus {
+            ProxyStatus {
                 running: false,
                 port: 0,
                 base_url: "busy".to_string(),
                 active_accounts: 0,
-            })
+            }
         }
     }
+}
+
+/// 获取反代服务状态
+#[tauri::command]
+pub async fn get_proxy_status(state: State<'_, ProxyServiceState>) -> Result<ProxyStatus, String> {
+    Ok(snapshot_proxy_status(&state))
 }
 
 /// 获取反代服务统计
@@ -607,24 +694,23 @@ pub fn generate_api_key() -> String {
 /// 重新加载账号（当主应用添加/删除账号时调用）
 #[tauri::command]
 pub async fn reload_proxy_accounts(state: State<'_, ProxyServiceState>) -> Result<usize, String> {
-    let instance_lock = state.instance.read().await;
+    let managers = state.active_token_managers().await;
+    if managers.is_empty() {
+        return Err("服务未运行".to_string());
+    }
 
-    if let Some(instance) = instance_lock.as_ref() {
+    let mut latest_count = 0usize;
+    for tm in managers {
         // [FIX #820] Clear stale session bindings before reloading accounts
         // This ensures that after switching accounts in the UI, API requests
         // won't be routed to the previously bound (wrong) account
-        instance.token_manager.clear_all_sessions();
-
-        // 重新加载账号
-        let count = instance
-            .token_manager
+        tm.clear_all_sessions();
+        latest_count = tm
             .load_accounts()
             .await
             .map_err(|e| format!("重新加载账号失败: {}", e))?;
-        Ok(count)
-    } else {
-        Err("服务未运行".to_string())
     }
+    Ok(latest_count)
 }
 
 /// 更新模型映射表 (热更新)
@@ -633,12 +719,9 @@ pub async fn update_model_mapping(
     config: ProxyConfig,
     state: State<'_, ProxyServiceState>,
 ) -> Result<(), String> {
-    let instance_lock = state.instance.read().await;
-
-    // 1. 如果服务正在运行，立即更新内存中的映射 (这里目前只更新了 anthropic_mapping 的 RwLock,
-    // 后续可以根据需要让 resolve_model_route 直接读取全量 config)
-    if let Some(instance) = instance_lock.as_ref() {
-        instance.axum_server.update_mapping(&config).await;
+    // 1. 如果服务正在运行，立即同步所有活跃服务器实例的内存映射
+    for server in state.active_axum_servers().await {
+        server.update_mapping(&config).await;
         tracing::debug!("后端服务已接收全量模型映射配置");
     }
 
@@ -714,9 +797,8 @@ fn extract_model_ids(value: &serde_json::Value) -> Vec<String> {
 pub async fn get_proxy_scheduling_config(
     state: State<'_, ProxyServiceState>,
 ) -> Result<crate::proxy::sticky_config::StickySessionConfig, String> {
-    let instance_lock = state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        Ok(instance.token_manager.get_sticky_config().await)
+    if let Some(server) = state.primary_axum_server().await {
+        Ok(server.token_manager.get_sticky_config().await)
     } else {
         Ok(crate::proxy::sticky_config::StickySessionConfig::default())
     }
@@ -728,13 +810,14 @@ pub async fn update_proxy_scheduling_config(
     state: State<'_, ProxyServiceState>,
     config: crate::proxy::sticky_config::StickySessionConfig,
 ) -> Result<(), String> {
-    let instance_lock = state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        instance.token_manager.update_sticky_config(config).await;
-        Ok(())
-    } else {
-        Err("服务未运行，无法更新实时配置".to_string())
+    let managers = state.active_token_managers().await;
+    if managers.is_empty() {
+        return Err("服务未运行，无法更新实时配置".to_string());
     }
+    for tm in managers {
+        tm.update_sticky_config(config.clone()).await;
+    }
+    Ok(())
 }
 
 /// 清除所有会话粘性绑定
@@ -742,13 +825,14 @@ pub async fn update_proxy_scheduling_config(
 pub async fn clear_proxy_session_bindings(
     state: State<'_, ProxyServiceState>,
 ) -> Result<(), String> {
-    let instance_lock = state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        instance.token_manager.clear_all_sessions();
-        Ok(())
-    } else {
-        Err("服务未运行".to_string())
+    let managers = state.active_token_managers().await;
+    if managers.is_empty() {
+        return Err("服务未运行".to_string());
     }
+    for tm in managers {
+        tm.clear_all_sessions();
+    }
+    Ok(())
 }
 
 // ===== [FIX #820] 固定账号模式命令 =====
@@ -760,37 +844,36 @@ pub async fn set_preferred_account(
     state: State<'_, ProxyServiceState>,
     account_id: Option<String>,
 ) -> Result<(), String> {
-    let instance_lock = state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        // 过滤空字符串为 None
-        let cleaned_id = account_id.filter(|s| !s.trim().is_empty());
-
-        // 1. 更新内存状态
-        instance
-            .token_manager
-            .set_preferred_account(cleaned_id.clone())
-            .await;
-
-        // 2. 持久化到配置文件 (修复 Issue #820 自动关闭问题)
-        let mut app_config = crate::modules::config::load_app_config()
-            .map_err(|e| format!("加载配置失败: {}", e))?;
-        app_config.proxy.preferred_account_id = cleaned_id.clone();
-        crate::modules::config::save_app_config(&app_config)
-            .map_err(|e| format!("保存配置失败: {}", e))?;
-
-        if let Some(ref id) = cleaned_id {
-            tracing::info!(
-                "🔒 [FIX #820] Fixed account mode enabled and persisted: {}",
-                id
-            );
-        } else {
-            tracing::info!("🔄 [FIX #820] Round-robin mode enabled and persisted");
-        }
-
-        Ok(())
-    } else {
-        Err("服务未运行".to_string())
+    let managers = state.active_token_managers().await;
+    if managers.is_empty() {
+        return Err("服务未运行".to_string());
     }
+
+    // 过滤空字符串为 None
+    let cleaned_id = account_id.filter(|s| !s.trim().is_empty());
+
+    // 1. 更新内存状态
+    for tm in managers {
+        tm.set_preferred_account(cleaned_id.clone()).await;
+    }
+
+    // 2. 持久化到配置文件 (修复 Issue #820 自动关闭问题)
+    let mut app_config =
+        crate::modules::config::load_app_config().map_err(|e| format!("加载配置失败: {}", e))?;
+    app_config.proxy.preferred_account_id = cleaned_id.clone();
+    crate::modules::config::save_app_config(&app_config)
+        .map_err(|e| format!("保存配置失败: {}", e))?;
+
+    if let Some(ref id) = cleaned_id {
+        tracing::info!(
+            "🔒 [FIX #820] Fixed account mode enabled and persisted: {}",
+            id
+        );
+    } else {
+        tracing::info!("🔄 [FIX #820] Round-robin mode enabled and persisted");
+    }
+
+    Ok(())
 }
 
 /// 获取当前优先使用的账号ID
@@ -798,9 +881,8 @@ pub async fn set_preferred_account(
 pub async fn get_preferred_account(
     state: State<'_, ProxyServiceState>,
 ) -> Result<Option<String>, String> {
-    let instance_lock = state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        Ok(instance.token_manager.get_preferred_account().await)
+    if let Some(server) = state.primary_axum_server().await {
+        Ok(server.token_manager.get_preferred_account().await)
     } else {
         Ok(None)
     }
@@ -812,12 +894,17 @@ pub async fn clear_proxy_rate_limit(
     state: State<'_, ProxyServiceState>,
     account_id: String,
 ) -> Result<bool, String> {
-    let instance_lock = state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        Ok(instance.token_manager.clear_rate_limit(&account_id))
-    } else {
-        Err("服务未运行".to_string())
+    let managers = state.active_token_managers().await;
+    if managers.is_empty() {
+        return Err("服务未运行".to_string());
     }
+    let mut cleared = false;
+    for tm in managers {
+        if tm.clear_rate_limit(&account_id) {
+            cleared = true;
+        }
+    }
+    Ok(cleared)
 }
 
 /// 清除所有限流记录
@@ -825,13 +912,14 @@ pub async fn clear_proxy_rate_limit(
 pub async fn clear_all_proxy_rate_limits(
     state: State<'_, ProxyServiceState>,
 ) -> Result<(), String> {
-    let instance_lock = state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        instance.token_manager.clear_all_rate_limits();
-        Ok(())
-    } else {
-        Err("服务未运行".to_string())
+    let managers = state.active_token_managers().await;
+    if managers.is_empty() {
+        return Err("服务未运行".to_string());
     }
+    for tm in managers {
+        tm.clear_all_rate_limits();
+    }
+    Ok(())
 }
 
 /// 触发所有代理的健康检查，并返回更新后的配置
@@ -839,9 +927,8 @@ pub async fn clear_all_proxy_rate_limits(
 pub async fn check_proxy_health(
     state: State<'_, ProxyServiceState>,
 ) -> Result<ProxyPoolConfig, String> {
-    let instance_lock = state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        let pool_state = instance.axum_server.proxy_pool_state.clone();
+    if let Some(server) = state.primary_axum_server().await {
+        let pool_state = server.proxy_pool_state.clone();
         let manager = crate::proxy::proxy_pool::ProxyPoolManager::new(pool_state.clone());
 
         manager.health_check().await?;
@@ -859,9 +946,8 @@ pub async fn check_proxy_health(
 pub async fn get_proxy_pool_config(
     state: State<'_, ProxyServiceState>,
 ) -> Result<ProxyPoolConfig, String> {
-    let instance_lock = state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        let config = instance.axum_server.proxy_pool_state.read().await;
+    if let Some(server) = state.primary_axum_server().await {
+        let config = server.proxy_pool_state.read().await;
         Ok(config.clone())
     } else {
         Err("服务未运行".to_string())
@@ -881,13 +967,14 @@ pub async fn test_model_connectivity(
     model: String,
     target_account_id: Option<String>,
 ) -> Result<crate::proxy::handlers::warmup::WarmupResponse, String> {
-    let port = {
-        let instance_guard = state.instance.read().await;
-        if let Some(ref inst) = *instance_guard {
-            inst.config.port
+    let port = if let Some(server) = state.primary_axum_server().await {
+        if *server.is_running.read().await {
+            server.port
         } else {
             return Err("反代服务未运行，请先在代理页面启动反代服务".to_string());
         }
+    } else {
+        return Err("反代服务未运行，请先在代理页面启动反代服务".to_string());
     };
 
     let accounts = crate::modules::account::list_accounts().unwrap_or_default();
@@ -905,9 +992,8 @@ pub async fn test_model_connectivity(
         let (t, p) = crate::modules::quota::get_valid_token_for_warmup(&acc).await?;
         (acc, t, p)
     } else {
-        // 桌面端探活是诊断入口，允许包含手动禁用反代的账号；
-        // Web 端自动调度走反代号池语义，见 proxy/server.rs。
-        let probe = crate::modules::probe::pick_auto_probe_account(&accounts, &model, true)
+        // 自动调度探活严格遵循反代启用状态，避免已禁用账号在“自动调度”下仍返回 200
+        let probe = crate::modules::probe::pick_auto_probe_account(&accounts, &model, false)
             .await
             .map_err(|e| e.to_string())?;
         (probe.account, probe.access_token, probe.project_id)
@@ -1135,4 +1221,86 @@ pub async fn detect_remote_hub_fingerprint(
     .await;
 
     Ok(fp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn proxy_service_state_helpers_cover_admin_only_and_deduplicate() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("abv_proxy_state_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let mut config = ProxyConfig::default();
+        config.port = port;
+        let tm = Arc::new(TokenManager::new(temp_dir.clone()));
+        let monitor = Arc::new(ProxyMonitor::new_for_test(16));
+        let (axum_server, server_handle) = crate::proxy::AxumServer::start(
+            "127.0.0.1".to_string(),
+            port,
+            tm.clone(),
+            config.custom_mapping.clone(),
+            config.request_timeout,
+            config.upstream_proxy.clone(),
+            config.user_agent_override.clone(),
+            crate::proxy::ProxySecurityConfig::from_proxy_config(&config),
+            monitor,
+            config.experimental.clone(),
+            config.debug_logging.clone(),
+            crate::modules::integration::SystemManager::Headless,
+            Arc::new(crate::commands::cloudflared::CloudflaredState::new()),
+            config.proxy_pool.clone(),
+            config.only_raw_quota_models,
+            config.image_scheduler.clone(),
+        )
+        .await
+        .expect("AxumServer::start on ephemeral port");
+
+        let state = ProxyServiceState::new();
+        {
+            let mut admin_lock = state.admin_server.write().await;
+            *admin_lock = Some(AdminServerInstance {
+                axum_server: axum_server.clone(),
+                server_handle,
+            });
+        }
+
+        // 1. admin_server present but is_running=false, instance=None
+        assert!(!snapshot_proxy_status(&state).running);
+        assert_eq!(state.active_token_managers().await.len(), 1);
+        assert!(state.primary_axum_server().await.is_some());
+
+        // 2. Web/Headless starts service via admin_server while instance stays None
+        axum_server.set_running(true).await;
+        let status = snapshot_proxy_status(&state);
+        assert!(status.running);
+        assert_eq!(status.port, port);
+        assert_eq!(status.active_accounts, 0);
+
+        // 3. When instance shares the same TokenManager (including 0-account startup),
+        // helpers deduplicate to 1 manager and keep running=true with active_accounts=0.
+        {
+            let mut inst_lock = state.instance.write().await;
+            *inst_lock = Some(ProxyServiceInstance {
+                config: config.clone(),
+                token_manager: tm.clone(),
+                axum_server: axum_server.clone(),
+            });
+        }
+        assert_eq!(state.active_token_managers().await.len(), 1);
+        let status_with_inst = snapshot_proxy_status(&state);
+        assert!(status_with_inst.running);
+        assert_eq!(status_with_inst.active_accounts, 0);
+
+        if let Some(admin) = state.admin_server.write().await.take() {
+            admin.stop().await;
+        }
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }

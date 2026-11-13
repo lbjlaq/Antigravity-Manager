@@ -452,10 +452,9 @@ pub async fn check_and_auto_switch_classic(
         *last_switch = Some(Instant::now());
     }
 
-    // 同步反代（如果已启动）
-    let instance_lock = proxy_state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        let _ = instance.token_manager.reload_all_accounts().await;
+    // 同步反代（如果已启动，同时涵盖 instance 与 admin_server）
+    for tm in proxy_state.active_token_managers().await {
+        let _ = tm.reload_all_accounts().await;
     }
 
     // 9. 界面与系统通知提醒

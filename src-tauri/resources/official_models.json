@@ -332,7 +332,7 @@
       "supportsThinking": true,
       "thinkingBudget": -1,
       "minThinkingBudget": 128,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65535,
       "quotaInfo": {
@@ -415,7 +415,7 @@
       "supportsThinking": true,
       "thinkingBudget": 1000,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -551,7 +551,7 @@
       "supportsThinking": true,
       "thinkingBudget": -1,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -646,7 +646,7 @@
       "supportsThinking": true,
       "thinkingBudget": 4000,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -729,7 +729,7 @@
       "supportsThinking": true,
       "thinkingBudget": 1000,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -1043,7 +1043,7 @@
       "supportsThinking": true,
       "thinkingBudget": -1,
       "minThinkingBudget": 128,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65535,
       "quotaInfo": {
@@ -1399,7 +1399,7 @@
       "supportsThinking": true,
       "thinkingBudget": -1,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -1488,7 +1488,7 @@
       "supportsThinking": true,
       "thinkingBudget": 4000,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -1583,7 +1583,7 @@
       "supportsThinking": true,
       "thinkingBudget": -1,
       "minThinkingBudget": 128,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65535,
       "quotaInfo": {
@@ -1665,7 +1665,7 @@
       "supportsThinking": true,
       "thinkingBudget": -1,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -1752,7 +1752,7 @@
       "supportsThinking": true,
       "thinkingBudget": -1,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -1849,7 +1849,7 @@
       "supportsThinking": true,
       "thinkingBudget": 1024,
       "minThinkingBudget": 128,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65535,
       "quotaInfo": {
@@ -1927,7 +1927,7 @@
       "supportsThinking": true,
       "thinkingBudget": 4000,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -2106,7 +2106,7 @@
       "supportsThinking": true,
       "thinkingBudget": 10001,
       "minThinkingBudget": 128,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65535,
       "quotaInfo": {
@@ -2195,7 +2195,7 @@
       "supportsThinking": true,
       "thinkingBudget": -1,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -2288,7 +2288,7 @@
       "supportsThinking": true,
       "thinkingBudget": 1000,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {
@@ -2371,7 +2371,7 @@
       "supportsThinking": true,
       "thinkingBudget": -1,
       "minThinkingBudget": 32,
-      "recommended": true,
+      "recommended": false,
       "maxTokens": 1048576,
       "maxOutputTokens": 65536,
       "quotaInfo": {

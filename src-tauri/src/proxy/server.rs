@@ -444,6 +444,7 @@ pub struct AxumServer {
     #[allow(dead_code)] // 预留给 cloudflared 运行状态查询与后续控制
     pub cloudflared_state: Arc<crate::commands::cloudflared::CloudflaredState>,
     pub is_running: Arc<RwLock<bool>>,
+    pub port: u16,
     pub token_manager: Arc<TokenManager>, // [NEW] 暴露出 TokenManager 供反代服务复用
     pub proxy_pool_state: Arc<tokio::sync::RwLock<crate::proxy::config::ProxyPoolConfig>>, // [NEW] 代理池配置状态
     pub proxy_pool_manager: Arc<crate::proxy::proxy_pool::ProxyPoolManager>, // [NEW] 暴露代理池管理器供命令调用
@@ -1170,6 +1171,7 @@ impl AxumServer {
             debug_logging: debug_logging_state.clone(),
             cloudflared_state,
             is_running: is_running_state,
+            port,
             token_manager: token_manager.clone(),
             proxy_pool_state,
             proxy_pool_manager,
@@ -3586,7 +3588,21 @@ async fn admin_toggle_proxy_status(
         )
     })?;
 
-    // 同步到运行中的反代服务
+    // 同步到运行中的反代服务（含固定账号清理与手动恢复时运行态解锁）
+    if !payload.enable {
+        let pref_id = state.token_manager.get_preferred_account().await;
+        if pref_id.as_deref() == Some(&account_id) {
+            state.token_manager.set_preferred_account(None).await;
+            if let Ok(mut cfg) = crate::modules::config::load_app_config() {
+                if cfg.proxy.preferred_account_id.as_deref() == Some(&account_id) {
+                    cfg.proxy.preferred_account_id = None;
+                    let _ = crate::modules::config::save_app_config(&cfg);
+                }
+            }
+        }
+    } else {
+        state.token_manager.prepare_manual_enable(&account_id);
+    }
     let _ = state.token_manager.reload_account(&account_id).await;
 
     Ok(StatusCode::OK)

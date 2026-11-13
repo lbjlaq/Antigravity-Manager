@@ -250,12 +250,131 @@ impl OfficialModelCatalog {
         found
     }
 
+    /// 获取运行时在线推荐模型缓存 (account_key -> recommended model IDs)
+    fn live_recommended_store(
+    ) -> &'static RwLock<Option<HashMap<String, std::collections::HashSet<String>>>> {
+        static STORE: Lazy<RwLock<Option<HashMap<String, std::collections::HashSet<String>>>>> =
+            Lazy::new(|| RwLock::new(None));
+        &STORE
+    }
+
+    /// 计算单个在线 fetchAvailableModels 响应下的权威推荐模型集合
+    pub(crate) fn extract_live_recommended_ids(
+        models: &HashMap<String, OfficialModelInfo>,
+        official_supported_ids: &std::collections::HashSet<String>,
+    ) -> std::collections::HashSet<String> {
+        let mut recommended = std::collections::HashSet::new();
+        for (id, info) in models {
+            if info.is_internal == Some(true) || info.is_disabled() {
+                continue;
+            }
+            let lower = id.trim().to_lowercase();
+            let is_recommended = if official_supported_ids.is_empty() {
+                info.recommended == Some(true) || lower == "gemini-3.1-flash-image"
+            } else {
+                official_supported_ids.contains(&lower)
+            };
+            if is_recommended {
+                recommended.insert(id.trim().to_string());
+            }
+        }
+        recommended
+    }
+
+    /// 计算暴露给端点的官方推荐模型列表（纯函数版本，便于并发安全的单元测试）
+    pub(crate) fn resolve_recommended_model_ids(
+        live_accounts: Option<&HashMap<String, std::collections::HashSet<String>>>,
+        catalog: &HashMap<String, OfficialModelInfo>,
+    ) -> Vec<String> {
+        let is_active_info =
+            |info: &OfficialModelInfo| info.is_internal != Some(true) && !info.is_disabled();
+
+        let mut result = std::collections::BTreeSet::new();
+        if let Some(accounts) = live_accounts.filter(|m| !m.is_empty()) {
+            for ids in accounts.values() {
+                for id in ids {
+                    let allow = catalog.get(id.as_str()).map(is_active_info).unwrap_or(true);
+                    if allow {
+                        result.insert(id.clone());
+                    }
+                }
+            }
+            return result.into_iter().collect();
+        }
+
+        for (id, info) in catalog {
+            if !is_active_info(info) {
+                continue;
+            }
+            if info.recommended == Some(true) || id.eq_ignore_ascii_case("gemini-3.1-flash-image") {
+                result.insert(id.clone());
+            }
+        }
+        result.into_iter().collect()
+    }
+
     /// 运行时动态更新官方模型目录 (由 fetchAvailableModels 接口返回数据触发)
     pub fn update(models: HashMap<String, OfficialModelInfo>) {
         if let Ok(mut lock) = DYNAMIC_CATALOG.write() {
             for (k, v) in models {
                 lock.insert(k, v);
             }
+        }
+    }
+
+    /// 使用在线 `fetchAvailableModels` 的官方推荐列表同步动态目录，替换冷启动静态快照的推荐集合
+    pub fn sync_live_catalog(
+        account_key: Option<&str>,
+        models: HashMap<String, OfficialModelInfo>,
+        official_supported_ids: &std::collections::HashSet<String>,
+    ) {
+        let recommended = Self::extract_live_recommended_ids(&models, official_supported_ids);
+        Self::update(models);
+
+        let key = account_key
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "_global".to_string());
+
+        if let Ok(mut live_lock) = Self::live_recommended_store().write() {
+            let map = live_lock.get_or_insert_with(HashMap::new);
+            map.insert(key, recommended);
+        }
+    }
+
+    /// 判断是否已接收到在线上游 `fetchAvailableModels` 同步的权威推荐列表
+    pub fn has_live_catalog() -> bool {
+        Self::live_recommended_store()
+            .read()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|m| !m.is_empty()))
+            .unwrap_or(false)
+    }
+
+    /// 当账号被永久删除时清理其在线推荐模型快照
+    pub fn remove_live_account(account_key: &str) {
+        let key = account_key.trim().to_lowercase();
+        if key.is_empty() {
+            return;
+        }
+        if let Ok(mut live_lock) = Self::live_recommended_store().write() {
+            if let Some(map) = live_lock.as_mut() {
+                map.remove(&key);
+                if map.is_empty() {
+                    *live_lock = None;
+                }
+            }
+        }
+    }
+
+    /// 获取官方推荐的可用模型 ID 列表（在线同步后优先使用官方推荐联合集合；冷启动尚未联网时回退到随包内嵌快照中的非退役推荐模型）
+    pub fn recommended_model_ids() -> Vec<String> {
+        let live_guard = Self::live_recommended_store().read().ok();
+        let live_ref = live_guard.as_ref().and_then(|g| g.as_ref());
+        if let Ok(catalog) = DYNAMIC_CATALOG.read() {
+            Self::resolve_recommended_model_ids(live_ref, &catalog)
+        } else {
+            Vec::new()
         }
     }
 
@@ -414,6 +533,119 @@ mod tests {
         assert!(
             tiers_for_full_base.contains(&"high".to_string()),
             "claude-opus-5-5 must contain high tier"
+        );
+    }
+
+    #[test]
+    fn recommended_model_ids_cold_start_excludes_retired_and_includes_hydrogen() {
+        let catalog = DYNAMIC_CATALOG.read().unwrap();
+        let recommended = OfficialModelCatalog::resolve_recommended_model_ids(None, &catalog);
+
+        for expected in [
+            "gemini-4-hydrogen-high",
+            "gemini-4-hydrogen",
+            "gemini-4-argon-high",
+            "gemini-3.8-flash-high",
+            "gemini-3.1-flash-image",
+            "claude-sonnet-4-6",
+        ] {
+            assert!(
+                recommended.iter().any(|id| id == expected),
+                "cold-start recommended catalog must include {expected}"
+            );
+        }
+
+        for retired in [
+            "gemini-3.6-flash-low",
+            "gemini-3.6-flash-medium",
+            "gemini-3.6-flash-high",
+            "gemini-3.6-flash-tiered",
+            "gemini-3.7-flash-high",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-3.5-flash-low",
+            "gemini-3.5-flash-extra-low",
+            "gemini-3-flash",
+            "gemini-3-flash-agent",
+            "gemini-pro-agent",
+            "tab_flash_lite_preview",
+            "tab_jump_flash_lite_preview",
+            "chat_20706",
+            "chat_23310",
+            "gemini-3.1-flash-lite",
+        ] {
+            assert!(
+                !recommended.iter().any(|id| id == retired),
+                "cold-start recommended catalog must exclude retired/internal model {retired}"
+            );
+        }
+
+        // Historical spec lookup via get() must remain intact for compatibility
+        assert!(OfficialModelCatalog::get("gemini-2.5-flash").is_some());
+        assert!(OfficialModelCatalog::get("tab_flash_lite_preview").is_some());
+    }
+
+    #[test]
+    fn live_recommended_prunes_stale_snapshot_and_keeps_account_union() {
+        let mut embedded = HashMap::new();
+        let mut stale_36 = OfficialModelCatalog::default_model();
+        stale_36.recommended = Some(true);
+        embedded.insert("gemini-3.6-flash-medium".to_string(), stale_36);
+        let mut hy = OfficialModelCatalog::default_model();
+        hy.recommended = Some(true);
+        embedded.insert("gemini-4-hydrogen-high".to_string(), hy.clone());
+        let mut flash38 = OfficialModelCatalog::default_model();
+        flash38.recommended = Some(true);
+        embedded.insert("gemini-3.8-flash-high".to_string(), flash38.clone());
+        let mut internal = OfficialModelCatalog::default_model();
+        internal.recommended = Some(true);
+        internal.is_internal = Some(true);
+        embedded.insert("chat_999".to_string(), internal.clone());
+
+        let mut live_acc_a_models = HashMap::new();
+        live_acc_a_models.insert("gemini-4-hydrogen-high".to_string(), hy);
+        live_acc_a_models.insert("gemini-3.8-flash-high".to_string(), flash38.clone());
+        live_acc_a_models.insert("chat_999".to_string(), internal);
+        let acc_a_supported: std::collections::HashSet<String> = [
+            "gemini-4-hydrogen-high".to_string(),
+            "gemini-3.8-flash-high".to_string(),
+            "chat_999".to_string(),
+        ]
+        .into_iter()
+        .collect();
+
+        let mut live_acc_b_models = HashMap::new();
+        live_acc_b_models.insert("gemini-3.8-flash-high".to_string(), flash38);
+        let acc_b_supported: std::collections::HashSet<String> =
+            ["gemini-3.8-flash-high".to_string()].into_iter().collect();
+
+        let mut live_map = HashMap::new();
+        live_map.insert(
+            "acc_a@example.com".to_string(),
+            OfficialModelCatalog::extract_live_recommended_ids(
+                &live_acc_a_models,
+                &acc_a_supported,
+            ),
+        );
+        live_map.insert(
+            "acc_b@example.com".to_string(),
+            OfficialModelCatalog::extract_live_recommended_ids(
+                &live_acc_b_models,
+                &acc_b_supported,
+            ),
+        );
+
+        let recommended =
+            OfficialModelCatalog::resolve_recommended_model_ids(Some(&live_map), &embedded);
+        assert!(recommended.contains(&"gemini-4-hydrogen-high".to_string()));
+        assert!(recommended.contains(&"gemini-3.8-flash-high".to_string()));
+        assert!(
+            !recommended.contains(&"gemini-3.6-flash-medium".to_string()),
+            "live upstream sync must replace stale static snapshot entries"
+        );
+        assert!(
+            !recommended.contains(&"chat_999".to_string()),
+            "internal models must never enter recommended list even if listed in sorts"
         );
     }
 }

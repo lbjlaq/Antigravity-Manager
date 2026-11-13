@@ -320,7 +320,7 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
 
 /// 获取所有内置支持的标准公开模型列表 (动态从官方模型结构体目录获取并严格过滤基准线)
 pub fn get_supported_models() -> Vec<String> {
-    crate::models::OfficialModelCatalog::all_model_ids()
+    crate::models::OfficialModelCatalog::recommended_model_ids()
         .into_iter()
         .filter(|id| is_model_compliant_with_baseline(id))
         .collect()
@@ -331,6 +331,20 @@ pub async fn get_all_dynamic_models(
     custom_mapping: &tokio::sync::RwLock<std::collections::HashMap<String, String>>,
     token_manager: Option<&crate::proxy::token_manager::TokenManager>,
     only_raw_quota_models: bool,
+) -> Vec<String> {
+    get_all_dynamic_models_with_options(custom_mapping, token_manager, only_raw_quota_models, true)
+        .await
+}
+
+/// [`get_all_dynamic_models`] 的底层实现，支持控制 `!only_raw_quota_models` 时是否并入官方推荐目录。
+///
+/// - 模型展示接口 (`/v1/models`) 传入 `union_supported_catalog = true`，保证部分池也能展示完整官方推荐列表；
+/// - 入站门禁在已有真实池数据时传入 `union_supported_catalog = false`，避免把“当前活跃池未持有”的目录模型误判为可调度。
+pub(crate) async fn get_all_dynamic_models_with_options(
+    custom_mapping: &tokio::sync::RwLock<std::collections::HashMap<String, String>>,
+    token_manager: Option<&crate::proxy::token_manager::TokenManager>,
+    only_raw_quota_models: bool,
+    union_supported_catalog: bool,
 ) -> Vec<String> {
     use std::collections::HashSet;
     let mut model_ids = HashSet::new();
@@ -347,10 +361,10 @@ pub async fn get_all_dynamic_models(
     }
 
     // 如果未开启 only_raw_quota_models：
-    // - 当账号池尚未加载任何模型（冷启动/无账号测试）时，使用官方权威目录基准模型兜底；
+    // - 按需并入官方推荐目录基准模型 (union_supported_catalog)；
     // - 追加用户显式配置的自定义映射模型 (Custom)。
     if !only_raw_quota_models {
-        if model_ids.is_empty() {
+        if union_supported_catalog {
             for m in get_supported_models() {
                 model_ids.insert(m);
             }
@@ -503,7 +517,7 @@ pub async fn get_all_dynamic_models_metadata(
         std::collections::HashMap::new()
     };
 
-    if !only_raw_quota_models && meta_map.is_empty() {
+    if !only_raw_quota_models {
         for m in get_supported_models() {
             if let Some(official) = crate::models::OfficialModelCatalog::get(&m) {
                 let official_meta = crate::models::quota::ModelListingMeta::from(&official);
@@ -634,6 +648,19 @@ pub async fn find_dynamic_model(
         .find(|&m| m.eq_ignore_ascii_case(clean_model))
     {
         return Some(m.clone());
+    }
+    // 3. 官方非推荐但允许单模型路由/查询的非内部合规模型（例如 gemini-3.1-flash-lite）
+    if !only_raw_quota_models {
+        for id in crate::models::OfficialModelCatalog::all_model_ids() {
+            if id.eq_ignore_ascii_case(clean_model) && is_model_compliant_with_baseline(&id) {
+                let allowed = crate::models::OfficialModelCatalog::get(&id)
+                    .map(|info| info.is_internal != Some(true) && !info.is_disabled())
+                    .unwrap_or(false);
+                if allowed {
+                    return Some(id);
+                }
+            }
+        }
     }
     None
 }
@@ -1916,5 +1943,93 @@ mod tests {
         if let Some(flash_meta) = meta_map.get("gemini-2.5-flash") {
             assert!(flash_meta.display_name.is_some() || flash_meta.supports_images.is_some());
         }
+    }
+
+    #[test]
+    fn test_get_supported_models_excludes_retired_and_exposes_active_recommended() {
+        let supported = get_supported_models();
+        for expected in [
+            "gemini-4-hydrogen-high",
+            "gemini-4-argon-high",
+            "gemini-3.8-flash-high",
+            "gemini-3.1-flash-image",
+            "claude-sonnet-4-6",
+        ] {
+            assert!(
+                supported.iter().any(|id| id == expected),
+                "get_supported_models must expose recommended official model {expected}"
+            );
+        }
+        for retired in [
+            "gemini-3.6-flash-medium",
+            "gemini-3.7-flash-high",
+            "gemini-2.5-flash",
+            "gemini-3-flash",
+            "gemini-3-flash-agent",
+            "gemini-pro-agent",
+            "tab_flash_lite_preview",
+            "tab_jump_flash_lite_preview",
+        ] {
+            assert!(
+                !supported.iter().any(|id| id == retired),
+                "get_supported_models must exclude retired/internal model {retired}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_all_dynamic_models_unions_recommended_when_pool_partial() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("abv_mapping_union_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let tm = crate::proxy::token_manager::TokenManager::new(temp_dir.clone());
+        let mut available = std::collections::HashSet::new();
+        available.insert("gemini-3.8-flash-high".to_string());
+        tm.insert_token_for_test(crate::proxy::token_manager::ProxyToken {
+            account_id: "acc-partial".to_string(),
+            priority: 0,
+            model_priorities: std::collections::HashMap::new(),
+            access_token: "ya29.test".to_string(),
+            refresh_token: "1//test".to_string(),
+            expires_in: 3600,
+            timestamp: chrono::Utc::now().timestamp() + 3600,
+            email: "partial@example.com".to_string(),
+            account_path: temp_dir.join("acc-partial.json"),
+            project_id: None,
+            subscription_tier: None,
+            remaining_quota: Some(100),
+            protected_models: std::collections::HashSet::new(),
+            forbidden_models: std::collections::HashSet::new(),
+            health_score: 1.0,
+            reset_time: None,
+            weekly_reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: std::collections::HashMap::new(),
+            model_limits: std::collections::HashMap::new(),
+            available_models: available,
+            model_metadata: std::collections::HashMap::new(),
+            model_reset_times: std::collections::HashMap::new(),
+            model_weekly_reset_times: std::collections::HashMap::new(),
+            model_quota_windows: std::collections::HashMap::new(),
+        });
+
+        let custom = tokio::sync::RwLock::new(std::collections::HashMap::new());
+        let default_list = get_all_dynamic_models(&custom, Some(&tm), false).await;
+        assert!(
+            default_list.contains(&"gemini-4-hydrogen-high".to_string()),
+            "partial account pool must still expose official recommended gemini-4-hydrogen-high when only_raw_quota_models=false"
+        );
+        assert!(
+            !default_list.contains(&"gemini-3.6-flash-medium".to_string()),
+            "retired gemini-3.6-flash-medium must never be exposed"
+        );
+
+        let raw_only = get_all_dynamic_models(&custom, Some(&tm), true).await;
+        assert!(raw_only.contains(&"gemini-3.8-flash-high".to_string()));
+        assert!(!raw_only.contains(&"gemini-4-hydrogen-high".to_string()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

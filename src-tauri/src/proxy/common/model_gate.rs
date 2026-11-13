@@ -186,10 +186,12 @@ pub async fn downstream_exposed_models(
     token_manager: &TokenManager,
     only_raw_quota_models: bool,
 ) -> HashSet<String> {
-    let mut allowed: HashSet<String> = model_mapping::get_all_dynamic_models(
+    let is_cold_start = token_manager.get_all_collected_models().is_empty();
+    let mut allowed: HashSet<String> = model_mapping::get_all_dynamic_models_with_options(
         custom_mapping,
         Some(token_manager),
         only_raw_quota_models,
+        is_cold_start,
     )
     .await
     .into_iter()
@@ -197,7 +199,7 @@ pub async fn downstream_exposed_models(
 
     // 冷启动（号池尚未同步模型目录）才用官方目录兜底；一旦有真实可用集合，
     // 严格只暴露 available ∪ agent 配置 ∪ 自定义别名，避免“字典存在但未开通”的条目外泄。
-    if token_manager.get_all_collected_models().is_empty() {
+    if is_cold_start {
         for id in model_mapping::get_supported_models() {
             allowed.insert(id);
         }
