@@ -37,6 +37,42 @@ pub fn routing_effort<'a>(explicit_disable: bool, effort: Option<&'a str>) -> Op
     }
 }
 
+/// 从 JSON 值提取思考等级文本（同时兼容 `"LOW"/"HIGH"` 字符串与 `1/2/3/100` 整数）
+pub fn extract_thinking_level_str(val: &Value) -> Option<String> {
+    if let Some(s) = val.as_str() {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+        return None;
+    }
+    val.as_i64()
+        .or_else(|| val.as_u64().and_then(|u| i64::try_from(u).ok()))
+        .map(|n| n.to_string())
+}
+
+/// 将官方目录/请求中的 `thinkingLevel` 原值转换为上游出站 JSON 值：
+/// - `1 / low` -> `"LOW"`
+/// - `2 / medium` -> `"MEDIUM"`
+/// - `3 / high` -> `"HIGH"`
+/// - `xhigh / x-high` -> `"XHIGH"`（不合并进 HIGH，保留独立档位语义）
+/// - `4`（历史未同步占位值）-> `"HIGH"` 兼容兜底
+/// - `> 4` 的扩展整数（如官方实抓 `100`）-> 原样保留整数 JSON 值
+fn parse_official_thinking_level_value(raw: &str) -> Option<Value> {
+    let trimmed = raw.trim();
+    match trimmed.to_ascii_lowercase().replace('_', "-").as_str() {
+        "1" | "low" => Some(json!("LOW")),
+        "2" | "medium" => Some(json!("MEDIUM")),
+        "3" | "4" | "high" => Some(json!("HIGH")),
+        "xhigh" | "x-high" => Some(json!("XHIGH")),
+        _ => trimmed
+            .parse::<i64>()
+            .ok()
+            .filter(|&n| n > 4)
+            .map(|n| json!(n)),
+    }
+}
+
 /// 统一归一化提取客户端思考开关状态（适用于 OpenAI / Claude / Gemini / Codex 等所有协议）
 pub fn extract_client_thinking_switch(
     thinking_type: Option<&str>,
@@ -1718,48 +1754,63 @@ impl InboundThinkingPipeline {
         let tb_config = crate::proxy::config::get_thinking_budget_config();
 
         // 等级取值优先级：
-        // ① 具名档位后缀（模型名即档位，对齐官方客户端：-low → LOW）
+        // ① 具名档位后缀（模型名即档位：-low → "LOW"；-xhigh 若官方声明扩展数值如 100 则发整数 100）
         // ② 无后缀 / 自适应模型 → 客户端 effort
-        // ③ 官方结构体声明的等级数值（如 tiered=3、2.5-flash=1）
-        // ④ 网关配置 effort → ⑤ MEDIUM 兜底
-        let resolve_level_for_model = |raw_effort: Option<&str>| -> String {
+        // ③ 官方结构体声明的等级数值（如 tiered=3 → "HIGH"、hydrogen-xhigh=100 → 100）
+        // ④ 网关配置 effort → ⑤ "MEDIUM" 兜底
+        let resolve_level_for_model = |raw_effort: Option<&str>| -> Value {
             let lower = target_model.to_lowercase();
+            let official_level_value = official_level.and_then(parse_official_thinking_level_value);
+
             if lower.ends_with("-low")
                 || lower.ends_with("-extra-low")
                 || lower.ends_with("-minimal")
                 || lower.ends_with("-lite")
             {
-                return "LOW".to_string();
+                return json!("LOW");
             }
-            if lower.ends_with("-high")
-                || lower.ends_with("-xhigh")
-                || lower.ends_with("-max")
-                || lower.ends_with("-extreme")
-            {
-                return "HIGH".to_string();
+            if lower.ends_with("-xhigh") {
+                return official_level_value.unwrap_or_else(|| json!("XHIGH"));
+            }
+            if lower.ends_with("-high") || lower.ends_with("-max") || lower.ends_with("-extreme") {
+                return json!("HIGH");
             }
             if lower.ends_with("-medium")
                 || lower.ends_with("-default")
                 || lower.ends_with("-normal")
             {
-                return "MEDIUM".to_string();
+                return json!("MEDIUM");
             }
 
             // 自适应/裸模型：客户端显式档位优先
-            if let Some(eff) =
-                raw_effort.and_then(crate::proxy::model_specs::normalize_client_thinking_level)
-            {
-                return eff.to_string();
+            // 若客户端请求 xhigh / 100：
+            // - 若官方模型支持扩展数字档（如 100）→ 发 100
+            // - 若官方模型仅在标准 1/2/3 三档内（如 3.8-flash-tiered）→ 钳制到 "HIGH"
+            // - 否则原样保留 "XHIGH"，不强行并入 "HIGH"
+            if let Some(raw) = raw_effort {
+                let norm = raw.trim().to_ascii_lowercase().replace('_', "-");
+                let wants_extended =
+                    norm == "xhigh" || norm == "x-high" || norm.parse::<i64>().is_ok_and(|n| n > 4);
+                if wants_extended {
+                    if let Some(val) = official_level_value.as_ref().filter(|v| v.is_number()) {
+                        return val.clone();
+                    }
+                    if official_level
+                        .and_then(|l| l.trim().parse::<i64>().ok())
+                        .is_some_and(|n| (1..=3).contains(&n))
+                    {
+                        return json!("HIGH");
+                    }
+                    return json!("XHIGH");
+                }
+                if let Some(eff) = crate::proxy::model_specs::normalize_client_thinking_level(raw) {
+                    return json!(eff);
+                }
             }
 
-            // 官方结构体声明的等级（数字 1/2/3 或字符串 LOW/MEDIUM/HIGH）
-            if let Some(raw) = official_level {
-                match raw.trim().to_ascii_lowercase().as_str() {
-                    "1" | "low" => return "LOW".to_string(),
-                    "2" | "medium" => return "MEDIUM".to_string(),
-                    "3" | "high" => return "HIGH".to_string(),
-                    _ => {}
-                }
+            // 官方结构体声明的等级（1/2/3 → LOW/MEDIUM/HIGH，100 等扩展数值 → 原样整数）
+            if let Some(val) = official_level_value {
+                return val;
             }
 
             if let Some(eff) = tb_config
@@ -1767,9 +1818,16 @@ impl InboundThinkingPipeline {
                 .as_deref()
                 .and_then(crate::proxy::model_specs::normalize_client_thinking_level)
             {
-                return eff.to_string();
+                if eff == "XHIGH"
+                    && official_level
+                        .and_then(|l| l.trim().parse::<i64>().ok())
+                        .is_some_and(|n| (1..=3).contains(&n))
+                {
+                    return json!("HIGH");
+                }
+                return json!(eff);
             }
-            "MEDIUM".to_string()
+            json!("MEDIUM")
         };
 
         // ════════════════════════════════════════════════════════════════════
@@ -1840,10 +1898,31 @@ impl InboundThinkingPipeline {
         }
 
         // 终审上限保护与不变量协调状态机：
-        // 1. 获取官方模型结构体的物理最大输出硬顶 (safe_limit)
-        let safe_limit = official_info
-            .as_ref()
-            .and_then(|info| info.max_output_tokens)
+        // 1. 优先采信当前选中账号动态拉取的 model_limits，再回退官方模型结构体物理上限，最后兜底 65536
+        let lower_target = target_model.trim().to_lowercase();
+        let base_target = crate::proxy::common::model_mapping::strip_tier_suffix(&lower_target);
+        let std_target =
+            crate::proxy::common::model_mapping::normalize_to_standard_id(target_model);
+        let token_limit = token.and_then(|t| {
+            t.model_limits
+                .get(target_model)
+                .or_else(|| t.model_limits.get(&lower_target))
+                .or_else(|| t.model_limits.get(&base_target))
+                .or_else(|| {
+                    std_target
+                        .as_deref()
+                        .and_then(|sid| t.model_limits.get(sid))
+                })
+                .copied()
+                .filter(|&v| v > 0)
+                .map(|v| v.max(8192) as i64)
+        });
+        let safe_limit = token_limit
+            .or_else(|| {
+                official_info
+                    .as_ref()
+                    .and_then(|info| info.max_output_tokens)
+            })
             .unwrap_or(65536);
 
         // 客户端/用户当前传入的 maxOutputTokens（若缺省则默认按官方 safe_limit 填齐）
@@ -1972,13 +2051,21 @@ impl InboundThinkingPipeline {
                     changed = true;
                 }
 
-                // 2. thinkingLevel 降级：HIGH 降级为 MEDIUM
+                // 2. thinkingLevel 降级：数字扩展档（如 100）或 XHIGH 降级为 HIGH；HIGH 降级为 MEDIUM
                 if let Some(level_val) = obj.get("thinkingLevel") {
-                    if let Some(level) = level_val.as_str() {
-                        if level.eq_ignore_ascii_case("HIGH") {
-                            obj.insert("thinkingLevel".to_string(), json!("MEDIUM"));
-                            changed = true;
-                        }
+                    if level_val.as_i64().is_some_and(|n| n > 3)
+                        || level_val
+                            .as_str()
+                            .is_some_and(|s| s.eq_ignore_ascii_case("XHIGH"))
+                    {
+                        obj.insert("thinkingLevel".to_string(), json!("HIGH"));
+                        changed = true;
+                    } else if level_val
+                        .as_str()
+                        .is_some_and(|s| s.eq_ignore_ascii_case("HIGH"))
+                    {
+                        obj.insert("thinkingLevel".to_string(), json!("MEDIUM"));
+                        changed = true;
                     }
                 }
             }
@@ -2024,10 +2111,13 @@ impl InboundThinkingPipeline {
             }
         }
 
-        // 检查模型名是否带 -high 后缀，替换为 -medium
+        // 检查模型名是否带 -xhigh / -high 后缀，按档位降一级（-xhigh -> -high, -high -> -medium）
         let mut degrade_model_str = |m_val: &mut Value| {
             if let Some(m_str) = m_val.as_str() {
-                if m_str.ends_with("-high") || m_str.contains("-high") {
+                if let Some(prefix) = m_str.strip_suffix("-xhigh") {
+                    *m_val = json!(format!("{}-high", prefix));
+                    degraded = true;
+                } else if m_str.ends_with("-high") || m_str.contains("-high") {
                     *m_val = json!(m_str.replace("-high", "-medium"));
                     degraded = true;
                 }
@@ -2960,6 +3050,25 @@ mod tests {
             &mut body6
         ));
         assert_eq!(body6["model"], "gemini-3.8-flash-medium");
+
+        // Case 7: thinkingLevel == 100 / "XHIGH" 且 -xhigh 模型 -> 降级为 "HIGH" 与 -high
+        let mut body7 = json!({
+            "model": "gemini-4-hydrogen-xhigh",
+            "generationConfig": {
+                "thinkingConfig": {
+                    "includeThoughts": true,
+                    "thinkingLevel": 100
+                }
+            }
+        });
+        assert!(InboundThinkingPipeline::try_degrade_thinking_budget(
+            &mut body7
+        ));
+        assert_eq!(body7["model"], "gemini-4-hydrogen-high");
+        assert_eq!(
+            body7["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "HIGH"
+        );
     }
 
     #[test]
@@ -5535,5 +5644,163 @@ mod tests {
         assert!(parts2[2].get("thoughtSignature").is_none());
         assert_eq!(parts2[3]["thoughtSignature"], claude_sig);
         assert!(parts2[4].get("thoughtSignature").is_none());
+    }
+
+    #[test]
+    fn test_configure_inbound_thinking_preserves_token_model_limit_and_xhigh_level() {
+        let mut token = crate::proxy::token_manager::ProxyToken {
+            account_id: "g4_limit_test".to_string(),
+            priority: crate::models::account::default_priority(),
+            model_priorities: std::collections::HashMap::new(),
+            access_token: "atk".to_string(),
+            refresh_token: "rtk".to_string(),
+            expires_in: 3600,
+            timestamp: chrono::Utc::now().timestamp() + 3600,
+            email: "g4@test.com".to_string(),
+            account_path: std::path::PathBuf::from("/tmp/g4"),
+            project_id: None,
+            subscription_tier: Some("PRO".to_string()),
+            remaining_quota: Some(100),
+            protected_models: std::collections::HashSet::new(),
+            forbidden_models: std::collections::HashSet::new(),
+            health_score: 1.0,
+            reset_time: None,
+            weekly_reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: std::collections::HashMap::new(),
+            model_limits: std::collections::HashMap::from([(
+                "gemini-4-helium-xhigh".to_string(),
+                262144u64,
+            )]),
+            available_models: std::collections::HashSet::new(),
+            model_metadata: std::collections::HashMap::new(),
+            model_reset_times: std::collections::HashMap::new(),
+            model_weekly_reset_times: std::collections::HashMap::new(),
+            model_quota_windows: std::collections::HashMap::new(),
+        };
+
+        let mut gen_cfg = json!({"maxOutputTokens": 200000});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-helium-xhigh",
+            &mut gen_cfg,
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            Some(&token),
+        );
+        // Must preserve upstream 262144 ceiling rather than clamping down to default 65536
+        assert_eq!(gen_cfg["maxOutputTokens"], 200000);
+
+        // Bare model without catalog entry falls back cleanly via base limit in token.model_limits
+        token
+            .model_limits
+            .insert("gemini-4-helium".to_string(), 262144u64);
+        let mut bare_cfg = json!({"maxOutputTokens": 300000});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-helium",
+            &mut bare_cfg,
+            ClientThinkingSwitch::Default,
+            Some("xhigh"),
+            None,
+            Some(&token),
+        );
+        assert_eq!(bare_cfg["maxOutputTokens"], 262144);
+
+        // Cataloged -xhigh model (official thinkingLevel=100) emits numeric 100 and respects token.model_limits
+        token
+            .model_limits
+            .insert("gemini-4-hydrogen-xhigh".to_string(), 262144u64);
+        let mut xhigh_cfg = json!({"maxOutputTokens": 262144});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-hydrogen-xhigh",
+            &mut xhigh_cfg,
+            ClientThinkingSwitch::Default,
+            None,
+            None,
+            Some(&token),
+        );
+        assert_eq!(xhigh_cfg["maxOutputTokens"], 262144);
+        assert_eq!(xhigh_cfg["thinkingConfig"]["thinkingLevel"], json!(100));
+
+        // Cataloged 1/2/3 Hydrogen variants map to LOW / MEDIUM / HIGH
+        for (model_id, expected_level) in [
+            ("gemini-4-hydrogen-low", "LOW"),
+            ("gemini-4-hydrogen-medium", "MEDIUM"),
+            ("gemini-4-hydrogen-high", "HIGH"),
+        ] {
+            let mut tier_cfg = json!({"maxOutputTokens": 262144});
+            InboundThinkingPipeline::configure_inbound_thinking(
+                model_id,
+                &mut tier_cfg,
+                ClientThinkingSwitch::Default,
+                None,
+                None,
+                Some(&token),
+            );
+            assert_eq!(
+                tier_cfg["thinkingConfig"]["thinkingLevel"],
+                json!(expected_level)
+            );
+        }
+
+        // Dynamic catalog entry with numeric thinkingLevel=100 (live upstream xhigh format) resolves bare model to 100
+        let mut helium_info = crate::models::OfficialModelCatalog::default_model();
+        helium_info.display_name = Some("Gemini 4 Helium (XHigh)".to_string());
+        helium_info.model = "MODEL_HELIUM".to_string();
+        helium_info.max_output_tokens = Some(262144);
+        helium_info.thinking_level = Some("100".to_string());
+        crate::models::OfficialModelCatalog::update(std::collections::HashMap::from([(
+            "gemini-4-helium-xhigh".to_string(),
+            helium_info,
+        )]));
+        let mut live_xhigh_bare_cfg = json!({"maxOutputTokens": 300000});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-4-helium",
+            &mut live_xhigh_bare_cfg,
+            ClientThinkingSwitch::Default,
+            Some("100"),
+            None,
+            Some(&token),
+        );
+        assert_eq!(live_xhigh_bare_cfg["maxOutputTokens"], 262144);
+        assert_eq!(
+            live_xhigh_bare_cfg["thinkingConfig"]["thinkingLevel"],
+            json!(100)
+        );
+
+        // Numeric & string extraction helper handles both wire formats cleanly
+        assert_eq!(
+            extract_thinking_level_str(&json!(100)).as_deref(),
+            Some("100")
+        );
+        assert_eq!(
+            extract_thinking_level_str(&json!("XHIGH")).as_deref(),
+            Some("XHIGH")
+        );
+
+        // Explicit "xhigh" catalog/client field preserves "XHIGH" instead of merging into "HIGH",
+        // while 3-tier capped models (e.g. gemini-3.8-flash-tiered = "3") stay safely at "HIGH".
+        let mut future_xhigh = crate::models::OfficialModelCatalog::default_model();
+        future_xhigh.model = "MODEL_FUTURE_XHIGH".to_string();
+        future_xhigh.thinking_level = Some("XHIGH".to_string());
+        crate::models::OfficialModelCatalog::update(std::collections::HashMap::from([(
+            "gemini-5-test-xhigh".to_string(),
+            future_xhigh,
+        )]));
+        let mut future_cfg = json!({});
+        InboundThinkingPipeline::configure_inbound_thinking(
+            "gemini-5-test-xhigh",
+            &mut future_cfg,
+            ClientThinkingSwitch::Default,
+            Some("xhigh"),
+            None,
+            None,
+        );
+        assert_eq!(
+            future_cfg["thinkingConfig"]["thinkingLevel"],
+            json!("XHIGH")
+        );
     }
 }

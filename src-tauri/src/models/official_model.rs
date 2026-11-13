@@ -300,7 +300,7 @@ impl OfficialModelCatalog {
 
         // 4. 若传入的是无后缀派生裸模型（如 claude-opus-5-5, gemini-3.8-flash, gemini-4-argon, gpt-oss-120b），
         // 自动匹配其标准分档变体以继承官方权威的 maxTokens (1048576 / 1000000) 与 maxOutputTokens (65536 / 128000)
-        for suffix in ["tiered", "medium", "high", "low", "thinking"] {
+        for suffix in ["tiered", "xhigh", "medium", "high", "low", "thinking"] {
             let candidate = format!("{}-{}", lower, suffix);
             if let Some(info) = lock.get(&candidate) {
                 return Some(info.clone());

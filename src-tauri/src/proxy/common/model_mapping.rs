@@ -1045,6 +1045,135 @@ pub fn strip_tier_suffix(model: &str) -> String {
     model.trim().to_string()
 }
 
+/// 判断 token 是否属于通用模型角色/时间窗口/后缀词（非 Gemini 4+ 专属代号）。
+fn is_generic_gemini_role_token(token: &str) -> bool {
+    matches!(
+        token,
+        "pro"
+            | "flash"
+            | "ultra"
+            | "nano"
+            | "lite"
+            | "image"
+            | "agent"
+            | "exp"
+            | "preview"
+            | "disabled"
+            | "thinking"
+            | "tiered"
+            | "models"
+            | "model"
+            | "wtu"
+            | "weekly"
+            | "5h"
+            | "7d"
+            | "hour"
+            | "quota"
+            | "pool"
+            | "default"
+            | "standard"
+    )
+}
+
+/// 从模型名中提取 `(主版本号片段, 代号)`，覆盖 `gemini-4-*`、`gemini-5-*` 等未来代际模型。
+///
+/// 会跳过纯数字（如 `gemini-4-1-flash`）与通用角色词（如 `gemini-4-pro`），
+/// 仅识别真正的独立字母代号；仅对历史遗留的 #3745 `argon` 保留裸子串兼容。
+fn extract_gemini_codename_with_version(model_name: &str) -> Option<(String, String)> {
+    let lower = model_name.trim().to_lowercase();
+    let stripped = strip_tier_suffix(&lower);
+    if let Some(after_gemini) = stripped.strip_prefix("gemini-") {
+        if let Some((ver_part, rest)) = after_gemini.split_once('-') {
+            let major_ok = ver_part
+                .split('.')
+                .next()
+                .and_then(|m| m.parse::<u32>().ok())
+                .map(|m| m >= 4)
+                .unwrap_or(false);
+            if major_ok {
+                let code = rest.split('-').next().unwrap_or("").trim();
+                if !code.is_empty()
+                    && code.bytes().any(|b| b.is_ascii_alphabetic())
+                    && !is_generic_gemini_role_token(code)
+                {
+                    return Some((ver_part.to_string(), code.to_string()));
+                }
+            }
+        }
+    }
+    if lower.contains("argon") {
+        return Some(("4".to_string(), "argon".to_string()));
+    }
+    None
+}
+
+/// 从模型名中提取 Gemini 4+ 专属代号（如 `argon`、`hydrogen`、`carbon` 及未来同类代号）。
+pub fn extract_gemini4_codename(model_name: &str) -> Option<String> {
+    extract_gemini_codename_with_version(model_name).map(|(_, code)| code)
+}
+
+/// 从配额分组名称 / bucket_id 中识别专属 Gemini 4+ 代号。
+///
+/// 完全由命名模式驱动：
+/// 1. 显式代际模式：`gemini <major>=4 <codename>` / `gemini-<major>=4-<codename>`；
+/// 2. 专属配额桶模式：`gemini-<codename>-wtu-...`（对齐上游 `gemini-argon-wtu-weekly`）；
+/// 3. 历史遗留 #3745：`argon` 兼容识别；
+/// 4. 与账号下发模型列表中动态提取的代号集合交叉匹配（见 `extract_group_g4_codename_with_known`）。
+pub fn extract_group_g4_codename(
+    display_name_lower: &str,
+    bucket_id_lower: &str,
+) -> Option<String> {
+    if display_name_lower.contains("argon") || bucket_id_lower.contains("argon") {
+        return Some("argon".to_string());
+    }
+    for text in [display_name_lower, bucket_id_lower] {
+        let normalized = text.replace('_', "-").replace(' ', "-");
+        let parts: Vec<&str> = normalized.split('-').filter(|s| !s.is_empty()).collect();
+        for win in parts.windows(3) {
+            if win[0] == "gemini" {
+                let is_v4_plus = win[1]
+                    .split('.')
+                    .next()
+                    .and_then(|m| m.parse::<u32>().ok())
+                    .map(|m| m >= 4)
+                    .unwrap_or(false);
+                if is_v4_plus
+                    && win[2].bytes().any(|b| b.is_ascii_alphabetic())
+                    && !is_generic_gemini_role_token(win[2])
+                {
+                    return Some(win[2].to_string());
+                }
+                if win[2] == "wtu"
+                    && win[1].bytes().any(|b| b.is_ascii_alphabetic())
+                    && !is_generic_gemini_role_token(win[1])
+                {
+                    return Some(win[1].to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// 结合当前账号模型目录动态收集到的代号集合，从配额分组识别专属 Gemini 4+ 代号。
+pub fn extract_group_g4_codename_with_known(
+    display_name_lower: &str,
+    bucket_id_lower: &str,
+    known_codenames: &[String],
+) -> Option<String> {
+    if let Some(code) = extract_group_g4_codename(display_name_lower, bucket_id_lower) {
+        return Some(code);
+    }
+    known_codenames
+        .iter()
+        .find(|code| {
+            !code.is_empty()
+                && (display_name_lower.contains(code.as_str())
+                    || bucket_id_lower.contains(code.as_str()))
+        })
+        .cloned()
+}
+
 pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
     let lower = model_name.to_lowercase();
 
@@ -1053,15 +1182,9 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
         return None;
     }
 
-    // 0. Gemini 4 系列（独立配额组与独立计费桶，如 carbon / argon / hydrogen，所有档位变体如 xhigh/high/medium/low/thinking 均归一化为基底 ID）
-    if lower.contains("carbon") {
-        return Some("gemini-4-carbon".to_string());
-    }
-    if lower.contains("argon") {
-        return Some("gemini-4-argon".to_string());
-    }
-    if lower.contains("hydrogen") {
-        return Some("gemini-4-hydrogen".to_string());
+    // 0. Gemini 4+ 系列代号（如 carbon / argon / hydrogen 及未来新代号，所有档位变体均归一化为基底 ID）
+    if let Some((ver, code)) = extract_gemini_codename_with_version(&lower) {
+        return Some(format!("gemini-{}-{}", ver, code));
     }
 
     // 1. Image resources must keep Flash image and Pro image in separate quota buckets.
@@ -1753,6 +1876,20 @@ mod tests {
         assert_eq!(normalize_to_standard_id("gemini-4-argon-disabled"), None);
         assert_eq!(normalize_to_standard_id("gemini-4-carbon-disabled"), None);
         assert_eq!(normalize_to_standard_id("gemini-4-hydrogen-disabled"), None);
+        assert_eq!(extract_gemini4_codename("gemini-4-1-flash"), None);
+        assert_eq!(extract_gemini4_codename("gemini-4-pro-preview"), None);
+        assert_eq!(
+            extract_gemini4_codename("gemini-4-helium-xhigh"),
+            Some("helium".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-4-helium-xhigh"),
+            Some("gemini-4-helium".to_string())
+        );
+        assert_eq!(
+            normalize_to_standard_id("gemini-5-nova-high"),
+            Some("gemini-5-nova".to_string())
+        );
     }
 
     #[test]

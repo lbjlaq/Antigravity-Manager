@@ -635,6 +635,9 @@ export {
     ensurePinnedImageSelector,
     DEFAULT_IMAGE_PIN_SELECTOR,
     resolveQuotaModels,
+    extractGemini4Codename,
+    isDedicatedG4Group,
+    extractGroupQuotaPercentage,
     type ModelCategory,
     type QuotaModelSelection,
 } from '../utils/modelCategory';

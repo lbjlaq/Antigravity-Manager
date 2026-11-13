@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react';
 import { TrendingUp, ArrowRightLeft, Zap, Laptop, Code2, Terminal, Blocks } from 'lucide-react';
-import { Account, QuotaGroup, ActiveClientsStatus, getAccountTier } from '../../types/account';
+import { Account, ActiveClientsStatus, getAccountTier } from '../../types/account';
 import { isAccountAbnormal } from '../../utils/accountStatus';
-import { findQuotaModel } from '../../config/modelConfig';
+import { extractGroupQuotaPercentage, findQuotaModel } from '../../config/modelConfig';
 import { useTranslation } from 'react-i18next';
 
 interface BestAccountsProps {
@@ -13,40 +13,6 @@ interface BestAccountsProps {
 }
 
 type TargetIdeType = 'classic' | 'ide' | 'agy' | 'acp';
-
-/** 从 quota_groups 中提取 5h 或 Weekly 桶百分比 (0-100) */
-function getBucketPercentage(
-    quotaGroups: QuotaGroup[] | undefined,
-    category: 'gemini' | 'claude',
-    targetWindow: '5h' | 'weekly'
-): number | null {
-    if (!quotaGroups || quotaGroups.length === 0) return null;
-
-    for (const group of quotaGroups) {
-        const name = (group.display_name || '').toLowerCase();
-        if (name.includes('argon')) continue;
-        const isTarget = category === 'claude'
-            ? (name.includes('claude') || name.includes('gpt'))
-            : (name.includes('gemini') || !name.includes('claude'));
-
-        if (isTarget) {
-            const bucket = group.buckets?.find(b => {
-                const win = (b.window || '').toLowerCase();
-                const id = (b.bucket_id || '').toLowerCase();
-                if (targetWindow === 'weekly') {
-                    return win.includes('week') || id.includes('week');
-                } else {
-                    return win.includes('5h') || id.includes('5h') || win.includes('hour') || id.includes('hour');
-                }
-            });
-
-            if (bucket && typeof bucket.remaining_fraction === 'number') {
-                return Math.round(bucket.remaining_fraction * 100);
-            }
-        }
-    }
-    return null;
-}
 
 /** 提取指定模型类别在当前 5h 窗口内的最关键可用配额百分比 */
 function get5HourQuota(
@@ -61,13 +27,13 @@ function get5HourQuota(
         if (!hasClaude) return 0;
     }
 
-    const weeklyGroup = getBucketPercentage(account.quota?.quota_groups, category, 'weekly');
+    const weeklyGroup = extractGroupQuotaPercentage(account.quota, category, 'weekly');
     // 周额度耗尽熔断保护
     if (weeklyGroup !== null && weeklyGroup <= 5) {
         return 0;
     }
 
-    const fiveHourGroup = getBucketPercentage(account.quota?.quota_groups, category, '5h');
+    const fiveHourGroup = extractGroupQuotaPercentage(account.quota, category, '5h');
     if (fiveHourGroup !== null) {
         return fiveHourGroup;
     }

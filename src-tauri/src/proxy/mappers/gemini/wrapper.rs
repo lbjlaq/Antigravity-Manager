@@ -77,7 +77,7 @@ pub fn wrap_request_v2(
                 .or_else(|| tc.get("maxTokens"))
         })
         .and_then(|b| b.as_i64());
-    let client_level = inner_request
+    let _client_level = inner_request
         .get("generationConfig")
         .and_then(|gc| gc.get("thinkingConfig"))
         .and_then(|tc| {
@@ -87,7 +87,7 @@ pub fn wrap_request_v2(
                 .or_else(|| tc.get("reasoningEffort"))
                 .or_else(|| tc.get("effort"))
         })
-        .and_then(|v| v.as_str());
+        .and_then(crate::proxy::pipeline::extract_thinking_level_str);
 
     let is_under_v3 = crate::proxy::model_specs::is_gemini_under_v3(final_model_name)
         || crate::proxy::model_specs::is_gemini_under_v3(original_model);
@@ -374,8 +374,7 @@ pub fn wrap_request_v2(
                     .or_else(|| t.get("reasoningEffort"))
                     .or_else(|| t.get("effort"))
             })
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .and_then(crate::proxy::pipeline::extract_thinking_level_str);
         let client_budget = gen_config
             .get("thinkingConfig")
             .and_then(|t| {
