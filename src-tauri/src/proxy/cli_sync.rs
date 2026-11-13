@@ -1759,9 +1759,33 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
         id: "claude-sonnet-4-6",
         context_window: 256_000,
     },
-    // Gemini 4 Argon 系列 (Google 旗舰推理模型，1M 上下文)
+    // Gemini 4 系列 (Google 旗舰推理模型，1M 上下文)
+    CoreModel {
+        id: "gemini-4-carbon",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-carbon-xhigh",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-carbon-high",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-carbon-medium",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-carbon-low",
+        context_window: 1_048_576,
+    },
     CoreModel {
         id: "gemini-4-argon",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-argon-xhigh",
         context_window: 1_048_576,
     },
     CoreModel {
@@ -1774,6 +1798,26 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
     },
     CoreModel {
         id: "gemini-4-argon-low",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-xhigh",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-high",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-medium",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-low",
         context_window: 1_048_576,
     },
     // Gemini 3.8 Flash 系列 (1M 上下文)

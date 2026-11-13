@@ -716,25 +716,52 @@ pub async fn fetch_quota_with_cache(
                     let mut group_reset: Option<String> = None;
 
                     if let Some(ref groups) = quota_groups {
-                        let is_argon = name_lower.contains("argon");
-                        let is_claude_or_gpt = !is_argon
+                        let g4_codename = if name_lower.contains("argon") {
+                            Some("argon")
+                        } else if name_lower.contains("carbon") {
+                            Some("carbon")
+                        } else if name_lower.contains("hydrogen") {
+                            Some("hydrogen")
+                        } else {
+                            None
+                        };
+                        let is_g4 = g4_codename.is_some();
+                        let is_claude_or_gpt = !is_g4
                             && (name_lower.starts_with("claude") || name_lower.starts_with("gpt"));
 
-                        // 查找匹配的配额组：Argon 优先专属组；若是 Ultra 账号，无专属组时允许回退继承通用 Gemini 分组；
+                        // 查找匹配的配额组：Gemini 4 代号模型（carbon/argon/hydrogen）优先专属组；若是 Ultra 账号，无专属组时允许回退继承通用 Gemini 分组；
                         // Claude/GPT 找 3P；Gemini 找常规 Gemini 组
                         let mut matched_group = groups.iter().find(|g| {
                             let gname = g.display_name.to_lowercase();
-                            let is_argon_group = gname.contains("argon")
+                            let is_specific_g4_group = if let Some(code) = g4_codename {
+                                gname.contains(code)
+                                    || g.buckets.iter().any(|b| {
+                                        let bid = b.bucket_id.to_lowercase();
+                                        let bname =
+                                            b.display_name.as_deref().unwrap_or("").to_lowercase();
+                                        bid.contains(code) || bname.contains(code)
+                                    })
+                            } else {
+                                false
+                            };
+                            if is_g4 {
+                                return is_specific_g4_group;
+                            }
+                            let is_any_g4_group = gname.contains("argon")
+                                || gname.contains("carbon")
+                                || gname.contains("hydrogen")
                                 || g.buckets.iter().any(|b| {
                                     let bid = b.bucket_id.to_lowercase();
                                     let bname =
                                         b.display_name.as_deref().unwrap_or("").to_lowercase();
-                                    bid.contains("argon") || bname.contains("argon")
+                                    bid.contains("argon")
+                                        || bid.contains("carbon")
+                                        || bid.contains("hydrogen")
+                                        || bname.contains("argon")
+                                        || bname.contains("carbon")
+                                        || bname.contains("hydrogen")
                                 });
-                            if is_argon {
-                                return is_argon_group;
-                            }
-                            if is_argon_group {
+                            if is_any_g4_group {
                                 return false;
                             }
                             let is_claude_group = gname.contains("claude")
@@ -751,8 +778,8 @@ pub async fn fetch_quota_with_cache(
                                         && !gname.contains("3p")))
                         });
 
-                        // Ultra 账号在官方架构下未拆分专属 Argon 分组，其 Argon 额度共享 Gemini 通用配额池
-                        if is_argon && matched_group.is_none() && is_ultra {
+                        // Ultra 账号在官方架构下可能未拆分专属 G4 分组，其额度共享 Gemini 通用配额池
+                        if is_g4 && matched_group.is_none() && is_ultra {
                             matched_group = groups.iter().find(|g| {
                                 let gname = g.display_name.to_lowercase();
                                 !gname.contains("claude")
@@ -761,8 +788,8 @@ pub async fn fetch_quota_with_cache(
                             });
                         }
 
-                        // 非 Ultra 账号若未命中独立 Argon 分组，判定为未获灰度授权，拦截防呆 (Fixes #3745)
-                        if is_argon && matched_group.is_none() {
+                        // 非 Ultra 账号若未命中独立代号分组，判定当前账号未获该专属模型授权，拦截防呆 (Fixes #3745)
+                        if is_g4 && matched_group.is_none() {
                             continue;
                         }
 

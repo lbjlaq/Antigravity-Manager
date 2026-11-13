@@ -381,6 +381,7 @@ pub async fn get_all_dynamic_models(
     for id in &model_ids {
         for suffix in &[
             "-tiered",
+            "-xhigh",
             "-high",
             "-medium",
             "-low",
@@ -516,6 +517,7 @@ pub async fn get_all_dynamic_models_metadata(
     for (name, meta) in &meta_map {
         for suffix in &[
             "-tiered",
+            "-xhigh",
             "-high",
             "-medium",
             "-low",
@@ -1051,9 +1053,15 @@ pub fn normalize_to_standard_id(model_name: &str) -> Option<String> {
         return None;
     }
 
-    // 0. Gemini 4 Argon 系列（独立配额组与独立计费桶，所有档位变体如 high/medium/low/thinking 均归一化为基底 ID）
+    // 0. Gemini 4 系列（独立配额组与独立计费桶，如 carbon / argon / hydrogen，所有档位变体如 xhigh/high/medium/low/thinking 均归一化为基底 ID）
+    if lower.contains("carbon") {
+        return Some("gemini-4-carbon".to_string());
+    }
     if lower.contains("argon") {
         return Some("gemini-4-argon".to_string());
+    }
+    if lower.contains("hydrogen") {
+        return Some("gemini-4-hydrogen".to_string());
     }
 
     // 1. Image resources must keep Flash image and Pro image in separate quota buckets.
@@ -1717,29 +1725,34 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_to_standard_id_argon_unified_pool() {
-        // Gemini 4 Argon 系列独立计费与熔断，统一归一化为 'gemini-4-argon' 标准桶
-        assert_eq!(
-            normalize_to_standard_id("gemini-4-argon-high"),
-            Some("gemini-4-argon".to_string())
-        );
-        assert_eq!(
-            normalize_to_standard_id("gemini-4-argon-medium"),
-            Some("gemini-4-argon".to_string())
-        );
-        assert_eq!(
-            normalize_to_standard_id("gemini-4-argon-low"),
-            Some("gemini-4-argon".to_string())
-        );
-        assert_eq!(
-            normalize_to_standard_id("gemini-4-argon-thinking"),
-            Some("gemini-4-argon".to_string())
-        );
-        assert_eq!(
-            normalize_to_standard_id("gemini-4-argon"),
-            Some("gemini-4-argon".to_string())
-        );
+    fn test_normalize_to_standard_id_gemini_4_unified_pools() {
+        // Gemini 4 系列（carbon / argon / hydrogen）独立计费与熔断，统一归一化为各自的基底标准桶
+        for (input, expected) in [
+            ("gemini-4-carbon-xhigh", Some("gemini-4-carbon")),
+            ("gemini-4-carbon-high", Some("gemini-4-carbon")),
+            ("gemini-4-carbon", Some("gemini-4-carbon")),
+            ("gemini-4-argon-xhigh", Some("gemini-4-argon")),
+            ("gemini-4-argon-high", Some("gemini-4-argon")),
+            ("gemini-4-argon-medium", Some("gemini-4-argon")),
+            ("gemini-4-argon-low", Some("gemini-4-argon")),
+            ("gemini-4-argon-thinking", Some("gemini-4-argon")),
+            ("gemini-4-argon", Some("gemini-4-argon")),
+            ("gemini-4-hydrogen-xhigh", Some("gemini-4-hydrogen")),
+            ("gemini-4-hydrogen-high", Some("gemini-4-hydrogen")),
+            ("gemini-4-hydrogen-medium", Some("gemini-4-hydrogen")),
+            ("gemini-4-hydrogen-low", Some("gemini-4-hydrogen")),
+            ("gemini-4-hydrogen", Some("gemini-4-hydrogen")),
+        ] {
+            assert_eq!(
+                normalize_to_standard_id(input),
+                expected.map(|s| s.to_string()),
+                "Failed normalization for {}",
+                input
+            );
+        }
         assert_eq!(normalize_to_standard_id("gemini-4-argon-disabled"), None);
+        assert_eq!(normalize_to_standard_id("gemini-4-carbon-disabled"), None);
+        assert_eq!(normalize_to_standard_id("gemini-4-hydrogen-disabled"), None);
     }
 
     #[test]

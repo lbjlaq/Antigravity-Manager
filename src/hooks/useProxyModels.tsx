@@ -11,11 +11,24 @@ export interface CanonicalFamilyDto {
 }
 
 const ALIAS_TO_CANONICAL: Record<string, { id: string; name: string; group: string }> = {
-    // Gemini 4 系列 (Argon)
+    // Gemini 4 系列 (Carbon / Argon / Hydrogen)
+    'gemini-4-carbon': { id: 'gemini-4-carbon', name: 'gemini-4-carbon', group: 'Gemini 4' },
+    'gemini-4-carbon-xhigh': { id: 'gemini-4-carbon-xhigh', name: 'gemini-4-carbon-xhigh', group: 'Gemini 4' },
+    'gemini-4-carbon-high': { id: 'gemini-4-carbon-high', name: 'gemini-4-carbon-high', group: 'Gemini 4' },
+    'gemini-4-carbon-medium': { id: 'gemini-4-carbon-medium', name: 'gemini-4-carbon-medium', group: 'Gemini 4' },
+    'gemini-4-carbon-low': { id: 'gemini-4-carbon-low', name: 'gemini-4-carbon-low', group: 'Gemini 4' },
+
     'gemini-4-argon': { id: 'gemini-4-argon', name: 'gemini-4-argon', group: 'Gemini 4' },
+    'gemini-4-argon-xhigh': { id: 'gemini-4-argon-xhigh', name: 'gemini-4-argon-xhigh', group: 'Gemini 4' },
     'gemini-4-argon-high': { id: 'gemini-4-argon-high', name: 'gemini-4-argon-high', group: 'Gemini 4' },
     'gemini-4-argon-medium': { id: 'gemini-4-argon-medium', name: 'gemini-4-argon-medium', group: 'Gemini 4' },
     'gemini-4-argon-low': { id: 'gemini-4-argon-low', name: 'gemini-4-argon-low', group: 'Gemini 4' },
+
+    'gemini-4-hydrogen': { id: 'gemini-4-hydrogen', name: 'gemini-4-hydrogen', group: 'Gemini 4' },
+    'gemini-4-hydrogen-xhigh': { id: 'gemini-4-hydrogen-xhigh', name: 'gemini-4-hydrogen-xhigh', group: 'Gemini 4' },
+    'gemini-4-hydrogen-high': { id: 'gemini-4-hydrogen-high', name: 'gemini-4-hydrogen-high', group: 'Gemini 4' },
+    'gemini-4-hydrogen-medium': { id: 'gemini-4-hydrogen-medium', name: 'gemini-4-hydrogen-medium', group: 'Gemini 4' },
+    'gemini-4-hydrogen-low': { id: 'gemini-4-hydrogen-low', name: 'gemini-4-hydrogen-low', group: 'Gemini 4' },
 
     // Gemini 3.8
     'gemini-3.8-flash': { id: 'gemini-3.8-flash', name: 'gemini-3.8-flash', group: 'Gemini 3' },
@@ -248,7 +261,7 @@ export const useProxyModels = () => {
         // 1.5 动态档位后缀剥离与裸模型派生（与后端算法完全对齐，纯通用数据驱动）
         const derivedBares: string[] = [];
         for (const id of uniqueModelsMap.keys()) {
-            for (const suffix of ['-tiered', '-high', '-medium', '-low', '-extra-low', '-thinking']) {
+            for (const suffix of ['-tiered', '-xhigh', '-high', '-medium', '-low', '-extra-low', '-thinking']) {
                 if (id.endsWith(suffix)) {
                     const base = id.slice(0, -suffix.length);
                     if (base && isCompliantModel(base, deprecatedSet, maxGemini3FlashMinor) && !uniqueModelsMap.has(base)) {

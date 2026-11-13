@@ -21,10 +21,21 @@ export interface ModelDisplayNameInput {
 }
 
 const DEFAULT_MODEL_LABELS: Record<string, string> = {
+    'gemini-4-carbon': 'gemini-4-carbon',
+    'gemini-4-carbon-xhigh': 'gemini-4-carbon-xhigh',
+    'gemini-4-carbon-high': 'gemini-4-carbon-high',
+    'gemini-4-carbon-medium': 'gemini-4-carbon-medium',
+    'gemini-4-carbon-low': 'gemini-4-carbon-low',
     'gemini-4-argon': 'gemini-4-argon',
+    'gemini-4-argon-xhigh': 'gemini-4-argon-xhigh',
     'gemini-4-argon-high': 'gemini-4-argon-high',
     'gemini-4-argon-medium': 'gemini-4-argon-medium',
     'gemini-4-argon-low': 'gemini-4-argon-low',
+    'gemini-4-hydrogen': 'gemini-4-hydrogen',
+    'gemini-4-hydrogen-xhigh': 'gemini-4-hydrogen-xhigh',
+    'gemini-4-hydrogen-high': 'gemini-4-hydrogen-high',
+    'gemini-4-hydrogen-medium': 'gemini-4-hydrogen-medium',
+    'gemini-4-hydrogen-low': 'gemini-4-hydrogen-low',
     'gemini-3.1-pro-high': 'gemini-3.1-pro-high',
     'gemini-3.1-pro': 'gemini-3.1-pro',
     'gemini-3.1-pro-low': 'gemini-3.1-pro-low',

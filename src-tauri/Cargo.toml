@@ -1,6 +1,6 @@
 [package]
 name = "antigravity-tools"
-version = "5.0.4-beta.7"
+version = "5.0.4-beta.8"
 description = "Antigravity Tools"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"

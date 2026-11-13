@@ -3,6 +3,22 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.8 (2026-11-13)**:
+        -   **[Gemini 4 全系新模型支持（Carbon/Argon/Hydrogen）、256k 巨型输出上限与账号级智能调度] (Fixes #3922, Ref #3927, Thanks to @koeria, @lbjlaq)**:
+            -   **官方模型目录补齐与 256k 输出上限对齐**: 紧跟 Google 官方上游模型灰度发布节奏，在内置模型目录表 `official_models.json` 中全面补齐 `gemini-4-carbon` 与 `gemini-4-hydrogen` 全系列（含 bare, low, medium, high, xhigh 档位），并为 `gemini-4-argon` 补全 `xhigh` 极限思考档位；将 Carbon 与 Hydrogen 的 `maxOutputTokens` 精确对齐上游官方标称的 `262,144`（256k tokens 输出），彻底突破旧版 64k 上限，完美满足超长上下文与深思考整包工具调用生成。(Fixes #3922, Ref #3927)
+            -   **账号能力智能隔离与逐号配额调度**: 彻底重构模型目录解析与账号配额加载链路，将既有 Argon 专属逻辑全面泛化为 Gemini 4 代号模型族体系（`carbon` / `argon` / `hydrogen`）；严格过滤上游下发的 `-disabled` 占位条目，禁止为未获授权或免费普通账号注入虚假高阶模型；调度器仅在具体账号真实具备对应代号授权与正额度（positive quota > 0%）时才赋予调度资格，确保高阶模型请求精准路由至具备能力的 Ultra/付费 Pro 账号，杜绝跨号误派发引发的 403 报错与号池熔断。(Fixes #3922)
+            -   **极高思考档位剥离与基底桶归一化**: 在 `model_mapping.rs` 中为裸模型派生与元数据生成补充 `-xhigh` 档位后缀剥离支持；在 `normalize_to_standard_id` 中将 `gemini-4-<codename>-*` 各变体归一化至对应的基底标准计费桶，实现各模型族独立配额追踪与精准熔断自愈。(Ref #3927)
+            -   **网关 CLI 同步与前端配置对齐**: 在 `cli_sync.rs` 的 `CORE_GATEWAY_MODELS` 中同步补齐 Carbon、Argon 与 Hydrogen 各档位及 1M 上下文规格；同步更新前端 `modelConfig.ts`、`useProxyModels.tsx` 与 `modelCategory.ts`，严格遵循 Single Source of Truth，提供纯净的账号真实可用模型视图。
+        -   **[OAuth 授权码兑换瞬态网络错误重试与精准网络指引] (Fixes #3920, Ref #3923, Thanks to @koeria, @lbjlaq)**:
+            -   **传输层瞬态失败指数退避重试**: 在 `oauth.rs` 的 `exchange_code_once` 中引入最多 3 次退避重试机制（500ms、1000ms 等）。精准区分传输层网络中断（连接失败、请求超时、DNS 解析异常）与 Google 4xx 业务响应：仅在授权码未到达 Google 未被消耗的瞬态阶段触发自动重试，挽救因网络抖动导致的授权中断，避免用户频繁重跑浏览器授权。(Fixes #3920, Ref #3923)
+            -   **4xx 业务错误即刻短路与友好诊断提示**: 当遭遇 4xx 业务状态码（如 `invalid_grant`、`unauthorized_client`）时即刻终止重试，无缝衔接多客户端 Fallback 兜底；当所有重试均为传输层失败时，明确提示“浏览器已成功授权但桌面客户端无法直连 Google 授权端点”，引导用户检查代理配置与网络连通性，消除“授权莫名失败”的误导性体验。(Fixes #3920, Ref #3923)
+        -   **[全池账号封禁明确诊断与免自锁自愈] (Fixes #3919, Ref #3924, Thanks to @koeria, @lbjlaq)**:
+            -   **池空状态深度诊断与封禁明确告警**: 彻底根治号池内所有账号因上游封禁（403 TOS 违规）或全部手动停用后，网关向客户端误报“429 限流冷却中，等待即可恢复”的严重误导体验。在候选池为空时按需执行轻量级磁盘状态扫描，精准统计封禁（banned）、手动停用（disabled）与未载入账号状态；针对封禁账号明确指出“封禁账号绝不可能通过等待冷却恢复，请前往账号管理页面检查或提交申诉”，帮助用户第一时间定位故障。(Fixes #3919, Ref #3924)
+            -   **防自锁分类器拓展与分类隔离**: 在 `policy.rs` 分类器中同步拓展针对“无可用账号”诊断特征（`no available accounts`）的安全识别，杜绝网关内部错误在无账号可用时发生错误递归自噬与雪崩。(Ref #3924)
+        -   **[Linux 文件句柄上限扩展与配置迁移死循环落盘消除] (Fixes #3918, Ref #3928, Thanks to @koeria, @lbjlaq)**:
+            -   **Unix/Linux 文件句柄上限提升至 4096**: 将 `increase_nofile_limit()` 从单限定 `macos` 扩展至全体 `unix` 平台。消除多账号大并发网络连接、TLS Socket 与文件读写在 Linux（系统默认 `RLIMIT_NOFILE = 1024`）上瞬间打满导致底层 GLib `g_error()`/`abort` 崩溃隐患。(Fixes #3918, Ref #3928)
+            -   **消除配置迁移死循环强制刷盘**: 在 `ThinkingBudgetConfig` 中补齐 `thinking_budget_32k_legacy_migrated` 标志字段，彻底解决每次读取配置都判定为“未迁移”导致频繁调用 `write_atomic` + `sync_all` 循环落盘并引发瞬时 I/O 阻塞的确定性缺陷。(Fixes #3918, Ref #3928)
+
     *   **v5.0.4-beta.7 (2026-11-12)**:
         -   **[上游 WAF 429 身份改写根治、请求级限流防连坐与风控提示词清理方案] (Fixes #3904, #3908, #3901, #3915, Ref #3903, #3912, PR #3913, Thanks to @jeikl, @lbjlaq, @sinderson123-afk)**:
             -   **单例身份不变量与多重身份清理**: 跨 `systemInstruction.parts` 全局去重，仅保留首处官方 Antigravity 身份；彻底清除 DSH/pi/OpenCode 等客户端多重身份声明叠加生成的纯空白与重复身份片段，杜绝多身份混合带 tools 时被 Google WAF 判定异常并抛出 429 RESOURCE_EXHAUSTED。(Fixes #3904, #3908)
