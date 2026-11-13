@@ -1700,8 +1700,20 @@ pub fn capture_gemini_response_with_preceding(
 /// 当会话在客户端成功生成 compact_boundary 或注入历史摘要后，该轮及其之前的历史属于压缩上下文。
 pub fn find_compaction_continuation_boundary(contents: &[Value]) -> Option<usize> {
     // [FIX #3697] 采用逆序扫描 contents，确保在长会话经历多次压缩时严格锚定到最新的第二次/后续压缩边界
+    // 仅检测客户端注入的纯文本用户接续轮次（排除模型回复正文及包含 tool_call/tool_response 的工具流，
+    // 防止技术讨论、进度汇报或代码检索里提及压缩关键字时误清空全部历史签名）。
     for (idx, content) in contents.iter().enumerate().rev() {
+        let role = content.get("role").and_then(Value::as_str).unwrap_or("");
+        if role == "model" || role == "assistant" {
+            continue;
+        }
         if let Some(parts) = content.get("parts").and_then(Value::as_array) {
+            let has_tool_part = parts
+                .iter()
+                .any(|p| p.get("functionCall").is_some() || p.get("functionResponse").is_some());
+            if has_tool_part {
+                continue;
+            }
             for part in parts {
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
                     if crate::proxy::mappers::common_utils::is_post_compaction_continuation_text(
@@ -1761,21 +1773,28 @@ pub fn calculate_contents_metrics(contents: &[Value]) -> (usize, usize) {
 }
 
 /// 识别文本中是否包含各主流 AI 客户端（Cline, Roo-Code, Cursor, Aider 等）常见的输出就地修剪/折叠占位标记
+fn line_starts_with_folded_marker(trimmed_lower: &str) -> bool {
+    trimmed_lower.starts_with("[output truncated")
+        || trimmed_lower.starts_with("[result omitted")
+        || trimmed_lower.starts_with("[tool result truncated")
+        || trimmed_lower.starts_with("[output omitted")
+        || trimmed_lower.starts_with("[content truncated")
+        || trimmed_lower.starts_with("[image omitted")
+        || trimmed_lower.starts_with("[image removed")
+        || trimmed_lower.starts_with("[history truncated")
+        || trimmed_lower.starts_with("[context truncated")
+        || trimmed_lower.starts_with("... (truncated")
+        || trimmed_lower.starts_with("...[truncated")
+        || trimmed_lower.starts_with("<persisted-output>")
+}
+
+/// 识别文本中是否包含各主流 AI 客户端（Cline, Roo-Code, Cursor, Aider 等）常见的输出就地修剪/折叠占位标记
 pub fn is_truncated_or_folded_text(text: &str) -> bool {
     let lower = text.to_lowercase();
-    lower.contains("[output truncated")
-        || lower.contains("[result omitted")
-        || lower.contains("[tool result truncated")
-        || lower.contains("[output omitted")
-        || lower.contains("[content truncated")
-        || lower.contains("[image omitted")
-        || lower.contains("[image removed")
-        || lower.contains("truncated to save")
-        || lower.contains("... (truncated")
-        || lower.contains("...[truncated")
-        || lower.contains("[history truncated")
-        || lower.contains("[context truncated")
-        || lower.contains("<persisted-output>")
+    lower.lines().any(|line| {
+        let trimmed = line.trim_start();
+        line_starts_with_folded_marker(trimmed) || trimmed.ends_with("truncated to save]")
+    }) || lower.trim() == "truncated to save"
 }
 
 /// 检索 contents 中是否存在包含微观就地修剪、折叠或占位符的轮次最大索引
@@ -6111,6 +6130,72 @@ mod signature_placement_tests {
         assert_eq!(
             find_compaction_continuation_boundary(&multi_compacted_contents),
             Some(4)
+        );
+    }
+
+    #[test]
+    fn test_compaction_and_micro_folding_ignore_code_and_discussion_false_positives() {
+        let sig_before = "EsIDaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let mut contents = vec![
+            json!({
+                "role": "user",
+                "parts": [{ "text": "Fix the compaction boundary bug" }]
+            }),
+            json!({
+                "role": "model",
+                "parts": [
+                    {
+                        "functionCall": {
+                            "id": "call_rg",
+                            "name": "exec_command",
+                            "args": { "cmd": r#"rg -n "compact_boundary|<persisted-output>" src-tauri/"# }
+                        },
+                        "thoughtSignature": sig_before
+                    }
+                ]
+            }),
+            json!({
+                "role": "user",
+                "parts": [
+                    {
+                        "functionResponse": {
+                            "id": "call_rg",
+                            "name": "exec_command",
+                            "response": { "output": "common_utils.rs:825: || text.contains(\"compact_boundary\")\nthinking_store.rs:1777: || lower.contains(\"<persisted-output>\")" }
+                        }
+                    }
+                ]
+            }),
+            json!({
+                "role": "model",
+                "parts": [{ "text": "已定位问题：common_utils.rs 里的 `compact_boundary` 与 `<persisted-output>` 触发了误判。" }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "text": "请修复 compact_boundary 和 <persisted-output> 的误判问题并提 PR" }]
+            }),
+        ];
+
+        assert_eq!(
+            find_compaction_continuation_boundary(&contents),
+            None,
+            "Prose, code discussion, and tool outputs mentioning compact_boundary must not trigger compaction boundary"
+        );
+        assert_eq!(
+            find_micro_folding_boundary(&contents),
+            None,
+            "Code/discussion mentioning <persisted-output> or [output truncated] inline must not trigger micro-folding boundary"
+        );
+
+        finalize_gemini_contents_thinking_with_session(
+            &mut contents,
+            true,
+            Some("gemini-4-hydrogen-high"),
+            Some("sess-no-false-compaction"),
+        );
+        assert_eq!(
+            contents[1]["parts"][0]["thoughtSignature"], sig_before,
+            "Valid historical thoughtSignature must be preserved instead of replaced by sentinel"
         );
     }
 

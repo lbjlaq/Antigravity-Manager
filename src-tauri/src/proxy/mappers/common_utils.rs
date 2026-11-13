@@ -820,11 +820,25 @@ pub fn is_compaction_request_text(text: &str) -> bool {
 /// 分流 B: 识别已完成压缩提纯的会话接续请求 (Post-Compaction Continuation)
 /// 当会话在客户端成功生成 compact_boundary 或注入历史摘要后，后续接续轮次携带此特征。
 /// 流水线层应给予其永久豁免保护，绝不再执行二次伪装拦截，由底层 1M 超大上下文平滑承接。
+fn contains_compact_boundary_tag(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("<compact_boundary>")
+            || trimmed.starts_with("<compact_boundary ")
+            || trimmed.starts_with("</compact_boundary>")
+    })
+}
+
 pub fn is_post_compaction_continuation_text(text: &str) -> bool {
-    text.contains("This session is being continued from a previous conversation")
-        || text.contains("compact_boundary")
-        || text.contains("previous conversation that ran out of context")
-        || (text.contains("<summary>") && text.contains("previous conversation"))
+    let trimmed = text.trim_start();
+    trimmed.starts_with("This session is being continued from a previous conversation")
+        || contains_compact_boundary_tag(text)
+        || trimmed.starts_with("previous conversation that ran out of context")
+        || text.contains(
+            "This session is being continued from a previous conversation that ran out of context",
+        )
+        || (trimmed.starts_with("<summary>") || text.contains("\n<summary>"))
+            && text.contains("previous conversation")
 }
 
 /// 检查 contents 中是否包含工具调用或工具返回结果 (表明处于多轮 Agent 会话中)
@@ -855,6 +869,38 @@ mod tests {
 
     /// 会话段必须**稳定**（同一 session 多次请求共享，贴近官方 conversationId 语义），
     /// 但整体 ID 每次唯一（含 unixMs + 轨迹段 → 幂等隔离）。
+    #[test]
+    fn test_post_compaction_continuation_ignores_prose_and_code_references() {
+        assert!(!is_post_compaction_continuation_text(
+            "Found references to `compact_boundary` in common_utils.rs"
+        ));
+        assert!(!is_post_compaction_continuation_text(
+            r#"rg -n "compact_boundary|compaction" src-tauri/src/proxy/"#
+        ));
+        assert!(!is_post_compaction_continuation_text(
+            r#"|| text.contains("compact_boundary")"#
+        ));
+        assert!(!is_post_compaction_continuation_text(
+            r#"let x = "<compact_boundary>";"#
+        ));
+        assert!(!is_post_compaction_continuation_text(
+            "We noticed previous conversation mentioned <summary> tags inside inline prose."
+        ));
+
+        assert!(is_post_compaction_continuation_text(
+            "<compact_boundary>Second compaction happened</compact_boundary>"
+        ));
+        assert!(is_post_compaction_continuation_text(
+            "<compact_boundary reason=\"auto\"/>"
+        ));
+        assert!(is_post_compaction_continuation_text(
+            "This session is being continued from a previous conversation that ran out of context."
+        ));
+        assert!(is_post_compaction_continuation_text(
+            "Here is the summary of what we did from previous conversation:\n<summary>\n1. Done\n</summary>"
+        ));
+    }
+
     #[test]
     fn test_official_request_id_stable_conversation_unique_overall() {
         let a = build_official_request_id("sess-aaaabbbbccccdddd", 3);
