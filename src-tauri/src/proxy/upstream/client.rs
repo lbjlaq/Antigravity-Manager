@@ -445,7 +445,7 @@ pub fn mask_email(email: &str) -> String {
 // 这里保留同名导出，保证既有调用点（含单测）无需改动。
 pub use crate::proxy::pipeline::terminal::{
     FIRST_BYTE_STAGE_TERMINAL_MARKER, GATEWAY_BUDGET_TERMINAL_MARKER, REPLAY_CAP_TERMINAL_MARKER,
-    TRANSPORT_RESET_TERMINAL_MARKER, UPLOAD_STAGE_TERMINAL_MARKER,
+    TRANSPORT_RESET_TERMINAL_MARKER, UPLOAD_STAGE_TERMINAL_MARKER, UPLOAD_STALLED_TERMINAL_MARKER,
 };
 
 /// 判断上游错误是否为“大体积上传阶段终止、不应再跨账号重传”的终态失败
@@ -1421,9 +1421,15 @@ impl UpstreamClient {
     /// 裁决发送阶段失败是否构成上游终态（阻止跨端点回退与跨账号重放）。
     ///
     /// - 当 `!has_next_for_send_stage` 为真（当前已是本次调用允许尝试的最后一个端点）时，
-    ///   无论该末尾端点是 Daily 还是 Sandbox，只要处于 `Upload | UploadStalled` 阶段，
-    ///   都必须标记为 `Upload / UploadStalled` 终态，防止外层 handler 把同一份 body 跨账号重传；
-    /// - 当后面仍有可尝试端点时，仅在非 Sandbox 端点触发 `terminal_large_body_failure` 时提前截断。
+    ///   无论该末尾端点是 Daily 还是 Sandbox，只要处于 `AwaitFirstByte | Upload | UploadStalled` 阶段，
+    ///   都必须标记为对应终态（`FirstByte` / `TransportReset` / `Upload` / `UploadStalled`），
+    ///   防止末尾 Sandbox 端点吞掉终态标记后退化为外层跨账号重传与粘性会话改绑；
+    /// - 当后面仍有可尝试端点时：
+    ///   - `AwaitFirstByte` 且 `budget_exhausted && !is_sandbox`：非 Sandbox 主端点已耗尽整次调用的
+    ///     共享首字预算，继续回退 Sandbox 只会带着残余的几秒预算重传同一份 body，直接标为 `FirstByte` 终态；
+    ///   - `Upload | UploadStalled` 且 `budget_exhausted || (terminal_large_body_failure && !is_sandbox)`：
+    ///     上传阶段已触发 `hard_deadline` 耗尽整次调用硬预算，或命中非 Sandbox 主端点的大体积单次尝试策略，
+    ///     直接标为 `Upload` / `UploadStalled` 终态，避免无意义进入下一端点并在回退入口被改标为 `FirstByte`。
     fn classify_send_stage_terminal(
         global_exhausted: bool,
         send_stage: SendStage,
@@ -1436,7 +1442,9 @@ impl UpstreamClient {
             return Some(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget);
         }
         match send_stage {
-            SendStage::AwaitFirstByte if !has_next_for_send_stage && !is_sandbox => {
+            SendStage::AwaitFirstByte
+                if !has_next_for_send_stage || (budget_exhausted && !is_sandbox) =>
+            {
                 if budget_exhausted {
                     Some(crate::proxy::pipeline::terminal::UpstreamTerminal::FirstByte)
                 } else {
@@ -1444,7 +1452,9 @@ impl UpstreamClient {
                 }
             }
             SendStage::Upload | SendStage::UploadStalled
-                if !has_next_for_send_stage || (terminal_large_body_failure && !is_sandbox) =>
+                if !has_next_for_send_stage
+                    || budget_exhausted
+                    || (terminal_large_body_failure && !is_sandbox) =>
             {
                 Some(if send_stage == SendStage::UploadStalled {
                     crate::proxy::pipeline::terminal::UpstreamTerminal::UploadStalled
@@ -1659,6 +1669,7 @@ impl UpstreamClient {
         // 我们包装一层循环，以便在检测到特定错误时移除 Header 并重试
         loop {
             let mut last_err: Option<String> = None;
+            let mut last_send_stage: Option<SendStage> = None;
             let mut should_retry_without_header = false;
 
             // 动态健康度排序：优先尝试健康端点，跳过处于冷却期的故障端点，避免无状态重复累积 40s 超时。
@@ -1715,9 +1726,18 @@ impl UpstreamClient {
                 let elapsed_secs = call_overall_start.elapsed().as_secs();
                 let remaining_budget = total_budget_secs.saturating_sub(elapsed_secs);
                 if remaining_budget == 0 && idx > 0 {
+                    let marker = if crate::proxy::pipeline::budget::exhausted() {
+                        GATEWAY_BUDGET_TERMINAL_MARKER
+                    } else {
+                        match last_send_stage {
+                            Some(SendStage::Upload) => UPLOAD_STAGE_TERMINAL_MARKER,
+                            Some(SendStage::UploadStalled) => UPLOAD_STALLED_TERMINAL_MARKER,
+                            _ => FIRST_BYTE_STAGE_TERMINAL_MARKER,
+                        }
+                    };
                     let budget_err = format!(
-                        "Total upstream timeout budget ({}s) exhausted before attempting endpoint {} (elapsed={:.1}s), aborting fallback chain",
-                        total_budget_secs, base_url, call_overall_start.elapsed().as_secs_f64()
+                        "{}Total upstream timeout budget ({}s) exhausted before attempting endpoint {} (elapsed={:.1}s), aborting fallback chain",
+                        marker, total_budget_secs, base_url, call_overall_start.elapsed().as_secs_f64()
                     );
                     tracing::warn!(%budget_err);
                     last_err = Some(budget_err);
@@ -1842,13 +1862,23 @@ impl UpstreamClient {
                         )
                         .await
                         {
-                            Ok(res) => PhasedSendOutcome {
-                                result: res.map_err(|e| e.to_string()),
-                                stage: SendStage::Completed,
-                                bytes_sent: body_bytes.len(),
-                                upload_elapsed: None,
-                                budget_exhausted: false,
-                            },
+                            Ok(res) => {
+                                // progress == None 无字节进度可观测，无法区分建连/上传/等首字阶段：
+                                // 失败时统一按 AwaitFirstByte（TransportReset）处理以避免误罚号；
+                                // 同时失败分支 bytes_sent 记为 0（无实测已发字节，避免诊断日志虚报 100% 进度）。
+                                let (stage, bytes_sent) = if res.is_ok() {
+                                    (SendStage::Completed, body_bytes.len())
+                                } else {
+                                    (SendStage::AwaitFirstByte, 0)
+                                };
+                                PhasedSendOutcome {
+                                    result: res.map_err(|e| e.to_string()),
+                                    stage,
+                                    bytes_sent,
+                                    upload_elapsed: None,
+                                    budget_exhausted: false,
+                                }
+                            }
                             Err(_) => PhasedSendOutcome {
                                 result: Err(format!(
                                     "First byte budget exhausted after {}s at {} (fixed-length body: upload_budget={}s + first_byte={}s, stage=await_first_byte)",
@@ -1864,6 +1894,7 @@ impl UpstreamClient {
                 };
                 let duration_s = attempt_start.elapsed().as_secs_f64();
                 let send_stage = outcome.stage;
+                last_send_stage = Some(send_stage);
                 let sent_bytes = outcome.bytes_sent;
                 let upload_elapsed = outcome.upload_elapsed;
                 let budget_exhausted = outcome.budget_exhausted;
@@ -2031,8 +2062,8 @@ impl UpstreamClient {
                             timeout_plan.large_body && timeout_plan.endpoint_attempt_limit <= 1;
                         // 终态判定统一交给 `pipeline::terminal` 分类：
                         // - 全局预算耗尽：整条请求已到点
-                        // - 首字节耗尽且后面没有可尝试端点：上游只是慢，不是账号故障（沙箱端点除外，沙箱非美地区不连通绝非真实终态）
-                        // - 大体积单次尝试策略：继续 fallback 只会再次上传同一份大 body（但沙箱端点除外，沙箱故障不应毒化阻断账号轮换）
+                        // - 末尾可尝试端点（无论 Daily 还是 Sandbox）或主端点预算已耗尽：按发送阶段标为对应终态，防止末尾吞掉终态标记或带着耗尽预算无效回退
+                        // - 大体积单次尝试策略：主端点失败后不再继续 fallback 重传同一份大 body（首选为 Sandbox 时允许回退主端点）
                         let global_exhausted = crate::proxy::pipeline::budget::exhausted();
                         let terminal = Self::classify_send_stage_terminal(
                             global_exhausted,
@@ -2510,7 +2541,32 @@ mod tests {
             None
         );
 
-        // 2. 第二个（也是最后一个）端点是 Sandbox (has_next_for_send_stage=false, is_sandbox=true)：
+        // 2. 常规请求 (< 4MB, large_body=false) 在首个端点 (has_next_for_send_stage=true) 上传阶段触发 hard_deadline
+        //    (budget_exhausted=true)：必须立即标为 Upload 终态，避免无意义进入下一端点并在 remaining_budget==0 入口被改标为 FirstByte。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::Upload,
+                true,
+                true,
+                false,
+                false,
+            ),
+            Some(UpstreamTerminal::Upload)
+        );
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::Upload,
+                true,
+                true,
+                false,
+                true,
+            ),
+            Some(UpstreamTerminal::Upload)
+        );
+
+        // 3. 第二个（也是最后一个）端点是 Sandbox (has_next_for_send_stage=false, is_sandbox=true)：
         //    必须打上 Upload / UploadStalled 终态标记，防止外层退化为跨账号重传。
         assert_eq!(
             UpstreamClient::classify_send_stage_terminal(
@@ -2533,6 +2589,79 @@ mod tests {
                 true,
             ),
             Some(UpstreamTerminal::Upload)
+        );
+    }
+
+    #[test]
+    fn classify_send_stage_terminal_marks_await_first_byte_across_daily_and_sandbox() {
+        use crate::proxy::pipeline::terminal::UpstreamTerminal;
+
+        // 1. 主端点 Daily (is_sandbox=false) 首字预算耗尽：即使后面还有 Sandbox (has_next=true)，
+        //    也必须立即标为 FirstByte 终态，避免带着残余的几秒预算去 Sandbox 白白重传并在末尾丢标记。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                true,
+                true,
+                false,
+                false,
+            ),
+            Some(UpstreamTerminal::FirstByte)
+        );
+
+        // 2. 主端点 Daily (is_sandbox=false) 发生传输层断连 (budget_exhausted=false)：
+        //    当后面仍有 Sandbox 可尝试 (has_next=true) 时不打终态，允许立即回退到 Sandbox。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                false,
+                true,
+                false,
+                false,
+            ),
+            None
+        );
+
+        // 3. 若 Sandbox 作为首选端点被尝试 (is_sandbox=true, has_next=true) 且首字超时：
+        //    不打终态，允许回退到主端点 Daily。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                true,
+                true,
+                false,
+                true,
+            ),
+            None
+        );
+
+        // 4. 末尾端点是 Sandbox (has_next=false, is_sandbox=true)：
+        //    无论首字超时还是传输断连，都必须打上 FirstByte / TransportReset 终态标记，
+        //    防止外层 handler 因丢失标记误走非终态分支而冷却账号、强制换号并改绑 CacheFirst 会话。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                true,
+                false,
+                false,
+                true,
+            ),
+            Some(UpstreamTerminal::FirstByte)
+        );
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                false,
+                false,
+                false,
+                true,
+            ),
+            Some(UpstreamTerminal::TransportReset)
         );
     }
 
