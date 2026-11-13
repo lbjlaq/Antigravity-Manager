@@ -45,6 +45,7 @@ pub use inbound::{
     InboundThinkingPipeline,
 };
 pub use policy::UpstreamClassification;
+pub use qos::{wrap_gemini_stream_with_qos_usage, QosAttemptTracker};
 pub use rotation::{
     apply_retry_strategy, calculate_max_retry_attempts, clamp_retry_after_for_claude,
     decide_rotation, determine_retry_strategy, determine_retry_strategy_adaptive,
