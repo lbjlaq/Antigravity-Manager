@@ -631,7 +631,7 @@ fn extract_thinking_hint(body: &Value) -> ThinkingHint {
         .or_else(|| body.get("output_config").and_then(|o| o.get("effort")))
         .or_else(|| body.get("thinking").and_then(|t| t.get("effort")))
         .or_else(|| body.get("effort"))
-        .and_then(|l| l.as_str())
+        .and_then(crate::proxy::pipeline::extract_thinking_level_str)
     {
         hint.level = Some(level.to_lowercase());
     }

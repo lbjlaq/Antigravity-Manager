@@ -23,13 +23,18 @@ pub fn payload_enables_thinking(gemini_body: &serde_json::Value, model_hint: Opt
                 return true;
             }
         }
-        // 显式检查 thinkingLevel: off / disabled / none 表示明确关闭
-        if let Some(level) = tc.get("thinkingLevel").and_then(|l| l.as_str()) {
-            let lower_level = level.trim().to_lowercase();
-            if lower_level == "off" || lower_level == "disabled" || lower_level == "none" {
-                return false;
+        // 显式检查 thinkingLevel: off / disabled / none 或 0 表示明确关闭；数字 > 0 或非关闭字符串表示开启
+        if let Some(level_val) = tc.get("thinkingLevel") {
+            if let Some(level) = level_val.as_str() {
+                let lower_level = level.trim().to_lowercase();
+                if lower_level == "off" || lower_level == "disabled" || lower_level == "none" {
+                    return false;
+                }
+                return true;
             }
-            return true;
+            if let Some(n) = level_val.as_i64() {
+                return n > 0;
+            }
         }
         // includeThoughts 为 true 则开启，为 false 则关闭
         if let Some(include_thoughts) = tc.get("includeThoughts").and_then(|t| t.as_bool()) {

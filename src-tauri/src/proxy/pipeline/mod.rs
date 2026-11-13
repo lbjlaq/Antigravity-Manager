@@ -40,7 +40,10 @@ pub use image::{
     stream_chunk_has_image_data, text_has_nonempty_image_data_url,
     value_has_nonempty_image_data_url, ImageDiagnostic,
 };
-pub use inbound::{extract_client_thinking_switch, routing_effort, InboundThinkingPipeline};
+pub use inbound::{
+    extract_client_thinking_switch, extract_thinking_level_str, routing_effort,
+    InboundThinkingPipeline,
+};
 pub use policy::UpstreamClassification;
 pub use rotation::{
     apply_retry_strategy, calculate_max_retry_attempts, clamp_retry_after_for_claude,

@@ -187,13 +187,14 @@ pub async fn handle_generate(
         .and_then(|gc| gc.get("thinkingConfig"));
     let client_effort = thinking_cfg
         .and_then(|tc| tc.get("thinkingLevel").or_else(|| tc.get("effort")))
-        .and_then(|v| v.as_str());
+        .and_then(crate::proxy::pipeline::extract_thinking_level_str);
     // Gemini 的“关闭思考”表达在 thinkingConfig 内部（includeThoughts=false / budget=0）
     let explicit_disable = thinking_cfg.map_or(false, |tc| {
         tc.get("includeThoughts").and_then(|v| v.as_bool()) == Some(false)
             || tc.get("thinkingBudget").and_then(|v| v.as_i64()) == Some(0)
     });
-    let route_effort = crate::proxy::pipeline::routing_effort(explicit_disable, client_effort);
+    let route_effort =
+        crate::proxy::pipeline::routing_effort(explicit_disable, client_effort.as_deref());
 
     let initial_mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
         &model_name,
@@ -1486,7 +1487,7 @@ pub async fn execute_count_tokens(
         .and_then(|gc| gc.get("thinkingConfig"));
     let client_effort = thinking_cfg
         .and_then(|tc| tc.get("thinkingLevel").or_else(|| tc.get("effort")))
-        .and_then(|v| v.as_str());
+        .and_then(crate::proxy::pipeline::extract_thinking_level_str);
     let explicit_disable = thinking_cfg.map_or(false, |tc| {
         tc.get("includeThoughts").and_then(|v| v.as_bool()) == Some(false)
             || tc.get("thinkingBudget").and_then(|v| v.as_i64()) == Some(0)
@@ -1495,7 +1496,7 @@ pub async fn execute_count_tokens(
     let mapped_model = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
         &model_name,
         &*state.custom_mapping.read().await,
-        crate::proxy::pipeline::routing_effort(explicit_disable, client_effort),
+        crate::proxy::pipeline::routing_effort(explicit_disable, client_effort.as_deref()),
     );
 
     // 2. 解析请求配置并获取 Token

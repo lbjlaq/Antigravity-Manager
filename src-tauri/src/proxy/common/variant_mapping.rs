@@ -161,7 +161,7 @@ pub fn tier_from_effort(effort: Option<&str>) -> Option<VariantTier> {
     match crate::proxy::model_specs::normalize_client_thinking_level(effort?)? {
         "LOW" => Some(VariantTier::Low),
         "MEDIUM" => Some(VariantTier::Medium),
-        "HIGH" => Some(VariantTier::High),
+        "HIGH" | "XHIGH" => Some(VariantTier::High),
         _ => None,
     }
 }
