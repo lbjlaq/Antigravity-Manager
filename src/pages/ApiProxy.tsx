@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useRef, startTransition } from 'react';
+import React, { useState, useEffect, useMemo, useRef, startTransition } from 'react';
 import { useTranslation } from 'react-i18next';
 import { request as invoke } from '../utils/request';
 import { isTauri } from '../utils/env';
 import { copyToClipboard } from '../utils/clipboard';
+import { inferModelGroup } from '../config/modelConfig';
 import {
     Power,
     Copy,
@@ -27,6 +28,8 @@ import {
     Zap,
     Square,
     ChevronDown,
+    ChevronRight,
+    Layers,
     Eye,
     EyeOff,
     AlertTriangle,
@@ -37,7 +40,7 @@ import HelpTooltip from '../components/common/HelpTooltip';
 import ModalDialog from '../components/common/ModalDialog';
 import { showToast } from '../components/common/ToastContainer';
 import { cn } from '../utils/cn';
-import { useProxyModels } from '../hooks/useProxyModels';
+import { useProxyModels, getModelIcon } from '../hooks/useProxyModels';
 import GroupedSelect, { SelectOption } from '../components/common/GroupedSelect';
 import { CliSyncCard } from '../components/proxy/CliSyncCard';
 import { listAccounts } from '../services/accountService';
@@ -265,6 +268,23 @@ export default function ApiProxy() {
     const [testTargetAccountId, setTestTargetAccountId] = useState<string>('');
     const [testingAll, setTestingAll] = useState(false);
     const stopTestingRef = useRef(false);
+
+    // 模型多级分组与账号选择器状态
+    const [selectedSeriesTab, setSelectedSeriesTab] = useState<string>('all');
+    const [expandedFamilies, setExpandedFamilies] = useState<Record<string, boolean>>({});
+    const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
+    const accountDropdownRef = useRef<HTMLDivElement>(null);
+
+    // 点击外部自动收起账号下拉窗
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (accountDropdownRef.current && !accountDropdownRef.current.contains(event.target as Node)) {
+                setAccountDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     // Request detail modal for probe logs
     const [selectedDetailLog, setSelectedDetailLog] = useState<ProxyRequestLog | null>(null);
@@ -1738,8 +1758,266 @@ print(response.choices[0].message.content)`;
         );
     };
 
+    // 档位后缀与分类帮助函数
+    const TIER_SUFFIXES = ['-tiered', '-xhigh', '-high', '-medium', '-low', '-extra-low', '-thinking'];
+
+    const getModelFamilyId = (modelId: string): string => {
+        const id = modelId.toLowerCase().trim();
+        for (const suffix of TIER_SUFFIXES) {
+            if (id.endsWith(suffix)) {
+                return id.slice(0, -suffix.length);
+            }
+        }
+        return id;
+    };
+
+    const getTierLabel = (modelId: string, familyId: string): string => {
+        const id = modelId.toLowerCase().trim();
+        if (id === familyId) return 'Default (无后缀)';
+        if (id.endsWith('-xhigh')) return 'X-High';
+        if (id.endsWith('-high')) return 'High';
+        if (id.endsWith('-medium')) return 'Medium';
+        if (id.endsWith('-low')) return 'Low';
+        if (id.endsWith('-extra-low')) return 'Extra-Low';
+        if (id.endsWith('-tiered')) return 'Tiered';
+        if (id.endsWith('-thinking')) return 'Thinking';
+        const rem = id.replace(familyId, '').replace(/^[-_]/, '');
+        return rem ? rem.toUpperCase() : 'Default';
+    };
+
+    const getTierBadgeClass = (tierLabel: string): string => {
+        if (tierLabel.includes('Default') || tierLabel.includes('无后缀')) {
+            return 'bg-gray-100 text-gray-700 border-gray-200/90 dark:bg-base-200 dark:text-gray-300 dark:border-base-300';
+        }
+        if (tierLabel.includes('X-High')) {
+            return 'bg-purple-50 text-purple-700 border-purple-200/90 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-800/60';
+        }
+        if (tierLabel.includes('High')) {
+            return 'bg-emerald-50 text-emerald-700 border-emerald-200/90 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60';
+        }
+        if (tierLabel.includes('Medium')) {
+            return 'bg-blue-50 text-blue-700 border-blue-200/90 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60';
+        }
+        if (tierLabel.includes('Low')) {
+            return 'bg-amber-50 text-amber-700 border-amber-200/90 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60';
+        }
+        if (tierLabel.includes('Tiered')) {
+            return 'bg-cyan-50 text-cyan-700 border-cyan-200/90 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800/60';
+        }
+        return 'bg-indigo-50 text-indigo-700 border-indigo-200/90 dark:bg-indigo-950/40 dark:text-indigo-300 dark:border-indigo-800/60';
+    };
+
     const renderSupportedModelsSection = () => {
         if (!appConfig) return null;
+
+        // 统一提取状态渲染标签
+        const renderTestStatusBadge = (testStatus?: ModelTestStatus) => {
+            if (testStatus?.loading) {
+                return (
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap bg-blue-50 text-blue-700 border border-blue-200/80 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60 shadow-2xs">
+                        <span className="loading loading-spinner loading-[10px] text-blue-600 dark:text-blue-400"></span>
+                        <span>{t('proxy.supported_models.testing')}</span>
+                    </span>
+                );
+            }
+            if (testStatus?.isRetired) {
+                return (
+                    <span
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (testStatus.logId) handleOpenLogDetail(testStatus.logId);
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/60 shadow-2xs transition-all ${
+                            testStatus.logId ? 'cursor-pointer hover:shadow-xs hover:border-rose-400 dark:hover:border-rose-600 hover:scale-[1.02] active:scale-95' : ''
+                        }`}
+                        title={testStatus.logId ? t('proxy.supported_models.view_detail') : undefined}
+                    >
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>
+                        <span>{t('proxy.supported_models.retired')}</span>
+                    </span>
+                );
+            }
+            if (testStatus?.success) {
+                return (
+                    <span
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (testStatus.logId) handleOpenLogDetail(testStatus.logId);
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap border shadow-2xs transition-all ${
+                            testStatus.isHistorical
+                                ? 'bg-gray-100/80 text-gray-700 border-gray-200/90 dark:bg-base-200 dark:text-gray-300 dark:border-base-300'
+                                : 'bg-emerald-50 text-emerald-700 border-emerald-200/90 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60'
+                        } ${testStatus.logId ? 'cursor-pointer hover:shadow-xs hover:border-emerald-400 dark:hover:border-emerald-600 hover:scale-[1.02] active:scale-95' : ''}`}
+                        title={testStatus.logId ? `${testStatus.accountEmail ? `账号: ${testStatus.accountEmail}\n` : ''}${t('proxy.supported_models.view_detail')}` : undefined}
+                    >
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                        <span>{testStatus.durationMs != null ? `${testStatus.durationMs}ms` : '200 OK'}</span>
+                    </span>
+                );
+            }
+            if (testStatus?.status === 429) {
+                return (
+                    <span
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (testStatus.logId) handleOpenLogDetail(testStatus.logId);
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap bg-amber-50 text-amber-700 border border-amber-200/90 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60 shadow-2xs transition-all ${
+                            testStatus.logId ? 'cursor-pointer hover:shadow-xs hover:border-amber-400 dark:hover:border-amber-600 hover:scale-[1.02] active:scale-95' : ''
+                        }`}
+                        title={testStatus.logId ? t('proxy.supported_models.view_detail') : undefined}
+                    >
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
+                        <span>{t('proxy.supported_models.rate_limited')}{testStatus.durationMs != null ? ` (${testStatus.durationMs}ms)` : ''}</span>
+                    </span>
+                );
+            }
+            if (testStatus && !testStatus.success && !testStatus.loading) {
+                return (
+                    <span
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (testStatus.logId) handleOpenLogDetail(testStatus.logId);
+                        }}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap bg-rose-50 text-rose-700 border border-rose-200/90 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/60 shadow-2xs transition-all ${
+                            testStatus.logId ? 'cursor-pointer hover:shadow-xs hover:border-rose-400 dark:hover:border-rose-600 hover:scale-[1.02] active:scale-95' : ''
+                        }`}
+                        title={testStatus.error || (testStatus.logId ? t('proxy.supported_models.view_detail') : undefined)}
+                    >
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>
+                        <span>{testStatus.status ? `${testStatus.status}` : 'Err'}</span>
+                    </span>
+                );
+            }
+            return <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono select-none px-2 py-0.5">--</span>;
+        };
+
+        // 按基础模型家族聚合（二级层级数据结构）
+        interface ModelVariantItem {
+            id: string;
+            name: string;
+            group: string;
+            icon: React.ReactNode;
+            tierLabel: string;
+            isBase: boolean;
+        }
+
+        interface ModelFamilyItem {
+            familyId: string;
+            familyName: string;
+            group: string;
+            icon: React.ReactNode;
+            baseModel: ModelVariantItem;
+            variants: ModelVariantItem[];
+        }
+
+        const familyMap = new Map<string, {
+            familyId: string;
+            familyName: string;
+            group: string;
+            icon: React.ReactNode;
+            variants: ModelVariantItem[];
+        }>();
+
+        for (const m of filteredModels) {
+            const famId = getModelFamilyId(m.id);
+            const tierLabel = getTierLabel(m.id, famId);
+            const isBase = m.id.toLowerCase().trim() === famId.toLowerCase().trim();
+
+            if (!familyMap.has(famId)) {
+                const group = m.group || inferModelGroup(famId);
+                const icon = getModelIcon(famId, group);
+
+                familyMap.set(famId, {
+                    familyId: famId,
+                    familyName: famId,
+                    group,
+                    icon,
+                    variants: []
+                });
+            }
+
+            const fam = familyMap.get(famId)!;
+            fam.variants.push({
+                id: m.id,
+                name: m.name,
+                group: m.group,
+                icon: m.icon || getModelIcon(m.id, m.group),
+                tierLabel,
+                isBase
+            });
+        }
+
+        const tierPriority = (v: ModelVariantItem) => {
+            if (v.isBase) return 0;
+            const l = v.tierLabel.toLowerCase();
+            if (l.includes('x-high')) return 1;
+            if (l.includes('high')) return 2;
+            if (l.includes('medium')) return 3;
+            if (l.includes('low')) return 4;
+            if (l.includes('extra-low')) return 5;
+            if (l.includes('tiered')) return 6;
+            if (l.includes('thinking')) return 7;
+            return 8;
+        };
+
+        const modelFamilyGroups: ModelFamilyItem[] = [];
+        for (const fam of familyMap.values()) {
+            fam.variants.sort((a, b) => tierPriority(a) - tierPriority(b));
+            const baseModel = fam.variants.find(v => v.isBase) || fam.variants[0];
+            modelFamilyGroups.push({
+                familyId: fam.familyId,
+                familyName: fam.familyName,
+                group: fam.group,
+                icon: fam.icon,
+                baseModel,
+                variants: fam.variants
+            });
+        }
+
+        // 按系列过滤
+        const displayedFamilies = modelFamilyGroups.filter(f => {
+            if (selectedSeriesTab === 'all') return true;
+            const g = (f.group || '').toLowerCase();
+            const fid = f.familyId.toLowerCase();
+            if (selectedSeriesTab === 'Gemini 4') {
+                return g.includes('gemini 4') || fid.startsWith('gemini-4');
+            }
+            if (selectedSeriesTab === 'Gemini 3') {
+                return g.includes('gemini 3') || fid.startsWith('gemini-3');
+            }
+            if (selectedSeriesTab === 'Claude') {
+                return g.includes('claude') || fid.startsWith('claude');
+            }
+            if (selectedSeriesTab === 'Other') {
+                return !fid.startsWith('gemini-') && !fid.startsWith('claude-');
+            }
+            return true;
+        });
+
+        const expandableFamilies = displayedFamilies.filter(f => f.variants.length > 1);
+        const allExpanded = expandableFamilies.length > 0 && expandableFamilies.every(f => expandedFamilies[f.familyId]);
+
+        const toggleAllFamilies = () => {
+            if (allExpanded) {
+                setExpandedFamilies({});
+            } else {
+                const next: Record<string, boolean> = {};
+                for (const f of expandableFamilies) {
+                    next[f.familyId] = true;
+                }
+                setExpandedFamilies(next);
+            }
+        };
+
+        const toggleFamily = (familyId: string) => {
+            setExpandedFamilies(prev => ({
+                ...prev,
+                [familyId]: !prev[familyId]
+            }));
+        };
+
         return (
             <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 dark:border-base-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-gray-50/40 dark:bg-base-200/40">
@@ -1748,27 +2026,63 @@ print(response.choices[0].message.content)`;
                         <span>{t('proxy.supported_models.title')}</span>
                     </h2>
                     <div className="flex items-center gap-2 flex-wrap shrink-0">
-                        {/* 账号选择器 */}
-                        <div className="relative inline-flex items-center">
-                            <div className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-gray-100 hover:bg-gray-200/70 dark:bg-base-200 dark:hover:bg-base-300 border border-gray-200/90 dark:border-base-300 shadow-2xs transition-all cursor-pointer">
+                        {/* 自定义账号选择器（彻底解决原生 select 在部分系统/WKWebView 下弹窗失效问题） */}
+                        <div className="relative inline-flex items-center" ref={accountDropdownRef}>
+                            <button
+                                type="button"
+                                onClick={() => setAccountDropdownOpen(prev => !prev)}
+                                className="flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-gray-100 hover:bg-gray-200/70 dark:bg-base-200 dark:hover:bg-base-300 border border-gray-200/90 dark:border-base-300 shadow-2xs transition-all cursor-pointer text-[11px] font-semibold text-gray-700 dark:text-gray-200 select-none active:scale-95"
+                                title={t('proxy.supported_models.select_account')}
+                            >
                                 <Bot size={13} className="text-amber-500 shrink-0" />
-                                <select
-                                    className="bg-transparent border-none text-[11px] font-semibold text-gray-700 dark:text-gray-200 focus:outline-none cursor-pointer max-w-[190px] truncate p-0 pr-1 appearance-none leading-none"
-                                    value={testTargetAccountId}
-                                    onChange={(e) => setTestTargetAccountId(e.target.value)}
-                                    title={t('proxy.supported_models.select_account')}
-                                >
-                                    <option value="" className="bg-white dark:bg-base-100 text-gray-900 dark:text-white">
-                                        {t('proxy.supported_models.auto_dispatch')}
-                                    </option>
-                                    {availableAccounts.map(acc => (
-                                        <option key={acc.id} value={acc.id} className="bg-white dark:bg-base-100 text-gray-900 dark:text-white">
-                                            {acc.email}
-                                        </option>
-                                    ))}
-                                </select>
-                                <ChevronDown size={11} className="text-gray-400 shrink-0 pointer-events-none" />
-                            </div>
+                                <span className="max-w-[170px] truncate text-left">
+                                    {testTargetAccountId
+                                        ? availableAccounts.find(a => a.id === testTargetAccountId)?.email || testTargetAccountId
+                                        : t('proxy.supported_models.auto_dispatch')}
+                                </span>
+                                <ChevronDown size={11} className={cn("text-gray-400 shrink-0 transition-transform duration-200", accountDropdownOpen && "rotate-180")} />
+                            </button>
+
+                            {accountDropdownOpen && (
+                                <div className="absolute left-0 sm:right-0 sm:left-auto top-full mt-1.5 w-64 max-h-64 overflow-y-auto bg-white dark:bg-base-100 rounded-xl shadow-xl border border-gray-200 dark:border-base-300 py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                    <div
+                                        onClick={() => {
+                                            setTestTargetAccountId('');
+                                            setAccountDropdownOpen(false);
+                                        }}
+                                        className={cn(
+                                            "flex items-center justify-between px-3 py-2 text-xs cursor-pointer transition-colors hover:bg-amber-50 dark:hover:bg-amber-950/30",
+                                            !testTargetAccountId ? "text-amber-600 dark:text-amber-400 font-bold bg-amber-50/60 dark:bg-amber-950/20" : "text-gray-700 dark:text-gray-200"
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2 truncate">
+                                            <Bot size={13} className="text-amber-500 shrink-0" />
+                                            <span className="truncate">{t('proxy.supported_models.auto_dispatch')}</span>
+                                        </div>
+                                        {!testTargetAccountId && <Check size={13} className="text-amber-600 dark:text-amber-400 shrink-0" />}
+                                    </div>
+                                    {availableAccounts.length > 0 && <div className="h-px bg-gray-100 dark:bg-base-200 my-1" />}
+                                    {availableAccounts.map(acc => {
+                                        const isSelected = testTargetAccountId === acc.id;
+                                        return (
+                                            <div
+                                                key={acc.id}
+                                                onClick={() => {
+                                                    setTestTargetAccountId(acc.id);
+                                                    setAccountDropdownOpen(false);
+                                                }}
+                                                className={cn(
+                                                    "flex items-center justify-between px-3 py-2 text-xs cursor-pointer transition-colors hover:bg-gray-100 dark:hover:bg-base-200",
+                                                    isSelected ? "text-blue-600 dark:text-blue-400 font-bold bg-blue-50/60 dark:bg-blue-950/20" : "text-gray-700 dark:text-gray-200"
+                                                )}
+                                            >
+                                                <span className="truncate" title={acc.email}>{acc.email}</span>
+                                                {isSelected && <Check size={13} className="text-blue-600 dark:text-blue-400 shrink-0" />}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
 
                         {/* 批量测活按钮 */}
@@ -1796,147 +2110,299 @@ print(response.choices[0].message.content)`;
                     </div>
                 </div>
 
+                {/* 系列分类快速切换与全部展开/折叠栏 */}
+                <div className="flex items-center gap-1.5 px-4 py-2 bg-gray-50/80 dark:bg-base-200/60 border-b border-gray-100 dark:border-base-200 text-xs flex-wrap">
+                    <span className="text-[11px] font-medium text-gray-400 dark:text-gray-500 mr-1 select-none">系列:</span>
+                    {[
+                        { id: 'all', label: '全部' },
+                        { id: 'Gemini 4', label: 'Gemini 4' },
+                        { id: 'Gemini 3', label: 'Gemini 3' },
+                        { id: 'Claude', label: 'Claude' },
+                        { id: 'Other', label: 'OpenAI / 其他' },
+                    ].map(tab => (
+                        <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setSelectedSeriesTab(tab.id)}
+                            className={cn(
+                                "px-2.5 py-1 rounded-md font-medium text-[11px] transition-all select-none cursor-pointer",
+                                selectedSeriesTab === tab.id
+                                    ? "bg-white dark:bg-base-100 text-blue-600 dark:text-blue-400 shadow-2xs font-semibold border border-gray-200/80 dark:border-base-300"
+                                    : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-200/50 dark:hover:bg-base-300/50"
+                            )}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                    {expandableFamilies.length > 0 && (
+                        <div className="ml-auto flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={toggleAllFamilies}
+                                className="text-[11px] text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 flex items-center gap-1 px-2 py-0.5 rounded hover:bg-gray-200/50 dark:hover:bg-base-300/50 transition-colors select-none cursor-pointer"
+                            >
+                                <Layers size={12} />
+                                <span>{allExpanded ? '全部折叠' : '全部展开'}</span>
+                            </button>
+                        </div>
+                    )}
+                </div>
+
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-0 lg:divide-x dark:divide-gray-700">
-                    {/* 左侧：模型列表 */}
+                    {/* 左侧：多级模型家族列表 */}
                     <div className="col-span-2 p-0">
                         <div className="overflow-x-auto">
                             <table className="table w-full">
                                 <thead className="bg-gray-50/70 dark:bg-gray-800/70 text-gray-500 dark:text-gray-400 select-none">
                                     <tr className="border-b border-gray-100 dark:border-base-200">
-                                        <th className="w-10 pl-3"></th>
-                                        <th className="text-[11px] font-medium whitespace-nowrap min-w-[140px]">{t('proxy.supported_models.model_name')}</th>
+                                        <th className="w-8 pl-3 pr-0"></th>
+                                        <th className="w-8 px-1"></th>
+                                        <th className="text-[11px] font-medium whitespace-nowrap min-w-[150px]">{t('proxy.supported_models.model_name')}</th>
                                         <th className="text-[11px] font-medium whitespace-nowrap min-w-[140px]">{t('proxy.supported_models.model_id')}</th>
                                         <th className="text-[11px] font-medium whitespace-nowrap min-w-[130px]">{t('proxy.supported_models.status')}</th>
                                         <th className="text-[11px] w-36 text-center font-medium whitespace-nowrap">{t('proxy.supported_models.action')}</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredModels.map((m) => {
-                                        const testStatus = modelTestResults[m.id];
+                                    {displayedFamilies.map((family) => {
+                                        const isExpanded = !!expandedFamilies[family.familyId];
+                                        const hasVariants = family.variants.length > 1;
+                                        const baseTestStatus = modelTestResults[family.baseModel.id];
+                                        const isBaseSelected = selectedModelId === family.baseModel.id;
+
                                         return (
-                                            <tr
-                                                key={m.id}
-                                                className={`h-11 border-b border-gray-100/70 dark:border-base-200/60 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 cursor-pointer transition-colors ${selectedModelId === m.id ? 'bg-blue-50/70 dark:bg-blue-900/20' : ''}`}
-                                                onClick={() => setSelectedModelId(m.id)}
-                                            >
-                                                <td className="pl-4 text-blue-500 align-middle">{m.icon}</td>
-                                                <td className="font-bold text-xs align-middle whitespace-nowrap text-gray-900 dark:text-gray-100">{m.name}</td>
-                                                <td className="font-mono text-[10px] text-gray-500 dark:text-gray-400 align-middle whitespace-nowrap">{m.id}</td>
-                                                <td className="align-middle whitespace-nowrap">
-                                                    {testStatus?.loading ? (
-                                                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap bg-blue-50 text-blue-700 border border-blue-200/80 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800/60 shadow-2xs">
-                                                            <span className="loading loading-spinner loading-[10px] text-blue-600 dark:text-blue-400"></span>
-                                                            <span>{t('proxy.supported_models.testing')}</span>
-                                                        </span>
-                                                    ) : testStatus?.isRetired ? (
-                                                        <span
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                if (testStatus.logId) handleOpenLogDetail(testStatus.logId);
-                                                            }}
-                                                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap bg-rose-50 text-rose-700 border border-rose-200/80 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/60 shadow-2xs transition-all ${
-                                                                testStatus.logId ? 'cursor-pointer hover:shadow-xs hover:border-rose-400 dark:hover:border-rose-600 hover:scale-[1.02] active:scale-95' : ''
-                                                            }`}
-                                                            title={testStatus.logId ? t('proxy.supported_models.view_detail') : undefined}
-                                                        >
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>
-                                                            <span>{t('proxy.supported_models.retired')}</span>
-                                                        </span>
-                                                    ) : testStatus?.success ? (
-                                                        <span
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                if (testStatus.logId) handleOpenLogDetail(testStatus.logId);
-                                                            }}
-                                                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap border shadow-2xs transition-all ${
-                                                                testStatus.isHistorical
-                                                                    ? 'bg-gray-100/80 text-gray-700 border-gray-200/90 dark:bg-base-200 dark:text-gray-300 dark:border-base-300'
-                                                                    : 'bg-emerald-50 text-emerald-700 border-emerald-200/90 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800/60'
-                                                            } ${testStatus.logId ? 'cursor-pointer hover:shadow-xs hover:border-emerald-400 dark:hover:border-emerald-600 hover:scale-[1.02] active:scale-95' : ''}`}
-                                                            title={testStatus.logId ? `${testStatus.accountEmail ? `账号: ${testStatus.accountEmail}\n` : ''}${t('proxy.supported_models.view_detail')}` : undefined}
-                                                        >
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
-                                                            <span>{testStatus.durationMs != null ? `${testStatus.durationMs}ms` : '200 OK'}</span>
-                                                        </span>
-                                                    ) : testStatus?.status === 429 ? (
-                                                        <span
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                if (testStatus.logId) handleOpenLogDetail(testStatus.logId);
-                                                            }}
-                                                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap bg-amber-50 text-amber-700 border border-amber-200/90 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60 shadow-2xs transition-all ${
-                                                                testStatus.logId ? 'cursor-pointer hover:shadow-xs hover:border-amber-400 dark:hover:border-amber-600 hover:scale-[1.02] active:scale-95' : ''
-                                                            }`}
-                                                            title={testStatus.logId ? t('proxy.supported_models.view_detail') : undefined}
-                                                        >
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
-                                                            <span>{t('proxy.supported_models.rate_limited')}{testStatus.durationMs != null ? ` (${testStatus.durationMs}ms)` : ''}</span>
-                                                        </span>
-                                                    ) : (testStatus && !testStatus.success && !testStatus.loading) ? (
-                                                        <span
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                if (testStatus.logId) handleOpenLogDetail(testStatus.logId);
-                                                            }}
-                                                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-medium whitespace-nowrap bg-rose-50 text-rose-700 border border-rose-200/90 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-800/60 shadow-2xs transition-all ${
-                                                                testStatus.logId ? 'cursor-pointer hover:shadow-xs hover:border-rose-400 dark:hover:border-rose-600 hover:scale-[1.02] active:scale-95' : ''
-                                                            }`}
-                                                            title={testStatus.error || (testStatus.logId ? t('proxy.supported_models.view_detail') : undefined)}
-                                                        >
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>
-                                                            <span>{testStatus.status ? `${testStatus.status}` : 'Err'}</span>
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono select-none px-2 py-0.5">--</span>
+                                            <React.Fragment key={family.familyId}>
+                                                {/* 一级界面：模型家族基准模型（默认测活无后缀模型） */}
+                                                <tr
+                                                    className={cn(
+                                                        "h-11 border-b border-gray-100/70 dark:border-base-200/60 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 cursor-pointer transition-colors",
+                                                        isBaseSelected ? "bg-blue-50/70 dark:bg-blue-900/20" : ""
                                                     )}
-                                                </td>
-                                                <td className="text-center align-middle whitespace-nowrap px-2">
-                                                    <div className="inline-flex items-center justify-center gap-1.5">
-                                                        <button
-                                                            className={`btn btn-xs h-6.5 min-h-0 px-2 rounded-md font-medium text-[11px] transition-all shadow-2xs ${
-                                                                testStatus?.loading
-                                                                    ? 'btn-disabled opacity-60'
-                                                                    : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/25 active:scale-95'
-                                                            }`}
-                                                            disabled={testStatus?.loading || testingAll}
-                                                            title={t('proxy.supported_models.test_connectivity')}
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                handleTestModel(m.id);
-                                                            }}
-                                                        >
-                                                            {testStatus?.loading ? (
-                                                                <span className="loading loading-spinner loading-[10px]"></span>
-                                                            ) : (
-                                                                <div className="flex items-center gap-1 font-semibold">
-                                                                    <Zap size={11} className="fill-current" />
-                                                                    <span>{t('proxy.supported_models.test_connectivity')}</span>
-                                                                </div>
+                                                    onClick={() => setSelectedModelId(family.baseModel.id)}
+                                                >
+                                                    {/* 折叠/展开箭头 */}
+                                                    <td className="pl-3 pr-0 py-0 align-middle">
+                                                        {hasVariants ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    toggleFamily(family.familyId);
+                                                                }}
+                                                                className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-200/70 dark:hover:bg-base-300 text-gray-400 hover:text-blue-600 transition-colors cursor-pointer"
+                                                                title={isExpanded ? '折叠档位' : `展开 ${family.variants.length} 个档位`}
+                                                            >
+                                                                <ChevronRight
+                                                                    size={13}
+                                                                    className={cn(
+                                                                        "transition-transform duration-200",
+                                                                        isExpanded && "rotate-90 text-blue-600 dark:text-blue-400"
+                                                                    )}
+                                                                />
+                                                            </button>
+                                                        ) : (
+                                                            <div className="w-6 h-6" />
+                                                        )}
+                                                    </td>
+
+                                                    {/* 模型图标 */}
+                                                    <td className="px-1 py-0 align-middle text-blue-500">
+                                                        {family.icon}
+                                                    </td>
+
+                                                    {/* 模型名称与档位计数徽章 */}
+                                                    <td className="py-0 align-middle whitespace-nowrap">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-xs text-gray-900 dark:text-gray-100">
+                                                                {family.familyName}
+                                                            </span>
+                                                            {hasVariants && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        toggleFamily(family.familyId);
+                                                                    }}
+                                                                    className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 hover:bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:hover:bg-blue-900/50 dark:text-blue-300 border border-blue-200/70 dark:border-blue-800/50 shadow-2xs transition-colors cursor-pointer select-none"
+                                                                    title="点击展开/折叠各个档位"
+                                                                >
+                                                                    {family.variants.length} 档位
+                                                                </button>
                                                             )}
-                                                        </button>
-                                                        <button
-                                                            className="btn btn-xs h-6.5 min-h-0 px-2 rounded-md font-medium text-[11px] bg-gray-100 hover:bg-gray-200 dark:bg-base-200 dark:hover:bg-base-300 text-gray-700 dark:text-gray-300 border border-gray-200/70 dark:border-base-300 transition-all active:scale-95 shadow-2xs"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                copyToClipboardHandler(m.id, `model-${m.id}`);
-                                                            }}
-                                                            title={t('common.copy')}
-                                                        >
-                                                            {copied === `model-${m.id}` ? (
-                                                                <div className="flex items-center gap-1 font-semibold text-emerald-600">
-                                                                    <CheckCircle size={11} />
-                                                                    <span>{t('common.copied')}</span>
-                                                                </div>
-                                                            ) : (
-                                                                <div className="flex items-center gap-1 font-semibold">
-                                                                    <Copy size={11} />
-                                                                    <span>{t('common.copy')}</span>
-                                                                </div>
+                                                        </div>
+                                                    </td>
+
+                                                    {/* 模型 ID（一级界面为无后缀模型 ID） */}
+                                                    <td className="py-0 align-middle whitespace-nowrap">
+                                                        <div className="flex items-center gap-1.5">
+                                                            <span className="font-mono text-[10px] text-gray-500 dark:text-gray-400">
+                                                                {family.baseModel.id}
+                                                            </span>
+                                                            {hasVariants && (
+                                                                <span className="text-[9px] px-1 py-0.2 rounded bg-gray-100 dark:bg-base-200 text-gray-500 dark:text-gray-400 font-mono">
+                                                                    Base
+                                                                </span>
                                                             )}
-                                                        </button>
-                                                    </div>
-                                                </td>
-                                            </tr>
+                                                        </div>
+                                                    </td>
+
+                                                    {/* 状态 / 连通性（显示无后缀基准模型状态） */}
+                                                    <td className="py-0 align-middle whitespace-nowrap">
+                                                        {renderTestStatusBadge(baseTestStatus)}
+                                                    </td>
+
+                                                    {/* 操作列：一级界面默认激活无后缀模型 */}
+                                                    <td className="py-0 text-center align-middle whitespace-nowrap px-2">
+                                                        <div className="inline-flex items-center justify-center gap-1.5">
+                                                            <button
+                                                                className={`btn btn-xs h-6.5 min-h-0 px-2 rounded-md font-medium text-[11px] transition-all shadow-2xs ${
+                                                                    baseTestStatus?.loading
+                                                                        ? 'btn-disabled opacity-60'
+                                                                        : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/25 active:scale-95'
+                                                                }`}
+                                                                disabled={baseTestStatus?.loading || testingAll}
+                                                                title={`测活无后缀基准模型 (${family.baseModel.id})`}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    handleTestModel(family.baseModel.id);
+                                                                }}
+                                                            >
+                                                                {baseTestStatus?.loading ? (
+                                                                    <span className="loading loading-spinner loading-[10px]"></span>
+                                                                ) : (
+                                                                    <div className="flex items-center gap-1 font-semibold">
+                                                                        <Zap size={11} className="fill-current" />
+                                                                        <span>{t('proxy.supported_models.test_connectivity')}</span>
+                                                                    </div>
+                                                                )}
+                                                            </button>
+                                                            <button
+                                                                className="btn btn-xs h-6.5 min-h-0 px-2 rounded-md font-medium text-[11px] bg-gray-100 hover:bg-gray-200 dark:bg-base-200 dark:hover:bg-base-300 text-gray-700 dark:text-gray-300 border border-gray-200/70 dark:border-base-300 transition-all active:scale-95 shadow-2xs"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    copyToClipboardHandler(family.baseModel.id, `model-${family.baseModel.id}`);
+                                                                }}
+                                                                title={t('common.copy')}
+                                                            >
+                                                                {copied === `model-${family.baseModel.id}` ? (
+                                                                    <div className="flex items-center gap-1 font-semibold text-emerald-600">
+                                                                        <CheckCircle size={11} />
+                                                                        <span>{t('common.copied')}</span>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="flex items-center gap-1 font-semibold">
+                                                                        <Copy size={11} />
+                                                                        <span>{t('common.copy')}</span>
+                                                                    </div>
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+
+                                                {/* 二级界面：各档位子模型列表（展开时渲染，可分别对各个模型进行激活） */}
+                                                {isExpanded && hasVariants && family.variants.map((variant, vIdx) => {
+                                                    const variantTestStatus = modelTestResults[variant.id];
+                                                    const isVariantSelected = selectedModelId === variant.id;
+                                                    const isLast = vIdx === family.variants.length - 1;
+
+                                                    return (
+                                                        <tr
+                                                            key={variant.id}
+                                                            className={cn(
+                                                                "h-9 border-b border-gray-100/50 dark:border-base-200/40 bg-gray-50/50 hover:bg-blue-50/40 dark:bg-base-200/25 dark:hover:bg-blue-900/15 cursor-pointer transition-colors text-xs",
+                                                                isVariantSelected ? "bg-blue-50/70 dark:bg-blue-900/25" : ""
+                                                            )}
+                                                            onClick={() => setSelectedModelId(variant.id)}
+                                                        >
+                                                            {/* 缩进与树状连线符号 */}
+                                                            <td className="pl-5 pr-0 py-0 align-middle text-gray-300 dark:text-gray-600 font-mono text-[11px] select-none">
+                                                                {isLast ? '└' : '├'}
+                                                            </td>
+
+                                                            {/* 档位图标 */}
+                                                            <td className="px-1 py-0 align-middle text-gray-400 dark:text-gray-500 scale-90">
+                                                                {variant.icon}
+                                                            </td>
+
+                                                            {/* 档位徽章 */}
+                                                            <td className="py-0 align-middle whitespace-nowrap pl-1">
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className={cn(
+                                                                        "px-2 py-0.5 rounded text-[10px] font-semibold border shadow-2xs font-mono",
+                                                                        getTierBadgeClass(variant.tierLabel)
+                                                                    )}>
+                                                                        {variant.tierLabel}
+                                                                    </span>
+                                                                </div>
+                                                            </td>
+
+                                                            {/* 完整 Model ID */}
+                                                            <td className="py-0 align-middle whitespace-nowrap">
+                                                                <span className={cn(
+                                                                    "font-mono text-[10px]",
+                                                                    isVariantSelected ? "font-bold text-blue-600 dark:text-blue-400" : "text-gray-600 dark:text-gray-300"
+                                                                )}>
+                                                                    {variant.id}
+                                                                </span>
+                                                            </td>
+
+                                                            {/* 档位专属连通性状态 */}
+                                                            <td className="py-0 align-middle whitespace-nowrap">
+                                                                {renderTestStatusBadge(variantTestStatus)}
+                                                            </td>
+
+                                                            {/* 档位专属操作：分别激活此模型 */}
+                                                            <td className="py-0 text-center align-middle whitespace-nowrap px-2">
+                                                                <div className="inline-flex items-center justify-center gap-1.5">
+                                                                    <button
+                                                                        className={`btn btn-xs h-6 min-h-0 px-2 rounded font-medium text-[10px] transition-all shadow-2xs ${
+                                                                            variantTestStatus?.loading
+                                                                                ? 'btn-disabled opacity-60'
+                                                                                : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/25 active:scale-95'
+                                                                        }`}
+                                                                        disabled={variantTestStatus?.loading || testingAll}
+                                                                        title={`测活档位模型 (${variant.id})`}
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleTestModel(variant.id);
+                                                                        }}
+                                                                    >
+                                                                        {variantTestStatus?.loading ? (
+                                                                            <span className="loading loading-spinner loading-[10px]"></span>
+                                                                        ) : (
+                                                                            <div className="flex items-center gap-1 font-semibold">
+                                                                                <Zap size={10} className="fill-current" />
+                                                                                <span>{t('proxy.supported_models.test_connectivity')}</span>
+                                                                            </div>
+                                                                        )}
+                                                                    </button>
+                                                                    <button
+                                                                        className="btn btn-xs h-6 min-h-0 px-2 rounded font-medium text-[10px] bg-gray-100 hover:bg-gray-200 dark:bg-base-200 dark:hover:bg-base-300 text-gray-700 dark:text-gray-300 border border-gray-200/70 dark:border-base-300 transition-all active:scale-95 shadow-2xs"
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            copyToClipboardHandler(variant.id, `model-${variant.id}`);
+                                                                        }}
+                                                                        title={t('common.copy')}
+                                                                    >
+                                                                        {copied === `model-${variant.id}` ? (
+                                                                            <div className="flex items-center gap-1 font-semibold text-emerald-600">
+                                                                                <CheckCircle size={10} />
+                                                                                <span>{t('common.copied')}</span>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <div className="flex items-center gap-1 font-semibold">
+                                                                                <Copy size={10} />
+                                                                                <span>{t('common.copy')}</span>
+                                                                            </div>
+                                                                        )}
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </React.Fragment>
                                         );
                                     })}
                                 </tbody>

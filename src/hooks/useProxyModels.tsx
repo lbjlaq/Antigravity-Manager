@@ -1,8 +1,42 @@
 import { useMemo, useEffect, useState } from 'react';
 import { MODEL_CONFIG, compareModelsDesc, inferModelGroup } from '../config/modelConfig';
 import { useAccountStore } from '../stores/useAccountStore';
-import { Bot, Sparkles } from 'lucide-react';
+import { Bot } from 'lucide-react';
+import { Gemini, Claude, OpenAI } from '@lobehub/icons';
 import { request } from '../utils/request';
+
+export function getModelIcon(id: string, group?: string): React.ReactNode {
+    const idLower = (id || '').toLowerCase().trim();
+    const groupLower = (group || '').toLowerCase().trim();
+
+    const cfgEntry = Object.entries(MODEL_CONFIG).find(
+        ([cfgId, cfg]) => cfgId.toLowerCase() === idLower || cfg.protectedKey?.toLowerCase() === idLower
+    );
+    if (cfgEntry?.[1]?.Icon) {
+        const CfgIcon = cfgEntry[1].Icon;
+        return <CfgIcon size={16} />;
+    }
+
+    if (
+        idLower.includes('gemini') ||
+        groupLower.includes('gemini') ||
+        idLower.includes('hydrogen') ||
+        idLower.includes('argon') ||
+        idLower.includes('carbon')
+    ) {
+        return <Gemini.Color size={16} />;
+    }
+
+    if (idLower.includes('claude') || groupLower.includes('claude')) {
+        return <Claude.Color size={16} />;
+    }
+
+    if (idLower.includes('gpt') || groupLower.includes('openai') || groupLower.includes('other')) {
+        return <OpenAI.Avatar size={16} />;
+    }
+
+    return <Bot size={16} className="text-blue-400" />;
+}
 
 export interface CanonicalFamilyDto {
     canonical_id: string;
@@ -241,11 +275,7 @@ export const useProxyModels = () => {
                 // 泛化推导分组，全面兼容未知/未来新模型 (如 Gemini 4 Argon 等)
                 const group = mapped ? mapped.group : inferModelGroup(canonicalId || canonicalName);
 
-                const cfgEntry = Object.entries(MODEL_CONFIG).find(
-                    ([cfgId, cfg]) => cfgId.toLowerCase() === canonicalId.toLowerCase() || cfg.protectedKey?.toLowerCase() === canonicalId.toLowerCase()
-                );
-                const CfgIcon = cfgEntry?.[1].Icon;
-                const icon = CfgIcon ? <CfgIcon size={16} /> : (group === 'Claude' ? <Sparkles size={16} className="text-purple-400" /> : <Bot size={16} className="text-blue-400" />);
+                const icon = getModelIcon(canonicalId, group);
 
                 if (!uniqueModelsMap.has(canonicalId)) {
                     uniqueModelsMap.set(canonicalId, {
@@ -273,11 +303,7 @@ export const useProxyModels = () => {
         for (const base of derivedBares) {
             if (!uniqueModelsMap.has(base)) {
                 const group = inferModelGroup(base);
-                const cfgEntry = Object.entries(MODEL_CONFIG).find(
-                    ([cfgId, cfg]) => cfgId.toLowerCase() === base.toLowerCase() || cfg.protectedKey?.toLowerCase() === base.toLowerCase()
-                );
-                const CfgIcon = cfgEntry?.[1].Icon;
-                const icon = CfgIcon ? <CfgIcon size={16} /> : (group === 'Claude' ? <Sparkles size={16} className="text-purple-400" /> : <Bot size={16} className="text-blue-400" />);
+                const icon = getModelIcon(base, group);
                 uniqueModelsMap.set(base, {
                     id: base,
                     name: base,
@@ -305,7 +331,7 @@ export const useProxyModels = () => {
                         id: canonicalId,
                         name: canonicalName,
                         group,
-                        icon: <config.Icon size={16} />,
+                        icon: getModelIcon(canonicalId, group),
                     });
                 }
             }
