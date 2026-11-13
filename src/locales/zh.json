@@ -2008,6 +2008,11 @@
             "total_duration_title": "总耗时",
             "ttft_title": "首字延迟"
         },
+        "gate_reasons": {
+            "model_not_exist": "模型不存在",
+            "no_available_accounts": "无可用配额账号",
+            "no_quota_accounts": "全池配额耗尽"
+        },
         "details": {
             "title": "请求详情",
             "request_payload": "请求报文 (Request)",

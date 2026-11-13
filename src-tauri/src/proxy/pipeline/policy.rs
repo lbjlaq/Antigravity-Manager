@@ -455,6 +455,12 @@ mod tests {
         assert_eq!(no_quota, UpstreamClassification::InternalGatewayMessage);
         assert!(!no_quota.should_lock_account());
         assert!(!no_quota.abandons_sticky_account());
+
+        // 503 no available accounts：第一道门禁自答，绝不能解绑粘性或连坐任何账号/模型
+        let no_available = UpstreamClassification::classify(503, "no available accounts", None);
+        assert_eq!(no_available, UpstreamClassification::InternalGatewayMessage);
+        assert!(!no_available.should_lock_account());
+        assert!(!no_available.abandons_sticky_account());
     }
 
     #[test]

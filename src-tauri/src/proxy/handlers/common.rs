@@ -125,7 +125,8 @@ mod tests {
 /// 入站模型闸门（协议无关）。
 ///
 /// - 缺失 / 不存在的 model-id → 404 `model not exist`
-/// - 整池无配额 → 502 `no quota accounts`
+/// - 模型在目录/磁盘已知但活跃池无可用账号 → 503 `no available accounts`
+/// - 活跃池有支持该模型的账号但整池无配额 → 502 `no quota accounts`
 ///
 /// 拒绝时：响应头带上 `X-Account-Email` 哨兵文案（日志账号列直接展示），
 /// 并把英文排障说明写入 `upstream_recorder`，使「转出报文」面板可展开查看。
@@ -677,6 +678,26 @@ pub fn build_dual_track_error_with_ua_and_lang(
             i18n_err.account_forbidden_sug.to_string(),
             "permission_error",
             "account_forbidden",
+        )
+    } else if lower.contains(crate::proxy::common::model_gate::NO_AVAILABLE_ACCOUNTS) {
+        (
+            i18n_err
+                .no_available_accounts_title
+                .replace("{model}", model),
+            i18n_err
+                .no_available_accounts_diag
+                .replace("{model}", model),
+            i18n_err.no_available_accounts_sug.replace("{model}", model),
+            "api_error",
+            "no_available_accounts",
+        )
+    } else if lower.contains(crate::proxy::common::model_gate::NO_QUOTA_ACCOUNTS) {
+        (
+            i18n_err.no_quota_accounts_title.replace("{model}", model),
+            i18n_err.no_quota_accounts_diag.replace("{model}", model),
+            i18n_err.no_quota_accounts_sug.replace("{model}", model),
+            "rate_limit_error",
+            "no_quota_accounts",
         )
     } else if is_internal_limited {
         (
@@ -1389,5 +1410,57 @@ mod retry_after_tests {
             .as_str()
             .unwrap()
             .contains("【模型全池临时熔断】"));
+    }
+
+    #[test]
+    fn test_dual_track_no_available_accounts_all_12_languages_and_protocols() {
+        let langs = [
+            ("zh", "【当前无可用配额账号】"),
+            ("zh-TW", "【目前無可用配額帳號】"),
+            ("en", "[No Available Quota Accounts]"),
+            ("ja", "【利用可能なクォータアカウントなし】"),
+            ("ko", "【사용 가능한 할당량 계정 없음】"),
+            ("es", "【Sin cuentas de cuota disponibles】"),
+            ("ru", "【Нет доступных аккаунтов с квотой】"),
+            ("pt", "【Sem contas de cota disponíveis】"),
+            ("tr", "【Kullanılabilir Kota Hesabı Yok】"),
+            ("vi", "【Hiện Không Có Tài Khoản Khả Dụng】"),
+            ("ar", "【لا توجد حسابات حصة متاحة حاليًا】"),
+            ("my", "【Tiada Akaun Kuota Tersedia】"),
+        ];
+
+        for (lang, expected_prefix) in langs {
+            let res = build_dual_track_error_with_ua_and_lang(
+                "openai",
+                503,
+                "gemini-4-hydrogen-high",
+                crate::proxy::common::model_gate::NO_AVAILABLE_ACCOUNTS,
+                None,
+                Some(lang),
+            );
+            assert_eq!(res["error"]["code"], "no_available_accounts");
+            assert_eq!(res["error"]["gateway_error"]["source"], "gateway_pool");
+            let msg = res["error"]["message"].as_str().unwrap();
+            assert!(
+                msg.contains(expected_prefix),
+                "lang={lang} expected '{expected_prefix}' in '{msg}'"
+            );
+            assert!(msg.contains("gemini-4-hydrogen-high"));
+        }
+
+        // Verify Gemini protocol also preserves HTTP 503 + gateway_error
+        let gemini_res = build_dual_track_error_with_ua_and_lang(
+            "gemini",
+            503,
+            "gemini-4-hydrogen-high",
+            crate::proxy::common::model_gate::NO_AVAILABLE_ACCOUNTS,
+            None,
+            Some("zh"),
+        );
+        assert_eq!(gemini_res["error"]["code"], 503);
+        assert_eq!(
+            gemini_res["error"]["gateway_error"]["error_code"],
+            "no_available_accounts"
+        );
     }
 }

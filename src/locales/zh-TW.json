@@ -1939,6 +1939,11 @@
             "total_duration_title": "總耗時",
             "ttft_title": "首字延遲"
         },
+        "gate_reasons": {
+            "model_not_exist": "模型不存在",
+            "no_available_accounts": "無可用配額帳號",
+            "no_quota_accounts": "全池配額耗盡"
+        },
         "details": {
             "title": "請求詳情",
             "request_payload": "請求封包 (Request)",

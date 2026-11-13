@@ -1811,6 +1811,11 @@
             "total_duration_title": "総所要時間",
             "ttft_title": "最初のトークン遅延"
         },
+        "gate_reasons": {
+            "model_not_exist": "モデルが存在しません",
+            "no_available_accounts": "利用可能なアカウントなし",
+            "no_quota_accounts": "全プールクォータ枯渇"
+        },
         "details": {
             "title": "リクエスト詳細",
             "request_payload": "リクエストペイロード",

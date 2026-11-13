@@ -927,6 +927,60 @@ impl TokenManager {
         !expired
     }
 
+    /// 读取 `accounts.json` 索引，返回 `(全部注册账号 ID, disabled/proxy_disabled 账号 ID)`。
+    fn read_accounts_index_sets(
+        data_dir: &std::path::Path,
+    ) -> (Option<HashSet<String>>, HashSet<String>) {
+        let index_file = data_dir.join("accounts.json");
+        if !index_file.exists() {
+            return (None, HashSet::new());
+        }
+        let Ok(content) = std::fs::read_to_string(&index_file) else {
+            return (None, HashSet::new());
+        };
+        let Ok(index_val) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return (None, HashSet::new());
+        };
+        let Some(accs) = index_val.get("accounts").and_then(|a| a.as_array()) else {
+            return (None, HashSet::new());
+        };
+        let mut all_ids = HashSet::new();
+        let mut disabled_ids = HashSet::new();
+        for acc in accs {
+            if let Some(id) = acc.get("id").and_then(|v| v.as_str()) {
+                all_ids.insert(id.to_string());
+                let is_disabled = acc
+                    .get("disabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let is_proxy_disabled = acc
+                    .get("proxy_disabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if is_disabled || is_proxy_disabled {
+                    disabled_ids.insert(id.to_string());
+                }
+            }
+        }
+        (Some(all_ids), disabled_ids)
+    }
+
+    /// 校验账号文件是否属于有效索引（兼容 `stem != id` 的文件）。
+    fn is_account_file_in_index(path: &PathBuf, valid_ids: &HashSet<String>) -> bool {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if valid_ids.contains(stem) {
+            return true;
+        }
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+            .and_then(|v| v.get("id").and_then(|id| id.as_str()).map(str::to_string))
+            .is_some_and(|internal_id| valid_ids.contains(&internal_id))
+    }
+
     /// 从主应用账号目录加载所有账号
     pub async fn load_accounts(&self) -> Result<usize, String> {
         let accounts_dir = self.resolved_data_dir().join("accounts");
@@ -936,45 +990,8 @@ impl TokenManager {
         }
 
         // 读取 accounts.json 索引，过滤掉用户在索引中标记为 disabled 或 proxy_disabled 的账号，防止实体文件残留导致已停用账号渗入代理池
-        let index_file = self.resolved_data_dir().join("accounts.json");
-        let (valid_in_index, disabled_in_index): (
-            Option<std::collections::HashSet<String>>,
-            std::collections::HashSet<String>,
-        ) = if index_file.exists() {
-            if let Ok(content) = std::fs::read_to_string(&index_file) {
-                if let Ok(index_val) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(accs) = index_val.get("accounts").and_then(|a| a.as_array()) {
-                        let mut all_ids = std::collections::HashSet::new();
-                        let mut disabled_ids = std::collections::HashSet::new();
-                        for acc in accs {
-                            if let Some(id) = acc.get("id").and_then(|v| v.as_str()) {
-                                all_ids.insert(id.to_string());
-                                let is_disabled = acc
-                                    .get("disabled")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
-                                let is_proxy_disabled = acc
-                                    .get("proxy_disabled")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
-                                if is_disabled || is_proxy_disabled {
-                                    disabled_ids.insert(id.to_string());
-                                }
-                            }
-                        }
-                        (Some(all_ids), disabled_ids)
-                    } else {
-                        (None, std::collections::HashSet::new())
-                    }
-                } else {
-                    (None, std::collections::HashSet::new())
-                }
-            } else {
-                (None, std::collections::HashSet::new())
-            }
-        } else {
-            (None, std::collections::HashSet::new())
-        };
+        let (valid_in_index, disabled_in_index) =
+            Self::read_accounts_index_sets(&self.resolved_data_dir());
 
         let entries =
             std::fs::read_dir(&accounts_dir).map_err(|e| format!("读取账号目录失败: {}", e))?;
@@ -999,24 +1016,7 @@ impl TokenManager {
             // 孤儿账号（已在界面删除但磁盘残留的 *.json 文件）拒绝载入代理调度池，仅记录 warning 跳过，
             // 严禁在此主动删除文件，避免并发导入或未提交窗口期误删 refresh token。
             if let Some(ref valid_ids) = valid_in_index {
-                let is_valid = if valid_ids.contains(stem) {
-                    true
-                } else if let Ok(content) = std::fs::read_to_string(&path) {
-                    // 兼容 stem != id 的情况，解析内部 id
-                    serde_json::from_str::<serde_json::Value>(&content)
-                        .ok()
-                        .and_then(|v| {
-                            v.get("id")
-                                .and_then(|id| id.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .map(|internal_id| valid_ids.contains(&internal_id))
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
-
-                if !is_valid {
+                if !Self::is_account_file_in_index(&path, valid_ids) {
                     tracing::warn!(
                         "[Proxy] Skipping orphan account file {:?} from proxy pool (not present in accounts.json index)",
                         path
@@ -5712,9 +5712,24 @@ impl TokenManager {
 
     /// 统计「对目标模型拥有正配额（或已授权可用）」的账号数量。
     ///
-    /// 用于入站模型的配额闸门：返回 0 表示整池都没有该模型额度，
-    /// 应当由网关直接 502 拒答，而不是把请求发往上游换回一个 429。
+    /// 用于入站模型的配额闸门：返回 0 且池中确实存在支持该模型的活跃账号时，
+    /// 应当由网关直接 502 拒答；若当前活跃池中没有任何支持该模型的账号，则由门禁返回 503。
     pub fn accounts_with_positive_quota(&self, model: &str) -> usize {
+        self.count_matching_accounts(model, true)
+    }
+
+    /// 检查当前活跃代理池（`self.tokens`）中是否存在至少一个“具备该模型资格（含 0% 配额）”的可用账号。
+    ///
+    /// 排除模型级 403 冻结与验证锁定账号，但不要求当前剩余配额 > 0%，
+    /// 以便模型门禁精确区分：
+    /// - 503 `no available accounts`（活跃池中没有支持/未禁用此模型的账号）
+    /// - 502 `no quota accounts`（活跃池里有支持此模型的账号，但全部剩余配额归零）
+    pub fn has_any_capable_account_in_pool(&self, model: &str) -> bool {
+        self.count_matching_accounts(model, false) > 0
+    }
+
+    /// 共享账号能力/正配额判定 helper：避免双套族判规则漂移。
+    fn count_matching_accounts(&self, model: &str, require_positive_quota: bool) -> usize {
         let normalized = crate::proxy::common::model_mapping::normalize_to_standard_id(model)
             .unwrap_or_else(|| model.to_string());
         // 生图基底：若账号只上报了尺寸变体（-4k / -2k / -preview …），同族变体配额即代表基底可用
@@ -5736,7 +5751,7 @@ impl TokenManager {
             .iter()
             .filter(|entry| {
                 let token = entry.value();
-                // 模型级 403 冻结：该模型不计入可用配额
+                // 模型级 403 冻结：该模型不计入可用账号/可用配额
                 if token.is_model_forbidden(model) {
                     return false;
                 }
@@ -5750,7 +5765,7 @@ impl TokenManager {
                 // 生图独立大池判定
                 if is_image {
                     if token.model_quotas.iter().any(|(known, quota)| {
-                        *quota > 0
+                        (!require_positive_quota || *quota > 0)
                             && crate::proxy::common::model_mapping::strip_image_variant_suffix(
                                 known,
                             ) == image_base
@@ -5764,6 +5779,20 @@ impl TokenManager {
 
                 // 3P 第三方大池判定（Claude / GPT）
                 if is_3p {
+                    if !require_positive_quota {
+                        let has_3p_bucket = token.model_quotas.contains_key(model)
+                            || token.model_quotas.contains_key(&model_lower)
+                            || token.model_quotas.contains_key("claude")
+                            || token.model_quotas.keys().any(|k| {
+                                let kl = k.to_lowercase();
+                                kl.contains("claude") || kl.contains("gpt")
+                            });
+                        let has_3p_available = token.available_models.contains(model)
+                            || token.available_models.contains(&model_lower)
+                            || token.available_models.contains(&normalized);
+                        return has_3p_bucket || has_3p_available;
+                    }
+
                     let has_3p_positive = token
                         .model_quotas
                         .get(model)
@@ -5824,6 +5853,9 @@ impl TokenManager {
                     if !has_argon_cap {
                         return false;
                     }
+                    if !require_positive_quota {
+                        return true;
+                    }
                     let has_argon_positive = token.model_quotas.iter().any(|(k, v)| {
                         *v > 0
                             && crate::proxy::common::model_mapping::extract_gemini4_codename(k)
@@ -5854,6 +5886,9 @@ impl TokenManager {
                         return false;
                     }
                     if Self::has_dedicated_codename_bucket(token, code) {
+                        if !require_positive_quota {
+                            return true;
+                        }
                         let has_dedicated_positive = token.model_quotas.iter().any(|(k, v)| {
                             *v > 0
                                 && crate::proxy::common::model_mapping::extract_gemini4_codename(k)
@@ -5871,6 +5906,37 @@ impl TokenManager {
                 }
 
                 // 除 3P 与专属独立代号桶外的所有 Gemini 模型：一律直接落入 Gemini 通用配额大池！
+                let matches_general_gemini_bucket = |k: &str| {
+                    let kl = k.to_lowercase();
+                    let k_dedicated_g4 =
+                        crate::proxy::common::model_mapping::extract_gemini4_codename(&kl)
+                            .map(|c| c == "argon" || Self::has_dedicated_codename_bucket(token, &c))
+                            .unwrap_or(false);
+                    !kl.contains("claude")
+                        && !kl.contains("gpt")
+                        && !kl.contains("3p")
+                        && !k_dedicated_g4
+                };
+
+                if !require_positive_quota {
+                    let has_gemini_bucket = token.model_quotas.contains_key(model)
+                        || token.model_quotas.contains_key(&model_lower)
+                        || token.model_quotas.contains_key(&base_name)
+                        || token
+                            .model_quotas
+                            .contains_key(&format!("{}-tiered", base_name))
+                        || token.model_quotas.contains_key(&normalized)
+                        || token
+                            .model_quotas
+                            .keys()
+                            .any(|k| matches_general_gemini_bucket(k));
+                    let has_gemini_available = token.available_models.contains(model)
+                        || token.available_models.contains(&model_lower)
+                        || (!base_name.is_empty() && token.available_models.contains(&base_name))
+                        || token.available_models.contains(&normalized);
+                    return has_gemini_bucket || has_gemini_available;
+                }
+
                 let has_gemini_positive = token
                     .model_quotas
                     .get(model)
@@ -5901,23 +5967,7 @@ impl TokenManager {
                         token
                             .model_quotas
                             .iter()
-                            .find(|(k, v)| {
-                                let kl = k.to_lowercase();
-                                let k_dedicated_g4 =
-                                    crate::proxy::common::model_mapping::extract_gemini4_codename(
-                                        &kl,
-                                    )
-                                    .map(|c| {
-                                        c == "argon"
-                                            || Self::has_dedicated_codename_bucket(token, &c)
-                                    })
-                                    .unwrap_or(false);
-                                **v > 0
-                                    && !kl.contains("claude")
-                                    && !kl.contains("gpt")
-                                    && !kl.contains("3p")
-                                    && !k_dedicated_g4
-                            })
+                            .find(|(k, v)| **v > 0 && matches_general_gemini_bucket(k))
                             .map(|(_, v)| *v)
                     })
                     .or_else(|| {
@@ -8126,6 +8176,40 @@ impl TokenManager {
             }
         }
         all_models
+    }
+
+    /// 扫描磁盘 `accounts/*.json` 中所有有效（非孤儿）账号曾上报过的模型并集，
+    /// **包含**当前被标记为 `disabled` / `proxy_disabled` 的已导入账号，用于模型门禁判定
+    /// “该模型确实在号池/目录生态中被识别过，只是当前没有启用/可用的配额账号 (503)”。
+    ///
+    /// 注意：严格复用 `ACCOUNT_MODEL_FILE_CACHE` 缓存与 `accounts.json` 索引校验，
+    /// 避免在请求路径引入重复磁盘解析或渗入已删除孤儿文件。
+    pub fn get_all_disk_discovered_models(&self) -> std::collections::HashSet<String> {
+        let mut discovered = std::collections::HashSet::new();
+        let data_dir = self.resolved_data_dir();
+        let accounts_dir = data_dir.join("accounts");
+        if !accounts_dir.exists() {
+            return discovered;
+        }
+        let (valid_in_index, _) = Self::read_accounts_index_sets(&data_dir);
+        let Ok(entries) = std::fs::read_dir(&accounts_dir) else {
+            return discovered;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            if let Some(ref valid_ids) = valid_in_index {
+                if !Self::is_account_file_in_index(&path, valid_ids) {
+                    continue;
+                }
+            }
+            if let Some(raw_models) = Self::get_available_models_from_json(&path) {
+                discovered.extend(raw_models);
+            }
+        }
+        discovered
     }
 
     /// [NEW #3677] 获取当前所有可用账号中收集到的官方动态模型能力与元数据集合
@@ -13995,5 +14079,152 @@ mod tests {
         assert!(manager
             .rate_limit_tracker
             .is_rate_limited("acc2", Some("gemini-3.8-flash-high")));
+    }
+
+    #[tokio::test]
+    async fn test_capable_account_vs_positive_quota_and_disk_discovery() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let accounts_dir = data_dir.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        // Disk account 1: proxy_disabled = true, carries gemini-4-hydrogen-high
+        let acc_disabled = serde_json::json!({
+            "id": "acc-disabled-h2",
+            "email": "h2-disabled@example.com",
+            "proxy_disabled": true,
+            "token": {
+                "access_token": "ya29.test",
+                "refresh_token": "1//test",
+                "expires_in": 3600,
+                "expiry_timestamp": chrono::Utc::now().timestamp() + 3600
+            },
+            "quota": {
+                "models": [
+                    { "name": "gemini-4-hydrogen-high", "percentage": 100 }
+                ]
+            }
+        });
+        std::fs::write(
+            accounts_dir.join("acc-disabled-h2.json"),
+            acc_disabled.to_string(),
+        )
+        .unwrap();
+
+        // Disk account 2: orphan (not in accounts.json), carries fake-orphan-model
+        let acc_orphan = serde_json::json!({
+            "id": "acc-orphan",
+            "email": "orphan@example.com",
+            "quota": {
+                "models": [
+                    { "name": "fake-orphan-model", "percentage": 100 }
+                ]
+            }
+        });
+        std::fs::write(accounts_dir.join("acc-orphan.json"), acc_orphan.to_string()).unwrap();
+
+        std::fs::write(
+            data_dir.join("accounts.json"),
+            serde_json::json!({
+                "version": "2.0",
+                "accounts": [
+                    {
+                        "id": "acc-disabled-h2",
+                        "email": "h2-disabled@example.com",
+                        "disabled": false,
+                        "proxy_disabled": true
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(data_dir.clone());
+        let disk_models = manager.get_all_disk_discovered_models();
+        assert!(
+            disk_models.contains("gemini-4-hydrogen-high"),
+            "proxy_disabled valid account models must remain discoverable on disk"
+        );
+        assert!(
+            !disk_models.contains("fake-orphan-model"),
+            "orphan files outside accounts.json must not leak into disk discovery"
+        );
+
+        // Pool token without hydrogen capability -> neither capable nor positive for hydrogen,
+        // while capable for its own 0%-quota gemini-3.8-flash-high.
+        let mut quotas = HashMap::new();
+        quotas.insert("gemini-3.8-flash-high".to_string(), 0);
+        let mut available = HashSet::new();
+        available.insert("gemini-3.8-flash-high".to_string());
+        let tok = ProxyToken {
+            account_id: "acc-active".to_string(),
+            priority: 0,
+            model_priorities: HashMap::new(),
+            access_token: "ya29.active".to_string(),
+            refresh_token: "1//active".to_string(),
+            expires_in: 3600,
+            timestamp: chrono::Utc::now().timestamp() + 3600,
+            email: "active@example.com".to_string(),
+            account_path: accounts_dir.join("acc-active.json"),
+            project_id: None,
+            subscription_tier: None,
+            remaining_quota: Some(0),
+            protected_models: HashSet::new(),
+            forbidden_models: HashSet::new(),
+            health_score: 1.0,
+            reset_time: None,
+            weekly_reset_time: None,
+            validation_blocked: false,
+            validation_blocked_until: 0,
+            validation_url: None,
+            model_quotas: quotas,
+            model_limits: HashMap::new(),
+            available_models: available,
+            model_metadata: HashMap::new(),
+            model_reset_times: HashMap::new(),
+            model_weekly_reset_times: HashMap::new(),
+            model_quota_windows: HashMap::new(),
+        };
+        manager.tokens.insert("acc-active".to_string(), tok);
+        let future_reset =
+            chrono::DateTime::from_timestamp(chrono::Utc::now().timestamp() + 3600, 0)
+                .unwrap()
+                .to_rfc3339();
+        let active_quota_json = serde_json::json!({
+            "quota": {
+                "last_updated": chrono::Utc::now().timestamp(),
+                "models": [
+                    { "name": "gemini-3.8-flash-high", "percentage": 0, "reset_time": future_reset }
+                ],
+                "quota_groups": [
+                    {
+                        "display_name": "Gemini Models",
+                        "buckets": [
+                            {
+                                "bucket_id": "gemini-weekly",
+                                "window": "weekly",
+                                "remaining_fraction": 0.0,
+                                "reset_time": future_reset
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        manager.sync_zero_quota_circuit_breaker("acc-active", &active_quota_json);
+
+        assert!(
+            !manager.has_any_capable_account_in_pool("gemini-4-hydrogen-high"),
+            "pool lacking hydrogen authorization must report no capable account (503)"
+        );
+        assert!(
+            manager.has_any_capable_account_in_pool("gemini-3.8-flash-high"),
+            "pool with 0%-quota authorized model still has capable account (502)"
+        );
+        assert_eq!(
+            manager.accounts_with_positive_quota("gemini-3.8-flash-high"),
+            0
+        );
     }
 }

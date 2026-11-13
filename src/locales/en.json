@@ -2014,6 +2014,11 @@
             "total_duration_title": "Total Latency",
             "ttft_title": "Time to First Token"
         },
+        "gate_reasons": {
+            "model_not_exist": "model not exist",
+            "no_available_accounts": "no available accounts",
+            "no_quota_accounts": "no quota accounts"
+        },
         "details": {
             "title": "Request Details",
             "request_payload": "Request Payload",

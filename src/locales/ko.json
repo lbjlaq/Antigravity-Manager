@@ -1811,6 +1811,11 @@
             "total_duration_title": "총 소요 시간",
             "ttft_title": "첫 글자 지연 시간"
         },
+        "gate_reasons": {
+            "model_not_exist": "모델이 존재하지 않음",
+            "no_available_accounts": "사용 가능한 계정 없음",
+            "no_quota_accounts": "할당량 소진"
+        },
         "details": {
             "title": "요청 상세",
             "request_payload": "요청 페이로드",
