@@ -3,6 +3,16 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.9 (2026-11-14)**:
+        -   **[官方推荐模型目录收敛、跨重启持久化与账号启停同步修复] (Fixes #3932, PR #3933, Thanks to @jeikl)**:
+            -   **Gemini 4+ 通用发现与高阶思考对齐**: 泛化 Gemini 4+ 代号模型发现与配额隔离逻辑，对齐 `gemini-4-hydrogen` 官方占位符（`MODEL_PLACEHOLDER_M525~M528`）与 `xhigh`/`100` `thinkingLevel` 处理；前端同步补齐模型分类与看板展示。(Fixes #3932, PR #3933)
+            -   **严格收敛为官方推荐模型并支持跨重启持久化**: `fetchAvailableModels` 同步后以官方 `agentModelSorts`、`imageGenerationModelIds`、`tieredModelIds` 推荐集合为准覆盖冷启动基线（不再将非推荐/已淘汰模型注入默认端点），将最新在线推荐目录剥离单账号私有配额后持久化到 `<data_dir>/official_models_live_cache.json`，并在账号删除时同步清理；同步将内置 Day-0 `official_models.json` 基线对齐为当前活跃的 20 个官方推荐条目（含派生裸名共 26 个）。(Fixes #3932)
+            -   **修复全禁用冷启动双端分裂与代理开关生效延迟**: 修复桌面端同时存在 `instance` 与 `admin_server` 两个独立 `TokenManager` 实例导致的列表与调度分裂，在所有启停、账号切换与热重载路径统一通过 `active_token_managers()` 同步，并在禁用代理或全部账号停用后立即清理活跃池与粘性绑定。(Ref #3932, #3936)
+        -   **[模型第一道门禁 503 语义规范化与全语言诊断] (PR #3936, Ref #3932, Thanks to @jeikl)**:
+            -   **第一道门禁 503 `no_available_accounts` 收敛**: 当请求命中已知官方目录或磁盘缓存模型但当前活跃可用池中没有任何持有该模型配额的账号时，直接在第一道门禁返回结构化 `503 Service Unavailable`（`code: no_available_accounts`），并配套补齐 12 种语言国际化诊断提示与监控日志语义分类，避免误报 `404` 或污染连坐其余模型与账号。(PR #3936, Ref #3932)
+        -   **[Upload 与 AwaitFirstByte 终态标记跨端点完整保留] (PR #3935, Ref #3639, #3763, #3821, #3893, #3899, #3906, Thanks to @mclinyeshi)**:
+            -   **跨 Daily 与 Sandbox 端点统一保留终态标记**: 主端点非 Sandbox 耗尽 `AwaitFirstByte` 预算时立即归类为 `FirstByte` 终态而不再带着耗尽预算回退 Sandbox；在 `Upload`/`UploadStalled` 硬截止耗尽或定长发送失败及末尾 Sandbox 候选失败路径上严格保留 `Upload`/`FirstByte`/`TransportReset` 终态标记，彻底防止 `CacheFirst` 模式下因未打标错误触发 30 秒账号锁定与强制解绑轮换。(PR #3935)
+
     *   **v5.0.4-beta.8 (2026-11-13)**:
         -   **[Gemini 4 全系新模型支持（Carbon/Argon/Hydrogen）、256k 巨型输出上限与账号级智能调度] (Fixes #3922, Ref #3927, Thanks to @koeria, @lbjlaq)**:
             -   **官方模型目录补齐与 256k 输出上限对齐**: 紧跟 Google 官方上游模型灰度发布节奏，在内置模型目录表 `official_models.json` 中全面补齐 `gemini-4-carbon` 与 `gemini-4-hydrogen` 全系列（含 bare, low, medium, high, xhigh 档位），并为 `gemini-4-argon` 补全 `xhigh` 极限思考档位；将 Carbon 与 Hydrogen 的 `maxOutputTokens` 精确对齐上游官方标称的 `262,144`（256k tokens 输出），彻底突破旧版 64k 上限，完美满足超长上下文与深思考整包工具调用生成。(Fixes #3922, Ref #3927)
