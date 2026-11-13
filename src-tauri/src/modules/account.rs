@@ -3256,7 +3256,13 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
         .map_err(|e| format!("failed_to_acquire_lock: {}", e))?;
     let mut index = load_account_index()?;
 
-    // Remove from index
+    // Remove from index (capture email before retain so live model cache can be pruned too)
+    let deleted_email = index
+        .accounts
+        .iter()
+        .find(|s| s.id == account_id)
+        .map(|s| s.email.clone())
+        .or_else(|| load_account(account_id).ok().map(|acc| acc.email));
     let original_len = index.accounts.len();
     index.accounts.retain(|s| s.id != account_id);
     let index_modified = index.accounts.len() != original_len;
@@ -3286,6 +3292,10 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
             .map_err(|e| format!("failed_to_delete_account_file: {}", e))?;
     }
 
+    if let Some(email) = deleted_email {
+        crate::models::OfficialModelCatalog::remove_live_account(&email);
+    }
+
     // [FIX #1477] Trigger TokenManager cache cleanup signal
     crate::proxy::server::trigger_account_delete(account_id);
 
@@ -3300,6 +3310,17 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
     let mut index = load_account_index()?;
 
     let accounts_dir = get_accounts_dir()?;
+    let deleted_emails: Vec<String> = account_ids
+        .iter()
+        .filter_map(|id| {
+            index
+                .accounts
+                .iter()
+                .find(|s| &s.id == id)
+                .map(|s| s.email.clone())
+                .or_else(|| load_account(id).ok().map(|acc| acc.email))
+        })
+        .collect();
 
     for account_id in account_ids {
         // Remove from index
@@ -3318,6 +3339,10 @@ pub fn delete_accounts(account_ids: &[String]) -> Result<(), String> {
 
         // [FIX #1477] Trigger TokenManager cache cleanup signal
         crate::proxy::server::trigger_account_delete(account_id);
+    }
+
+    for email in deleted_emails {
+        crate::models::OfficialModelCatalog::remove_live_account(&email);
     }
 
     // If current account is empty, use first one as default

@@ -275,6 +275,16 @@ async fn is_known_catalog_or_disk_model(
     for id in model_mapping::get_supported_models() {
         known.insert(id.to_lowercase());
     }
+    for id in crate::models::OfficialModelCatalog::all_model_ids() {
+        if let Some(info) = crate::models::OfficialModelCatalog::get(&id) {
+            if info.is_internal != Some(true)
+                && !info.is_disabled()
+                && model_mapping::is_model_compliant_with_baseline(&id)
+            {
+                known.insert(id.to_lowercase());
+            }
+        }
+    }
     for id in crate::proxy::cli_sync::all_core_gateway_model_ids() {
         known.insert(id.to_lowercase());
     }

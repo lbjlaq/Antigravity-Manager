@@ -113,17 +113,55 @@ pub struct OfficialModelsFile {
     pub models: HashMap<String, OfficialModelInfo>,
 }
 
+const LIVE_CACHE_FILE_NAME: &str = "official_models_live_cache.json";
+const LIVE_CACHE_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LiveCatalogCacheFile {
+    #[serde(default)]
+    schema_version: u32,
+    #[serde(default)]
+    updated_at: i64,
+    #[serde(default)]
+    accounts: HashMap<String, Vec<String>>,
+    #[serde(default)]
+    models: HashMap<String, OfficialModelInfo>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct LiveCatalogState {
+    accounts: HashMap<String, std::collections::HashSet<String>>,
+    live_models: HashMap<String, OfficialModelInfo>,
+}
+
+static INITIAL_DISK_CACHE: std::sync::OnceLock<Option<LiveCatalogCacheFile>> =
+    std::sync::OnceLock::new();
+
+fn initial_disk_cache() -> &'static Option<LiveCatalogCacheFile> {
+    INITIAL_DISK_CACHE.get_or_init(|| {
+        OfficialModelCatalog::resolve_live_cache_path()
+            .and_then(|path| OfficialModelCatalog::load_live_cache_from_path(&path))
+    })
+}
+
 static DYNAMIC_CATALOG: Lazy<RwLock<HashMap<String, OfficialModelInfo>>> = Lazy::new(|| {
     let json_str = include_str!("../../resources/official_models.json");
-    match serde_json::from_str::<OfficialModelsFile>(json_str) {
-        Ok(file) => RwLock::new(file.models),
+    let mut catalog = match serde_json::from_str::<OfficialModelsFile>(json_str) {
+        Ok(file) => file.models,
         Err(err) => {
             // 目录解析失败不能 panic：生成请求在选完账号后才会第一次碰到这里，
             // 任务一旦崩掉，连接会在写出响应前被掐断，监控中间件也来不及落日志。
             tracing::error!("official_models.json 解析失败，生成请求将回退到默认模型结构: {err}");
-            RwLock::new(HashMap::new())
+            HashMap::new()
+        }
+    };
+    if let Some(cache) = initial_disk_cache() {
+        for (id, info) in &cache.models {
+            catalog.insert(id.clone(), info.clone());
         }
     }
+    RwLock::new(catalog)
 });
 
 /// 接受字符串、数字或 null。数字会被保留成十进制文本，避免官方整数档位把整份目录打崩。
@@ -250,12 +288,117 @@ impl OfficialModelCatalog {
         found
     }
 
-    /// 获取运行时在线推荐模型缓存 (account_key -> recommended model IDs)
-    fn live_recommended_store(
-    ) -> &'static RwLock<Option<HashMap<String, std::collections::HashSet<String>>>> {
-        static STORE: Lazy<RwLock<Option<HashMap<String, std::collections::HashSet<String>>>>> =
-            Lazy::new(|| RwLock::new(None));
+    /// 获取运行时在线推荐模型缓存 (account_key -> recommended model IDs + 模型规格叠加)
+    fn live_recommended_store() -> &'static RwLock<Option<LiveCatalogState>> {
+        static STORE: Lazy<RwLock<Option<LiveCatalogState>>> = Lazy::new(|| {
+            if let Some(cache) = initial_disk_cache() {
+                if !cache.accounts.is_empty() {
+                    let accounts: HashMap<String, std::collections::HashSet<String>> = cache
+                        .accounts
+                        .iter()
+                        .map(|(k, ids)| (k.clone(), ids.iter().cloned().collect()))
+                        .collect();
+                    return RwLock::new(Some(LiveCatalogState {
+                        accounts,
+                        live_models: cache.models.clone(),
+                    }));
+                }
+            }
+            RwLock::new(None)
+        });
         &STORE
+    }
+
+    fn resolve_live_cache_path() -> Option<std::path::PathBuf> {
+        crate::modules::account::get_data_dir()
+            .ok()
+            .map(|dir| dir.join(LIVE_CACHE_FILE_NAME))
+    }
+
+    fn compact_live_model_info(info: &OfficialModelInfo) -> OfficialModelInfo {
+        let mut compacted = info.clone();
+        // quota_info 属于单账号私有配额，model_experiments 体积大且目录不用，落盘前剔除
+        compacted.quota_info = None;
+        compacted.model_experiments = None;
+        compacted
+    }
+
+    pub(crate) fn load_live_cache_from_path(
+        path: &std::path::Path,
+    ) -> Option<LiveCatalogCacheFile> {
+        let raw = std::fs::read_to_string(path).ok()?;
+        let parsed: LiveCatalogCacheFile = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(err) => {
+                tracing::warn!(
+                    "[OfficialCatalog] Failed to parse live cache {:?}, ignoring: {}",
+                    path,
+                    err
+                );
+                return None;
+            }
+        };
+        if parsed.schema_version != LIVE_CACHE_SCHEMA_VERSION || parsed.accounts.is_empty() {
+            return None;
+        }
+        Some(parsed)
+    }
+
+    pub(crate) fn save_live_cache_to_path(
+        path: &std::path::Path,
+        cache: Option<&LiveCatalogCacheFile>,
+    ) {
+        let Some(cache) = cache.filter(|c| !c.accounts.is_empty()) else {
+            if path.exists() {
+                if let Err(err) = std::fs::remove_file(path) {
+                    tracing::warn!(
+                        "[OfficialCatalog] Failed to remove empty live cache {:?}: {}",
+                        path,
+                        err
+                    );
+                }
+            }
+            return;
+        };
+
+        match serde_json::to_string_pretty(cache) {
+            Ok(content) => {
+                if let Err(err) = crate::utils::fs::write_atomic(path, content.as_bytes()) {
+                    tracing::warn!(
+                        "[OfficialCatalog] Failed to persist live cache {:?}: {}",
+                        path,
+                        err
+                    );
+                }
+            }
+            Err(err) => {
+                tracing::warn!("[OfficialCatalog] Failed to serialize live cache: {}", err);
+            }
+        }
+    }
+
+    fn persist_live_cache(cache: Option<&LiveCatalogCacheFile>) {
+        if let Some(path) = Self::resolve_live_cache_path() {
+            Self::save_live_cache_to_path(&path, cache);
+        }
+    }
+
+    fn build_cache_snapshot(state: &LiveCatalogState) -> LiveCatalogCacheFile {
+        let accounts = state
+            .accounts
+            .iter()
+            .map(|(k, ids)| {
+                let mut sorted: Vec<String> = ids.iter().cloned().collect();
+                sorted.sort();
+                (k.clone(), sorted)
+            })
+            .collect();
+        LiveCatalogCacheFile {
+            schema_version: LIVE_CACHE_SCHEMA_VERSION,
+            updated_at: chrono::Utc::now().timestamp(),
+            accounts,
+            models: state.live_models.clone(),
+        }
     }
 
     /// 计算单个在线 fetchAvailableModels 响应下的权威推荐模型集合
@@ -322,13 +465,20 @@ impl OfficialModelCatalog {
         }
     }
 
-    /// 使用在线 `fetchAvailableModels` 的官方推荐列表同步动态目录，替换冷启动静态快照的推荐集合
+    /// 使用在线 `fetchAvailableModels` 的官方推荐列表同步动态目录，替换冷启动静态快照的推荐集合并持久化到数据目录
     pub fn sync_live_catalog(
         account_key: Option<&str>,
         models: HashMap<String, OfficialModelInfo>,
         official_supported_ids: &std::collections::HashSet<String>,
     ) {
         let recommended = Self::extract_live_recommended_ids(&models, official_supported_ids);
+        let compacted_models: Vec<(String, OfficialModelInfo)> = models
+            .iter()
+            .filter(|(id, info)| {
+                info.is_internal != Some(true) && !info.is_disabled() && !id.trim().is_empty()
+            })
+            .map(|(id, info)| (id.clone(), Self::compact_live_model_info(info)))
+            .collect();
         Self::update(models);
 
         let key = account_key
@@ -336,9 +486,19 @@ impl OfficialModelCatalog {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "_global".to_string());
 
-        if let Ok(mut live_lock) = Self::live_recommended_store().write() {
-            let map = live_lock.get_or_insert_with(HashMap::new);
-            map.insert(key, recommended);
+        let snapshot = if let Ok(mut live_lock) = Self::live_recommended_store().write() {
+            let state = live_lock.get_or_insert_with(LiveCatalogState::default);
+            state.accounts.insert(key, recommended);
+            for (id, info) in compacted_models {
+                state.live_models.insert(id, info);
+            }
+            Some(Self::build_cache_snapshot(state))
+        } else {
+            None
+        };
+
+        if let Some(cache) = snapshot {
+            Self::persist_live_cache(Some(&cache));
         }
     }
 
@@ -347,30 +507,41 @@ impl OfficialModelCatalog {
         Self::live_recommended_store()
             .read()
             .ok()
-            .and_then(|guard| guard.as_ref().map(|m| !m.is_empty()))
+            .and_then(|guard| guard.as_ref().map(|s| !s.accounts.is_empty()))
             .unwrap_or(false)
     }
 
-    /// 当账号被永久删除时清理其在线推荐模型快照
+    /// 当账号被永久删除时清理其在线推荐模型快照（同步刷新/清理磁盘缓存）
     pub fn remove_live_account(account_key: &str) {
         let key = account_key.trim().to_lowercase();
         if key.is_empty() {
             return;
         }
+        let mut updated_snapshot: Option<Option<LiveCatalogCacheFile>> = None;
         if let Ok(mut live_lock) = Self::live_recommended_store().write() {
-            if let Some(map) = live_lock.as_mut() {
-                map.remove(&key);
-                if map.is_empty() {
-                    *live_lock = None;
+            if let Some(state) = live_lock.as_mut() {
+                if state.accounts.remove(&key).is_some() {
+                    if state.accounts.is_empty() {
+                        *live_lock = None;
+                        updated_snapshot = Some(None);
+                    } else {
+                        updated_snapshot = Some(Some(Self::build_cache_snapshot(state)));
+                    }
                 }
             }
         }
+        if let Some(cache_opt) = updated_snapshot {
+            Self::persist_live_cache(cache_opt.as_ref());
+        }
     }
 
-    /// 获取官方推荐的可用模型 ID 列表（在线同步后优先使用官方推荐联合集合；冷启动尚未联网时回退到随包内嵌快照中的非退役推荐模型）
+    /// 获取官方推荐的可用模型 ID 列表（在线同步或重启恢复磁盘缓存后优先使用官方推荐联合集合；仅纯首次冷启动回退随包内嵌快照）
     pub fn recommended_model_ids() -> Vec<String> {
         let live_guard = Self::live_recommended_store().read().ok();
-        let live_ref = live_guard.as_ref().and_then(|g| g.as_ref());
+        let live_ref = live_guard
+            .as_ref()
+            .and_then(|g| g.as_ref())
+            .map(|s| &s.accounts);
         if let Ok(catalog) = DYNAMIC_CATALOG.read() {
             Self::resolve_recommended_model_ids(live_ref, &catalog)
         } else {
@@ -541,13 +712,24 @@ mod tests {
         let catalog = DYNAMIC_CATALOG.read().unwrap();
         let recommended = OfficialModelCatalog::resolve_recommended_model_ids(None, &catalog);
 
+        assert_eq!(
+            recommended.len(),
+            20,
+            "cold-start recommended baseline must match exact 20 active official entries, got: {:?}",
+            recommended
+        );
+
         for expected in [
             "gemini-4-hydrogen-high",
-            "gemini-4-hydrogen",
+            "gemini-4-hydrogen-xhigh",
             "gemini-4-argon-high",
             "gemini-3.8-flash-high",
+            "gemini-3.8-flash-tiered",
+            "gemini-3.5-flash-lite",
             "gemini-3.1-flash-image",
-            "claude-sonnet-4-6",
+            "claude-opus-5-5-high",
+            "claude-sonnet-5-5-high",
+            "gpt-oss-120b-medium",
         ] {
             assert!(
                 recommended.iter().any(|id| id == expected),
@@ -573,16 +755,22 @@ mod tests {
             "chat_20706",
             "chat_23310",
             "gemini-3.1-flash-lite",
+            "claude-sonnet-4-6",
+            "claude-opus-4-6-thinking",
+            "gemini-3.1-pro-high",
+            "gemini-4-carbon-high",
         ] {
             assert!(
                 !recommended.iter().any(|id| id == retired),
-                "cold-start recommended catalog must exclude retired/internal model {retired}"
+                "cold-start recommended catalog must exclude retired/non-recommended model {retired}"
             );
         }
 
         // Historical spec lookup via get() must remain intact for compatibility
         assert!(OfficialModelCatalog::get("gemini-2.5-flash").is_some());
         assert!(OfficialModelCatalog::get("tab_flash_lite_preview").is_some());
+        assert!(OfficialModelCatalog::get("claude-sonnet-4-6").is_some());
+        assert!(OfficialModelCatalog::get("gemini-3.1-pro-high").is_some());
     }
 
     #[test]
@@ -647,5 +835,70 @@ mod tests {
             !recommended.contains(&"chat_999".to_string()),
             "internal models must never enter recommended list even if listed in sorts"
         );
+    }
+
+    #[test]
+    fn live_catalog_cache_persists_and_cleans_up_on_disk() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("abv_live_catalog_cache_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let cache_path = temp_dir.join(LIVE_CACHE_FILE_NAME);
+
+        let mut info = OfficialModelCatalog::default_model();
+        info.quota_info = Some(OfficialQuotaInfo {
+            remaining_fraction: Some(0.5),
+            reset_time: Some("2026-11-14T00:00:00Z".to_string()),
+        });
+        info.model_experiments = Some(serde_json::json!({"heavy": true}));
+
+        let mut state = LiveCatalogState::default();
+        state.accounts.insert(
+            "vanskou@outlook.com".to_string(),
+            [
+                "gemini-4-hydrogen-high".to_string(),
+                "gemini-3.5-flash-lite".to_string(),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        state.live_models.insert(
+            "gemini-4-hydrogen-high".to_string(),
+            OfficialModelCatalog::compact_live_model_info(&info),
+        );
+
+        let snapshot = OfficialModelCatalog::build_cache_snapshot(&state);
+        OfficialModelCatalog::save_live_cache_to_path(&cache_path, Some(&snapshot));
+        assert!(cache_path.exists());
+
+        let reloaded = OfficialModelCatalog::load_live_cache_from_path(&cache_path)
+            .expect("valid persisted live cache must reload cleanly");
+        assert_eq!(
+            reloaded
+                .accounts
+                .get("vanskou@outlook.com")
+                .cloned()
+                .unwrap(),
+            vec![
+                "gemini-3.5-flash-lite".to_string(),
+                "gemini-4-hydrogen-high".to_string()
+            ]
+        );
+        let reloaded_hy = reloaded.models.get("gemini-4-hydrogen-high").unwrap();
+        assert!(reloaded_hy.quota_info.is_none());
+        assert!(reloaded_hy.model_experiments.is_none());
+
+        // Corrupted or stale-schema cache must gracefully return None
+        std::fs::write(
+            &cache_path,
+            r#"{"schemaVersion":999,"accounts":{"a":["b"]}}"#,
+        )
+        .unwrap();
+        assert!(OfficialModelCatalog::load_live_cache_from_path(&cache_path).is_none());
+
+        // Clearing accounts removes disk cache file
+        OfficialModelCatalog::save_live_cache_to_path(&cache_path, None);
+        assert!(!cache_path.exists());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

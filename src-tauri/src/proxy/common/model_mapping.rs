@@ -1303,22 +1303,25 @@ mod tests {
         // When only_raw_quota_models is FALSE, custom_mapping should be included
         let models_all = get_all_dynamic_models(&custom_mapping, None, false).await;
         assert!(models_all.contains(&"my-custom-model".to_string()));
-        // 动态官方模型与自派生无后缀模型必须包含
-        assert!(models_all.contains(&"claude-sonnet-4-6".to_string()));
-        assert!(models_all.contains(&"claude-opus-4-6-thinking".to_string()));
-        assert!(models_all.contains(&"claude-opus-4-6".to_string()));
+        // 动态官方推荐模型与自派生无后缀模型必须包含（与官方在线推荐基线一致）
         assert!(models_all.contains(&"claude-opus-5-5".to_string()));
         assert!(models_all.contains(&"claude-opus-5-5-high".to_string()));
         assert!(models_all.contains(&"claude-sonnet-5-5".to_string()));
+        assert!(models_all.contains(&"claude-sonnet-5-5-high".to_string()));
+        assert!(models_all.contains(&"gemini-4-hydrogen".to_string()));
+        assert!(models_all.contains(&"gemini-4-hydrogen-high".to_string()));
         assert!(models_all.contains(&"gemini-4-argon".to_string()));
         assert!(models_all.contains(&"gemini-4-argon-high".to_string()));
         assert!(models_all.contains(&"gemini-3.8-flash".to_string()));
         assert!(models_all.contains(&"gemini-3.8-flash-high".to_string()));
+        assert!(models_all.contains(&"gemini-3.5-flash-lite".to_string()));
+        assert!(models_all.contains(&"gemini-3.1-flash-image".to_string()));
         assert!(models_all.contains(&"gpt-oss-120b".to_string()));
         assert!(models_all.contains(&"gpt-oss-120b-medium".to_string()));
-        // 非法硬编码或已淘汰模型绝不泄露暴露
+        // 非法硬编码或已淘汰/未上榜推荐模型绝不泄露暴露
         assert!(!models_all.contains(&"claude-sonnet-4-6-thinking".to_string()));
         assert!(!models_all.contains(&"gemini-2.5-flash".to_string()));
+        assert!(!models_all.contains(&"gemini-3.6-flash-medium".to_string()));
         assert!(!models_all.contains(&"gemini-3.7-flash-high".to_string()));
         assert!(!models_all.contains(&"gemini-pro-agent".to_string()));
     }
@@ -1950,10 +1953,15 @@ mod tests {
         let supported = get_supported_models();
         for expected in [
             "gemini-4-hydrogen-high",
+            "gemini-4-hydrogen-xhigh",
             "gemini-4-argon-high",
             "gemini-3.8-flash-high",
+            "gemini-3.8-flash-tiered",
+            "gemini-3.5-flash-lite",
             "gemini-3.1-flash-image",
-            "claude-sonnet-4-6",
+            "claude-opus-5-5-high",
+            "claude-sonnet-5-5-high",
+            "gpt-oss-120b-medium",
         ] {
             assert!(
                 supported.iter().any(|id| id == expected),
@@ -1969,10 +1977,13 @@ mod tests {
             "gemini-pro-agent",
             "tab_flash_lite_preview",
             "tab_jump_flash_lite_preview",
+            "claude-sonnet-4-6",
+            "gemini-3.1-pro-high",
+            "gemini-4-carbon-high",
         ] {
             assert!(
                 !supported.iter().any(|id| id == retired),
-                "get_supported_models must exclude retired/internal model {retired}"
+                "get_supported_models must exclude retired/internal/non-recommended model {retired}"
             );
         }
     }
