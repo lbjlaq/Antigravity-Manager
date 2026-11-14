@@ -2363,6 +2363,20 @@ pub async fn handle_messages(
                         Box::pin(gemini_stream),
                         auto_heal_ctx,
                     );
+                let qos_is_thinking =
+                    request_enables_thinking(request.thinking.is_some(), &gemini_body);
+                let qos_tracker =
+                    std::sync::Arc::new(crate::proxy::pipeline::qos::QosAttemptTracker::new(
+                        token_manager.clone(),
+                        account_id.clone(),
+                        Some(affinity_key.clone()),
+                        qos_is_thinking,
+                        Some(raw_estimated as u32),
+                    ));
+                let gemini_stream = crate::proxy::pipeline::qos::wrap_gemini_stream_with_qos_usage(
+                    gemini_stream,
+                    qos_tracker.clone(),
+                );
 
                 let current_message_count = request_with_mapped.messages.len();
 
@@ -2442,16 +2456,11 @@ pub async fn handle_messages(
                             }
                         });
 
-                    // [QoS] 以首个真实数据块为准上报 TTFT（与 peek / 非流式口径一致）
+                    // [QoS] 以首个真实数据块触发 Phase 1，流尾 usageMetadata 完成 Phase 2 核销
                     let ttft_seen = std::sync::Arc::new(std::sync::OnceLock::<f64>::new());
                     let ttft_seen_cb = ttft_seen.clone();
                     let ttft_probe_start = effective_attempt_start;
-                    let ttft_tm = token_manager.clone();
-                    let ttft_account = account_id.clone();
-                    let ttft_session = affinity_key.clone();
-                    let ttft_is_thinking =
-                        request_enables_thinking(request.thinking.is_some(), &gemini_body);
-                    let ttft_tokens = raw_estimated as u32;
+                    let qos_tracker_cb = qos_tracker.clone();
                     let stream_mapped =
                         crate::proxy::pipeline::stream_peek::wrap_stream_with_ttft_probe(
                             stream_mapped,
@@ -2464,14 +2473,7 @@ pub async fn handle_messages(
                             },
                             move |ttft| {
                                 let _ = ttft_seen_cb.set(ttft);
-                                crate::proxy::handlers::common::report_qos_ttft(
-                                    &ttft_tm,
-                                    &ttft_account,
-                                    Some(ttft_session.as_str()),
-                                    ttft,
-                                    ttft_is_thinking,
-                                    Some(ttft_tokens),
-                                );
+                                qos_tracker_cb.on_first_byte(ttft);
                             },
                         );
 
@@ -2534,14 +2536,7 @@ pub async fn handle_messages(
                 {
                     crate::proxy::pipeline::stream_peek::PeekOutcome::Data { bytes, .. } => {
                         ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
-                        crate::proxy::handlers::common::report_qos_ttft(
-                            &token_manager,
-                            &account_id,
-                            Some(affinity_key.as_str()),
-                            ttft_ms,
-                            request_enables_thinking(request.thinking.is_some(), &gemini_body),
-                            Some(raw_estimated as u32),
-                        );
+                        qos_tracker.on_first_byte(ttft_ms);
                         if let Some(effective_item) =
                             fallback_attempts.iter_mut().find(|a| a.is_effective)
                         {

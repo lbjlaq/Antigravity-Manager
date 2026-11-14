@@ -2859,6 +2859,25 @@ pub async fn handle_chat_completions(
                         Box::pin(gemini_stream),
                         auto_heal_ctx,
                     );
+                let qos_is_thinking = crate::proxy::pipeline::qos::payload_enables_thinking(
+                    &gemini_body,
+                    Some(&mapped_model),
+                ) || effort_hint.is_some()
+                    || openai_req.thinking.is_some()
+                    || openai_req.reasoning.is_some()
+                    || openai_req.reasoning_effort.is_some();
+                let qos_tracker =
+                    std::sync::Arc::new(crate::proxy::pipeline::qos::QosAttemptTracker::new(
+                        token_manager.clone(),
+                        account_id.clone(),
+                        Some(affinity_key.clone()),
+                        qos_is_thinking,
+                        Some(estimated_input_tokens),
+                    ));
+                let gemini_stream = crate::proxy::pipeline::qos::wrap_gemini_stream_with_qos_usage(
+                    gemini_stream,
+                    qos_tracker.clone(),
+                );
 
                 // [P1 FIX] Enhanced Peek logic to handle heartbeats and slow start
                 // Pre-read until we find meaningful content, skip heartbeats
@@ -2917,14 +2936,7 @@ pub async fn handle_chat_completions(
                             bytes, ..
                         } => {
                             ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
-                            crate::proxy::handlers::common::report_qos_ttft(
-                                &token_manager,
-                                &account_id,
-                                Some(affinity_key.as_str()),
-                                ttft_ms,
-                                is_thinking,
-                                Some(estimated_input_tokens),
-                            );
+                            qos_tracker.on_first_byte(ttft_ms);
                             if let Some(effective_item) =
                                 fallback_attempts.iter_mut().find(|a| a.is_effective)
                             {
@@ -3045,17 +3057,7 @@ pub async fn handle_chat_completions(
                     Box<dyn futures::Stream<Item = Result<Bytes, String>> + Send>,
                 > = if client_wants_stream {
                     let ttft_start = effective_attempt_start;
-                    let ttft_tm = token_manager.clone();
-                    let ttft_account = account_id.clone();
-                    let ttft_session = affinity_key.clone();
-                    let ttft_is_thinking = crate::proxy::pipeline::qos::payload_enables_thinking(
-                        &gemini_body,
-                        Some(&mapped_model),
-                    ) || effort_hint.is_some()
-                        || openai_req.thinking.is_some()
-                        || openai_req.reasoning.is_some()
-                        || openai_req.reasoning_effort.is_some();
-                    let ttft_tokens = estimated_input_tokens;
+                    let qos_tracker_cb = qos_tracker.clone();
                     Box::pin(
                         crate::proxy::pipeline::stream_peek::wrap_stream_with_ttft_probe(
                             combined_stream,
@@ -3068,14 +3070,7 @@ pub async fn handle_chat_completions(
                             },
                             move |ttft| {
                                 let _ = ttft_seen_cb.set(ttft);
-                                crate::proxy::handlers::common::report_qos_ttft(
-                                    &ttft_tm,
-                                    &ttft_account,
-                                    Some(ttft_session.as_str()),
-                                    ttft,
-                                    ttft_is_thinking,
-                                    Some(ttft_tokens),
-                                );
+                                qos_tracker_cb.on_first_byte(ttft);
                             },
                         ),
                     )
@@ -4952,6 +4947,24 @@ pub async fn handle_completions(
                         Box::pin(gemini_stream),
                         auto_heal_ctx,
                     );
+                let qos_is_thinking = crate::proxy::pipeline::qos::payload_enables_thinking(
+                    &gemini_body,
+                    Some(&mapped_model),
+                ) || openai_req.thinking.is_some()
+                    || openai_req.reasoning.is_some()
+                    || openai_req.reasoning_effort.is_some();
+                let qos_tracker =
+                    std::sync::Arc::new(crate::proxy::pipeline::qos::QosAttemptTracker::new(
+                        token_manager.clone(),
+                        account_id.clone(),
+                        Some(affinity_key.clone()),
+                        qos_is_thinking,
+                        Some(estimated_input_tokens),
+                    ));
+                let gemini_stream = crate::proxy::pipeline::qos::wrap_gemini_stream_with_qos_usage(
+                    gemini_stream,
+                    qos_tracker.clone(),
+                );
 
                 // DECISION: Which stream to create?
                 // If client wants stream: give them what they asked (Legacy/Codex SSE).
@@ -4995,20 +5008,11 @@ pub async fn handle_completions(
                     // 负责首字宽限与心跳保活，不再阻塞等待首包（与 Claude / Gemini 同构）。
                     headers_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
                     ttft_ms = crate::proxy::pipeline::stream_peek::TTFT_UNKNOWN_MS;
-                    // [QoS] Responses 流式与 chat 同口径：首个真实数据块上报 TTFT
+                    // [QoS] Responses 流式与 chat 同口径：首个真实数据块触发 Phase 1，流尾 usageMetadata 完成 Phase 2 核销
                     let ttft_seen = std::sync::Arc::new(std::sync::OnceLock::<f64>::new());
                     let ttft_seen_cb = ttft_seen.clone();
                     let ttft_start = effective_attempt_start;
-                    let ttft_tm = token_manager.clone();
-                    let ttft_account = account_id.clone();
-                    let ttft_session = affinity_key.clone();
-                    let ttft_is_thinking = crate::proxy::pipeline::qos::payload_enables_thinking(
-                        &gemini_body,
-                        Some(&mapped_model),
-                    ) || openai_req.thinking.is_some()
-                        || openai_req.reasoning.is_some()
-                        || openai_req.reasoning_effort.is_some();
-                    let ttft_tokens = estimated_input_tokens;
+                    let qos_tracker_cb = qos_tracker.clone();
                     let combined_stream =
                         crate::proxy::pipeline::stream_peek::wrap_stream_with_ttft_probe(
                             openai_stream,
@@ -5021,14 +5025,7 @@ pub async fn handle_completions(
                             },
                             move |ttft| {
                                 let _ = ttft_seen_cb.set(ttft);
-                                crate::proxy::handlers::common::report_qos_ttft(
-                                    &ttft_tm,
-                                    &ttft_account,
-                                    Some(ttft_session.as_str()),
-                                    ttft,
-                                    ttft_is_thinking,
-                                    Some(ttft_tokens),
-                                );
+                                qos_tracker_cb.on_first_byte(ttft);
                             },
                         );
                     let converted_meta = json!({
@@ -5164,15 +5161,8 @@ pub async fn handle_completions(
                             bytes, ..
                         } => {
                             ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
-                            // 非流式 Responses：因为删除了 tail 上报，这里必须补一次真实首块样本
-                            crate::proxy::handlers::common::report_qos_ttft(
-                                &token_manager,
-                                &account_id,
-                                Some(affinity_key.as_str()),
-                                ttft_ms,
-                                is_thinking,
-                                Some(estimated_input_tokens),
-                            );
+                            // 非流式 Responses：首块触发 Phase 1，后续收集流尾 usageMetadata 完成 Phase 2 核销
+                            qos_tracker.on_first_byte(ttft_ms);
                             if let Some(effective_item) =
                                 fallback_attempts.iter_mut().find(|a| a.is_effective)
                             {

@@ -680,6 +680,19 @@ pub async fn handle_generate(
                     &body,
                     Some(&mapped_model),
                 );
+                let qos_tracker =
+                    std::sync::Arc::new(crate::proxy::pipeline::qos::QosAttemptTracker::new(
+                        token_manager.clone(),
+                        account_id.clone(),
+                        Some(affinity_key.clone()),
+                        is_thinking,
+                        Some(estimated_input_tokens),
+                    ));
+                let response_stream =
+                    crate::proxy::pipeline::qos::wrap_gemini_stream_with_qos_usage(
+                        response_stream,
+                        qos_tracker.clone(),
+                    );
                 if let Some(effective_item) = fallback_attempts.iter_mut().find(|a| a.is_effective)
                 {
                     effective_item.duration_s = headers_ms / 1000.0;
@@ -724,14 +737,11 @@ pub async fn handle_generate(
                         yield item;
                     }
                 };
-                // [QoS] 与响应头共用同一个 TTFT 值：首个真实数据块
+                // [QoS] 与响应头共用同一个 TTFT 值：首个真实数据块触发 Phase 1，流尾 usageMetadata 完成 Phase 2 核销
                 let ttft_seen = std::sync::Arc::new(std::sync::OnceLock::<f64>::new());
                 let ttft_seen_cb = ttft_seen.clone();
                 let ttft_start = effective_attempt_start;
-                let ttft_tm = token_manager.clone();
-                let ttft_account = account_id.clone();
-                let ttft_session = affinity_key.clone();
-                let ttft_tokens = estimated_input_tokens;
+                let qos_tracker_cb = qos_tracker.clone();
                 let stream = crate::proxy::pipeline::stream_peek::wrap_stream_with_ttft_probe(
                     stream,
                     ttft_start,
@@ -743,14 +753,7 @@ pub async fn handle_generate(
                     },
                     move |ttft| {
                         let _ = ttft_seen_cb.set(ttft);
-                        crate::proxy::handlers::common::report_qos_ttft(
-                            &ttft_tm,
-                            &ttft_account,
-                            Some(ttft_session.as_str()),
-                            ttft,
-                            is_thinking,
-                            Some(ttft_tokens),
-                        );
+                        qos_tracker_cb.on_first_byte(ttft);
                     },
                 );
 
