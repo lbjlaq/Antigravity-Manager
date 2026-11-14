@@ -22,6 +22,7 @@ export function getModelIcon(id: string, group?: string): React.ReactNode {
         groupLower.includes('gemini') ||
         idLower.includes('hydrogen') ||
         idLower.includes('argon') ||
+        idLower.includes('orchestrator') ||
         idLower.includes('carbon')
     ) {
         return <Gemini.Color size={16} />;
@@ -57,6 +58,7 @@ const ALIAS_TO_CANONICAL: Record<string, { id: string; name: string; group: stri
     'gemini-4-argon-high': { id: 'gemini-4-argon-high', name: 'gemini-4-argon-high', group: 'Gemini 4' },
     'gemini-4-argon-medium': { id: 'gemini-4-argon-medium', name: 'gemini-4-argon-medium', group: 'Gemini 4' },
     'gemini-4-argon-low': { id: 'gemini-4-argon-low', name: 'gemini-4-argon-low', group: 'Gemini 4' },
+    'gemini-pro-orchestrator-g1-pro': { id: 'gemini-pro-orchestrator-g1-pro', name: 'gemini-pro-orchestrator-g1-pro', group: 'Gemini 4' },
 
     'gemini-4-hydrogen': { id: 'gemini-4-hydrogen', name: 'gemini-4-hydrogen', group: 'Gemini 4' },
     'gemini-4-hydrogen-xhigh': { id: 'gemini-4-hydrogen-xhigh', name: 'gemini-4-hydrogen-xhigh', group: 'Gemini 4' },
@@ -114,6 +116,7 @@ function isCompliantModel(
         m.includes('-exp') ||
         m.endsWith('-agent') ||
         m === 'gemini-3-flash' ||
+        m === 'gemini-flash-worker-agy' ||
         // 未在官方可用集合里的字典残留（已从后端可用集合移除）
         m === 'gemini-3.1-flash-lite'
     ) {

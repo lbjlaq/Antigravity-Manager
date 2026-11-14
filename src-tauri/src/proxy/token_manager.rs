@@ -1703,11 +1703,12 @@ impl TokenManager {
         available_models: &mut HashSet<String>,
         model_limits: &mut HashMap<String, u64>,
     ) {
-        const ARGON_DEFAULT_MODELS: [&str; 4] = [
+        const ARGON_DEFAULT_MODELS: [&str; 5] = [
             "gemini-4-argon",
             "gemini-4-argon-high",
             "gemini-4-argon-medium",
             "gemini-4-argon-low",
+            "gemini-pro-orchestrator-g1-pro",
         ];
 
         let primary_fraction_for = |family: &str| -> Option<f64> {
@@ -1749,6 +1750,7 @@ impl TokenManager {
                 "gemini-4-argon-high",
                 "gemini-4-argon-medium",
                 "gemini-4-argon-low",
+                "gemini-pro-orchestrator-g1-pro",
             ] {
                 model_quotas.remove(m);
                 available_models.remove(m);
@@ -2375,7 +2377,10 @@ impl TokenManager {
                 }
                 let raw_name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let raw_name_lower = raw_name.trim().to_lowercase();
-                if raw_name_lower.contains("-disabled") || raw_name_lower.ends_with("_disabled") {
+                if raw_name_lower.contains("-disabled")
+                    || raw_name_lower.ends_with("_disabled")
+                    || raw_name_lower == "gemini-flash-worker-agy"
+                {
                     continue;
                 }
 
@@ -2491,6 +2496,7 @@ impl TokenManager {
                 "gemini-4-argon-high",
                 "gemini-4-argon-medium",
                 "gemini-4-argon-low",
+                "gemini-pro-orchestrator-g1-pro",
             ] {
                 available_models.insert(m.to_string());
                 model_limits.entry(m.to_string()).or_insert(65536);
@@ -2874,7 +2880,10 @@ impl TokenManager {
                 }
                 if let Some(name) = model.get("name").and_then(|v| v.as_str()) {
                     let normalized = name.trim().to_lowercase();
-                    if normalized.contains("-disabled") || normalized.ends_with("_disabled") {
+                    if normalized.contains("-disabled")
+                        || normalized.ends_with("_disabled")
+                        || normalized == "gemini-flash-worker-agy"
+                    {
                         continue;
                     }
                     if !normalized.is_empty() {
@@ -2931,11 +2940,13 @@ impl TokenManager {
                 result.insert("gemini-4-argon-high".to_string());
                 result.insert("gemini-4-argon-medium".to_string());
                 result.insert("gemini-4-argon-low".to_string());
+                result.insert("gemini-pro-orchestrator-g1-pro".to_string());
             } else {
                 result.remove("gemini-4-argon");
                 result.remove("gemini-4-argon-high");
                 result.remove("gemini-4-argon-medium");
                 result.remove("gemini-4-argon-low");
+                result.remove("gemini-pro-orchestrator-g1-pro");
             }
         }
         Some(result)
@@ -7741,8 +7752,10 @@ impl TokenManager {
 
         candidates.sort_by_key(|(name, quota)| {
             let lower = name.to_lowercase();
-            let gemini_text =
-                lower.starts_with("gemini") && !lower.contains("image") && !lower.contains("argon");
+            let gemini_text = lower.starts_with("gemini")
+                && !lower.contains("image")
+                && crate::proxy::common::model_mapping::extract_gemini4_codename(&lower).as_deref()
+                    != Some("argon");
             (
                 if gemini_text { 0 } else { 1 },
                 if lower.contains("flash") { 0 } else { 1 },
@@ -8144,6 +8157,7 @@ impl TokenManager {
                                     "gemini-4-argon-high".to_string(),
                                     "gemini-4-argon-medium".to_string(),
                                     "gemini-4-argon-low".to_string(),
+                                    "gemini-pro-orchestrator-g1-pro".to_string(),
                                 ]
                             } else {
                                 vec![format!("gemini-4-{}", code)]
@@ -14503,5 +14517,123 @@ mod tests {
         assert!(!manager.project_id_failures.contains_key("acc-toggle"));
 
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[tokio::test]
+    async fn test_orchestrator_argon_g1_pro_isolation_and_worker_exclusion() {
+        // 1. select_probe_model must NOT treat gemini-pro-orchestrator-g1-pro as general gemini_text
+        let mut probe_tok =
+            create_test_token("probe_orch@test.com", Some("ULTRA"), 1.0, None, Some(100));
+        probe_tok
+            .available_models
+            .insert("gemini-pro-orchestrator-g1-pro".to_string());
+        probe_tok
+            .model_quotas
+            .insert("gemini-pro-orchestrator-g1-pro".to_string(), 100);
+        probe_tok
+            .available_models
+            .insert("gemini-3.1-pro-high".to_string());
+        probe_tok
+            .model_quotas
+            .insert("gemini-3.1-pro-high".to_string(), 0);
+        assert_eq!(
+            TokenManager::select_probe_model(&probe_tok).as_deref(),
+            Some("gemini-3.1-pro-high"),
+            "probe selector must not prioritize Argon orchestrator over standard gemini_text"
+        );
+
+        // 2. load_accounts must preserve gemini-pro-orchestrator-g1-pro for Ultra / Argon-group Pro,
+        //    strip it for non-Argon Pro, and always strip internal gemini-flash-worker-agy.
+        let tmp_root = std::env::temp_dir().join(format!(
+            "antigravity-token-manager-test-orch-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let accounts_dir = tmp_root.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let future_reset = chrono::DateTime::from_timestamp(now + 3600, 0)
+            .unwrap()
+            .to_rfc3339();
+
+        let ultra_json = serde_json::json!({
+            "id": "acc_ultra_orch",
+            "email": "ultra_orch@test.com",
+            "token": {
+                "access_token": "atk_uo",
+                "refresh_token": "rtk_uo",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "quota": {
+                "subscription_tier": "ULTRA",
+                "models": [
+                    { "name": "gemini-3.8-flash-high", "percentage": 90, "reset_time": future_reset },
+                    { "name": "gemini-flash-worker-agy", "percentage": 100, "reset_time": future_reset }
+                ],
+                "quota_groups": [
+                    {
+                        "display_name": "Gemini",
+                        "buckets": [{ "bucket_id": "gemini-5h", "window": "5h", "remaining_fraction": 0.90, "reset_time": future_reset }]
+                    }
+                ]
+            },
+            "created_at": now,
+            "last_used": now
+        });
+        let non_argon_pro_json = serde_json::json!({
+            "id": "acc_pro_no_orch",
+            "email": "pro_no_orch@test.com",
+            "token": {
+                "access_token": "atk_pn",
+                "refresh_token": "rtk_pn",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "quota": {
+                "subscription_tier": "PRO",
+                "models": [
+                    { "name": "gemini-pro-orchestrator-g1-pro", "percentage": 80, "reset_time": future_reset },
+                    { "name": "gemini-flash-worker-agy", "percentage": 100, "reset_time": future_reset }
+                ],
+                "quota_groups": [
+                    {
+                        "display_name": "Gemini",
+                        "buckets": [{ "bucket_id": "gemini-5h", "window": "5h", "remaining_fraction": 0.80, "reset_time": future_reset }]
+                    }
+                ]
+            },
+            "created_at": now,
+            "last_used": now
+        });
+
+        std::fs::write(
+            accounts_dir.join("acc_ultra_orch.json"),
+            serde_json::to_string_pretty(&ultra_json).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            accounts_dir.join("acc_pro_no_orch.json"),
+            serde_json::to_string_pretty(&non_argon_pro_json).unwrap(),
+        )
+        .unwrap();
+
+        let manager = TokenManager::new(tmp_root.clone());
+        manager.load_accounts().await.unwrap();
+
+        let ultra_tok = manager.tokens.get("acc_ultra_orch").unwrap();
+        assert!(ultra_tok
+            .available_models
+            .contains("gemini-pro-orchestrator-g1-pro"));
+        assert!(!ultra_tok
+            .available_models
+            .contains("gemini-flash-worker-agy"));
+
+        let pro_tok = manager.tokens.get("acc_pro_no_orch").unwrap();
+        assert!(!pro_tok
+            .available_models
+            .contains("gemini-pro-orchestrator-g1-pro"));
+        assert!(!pro_tok.available_models.contains("gemini-flash-worker-agy"));
+
+        let _ = std::fs::remove_dir_all(&tmp_root);
     }
 }

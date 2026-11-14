@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 import { getGroupQuotaSummaries, GroupQuotaSummary } from '../../utils/quotaDisplay';
 import { GroupQuotaCard } from '../accounts/GroupQuotaCard';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
+import { isArgonModel } from '../../utils/modelCategory';
 
 interface CurrentAccountProps {
     account?: Account | null;
@@ -122,13 +123,11 @@ function CurrentAccount({
         if (!displayedAccount?.protected_models || displayedAccount.protected_models.length === 0)
             return false;
         if (key === 'argon') {
-            return displayedAccount.protected_models.some((m) =>
-                m.toLowerCase().includes('argon')
-            );
+            return displayedAccount.protected_models.some(isArgonModel);
         }
         if (key === 'gemini') {
             return displayedAccount.protected_models.some(
-                (m) => m.toLowerCase().includes('gemini') && !m.toLowerCase().includes('argon')
+                (m) => m.toLowerCase().includes('gemini') && !isArgonModel(m)
             );
         }
         return displayedAccount.protected_models.some(

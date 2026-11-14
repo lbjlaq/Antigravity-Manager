@@ -3,7 +3,9 @@
  * Run: npx tsx src/utils/__tests__/argonCapability.test.ts
  */
 import { hasAccountArgonCapability, checkArgonEligibility, type QuotaData } from '../../types/account';
-import { getGroupQuotaSummaries, getModelQuotaDisplay } from '../quotaDisplay';
+import { getGroupQuotaSummaries, getModelQuotaDisplay, isSupportedDisplayModel } from '../quotaDisplay';
+import { inferModelGroup } from '../../config/modelConfig';
+import { extractGemini4Codename } from '../modelCategory';
 
 let passed = 0;
 let failed = 0;
@@ -139,6 +141,42 @@ test('getModelQuotaDisplay correctly preserves Ultra Argon percentage and zeros 
     // Free account without Argon percentage
     const displayZero = getModelQuotaDisplay('gemini-4-argon', undefined, groups);
     assertEqual(displayZero.percentage, 0, 'Unauthorized Argon percentage is 0');
+});
+
+// 5. Orchestrator (Argon) & internal worker isolation tests
+test('gemini-pro-orchestrator-g1-pro maps to Argon group and Gemini 4, while gemini-flash-worker-agy is excluded', () => {
+    assertEqual(extractGemini4Codename('gemini-pro-orchestrator-g1-pro'), 'argon', 'Orchestrator maps to argon codename');
+    assertEqual(inferModelGroup('gemini-pro-orchestrator-g1-pro'), 'Gemini 4', 'Orchestrator belongs to Gemini 4 group');
+    assertEqual(isSupportedDisplayModel('gemini-pro-orchestrator-g1-pro'), true, 'Orchestrator is supported display model');
+    assertEqual(isSupportedDisplayModel('gemini-flash-worker-agy'), false, 'Internal worker is excluded from display');
+
+    const proAccount = {
+        quota: {
+            last_updated: Date.now(),
+            subscription_tier: 'PRO',
+            quota_groups: [
+                {
+                    display_name: 'Gemini Models',
+                    buckets: [
+                        { bucket_id: 'gemini-5h', window: '5h', remaining_fraction: 0.9, reset_time: '2026-10-27T08:00:00Z' },
+                    ]
+                },
+                {
+                    display_name: 'Gemini 4 Argon',
+                    buckets: [
+                        { bucket_id: 'gemini-argon-wtu-weekly', window: 'weekly', remaining_fraction: 0.77, reset_time: '2026-10-31T12:00:00Z' },
+                    ]
+                }
+            ],
+            models: [
+                { name: 'gemini-pro-orchestrator-g1-pro', percentage: 77, reset_time: '2026-10-31T12:00:00Z' },
+            ]
+        } as QuotaData
+    };
+
+    assertEqual(hasAccountArgonCapability(proAccount), true, 'Pro with orchestrator has Argon capability');
+    const orchDisplay = getModelQuotaDisplay('gemini-pro-orchestrator-g1-pro', proAccount.quota.models[0], proAccount.quota.quota_groups);
+    assertEqual(orchDisplay.percentage, 77, 'Orchestrator displays Argon quota');
 });
 
 console.log(`Passed: ${passed}, Failed: ${failed}`);

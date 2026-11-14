@@ -191,7 +191,7 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
     let lower = model.to_lowercase();
     let m = lower.trim();
 
-    // 过滤禁用标记模型、内部任务、测试、tab 补全与旧版 agent 内部代号模型
+    // 过滤禁用标记模型、内部任务、测试、tab 补全、内部 planexecute worker 与旧版 agent 内部代号模型
     if m.contains("-disabled")
         || m.ends_with("_disabled")
         || m.starts_with("chat_")
@@ -200,6 +200,7 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
         || m.contains("-exp")
         || m.ends_with("-agent")
         || m == "gemini-3-flash"
+        || m == "gemini-flash-worker-agy"
     {
         return false;
     }
@@ -214,8 +215,9 @@ pub fn is_model_compliant_with_baseline(model: &str) -> bool {
         }
     }
 
-    // 特许放行的官方轻量级与图像专用模型，以及新一代 Gemini 4 Argon 旗舰模型
+    // 特许放行的官方轻量级与图像专用模型，以及新一代 Gemini 4 Argon / Orchestrator 旗舰模型
     if m.contains("argon")
+        || m == "gemini-pro-orchestrator-g1-pro"
         || m == "gemini-3.1-flash-lite"
         || m == "gemini-3.5-flash-lite"
         || m == "gemini-3.1-flash-image"
@@ -1139,7 +1141,7 @@ fn extract_gemini_codename_with_version(model_name: &str) -> Option<(String, Str
             }
         }
     }
-    if lower.contains("argon") {
+    if lower.contains("argon") || stripped == "gemini-pro-orchestrator-g1-pro" {
         return Some(("4".to_string(), "argon".to_string()));
     }
     None
@@ -1596,6 +1598,10 @@ mod tests {
         // Gemini 4 Argon & Flash >= 3.8 pass, < 3.8 rejected (except 3.1/3.5-flash-lite)
         assert!(is_model_compliant_with_baseline("gemini-4-argon"));
         assert!(is_model_compliant_with_baseline("gemini-4-argon-high"));
+        assert!(is_model_compliant_with_baseline(
+            "gemini-pro-orchestrator-g1-pro"
+        ));
+        assert!(!is_model_compliant_with_baseline("gemini-flash-worker-agy"));
         assert!(!is_model_compliant_with_baseline("gemini-4-argon-disabled"));
         assert!(!is_model_compliant_with_baseline(
             "gemini-3.8-flash-disabled"
@@ -1707,6 +1713,14 @@ mod tests {
         assert_eq!(
             resolve_model_route_with_effort("gemini-4-argon", &empty, Some("high")),
             "gemini-4-argon-high"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-pro-orchestrator-g1-pro", &empty, None),
+            "gemini-pro-orchestrator-g1-pro"
+        );
+        assert_eq!(
+            resolve_model_route_with_effort("gemini-pro-orchestrator-g1-pro", &empty, Some("high")),
+            "gemini-pro-orchestrator-g1-pro"
         );
         assert_eq!(
             resolve_model_route_with_effort("claude-opus-4-6", &empty, None),
@@ -1901,6 +1915,7 @@ mod tests {
             ("gemini-4-argon-low", Some("gemini-4-argon")),
             ("gemini-4-argon-thinking", Some("gemini-4-argon")),
             ("gemini-4-argon", Some("gemini-4-argon")),
+            ("gemini-pro-orchestrator-g1-pro", Some("gemini-4-argon")),
             ("gemini-4-hydrogen-xhigh", Some("gemini-4-hydrogen")),
             ("gemini-4-hydrogen-high", Some("gemini-4-hydrogen")),
             ("gemini-4-hydrogen-medium", Some("gemini-4-hydrogen")),

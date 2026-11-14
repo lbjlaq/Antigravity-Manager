@@ -1801,6 +1801,10 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
         context_window: 1_048_576,
     },
     CoreModel {
+        id: "gemini-pro-orchestrator-g1-pro",
+        context_window: 1_048_576,
+    },
+    CoreModel {
         id: "gemini-4-hydrogen",
         context_window: 1_048_576,
     },

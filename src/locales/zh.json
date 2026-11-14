@@ -996,7 +996,7 @@
             "request": {
                 "user_agent": "User-Agent 覆盖",
                 "user_agent_tooltip": "自定义发送给上游 API 的 User-Agent 请求头。留空则使用默认值。",
-                "user_agent_hint": "当前默认值: antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)",
+                "user_agent_hint": "当前默认值: antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)",
                 "user_agent_placeholder": "输入自定义 User-Agent 字符串...",
                 "user_agent_risk_title": "风险提示",
                 "user_agent_risk_desc": "自定义 User-Agent 可能会影响出站请求的协议兼容性。Google Cloud Code 上游对新一代旗舰模型（如 Gemini 4 Argon 等）实施了严格的客户端指纹门禁。若填入非 Hub 签名格式（如 antigravity/4.3.0 等旧 IDE 指纹）或版本过旧（低于官方最新基准 {{version}}），上游将直接返回 HTTP 404 (Requested entity was not found)，并可能导致网关账号池被临时保护性熔断挂起 15 分钟。若不了解上游指纹协议细节，请谨慎操作或保持默认。",

@@ -179,6 +179,16 @@ export const MODEL_CONFIG: Record<string, ModelConfig> = {
         group: 'Gemini 4',
         tags: ['flash', 'argon', 'low'],
     },
+    'gemini-pro-orchestrator-g1-pro': {
+        label: 'Orchestrator (Argon)',
+        shortLabel: 'Orchestrator',
+        protectedKey: 'gemini-4-argon',
+        Icon: Gemini.Color,
+        i18nKey: 'proxy.model.pro',
+        i18nDescKey: 'proxy.model.pro',
+        group: 'Gemini 4',
+        tags: ['pro', 'argon', 'orchestrator'],
+    },
     'gemini-4-hydrogen': {
         label: 'Gemini 4 Hydrogen',
         shortLabel: 'G4 Hydrogen',
@@ -527,7 +537,8 @@ export const CANONICAL_GROUP_ORDER = ['Gemini 3', 'Gemini 2.5', 'Gemini', 'Claud
 export function extractModelVersion(idOrName: string): [number, number] {
     const s = idOrName.toLowerCase();
 
-    // 特殊匹配 OpenAI
+    // 特殊匹配 OpenAI 与 Gemini 4 Orchestrator (Argon)
+    if (s.includes('gemini-pro-orchestrator-g1-pro')) return [4, 0];
     if (s.includes('gpt-4o')) return [4, 5];
     if (s.includes('gpt-4')) return [4, 0];
     if (s.includes('gpt-3.5')) return [3, 5];
@@ -636,6 +647,7 @@ export {
     DEFAULT_IMAGE_PIN_SELECTOR,
     resolveQuotaModels,
     extractGemini4Codename,
+    isArgonModel,
     isDedicatedG4Group,
     extractGroupQuotaPercentage,
     type ModelCategory,

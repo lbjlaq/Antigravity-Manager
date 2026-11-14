@@ -401,6 +401,11 @@ impl OfficialModelCatalog {
         }
     }
 
+    fn is_excluded_internal_model(id: &str) -> bool {
+        let lower = id.trim().to_lowercase();
+        lower == "gemini-flash-worker-agy"
+    }
+
     /// 计算单个在线 fetchAvailableModels 响应下的权威推荐模型集合
     pub(crate) fn extract_live_recommended_ids(
         models: &HashMap<String, OfficialModelInfo>,
@@ -408,7 +413,10 @@ impl OfficialModelCatalog {
     ) -> std::collections::HashSet<String> {
         let mut recommended = std::collections::HashSet::new();
         for (id, info) in models {
-            if info.is_internal == Some(true) || info.is_disabled() {
+            if info.is_internal == Some(true)
+                || info.is_disabled()
+                || Self::is_excluded_internal_model(id)
+            {
                 continue;
             }
             let lower = id.trim().to_lowercase();
@@ -429,14 +437,21 @@ impl OfficialModelCatalog {
         live_accounts: Option<&HashMap<String, std::collections::HashSet<String>>>,
         catalog: &HashMap<String, OfficialModelInfo>,
     ) -> Vec<String> {
-        let is_active_info =
-            |info: &OfficialModelInfo| info.is_internal != Some(true) && !info.is_disabled();
+        let is_active_info = |id: &str, info: &OfficialModelInfo| {
+            info.is_internal != Some(true)
+                && !info.is_disabled()
+                && !Self::is_excluded_internal_model(id)
+        };
 
         let mut result = std::collections::BTreeSet::new();
         if let Some(accounts) = live_accounts.filter(|m| !m.is_empty()) {
             for ids in accounts.values() {
                 for id in ids {
-                    let allow = catalog.get(id.as_str()).map(is_active_info).unwrap_or(true);
+                    let allow = !Self::is_excluded_internal_model(id)
+                        && catalog
+                            .get(id.as_str())
+                            .map(|info| is_active_info(id, info))
+                            .unwrap_or(true);
                     if allow {
                         result.insert(id.clone());
                     }
@@ -446,7 +461,7 @@ impl OfficialModelCatalog {
         }
 
         for (id, info) in catalog {
-            if !is_active_info(info) {
+            if !is_active_info(id, info) {
                 continue;
             }
             if info.recommended == Some(true) || id.eq_ignore_ascii_case("gemini-3.1-flash-image") {
@@ -475,7 +490,10 @@ impl OfficialModelCatalog {
         let compacted_models: Vec<(String, OfficialModelInfo)> = models
             .iter()
             .filter(|(id, info)| {
-                info.is_internal != Some(true) && !info.is_disabled() && !id.trim().is_empty()
+                info.is_internal != Some(true)
+                    && !info.is_disabled()
+                    && !Self::is_excluded_internal_model(id)
+                    && !id.trim().is_empty()
             })
             .map(|(id, info)| (id.clone(), Self::compact_live_model_info(info)))
             .collect();
@@ -714,8 +732,8 @@ mod tests {
 
         assert_eq!(
             recommended.len(),
-            20,
-            "cold-start recommended baseline must match exact 20 active official entries, got: {:?}",
+            21,
+            "cold-start recommended baseline must match exact 21 active official entries, got: {:?}",
             recommended
         );
 
@@ -723,6 +741,7 @@ mod tests {
             "gemini-4-hydrogen-high",
             "gemini-4-hydrogen-xhigh",
             "gemini-4-argon-high",
+            "gemini-pro-orchestrator-g1-pro",
             "gemini-3.8-flash-high",
             "gemini-3.8-flash-tiered",
             "gemini-3.5-flash-lite",
@@ -738,6 +757,7 @@ mod tests {
         }
 
         for retired in [
+            "gemini-flash-worker-agy",
             "gemini-3.6-flash-low",
             "gemini-3.6-flash-medium",
             "gemini-3.6-flash-high",

@@ -532,7 +532,7 @@ mod tests {
             404,
             raw_404,
             Some(
-                "antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)",
+                "antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)",
             ),
             0,
             3,

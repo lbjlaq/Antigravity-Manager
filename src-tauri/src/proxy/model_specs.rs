@@ -74,6 +74,9 @@ pub fn is_bare_gemini_pro(model: &str) -> bool {
     if !lower.contains("gemini") || !lower.contains("pro") || lower.contains("flash") {
         return false;
     }
+    if lower.contains("orchestrator") {
+        return false;
+    }
     if !is_gemini_v3_or_above(model) {
         return false;
     }
@@ -170,7 +173,11 @@ pub fn is_gemini_v3_or_above(model: &str) -> bool {
     if !lower.contains("gemini") {
         return false;
     }
-    if lower.contains("agent") || lower == "gemini-pro" || lower == "gemini-flash" {
+    if lower.contains("agent")
+        || lower.contains("orchestrator")
+        || lower == "gemini-pro"
+        || lower == "gemini-flash"
+    {
         return true;
     }
     if let Some(idx) = lower.find("gemini-") {
@@ -247,6 +254,9 @@ pub fn is_gemini_v4_or_above(model: &str) -> bool {
     let lower = model.to_lowercase();
     if !lower.contains("gemini") {
         return false;
+    }
+    if lower.contains("orchestrator") {
+        return true;
     }
     if let Some(idx) = lower.find("gemini-") {
         let rest = &lower[idx + "gemini-".len()..];
@@ -887,5 +897,13 @@ mod tests {
             Some((3, 5))
         );
         assert_eq!(parse_claude_version_tuple("gemini-3.8-flash"), None);
+    }
+
+    #[test]
+    fn test_orchestrator_argon_g1_pro_specs() {
+        assert!(is_gemini_v3_or_above("gemini-pro-orchestrator-g1-pro"));
+        assert!(is_gemini_v4_or_above("gemini-pro-orchestrator-g1-pro"));
+        assert!(!is_gemini_under_v3("gemini-pro-orchestrator-g1-pro"));
+        assert!(!is_bare_gemini_pro("gemini-pro-orchestrator-g1-pro"));
     }
 }

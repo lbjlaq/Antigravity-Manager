@@ -410,6 +410,10 @@ mod tests {
         ));
         assert!(payload_enables_thinking(
             &empty_payload,
+            Some("gemini-pro-orchestrator-g1-pro")
+        ));
+        assert!(payload_enables_thinking(
+            &empty_payload,
             Some("gemini-3.8-flash-high")
         ));
         assert!(payload_enables_thinking(&empty_payload, Some("o3-mini")));

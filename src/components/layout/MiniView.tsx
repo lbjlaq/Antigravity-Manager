@@ -22,6 +22,7 @@ import {
 import { getAccountTier, type Account } from '../../types/account';
 import { isAccountAbnormal } from '../../utils/accountStatus';
 import { getLiveLimitForModel } from '../../utils/liveLimit';
+import { isArgonModel } from '../../utils/modelCategory';
 import { GroupQuotaCard } from '../accounts/GroupQuotaCard';
 import { useConfigStore } from '../../stores/useConfigStore';
 
@@ -221,13 +222,11 @@ export default function MiniView() {
         if (!displayedAccount?.protected_models || displayedAccount.protected_models.length === 0)
             return false;
         if (key === 'argon') {
-            return displayedAccount.protected_models.some((m: string) =>
-                m.toLowerCase().includes('argon')
-            );
+            return displayedAccount.protected_models.some(isArgonModel);
         }
         if (key === 'gemini') {
             return displayedAccount.protected_models.some(
-                (m: string) => m.toLowerCase().includes('gemini') && !m.toLowerCase().includes('argon')
+                (m: string) => m.toLowerCase().includes('gemini') && !isArgonModel(m)
             );
         }
         return displayedAccount.protected_models.some(

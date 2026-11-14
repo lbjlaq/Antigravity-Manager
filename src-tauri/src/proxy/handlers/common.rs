@@ -1349,16 +1349,16 @@ mod retry_after_tests {
             404,
             raw_404,
             Some(
-                "antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)"
+                "antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)"
             )
         ));
     }
 
     #[test]
     fn test_check_outdated_user_agent_issue_detects_low_version_hub_ua() {
-        // 具有官方 Hub 签名，但版本号 (2.11.0) 低于当前推荐默认基准 (OFFICIAL_HUB_VERSION 2.28.0)
+        // 具有官方 Hub 签名，但版本号 (2.11.0) 低于当前推荐默认基准 (OFFICIAL_HUB_VERSION 2.32.1)
         let low_hub_ua =
-            "antigravity/hub/2.11.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)";
+            "antigravity/hub/2.11.0 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)";
         let raw_404 = r#"HTTP 404: {"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}"#;
 
         let res = build_dual_track_error_with_ua_and_lang(
@@ -1378,7 +1378,7 @@ mod retry_after_tests {
     #[test]
     fn test_check_outdated_user_agent_issue_passes_modern_hub_ua() {
         let modern_ua =
-            "antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)";
+            "antigravity/hub/2.32.1 (aidev_client; os_type=windows; arch=amd64; cl=1021296516)";
         let raw_404 = r#"HTTP 404: {"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}"#;
 
         let res = build_dual_track_error_with_ua(
