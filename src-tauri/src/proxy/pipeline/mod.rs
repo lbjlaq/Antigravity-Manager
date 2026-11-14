@@ -40,14 +40,18 @@ pub use image::{
     stream_chunk_has_image_data, text_has_nonempty_image_data_url,
     value_has_nonempty_image_data_url, ImageDiagnostic,
 };
-pub use inbound::{extract_client_thinking_switch, routing_effort, InboundThinkingPipeline};
+pub use inbound::{
+    extract_client_thinking_switch, extract_thinking_level_str, routing_effort,
+    InboundThinkingPipeline,
+};
 pub use policy::UpstreamClassification;
+pub use qos::{wrap_gemini_stream_with_qos_usage, QosAttemptTracker};
 pub use rotation::{
     apply_retry_strategy, calculate_max_retry_attempts, clamp_retry_after_for_claude,
     decide_rotation, determine_retry_strategy, determine_retry_strategy_adaptive,
     determine_retry_strategy_with_grace, extract_retry_after_seconds, is_model_not_found_error,
-    next_rotation_attempt, scheduling_allows_grace, should_rotate_account, RequestRetryState,
-    RetryStrategy, RotationDecision,
+    next_rotation_attempt, scheduling_allows_grace, should_rotate_account, HttpRetryPlan,
+    RequestRetryState, RetryStrategy, RotationDecision,
 };
 pub use stream_lifecycle::{run_stream_lifecycle, ProtocolStreamHandler, StreamLifecycleConfig};
 pub use stream_peek::{
@@ -57,6 +61,6 @@ pub use stream_peek::{
 pub use terminal::{
     apply_terminal, classify as classify_terminal_error, gate_exhausted, protocol_status,
     record_first_byte_timeout, strip_markers, FailureStatusTracker, TerminalDisposition,
-    TerminalHandling, UpstreamTerminal,
+    TerminalHandling, TerminalNextStep, TerminalRetryPlan, UpstreamTerminal,
 };
 pub use usage::CanonicalUsage;

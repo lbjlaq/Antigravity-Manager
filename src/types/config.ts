@@ -29,6 +29,7 @@ export interface ProxyConfig {
     hub_cl?: string;
     thinking_budget?: ThinkingBudgetConfig;
     global_system_prompt?: GlobalSystemPromptConfig;
+    prompt_rewrite?: PromptRewriteConfig;
     image_thinking_mode?: 'enabled' | 'disabled'; // [NEW] 图像思维模式开关
     only_raw_quota_models?: boolean; // [NEW] 是否只暴露真实配额模型
     proxy_pool?: ProxyPoolConfig;
@@ -142,6 +143,66 @@ export interface GlobalSystemPromptConfig {
     content: string;
 }
 
+/** 风控提示词清理规则（行式：匹配内容 → 替换为） */
+export interface PromptRewriteRule {
+    /** 稳定 ID */
+    id: string;
+    /** 匹配内容：支持 * 通配符（同一行内任意字符）与 \n / \t / \\ 转义 */
+    pattern: string;
+    /** 替换内容：留空表示删除匹配内容 */
+    replacement: string;
+    /** 是否启用 */
+    enabled: boolean;
+}
+
+/** 风控提示词清理方案 */
+export interface PromptRewriteConfig {
+    enabled: boolean;
+    /** 是否启用内置身份归一化（默认 true） */
+    normalize_identity?: boolean;
+    rules: PromptRewriteRule[];
+}
+
+/** 官方推荐风控预设规则集（经过生产环境与 WAF 实测验证） */
+export const RECOMMENDED_PROMPT_REWRITE_PRESETS: PromptRewriteRule[] = [
+    {
+        id: "preset-opencode",
+        pattern: "You are an AI agent running in OpenCode*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-dsh-identity",
+        pattern: "You are an AI agent powered by DeepSeek Harness*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-dsh-model",
+        pattern: "You are a coding agent powered by *gemini*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-workbuddy",
+        pattern: "*WorkBuddy*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-codex-intro",
+        pattern: "*the codex cli is an open*source project*",
+        replacement: "",
+        enabled: true,
+    },
+    {
+        id: "preset-anthropic-billing",
+        pattern: "*x-anthropic-billing-header:*",
+        replacement: "",
+        enabled: true,
+    },
+];
+
 export interface DebugLoggingConfig {
     enabled: boolean;
     output_dir?: string;
@@ -153,6 +214,7 @@ export type AffinityScope = 'session' | 'api_key';
 export interface StickySessionConfig {
     mode: SchedulingMode;
     max_wait_seconds: number;
+    request_429_grace_ms?: number;
     max_spillover_accounts?: number;
     affinity_scope?: AffinityScope;
 }

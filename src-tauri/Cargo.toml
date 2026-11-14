@@ -1,10 +1,11 @@
 [package]
 name = "antigravity-tools"
-version = "5.0.4-beta.6"
+version = "5.0.4-beta.9"
 description = "Antigravity Tools"
 authors = ["you"]
 license = "CC-BY-NC-SA-4.0"
 edition = "2021"
+default-run = "antigravity-tools"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

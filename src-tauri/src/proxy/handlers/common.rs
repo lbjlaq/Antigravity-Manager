@@ -125,7 +125,8 @@ mod tests {
 /// 入站模型闸门（协议无关）。
 ///
 /// - 缺失 / 不存在的 model-id → 404 `model not exist`
-/// - 整池无配额 → 502 `no quota accounts`
+/// - 模型在目录/磁盘已知但活跃池无可用账号 → 503 `no available accounts`
+/// - 活跃池有支持该模型的账号但整池无配额 → 502 `no quota accounts`
 ///
 /// 拒绝时：响应头带上 `X-Account-Email` 哨兵文案（日志账号列直接展示），
 /// 并把英文排障说明写入 `upstream_recorder`，使「转出报文」面板可展开查看。
@@ -354,6 +355,16 @@ pub fn build_token_error_headers_for_protocol<'a>(
             headers.insert(axum::http::header::RETRY_AFTER, val);
         }
     }
+
+    // [Fixes #3908] 明确标识错误来源：网关账号池冷却 vs 上游拒绝。
+    if crate::proxy::pipeline::policy::UpstreamClassification::is_internal_gateway_exhaustion(
+        &error_text.to_lowercase(),
+    ) {
+        headers.insert(
+            HeaderName::from_static("x-gateway-error-source"),
+            HeaderValue::from_static("gateway_pool"),
+        );
+    }
     headers
 }
 
@@ -364,6 +375,38 @@ pub fn build_token_error_headers<'a>(
     error_text: &str,
 ) -> axum::http::HeaderMap {
     build_token_error_headers_for_protocol("common", mapped_model, account_email, error_text)
+}
+
+/// 首轮获取账号失败（网关账号池冷却 vs 无可用账号）的统一状态码裁决：
+/// - 网关账号池全员冷却（`is_internal_gateway_exhaustion`）返回 `429 TOO_MANY_REQUESTS`；
+/// - 其余无可用账号或刷新失败返回 `503 SERVICE_UNAVAILABLE`。
+pub fn resolve_token_error_status(error_text: &str) -> axum::http::StatusCode {
+    if crate::proxy::pipeline::policy::UpstreamClassification::is_internal_gateway_exhaustion(
+        &error_text.to_lowercase(),
+    ) {
+        axum::http::StatusCode::TOO_MANY_REQUESTS
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    }
+}
+
+/// 统一构造首轮获取账号失败（网关账号池冷却 / 无可用账号）的双轨制协议响应
+pub fn build_token_error_response(
+    protocol: &str,
+    mapped_model: &str,
+    account_email: Option<&str>,
+    error_text: &str,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let status = resolve_token_error_status(error_text);
+    let headers = build_token_error_headers_for_protocol(
+        protocol,
+        Some(mapped_model),
+        account_email,
+        error_text,
+    );
+    let dual_err = build_dual_track_error(protocol, status.as_u16(), mapped_model, error_text);
+    (status, headers, axum::Json(dual_err)).into_response()
 }
 
 fn map_status_code_to_gemini_status(status_code: u16) -> &'static str {
@@ -400,6 +443,21 @@ pub fn check_outdated_user_agent_issue(
         custom_ua,
         Some(&lang),
     )
+}
+
+/// 是否为可通过修正 UA 配置解决的 404/403（缺失 Hub 签名 / Hub 版本过低）。
+///
+/// 这类错误不是账号/模型故障：不应写入 900s 单模型熔断，也不应换号重放；
+/// 否则用户改好 UA 后仍会被旧熔断卡 15 分钟。
+pub fn is_outdated_user_agent_error(
+    model: &str,
+    status_code: u16,
+    error_text: &str,
+    custom_ua: Option<&str>,
+) -> bool {
+    check_outdated_user_agent_issue(model, status_code, error_text, custom_ua)
+        .map(|(_, _, _, _, code)| code == "outdated_user_agent")
+        .unwrap_or(false)
 }
 
 /// 支持指定语言环境的 User-Agent 门禁与熔断特征检测
@@ -621,6 +679,26 @@ pub fn build_dual_track_error_with_ua_and_lang(
             "permission_error",
             "account_forbidden",
         )
+    } else if lower.contains(crate::proxy::common::model_gate::NO_AVAILABLE_ACCOUNTS) {
+        (
+            i18n_err
+                .no_available_accounts_title
+                .replace("{model}", model),
+            i18n_err
+                .no_available_accounts_diag
+                .replace("{model}", model),
+            i18n_err.no_available_accounts_sug.replace("{model}", model),
+            "api_error",
+            "no_available_accounts",
+        )
+    } else if lower.contains(crate::proxy::common::model_gate::NO_QUOTA_ACCOUNTS) {
+        (
+            i18n_err.no_quota_accounts_title.replace("{model}", model),
+            i18n_err.no_quota_accounts_diag.replace("{model}", model),
+            i18n_err.no_quota_accounts_sug.replace("{model}", model),
+            "rate_limit_error",
+            "no_quota_accounts",
+        )
     } else if is_internal_limited {
         (
             i18n_err.all_accounts_limited_title.to_string(),
@@ -691,6 +769,7 @@ pub fn build_dual_track_error_with_ua_and_lang(
 
     let gateway_error_obj = serde_json::json!({
         "error_code": err_code,
+        "source": if is_internal_limited { "gateway_pool" } else { "upstream" },
         "model": model,
         "is_server_error": false,
         "diagnosis": diagnosis,
@@ -1080,6 +1159,10 @@ mod retry_after_tests {
             Some("zh"),
         );
         assert_eq!(claude_res["error"]["code"], "all_accounts_limited");
+        assert_eq!(
+            claude_res["error"]["gateway_error"]["source"],
+            "gateway_pool"
+        );
         assert!(claude_res["error"]["message"]
             .as_str()
             .unwrap()
@@ -1102,6 +1185,33 @@ mod retry_after_tests {
         let default_res = build_dual_track_error("claude", 429, "gemini-2.5-flash", raw_err);
         assert_eq!(default_res["error"]["code"], "all_accounts_limited");
         assert!(default_res["error"]["message"].is_string());
+    }
+
+    #[test]
+    fn test_build_dual_track_error_upstream_source() {
+        let raw_err = r#"{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}"#;
+        let res = build_dual_track_error("claude", 429, "gemini-2.5-flash", raw_err);
+        assert_eq!(res["error"]["gateway_error"]["source"], "upstream");
+    }
+
+    #[test]
+    fn test_token_error_headers_mark_gateway_pool_source() {
+        let headers =
+            build_token_error_headers(None, None, "All accounts rate-limited. Cooldown wait 27s.");
+        assert_eq!(
+            headers
+                .get("x-gateway-error-source")
+                .and_then(|v| v.to_str().ok()),
+            Some("gateway_pool")
+        );
+        assert_eq!(
+            resolve_token_error_status("All accounts rate-limited. Cooldown wait 27s."),
+            axum::http::StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            resolve_token_error_status("No accounts available"),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
     }
 
     #[test]
@@ -1277,6 +1387,22 @@ mod retry_after_tests {
             .as_str()
             .unwrap()
             .contains("【上游指纹门禁异常】"));
+
+        // 模型-not-found 分支使用这个纯判定：UA 风险时不得写 900s 熔断/换号。
+        assert!(is_outdated_user_agent_error(
+            "gemini-4-argon-high",
+            404,
+            raw_404,
+            Some(legacy_ua)
+        ));
+        assert!(!is_outdated_user_agent_error(
+            "gemini-4-argon-high",
+            404,
+            raw_404,
+            Some(
+                "antigravity/hub/2.28.0 (aidev_client; os_type=windows; arch=amd64; cl=1008300195)"
+            )
+        ));
     }
 
     #[test]
@@ -1335,5 +1461,57 @@ mod retry_after_tests {
             .as_str()
             .unwrap()
             .contains("【模型全池临时熔断】"));
+    }
+
+    #[test]
+    fn test_dual_track_no_available_accounts_all_12_languages_and_protocols() {
+        let langs = [
+            ("zh", "【当前无可用配额账号】"),
+            ("zh-TW", "【目前無可用配額帳號】"),
+            ("en", "[No Available Quota Accounts]"),
+            ("ja", "【利用可能なクォータアカウントなし】"),
+            ("ko", "【사용 가능한 할당량 계정 없음】"),
+            ("es", "【Sin cuentas de cuota disponibles】"),
+            ("ru", "【Нет доступных аккаунтов с квотой】"),
+            ("pt", "【Sem contas de cota disponíveis】"),
+            ("tr", "【Kullanılabilir Kota Hesabı Yok】"),
+            ("vi", "【Hiện Không Có Tài Khoản Khả Dụng】"),
+            ("ar", "【لا توجد حسابات حصة متاحة حاليًا】"),
+            ("my", "【Tiada Akaun Kuota Tersedia】"),
+        ];
+
+        for (lang, expected_prefix) in langs {
+            let res = build_dual_track_error_with_ua_and_lang(
+                "openai",
+                503,
+                "gemini-4-hydrogen-high",
+                crate::proxy::common::model_gate::NO_AVAILABLE_ACCOUNTS,
+                None,
+                Some(lang),
+            );
+            assert_eq!(res["error"]["code"], "no_available_accounts");
+            assert_eq!(res["error"]["gateway_error"]["source"], "gateway_pool");
+            let msg = res["error"]["message"].as_str().unwrap();
+            assert!(
+                msg.contains(expected_prefix),
+                "lang={lang} expected '{expected_prefix}' in '{msg}'"
+            );
+            assert!(msg.contains("gemini-4-hydrogen-high"));
+        }
+
+        // Verify Gemini protocol also preserves HTTP 503 + gateway_error
+        let gemini_res = build_dual_track_error_with_ua_and_lang(
+            "gemini",
+            503,
+            "gemini-4-hydrogen-high",
+            crate::proxy::common::model_gate::NO_AVAILABLE_ACCOUNTS,
+            None,
+            Some("zh"),
+        );
+        assert_eq!(gemini_res["error"]["code"], 503);
+        assert_eq!(
+            gemini_res["error"]["gateway_error"]["error_code"],
+            "no_available_accounts"
+        );
     }
 }

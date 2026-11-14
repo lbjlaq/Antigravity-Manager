@@ -15,7 +15,7 @@ use tracing::{debug, error, info};
 use crate::proxy::common::client_adapter::CLIENT_ADAPTERS; // [NEW] Import Adapter Registry
 use crate::proxy::debug_logger;
 use crate::proxy::mappers::claude::{
-    clean_cache_control_from_messages, create_claude_sse_stream,
+    clean_cache_control_from_messages, create_claude_sse_stream_with_anchor,
     filter_invalid_thinking_blocks_with_family, merge_consecutive_messages, models::MessageContent,
     transform_response, ClaudeRequest,
 };
@@ -629,7 +629,7 @@ fn extract_thinking_hint(body: &Value) -> ThinkingHint {
         .or_else(|| body.get("output_config").and_then(|o| o.get("effort")))
         .or_else(|| body.get("thinking").and_then(|t| t.get("effort")))
         .or_else(|| body.get("effort"))
-        .and_then(|l| l.as_str())
+        .and_then(crate::proxy::pipeline::extract_thinking_level_str)
     {
         hint.level = Some(level.to_lowercase());
     }
@@ -648,7 +648,7 @@ fn extract_thinking_hint(body: &Value) -> ThinkingHint {
 
 // ===== 统一退避策略模块 =====
 // 移除本地重复定义，使用 common 中的统一实现
-use super::common::{apply_retry_strategy, should_rotate_account, RetryStrategy};
+use super::common::{apply_retry_strategy, RetryStrategy};
 
 // ===== 退避策略模块结束 =====
 
@@ -1819,24 +1819,22 @@ pub async fn handle_messages(
                 } else {
                     e
                 };
-                let headers =
-                    crate::proxy::handlers::common::build_token_error_headers_for_protocol(
-                        "claude",
-                        Some(mapped_model.as_str()),
-                        None,
-                        &safe_message,
-                    );
-                let dual_err = crate::proxy::handlers::common::build_dual_track_error(
-                    "claude",
-                    StatusCode::SERVICE_UNAVAILABLE.as_u16(),
-                    mapped_model.as_str(),
-                    &safe_message,
-                );
+                let status =
+                    crate::proxy::handlers::common::resolve_token_error_status(&safe_message);
                 crate::proxy::stage_trace::StageTrace::alert_current_error(
                     "gateway_local",
-                    format!("token_unavailable status=503 reason={}", safe_message),
+                    format!(
+                        "token_unavailable status={} reason={}",
+                        status.as_u16(),
+                        safe_message
+                    ),
                 );
-                return (StatusCode::SERVICE_UNAVAILABLE, headers, Json(dual_err)).into_response();
+                return crate::proxy::handlers::common::build_token_error_response(
+                    "claude",
+                    mapped_model.as_str(),
+                    None,
+                    &safe_message,
+                );
             }
         };
 
@@ -2053,6 +2051,16 @@ pub async fn handle_messages(
             }
         }
 
+        let preceding_turn_anchor = gemini_body
+            .get("request")
+            .and_then(|r| r.get("contents"))
+            .or_else(|| gemini_body.get("contents"))
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.last())
+            .cloned();
+        let causal_anchor =
+            crate::proxy::thinking_store::compute_causal_anchor(preceding_turn_anchor.as_ref());
+
         // [Stage 4 Timing] 等待谷歌上游首包计时起点
         let upstream_req_start = std::time::Instant::now();
 
@@ -2094,18 +2102,44 @@ pub async fn handle_messages(
                     upstream_req_start.elapsed().as_secs_f64(),
                     |err| token_manager.mark_account_transient_failure(&account_id, 30, err),
                 ) {
-                    if handling.disposition.abandon_sticky_account {
+                    // 终态都不是账号故障：解绑 / 换号 / 原地重放统一由 pipeline 按调度模式裁决。
+                    // CacheFirst 下文本请求绝不解绑 / 换号；Balance 下传输层断连先原地重连一次。
+                    let terminal_plan = retry_state.plan_terminal(
+                        &account_id,
+                        handling.disposition,
+                        token_manager.get_scheduling_mode().await,
+                        config.request_type != "image_gen",
+                    );
+                    if terminal_plan.abandon_sticky_account {
                         token_manager.abandon_session(&affinity_key, &account_id);
                         tracing::debug!(
-                            "[{}] Unbound session {} from account {} due to terminal {}",
-                            trace_id,
+                            "Unbound session {} from account {} due to terminal {}",
                             affinity_key,
                             email,
                             handling.terminal.as_str()
                         );
                     }
-                    if handling.disposition.stop_rotation {
-                        break;
+                    match terminal_plan.next {
+                        crate::proxy::pipeline::TerminalNextStep::Stop => break,
+                        crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
+                            tracing::info!(
+                                "Upstream terminal {} on account {} (attempt {}/{}): keeping session {} bound and retrying the same account in-place to preserve KV cache",
+                                handling.terminal.as_str(),
+                                email,
+                                attempt + 1,
+                                max_attempts,
+                                affinity_key
+                            );
+                            retry_credentials = Some((
+                                access_token.clone(),
+                                project_id.clone(),
+                                email.clone(),
+                                account_id.clone(),
+                                0,
+                            ));
+                            continue;
+                        }
+                        crate::proxy::pipeline::TerminalNextStep::Rotate => {}
                     }
                     crate::proxy::pipeline::rotation::record_attempted_account(
                         &mut attempted_accounts,
@@ -2258,6 +2292,20 @@ pub async fn handle_messages(
                         Box::pin(gemini_stream),
                         auto_heal_ctx,
                     );
+                let qos_is_thinking =
+                    request_enables_thinking(request.thinking.is_some(), &gemini_body);
+                let qos_tracker =
+                    std::sync::Arc::new(crate::proxy::pipeline::qos::QosAttemptTracker::new(
+                        token_manager.clone(),
+                        account_id.clone(),
+                        Some(affinity_key.clone()),
+                        qos_is_thinking,
+                        Some(raw_estimated as u32),
+                    ));
+                let gemini_stream = crate::proxy::pipeline::qos::wrap_gemini_stream_with_qos_usage(
+                    gemini_stream,
+                    qos_tracker.clone(),
+                );
 
                 let current_message_count = request_with_mapped.messages.len();
 
@@ -2271,7 +2319,7 @@ pub async fn handle_messages(
                 // [FIX #530/#529/#859] Enhanced Peek logic to handle heartbeats and slow start
                 // We must pre-read until we find a MEANINGFUL content block (like message_start).
                 // If we only get heartbeats (ping) and then the stream dies, we should rotate account.
-                let mut claude_stream = create_claude_sse_stream(
+                let mut claude_stream = create_claude_sse_stream_with_anchor(
                     gemini_stream,
                     trace_id.clone(),
                     email.clone(),
@@ -2282,6 +2330,7 @@ pub async fn handle_messages(
                     current_message_count, // [NEW v4.0.0] Pass message count for rewind detection
                     client_adapter.clone(), // [NEW] Pass client adapter
                     registered_tool_names, // [FIX #MCP] Pass tool names for fuzzy matching
+                    Some(causal_anchor),
                 );
 
                 // [FIX #3634 对齐 Anthropic 官方规范并彻底杜绝网关静默超时]
@@ -2336,16 +2385,11 @@ pub async fn handle_messages(
                             }
                         });
 
-                    // [QoS] 以首个真实数据块为准上报 TTFT（与 peek / 非流式口径一致）
+                    // [QoS] 以首个真实数据块触发 Phase 1，流尾 usageMetadata 完成 Phase 2 核销
                     let ttft_seen = std::sync::Arc::new(std::sync::OnceLock::<f64>::new());
                     let ttft_seen_cb = ttft_seen.clone();
                     let ttft_probe_start = effective_attempt_start;
-                    let ttft_tm = token_manager.clone();
-                    let ttft_account = account_id.clone();
-                    let ttft_session = affinity_key.clone();
-                    let ttft_is_thinking =
-                        request_enables_thinking(request.thinking.is_some(), &gemini_body);
-                    let ttft_tokens = raw_estimated as u32;
+                    let qos_tracker_cb = qos_tracker.clone();
                     let stream_mapped =
                         crate::proxy::pipeline::stream_peek::wrap_stream_with_ttft_probe(
                             stream_mapped,
@@ -2358,14 +2402,7 @@ pub async fn handle_messages(
                             },
                             move |ttft| {
                                 let _ = ttft_seen_cb.set(ttft);
-                                crate::proxy::handlers::common::report_qos_ttft(
-                                    &ttft_tm,
-                                    &ttft_account,
-                                    Some(ttft_session.as_str()),
-                                    ttft,
-                                    ttft_is_thinking,
-                                    Some(ttft_tokens),
-                                );
+                                qos_tracker_cb.on_first_byte(ttft);
                             },
                         );
 
@@ -2428,14 +2465,7 @@ pub async fn handle_messages(
                 {
                     crate::proxy::pipeline::stream_peek::PeekOutcome::Data { bytes, .. } => {
                         ttft_ms = effective_attempt_start.elapsed().as_micros() as f64 / 1000.0;
-                        crate::proxy::handlers::common::report_qos_ttft(
-                            &token_manager,
-                            &account_id,
-                            Some(affinity_key.as_str()),
-                            ttft_ms,
-                            request_enables_thinking(request.thinking.is_some(), &gemini_body),
-                            Some(raw_estimated as u32),
-                        );
+                        qos_tracker.on_first_byte(ttft_ms);
                         if let Some(effective_item) =
                             fallback_attempts.iter_mut().find(|a| a.is_effective)
                         {
@@ -2739,17 +2769,26 @@ pub async fn handle_messages(
         );
 
         if classification.is_model_not_found() {
-            // [Pipeline Policy] 单模型临时熔断 + 是否换号的决策已下沉
-            let can_rotate =
-                crate::proxy::pipeline::policy::apply_model_not_found(attempt, pool_size, || {
+            // [Pipeline Policy] UA 门禁短路 + 单模型临时熔断 + 是否换号的决策统一由 policy 承担
+            let custom_ua = state.upstream.get_user_agent_override().await;
+            let can_rotate = crate::proxy::pipeline::policy::apply_model_not_found_with_ua(
+                &request_with_mapped.model,
+                status_code,
+                &error_text,
+                custom_ua.as_deref(),
+                attempt,
+                pool_size,
+                || {
                     token_manager.mark_model_unsupported(
                         &account_id,
                         &request_with_mapped.model,
                         Some(900),
                     )
-                });
+                },
+            );
 
             if can_rotate {
+                token_manager.abandon_session(&affinity_key, &account_id);
                 tracing::warn!(
                     "[{}] 上游报错模型不可用 (HTTP {})，已标记账号 {} 对模型 [{}] 临时熔断，继续换号重试 ({}/{})...",
                     trace_id, status_code, email, request_with_mapped.model, attempt, pool_size
@@ -2762,11 +2801,12 @@ pub async fn handle_messages(
                 "[{}] Pipeline: Target model [{}] not found on upstream (HTTP {}). Pool exhausted without account-level lockout.",
                 trace_id, request_with_mapped.model, status_code
             );
-            let dual_err = crate::proxy::handlers::common::build_dual_track_error(
+            let dual_err = crate::proxy::handlers::common::build_dual_track_error_with_ua(
                 "claude",
                 status_code,
                 &request_with_mapped.model,
                 &error_text,
+                custom_ua.as_deref(),
             );
             return (
                 StatusCode::from_u16(status_code).unwrap_or(StatusCode::NOT_FOUND),
@@ -2780,7 +2820,12 @@ pub async fn handle_messages(
                 .into_response();
         }
 
-        if classification.should_lock_account() {
+        if classification.should_lock_account_on_attempt(
+            status_code,
+            &error_text,
+            retry_after.as_deref(),
+            attempt,
+        ) {
             token_manager
                 .mark_rate_limited_async_baseline(
                     &email,
@@ -2791,8 +2836,6 @@ pub async fn handle_messages(
                 )
                 .await;
         }
-        // (Removed premature abandon_session; moved to rotation or terminal failure)
-
         // [Pipeline Auto-Heal] 503 过载 / 400 tool_choice 冲突 / 400 损坏图片：
         // 三者均是对已转出的 Gemini 报文的原地修复，统一在同账号重试（换号只会重蹈覆车）。
         if let Some(heal) = crate::proxy::pipeline::try_auto_heal(
@@ -2918,15 +2961,10 @@ pub async fn handle_messages(
             continue; // 重试:下一轮 transform 时读取新代数,派生全新 sessionId
         }
 
-        // 调度模式只表达“是否接受在当前账号原地等待”，由有状态裁决器保证每账号仅一次；
-        // 档位表（退避时长/换号判定）不随调度模式变化。
-        let allow_grace = crate::proxy::pipeline::rotation::scheduling_allows_grace(
-            token_manager.get_scheduling_mode().await,
-            pool_size,
-        );
-
-        // 确定重试策略：传入当前 attempt 与 pool_size，执行智能自适应裁决
-        let retry_strategy = retry_state.determine_strategy_adaptive_with_policy(
+        let sticky_cfg = token_manager.get_sticky_config().await;
+        let allow_grace =
+            crate::proxy::pipeline::rotation::scheduling_allows_grace(sticky_cfg.mode, pool_size);
+        let http_plan = retry_state.plan_http_retry(
             &account_id,
             status_code,
             &error_text,
@@ -2934,12 +2972,24 @@ pub async fn handle_messages(
             retried_without_thinking,
             attempt,
             pool_size,
+            sticky_cfg.mode,
+            config.request_type != "image_gen",
+            sticky_cfg.max_wait_seconds,
             allow_grace,
+            &classification,
         );
+
+        if http_plan.abandon_sticky_account {
+            token_manager.abandon_session(&affinity_key, &account_id);
+            debug!(
+                "[{}] Unbound session {} from account {} due to status {}",
+                trace_id, affinity_key, email, status_code
+            );
+        }
 
         // 执行退避
         if apply_retry_strategy(
-            retry_strategy.clone(),
+            http_plan.strategy.clone(),
             attempt,
             max_attempts,
             status_code,
@@ -2947,37 +2997,30 @@ pub async fn handle_messages(
         )
         .await
         {
-            // [Rotation] GraceRetry 复用同一账号凭据：不重新选号，也不消耗轮换次数
-            if matches!(retry_strategy, RetryStrategy::GraceRetry(_)) {
-                retry_credentials = Some((
-                    access_token.clone(),
-                    project_id.clone(),
-                    email.clone(),
-                    account_id.clone(),
-                    0,
-                ));
-            }
-            // 判断是否需要轮换账号
-            if !should_rotate_account(status_code, Some(&retry_strategy)) {
-                debug!(
-                    "[{}] Keeping same account for status {} (Grace Retry or Server Issue)",
-                    trace_id, status_code
-                );
-                force_rotate = false;
-            } else {
-                if classification.abandons_sticky_account() {
-                    token_manager.abandon_session(&affinity_key, &account_id);
-                    tracing::debug!(
-                        "[Claude] Unbound session {} from account {} due to account rotation (status {})",
-                        affinity_key, email, status_code
+            match http_plan.next {
+                crate::proxy::pipeline::TerminalNextStep::RetrySameAccount => {
+                    debug!(
+                        "[{}] Keeping same account {} for status {} (CacheFirst/Grace in-place retry)",
+                        trace_id, email, status_code
+                    );
+                    force_rotate = false;
+                    retry_credentials = Some((
+                        access_token.clone(),
+                        project_id.clone(),
+                        email.clone(),
+                        account_id.clone(),
+                        0,
+                    ));
+                }
+                crate::proxy::pipeline::TerminalNextStep::Rotate => {
+                    crate::proxy::pipeline::rotation::record_attempted_account(
+                        &mut attempted_accounts,
+                        &account_id,
+                        pool_size,
+                        &mut force_rotate,
                     );
                 }
-                crate::proxy::pipeline::rotation::record_attempted_account(
-                    &mut attempted_accounts,
-                    &account_id,
-                    pool_size,
-                    &mut force_rotate,
-                );
+                crate::proxy::pipeline::TerminalNextStep::Stop => break,
             }
             continue;
         } else {

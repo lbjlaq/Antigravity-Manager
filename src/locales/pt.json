@@ -1064,6 +1064,8 @@
                 },
                 "max_wait": "Tempo Máximo de Espera (seg)",
                 "max_wait_tooltip": "Usado apenas no modo 'Cache Primeiro': aguardar em vez de alternar se o tempo de reset do limite de taxa estiver abaixo deste valor.",
+                "request_429_grace_ms": "Espera de tolerância 429 no nível de requisição",
+                "request_429_grace_ms_tooltip": "Tempo que a primeira tentativa aguarda na conta atual para um 429 no nível de requisição sem retryDelay; padrão 1500ms, faixa 200–10000ms.",
                 "max_spillover_accounts": "Limite de Contas de Transbordamento",
                 "max_spillover_accounts_tooltip": "Número máximo de contas permitidas para transbordamento de tráfego simultâneo. 0 para ilimitado (todas disponíveis); um inteiro positivo (ex: 2) para limitar contas ativas.",
                 "spillover_unlimited": "Ilimitado (Todas disponíveis)",
@@ -1367,7 +1369,7 @@
             "first_byte_effective": "Em vigor agora: texto/código {{text}}s　imagem {{image}}s　vídeo {{video}}s　auxiliar {{aux}}s",
             "section_stream": "③ Primeiro token e saída contínua",
             "stream_desc": "A espera de cabeçalhos e o primeiro token foram unificados em uma única latência do primeiro byte: a troca de endpoint é permitida antes de HTTP 200 e, depois disso, apenas finalização segura.",
-            "auto_summary": "Ex.: espera máxima = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}} s;"
+            "auto_summary": "Ex.: espera máxima = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} s;"
         },
         "cloudflared": {
             "title": "Túnel Cloudflare (Cloudflared)",
@@ -1757,6 +1759,32 @@
             "strategy_memory_desc": "Calcula o volume de Base64 retrocedendo a partir da rodada mais recente; retém o que estiver dentro da cota e descarta imagens anteriores.",
             "memory_budget_label": "Limite de frescor de memória acumulada",
             "memory_budget_hint": "Define o orçamento total de volume decodificado de Base64. Retrocede a partir da rodada atual; imagens dentro do orçamento são mantidas e as anteriores são convertidas em marcadores."
+        },
+        "prompt_rewrite": {
+            "title": "Regras de Limpeza de Prompts WAF",
+            "subtitle": "Substitui texto em todos os blocos de prompt antes da primeira mensagem real do usuário; o conteúdo do usuário, a saída do modelo e as ferramentas nunca são alterados.",
+            "enabled": "Ativado",
+            "empty": "Nenhuma regra de limpeza ainda. Adicione uma abaixo.",
+            "add_rule": "Adicionar regra de limpeza",
+            "load_presets": "Carregar predefinições recomendadas",
+            "load_presets_confirm": "Isso adicionará as regras predefinidas de WAF recomendadas oficialmente mantendo suas regras personalizadas. Continuar?",
+            "match": "Correspondência",
+            "replace": "Substituir por",
+            "match_placeholder": "Texto para corresponder, ex.: You are *",
+            "replace_placeholder": "Vazio = excluir correspondência",
+            "expand": "Expandir editor",
+            "delete": "Excluir",
+            "done": "Concluído",
+            "normalize_identity": "Normalização de identidade integrada",
+            "normalize_identity_hint": "Desative para manter as declarações de identidade originais do cliente e executar apenas as regras personalizadas. Útil para diagnóstico ou clientes com identidade compatível própria.",
+            "rule_empty_pattern": "O texto de correspondência não pode estar vazio",
+            "rule_pattern_too_long": "O texto de correspondência excede 8192 caracteres; o backend ignorará esta regra",
+            "rule_replacement_too_long": "O texto de substituição excede 16384 caracteres; o backend ignorará esta regra",
+            "rule_empty_match": "Esta regra corresponde a texto vazio e será ignorada; adicione um prefixo fixo como You are *",
+            "hint_empty": "Substituição vazia = excluir o texto correspondente",
+            "hint_wildcard": "Suporta * (qualquer caractere na mesma linha); use \\n para nova linha.",
+            "hint_escape": "Escapes: \\n nova linha, \\t tabulação, \\\\ barra invertida, \\* asterisco literal.",
+            "hint_order": "As regras são executadas de cima para baixo; apenas blocos de prompt antes da primeira mensagem real do usuário são afetados, blocos de código são isentos."
         }
     },
     "monitor": {
@@ -1818,6 +1846,11 @@
             "ttft_prefix": "TTFT:",
             "total_duration_title": "Latência total",
             "ttft_title": "Latência do primeiro token"
+        },
+        "gate_reasons": {
+            "model_not_exist": "modelo inexistente",
+            "no_available_accounts": "sem contas disponíveis",
+            "no_quota_accounts": "sem contas com cota"
         },
         "details": {
             "title": "Detalhes da Solicitação",

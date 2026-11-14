@@ -404,6 +404,26 @@ pub fn get_auth_url(redirect_uri: &str, state: &str) -> String {
         .expect("Failed to build OAuth URL")
 }
 
+/// 判断是否属于未到达 Google 授权服务或服务端临时故障的瞬态网络错误。
+///
+/// 关键依据：OAuth 授权码（authorization_code）是一次性使用的凭据，
+/// 仅当请求真实到达 Google 且由 Google 明确返回 4xx 业务响应（如 invalid_grant、unauthorized_client）时，
+/// 授权码才被服务端核验并标记消耗。
+/// 若在传输层阶段遭遇连接中断、超时、DNS/TLS 握手失败，或者 Google 抛出 5xx 服务端瞬态异常，
+/// 授权码在服务端根本未被消耗，进行轻量退避重试可有效挽救网络抖动，杜绝浪费用户已完成的浏览器授权。
+pub fn is_transient_exchange_error(status: Option<reqwest::StatusCode>) -> bool {
+    match status {
+        // 无状态码说明在网络传输/连接/超时阶段即发生错误，请求未获得 HTTP 响应
+        None => true,
+        // 5xx 服务端错误属 Google 侧瞬态抖动，授权码未成功用于业务鉴权，可重试
+        Some(s) if s.is_server_error() => true,
+        // 429 频率限制属于瞬态可退避重试
+        Some(s) if s == reqwest::StatusCode::TOO_MANY_REQUESTS => true,
+        // 其余情况（如 4xx 业务错误：400 Bad Request、401 Unauthorized）不可重试
+        _ => false,
+    }
+}
+
 async fn exchange_code_once(
     code: &str,
     redirect_uri: &str,
@@ -429,64 +449,91 @@ async fn exchange_code_once(
         crate::constants::NATIVE_OAUTH_USER_AGENT.as_str()
     );
 
-    let response = client
-        .post(TOKEN_URL)
-        .header(rquest::header::USER_AGENT, crate::constants::NATIVE_OAUTH_USER_AGENT.as_str())
-        .form(&params)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_connect() || e.is_timeout() {
-                (
-                    None,
-                    format!(
-                        "Token exchange request failed: {}. 请检查你的网络代理设置，确保可以稳定连接 Google 服务。",
-                        e
-                    ),
-                )
-            } else {
-                (None, format!("Token exchange request failed: {}", e))
-            }
-        })?;
+    const MAX_EXCHANGE_ATTEMPTS: usize = 3;
+    let mut last_status: Option<reqwest::StatusCode> = None;
+    let mut last_err_msg = String::new();
 
-    if response.status().is_success() {
-        let mut token_res = response
-            .json::<TokenResponse>()
-            .await
-            .map_err(|e| (None, format!("Token parsing failed: {}", e)))?;
-        token_res.oauth_client_key = Some(client_cfg.key.clone());
-
-        // Add detailed logs
-        crate::modules::logger::log_info(&format!(
-            "Token exchange successful via [{}]! access_token: {}..., refresh_token: {}",
-            client_cfg.key,
-            &token_res.access_token.chars().take(20).collect::<String>(),
-            if token_res.refresh_token.is_some() {
-                "✓"
-            } else {
-                "✗ Missing"
-            }
-        ));
-
-        // Log warning if refresh_token is missing
-        if token_res.refresh_token.is_none() {
-            crate::modules::logger::log_warn(
-                "Warning: Google did not return a refresh_token. Potential reasons:\n\
-                 1. User has previously authorized this application\n\
-                 2. Need to revoke access in Google Cloud Console and retry\n\
-                 3. OAuth parameter configuration issue",
+    for attempt in 1..=MAX_EXCHANGE_ATTEMPTS {
+        if attempt > 1 {
+            let backoff_ms = (attempt - 1) as u64 * 500;
+            tracing::info!(
+                "[OAuth] Retrying token exchange for [{}] (attempt {}/{}) after {}ms backoff...",
+                client_cfg.key,
+                attempt,
+                MAX_EXCHANGE_ATTEMPTS,
+                backoff_ms
             );
+            tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
         }
 
-        Ok(token_res)
-    } else {
+        let send_res = client
+            .post(TOKEN_URL)
+            .header(
+                rquest::header::USER_AGENT,
+                crate::constants::NATIVE_OAUTH_USER_AGENT.as_str(),
+            )
+            .form(&params)
+            .send()
+            .await;
+
+        let response = match send_res {
+            Ok(resp) => resp,
+            Err(e) => {
+                last_status = None;
+                last_err_msg = format!(
+                    "Token exchange request failed: {}. 浏览器已成功完成授权，但客户端连接 Google 授权端点失败。桌面客户端网络不自动沿用浏览器专用代理，请在设置中配置代理（或检查网络连通性）后重试。",
+                    e
+                );
+                // 传输层失败未到达 Google，授权码未消耗，继续瞬态退避重试
+                continue;
+            }
+        };
+
         let status = response.status();
+        if status.is_success() {
+            let mut token_res = response
+                .json::<TokenResponse>()
+                .await
+                .map_err(|e| (None, format!("Token parsing failed: {}", e)))?;
+            token_res.oauth_client_key = Some(client_cfg.key.clone());
+
+            // Add detailed logs
+            crate::modules::logger::log_info(&format!(
+                "Token exchange successful via [{}]! access_token: {}..., refresh_token: {}",
+                client_cfg.key,
+                &token_res.access_token.chars().take(20).collect::<String>(),
+                if token_res.refresh_token.is_some() {
+                    "✓"
+                } else {
+                    "✗ Missing"
+                }
+            ));
+
+            // Log warning if refresh_token is missing
+            if token_res.refresh_token.is_none() {
+                crate::modules::logger::log_warn(
+                    "Warning: Google did not return a refresh_token. Potential reasons:\n\
+                     1. User has previously authorized this application\n\
+                     2. Need to revoke access in Google Cloud Console and retry\n\
+                     3. OAuth parameter configuration issue",
+                );
+            }
+
+            return Ok(token_res);
+        }
+
         let error_text = response.text().await.unwrap_or_default();
-        Err((
-            Some(status),
-            format!("Token exchange failed: {}", error_text),
-        ))
+        last_status = Some(status);
+        last_err_msg = format!("Token exchange failed (HTTP {}): {}", status, error_text);
+
+        // 若不是瞬态错误（例如 4xx 业务错误，如 client mismatch 或 invalid grant），立即跳出重试循环，
+        // 允许外部根据 mismatch 决定是否切换下一个候选 client，避免用已被消耗的 code 做无意义重试
+        if !is_transient_exchange_error(Some(status)) {
+            break;
+        }
     }
+
+    Err((last_status, last_err_msg))
 }
 
 /// Exchange authorization code for token using optional preferred client.
@@ -802,5 +849,42 @@ mod tests {
         assert!(is_builtin_oauth_client(None));
         assert!(is_builtin_oauth_client(Some("antigravity_enterprise")));
         assert!(is_builtin_oauth_client(Some("unknown_non_existent_key")));
+    }
+
+    #[test]
+    fn test_is_transient_exchange_error() {
+        // 网络/传输/超时未收到 HTTP 响应（None）属于瞬态错误，授权码未到达 Google 未被消耗，应当重试
+        assert!(is_transient_exchange_error(None));
+
+        // 5xx 服务端异常与 429 限流属于临时故障，应当重试
+        assert!(is_transient_exchange_error(Some(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        )));
+        assert!(is_transient_exchange_error(Some(
+            reqwest::StatusCode::BAD_GATEWAY
+        )));
+        assert!(is_transient_exchange_error(Some(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
+        )));
+        assert!(is_transient_exchange_error(Some(
+            reqwest::StatusCode::GATEWAY_TIMEOUT
+        )));
+        assert!(is_transient_exchange_error(Some(
+            reqwest::StatusCode::TOO_MANY_REQUESTS
+        )));
+
+        // 4xx 业务错误（已到达 Google 且授权码已消耗/或 client 不匹配）绝不可当作瞬态重试
+        assert!(!is_transient_exchange_error(Some(
+            reqwest::StatusCode::BAD_REQUEST
+        )));
+        assert!(!is_transient_exchange_error(Some(
+            reqwest::StatusCode::UNAUTHORIZED
+        )));
+        assert!(!is_transient_exchange_error(Some(
+            reqwest::StatusCode::FORBIDDEN
+        )));
+        assert!(!is_transient_exchange_error(Some(
+            reqwest::StatusCode::NOT_FOUND
+        )));
     }
 }

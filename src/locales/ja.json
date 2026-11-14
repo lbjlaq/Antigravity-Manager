@@ -1051,6 +1051,8 @@
                 },
                 "max_wait": "最大待機時間 (秒)",
                 "max_wait_tooltip": "「キャッシュ優先」モードでのみ使用: レートリミットのリセット時間がこの値以下の場合、切り替えずに待機します。",
+                "request_429_grace_ms": "リクエストレベル 429 待機時間",
+                "request_429_grace_ms_tooltip": "retryDelay のないリクエストレベル 429 に対し、現在のアカウントで初回到達時にインプレース待機する時間。デフォルト 1500ms、範囲 200–10000ms。",
                 "max_spillover_accounts": "スピルオーバーアカウント上限",
                 "max_spillover_accounts_tooltip": "複数のサブエージェントまたは並列セッションを実行する際に、同時に呼び出せる健全なアカウントの最大数。0 に設定すると無制限（すべての利用可能なアカウントを使用）；正の整数（例：2）に設定すると、アクティブなアカウント数を制限し、アカウントの過剰な分散を防ぎます。",
                 "spillover_unlimited": "無制限 (すべて利用可能)",
@@ -1354,7 +1356,7 @@
             "first_byte_effective": "現在の適用値：通常 {{text}}s　画像 {{image}}s　動画 {{video}}s　補助 {{aux}}s",
             "section_stream": "③ 初文字と連続出力",
             "stream_desc": "レスポンスヘッダー待ちと最初のトークンは単一の初回バイト待ちに統合されました。HTTP 200 前はエンドポイント切替が可能、200 後は安全な終了のみ行います。",
-            "auto_summary": "例：最大待機 = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}} 秒;"
+            "auto_summary": "例：最大待機 = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} 秒;"
         },
         "cloudflared": {
             "title": "外部公開 (Cloudflared)",
@@ -1721,6 +1723,32 @@
             "strategy_memory_desc": "最新ターンから過去へ Base64 容量を逆算し、予算内はすべて保持、超過した古い画像は自動除外。",
             "memory_budget_label": "累計メモリ鮮度上限",
             "memory_budget_hint": "Base64 デコード総容量を上限とします。最新ターンから逆算して上限内の画像は完全保持し、超過分はプレースホルダーに縮退します。"
+        },
+        "prompt_rewrite": {
+            "title": "WAF プロンプトクリーンアップ設定",
+            "subtitle": "最初の実際の user プロンプトの前のすべてのプロンプトブロックでテキスト置換を実行します。ユーザー本文、モデル出力、ツール宣言には影響しません。",
+            "enabled": "有効",
+            "empty": "クリーンアップルールがまだありません。下部から追加してください。",
+            "add_rule": "クリーンアップルールを追加",
+            "load_presets": "公式推奨プリセットを読み込む",
+            "load_presets_confirm": "現在のカスタムルールを保持したまま、公式推奨の WAF プリセットルールを追加します。続行しますか？",
+            "match": "一致パターン",
+            "replace": "置換後",
+            "match_placeholder": "一致パターン（例：You are *）",
+            "replace_placeholder": "空欄 = 一致部分を削除",
+            "expand": "拡大編集",
+            "delete": "削除",
+            "done": "完了",
+            "normalize_identity": "組み込みアイデンティティ正規化",
+            "normalize_identity_hint": "無効にするとクライアントの元のアイデンティティ文を保持し、上記のカスタムルールのみを実行します。トラブルシューティングや独自の準拠アイデンティティを持つクライアントに有用です。",
+            "rule_empty_pattern": "一致パターンを空にすることはできません",
+            "rule_pattern_too_long": "一致パターンが 8192 文字を超えているため、バックエンドはこのルールをスキップします",
+            "rule_replacement_too_long": "置換内容が 16384 文字を超えているため、バックエンドはこのルールをスキップします",
+            "rule_empty_match": "このルールは空テキストに一致するためスキップされます。「You are *」などの固定プレフィックスを追加してください",
+            "hint_empty": "置換後が空欄 = 一致テキストを削除",
+            "hint_wildcard": "ワイルドカード *（同一行内の任意の文字に一致）に対応。改行は \\n を使用してください。",
+            "hint_escape": "エスケープ対応：\\n 改行、\\t タブ、\\\\ バックスラッシュ、\\* 文字通りのアスタリスク。",
+            "hint_order": "ルールは上から順に実行されます。最初の実際の user プロンプト前のプロンプトブロックにのみ適用され、コードブロックは自動的に除外されます。"
         }
     },
     "monitor": {
@@ -1782,6 +1810,11 @@
             "ttft_prefix": "初字:",
             "total_duration_title": "総所要時間",
             "ttft_title": "最初のトークン遅延"
+        },
+        "gate_reasons": {
+            "model_not_exist": "モデルが存在しません",
+            "no_available_accounts": "利用可能なアカウントなし",
+            "no_quota_accounts": "全プールクォータ枯渇"
         },
         "details": {
             "title": "リクエスト詳細",

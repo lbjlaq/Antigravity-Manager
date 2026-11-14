@@ -502,6 +502,18 @@ impl ProxyMonitor {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_for_test(max_logs: usize) -> Self {
+        Self {
+            logs: RwLock::new(VecDeque::with_capacity(max_logs)),
+            stats: RwLock::new(ProxyStats::default()),
+            max_logs,
+            enabled: Arc::new(AtomicBool::new(false)),
+            capture_health_logs: Arc::new(AtomicBool::new(false)),
+            app_handle: None,
+        }
+    }
+
     pub fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
     }

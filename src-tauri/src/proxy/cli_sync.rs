@@ -1760,9 +1760,33 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
         id: "claude-sonnet-4-6",
         context_window: 256_000,
     },
-    // Gemini 4 Argon 系列 (Google 旗舰推理模型，1M 上下文)
+    // Gemini 4 系列 (Google 旗舰推理模型，1M 上下文)
+    CoreModel {
+        id: "gemini-4-carbon",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-carbon-xhigh",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-carbon-high",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-carbon-medium",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-carbon-low",
+        context_window: 1_048_576,
+    },
     CoreModel {
         id: "gemini-4-argon",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-argon-xhigh",
         context_window: 1_048_576,
     },
     CoreModel {
@@ -1775,6 +1799,26 @@ static CORE_GATEWAY_MODELS: &[CoreModel] = &[
     },
     CoreModel {
         id: "gemini-4-argon-low",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-xhigh",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-high",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-medium",
+        context_window: 1_048_576,
+    },
+    CoreModel {
+        id: "gemini-4-hydrogen-low",
         context_window: 1_048_576,
     },
     // Gemini 3.8 Flash 系列 (1M 上下文)
@@ -1857,6 +1901,12 @@ pub fn is_model_available_now(id: &str) -> bool {
         Ok(guard) if !guard.is_empty() => model_matches_available(id, &guard),
         _ => true,
     }
+}
+
+/// 返回网关静态核心旗舰模型列表的所有模型 ID（不含配额池实时裁剪）。
+/// 供入站模型闸门区分“已知但当前无可用账号 (503)”与“不存在模型 (404)”。
+pub fn all_core_gateway_model_ids() -> Vec<&'static str> {
+    CORE_GATEWAY_MODELS.iter().map(|m| m.id).collect()
 }
 
 /// 导出网关核心模型（仅保留当前账号池官方真实可用的模型；冷启动时回退全量）

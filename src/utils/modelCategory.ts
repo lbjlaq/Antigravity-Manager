@@ -21,10 +21,21 @@ export interface ModelDisplayNameInput {
 }
 
 const DEFAULT_MODEL_LABELS: Record<string, string> = {
+    'gemini-4-carbon': 'gemini-4-carbon',
+    'gemini-4-carbon-xhigh': 'gemini-4-carbon-xhigh',
+    'gemini-4-carbon-high': 'gemini-4-carbon-high',
+    'gemini-4-carbon-medium': 'gemini-4-carbon-medium',
+    'gemini-4-carbon-low': 'gemini-4-carbon-low',
     'gemini-4-argon': 'gemini-4-argon',
+    'gemini-4-argon-xhigh': 'gemini-4-argon-xhigh',
     'gemini-4-argon-high': 'gemini-4-argon-high',
     'gemini-4-argon-medium': 'gemini-4-argon-medium',
     'gemini-4-argon-low': 'gemini-4-argon-low',
+    'gemini-4-hydrogen': 'gemini-4-hydrogen',
+    'gemini-4-hydrogen-xhigh': 'gemini-4-hydrogen-xhigh',
+    'gemini-4-hydrogen-high': 'gemini-4-hydrogen-high',
+    'gemini-4-hydrogen-medium': 'gemini-4-hydrogen-medium',
+    'gemini-4-hydrogen-low': 'gemini-4-hydrogen-low',
     'gemini-3.1-pro-high': 'gemini-3.1-pro-high',
     'gemini-3.1-pro': 'gemini-3.1-pro',
     'gemini-3.1-pro-low': 'gemini-3.1-pro-low',
@@ -172,4 +183,98 @@ export function resolveQuotaModels<T extends { name: string }>(
         results.push({ selectorId, selectionKey, model });
     }
     return results;
+}
+
+const GENERIC_G4_ROLE_TOKENS = new Set([
+    'pro', 'flash', 'ultra', 'nano', 'lite', 'image', 'agent', 'exp',
+    'preview', 'disabled', 'thinking', 'tiered', 'models', 'model',
+    'wtu', 'weekly', '5h', '7d', 'hour', 'quota', 'pool', 'default', 'standard',
+]);
+
+/** 从模型名动态提取 Gemini 4+ 专属代号（零硬编码） */
+export function extractGemini4Codename(modelName: string): string | null {
+    const lower = modelName.trim().toLowerCase();
+    if (!lower || lower.includes('-disabled') || lower.endsWith('_disabled')) return null;
+    const stripped = lower.replace(/-(?:extra-low|xhigh|high|medium|low|thinking|tiered)$/, '');
+    const m = stripped.match(/^gemini-(\d+)(?:\.\d+)?-([a-z0-9]+)/);
+    if (m && Number(m[1]) >= 4) {
+        const code = m[2];
+        if (/[a-z]/.test(code) && !GENERIC_G4_ROLE_TOKENS.has(code)) {
+            return code;
+        }
+    }
+    if (lower.includes('argon')) return 'argon';
+    return null;
+}
+
+export function isDedicatedG4Group(
+    group: { display_name?: string; buckets?: Array<{ bucket_id?: string; display_name?: string | null }> },
+    knownCodenames: readonly string[] = []
+): boolean {
+    const gname = (group.display_name || '').toLowerCase();
+    const texts = [
+        gname,
+        ...(group.buckets || []).flatMap(b => [
+            (b.bucket_id || '').toLowerCase(),
+            (b.display_name || '').toLowerCase(),
+        ]),
+    ];
+    for (const t of texts) {
+        if (!t) continue;
+        if (t.includes('argon')) return true;
+        if (/(?:^|[\s_-])gemini[\s_-]+([4-9]|\d{2,})(?:\.\d+)?[\s_-]+([a-z][a-z0-9]*)/.test(t)) {
+            const m = t.match(/gemini[\s_-]+(?:[4-9]|\d{2,})(?:\.\d+)?[\s_-]+([a-z][a-z0-9]*)/);
+            if (m && !GENERIC_G4_ROLE_TOKENS.has(m[1])) return true;
+        }
+        const wtu = t.match(/gemini[\s_-]+([a-z][a-z0-9]*)[\s_-]+wtu/);
+        if (wtu && !GENERIC_G4_ROLE_TOKENS.has(wtu[1])) return true;
+        if (knownCodenames.some(code => code && t.includes(code))) return true;
+    }
+    return false;
+}
+
+/** 从 quota_groups 提取通用 Gemini 或 3P(Claude/GPT) 的 5h / weekly 百分比 (0-100)，自动隔离所有 Gemini 4+ 专属组 */
+export function extractGroupQuotaPercentage(
+    quota: {
+        models?: Array<{ name?: string; disabled?: boolean }>;
+        quota_groups?: Array<{
+            display_name?: string;
+            buckets?: Array<{ window?: string; bucket_id?: string; display_name?: string | null; remaining_fraction?: number }>;
+        }>;
+    } | undefined,
+    category: 'gemini' | 'claude',
+    targetWindow: '5h' | 'weekly'
+): number | null {
+    const groups = quota?.quota_groups;
+    if (!groups || groups.length === 0) return null;
+
+    const knownCodenames = Array.from(
+        new Set(
+            (quota?.models || [])
+                .filter(m => !m.disabled && m.name)
+                .map(m => extractGemini4Codename(m.name!))
+                .filter((c): c is string => Boolean(c))
+        )
+    );
+
+    for (const group of groups) {
+        if (isDedicatedG4Group(group, knownCodenames)) continue;
+        const name = (group.display_name || '').toLowerCase();
+        const isTarget = category === 'claude'
+            ? (name.includes('claude') || name.includes('gpt') || name.includes('3p'))
+            : (name.includes('gemini') || (!name.includes('claude') && !name.includes('gpt') && !name.includes('3p')));
+        if (!isTarget) continue;
+
+        const bucket = group.buckets?.find(b => {
+            const win = (b.window || '').toLowerCase();
+            const id = (b.bucket_id || '').toLowerCase();
+            return targetWindow === 'weekly'
+                ? (win.includes('week') || id.includes('week') || win.includes('7d'))
+                : (win.includes('5h') || id.includes('5h') || win.includes('hour') || id.includes('hour'));
+        });
+        if (bucket && typeof bucket.remaining_fraction === 'number') {
+            return Math.round(bucket.remaining_fraction * 100);
+        }
+    }
+    return null;
 }

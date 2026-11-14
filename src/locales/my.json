@@ -1036,6 +1036,8 @@
                 },
                 "max_wait": "Tunggu Maks (saat)",
                 "max_wait_tooltip": "Hanya digunakan dalam mod 'Cache First': tunggu bukannya menukar jika masa reset had kadar adalah di bawah nilai ini.",
+                "request_429_grace_ms": "Request အဆင့် 429 စောင့်ဆိုင်းချိန်",
+                "request_429_grace_ms_tooltip": "retryDelay မပါသော request အဆင့် 429 အတွက် လက်ရှိအကောင့်တွင် ပထမအကြိမ် စောင့်ဆိုင်းရမည့် အချိန်။ မူရင်း 1500ms၊ သတ်မှတ်နိုင်သည့် အတိုင်းအတာ 200–10000ms။",
                 "max_spillover_accounts": "Had Akaun Limpahan",
                 "max_spillover_accounts_tooltip": "Bilangan maksimum akaun yang dibenarkan untuk limpahan trafik serentak. Tetapkan ke 0 untuk tanpa had; tetapkan integer positif (cth. 2) untuk mengehadkan akaun aktif.",
                 "spillover_unlimited": "Tanpa Had (Semua tersedia)",
@@ -1345,7 +1347,7 @@
             "first_byte_effective": "Effective now: text/code {{text}}s　image {{image}}s　video {{video}}s　auxiliary {{aux}}s",
             "section_stream": "③ ပထမ token နှင့် ဆက်တိုက် ထုတ်လွှတ်မှု",
             "stream_desc": "Header wait and first token are merged into one first-byte delay: endpoint failover is allowed before HTTP 200, and only a safe finalize after it.",
-            "auto_summary": "ဥပမာ- အများဆုံး စောင့်ချိန် = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}} စက္ကန့်;"
+            "auto_summary": "ဥပမာ- အများဆုံး စောင့်ချိန် = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} စက္ကန့်;"
         },
         "cloudflared": {
             "title": "Akses Awam (Cloudflared)",
@@ -1715,6 +1717,32 @@
             "strategy_memory_desc": "Mengira volum Base64 ke belakang daripada pusingan terkini; mengekalkan apa yang ada dalam kuota dan menggugurkan imej terdahulu.",
             "memory_budget_label": "Had Kesegaran Memori Terkumpul",
             "memory_budget_hint": "Menetapkan bajet volum ternyahkod Base64. Mengimbas ke belakang daripada pusingan semasa; imej dalam bajet disimpan dan imej lebih lama diturunkan taraf kepada pemegang tempat."
+        },
+        "prompt_rewrite": {
+            "title": "WAF Prompt သန့်ရှင်းရေးစည်းမျဉ်းများ",
+            "subtitle": "ပထမဆုံး တကယ့် user မက်ဆေ့ခ်ျမတိုင်မီ prompt blocks များရှိ စာသားများကို အစားထိုးသည်။ သုံးစွဲသူစာသား၊ model output နှင့် tool declarations များကို မထိခိုက်ပါ။",
+            "enabled": "ဖွင့်ထားသည်",
+            "empty": "သန့်ရှင်းရေးစည်းမျဉ်း မရှိသေးပါ။ အောက်တွင် အသစ်ထည့်ပါ။",
+            "add_rule": "သန့်ရှင်းရေးစည်းမျဉ်း အသစ်ထည့်ရန်",
+            "load_presets": "အကြံပြုထားသော ပုံစံများကို ရယူရန်",
+            "load_presets_confirm": "လက်ရှိ စိတ်ကြိုက်စည်းမျဉ်းများကို ထိန်းသိမ်းထားပြီး တရားဝင် အကြံပြုထားသော WAF စည်းမျဉ်းများကို ထည့်သွင်းပေးပါမည်။ ဆက်လုပ်မည်လား။",
+            "match": "ကိုက်ညီသည့် စာသား",
+            "replace": "အစားထိုးရန်",
+            "match_placeholder": "ကိုက်ညီသည့် စာသား၊ ဥပမာ - You are *",
+            "replace_placeholder": "ဘာမှမထည့်ပါက = ဖျက်ပစ်မည်",
+            "expand": "တည်းဖြတ်ရန် ချဲ့ပါ",
+            "delete": "ဖျက်မည်",
+            "done": "ပြီးပါပြီ",
+            "normalize_identity": "အတွင်းပိုင်း Identity ပုံမှန်ပြုလုပ်ခြင်း",
+            "normalize_identity_hint": "ပိတ်ထားပါက client ၏ မူလ identity ကို ထိန်းသိမ်းပြီး အထက်ပါ စိတ်ကြိုက်စည်းမျဉ်းများကိုသာ အသုံးပြုမည်။ ပြဿနာရှာဖွေရန် သို့မဟုတ် သီးသန့် identity ရှိသော client များအတွက် အသုံးဝင်သည်။",
+            "rule_empty_pattern": "ကိုက်ညီသည့် စာသား ကွက်လပ်မဖြစ်ရပါ",
+            "rule_pattern_too_long": "ကိုက်ညီသည့် စာသား 8192 လုံးထက်ကျော်လွန်နေသဖြင့် ကျော်သွားပါမည်",
+            "rule_replacement_too_long": "အစားထိုးစာသား 16384 လုံးထက်ကျော်လွန်နေသဖြင့် ကျော်သွားပါမည်",
+            "rule_empty_match": "ဤစည်းမျဉ်းသည် စာသားအလွတ်နှင့် ကိုက်ညီနေသဖြင့် ကျော်သွားပါမည်။ You are * ကဲ့သို့ ရှေ့စာသားထည့်ပါ",
+            "hint_empty": "အစားထိုးစာသားမထည့်ပါက = ကိုက်ညီသည့်စာသားကို ဖျက်ပစ်မည်",
+            "hint_wildcard": "* ကို အသုံးပြုနိုင်သည် (စာကြောင်းတစ်ကြောင်းအတွင်း စာလုံးအားလုံး ကိုက်ညီသည်)။ စာကြောင်းအသစ်အတွက် \\n ကိုသုံးပါ။",
+            "hint_escape": "Escape အထောက်အပံ့: \\n စာကြောင်းအသစ်၊ \\t tab၊ \\\\ backslash၊ \\* star အစစ်။",
+            "hint_order": "စည်းမျဉ်းများကို အပေါ်မှအောက်သို့ အစီအစဉ်အတိုင်း လုပ်ဆောင်သည်။ ပထမဆုံး user မက်ဆေ့ခ်ျမတိုင်မီ prompt blocks များတွင်သာ အကျိုးသက်ရောက်ပြီး code blocks များကို အလိုအလျောက် ချန်လှပ်ထားသည်။"
         }
     },
     "monitor": {
@@ -1776,6 +1804,11 @@
             "ttft_prefix": "ပထမစာလုံး:",
             "total_duration_title": "စုစုပေါင်း ကြာချိန်",
             "ttft_title": "ပထမဆုံး တိုကင် ကြာချိန်"
+        },
+        "gate_reasons": {
+            "model_not_exist": "မော်ဒယ် မရှိပါ",
+            "no_available_accounts": "အသုံးပြုနိုင်သော အကောင့် မရှိပါ",
+            "no_quota_accounts": "ခွဲတမ်းကုန်ဆုံးပါပြီ"
         },
         "details": {
             "title": "Butiran Permintaan",

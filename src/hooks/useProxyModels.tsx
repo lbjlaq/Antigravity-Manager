@@ -1,8 +1,42 @@
 import { useMemo, useEffect, useState } from 'react';
 import { MODEL_CONFIG, compareModelsDesc, inferModelGroup } from '../config/modelConfig';
 import { useAccountStore } from '../stores/useAccountStore';
-import { Bot, Sparkles } from 'lucide-react';
+import { Bot } from 'lucide-react';
+import { Gemini, Claude, OpenAI } from '@lobehub/icons';
 import { request } from '../utils/request';
+
+export function getModelIcon(id: string, group?: string): React.ReactNode {
+    const idLower = (id || '').toLowerCase().trim();
+    const groupLower = (group || '').toLowerCase().trim();
+
+    const cfgEntry = Object.entries(MODEL_CONFIG).find(
+        ([cfgId, cfg]) => cfgId.toLowerCase() === idLower || cfg.protectedKey?.toLowerCase() === idLower
+    );
+    if (cfgEntry?.[1]?.Icon) {
+        const CfgIcon = cfgEntry[1].Icon;
+        return <CfgIcon size={16} />;
+    }
+
+    if (
+        idLower.includes('gemini') ||
+        groupLower.includes('gemini') ||
+        idLower.includes('hydrogen') ||
+        idLower.includes('argon') ||
+        idLower.includes('carbon')
+    ) {
+        return <Gemini.Color size={16} />;
+    }
+
+    if (idLower.includes('claude') || groupLower.includes('claude')) {
+        return <Claude.Color size={16} />;
+    }
+
+    if (idLower.includes('gpt') || groupLower.includes('openai') || groupLower.includes('other')) {
+        return <OpenAI.Avatar size={16} />;
+    }
+
+    return <Bot size={16} className="text-blue-400" />;
+}
 
 export interface CanonicalFamilyDto {
     canonical_id: string;
@@ -11,11 +45,24 @@ export interface CanonicalFamilyDto {
 }
 
 const ALIAS_TO_CANONICAL: Record<string, { id: string; name: string; group: string }> = {
-    // Gemini 4 系列 (Argon)
+    // Gemini 4 系列 (Carbon / Argon / Hydrogen)
+    'gemini-4-carbon': { id: 'gemini-4-carbon', name: 'gemini-4-carbon', group: 'Gemini 4' },
+    'gemini-4-carbon-xhigh': { id: 'gemini-4-carbon-xhigh', name: 'gemini-4-carbon-xhigh', group: 'Gemini 4' },
+    'gemini-4-carbon-high': { id: 'gemini-4-carbon-high', name: 'gemini-4-carbon-high', group: 'Gemini 4' },
+    'gemini-4-carbon-medium': { id: 'gemini-4-carbon-medium', name: 'gemini-4-carbon-medium', group: 'Gemini 4' },
+    'gemini-4-carbon-low': { id: 'gemini-4-carbon-low', name: 'gemini-4-carbon-low', group: 'Gemini 4' },
+
     'gemini-4-argon': { id: 'gemini-4-argon', name: 'gemini-4-argon', group: 'Gemini 4' },
+    'gemini-4-argon-xhigh': { id: 'gemini-4-argon-xhigh', name: 'gemini-4-argon-xhigh', group: 'Gemini 4' },
     'gemini-4-argon-high': { id: 'gemini-4-argon-high', name: 'gemini-4-argon-high', group: 'Gemini 4' },
     'gemini-4-argon-medium': { id: 'gemini-4-argon-medium', name: 'gemini-4-argon-medium', group: 'Gemini 4' },
     'gemini-4-argon-low': { id: 'gemini-4-argon-low', name: 'gemini-4-argon-low', group: 'Gemini 4' },
+
+    'gemini-4-hydrogen': { id: 'gemini-4-hydrogen', name: 'gemini-4-hydrogen', group: 'Gemini 4' },
+    'gemini-4-hydrogen-xhigh': { id: 'gemini-4-hydrogen-xhigh', name: 'gemini-4-hydrogen-xhigh', group: 'Gemini 4' },
+    'gemini-4-hydrogen-high': { id: 'gemini-4-hydrogen-high', name: 'gemini-4-hydrogen-high', group: 'Gemini 4' },
+    'gemini-4-hydrogen-medium': { id: 'gemini-4-hydrogen-medium', name: 'gemini-4-hydrogen-medium', group: 'Gemini 4' },
+    'gemini-4-hydrogen-low': { id: 'gemini-4-hydrogen-low', name: 'gemini-4-hydrogen-low', group: 'Gemini 4' },
 
     // Gemini 3.8
     'gemini-3.8-flash': { id: 'gemini-3.8-flash', name: 'gemini-3.8-flash', group: 'Gemini 3' },
@@ -228,11 +275,7 @@ export const useProxyModels = () => {
                 // 泛化推导分组，全面兼容未知/未来新模型 (如 Gemini 4 Argon 等)
                 const group = mapped ? mapped.group : inferModelGroup(canonicalId || canonicalName);
 
-                const cfgEntry = Object.entries(MODEL_CONFIG).find(
-                    ([cfgId, cfg]) => cfgId.toLowerCase() === canonicalId.toLowerCase() || cfg.protectedKey?.toLowerCase() === canonicalId.toLowerCase()
-                );
-                const CfgIcon = cfgEntry?.[1].Icon;
-                const icon = CfgIcon ? <CfgIcon size={16} /> : (group === 'Claude' ? <Sparkles size={16} className="text-purple-400" /> : <Bot size={16} className="text-blue-400" />);
+                const icon = getModelIcon(canonicalId, group);
 
                 if (!uniqueModelsMap.has(canonicalId)) {
                     uniqueModelsMap.set(canonicalId, {
@@ -248,7 +291,7 @@ export const useProxyModels = () => {
         // 1.5 动态档位后缀剥离与裸模型派生（与后端算法完全对齐，纯通用数据驱动）
         const derivedBares: string[] = [];
         for (const id of uniqueModelsMap.keys()) {
-            for (const suffix of ['-tiered', '-high', '-medium', '-low', '-extra-low', '-thinking']) {
+            for (const suffix of ['-tiered', '-xhigh', '-high', '-medium', '-low', '-extra-low', '-thinking']) {
                 if (id.endsWith(suffix)) {
                     const base = id.slice(0, -suffix.length);
                     if (base && isCompliantModel(base, deprecatedSet, maxGemini3FlashMinor) && !uniqueModelsMap.has(base)) {
@@ -260,11 +303,7 @@ export const useProxyModels = () => {
         for (const base of derivedBares) {
             if (!uniqueModelsMap.has(base)) {
                 const group = inferModelGroup(base);
-                const cfgEntry = Object.entries(MODEL_CONFIG).find(
-                    ([cfgId, cfg]) => cfgId.toLowerCase() === base.toLowerCase() || cfg.protectedKey?.toLowerCase() === base.toLowerCase()
-                );
-                const CfgIcon = cfgEntry?.[1].Icon;
-                const icon = CfgIcon ? <CfgIcon size={16} /> : (group === 'Claude' ? <Sparkles size={16} className="text-purple-400" /> : <Bot size={16} className="text-blue-400" />);
+                const icon = getModelIcon(base, group);
                 uniqueModelsMap.set(base, {
                     id: base,
                     name: base,
@@ -292,7 +331,7 @@ export const useProxyModels = () => {
                         id: canonicalId,
                         name: canonicalName,
                         group,
-                        icon: <config.Icon size={16} />,
+                        icon: getModelIcon(canonicalId, group),
                     });
                 }
             }

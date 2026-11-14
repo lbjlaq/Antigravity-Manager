@@ -149,7 +149,43 @@ where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
     E: std::fmt::Display + Send + 'static,
 {
+    create_claude_sse_stream_with_anchor(
+        gemini_stream,
+        trace_id,
+        email,
+        session_id,
+        scaling_enabled,
+        context_limit,
+        estimated_prompt_tokens,
+        message_count,
+        client_adapter,
+        registered_tool_names,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_claude_sse_stream_with_anchor<S, E>(
+    gemini_stream: Pin<Box<S>>,
+    trace_id: String,
+    email: String,
+    session_id: Option<String>, // [NEW v3.3.17] Session ID for signature caching
+    scaling_enabled: bool,      // [NEW] Flag for context usage scaling
+    context_limit: u32,
+    estimated_prompt_tokens: Option<u32>, // [FIX] Estimated tokens for calibrator learning
+    message_count: usize,                 // [NEW v4.0.0] Message count for rewind detection
+    client_adapter: Option<std::sync::Arc<dyn ClientAdapter>>, // [NEW] Adapter reference
+    registered_tool_names: Vec<String>,   // [FIX #MCP] Tool names for fuzzy matching
+    causal_anchor: Option<String>,
+) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
     let mut state = StreamingState::new();
+    if let Some(ref anchor) = causal_anchor {
+        state.thinking_acc = crate::proxy::thinking_store::TurnAccumulator::with_anchor(anchor);
+    }
     state.session_id = session_id;
     state.message_count = message_count;
     state.scaling_enabled = scaling_enabled;

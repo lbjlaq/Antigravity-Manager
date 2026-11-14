@@ -1,14 +1,18 @@
 //! 入站模型闸门（协议无关）
 //!
-//! 目标：在「选号 / 发往上游」之前，把**根本不存在的模型**与**全池无配额的模型**
-//! 在网关层直接拒答，避免把无效模型发往 Google 触发 429 长冷却，污染整条号池链路。
+//! 目标：在「选号 / 发往上游」之前，把**根本不存在的模型**、**当前无可用配额账号的模型**
+//! 与**全池无配额的模型**在网关层直接拒答，避免把无效模型发往 Google 触发 429 长冷却或连坐其他账号与模型。
 //!
 //! 判定顺序（严格遵循产品定义）：
 //! 1. 请求未携带 model-id（空 / 缺失）→ 404 `model not exist`
 //! 2. 应用用户自定义映射（精确 → 大小写 → 规范化 → 通配符）；无命中则保留原值
-//! 3. 映射后的最终 model-id 必须存在于「下游 API 开放列表 ∪ agent 工具一键配置列表」，
-//!    否则 → 404 `model not exist`
-//! 4. 拥有该模型配额的账号全部为 0 配额 → 502 `no quota accounts`
+//! 3. 映射后的最终 model-id 若属于已下线模型家族 → 404 `model not exist`
+//! 4. 映射后的最终 model-id 若不在「活跃池向下游暴露清单」中：
+//!    - 若属于官方目录 / 核心网关目录 / 磁盘已导入账号（含停用代理账号）识别过的合规模型 → 503 `no available accounts`
+//!    - 否则 → 404 `model not exist`
+//! 5. 拥有该模型正配额的账号为 0：
+//!    - 若当前活跃池根本没有任何支持/未冻结该模型的可用账号 → 503 `no available accounts`
+//!    - 否则（存在支持该模型的活跃账号，仅剩余配额归零）→ 502 `no quota accounts`
 //!
 //! 设计约束：本模块不得依赖任何硬编码模型名，全部由运行时模型池 / 官方目录驱动。
 
@@ -21,6 +25,8 @@ use crate::proxy::token_manager::TokenManager;
 
 /// 网关自答文案：模型不存在（404）
 pub const MODEL_NOT_EXIST: &str = "model not exist";
+/// 网关自答文案：当前无可用配额账号（503）
+pub const NO_AVAILABLE_ACCOUNTS: &str = "no available accounts";
 /// 网关自答文案：全池无配额（502）
 pub const NO_QUOTA_ACCOUNTS: &str = "no quota accounts";
 
@@ -31,7 +37,9 @@ pub enum ModelGate {
     Allow(String),
     /// 模型不存在（含请求缺失 model 字段）
     NotFound,
-    /// 该模型在所有账号上都没有剩余配额
+    /// 模型合法且在生态中已知，但当前活跃池中没有支持或未禁用的可用配额账号
+    NoAvailableAccounts,
+    /// 活跃池中存在支持该模型的账号，但全部没有剩余配额
     NoQuota,
 }
 
@@ -41,6 +49,9 @@ impl ModelGate {
         match self {
             ModelGate::Allow(_) => None,
             ModelGate::NotFound => Some((StatusCode::NOT_FOUND, MODEL_NOT_EXIST)),
+            ModelGate::NoAvailableAccounts => {
+                Some((StatusCode::SERVICE_UNAVAILABLE, NO_AVAILABLE_ACCOUNTS))
+            }
             ModelGate::NoQuota => Some((StatusCode::BAD_GATEWAY, NO_QUOTA_ACCOUNTS)),
         }
     }
@@ -59,8 +70,17 @@ pub fn resolve_requested_model(
     requested: &str,
     custom_mapping: &HashMap<String, String>,
 ) -> String {
-    model_mapping::resolve_custom_model_route(requested, custom_mapping)
-        .unwrap_or_else(|| requested.to_string())
+    if let Some(target) = model_mapping::resolve_custom_model_route(requested, custom_mapping) {
+        return target;
+    }
+    // 客户端联网修饰后缀处理：如 `gemini-3.8-flash-online` 剥离 `-online` 后匹配自定义映射或基准模型
+    if let Some(base) = requested.strip_suffix("-online") {
+        if let Some(target) = model_mapping::resolve_custom_model_route(base, custom_mapping) {
+            return target;
+        }
+        return base.to_string();
+    }
+    requested.to_string()
 }
 
 /// 已下线模型族硬门禁（作用于**映射后的最终出站模型 ID**，而非客户端原始请求名）。
@@ -175,10 +195,12 @@ pub async fn downstream_exposed_models(
     token_manager: &TokenManager,
     only_raw_quota_models: bool,
 ) -> HashSet<String> {
-    let mut allowed: HashSet<String> = model_mapping::get_all_dynamic_models(
+    let is_cold_start = token_manager.get_all_collected_models().is_empty();
+    let mut allowed: HashSet<String> = model_mapping::get_all_dynamic_models_with_options(
         custom_mapping,
         Some(token_manager),
         only_raw_quota_models,
+        is_cold_start,
     )
     .await
     .into_iter()
@@ -186,7 +208,7 @@ pub async fn downstream_exposed_models(
 
     // 冷启动（号池尚未同步模型目录）才用官方目录兜底；一旦有真实可用集合，
     // 严格只暴露 available ∪ agent 配置 ∪ 自定义别名，避免“字典存在但未开通”的条目外泄。
-    if token_manager.get_all_collected_models().is_empty() {
+    if is_cold_start {
         for id in model_mapping::get_supported_models() {
             allowed.insert(id);
         }
@@ -246,6 +268,91 @@ fn family_fallback_applicable(
     !exact_allowed && !routed_allowed && routed != final_model
 }
 
+/// 判定一个未被当前活跃池暴露的合规模型是否属于「官方/核心目录或磁盘已导入账号（含停用代理账号）识别过的模型」。
+///
+/// 命中时代表模型本身存在且合法，仅因为当前活跃代理池中没有启用并具备授权的账号而不可服务，
+/// 第一道门禁应当直接自答 `503 no available accounts`，而不是误报 `404 model not exist`。
+async fn is_known_catalog_or_disk_model(
+    final_model: &str,
+    routed: &str,
+    custom_mapping: &tokio::sync::RwLock<HashMap<String, String>>,
+    token_manager: &TokenManager,
+    preloaded_disk_models: Option<&HashSet<String>>,
+) -> bool {
+    let mut known: HashSet<String> = HashSet::new();
+
+    for id in model_mapping::get_supported_models() {
+        known.insert(id.to_lowercase());
+    }
+    for id in crate::models::OfficialModelCatalog::all_model_ids() {
+        if let Some(info) = crate::models::OfficialModelCatalog::get(&id) {
+            if info.is_internal != Some(true)
+                && !info.is_disabled()
+                && model_mapping::is_model_compliant_with_baseline(&id)
+            {
+                known.insert(id.to_lowercase());
+            }
+        }
+    }
+    for id in crate::proxy::cli_sync::all_core_gateway_model_ids() {
+        known.insert(id.to_lowercase());
+    }
+    let disk_owned;
+    let disk_models = match preloaded_disk_models {
+        Some(models) => models,
+        None => {
+            disk_owned = token_manager.get_all_disk_discovered_models();
+            &disk_owned
+        }
+    };
+    for id in disk_models {
+        if model_mapping::is_model_compliant_with_baseline(id) {
+            known.insert(id.to_lowercase());
+        }
+    }
+
+    {
+        let mapping = custom_mapping.read().await;
+        for (key, target) in mapping.iter() {
+            if target.starts_with("auto:")
+                || is_retired_model_id(key)
+                || is_retired_model_id(target)
+            {
+                continue;
+            }
+            known.insert(key.to_lowercase());
+            known.insert(target.to_lowercase());
+        }
+    }
+
+    let derived_bare: Vec<String> = known
+        .iter()
+        .filter_map(|id| {
+            let base = model_mapping::strip_tier_suffix(id);
+            (base != *id && model_mapping::is_model_compliant_with_baseline(&base)).then_some(base)
+        })
+        .collect();
+    known.extend(derived_bare);
+    known.retain(|id| !is_retired_model_id(id));
+
+    let final_lower = final_model.to_lowercase();
+    let routed_lower = routed.to_lowercase();
+    let exact_known = known.contains(&final_lower);
+    let routed_known = known.contains(&routed_lower);
+    let family_known =
+        family_fallback_applicable(exact_known, routed_known, &final_lower, &routed_lower)
+            && known.iter().any(|k| {
+                model_mapping::strip_tier_suffix(k)
+                    == model_mapping::strip_tier_suffix(&routed_lower)
+            });
+
+    exact_known
+        || routed_known
+        || family_known
+        || is_image_family_allowed(&final_lower, &known)
+        || is_image_family_allowed(&routed_lower, &known)
+}
+
 /// 入站模型闸门主入口。
 pub async fn gate_inbound_model(
     requested_model: Option<&str>,
@@ -263,8 +370,9 @@ pub async fn gate_inbound_model(
         let mapping = custom_mapping.read().await;
         resolve_requested_model(requested, &mapping)
     };
+    let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
     let final_model =
-        model_mapping::resolve_adaptive_target(&raw_target, requested, None, Some(token_manager));
+        model_mapping::resolve_adaptive_target(&raw_target, lookup_base, None, Some(token_manager));
 
     // 已下线模型族硬门禁：检查 **映射后的真实出站模型**，
     // 允许用户把已下线的旧名作为别名键映射到合规模型。
@@ -277,14 +385,39 @@ pub async fn gate_inbound_model(
         .map(|cfg| cfg.proxy.only_raw_quota_models)
         .unwrap_or(false);
 
-    // 冷启动 fail-open：号池尚未同步到任何模型时，模型目录为空，
-    // 此时做存在性拦截会把全部流量误杀（例如网关刚启动的几秒内），因此直接放行。
+    // [ROUTE PARITY] 门禁必须与真正出站路由同口径：历史别名 / 裸名先交给 router 解析一次，
+    // 否则 `gemini-3-flash` 这类 router 仍支持的别名会在门禁处被误杀。
+    let routed = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
+        &final_model,
+        &std::collections::HashMap::new(),
+        None,
+    );
+
+    // 冷启动 vs 全账号代理关闭区分：
+    // - 磁盘账号也无任何模型元数据 → 真冷启动，fail-open 避免误杀首启流量；
+    // - 磁盘已有账号模型元数据，但当前活跃池为空（如账号全部被禁用代理）→ 已知模型返回 503，未知返回 404。
     if token_manager.get_all_collected_models().is_empty() {
-        tracing::debug!(
-            "[ModelGate] Account pool has no model metadata yet, skipping existence gate for '{}'",
-            final_model
-        );
-        return ModelGate::Allow(final_model);
+        let disk_models = token_manager.get_all_disk_discovered_models();
+        if disk_models.is_empty() {
+            tracing::debug!(
+                "[ModelGate] Account pool has no model metadata yet, skipping existence gate for '{}'",
+                final_model
+            );
+            return ModelGate::Allow(final_model);
+        }
+        return if is_known_catalog_or_disk_model(
+            &final_model,
+            &routed,
+            custom_mapping,
+            token_manager,
+            Some(&disk_models),
+        )
+        .await
+        {
+            ModelGate::NoAvailableAccounts
+        } else {
+            ModelGate::NotFound
+        };
     }
 
     let mut allowed =
@@ -299,13 +432,6 @@ pub async fn gate_inbound_model(
         return ModelGate::Allow(final_model);
     }
 
-    // [ROUTE PARITY] 门禁必须与真正出站路由同口径：历史别名 / 裸名先交给 router 解析一次，
-    // 否则 `gemini-3-flash` 这类 router 仍支持的别名会在门禁处被误杀。
-    let routed = crate::proxy::common::model_mapping::resolve_model_route_with_effort(
-        &final_model,
-        &std::collections::HashMap::new(),
-        None,
-    );
     let strip = |s: &str| model_mapping::strip_tier_suffix(s);
 
     let mut exact_allowed = allowed.contains(&final_model);
@@ -355,7 +481,19 @@ pub async fn gate_inbound_model(
             || is_image_family_allowed(&final_model, &allowed)
             || is_image_family_allowed(&routed, &allowed);
         if !exposed {
-            return ModelGate::NotFound;
+            return if is_known_catalog_or_disk_model(
+                &final_model,
+                &routed,
+                custom_mapping,
+                token_manager,
+                None,
+            )
+            .await
+            {
+                ModelGate::NoAvailableAccounts
+            } else {
+                ModelGate::NotFound
+            };
         }
     }
 
@@ -390,7 +528,14 @@ pub async fn gate_inbound_model(
             retry_quota
         };
         if retry_quota == 0 && retry_final == 0 {
-            return ModelGate::NoQuota;
+            let has_capable = token_manager.has_any_capable_account_in_pool(&quota_model)
+                || (quota_model != final_model
+                    && token_manager.has_any_capable_account_in_pool(&final_model));
+            return if has_capable {
+                ModelGate::NoQuota
+            } else {
+                ModelGate::NoAvailableAccounts
+            };
         }
     }
 
@@ -399,7 +544,7 @@ pub async fn gate_inbound_model(
 
 /// 「只查存在性」的入站模型闸门（不做整池配额检查）
 ///
-/// 用于生图等与文本模型配额桶不同源的入口：先把“模型名写错 / 已下线”在选号之前拦下，
+/// 用于生图等与文本模型配额桶不同源的入口：先把“模型名写错 / 已下线”或“无可用账号”在选号之前拦下，
 /// 避免错误文案拖到重试循环里被误当成账号故障；同时不因配额桶缺失而误杀。
 ///
 /// 拒绝时的文案与 [`gate_inbound_model`] 完全一致，均为网关自答（不罚号、不轮换）。
@@ -417,8 +562,9 @@ pub async fn gate_inbound_model_exists(
         let mapping = custom_mapping.read().await;
         resolve_requested_model(requested, &mapping)
     };
+    let lookup_base = requested.strip_suffix("-online").unwrap_or(requested);
     let final_model =
-        model_mapping::resolve_adaptive_target(&raw_target, requested, None, Some(token_manager));
+        model_mapping::resolve_adaptive_target(&raw_target, lookup_base, None, Some(token_manager));
 
     // 检查映射后的真实出站模型，允许旧名作为自定义别名键。
     if is_retired_model_id(&final_model) {
@@ -426,9 +572,26 @@ pub async fn gate_inbound_model_exists(
         return ModelGate::NotFound;
     }
 
-    // 冷启动（号池尚未同步模型目录）：只做已下线检查，避免误杀
+    // 冷启动（号池与磁盘均尚未同步模型目录）：只做已下线检查，避免误杀；
+    // 若磁盘已有模型记录但活跃池为空，区分已知模型 (503) 与未知模型 (404)。
     if token_manager.get_all_collected_models().is_empty() {
-        return ModelGate::Allow(final_model);
+        let disk_models = token_manager.get_all_disk_discovered_models();
+        if disk_models.is_empty() {
+            return ModelGate::Allow(final_model);
+        }
+        return if is_known_catalog_or_disk_model(
+            &final_model,
+            &final_model,
+            custom_mapping,
+            token_manager,
+            Some(&disk_models),
+        )
+        .await
+        {
+            ModelGate::NoAvailableAccounts
+        } else {
+            ModelGate::NotFound
+        };
     }
 
     let allowed = downstream_exposed_models(custom_mapping, token_manager, false).await;
@@ -444,7 +607,19 @@ pub async fn gate_inbound_model_exists(
         token_manager.refresh_pool_for_gate_if_stale().await;
         let refreshed = downstream_exposed_models(custom_mapping, token_manager, false).await;
         if !refreshed.contains(&final_model) && !is_image_family_allowed(&final_model, &refreshed) {
-            return ModelGate::NotFound;
+            return if is_known_catalog_or_disk_model(
+                &final_model,
+                &final_model,
+                custom_mapping,
+                token_manager,
+                None,
+            )
+            .await
+            {
+                ModelGate::NoAvailableAccounts
+            } else {
+                ModelGate::NotFound
+            };
         }
     }
 
@@ -492,8 +667,9 @@ pub fn pick_background_model_from_pool(token_manager: &TokenManager) -> Option<S
 /// 网关自答（代答）错误文本：不来自任何账号。
 ///
 /// 全局错误分类、限流解析、账号冷却与粘性解绑链路必须无条件豁免，
-/// 否则一次“模型名写错”或“全池无配额”就会连坐惩罚无辜账号。
-pub const GATEWAY_SELF_ANSWER_ERRORS: [&str; 2] = [MODEL_NOT_EXIST, NO_QUOTA_ACCOUNTS];
+/// 否则一次“模型名写错”、“当前无可用配额账号”或“全池无配额”就会连坐惩罚无辜账号与模型。
+pub const GATEWAY_SELF_ANSWER_ERRORS: [&str; 3] =
+    [MODEL_NOT_EXIST, NO_AVAILABLE_ACCOUNTS, NO_QUOTA_ACCOUNTS];
 
 /// 判断错误文本是否为网关自答（非上游产生）。
 pub fn is_gateway_self_answer(text: &str) -> bool {
@@ -512,6 +688,12 @@ pub fn self_answer_disposition(text: &str) -> Option<(axum::http::StatusCode, &'
     if lower.contains(MODEL_NOT_EXIST) {
         return Some((axum::http::StatusCode::NOT_FOUND, MODEL_NOT_EXIST));
     }
+    if lower.contains(NO_AVAILABLE_ACCOUNTS) {
+        return Some((
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            NO_AVAILABLE_ACCOUNTS,
+        ));
+    }
     if lower.contains(NO_QUOTA_ACCOUNTS) {
         return Some((axum::http::StatusCode::BAD_GATEWAY, NO_QUOTA_ACCOUNTS));
     }
@@ -520,7 +702,7 @@ pub fn self_answer_disposition(text: &str) -> Option<(axum::http::StatusCode, &'
 
 /// 网关拒绝时写入「转出报文」面板的英文详细说明。
 ///
-/// 日志列表的账号列只放一句短标语（`model not exist` / `no quota accounts`），
+/// 日志列表的账号列只放一句短标语（`model not exist` / `no available accounts` / `no quota accounts`），
 /// 点开详情后在 Forwarded 面板展示可操作的英文排查指引。
 pub fn blocked_explanation(
     reason: &str,
@@ -536,6 +718,15 @@ pub fn blocked_explanation(
             "summary": MODEL_NOT_EXIST,
             "detail": "This model ID is not in the model list this gateway exposes to downstream clients, so the request was rejected at the gateway and never reached any upstream account.",
             "hint": "Use a model ID returned by /v1/models (or the agent tool model list), or add a custom model mapping that points this ID to a supported model."
+        }),
+        NO_AVAILABLE_ACCOUNTS => serde_json::json!({
+            "gateway_blocked": true,
+            "gateway_error": "no_available_accounts",
+            "protocol": protocol,
+            "requested_model": requested_model,
+            "summary": NO_AVAILABLE_ACCOUNTS,
+            "detail": "This model ID is recognized, but no enabled account in the active proxy pool currently supports or authorizes it (accounts with this model may be proxy-disabled, inactive, or model-frozen), so the request was rejected at the gateway.",
+            "hint": "Enable an imported account that supports this model in the proxy pool, add a new account with access to this model, or switch to another available model."
         }),
         _ => serde_json::json!({
             "gateway_blocked": true,
@@ -652,6 +843,21 @@ mod tests {
             resolve_requested_model("gemini-3.8-flash-high", &mapping),
             "gemini-3.8-flash-high",
             "无自定义映射时必须原样保留请求 ID"
+        );
+    }
+
+    #[test]
+    fn test_issue_3937_online_suffix_resolves_base_model() {
+        let mapping = HashMap::new();
+        assert_eq!(
+            resolve_requested_model("gemini-3.8-flash-online", &mapping),
+            "gemini-3.8-flash",
+            "-online 后缀必须在门禁中被剥离以匹配基准模型"
+        );
+        assert_eq!(
+            resolve_requested_model("gemini-3.8-flash-low-online", &mapping),
+            "gemini-3.8-flash-low",
+            "-online 后缀必须在门禁中被剥离以匹配具体档位"
         );
     }
 
@@ -800,15 +1006,20 @@ mod tests {
     #[test]
     fn gateway_self_answers_are_exempt_from_penalties() {
         assert!(is_gateway_self_answer("model not exist"));
+        assert!(is_gateway_self_answer("no available accounts"));
         assert!(is_gateway_self_answer(
             "{\"message\":\"no quota accounts\"}"
         ));
         assert!(!is_gateway_self_answer("quota exceeded for this model"));
 
-        // 统一处置口径：404 / 502，且与账号故障无关
+        // 统一处置口径：404 / 503 / 502，且与账号故障无关
         assert_eq!(
             self_answer_disposition("HTTP 404: model not exist"),
             Some((StatusCode::NOT_FOUND, MODEL_NOT_EXIST))
+        );
+        assert_eq!(
+            self_answer_disposition("no available accounts"),
+            Some((StatusCode::SERVICE_UNAVAILABLE, NO_AVAILABLE_ACCOUNTS))
         );
         assert_eq!(
             self_answer_disposition("no quota accounts"),
@@ -817,11 +1028,12 @@ mod tests {
         assert_eq!(self_answer_disposition("rate limited"), None);
 
         // 分类器必须优先归为 InternalGatewayMessage：既不锁号也不解绑粘性
-        let cls =
-            crate::proxy::pipeline::UpstreamClassification::classify(502, MODEL_NOT_EXIST, None);
-        assert!(cls.is_internal_gateway_message());
-        assert!(!cls.should_lock_account());
-        assert!(!cls.abandons_sticky_account());
+        for sentinel in [MODEL_NOT_EXIST, NO_AVAILABLE_ACCOUNTS, NO_QUOTA_ACCOUNTS] {
+            let cls = crate::proxy::pipeline::UpstreamClassification::classify(503, sentinel, None);
+            assert!(cls.is_internal_gateway_message());
+            assert!(!cls.should_lock_account());
+            assert!(!cls.abandons_sticky_account());
+        }
     }
 
     #[test]
@@ -831,9 +1043,136 @@ mod tests {
             Some((StatusCode::NOT_FOUND, MODEL_NOT_EXIST))
         );
         assert_eq!(
+            ModelGate::NoAvailableAccounts.rejection(),
+            Some((StatusCode::SERVICE_UNAVAILABLE, NO_AVAILABLE_ACCOUNTS))
+        );
+        assert_eq!(
             ModelGate::NoQuota.rejection(),
             Some((StatusCode::BAD_GATEWAY, NO_QUOTA_ACCOUNTS))
         );
         assert!(ModelGate::Allow("m".into()).rejection().is_none());
+    }
+
+    #[tokio::test]
+    async fn gate_distinguishes_503_no_available_accounts_from_404_and_502() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+        let accounts_dir = data_dir.join("accounts");
+        std::fs::create_dir_all(&accounts_dir).unwrap();
+
+        let now = chrono::Utc::now().timestamp();
+        // 磁盘上导入了一个带 gemini-4-hydrogen-high 的账号，但代理已被关闭 (proxy_disabled=true)
+        let disabled_acc = serde_json::json!({
+            "id": "acc-disabled-hydrogen",
+            "email": "h2-disabled@example.com",
+            "proxy_disabled": true,
+            "token": {
+                "access_token": "ya29.h2",
+                "refresh_token": "1//h2",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "quota": {
+                "models": [
+                    { "name": "gemini-4-hydrogen-high", "percentage": 100 }
+                ]
+            }
+        });
+        let future_reset = chrono::DateTime::from_timestamp(now + 3600, 0)
+            .unwrap()
+            .to_rfc3339();
+        // 磁盘上另一个正常启用账号只拥有 gemini-3.8-flash-high (配额 0% 且未到 reset_time)
+        let active_acc = serde_json::json!({
+            "id": "acc-active-flash",
+            "email": "flash-active@example.com",
+            "proxy_disabled": false,
+            "token": {
+                "access_token": "ya29.fl",
+                "refresh_token": "1//fl",
+                "expires_in": 3600,
+                "expiry_timestamp": now + 3600
+            },
+            "quota": {
+                "last_updated": now,
+                "models": [
+                    { "name": "gemini-3.8-flash-high", "percentage": 0, "reset_time": future_reset }
+                ],
+                "quota_groups": [
+                    {
+                        "display_name": "Gemini Models",
+                        "buckets": [
+                            {
+                                "bucket_id": "gemini-weekly",
+                                "window": "weekly",
+                                "remaining_fraction": 0.0,
+                                "reset_time": future_reset
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        std::fs::write(
+            accounts_dir.join("acc-disabled-hydrogen.json"),
+            disabled_acc.to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            accounts_dir.join("acc-active-flash.json"),
+            active_acc.to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            data_dir.join("accounts.json"),
+            serde_json::json!({
+                "version": "2.0",
+                "accounts": [
+                    { "id": "acc-disabled-hydrogen", "email": "h2-disabled@example.com", "disabled": false, "proxy_disabled": true },
+                    { "id": "acc-active-flash", "email": "flash-active@example.com", "disabled": false, "proxy_disabled": false }
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let tm = TokenManager::new(data_dir.clone());
+        let loaded = tm.load_accounts().await.unwrap();
+        assert_eq!(loaded, 1);
+
+        let custom_mapping = tokio::sync::RwLock::new(HashMap::new());
+
+        // 1. 磁盘存在该模型但所属账号已禁用代理 -> 503 no available accounts
+        assert_eq!(
+            gate_inbound_model(Some("gemini-4-hydrogen-high"), &custom_mapping, &tm).await,
+            ModelGate::NoAvailableAccounts
+        );
+        // 2. 官方目录里的合规新模型（活跃池未携带）-> 503 no available accounts
+        assert_eq!(
+            gate_inbound_model(Some("gemini-4-carbon-high"), &custom_mapping, &tm).await,
+            ModelGate::NoAvailableAccounts
+        );
+        // 3. 活跃池拥有该模型但 0% 配额 -> 502 no quota accounts
+        assert_eq!(
+            gate_inbound_model(Some("gemini-3.8-flash-high"), &custom_mapping, &tm).await,
+            ModelGate::NoQuota
+        );
+        // 4. 真正不存在 / 已下线模型 -> 404 model not exist
+        assert_eq!(
+            gate_inbound_model(Some("nonexistent-model-xyz"), &custom_mapping, &tm).await,
+            ModelGate::NotFound
+        );
+        assert_eq!(
+            gate_inbound_model(Some("gemini-2.5-pro"), &custom_mapping, &tm).await,
+            ModelGate::NotFound
+        );
+        // 5. 生图等仅查存在性入口：目录中已知的生图模型（但不在活跃池） -> 503，不存在 -> 404
+        assert_eq!(
+            gate_inbound_model_exists(Some("gemini-3.1-flash-image"), &custom_mapping, &tm).await,
+            ModelGate::NoAvailableAccounts
+        );
+        assert_eq!(
+            gate_inbound_model_exists(Some("totally-fake-image-model"), &custom_mapping, &tm).await,
+            ModelGate::NotFound
+        );
     }
 }

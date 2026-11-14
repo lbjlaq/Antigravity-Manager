@@ -19,15 +19,45 @@ pub fn get_category_percentage(quota: &QuotaData, category: &str) -> Option<i32>
 
     // 1. 优先从双窗口 quota_groups 提取
     if let Some(ref groups) = quota.quota_groups {
+        let known_codenames: Vec<String> = quota
+            .models
+            .iter()
+            .filter_map(|m| {
+                let nl = m.name.trim().to_lowercase();
+                if nl.contains("-disabled") || nl.ends_with("_disabled") {
+                    None
+                } else {
+                    crate::proxy::common::model_mapping::extract_gemini4_codename(&nl)
+                }
+            })
+            .collect();
         for group in groups {
             let name = group.display_name.to_lowercase();
-            if name.contains("argon") {
+            let is_dedicated_g4 =
+                crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+                    &name,
+                    "",
+                    &known_codenames,
+                )
+                .is_some()
+                    || group.buckets.iter().any(|b| {
+                        let bid = b.bucket_id.to_lowercase();
+                        let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
+                        crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+                            &bname,
+                            &bid,
+                            &known_codenames,
+                        )
+                        .is_some()
+                    });
+            if is_dedicated_g4 {
                 continue;
             }
             let is_target = if is_claude {
                 name.contains("claude") || name.contains("gpt") || name.contains("3p")
             } else if is_gemini {
-                name.contains("gemini") || !name.contains("claude")
+                name.contains("gemini")
+                    || (!name.contains("claude") && !name.contains("gpt") && !name.contains("3p"))
             } else {
                 false
             };
@@ -422,10 +452,9 @@ pub async fn check_and_auto_switch_classic(
         *last_switch = Some(Instant::now());
     }
 
-    // 同步反代（如果已启动）
-    let instance_lock = proxy_state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        let _ = instance.token_manager.reload_all_accounts().await;
+    // 同步反代（如果已启动，同时涵盖 instance 与 admin_server）
+    for tm in proxy_state.active_token_managers().await {
+        let _ = tm.reload_all_accounts().await;
     }
 
     // 9. 界面与系统通知提醒

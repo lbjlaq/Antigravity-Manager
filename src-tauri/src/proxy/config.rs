@@ -475,6 +475,99 @@ impl Default for GlobalSystemPromptConfig {
     }
 }
 
+/// 风控提示词清理规则（行式：匹配内容 → 替换为）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromptRewriteRule {
+    /// 稳定 ID（前端生成，便于排序/删除）
+    #[serde(default)]
+    pub id: String,
+    /// 匹配内容：支持 `*` 通配符（同一行内任意字符）与 `\n` / `\t` / `\\` 转义
+    #[serde(default)]
+    pub pattern: String,
+    /// 替换内容：留空表示删除匹配内容；支持 `\n` / `\t` / `\\` 转义
+    #[serde(default)]
+    pub replacement: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl PromptRewriteRule {
+    pub fn new(
+        id: impl Into<String>,
+        pattern: impl Into<String>,
+        replacement: impl Into<String>,
+        enabled: bool,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            pattern: pattern.into(),
+            replacement: replacement.into(),
+            enabled,
+        }
+    }
+}
+
+/// 风控提示词清理方案
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptRewriteConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 是否启用内置身份归一化（默认 true）。关闭后保留客户端原始身份句，只执行用户自定义规则。
+    #[serde(default = "default_true")]
+    pub normalize_identity: bool,
+    #[serde(default = "PromptRewriteConfig::recommended_preset_rules")]
+    pub rules: Vec<PromptRewriteRule>,
+}
+
+impl PromptRewriteConfig {
+    /// 官方推荐的内置风控预设规则集（经过生产环境与 WAF 实测验证）
+    pub fn recommended_preset_rules() -> Vec<PromptRewriteRule> {
+        vec![
+            PromptRewriteRule::new(
+                "preset-opencode",
+                "You are an AI agent running in OpenCode*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new(
+                "preset-dsh-identity",
+                "You are an AI agent powered by DeepSeek Harness*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new(
+                "preset-dsh-model",
+                "You are a coding agent powered by *gemini*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new("preset-workbuddy", "*WorkBuddy*", "", true),
+            PromptRewriteRule::new(
+                "preset-codex-intro",
+                "*the codex cli is an open*source project*",
+                "",
+                true,
+            ),
+            PromptRewriteRule::new(
+                "preset-anthropic-billing",
+                "*x-anthropic-billing-header:*",
+                "",
+                true,
+            ),
+        ]
+    }
+}
+
+impl Default for PromptRewriteConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            normalize_identity: true,
+            rules: Self::recommended_preset_rules(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProxyAuthMode {
@@ -653,6 +746,9 @@ pub struct ThinkingBudgetConfig {
     /// 旧默认值 16384 已迁移为官方 -1。置位后不再重复改写用户后来手选的 16384。
     #[serde(default)]
     pub flash_high_legacy_migrated: bool,
+    /// 旧默认值 32768 已迁移为官方 -1。置位后配置迁移不再重复落盘改写 gui_config.json。
+    #[serde(default)]
+    pub thinking_budget_32k_legacy_migrated: bool,
     #[serde(default = "default_flash_tiered")]
     pub flash_tiered: i32, // 默认 -1
 
@@ -747,6 +843,7 @@ impl Default for ThinkingBudgetConfig {
             flash_medium: default_flash_medium(),
             flash_high: default_flash_high(),
             flash_high_legacy_migrated: false,
+            thinking_budget_32k_legacy_migrated: false,
             flash_tiered: default_flash_tiered(),
 
             pro_mode: default_thinking_budget_mode(),
@@ -1205,6 +1302,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub global_system_prompt: GlobalSystemPromptConfig,
 
+    /// 风控提示词清理方案（作用于首个真实 user 提问前的提示词块）
+    #[serde(default)]
+    pub prompt_rewrite: PromptRewriteConfig,
+
     /// 图像思维模式配置
     /// - enabled: 保留思维链 (默认)
     /// - disabled: 移除思维链 (画质优先)
@@ -1398,6 +1499,7 @@ impl Default for ProxyConfig {
             saved_user_agent: None,
             thinking_budget: ThinkingBudgetConfig::default(),
             global_system_prompt: GlobalSystemPromptConfig::default(),
+            prompt_rewrite: PromptRewriteConfig::default(),
             proxy_pool: ProxyPoolConfig::default(),
             multimodal: MultimodalConfig::default(),
             stream_timeouts: StreamTimeoutConfig::default(),
@@ -1535,5 +1637,33 @@ mod tests {
         // 测试边缘情况
         assert_eq!(normalize_proxy_url(""), "");
         assert_eq!(normalize_proxy_url("   "), "");
+    }
+
+    #[test]
+    fn upload_timeout_config_roundtrip_and_normalization() {
+        let cfg = UploadTimeoutConfig {
+            connect_secs: 0,
+            min_upload_mbps: 0.0,
+            extra_wait_ratio: 99.0,
+            stall_secs: 1,
+            header_wait_secs: 999,
+            large_body_threshold_mb: 0,
+            large_body_endpoint_attempts: 0,
+        };
+        let normalized = cfg.clone().normalized();
+        assert_eq!(normalized.connect_secs, 3);
+        assert_eq!(normalized.min_upload_mbps, 0.1);
+        assert_eq!(normalized.extra_wait_ratio, 10.0);
+        assert_eq!(normalized.stall_secs, 5);
+        assert_eq!(normalized.header_wait_secs, 600);
+        assert_eq!(normalized.large_body_threshold_mb, 1);
+        assert_eq!(normalized.large_body_endpoint_attempts, 1);
+
+        // 配置必须完整 round-trip；缺失字段回退默认值，不得静默丢字段。
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: UploadTimeoutConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+        let partial: UploadTimeoutConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(partial, UploadTimeoutConfig::default());
     }
 }

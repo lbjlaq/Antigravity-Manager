@@ -1051,6 +1051,8 @@
                 },
                 "max_wait": "최대 대기 (초)",
                 "max_wait_tooltip": "'캐시 우선' 모드에서만 사용: 속도 제한 재설정 시간이 이 값보다 작으면 전환하는 대신 대기합니다.",
+                "request_429_grace_ms": "요청 수준 429 제자리 대기",
+                "request_429_grace_ms_tooltip": "retryDelay가 없는 요청 수준 429에 대해 현재 계정에서 1차 시도 시 대기하는 시간. 기본값 1500ms, 범위 200–10000ms.",
                 "max_spillover_accounts": "분류 동시 계정 상한",
                 "max_spillover_accounts_tooltip": "여러 서브 에이전트 또는 병렬 세션을 실행할 때 동시에 호출할 수 있는 최대 정상 계정 수입니다. 0으로 설정하면 무제한(사용 가능한 모든 계정 사용); 양의 정수(예: 2)로 설정하면 활성 계정 수를 제한하여 과도한 분산을 방지합니다.",
                 "spillover_unlimited": "무제한 (모두 사용 가능)",
@@ -1354,7 +1356,7 @@
             "first_byte_effective": "현재 적용: 일반 {{text}}s　이미지 {{image}}s　동영상 {{video}}s　보조 {{aux}}s",
             "section_stream": "③ 첫 글자와 연속 출력",
             "stream_desc": "응답 헤더 대기와 첫 토큰이 하나의 첫 바이트 지연으로 통합되었습니다. HTTP 200 이전에는 엔드포인트 전환이 가능하고, 이후에는 안전하게 마무리만 합니다.",
-            "auto_summary": "예: 최대 대기 = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}}초;"
+            "auto_summary": "예: 최대 대기 = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}}초;"
         },
         "cloudflared": {
             "title": "공개 액세스 (Cloudflared)",
@@ -1721,6 +1723,32 @@
             "strategy_memory_desc": "최신 턴부터 역방향으로 Base64 용량을 계산하여 할당량 내는 모두 유지, 초과된 오래된 이미지는 자동 제외.",
             "memory_budget_label": "누적 메모리 신선도 상한",
             "memory_budget_hint": "Base64 디코딩 총 용량을 한도로 설정합니다. 최신 턴부터 역방향 계산하여 한도 내 이미지는 온전히 유지하고 초과분은 플레이스홀더로 대체합니다."
+        },
+        "prompt_rewrite": {
+            "title": "WAF 프롬프트 정리 규칙",
+            "subtitle": "첫 번째 실제 user 질문 이전의 모든 프롬프트 블록에 텍스트 대체를 수행합니다. 사용자 본문, 모델 출력, 도구 선언에는 영향을 주지 않습니다.",
+            "enabled": "활성화됨",
+            "empty": "아직 정리 규칙이 없습니다. 아래에서 추가하세요.",
+            "add_rule": "정리 규칙 추가",
+            "load_presets": "공식 권장 프리셋 불러오기",
+            "load_presets_confirm": "기존 사용자 정의 규칙을 유지하면서 공식 권장 WAF 프리셋 규칙을 추가합니다. 계속하시겠습니까?",
+            "match": "일치 패턴",
+            "replace": "대체 내용",
+            "match_placeholder": "일치 패턴(예: You are *)",
+            "replace_placeholder": "비워두기 = 일치 내용 삭제",
+            "expand": "확대 편집",
+            "delete": "삭제",
+            "done": "완료",
+            "normalize_identity": "내장 정체성 정규화",
+            "normalize_identity_hint": "비활성화 시 클라이언트의 원래 정체성 문장을 유지하고 위의 사용자 지정 규칙만 실행합니다. 문제 해결 또는 클라이언트 자체 준수 정체성이 있는 경우 유용합니다.",
+            "rule_empty_pattern": "일치 패턴은 비워 둘 수 없습니다",
+            "rule_pattern_too_long": "일치 패턴이 8192자를 초과하여 백엔드에서 건너뜁니다",
+            "rule_replacement_too_long": "대체 내용이 16384자를 초과하여 백엔드에서 건너뜁니다",
+            "rule_empty_match": "이 규칙은 빈 텍스트와 일치하므로 건너뜁니다. You are *와 같은 고정 접두사를 추가하세요",
+            "hint_empty": "대체 내용 비워두기 = 일치 텍스트 삭제",
+            "hint_wildcard": "와일드카드 * 지원(동일 행 내 임의 문자 일치). 줄바꿈은 \\n을 사용하세요.",
+            "hint_escape": "이스케이프 지원: \\n 줄바꿈, \\t 탭, \\\\ 역슬래시, \\* 리터럴 별표.",
+            "hint_order": "규칙은 위에서 아래 순서로 실행됩니다. 첫 번째 실제 user 질문 이전의 프롬프트 블록에만 적용되며, 코드 블록은 자동으로 제외됩니다."
         }
     },
     "monitor": {
@@ -1782,6 +1810,11 @@
             "ttft_prefix": "첫 글자:",
             "total_duration_title": "총 소요 시간",
             "ttft_title": "첫 글자 지연 시간"
+        },
+        "gate_reasons": {
+            "model_not_exist": "모델이 존재하지 않음",
+            "no_available_accounts": "사용 가능한 계정 없음",
+            "no_quota_accounts": "할당량 소진"
         },
         "details": {
             "title": "요청 상세",

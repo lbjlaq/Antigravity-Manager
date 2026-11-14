@@ -343,7 +343,22 @@ where
                             }
                         }
                         None => {
-                            // [关键契约守卫] 若上游到达 EOF 时未处于终止态，且从未产生任何正文或工具调用（无论是否产生了思考）：
+                            // [FIX #3911] 到达 EOF 时，优先安全冲刷尾部残余缓冲区，
+                            // 避免因最后一行包含正文/工具调用的 chunk 缺少尾随换行符而滞留在 buffer 中，
+                            // 导致后续守卫误判 !has_content() 并在冲刷前提前截断抛错丢弃有效尾帧。
+                            if !buffer.is_empty() {
+                                let line_str = String::from_utf8_lossy(&buffer);
+                                let line = line_str.trim();
+                                if !line.is_empty() {
+                                    let chunks = handler.process_line(line);
+                                    for out_chunk in chunks {
+                                        yield Ok(out_chunk);
+                                    }
+                                }
+                                buffer.clear();
+                            }
+
+                            // [关键契约守卫] 若冲刷后上游仍未处于终止态，且从未产生任何正文或工具调用（无论是否产生了思考）：
                             // 严禁作为正常 EOF 终结或伪造收尾帧！如实作为 Err 透传底层中断，
                             // 促使 Claude Code 等客户端状态机捕获 ConnectionLost 并自动触发原生重试。
                             if !handler.is_terminal()
@@ -469,7 +484,28 @@ where
             return;
         }
 
-        // [关键契约守卫] 若流结束时未处于终止态且未产生任何正文/工具调用（无论是否产生了思考）：
+        // 协议守卫：如果协议在流处理过程中已正常终结（例如已发送 message_stop），
+        // 严禁冲刷残留缓冲区或再次调用 emit_finalize()，防止向客户端投毒多余数据帧导致 StreamMalformedEventError
+        if handler.is_terminal() {
+            handler.on_finish();
+            return;
+        }
+
+        // [FIX #1732, #3911] 尾部数据安全 Flush：防止因末尾缺少换行符产生网络分片悬挂
+        // 必须在无内容守卫判断前冲刷，确保尾部未带换行符的正文/工具帧不被遗漏丢弃
+        if !buffer.is_empty() {
+            let line_str = String::from_utf8_lossy(&buffer);
+            let line = line_str.trim();
+            if !line.is_empty() {
+                let chunks = handler.process_line(line);
+                for out_chunk in chunks {
+                    yield Ok(out_chunk);
+                }
+            }
+            buffer.clear();
+        }
+
+        // [关键契约守卫] 若流结束且冲刷后仍未处于终止态且未产生任何正文/工具调用（无论是否产生了思考）：
         // 严禁下发伪造终结帧，如实透传 Err 促使客户端原生重试
         if !handler.is_terminal() && !handler.has_content() && !handler.finalize_without_content() {
             let reason = if handler.has_thinking() {
@@ -493,26 +529,6 @@ where
             yield Err(report.client_message());
             handler.on_finish();
             return;
-        }
-
-        // 协议守卫：如果协议在流处理过程中已正常终结（例如已发送 message_stop），
-        // 严禁冲刷残留缓冲区或再次调用 emit_finalize()，防止向客户端投毒多余数据帧导致 StreamMalformedEventError
-        if handler.is_terminal() {
-            handler.on_finish();
-            return;
-        }
-
-        // [FIX #1732] 尾部数据安全 Flush：防止因末尾缺少换行符产生网络分片悬挂
-        if !buffer.is_empty() {
-            let line_str = String::from_utf8_lossy(&buffer);
-            let line = line_str.trim();
-            if !line.is_empty() {
-                let chunks = handler.process_line(line);
-                for out_chunk in chunks {
-                    yield Ok(out_chunk);
-                }
-            }
-            buffer.clear();
         }
 
         // [Double-Finalization Guard]
@@ -930,6 +946,49 @@ mod tests {
         assert!(
             error_propagated,
             "Must propagate Err on thinking-only stream EOF to trigger client native retry"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_eof_flushes_pending_content_buffer_without_trailing_newline() {
+        // [FIX #3911] 模拟上游此前仅产生了思考内容，但随后的正文/工具调用数据未带尾随换行符即直接 EOF
+        let mock_stream = async_stream::stream! {
+            yield Ok::<_, String>(Bytes::from("data: thinking_chunk\n"));
+            yield Ok::<_, String>(Bytes::from("data: thinking_done\n"));
+            // 尾部 chunk 未携带换行符 \n，直接随上游关闭 (EOF)
+            yield Ok::<_, String>(Bytes::from("data: normal_token_without_newline"));
+        };
+
+        let handler = MockHandler::new(false, false);
+        let config = StreamLifecycleConfig::new("test", "test_fn", "trace_flush_eof".to_string())
+            .with_timeouts(5, 5, 5);
+        let mut stream = run_stream_lifecycle(Box::pin(mock_stream), handler, config);
+
+        let mut output = Vec::new();
+        let mut error_propagated = false;
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(b) => output.push(String::from_utf8_lossy(&b).to_string()),
+                Err(_) => {
+                    error_propagated = true;
+                }
+            }
+        }
+
+        let full_output = output.join("");
+        assert!(full_output.contains("processed:data: thinking_chunk"));
+        assert!(full_output.contains("processed:data: thinking_done"));
+        assert!(
+            full_output.contains("processed:data: normal_token_without_newline"),
+            "Trailing buffer without newline must be flushed and processed before EOF guard"
+        );
+        assert!(
+            full_output.contains("[finalized]"),
+            "Stream with flushed content must finalize gracefully"
+        );
+        assert!(
+            !error_propagated,
+            "Must NOT report error when trailing buffer contains content"
         );
     }
 

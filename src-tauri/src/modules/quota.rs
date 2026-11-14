@@ -624,9 +624,6 @@ pub async fn fetch_quota_with_cache(
                 // Use debug level for detailed info to avoid console noise
                 tracing::debug!("Quota API returned {} models", quota_response.models.len());
 
-                // 动态更新官方全量模型结构体目录缓存
-                crate::models::OfficialModelCatalog::update(quota_response.models.clone());
-
                 // 提取该账号在官方 fetchAvailableModels 中真实披露支持的推荐/专用模型集合：
                 // 1. agentModelSorts (Recommended 核心模型列表，如 gemini-4-argon-*, gemini-3.8-flash-*, claude-opus-5-5-*, claude-sonnet-5-5-* 或 claude-*-4-6, gpt-oss-120b-medium)
                 // 2. imageGenerationModelIds (图像生成模型，如 gemini-3.1-flash-image)
@@ -652,6 +649,13 @@ pub async fn fetch_quota_with_cache(
                 // [2026-10-29] 不再向官方可用集合里注入任何“字典存在但未开通”的模型（如 gemini-3.1-flash-lite），
                 // 对外模型列表严格等于 fetchAvailableModels 的可用集合。
 
+                // 使用在线官方推荐结构同步动态目录（替换静态快照推荐列表并刷新模型规格）
+                crate::models::OfficialModelCatalog::sync_live_catalog(
+                    Some(email),
+                    quota_response.models.clone(),
+                    &official_supported_ids,
+                );
+
                 // Parse deprecated model routing rules
                 if let Some(deprecated) = quota_response.deprecated_model_ids {
                     for (old_id, info) in deprecated {
@@ -675,6 +679,24 @@ pub async fn fetch_quota_with_cache(
                 let mut quota_groups =
                     fetch_quota_summary(access_token, email, project_id.as_deref(), account_id)
                         .await;
+
+                // Pre-collect any active Gemini 4+ codenames returned by fetchAvailableModels
+                // so future dedicated groups (even with short names like "Helium") are isolated
+                // from general Gemini/3P pools.
+                let mut known_g4_codenames: Vec<String> = Vec::new();
+                for (name, info) in &quota_response.models {
+                    let nl = name.trim().to_lowercase();
+                    if info.is_disabled() || nl.contains("-disabled") || nl.ends_with("_disabled") {
+                        continue;
+                    }
+                    if let Some(code) =
+                        crate::proxy::common::model_mapping::extract_gemini4_codename(&nl)
+                    {
+                        if !known_g4_codenames.iter().any(|c| c == &code) {
+                            known_g4_codenames.push(code);
+                        }
+                    }
+                }
 
                 // 遍历官方公开模型目录，将模型可用性与额度解析解耦：
                 // 只要模型在官方支持清单且符合旗舰基准线，坚决予以保留，不再因缺少 quotaInfo 而丢弃模型。
@@ -717,55 +739,16 @@ pub async fn fetch_quota_with_cache(
                     let mut group_reset: Option<String> = None;
 
                     if let Some(ref groups) = quota_groups {
-                        let is_argon = name_lower.contains("argon");
-                        let is_claude_or_gpt = !is_argon
-                            && (name_lower.starts_with("claude") || name_lower.starts_with("gpt"));
-
-                        // 查找匹配的配额组：Argon 优先专属组；若是 Ultra 账号，无专属组时允许回退继承通用 Gemini 分组；
-                        // Claude/GPT 找 3P；Gemini 找常规 Gemini 组
-                        let mut matched_group = groups.iter().find(|g| {
-                            let gname = g.display_name.to_lowercase();
-                            let is_argon_group = gname.contains("argon")
-                                || g.buckets.iter().any(|b| {
-                                    let bid = b.bucket_id.to_lowercase();
-                                    let bname =
-                                        b.display_name.as_deref().unwrap_or("").to_lowercase();
-                                    bid.contains("argon") || bname.contains("argon")
-                                });
-                            if is_argon {
-                                return is_argon_group;
-                            }
-                            if is_argon_group {
-                                return false;
-                            }
-                            let is_claude_group = gname.contains("claude")
-                                || gname.contains("gpt")
-                                || gname.contains("3p");
-                            if is_claude_or_gpt {
-                                return is_claude_group;
-                            }
-                            // standard gemini
-                            !is_claude_group
-                                && (gname.contains("gemini")
-                                    || (!gname.contains("claude")
-                                        && !gname.contains("gpt")
-                                        && !gname.contains("3p")))
-                        });
-
-                        // Ultra 账号在官方架构下未拆分专属 Argon 分组，其 Argon 额度共享 Gemini 通用配额池
-                        if is_argon && matched_group.is_none() && is_ultra {
-                            matched_group = groups.iter().find(|g| {
-                                let gname = g.display_name.to_lowercase();
-                                !gname.contains("claude")
-                                    && !gname.contains("gpt")
-                                    && !gname.contains("3p")
-                            });
-                        }
-
-                        // 非 Ultra 账号若未命中独立 Argon 分组，判定为未获灰度授权，拦截防呆 (Fixes #3745)
-                        if is_argon && matched_group.is_none() {
-                            continue;
-                        }
+                        let matched_group = match match_quota_group_for_model_with_codenames(
+                            groups,
+                            &name_lower,
+                            is_ultra,
+                            &known_g4_codenames,
+                        ) {
+                            QuotaGroupMatch::Matched(g) => Some(g),
+                            QuotaGroupMatch::NoGroupKeep => None,
+                            QuotaGroupMatch::SkipUnauthorized => continue,
+                        };
 
                         if let Some(group) = matched_group {
                             // ================================================================
@@ -926,14 +909,7 @@ pub async fn fetch_quota_with_cache(
                             })
                             .or_else(|| {
                                 if is_ultra {
-                                    groups
-                                        .iter()
-                                        .find(|g| {
-                                            let gname = g.display_name.to_lowercase();
-                                            !gname.contains("claude")
-                                                && !gname.contains("gpt")
-                                                && !gname.contains("3p")
-                                        })
+                                    find_general_gemini_group(groups, &known_g4_codenames)
                                         .and_then(|g| g.buckets.first())
                                 } else {
                                     None
@@ -955,6 +931,12 @@ pub async fn fetch_quota_with_cache(
                                 "gemini-4-argon-low" => "Gemini 4 Argon (Low)",
                                 _ => "Gemini 4 Argon",
                             };
+                            let catalog_max_output =
+                                crate::models::OfficialModelCatalog::get(argon_name)
+                                    .and_then(|info| info.max_output_tokens)
+                                    .filter(|&v| v > 0)
+                                    .map(|v| v as i32)
+                                    .unwrap_or(65536);
                             quota_data.add_model(crate::models::quota::ModelQuota {
                                 name: argon_name.to_string(),
                                 percentage: pct,
@@ -965,7 +947,7 @@ pub async fn fetch_quota_with_cache(
                                 thinking_budget: Some(-1),
                                 recommended: Some(true),
                                 max_tokens: Some(1048576),
-                                max_output_tokens: Some(65536),
+                                max_output_tokens: Some(catalog_max_output),
                                 model: Some("MODEL_PLACEHOLDER_M421".to_string()),
                                 supported_mime_types: None,
                             });
@@ -1590,6 +1572,135 @@ pub async fn warm_up_account(account_id: &str) -> Result<String, String> {
     ))
 }
 
+#[derive(Debug)]
+enum QuotaGroupMatch<'a> {
+    Matched(&'a crate::models::quota::QuotaGroup),
+    NoGroupKeep,
+    SkipUnauthorized,
+}
+
+fn group_matches_codename(group: &crate::models::quota::QuotaGroup, code: &str) -> bool {
+    let gname = group.display_name.to_lowercase();
+    gname.contains(code)
+        || group.buckets.iter().any(|b| {
+            let bid = b.bucket_id.to_lowercase();
+            let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
+            bid.contains(code) || bname.contains(code)
+        })
+}
+
+fn is_claude_or_3p_group(group: &crate::models::quota::QuotaGroup) -> bool {
+    let gname = group.display_name.to_lowercase();
+    gname.contains("claude") || gname.contains("gpt") || gname.contains("3p")
+}
+
+fn is_dedicated_g4_group(
+    group: &crate::models::quota::QuotaGroup,
+    known_codenames: &[String],
+) -> bool {
+    let gname = group.display_name.to_lowercase();
+    if crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+        &gname,
+        "",
+        known_codenames,
+    )
+    .is_some()
+    {
+        return true;
+    }
+    group.buckets.iter().any(|b| {
+        let bid = b.bucket_id.to_lowercase();
+        let bname = b.display_name.as_deref().unwrap_or("").to_lowercase();
+        crate::proxy::common::model_mapping::extract_group_g4_codename_with_known(
+            &bname,
+            &bid,
+            known_codenames,
+        )
+        .is_some()
+    })
+}
+
+fn find_general_gemini_group<'a>(
+    groups: &'a [crate::models::quota::QuotaGroup],
+    known_codenames: &[String],
+) -> Option<&'a crate::models::quota::QuotaGroup> {
+    groups
+        .iter()
+        .find(|g| {
+            !is_dedicated_g4_group(g, known_codenames)
+                && !is_claude_or_3p_group(g)
+                && (g.display_name.to_lowercase().contains("gemini")
+                    || g.buckets
+                        .iter()
+                        .any(|b| b.bucket_id.to_lowercase().contains("gemini")))
+        })
+        .or_else(|| {
+            groups
+                .iter()
+                .find(|g| !is_dedicated_g4_group(g, known_codenames) && !is_claude_or_3p_group(g))
+        })
+}
+
+/// Extract a Gemini 4+ codename (e.g. "argon", "hydrogen", "carbon") when present.
+fn extract_g4_codename(name_lower: &str) -> Option<String> {
+    crate::proxy::common::model_mapping::extract_gemini4_codename(name_lower)
+}
+
+/// Match a model from `fetchAvailableModels` against `retrieveUserQuotaSummary` groups.
+///
+/// Only legacy `argon` enforces the dedicated-group-or-Ultra gate (#3745). Other Gemini 4+
+/// models (e.g. `hydrogen`, `carbon`, or future codenames) prefer a matching dedicated group
+/// when present and otherwise fall back to the standard Gemini pool across all account tiers.
+fn match_quota_group_for_model_with_codenames<'a>(
+    groups: &'a [crate::models::quota::QuotaGroup],
+    name_lower: &str,
+    is_ultra: bool,
+    known_codenames: &[String],
+) -> QuotaGroupMatch<'a> {
+    let g4_codename = extract_g4_codename(name_lower);
+    let is_argon = g4_codename.as_deref() == Some("argon");
+    let is_claude_or_gpt = g4_codename.is_none()
+        && (name_lower.starts_with("claude") || name_lower.starts_with("gpt"));
+
+    if is_claude_or_gpt {
+        return groups
+            .iter()
+            .find(|g| !is_dedicated_g4_group(g, known_codenames) && is_claude_or_3p_group(g))
+            .map_or(QuotaGroupMatch::NoGroupKeep, QuotaGroupMatch::Matched);
+    }
+
+    if let Some(code) = g4_codename.as_deref() {
+        if let Some(specific) = groups.iter().find(|g| group_matches_codename(g, code)) {
+            return QuotaGroupMatch::Matched(specific);
+        }
+        // Only Argon preserves the strict non-Ultra dedicated-group gate (#3745).
+        if is_argon && !is_ultra {
+            return QuotaGroupMatch::SkipUnauthorized;
+        }
+        return find_general_gemini_group(groups, known_codenames).map_or(
+            if is_argon {
+                QuotaGroupMatch::SkipUnauthorized
+            } else {
+                QuotaGroupMatch::NoGroupKeep
+            },
+            QuotaGroupMatch::Matched,
+        );
+    }
+
+    // Standard Gemini models avoid dedicated G4/3P groups.
+    find_general_gemini_group(groups, known_codenames)
+        .map_or(QuotaGroupMatch::NoGroupKeep, QuotaGroupMatch::Matched)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+fn match_quota_group_for_model<'a>(
+    groups: &'a [crate::models::quota::QuotaGroup],
+    name_lower: &str,
+    is_ultra: bool,
+) -> QuotaGroupMatch<'a> {
+    match_quota_group_for_model_with_codenames(groups, name_lower, is_ultra, &[])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1696,5 +1807,116 @@ mod tests {
             classify_ban_probe_response(403, body),
             BanProbeOutcome::Unknown
         );
+    }
+
+    fn make_test_group(display_name: &str, bucket_id: &str) -> crate::models::quota::QuotaGroup {
+        crate::models::quota::QuotaGroup {
+            display_name: display_name.to_string(),
+            description: None,
+            buckets: vec![crate::models::quota::QuotaBucket {
+                bucket_id: bucket_id.to_string(),
+                window: "5h".to_string(),
+                remaining_fraction: 0.85,
+                reset_time: "2026-11-13T18:00:00Z".to_string(),
+                observed_at: None,
+                cycle_tokens: None,
+                display_name: None,
+                description: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn test_match_quota_group_preserves_hydrogen_and_carbon_for_non_ultra_without_dedicated_group()
+    {
+        let groups = vec![
+            make_test_group("Gemini", "gemini-5h"),
+            make_test_group("Claude", "3p-5h"),
+        ];
+
+        // Non-Ultra accounts without a dedicated "hydrogen"/"carbon" bucket must fall back
+        // to the standard Gemini pool instead of discarding models returned by fetchAvailableModels.
+        for model in [
+            "gemini-4-hydrogen-high",
+            "gemini-4-hydrogen-low",
+            "gemini-4-carbon-xhigh",
+            "gemini-4-helium-medium",
+        ] {
+            match match_quota_group_for_model(&groups, model, false) {
+                QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Gemini"),
+                other => panic!("expected Gemini fallback for {model}, got {other:?}"),
+            }
+        }
+
+        // Legacy Argon still enforces the dedicated-group-or-Ultra gate (#3745).
+        assert!(matches!(
+            match_quota_group_for_model(&groups, "gemini-4-argon-high", false),
+            QuotaGroupMatch::SkipUnauthorized
+        ));
+        match match_quota_group_for_model(&groups, "gemini-4-argon-high", true) {
+            QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Gemini"),
+            other => panic!("expected Ultra Argon fallback to Gemini, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_match_quota_group_prefers_dedicated_g4_group_when_present() {
+        let groups = vec![
+            make_test_group("Gemini", "gemini-5h"),
+            make_test_group("Hydrogen", "hydrogen-weekly"),
+            make_test_group("Argon", "argon-weekly"),
+            make_test_group("Claude", "3p-5h"),
+        ];
+
+        match match_quota_group_for_model(&groups, "gemini-4-hydrogen-high", false) {
+            QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Hydrogen"),
+            other => panic!("expected dedicated Hydrogen group, got {other:?}"),
+        }
+        match match_quota_group_for_model(&groups, "gemini-4-argon-high", false) {
+            QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Argon"),
+            other => panic!("expected dedicated Argon group, got {other:?}"),
+        }
+        match match_quota_group_for_model(&groups, "gemini-3.8-flash-high", false) {
+            QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Gemini"),
+            other => panic!("expected standard Gemini group, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_match_quota_group_isolates_dynamic_codename_and_ignores_numeric_versions() {
+        // Pure numeric segment after "gemini-4-" must not be treated as a codename.
+        assert_eq!(extract_g4_codename("gemini-4-1-flash"), None);
+        assert_eq!(extract_g4_codename("gemini-4-pro-preview"), None);
+        assert_eq!(
+            extract_g4_codename("gemini-4-helium-xhigh"),
+            Some("helium".to_string())
+        );
+
+        let groups = vec![
+            make_test_group("Helium", "helium-weekly"),
+            make_test_group("Gemini", "gemini-5h"),
+        ];
+        let known_codenames = vec!["helium".to_string()];
+
+        match match_quota_group_for_model_with_codenames(
+            &groups,
+            "gemini-4-helium-xhigh",
+            false,
+            &known_codenames,
+        ) {
+            QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Helium"),
+            other => panic!("expected Helium group, got {other:?}"),
+        }
+
+        // Standard Gemini must skip the dynamic Helium group even when Helium comes first.
+        match match_quota_group_for_model_with_codenames(
+            &groups,
+            "gemini-3.8-flash-high",
+            false,
+            &known_codenames,
+        ) {
+            QuotaGroupMatch::Matched(g) => assert_eq!(g.display_name, "Gemini"),
+            other => panic!("expected Gemini group, got {other:?}"),
+        }
     }
 }

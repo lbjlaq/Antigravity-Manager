@@ -250,8 +250,10 @@ pub struct UpstreamTimeoutPlan {
 /// 发送阶段（用于错误分类与诊断）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendStage {
-    /// 仍在向上游写出请求体
+    /// 仍在向上游写出请求体（有进展，或底层传输错误）
     Upload,
+    /// 上传阶段连续无进展，stall 看门狗触发
+    UploadStalled,
     /// 请求体已发完，正在等待首个上游字节（响应头与首 chunk 同源，即 TTFT）
     AwaitFirstByte,
     /// 已拿到响应头或底层已完成
@@ -262,6 +264,7 @@ impl SendStage {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Upload => "upload",
+            Self::UploadStalled => "upload_stalled",
             Self::AwaitFirstByte => "await_first_byte",
             Self::Completed => "completed",
         }
@@ -377,9 +380,12 @@ pub fn current_upload_throughput_bps() -> Option<u64> {
     UPLOAD_THROUGHPUT_EWMA_BPS.read().map(|v| v as u64)
 }
 
-/// 用一个完整上传样本更新 EWMA（样本过小或过快时直接忽略）
+/// 用一个上传样本更新 EWMA（样本过小或过快时直接忽略）。
+///
+/// 阈值必须覆盖现场常见的 5~30KB/s 慢速上传；历史上 `<32KB/s` 被丢弃，
+/// 导致预算永远学不到慢速，只能按声明的 2Mbps 下限 5~18s 硬切。
 fn observe_upload_throughput(bps: u64) {
-    if bps < 32 * 1024 || bps > 1024 * 1024 * 1024 {
+    if bps < 4 * 1024 || bps > 1024 * 1024 * 1024 {
         return;
     }
     let mut guard = UPLOAD_THROUGHPUT_EWMA_BPS.write();
@@ -414,6 +420,8 @@ struct PhasedSendOutcome {
     bytes_sent: usize,
     /// 上传阶段耗时（仅当上传确实完成时有值）
     upload_elapsed: Option<std::time::Duration>,
+    /// 失败是否由看门狗预算（首字节 / 总预算）掐断；false 表示底层传输自身报错
+    budget_exhausted: bool,
 }
 
 /// 邮箱脱敏：只显示前3位 + *** + @域名前2位 + ***
@@ -437,13 +445,18 @@ pub fn mask_email(email: &str) -> String {
 // 这里保留同名导出，保证既有调用点（含单测）无需改动。
 pub use crate::proxy::pipeline::terminal::{
     FIRST_BYTE_STAGE_TERMINAL_MARKER, GATEWAY_BUDGET_TERMINAL_MARKER, REPLAY_CAP_TERMINAL_MARKER,
-    UPLOAD_STAGE_TERMINAL_MARKER,
+    TRANSPORT_RESET_TERMINAL_MARKER, UPLOAD_STAGE_TERMINAL_MARKER, UPLOAD_STALLED_TERMINAL_MARKER,
 };
 
 /// 判断上游错误是否为“大体积上传阶段终止、不应再跨账号重传”的终态失败
 pub fn is_upload_stage_failure(error_text: &str) -> bool {
-    crate::proxy::pipeline::terminal::classify(error_text)
-        == Some(crate::proxy::pipeline::terminal::UpstreamTerminal::Upload)
+    matches!(
+        crate::proxy::pipeline::terminal::classify(error_text),
+        Some(
+            crate::proxy::pipeline::terminal::UpstreamTerminal::Upload
+                | crate::proxy::pipeline::terminal::UpstreamTerminal::UploadStalled
+        )
+    )
 }
 
 /// 判断上游错误是否为“首字节预算耗尽、不应跨账号重放”的终态失败
@@ -504,6 +517,10 @@ pub const V1_INTERNAL_BASE_URL_FALLBACKS: [&str; 2] = [
     V1_INTERNAL_BASE_URL_DAILY, // 优先级 1: Daily (官方 IDE 原生主力端点，毫秒级响应，稳定支持长流式与思维链)
     V1_INTERNAL_BASE_URL_SANDBOX, // 优先级 2: Sandbox (沙箱备用，极速响应，实测完美承载 100k+ 上下文，无缝容灾)
 ];
+
+/// 大 body 上传的端点偏好阈值：达到该体量时，主端点冷却期间优先健康 Sandbox，
+/// 避免把同一份大 body 先重传到已知故障的主端点。
+const UPLOAD_HEAVY_BODY_BYTES: usize = 512 * 1024;
 
 /// 提取端点的主机名或规范标识，使不同 API 路径（如 :loadCodeAssist、:fetchAvailableModels、v1internal）
 /// 能共享底层主机的健康度状态，避免同一死端点在不同业务模块重复超时。
@@ -631,6 +648,19 @@ impl EndpointHealthTracker {
     /// - 沙箱备用端点 (sandbox.googleapis.com) 永远排在主端点之后，绝不因主端点偶发抖动而抢占首位导致非美用户大面积 400；
     /// - 永远保留所有端点，确保在全故障极端情况下仍能兜底尝试。
     pub fn get_ordered_endpoints<'a>(&self, default_endpoints: &[&'a str]) -> Vec<&'a str> {
+        self.get_ordered_endpoints_with_preference(default_endpoints, false)
+    }
+
+    /// 与 [`Self::get_ordered_endpoints`] 相同，但允许在上传重请求时优先健康 Sandbox。
+    ///
+    /// 默认策略刻意让冷却中的主端点先探活（避免 Sandbox 抢占导致非美用户 400）；
+    /// 但对大 body 上传，主端点冷却时继续先传 Daily 会把同一份 body 再传一遍。
+    /// `prefer_healthy_sandbox=true` 时顺序变为：健康主端点 → 健康 Sandbox → 不健康主端点 → 不健康 Sandbox。
+    pub fn get_ordered_endpoints_with_preference<'a>(
+        &self,
+        default_endpoints: &[&'a str],
+        prefer_healthy_sandbox: bool,
+    ) -> Vec<&'a str> {
         let mut healthy_primary = Vec::new();
         let mut unhealthy_primary = Vec::new();
         let mut healthy_sandbox = Vec::new();
@@ -669,10 +699,17 @@ impl EndpointHealthTracker {
         unhealthy_sandbox.sort_by_key(|&(_, time)| time);
 
         let mut result = healthy_primary;
-        for (ep, _) in unhealthy_primary {
-            result.push(ep);
+        if prefer_healthy_sandbox {
+            result.extend(healthy_sandbox);
+            for (ep, _) in unhealthy_primary {
+                result.push(ep);
+            }
+        } else {
+            for (ep, _) in unhealthy_primary {
+                result.push(ep);
+            }
+            result.extend(healthy_sandbox);
         }
-        result.extend(healthy_sandbox);
         for (ep, _) in unhealthy_sandbox {
             result.push(ep);
         }
@@ -1060,6 +1097,8 @@ impl UpstreamClient {
         ticker.tick().await; // 消费 interval 的首个立即 tick
 
         let mut slow_reported = false;
+        // 软上传预算只用于观测/提示：有进展时不再作为硬终止条件。
+        let mut soft_budget_extended = false;
         loop {
             tokio::select! {
                 biased;
@@ -1090,6 +1129,7 @@ impl UpstreamClient {
                         stage,
                         bytes_sent: sent,
                         upload_elapsed,
+                        budget_exhausted: false,
                     };
                 }
                 _ = ticker.tick() => {
@@ -1139,41 +1179,60 @@ impl UpstreamClient {
                                 stage: SendStage::AwaitFirstByte,
                                 bytes_sent: sent,
                                 upload_elapsed,
+                                budget_exhausted: true,
                             };
                         }
                     } else {
-                        // 2. 上传阶段：持续有进展不算卡死；预算从“首个字节真正开始传输”起算，
-                        //    建连/TLS/写头不占用按体积估算的传输预算；尚未开传时由停滞检测兜底。
+                        // 2. 上传阶段：进展驱动。
+                        //    - 只有连续 stall_timeout 无任何进展才终止（UploadStalled）；
+                        //    - upload_budget 仅作为软预算/观测阈值：有进展时只记录一次扩展事件，
+                        //      不再按固定 5~18s 硬切断，避免把 5~30KB/s 的慢流误杀；
+                        //    - 真正的硬上限由 hard_deadline（全局请求预算）兜底。
                         if idle >= stall_timeout {
+                            // 失败/中止的上传同样是有效慢速样本；只在成功上传后采样会让
+                            // EWMA 永远停留在旧的高速值。
+                            if let Some(elapsed) = progress.elapsed_since_first_byte() {
+                                if let Some(bps) = progress.completed_throughput_bps(elapsed) {
+                                    observe_upload_throughput(bps);
+                                }
+                            }
+                            let soft_exceeded = progress
+                                .elapsed_since_first_byte()
+                                .map(|elapsed| elapsed >= upload_budget)
+                                .unwrap_or(false);
                             return PhasedSendOutcome {
                                 result: Err(format!(
-                                    "Upload stalled: no progress for {}s (sent {}/{} bytes, upload_budget={}s)",
+                                    "Upload stalled: no progress for {}s (sent {}/{} bytes, upload_budget={}s, soft_budget_exceeded={})",
                                     idle.as_secs(),
                                     sent,
                                     body_len,
-                                    upload_budget.as_secs()
+                                    upload_budget.as_secs(),
+                                    soft_exceeded
                                 )),
-                                stage: SendStage::Upload,
+                                stage: SendStage::UploadStalled,
                                 bytes_sent: sent,
                                 upload_elapsed: None,
+                                budget_exhausted: false,
                             };
                         }
                         if let Some(transfer_elapsed) = progress.elapsed_since_first_byte() {
-                            if transfer_elapsed >= upload_budget {
+                            if transfer_elapsed >= upload_budget && !soft_budget_extended {
+                                soft_budget_extended = true;
                                 let secs = transfer_elapsed.as_secs_f64().max(0.001);
                                 let rate_kbps = (sent as f64 / secs / 1024.0) as u64;
-                                return PhasedSendOutcome {
-                                    result: Err(format!(
-                                        "Upload budget exhausted after {}s of transfer (sent {}/{} bytes, rate={}KB/s)",
-                                        upload_budget.as_secs(),
+                                crate::proxy::stage_trace::StageTrace::notice_current(
+                                    "upload_budget_extended",
+                                    format!(
+                                        "sent={}/{} rate={}KB/s transfer_elapsed={:.1}s soft_upload_budget={}s stall_timeout={}s idle={}s (progressing; waiting for stall timeout)",
                                         sent,
                                         body_len,
-                                        rate_kbps
-                                    )),
-                                    stage: SendStage::Upload,
-                                    bytes_sent: sent,
-                                    upload_elapsed: None,
-                                };
+                                        rate_kbps,
+                                        transfer_elapsed.as_secs_f64(),
+                                        upload_budget.as_secs(),
+                                        stall_timeout.as_secs(),
+                                        idle.as_secs()
+                                    ),
+                                );
                             }
                         }
                     }
@@ -1193,6 +1252,7 @@ impl UpstreamClient {
                                 stage: SendStage::AwaitFirstByte,
                                 bytes_sent: sent,
                                 upload_elapsed,
+                                budget_exhausted: true,
                             };
                         }
                         return PhasedSendOutcome {
@@ -1204,6 +1264,7 @@ impl UpstreamClient {
                             stage: SendStage::Upload,
                             bytes_sent: sent,
                             upload_elapsed: None,
+                            budget_exhausted: true,
                         };
                     }
                 }
@@ -1235,11 +1296,9 @@ impl UpstreamClient {
         let (upload_budget_secs, budget_source) =
             Self::calculate_upload_budget_secs(body_len, cfg, observed_bps);
 
-        let estimated_tokens = crate::proxy::pipeline::budget::estimated_tokens()
-            .unwrap_or_else(|| estimate_payload_tokens(body_len));
-        let large_body = body_len >= cfg.large_body_threshold_bytes()
-            || body_len >= 1024 * 1024
-            || estimated_tokens >= 30_000;
+        // 上传重传成本只由 body 字节数决定；token 数属于 prefill/首字预算，
+        // 不应把 642KB/155k tokens 的 agent 请求误判为“大 body”而禁用端点回退。
+        let large_body = body_len >= cfg.large_body_threshold_bytes();
         let max_endpoints = V1_INTERNAL_BASE_URL_FALLBACKS.len();
         let endpoint_attempt_limit = if large_body {
             cfg.large_body_endpoint_attempts.clamp(1, max_endpoints)
@@ -1356,6 +1415,54 @@ impl UpstreamClient {
                 crate::proxy::pipeline::budget::gateway_request_budget_secs(),
                 method
             )),
+        }
+    }
+
+    /// 裁决发送阶段失败是否构成上游终态（阻止跨端点回退与跨账号重放）。
+    ///
+    /// - 当 `!has_next_for_send_stage` 为真（当前已是本次调用允许尝试的最后一个端点）时，
+    ///   无论该末尾端点是 Daily 还是 Sandbox，只要处于 `AwaitFirstByte | Upload | UploadStalled` 阶段，
+    ///   都必须标记为对应终态（`FirstByte` / `TransportReset` / `Upload` / `UploadStalled`），
+    ///   防止末尾 Sandbox 端点吞掉终态标记后退化为外层跨账号重传与粘性会话改绑；
+    /// - 当后面仍有可尝试端点时：
+    ///   - `AwaitFirstByte` 且 `budget_exhausted && !is_sandbox`：非 Sandbox 主端点已耗尽整次调用的
+    ///     共享首字预算，继续回退 Sandbox 只会带着残余的几秒预算重传同一份 body，直接标为 `FirstByte` 终态；
+    ///   - `Upload | UploadStalled` 且 `budget_exhausted || (terminal_large_body_failure && !is_sandbox)`：
+    ///     上传阶段已触发 `hard_deadline` 耗尽整次调用硬预算，或命中非 Sandbox 主端点的大体积单次尝试策略，
+    ///     直接标为 `Upload` / `UploadStalled` 终态，避免无意义进入下一端点并在回退入口被改标为 `FirstByte`。
+    fn classify_send_stage_terminal(
+        global_exhausted: bool,
+        send_stage: SendStage,
+        budget_exhausted: bool,
+        has_next_for_send_stage: bool,
+        terminal_large_body_failure: bool,
+        is_sandbox: bool,
+    ) -> Option<crate::proxy::pipeline::terminal::UpstreamTerminal> {
+        if global_exhausted {
+            return Some(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget);
+        }
+        match send_stage {
+            SendStage::AwaitFirstByte
+                if !has_next_for_send_stage || (budget_exhausted && !is_sandbox) =>
+            {
+                if budget_exhausted {
+                    Some(crate::proxy::pipeline::terminal::UpstreamTerminal::FirstByte)
+                } else {
+                    Some(crate::proxy::pipeline::terminal::UpstreamTerminal::TransportReset)
+                }
+            }
+            SendStage::Upload | SendStage::UploadStalled
+                if !has_next_for_send_stage
+                    || budget_exhausted
+                    || (terminal_large_body_failure && !is_sandbox) =>
+            {
+                Some(if send_stage == SendStage::UploadStalled {
+                    crate::proxy::pipeline::terminal::UpstreamTerminal::UploadStalled
+                } else {
+                    crate::proxy::pipeline::terminal::UpstreamTerminal::Upload
+                })
+            }
+            _ => None,
         }
     }
 
@@ -1562,12 +1669,18 @@ impl UpstreamClient {
         // 我们包装一层循环，以便在检测到特定错误时移除 Header 并重试
         loop {
             let mut last_err: Option<String> = None;
+            let mut last_send_stage: Option<SendStage> = None;
             let mut should_retry_without_header = false;
 
-            // 动态健康度排序：优先尝试健康端点，跳过处于冷却期的故障端点，避免无状态重复累积 40s 超时
-            let candidate_endpoints = self
-                .endpoint_health
-                .get_ordered_endpoints(&V1_INTERNAL_BASE_URL_FALLBACKS);
+            // 动态健康度排序：优先尝试健康端点，跳过处于冷却期的故障端点，避免无状态重复累积 40s 超时。
+            // 大 body 上传时，若主端点处于冷却期，优先健康 Sandbox，避免把同一份 body 先重传到 Daily。
+            let prefer_healthy_sandbox =
+                matches!(method, "generateContent" | "streamGenerateContent")
+                    && body_bytes.len() >= UPLOAD_HEAVY_BODY_BYTES;
+            let candidate_endpoints = self.endpoint_health.get_ordered_endpoints_with_preference(
+                &V1_INTERNAL_BASE_URL_FALLBACKS,
+                prefer_healthy_sandbox,
+            );
             let endpoints_snapshot = candidate_endpoints
                 .iter()
                 .map(|u| {
@@ -1613,9 +1726,18 @@ impl UpstreamClient {
                 let elapsed_secs = call_overall_start.elapsed().as_secs();
                 let remaining_budget = total_budget_secs.saturating_sub(elapsed_secs);
                 if remaining_budget == 0 && idx > 0 {
+                    let marker = if crate::proxy::pipeline::budget::exhausted() {
+                        GATEWAY_BUDGET_TERMINAL_MARKER
+                    } else {
+                        match last_send_stage {
+                            Some(SendStage::Upload) => UPLOAD_STAGE_TERMINAL_MARKER,
+                            Some(SendStage::UploadStalled) => UPLOAD_STALLED_TERMINAL_MARKER,
+                            _ => FIRST_BYTE_STAGE_TERMINAL_MARKER,
+                        }
+                    };
                     let budget_err = format!(
-                        "Total upstream timeout budget ({}s) exhausted before attempting endpoint {} (elapsed={:.1}s), aborting fallback chain",
-                        total_budget_secs, base_url, call_overall_start.elapsed().as_secs_f64()
+                        "{}Total upstream timeout budget ({}s) exhausted before attempting endpoint {} (elapsed={:.1}s), aborting fallback chain",
+                        marker, total_budget_secs, base_url, call_overall_start.elapsed().as_secs_f64()
                     );
                     tracing::warn!(%budget_err);
                     last_err = Some(budget_err);
@@ -1740,12 +1862,23 @@ impl UpstreamClient {
                         )
                         .await
                         {
-                            Ok(res) => PhasedSendOutcome {
-                                result: res.map_err(|e| e.to_string()),
-                                stage: SendStage::Completed,
-                                bytes_sent: body_bytes.len(),
-                                upload_elapsed: None,
-                            },
+                            Ok(res) => {
+                                // progress == None 无字节进度可观测，无法区分建连/上传/等首字阶段：
+                                // 失败时统一按 AwaitFirstByte（TransportReset）处理以避免误罚号；
+                                // 同时失败分支 bytes_sent 记为 0（无实测已发字节，避免诊断日志虚报 100% 进度）。
+                                let (stage, bytes_sent) = if res.is_ok() {
+                                    (SendStage::Completed, body_bytes.len())
+                                } else {
+                                    (SendStage::AwaitFirstByte, 0)
+                                };
+                                PhasedSendOutcome {
+                                    result: res.map_err(|e| e.to_string()),
+                                    stage,
+                                    bytes_sent,
+                                    upload_elapsed: None,
+                                    budget_exhausted: false,
+                                }
+                            }
                             Err(_) => PhasedSendOutcome {
                                 result: Err(format!(
                                     "First byte budget exhausted after {}s at {} (fixed-length body: upload_budget={}s + first_byte={}s, stage=await_first_byte)",
@@ -1754,14 +1887,17 @@ impl UpstreamClient {
                                 stage: SendStage::AwaitFirstByte,
                                 bytes_sent: 0,
                                 upload_elapsed: None,
+                                budget_exhausted: true,
                             },
                         }
                     }
                 };
                 let duration_s = attempt_start.elapsed().as_secs_f64();
                 let send_stage = outcome.stage;
+                last_send_stage = Some(send_stage);
                 let sent_bytes = outcome.bytes_sent;
                 let upload_elapsed = outcome.upload_elapsed;
+                let budget_exhausted = outcome.budget_exhausted;
                 let response = outcome.result;
 
                 match response {
@@ -1926,24 +2062,17 @@ impl UpstreamClient {
                             timeout_plan.large_body && timeout_plan.endpoint_attempt_limit <= 1;
                         // 终态判定统一交给 `pipeline::terminal` 分类：
                         // - 全局预算耗尽：整条请求已到点
-                        // - 首字节耗尽且后面没有可尝试端点：上游只是慢，不是账号故障（沙箱端点除外，沙箱非美地区不连通绝非真实终态）
-                        // - 大体积单次尝试策略：继续 fallback 只会再次上传同一份大 body（但沙箱端点除外，沙箱故障不应毒化阻断账号轮换）
+                        // - 末尾可尝试端点（无论 Daily 还是 Sandbox）或主端点预算已耗尽：按发送阶段标为对应终态，防止末尾吞掉终态标记或带着耗尽预算无效回退
+                        // - 大体积单次尝试策略：主端点失败后不再继续 fallback 重传同一份大 body（首选为 Sandbox 时允许回退主端点）
                         let global_exhausted = crate::proxy::pipeline::budget::exhausted();
-                        let terminal = if global_exhausted {
-                            Some(crate::proxy::pipeline::terminal::UpstreamTerminal::GlobalBudget)
-                        } else if send_stage == SendStage::AwaitFirstByte
-                            && !has_next_for_send_stage
-                            && !is_sandbox
-                        {
-                            Some(crate::proxy::pipeline::terminal::UpstreamTerminal::FirstByte)
-                        } else if send_stage == SendStage::Upload
-                            && !is_sandbox
-                            && (!has_next_for_send_stage || terminal_large_body_failure)
-                        {
-                            Some(crate::proxy::pipeline::terminal::UpstreamTerminal::Upload)
-                        } else {
-                            None
-                        };
+                        let terminal = Self::classify_send_stage_terminal(
+                            global_exhausted,
+                            send_stage,
+                            budget_exhausted,
+                            has_next_for_send_stage,
+                            terminal_large_body_failure,
+                            is_sandbox,
+                        );
                         let detail = if !fallback_attempts.is_empty() {
                             format!(
                                 "Upstream send failed at {} (fallback attempt {} after primary {}): {}",
@@ -1954,17 +2083,24 @@ impl UpstreamClient {
                             )
                         } else {
                             format!(
-                                "Upstream send failed at {} (method={}, kind={}, body_len={}, stage={}, bytes_sent={}, effective_bps={}, budget_source={}, upload_budget={}s, first_byte_budget={}s, total_elapsed={:.1}s): {}",
+                                "Upstream send failed at {} (method={}, kind={}, body_len={}, stage={}, bytes_sent={}, progress_pct={:.1}%, effective_bps={}, budget_source={}, upload_budget={}s, first_byte_budget={}s, large_body={}, endpoint_attempts={}, total_elapsed={:.1}s): {}",
                                 base_url,
                                 method,
                                 media_kind.as_str(),
                                 body_bytes.len(),
                                 send_stage.as_str(),
                                 sent_bytes,
+                                if body_bytes.is_empty() {
+                                    0.0
+                                } else {
+                                    sent_bytes as f64 * 100.0 / body_bytes.len() as f64
+                                },
                                 effective_bps,
                                 timeout_plan.budget_source.as_str(),
                                 upload_budget_secs,
                                 first_byte_budget_secs,
+                                timeout_plan.large_body,
+                                timeout_plan.endpoint_attempt_limit,
                                 call_overall_start.elapsed().as_secs_f64(),
                                 e
                             )
@@ -2366,6 +2502,170 @@ mod tests {
     }
 
     #[test]
+    fn upload_prefers_healthy_sandbox_when_primary_in_cooldown() {
+        let tracker = EndpointHealthTracker::new(Duration::from_secs(60));
+        // 主端点故障、Sandbox 健康
+        tracker.mark_failure(V1_INTERNAL_BASE_URL_DAILY);
+
+        // 默认策略：冷却中的主端点仍在健康 Sandbox 之前（探活主端点）
+        let default_order = tracker.get_ordered_endpoints(&V1_INTERNAL_BASE_URL_FALLBACKS);
+        assert_eq!(
+            default_order,
+            vec![V1_INTERNAL_BASE_URL_DAILY, V1_INTERNAL_BASE_URL_SANDBOX]
+        );
+
+        // 上传重请求：健康 Sandbox 优先，避免把大 body 再传一遍到已知故障的主端点
+        let upload_order =
+            tracker.get_ordered_endpoints_with_preference(&V1_INTERNAL_BASE_URL_FALLBACKS, true);
+        assert_eq!(
+            upload_order,
+            vec![V1_INTERNAL_BASE_URL_SANDBOX, V1_INTERNAL_BASE_URL_DAILY]
+        );
+    }
+
+    #[test]
+    fn classify_send_stage_terminal_marks_upload_even_when_last_endpoint_is_sandbox() {
+        use crate::proxy::pipeline::terminal::UpstreamTerminal;
+
+        // 1. 常规请求 (has_next_for_send_stage=true, large_body=false) 在首个端点 Daily 失败：
+        //    不打终态标记，允许继续回退到第二个端点 Sandbox。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::UploadStalled,
+                false,
+                true,
+                false,
+                false,
+            ),
+            None
+        );
+
+        // 2. 常规请求 (< 4MB, large_body=false) 在首个端点 (has_next_for_send_stage=true) 上传阶段触发 hard_deadline
+        //    (budget_exhausted=true)：必须立即标为 Upload 终态，避免无意义进入下一端点并在 remaining_budget==0 入口被改标为 FirstByte。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::Upload,
+                true,
+                true,
+                false,
+                false,
+            ),
+            Some(UpstreamTerminal::Upload)
+        );
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::Upload,
+                true,
+                true,
+                false,
+                true,
+            ),
+            Some(UpstreamTerminal::Upload)
+        );
+
+        // 3. 第二个（也是最后一个）端点是 Sandbox (has_next_for_send_stage=false, is_sandbox=true)：
+        //    必须打上 Upload / UploadStalled 终态标记，防止外层退化为跨账号重传。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::UploadStalled,
+                false,
+                false,
+                false,
+                true,
+            ),
+            Some(UpstreamTerminal::UploadStalled)
+        );
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::Upload,
+                false,
+                false,
+                true,
+                true,
+            ),
+            Some(UpstreamTerminal::Upload)
+        );
+    }
+
+    #[test]
+    fn classify_send_stage_terminal_marks_await_first_byte_across_daily_and_sandbox() {
+        use crate::proxy::pipeline::terminal::UpstreamTerminal;
+
+        // 1. 主端点 Daily (is_sandbox=false) 首字预算耗尽：即使后面还有 Sandbox (has_next=true)，
+        //    也必须立即标为 FirstByte 终态，避免带着残余的几秒预算去 Sandbox 白白重传并在末尾丢标记。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                true,
+                true,
+                false,
+                false,
+            ),
+            Some(UpstreamTerminal::FirstByte)
+        );
+
+        // 2. 主端点 Daily (is_sandbox=false) 发生传输层断连 (budget_exhausted=false)：
+        //    当后面仍有 Sandbox 可尝试 (has_next=true) 时不打终态，允许立即回退到 Sandbox。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                false,
+                true,
+                false,
+                false,
+            ),
+            None
+        );
+
+        // 3. 若 Sandbox 作为首选端点被尝试 (is_sandbox=true, has_next=true) 且首字超时：
+        //    不打终态，允许回退到主端点 Daily。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                true,
+                true,
+                false,
+                true,
+            ),
+            None
+        );
+
+        // 4. 末尾端点是 Sandbox (has_next=false, is_sandbox=true)：
+        //    无论首字超时还是传输断连，都必须打上 FirstByte / TransportReset 终态标记，
+        //    防止外层 handler 因丢失标记误走非终态分支而冷却账号、强制换号并改绑 CacheFirst 会话。
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                true,
+                false,
+                false,
+                true,
+            ),
+            Some(UpstreamTerminal::FirstByte)
+        );
+        assert_eq!(
+            UpstreamClient::classify_send_stage_terminal(
+                false,
+                SendStage::AwaitFirstByte,
+                false,
+                false,
+                false,
+                true,
+            ),
+            Some(UpstreamTerminal::TransportReset)
+        );
+    }
+
+    #[test]
     fn test_v1_internal_fallbacks_order_prioritizes_daily_over_sandbox() {
         assert_eq!(
             V1_INTERNAL_BASE_URL_FALLBACKS,
@@ -2723,15 +3023,19 @@ mod tests {
         assert_eq!(big_plan.stall_secs, 45);
         assert!(big_plan.total_budget_secs >= big_plan.upload_budget_secs);
 
-        // 大上下文 (>=30k tokens 或 >=1MB) 同样被识别为大请求，仅允许 1 个端点以抑制无效重传
-        let large_context_plan = UpstreamClient::plan_upstream_timeouts_with_observed(
+        // 大上下文/大 token 数不再单独触发“大 body”端点限制：上传成本只看字节数。
+        // 1MB/155k tokens 的 agent 请求仍应允许端点回退（Daily -> Sandbox）。
+        let text_1mb = UpstreamClient::plan_upstream_timeouts_with_observed(
             PayloadMediaKind::TextChat,
             1024 * 1024,
             &cfg,
             None,
         );
-        assert!(large_context_plan.large_body);
-        assert_eq!(large_context_plan.endpoint_attempt_limit, 1);
+        assert!(!text_1mb.large_body);
+        assert_eq!(
+            text_1mb.endpoint_attempt_limit,
+            V1_INTERNAL_BASE_URL_FALLBACKS.len()
+        );
     }
 
     #[test]
@@ -2793,6 +3097,18 @@ mod tests {
         assert!(current_upload_throughput_bps().is_none());
         record_upload_throughput_sample(4 * 1024 * 1024, std::time::Duration::from_secs(2));
         assert!(current_upload_throughput_bps().is_some());
+
+        // 5~30KB/s 的慢速样本必须进入 EWMA；此前 `<32KB/s` 被丢弃，
+        // 导致 5s 固定预算永远学不到现场真实上行。
+        reset_upload_throughput_estimate();
+        observe_upload_throughput(5 * 1024);
+        assert_eq!(current_upload_throughput_bps(), Some(5 * 1024));
+        reset_upload_throughput_estimate();
+        observe_upload_throughput(1024);
+        assert!(
+            current_upload_throughput_bps().is_none(),
+            "samples below the 4KB/s floor must stay ignored"
+        );
         reset_upload_throughput_estimate();
     }
 }

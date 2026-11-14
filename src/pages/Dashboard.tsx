@@ -17,7 +17,7 @@ import { useNavigate } from 'react-router-dom';
 import AddAccountDialog from '../components/accounts/AddAccountDialog';
 import { showToast } from '../components/common/ToastContainer';
 import BestAccounts from '../components/dashboard/BestAccounts';
-import { findImageQuotaModel, findQuotaModel } from '../config/modelConfig';
+import { extractGroupQuotaPercentage, findImageQuotaModel, findQuotaModel } from '../config/modelConfig';
 import CurrentAccount from '../components/dashboard/CurrentAccount';
 import { useAccountStore } from '../stores/useAccountStore';
 import { useConfigStore } from '../stores/useConfigStore';
@@ -144,26 +144,10 @@ function Dashboard() {
                 });
                 if (!hasClaude) return null;
             }
-            // 优先从 quota_groups 提取原生 5H 滚动配额桶
-            if (a.quota?.quota_groups) {
-                for (const group of a.quota.quota_groups) {
-                    const gname = group.display_name.toLowerCase();
-                    if (gname.includes('argon')) continue;
-                    const matches = isClaude
-                        ? (gname.includes('claude') || gname.includes('gpt') || gname.includes('3p'))
-                        : (gname.includes('gemini') || (!gname.includes('claude') && !gname.includes('gpt') && !gname.includes('3p')));
-                    if (matches) {
-                        const bucket5h = group.buckets?.find(b =>
-                            b.window?.toLowerCase().includes('5h') ||
-                            b.bucket_id?.toLowerCase().includes('5h') ||
-                            b.window?.toLowerCase().includes('hour') ||
-                            b.bucket_id?.toLowerCase().includes('hour')
-                        );
-                        if (bucket5h && typeof bucket5h.remaining_fraction === 'number') {
-                            return Math.round(bucket5h.remaining_fraction * 100);
-                        }
-                    }
-                }
+            // 优先从 quota_groups 提取原生 5H 滚动配额桶（自动隔离 Gemini 4+ 专属桶）
+            const group5h = extractGroupQuotaPercentage(a.quota, isClaude ? 'claude' : 'gemini', '5h');
+            if (group5h !== null) {
+                return group5h;
             }
             if (modelKey === 'gemini-image') {
                 return findImageQuotaModel(a.quota?.models)?.percentage ?? null;
@@ -180,26 +164,7 @@ function Dashboard() {
                 });
                 if (!hasClaude) return null;
             }
-            if (a.quota?.quota_groups) {
-                for (const group of a.quota.quota_groups) {
-                    const gname = group.display_name.toLowerCase();
-                    if (gname.includes('argon')) continue;
-                    const matches = isClaude
-                        ? (gname.includes('claude') || gname.includes('gpt') || gname.includes('3p'))
-                        : (gname.includes('gemini') || (!gname.includes('claude') && !gname.includes('gpt') && !gname.includes('3p')));
-                    if (matches) {
-                        const weekly = group.buckets?.find(b =>
-                            b.window?.toLowerCase().includes('week') ||
-                            b.bucket_id?.toLowerCase().includes('week') ||
-                            b.window?.toLowerCase().includes('7d')
-                        );
-                        if (weekly && typeof weekly.remaining_fraction === 'number') {
-                            return Math.round(weekly.remaining_fraction * 100);
-                        }
-                    }
-                }
-            }
-            return null;
+            return extractGroupQuotaPercentage(a.quota, isClaude ? 'claude' : 'gemini', 'weekly');
         };
 
         // 计算目标底座池在指定模型下的综合指标（5H均值、周配额均值、周配额熔断加权，以及受周额度木桶约束后的 5H 均值）

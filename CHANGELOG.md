@@ -3,6 +3,56 @@
 > 完整版本历史记录。返回项目主页请查看 [README_ZH.md](README_ZH.md) | [English Changelog](CHANGELOG_EN.md)。
 
 *   **版本演进**:
+    *   **v5.0.4-beta.9 (2026-11-14)**:
+        -   **[官方推荐模型目录收敛、跨重启持久化与账号启停同步修复] (Fixes #3932, PR #3933, Thanks to @jeikl)**:
+            -   **Gemini 4+ 通用发现与高阶思考对齐**: 泛化 Gemini 4+ 代号模型发现与配额隔离逻辑，对齐 `gemini-4-hydrogen` 官方占位符（`MODEL_PLACEHOLDER_M525~M528`）与 `xhigh`/`100` `thinkingLevel` 处理；前端同步补齐模型分类与看板展示。(Fixes #3932, PR #3933)
+            -   **严格收敛为官方推荐模型并支持跨重启持久化**: `fetchAvailableModels` 同步后以官方 `agentModelSorts`、`imageGenerationModelIds`、`tieredModelIds` 推荐集合为准覆盖冷启动基线（不再将非推荐/已淘汰模型注入默认端点），将最新在线推荐目录剥离单账号私有配额后持久化到 `<data_dir>/official_models_live_cache.json`，并在账号删除时同步清理；同步将内置 Day-0 `official_models.json` 基线对齐为当前活跃的 20 个官方推荐条目（含派生裸名共 26 个）。(Fixes #3932)
+            -   **修复全禁用冷启动双端分裂与代理开关生效延迟**: 修复桌面端同时存在 `instance` 与 `admin_server` 两个独立 `TokenManager` 实例导致的列表与调度分裂，在所有启停、账号切换与热重载路径统一通过 `active_token_managers()` 同步，并在禁用代理或全部账号停用后立即清理活跃池与粘性绑定。(Ref #3932, #3936)
+        -   **[模型第一道门禁 503 语义规范化与全语言诊断] (PR #3936, Ref #3932, Thanks to @jeikl)**:
+            -   **第一道门禁 503 `no_available_accounts` 收敛**: 当请求命中已知官方目录或磁盘缓存模型但当前活跃可用池中没有任何持有该模型配额的账号时，直接在第一道门禁返回结构化 `503 Service Unavailable`（`code: no_available_accounts`），并配套补齐 12 种语言国际化诊断提示与监控日志语义分类，避免误报 `404` 或污染连坐其余模型与账号。(PR #3936, Ref #3932)
+        -   **[Upload 与 AwaitFirstByte 终态标记跨端点完整保留] (PR #3935, Ref #3639, #3763, #3821, #3893, #3899, #3906, Thanks to @mclinyeshi)**:
+            -   **跨 Daily 与 Sandbox 端点统一保留终态标记**: 主端点非 Sandbox 耗尽 `AwaitFirstByte` 预算时立即归类为 `FirstByte` 终态而不再带着耗尽预算回退 Sandbox；在 `Upload`/`UploadStalled` 硬截止耗尽或定长发送失败及末尾 Sandbox 候选失败路径上严格保留 `Upload`/`FirstByte`/`TransportReset` 终态标记，彻底防止 `CacheFirst` 模式下因未打标错误触发 30 秒账号锁定与强制解绑轮换。(PR #3935)
+
+    *   **v5.0.4-beta.8 (2026-11-13)**:
+        -   **[Gemini 4 全系新模型支持（Carbon/Argon/Hydrogen）、256k 巨型输出上限与账号级智能调度] (Fixes #3922, Ref #3927, Thanks to @koeria, @lbjlaq)**:
+            -   **官方模型目录补齐与 256k 输出上限对齐**: 紧跟 Google 官方上游模型灰度发布节奏，在内置模型目录表 `official_models.json` 中全面补齐 `gemini-4-carbon` 与 `gemini-4-hydrogen` 全系列（含 bare, low, medium, high, xhigh 档位），并为 `gemini-4-argon` 补全 `xhigh` 极限思考档位；将 Carbon 与 Hydrogen 的 `maxOutputTokens` 精确对齐上游官方标称的 `262,144`（256k tokens 输出），彻底突破旧版 64k 上限，完美满足超长上下文与深思考整包工具调用生成。(Fixes #3922, Ref #3927)
+            -   **账号能力智能隔离与逐号配额调度**: 彻底重构模型目录解析与账号配额加载链路，将既有 Argon 专属逻辑全面泛化为 Gemini 4 代号模型族体系（`carbon` / `argon` / `hydrogen`）；严格过滤上游下发的 `-disabled` 占位条目，禁止为未获授权或免费普通账号注入虚假高阶模型；调度器仅在具体账号真实具备对应代号授权与正额度（positive quota > 0%）时才赋予调度资格，确保高阶模型请求精准路由至具备能力的 Ultra/付费 Pro 账号，杜绝跨号误派发引发的 403 报错与号池熔断。(Fixes #3922)
+            -   **极高思考档位剥离与基底桶归一化**: 在 `model_mapping.rs` 中为裸模型派生与元数据生成补充 `-xhigh` 档位后缀剥离支持；在 `normalize_to_standard_id` 中将 `gemini-4-<codename>-*` 各变体归一化至对应的基底标准计费桶，实现各模型族独立配额追踪与精准熔断自愈。(Ref #3927)
+            -   **网关 CLI 同步与前端配置对齐**: 在 `cli_sync.rs` 的 `CORE_GATEWAY_MODELS` 中同步补齐 Carbon、Argon 与 Hydrogen 各档位及 1M 上下文规格；同步更新前端 `modelConfig.ts`、`useProxyModels.tsx` 与 `modelCategory.ts`，严格遵循 Single Source of Truth，提供纯净的账号真实可用模型视图。
+        -   **[OAuth 授权码兑换瞬态网络错误重试与精准网络指引] (Fixes #3920, Ref #3923, Thanks to @koeria, @lbjlaq)**:
+            -   **传输层瞬态失败指数退避重试**: 在 `oauth.rs` 的 `exchange_code_once` 中引入最多 3 次退避重试机制（500ms、1000ms 等）。精准区分传输层网络中断（连接失败、请求超时、DNS 解析异常）与 Google 4xx 业务响应：仅在授权码未到达 Google 未被消耗的瞬态阶段触发自动重试，挽救因网络抖动导致的授权中断，避免用户频繁重跑浏览器授权。(Fixes #3920, Ref #3923)
+            -   **4xx 业务错误即刻短路与友好诊断提示**: 当遭遇 4xx 业务状态码（如 `invalid_grant`、`unauthorized_client`）时即刻终止重试，无缝衔接多客户端 Fallback 兜底；当所有重试均为传输层失败时，明确提示“浏览器已成功授权但桌面客户端无法直连 Google 授权端点”，引导用户检查代理配置与网络连通性，消除“授权莫名失败”的误导性体验。(Fixes #3920, Ref #3923)
+        -   **[全池账号封禁明确诊断与免自锁自愈] (Fixes #3919, Ref #3924, Thanks to @koeria, @lbjlaq)**:
+            -   **池空状态深度诊断与封禁明确告警**: 彻底根治号池内所有账号因上游封禁（403 TOS 违规）或全部手动停用后，网关向客户端误报“429 限流冷却中，等待即可恢复”的严重误导体验。在候选池为空时按需执行轻量级磁盘状态扫描，精准统计封禁（banned）、手动停用（disabled）与未载入账号状态；针对封禁账号明确指出“封禁账号绝不可能通过等待冷却恢复，请前往账号管理页面检查或提交申诉”，帮助用户第一时间定位故障。(Fixes #3919, Ref #3924)
+            -   **防自锁分类器拓展与分类隔离**: 在 `policy.rs` 分类器中同步拓展针对“无可用账号”诊断特征（`no available accounts`）的安全识别，杜绝网关内部错误在无账号可用时发生错误递归自噬与雪崩。(Ref #3924)
+        -   **[Linux 文件句柄上限扩展与配置迁移死循环落盘消除] (Fixes #3918, Ref #3928, Thanks to @koeria, @lbjlaq)**:
+            -   **Unix/Linux 文件句柄上限提升至 4096**: 将 `increase_nofile_limit()` 从单限定 `macos` 扩展至全体 `unix` 平台。消除多账号大并发网络连接、TLS Socket 与文件读写在 Linux（系统默认 `RLIMIT_NOFILE = 1024`）上瞬间打满导致底层 GLib `g_error()`/`abort` 崩溃隐患。(Fixes #3918, Ref #3928)
+            -   **消除配置迁移死循环强制刷盘**: 在 `ThinkingBudgetConfig` 中补齐 `thinking_budget_32k_legacy_migrated` 标志字段，彻底解决每次读取配置都判定为“未迁移”导致频繁调用 `write_atomic` + `sync_all` 循环落盘并引发瞬时 I/O 阻塞的确定性缺陷。(Fixes #3918, Ref #3928)
+
+    *   **v5.0.4-beta.7 (2026-11-12)**:
+        -   **[上游 WAF 429 身份改写根治、请求级限流防连坐与风控提示词清理方案] (Fixes #3904, #3908, #3901, #3915, Ref #3903, #3912, PR #3913, Thanks to @jeikl, @lbjlaq, @sinderson123-afk)**:
+            -   **单例身份不变量与多重身份清理**: 跨 `systemInstruction.parts` 全局去重，仅保留首处官方 Antigravity 身份；彻底清除 DSH/pi/OpenCode 等客户端多重身份声明叠加生成的纯空白与重复身份片段，杜绝多身份混合带 tools 时被 Google WAF 判定异常并抛出 429 RESOURCE_EXHAUSTED。(Fixes #3904, #3908)
+            -   **版本号识别优化与同位语标点规整**: 版本 token 优先匹配完整版本号（如 `gemini-3.8-flash-low`，彻底根除被截断为 `gemini-3` 并残留 `8-flash-low model.` 的缺陷）；规范化 AG 声明后的 ASCII 逗号与同位语续写为句号（`AG, a coding agent harness.` $\to$ `AG. a coding agent harness.`），折叠处理畸形标点（如 `.,`、`。，`），消除上游 WAF 触发特征。(Fixes #3908, #3915)
+            -   **请求级 429 防连坐与智能宽限重试**: 失败计数粒度细化至账号+模型（account + model），避免单一模型限流波及全号；首轮 429 遭遇无 `retryDelay` 的请求级限流时原地执行 GraceRetry 且不锁定账号；新增 `request_429_grace_ms`（首轮请求 429 宽限延迟，默认 1500ms，范围 200–10000ms，支持环境变量 `ABV_REQUEST_429_GRACE_MS` 与热更新）；网关全池冷却规范返回 429 状态码与 `all_accounts_limited`，并通过 `gateway_error.source` 标明来源；优先解析 `QuotaFailure`、`RetryInfo`、`ErrorInfo` 结构化信号，与轮换策略协同。(Fixes #3901)
+            -   **风控提示词清理方案（Prompt Rewrite）与内置推荐预设**: 反代设置新增「风控提示词清理方案」配置与编辑面板，支持单行通配符 `*` 与 `\n/\r/\t/\\/\*` 转义，空替换即为删除，仅作用于首个真实 user 之前的 System 轨并豁免代码块与思考块；默认内置并支持一键载入 6 套实战推荐规则（OpenCode 同位语、DSH 身份声明、WorkBuddy 身份声明、Codex CLI 身份指纹、Anthropic Billing 计费头元数据等），支持规则热重载与配置导入导出。(Ref #3903, #3913)
+            -   **全语言国际化覆盖与多目标编译修复**: 针对提示词清理规则与宽限延迟等新配置项补齐 12 种语言完整国际化覆盖；在 `Cargo.toml` 中显式指定 `default-run = "antigravity-tools"`，彻底消除多 bin 目标时 `cargo run` 或 `tauri dev` 编译报错问题。(Ref #3913)
+        -   **[收敛上传超时策略并消除 504 跨账号重传放大] (PR #3906, Ref #3763, #3821, #3639, #3893, #3899, Thanks to @jeikl, @mclinyeshi, @JeikCode)**:
+            -   **进展驱动上传看门狗**: 将 `upload_budget` 从固定硬时间切断降级为软预算与观测指标，仅在连续 `stall_secs` 无任何数据传输进展时才触发 `UploadStalled` 终态中止；全局总预算兜底硬上限，彻底避免网络平稳但速度较慢的大文件/大上下文上传被中途误掐断。(PR #3906, Ref #3763)
+            -   **杜绝跨账号重传放大**: 全面接入 `TerminalDisposition::plan`，明确 `Upload` 与 `UploadStalled` 在所有文本调度模式（CacheFirst / Balance / PerformanceFirst）下仅允许在同账号原地重连重试 1 次，失败后直接终止（Stop），坚决不解绑粘性会话、不跨账号轮换重放同一份大请求体，彻底消除 504 导致的号池风暴与雪崩。(PR #3906, Ref #3899)
+            -   **端点调度与 large_body 字节判定优化**: 修正 `large_body` 判定，仅依据实际 Body 字节数（>= 2MB）触发，移除 `>= 30k tokens` 的误判；主端点冷却时大请求优先尝试健康的 Sandbox 端点，且端点遍历至末尾时严格打齐终态标记。(PR #3906)
+            -   **EWMA 传输速率采样放宽与 UA 404 短路保护**: EWMA 有效速率采样门槛从 32KB/s 宽限至 4KB/s，并在失败/中止的上传上正常采样以更贴近真实弱网环境；客户端 UA 过旧引发的 404/403 在 Pipeline 统一短路，不再误写 900 秒模型熔断与换号。(PR #3906)
+            -   **前后端超时配置与生效值面板对齐**: 超时配置公式动态对齐后端（`1 + extra_wait_ratio`），前端精确夹取后端取值范围；新增 `get_effective_timeout_config` 命令并在设置面板提供「当前生效值」展示，明确区分单端点尝试次数与跨账号重试。(PR #3906)
+            -   **策略文档与结构化观测落地**: 新增 [`docs/UPLOAD_TIMEOUT_POLICY.md`](UPLOAD_TIMEOUT_POLICY.md) 详细阐释超时策略、终态矩阵、迁移与回滚路径；上传日志增加 `progress_pct`、`upload_budget_extended`、`endpoint_attempts` 等结构化指标。(PR #3906)
+        -   **[粘性会话连接重置原地重试与缓存锁定保护] (PR #3899, Ref #3821, #3893, #3639, Thanks to @mclinyeshi)**:
+            -   **区分底层连接重置与首字超时**: 准确区分预算内底层 TCP 连接中断（如 daily 端点 `client error (SendRequest)`）与真正的首字超时，将预算内断流归类为 `TransportReset`（502）且不惩罚账号，避免被误判为超时故障。(PR #3899, Ref #3821)
+            -   **CacheFirst 模式原地重试与会话缓存锁定**: 在 CacheFirst 调度模式下遭遇 TransportReset 坚决不解绑账号，在原地重试 1 次并维持会话绑定，彻底根除长会话因瞬间断流漂移至其他账号导致昂贵的前缀预填充缓存（KV Cache）雪崩失效的问题；Balance 模式下原地重试 1 次失败后才触发换号容灾；CacheFirst 下生图请求（不携带 KV 缓存）遭遇故障时允许平滑轮换账号且不解绑会话原有的文本绑定。(PR #3899)
+        -   **[身份改写标点清洗与续写保护] (PR #3902, Ref #3508, Thanks to @ThermalEng, @jeikl)**:
+            -   **规整身份声明后续标点拼接**: 仅当官方身份声明紧跟逗号续写时才剥离末尾句号，彻底消除清洗后出现 `.,` 双标点异常，在非续写路径严格保留句号；强化全角逗号与已知客户端开场白的单元测试防御覆盖。(PR #3902, Ref #3508)
+        -   **[OpenAI 协议提示词纯净透传与遗留技能伪指令清除] (Fixes #3914, Thanks to @l10kai)**:
+            -   **拔除遗留技能提示词劫持**: 彻底移除 `enhance_gemini_skills_prompt` 硬编码逻辑，不再无条件劫持 OpenAI 兼容协议（`/v1/chat/completions` 与 `/v1/responses`）中的 `</skills>` 及 `</skills_instructions>` XML 标签；消除向非 Codex 客户端注入虚构的 `shell_command` 工具及 Windows PowerShell 命令的错误伪指令，彻底恢复系统提示词原样纯净透传，杜绝主流 Agent 客户端（Oh My Pi、Cline、Roo Code 等）发生指令冲突与工具调用幻觉。(Fixes #3914)
+        -   **[流式生命周期 EOF 残余缓冲区优先冲刷与误中断消除] (Fixes #3911, Ref #3693, Thanks to @djj532)**:
+            -   **EOF 残余缓冲区优先安全冲刷**: 调整流式生命周期管理（`stream_lifecycle.rs`）在遇到上游 EOF 及跳出主循环时的执行顺序，优先对滞留的尾部数据缓冲区（`buffer`）执行 Trim 与行解析下发，彻底根治思考结束（`thought=true`）后紧跟的无换行符（`\n`）正文或工具调用尾帧因滞留缓冲区而被判空守卫（`!has_content()`）提前拦截并报出 `upstream stream ended after thinking without content` 导致有效帧丢失的问题；冲刷后若确实无有效正文依然如实报错以触发原生重试，兼顾极端分片容错与故障重试契约。(Fixes #3911, Ref #3693)
+
     *   **v5.0.4-beta.6 (2026-11-09)**:
         -   **[上游权威数据面封禁探针重构与智能长时冷却闭环] (Ref #3863, #3865, #3875, #3895, Thanks to @jeikl, @cubelikeplayDaniel)**:
             -   **数据面推理探针与标准 Antigravity 报文对齐**: 封禁探针全面升级为最新官方基准模型 `gemini-3.8-flash-low`（彻底淘汰废弃的 `gemini-2.5-flash`），通过 `wrap_request` 生成具备完整 `sessionId`、`systemInstruction`、`generationConfig.thinkingConfig` (LOW)、官方 `requestId` 与 `userAgent` 的正规请求信封，杜绝因结构残缺或废弃模型被 Google WAF 判定异常并抛出 429 RESOURCE_EXHAUSTED。

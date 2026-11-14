@@ -1046,6 +1046,8 @@
                 },
                 "max_wait": "Maks Bekleme (sn)",
                 "max_wait_tooltip": "Yalnızca 'Önbellek Öncelikli' modunda kullanılır: oran limiti sıfırlama zamanı bu değerin altındaysa geçiş yapmak yerine bekle.",
+                "request_429_grace_ms": "İstek düzeyinde 429 bekleme süresi",
+                "request_429_grace_ms_tooltip": "retryDelay içermeyen istek düzeyinde 429 için geçerli hesapta ilk denemenin yerinde bekleme süresi; varsayılan 1500ms, aralık 200–10000ms.",
                 "max_spillover_accounts": "Taşma Hesap Sınırı",
                 "max_spillover_accounts_tooltip": "Eşzamanlı trafik taşması için izin verilen maksimum hesap sayısı. 0 sınırsız demektir; pozitif bir tamsayı (örn. 2) aktif hesapları sınırlar.",
                 "spillover_unlimited": "Sınırsız (Tümü kullanılabilir)",
@@ -1403,7 +1405,7 @@
             "first_byte_effective": "Şu anda geçerli: metin/kod {{text}}s　görsel {{image}}s　video {{video}}s　yardımcı {{aux}}s",
             "section_stream": "③ İlk token ve sürekli çıktı",
             "stream_desc": "Başlık bekleme ve ilk token tek bir ilk-bayt gecikmesinde birleştirildi: HTTP 200 öncesi uç nokta değişimi serbest, sonrasında yalnızca güvenli kapatma yapılır.",
-            "auto_summary": "Örn.: maks. bekleme = 47MB ÷ {{mbps}}Mbps × 1.4 ≈ {{big}} sn;"
+            "auto_summary": "Örn.: maks. bekleme = 47MB ÷ {{mbps}}Mbps × {{factor}} ≈ {{big}} sn;"
         },
         "example": {
             "title": "Kullanım Örnekleri",
@@ -1774,6 +1776,32 @@
             "strategy_memory_desc": "En son turdan geriye doğru Base64 hacmini hesaplar; kota içindekileri korur, aşan eski görselleri otomatik olarak kaldırır.",
             "memory_budget_label": "Kümülatif Bellek Tazelik Sınırı",
             "memory_budget_hint": "Toplam çözümlenmiş Base64 hacmini sınır olarak belirler. Mevcut turdan geriye doğru tarar; sınır içindeki görseller korunur, öncekiler yer tutucuya dönüştürülür."
+        },
+        "prompt_rewrite": {
+            "title": "WAF İstem Temizleme Kuralları",
+            "subtitle": "İlk gerçek kullanıcı mesajından önceki tüm istem bloklarında metin değişikliği yapar; kullanıcı içeriği, model çıktısı ve araç bildirimleri değiştirilmez.",
+            "enabled": "Etkin",
+            "empty": "Henüz temizleme kuralı yok. Aşağıdan ekleyin.",
+            "add_rule": "Temizleme kuralı ekle",
+            "load_presets": "Önerilen Hazır Ayarları Yükle",
+            "load_presets_confirm": "Bu işlem mevcut özel kurallarınızı koruyarak resmi önerilen WAF hazır ayarlarını ekleyecektir. Devam edilsin mi?",
+            "match": "Eşleşme",
+            "replace": "Şununla değiştir",
+            "match_placeholder": "Eşleşme metni, örn: You are *",
+            "replace_placeholder": "Boş = eşleşen metni sil",
+            "expand": "Düzenleyiciyi genişlet",
+            "delete": "Sil",
+            "done": "Tamam",
+            "normalize_identity": "Yerleşik kimlik normalizasyonu",
+            "normalize_identity_hint": "İstemcinin orijinal kimlik bildirimlerini korumak ve yalnızca yukarıdaki özel kuralları çalıştırmak için kapatın. Hata ayıklama veya kendi uyumlu kimliğine sahip istemciler için yararlıdır.",
+            "rule_empty_pattern": "Eşleşme metni boş olamaz",
+            "rule_pattern_too_long": "Eşleşme metni 8192 karakteri aşıyor; arka uç bu kuralı atlayacaktır",
+            "rule_replacement_too_long": "Değiştirme metni 16384 karakteri aşıyor; arka uç bu kuralı atlayacaktır",
+            "rule_empty_match": "Bu kural boş metinle eşleşiyor ve atlanacak; lütfen You are * gibi sabit bir ön ek ekleyin",
+            "hint_empty": "Boş değiştirme = eşleşen metni sil",
+            "hint_wildcard": "* desteği (aynı satırdaki herhangi bir karakter); yeni satır için \\n kullanın.",
+            "hint_escape": "Kaçış karakterleri: \\n yeni satır, \\t sekme, \\\\ ters eğik çizgi, \\* yıldız işareti.",
+            "hint_order": "Kurallar yukarıdan aşağıya doğru çalıştırılır; yalnızca ilk gerçek kullanıcı mesajından önceki istem blokları işlenir, kod blokları muaftır."
         }
     },
     "monitor": {
@@ -1835,6 +1863,11 @@
             "ttft_prefix": "TTFT:",
             "total_duration_title": "Toplam Gecikme",
             "ttft_title": "İlk Belirteç Gecikmesi"
+        },
+        "gate_reasons": {
+            "model_not_exist": "model mevcut değil",
+            "no_available_accounts": "kullanılabilir hesap yok",
+            "no_quota_accounts": "kotalı hesap yok"
         },
         "details": {
             "title": "İstek Detayları",

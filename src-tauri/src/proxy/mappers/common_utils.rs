@@ -176,7 +176,7 @@ pub fn resolve_request_config(
     let _has_non_networking = contains_non_networking_tool(tools);
 
     // Strip -online suffix from original model if present (to detect networking intent)
-    let is_online_suffix = original_model.ends_with("-online");
+    let is_online_suffix = original_model.ends_with("-online") || mapped_model.ends_with("-online");
 
     // High-quality grounding allowlist (Only for models known to support search and be relatively 'safe')
     let _is_high_quality_model = mapped_model == "gemini-2.5-flash"
@@ -187,16 +187,21 @@ pub fn resolve_request_config(
         || mapped_model.starts_with("gemini-3-")
         || mapped_model.starts_with("gemini-3.")
         || mapped_model.starts_with("gemini-3.5-")
+        || mapped_model.starts_with("gemini-3.8-")
         || mapped_model.starts_with("gemini-pro-")
         || mapped_model.starts_with("gemini-3-flash")
         || mapped_model.starts_with("gemini-3.5-flash")
+        || mapped_model.starts_with("gemini-3.8-flash")
+        || mapped_model.starts_with("gemini-4")
         || mapped_model.starts_with("agent")
         || mapped_model.contains("claude-3-5-sonnet")
         || mapped_model.contains("claude-3-opus")
         || mapped_model.contains("claude-sonnet")
         || mapped_model.contains("claude-opus")
         || mapped_model.contains("claude-4")
-        || crate::proxy::model_specs::is_gemini_v3_or_above(mapped_model);
+        || mapped_model.contains("claude-5")
+        || crate::proxy::model_specs::is_gemini_v3_or_above(mapped_model)
+        || crate::proxy::model_specs::is_gemini_v4_or_above(mapped_model);
 
     // Determine if we should enable networking
     // [FIX] 禁用基于模型的自动联网逻辑，防止图像请求被联网搜索结果覆盖。
@@ -214,6 +219,7 @@ pub fn resolve_request_config(
     final_model = match final_model.as_str() {
         "gemini-3-pro-image-preview" => "gemini-3-pro-image".to_string(),
         "gemini-3-flash-preview" => "gemini-3-flash".to_string(),
+        "gemini-3.8-flash" => "gemini-3.8-flash-high".to_string(),
         _ => final_model,
     };
 
@@ -821,11 +827,25 @@ pub fn is_compaction_request_text(text: &str) -> bool {
 /// 分流 B: 识别已完成压缩提纯的会话接续请求 (Post-Compaction Continuation)
 /// 当会话在客户端成功生成 compact_boundary 或注入历史摘要后，后续接续轮次携带此特征。
 /// 流水线层应给予其永久豁免保护，绝不再执行二次伪装拦截，由底层 1M 超大上下文平滑承接。
+fn contains_compact_boundary_tag(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("<compact_boundary>")
+            || trimmed.starts_with("<compact_boundary ")
+            || trimmed.starts_with("</compact_boundary>")
+    })
+}
+
 pub fn is_post_compaction_continuation_text(text: &str) -> bool {
-    text.contains("This session is being continued from a previous conversation")
-        || text.contains("compact_boundary")
-        || text.contains("previous conversation that ran out of context")
-        || (text.contains("<summary>") && text.contains("previous conversation"))
+    let trimmed = text.trim_start();
+    trimmed.starts_with("This session is being continued from a previous conversation")
+        || contains_compact_boundary_tag(text)
+        || trimmed.starts_with("previous conversation that ran out of context")
+        || text.contains(
+            "This session is being continued from a previous conversation that ran out of context",
+        )
+        || (trimmed.starts_with("<summary>") || text.contains("\n<summary>"))
+            && text.contains("previous conversation")
 }
 
 /// 检查 contents 中是否包含工具调用或工具返回结果 (表明处于多轮 Agent 会话中)
@@ -856,6 +876,38 @@ mod tests {
 
     /// 会话段必须**稳定**（同一 session 多次请求共享，贴近官方 conversationId 语义），
     /// 但整体 ID 每次唯一（含 unixMs + 轨迹段 → 幂等隔离）。
+    #[test]
+    fn test_post_compaction_continuation_ignores_prose_and_code_references() {
+        assert!(!is_post_compaction_continuation_text(
+            "Found references to `compact_boundary` in common_utils.rs"
+        ));
+        assert!(!is_post_compaction_continuation_text(
+            r#"rg -n "compact_boundary|compaction" src-tauri/src/proxy/"#
+        ));
+        assert!(!is_post_compaction_continuation_text(
+            r#"|| text.contains("compact_boundary")"#
+        ));
+        assert!(!is_post_compaction_continuation_text(
+            r#"let x = "<compact_boundary>";"#
+        ));
+        assert!(!is_post_compaction_continuation_text(
+            "We noticed previous conversation mentioned <summary> tags inside inline prose."
+        ));
+
+        assert!(is_post_compaction_continuation_text(
+            "<compact_boundary>Second compaction happened</compact_boundary>"
+        ));
+        assert!(is_post_compaction_continuation_text(
+            "<compact_boundary reason=\"auto\"/>"
+        ));
+        assert!(is_post_compaction_continuation_text(
+            "This session is being continued from a previous conversation that ran out of context."
+        ));
+        assert!(is_post_compaction_continuation_text(
+            "Here is the summary of what we did from previous conversation:\n<summary>\n1. Done\n</summary>"
+        ));
+    }
+
     #[test]
     fn test_official_request_id_stable_conversation_unique_overall() {
         let a = build_official_request_id("sess-aaaabbbbccccdddd", 3);
@@ -939,6 +991,35 @@ mod tests {
         assert_eq!(config.request_type, "web_search");
         assert!(config.inject_google_search);
         assert_eq!(config.final_model, "gemini-3-flash");
+    }
+
+    #[test]
+    fn test_issue_3937_gemini_38_flash_online_grounding() {
+        let config = resolve_request_config(
+            "gemini-3.8-flash-online",
+            "gemini-3.8-flash-high",
+            &None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(config.request_type, "web_search");
+        assert!(config.inject_google_search);
+        assert_eq!(config.final_model, "gemini-3.8-flash-high");
+
+        let config_bare = resolve_request_config(
+            "gemini-3.8-flash-online",
+            "gemini-3.8-flash",
+            &None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(config_bare.request_type, "web_search");
+        assert!(config_bare.inject_google_search);
+        assert_eq!(config_bare.final_model, "gemini-3.8-flash-high");
     }
 
     #[test]
@@ -1739,24 +1820,6 @@ pub fn extract_multimodal_from_tool_text(raw_text: &str, extra_parts: &mut Vec<V
 
     // 4. 普通纯文本（代码、日志、测试数据等）：对齐官方原生，100% 原始透传，绝不破坏文本内容
     raw_text.to_string()
-}
-
-/// [FIX] Inject explicit tool mapping instructions for Gemini to read SKILL.md
-pub fn enhance_gemini_skills_prompt(text: &str) -> String {
-    let mut enhanced = text.to_string();
-    let warning_note = "\n\n**[CRITICAL INSTRUCTION FOR GEMINI - HOW TO READ SKILL.md]**\nYou do NOT have a direct `view_file` or `read_file` tool.\nTo \"open and read its SKILL.md completely\" as instructed above, you MUST use the `shell_command` tool.\nFor example, run the following command in PowerShell:\n`Get-Content -Raw -Path \"C:\\Users\\...\\SKILL.md\"`\nDo NOT guess other non-existent reading tools. You must use `shell_command`!\n\n";
-
-    // Inject before </skills_instructions> or </skills>
-    if enhanced.contains("</skills_instructions>") {
-        enhanced = enhanced.replace(
-            "</skills_instructions>",
-            &format!("{}</skills_instructions>", warning_note),
-        );
-    } else if enhanced.contains("</skills>") {
-        enhanced = enhanced.replace("</skills>", &format!("{}</skills>", warning_note));
-    }
-
-    enhanced
 }
 
 /// Detect common MIME types from magic bytes

@@ -143,6 +143,7 @@ const COMMAND_MAPPING: Record<string, { url: string; method: 'GET' | 'POST' | 'D
   'get_hub_fingerprint': { url: '/api/system/hub/fingerprint', method: 'GET' },
   'detect_remote_hub_fingerprint': { url: '/api/system/hub/detect-fingerprint', method: 'POST' },
   'get_effective_first_byte_timeouts': { url: '/api/system/timeouts/effective-first-byte', method: 'GET' },
+  'get_effective_timeout_config': { url: '/api/system/timeouts/effective-upload', method: 'GET' },
 
   // OAuth
   'prepare_oauth_url': { url: '/api/auth/url', method: 'GET' },

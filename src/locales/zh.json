@@ -1149,6 +1149,8 @@
                 },
                 "max_wait": "最大等待时长 (秒)",
                 "max_wait_tooltip": "仅在“缓存优先”模式下生效：如果账号限流重置时间小于此值，则原地等待而非切换账号。",
+                "request_429_grace_ms": "请求级 429 原地等待",
+                "request_429_grace_ms_tooltip": "无 retryDelay 的请求级 429 首轮在当前账号原地等待的时间；默认 1500ms，范围 200–10000ms。",
                 "max_spillover_accounts": "分流并发账号上限",
                 "max_spillover_accounts_tooltip": "当启动多个子代理或高并发多会话时，最多允许同时调用的健康账号数量。设为 0 表示不限制（全池空闲账号皆可外溢加速）；设为正整数（如 2）则限制最多同时使用该数量的账号，超出时在已有账号间负载均衡，防止子代理占用过多额外账号。",
                 "affinity_scope": "粘性绑定维度",
@@ -1430,8 +1432,11 @@
             "header_wait_title": "首响应头超时 (秒)",
             "header_wait_desc": "0 = 使用内置值：首选端点 30 秒 / 备用端点 25 秒；填非 0 时只作为下限往上抬。",
             "large_body_desc": "超过阈值的文件默认只发一次，避免反复重传占满上行。",
+            "large_body_desc_v2": "超过该字节阈值的请求最多只尝试配置的端点数；账号轮换另计。",
             "large_body_threshold_title": "大文件阈值 (MB)",
             "endpoint_attempts_title": "最多尝试次数",
+            "endpoint_attempts_title_v2": "最多端点尝试次数",
+            "account_retry_note": "账号轮换另计：按号池大小通常 4~12 次；本项只限制端点尝试次数。",
             "toast_reset": "已恢复超时默认值",
             "btn_reset": "恢复默认值",
             "btn_save": "保存超时设置"
@@ -1453,7 +1458,9 @@
             "first_byte_effective": "当前生效（基准上限 {{cap}}s）：常规 {{text}}s　图片 {{image}}s　视频 {{video}}s　辅助 {{aux}}s",
             "section_stream": "③ 首字与连续输出",
             "stream_desc": "首响应头与首个输出 token 已合并为统一首字延迟：未收到 200 前可切换端点；收到 200 后只安全收尾，不再切换。",
-            "auto_summary": "例：最大等待时间= 47MB ÷ {{mbps}}Mbps ×1.4 ≈ {{big}} 秒；"
+            "auto_summary": "例：最大等待时间= 47MB ÷ {{mbps}}Mbps ×{{factor}} ≈ {{big}} 秒；",
+            "effective_upload_title": "当前生效值（含环境变量与归一化）",
+            "effective_upload_env_overridden": "环境变量覆盖：{{fields}}"
         },
         "cloudflared": {
             "title": "公网访问 (Cloudflared)",
@@ -1809,6 +1816,32 @@
         "model_config": {
             "title": "模型配置"
         },
+        "prompt_rewrite": {
+            "title": "风控提示词清理方案",
+            "subtitle": "对首个真实 user 提问之前的所有提示词块执行文本替换；不影响用户正文、模型输出与工具声明。",
+            "enabled": "启用",
+            "empty": "还没有清理规则，点击下方新增。",
+            "add_rule": "新增清理规则",
+            "load_presets": "载入官方推荐预设",
+            "load_presets_confirm": "这将在保留现有自定义规则的同时，自动补齐官方推荐的风控预设规则，是否继续？",
+            "match": "匹配内容",
+            "replace": "替换为",
+            "match_placeholder": "匹配内容，例如：You are *",
+            "replace_placeholder": "留空 = 删除匹配内容",
+            "expand": "放大编辑",
+            "delete": "删除",
+            "done": "完成",
+            "normalize_identity": "内置身份归一化",
+            "normalize_identity_hint": "关闭后保留客户端原始身份句，仅执行上面的自定义规则；用于排障或客户端自带合规身份的场景。",
+            "rule_empty_pattern": "匹配内容不能为空",
+            "rule_pattern_too_long": "匹配内容超过 8192 字符，后端会跳过该规则",
+            "rule_replacement_too_long": "替换内容超过 16384 字符，后端会跳过该规则",
+            "rule_empty_match": "该规则会匹配空文本，后端会跳过；请补充固定前缀，例如 You are *",
+            "hint_empty": "替换为留空 = 删除匹配内容",
+            "hint_wildcard": "支持通配符 *（匹配同一行内任意字符）；跨行请写 \\n。",
+            "hint_escape": "支持转义：\\n 换行、\\t 制表符、\\\\ 反斜杠、\\* 字面星号。",
+            "hint_order": "规则按从上到下顺序执行；只作用于首个真实 user 提问前的提示词块，代码块自动豁免。"
+        },
         "multimodal": {
             "banner_title": "多模态交互与长程保鲜治理 (Pipeline First)",
             "banner_desc": "针对长程多模态 Agent（如 Codex、Claude Code、Cursor）频繁查看截图或文档的场景，提供协议无关的多模态历史保鲜滑窗与物理内存防爆治理，彻底根治会话历史因累积图片过多引发的 400 阻断崩溃与 Token 急速膨胀。",
@@ -1974,6 +2007,11 @@
             "ttft_prefix": "首字:",
             "total_duration_title": "总耗时",
             "ttft_title": "首字延迟"
+        },
+        "gate_reasons": {
+            "model_not_exist": "模型不存在",
+            "no_available_accounts": "无可用配额账号",
+            "no_quota_accounts": "全池配额耗尽"
         },
         "details": {
             "title": "请求详情",

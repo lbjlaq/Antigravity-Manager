@@ -341,19 +341,15 @@ pub async fn fetch_account_quota(
 
     crate::modules::tray::update_tray_menus(&app);
 
-    // 5. 同步到运行中的反代服务（如果已启动）
-    let instance_lock = proxy_state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
+    // 5. 同步到运行中的反代服务（如果已启动，覆盖 instance 与 admin_server）
+    for tm in proxy_state.active_token_managers().await {
         if quota.models.iter().any(|model| model.percentage > 0) {
-            instance.token_manager.clear_rate_limit_memory(&account_id);
+            tm.clear_rate_limit_memory(&account_id);
         }
-        let _ = instance.token_manager.reload_account(&account_id).await;
+        let _ = tm.reload_account(&account_id).await;
 
         // Blend TokenManager lockout state only for models that are still 0%
-        if let Some(reset_secs) = instance
-            .token_manager
-            .get_rate_limit_reset_seconds(&account_id)
-        {
+        if let Some(reset_secs) = tm.get_rate_limit_reset_seconds(&account_id) {
             if reset_secs > 0 {
                 let reset_iso = chrono::DateTime::<chrono::Utc>::from_timestamp(
                     chrono::Utc::now().timestamp() + reset_secs as i64,
@@ -383,10 +379,9 @@ pub async fn refresh_all_quotas_internal(
 ) -> Result<RefreshStats, String> {
     let stats = modules::account::refresh_all_quotas_logic().await?;
 
-    // 同步到运行中的反代服务（如果已启动）
-    let instance_lock = proxy_state.instance.read().await;
-    if let Some(instance) = instance_lock.as_ref() {
-        let _ = instance.token_manager.reload_all_accounts().await;
+    // 同步到运行中的反代服务（如果已启动，覆盖 instance 与 admin_server）
+    for tm in proxy_state.active_token_managers().await {
+        let _ = tm.reload_all_accounts().await;
     }
 
     // 发送全局刷新事件给 UI (如果需要)
@@ -553,6 +548,9 @@ pub async fn save_config(
     );
     crate::proxy::update_thinking_budget_config(config.proxy.thinking_budget.clone());
     crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
+    crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+        &config.proxy.prompt_rewrite,
+    );
     crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
     crate::proxy::update_multimodal_config(config.proxy.multimodal.clone());
     crate::proxy::update_stream_timeout_config(config.proxy.stream_timeouts.clone());
@@ -605,6 +603,9 @@ pub async fn save_config(
         crate::proxy::update_thinking_budget_config(config.proxy.thinking_budget.clone());
         // [NEW] 更新全局系统提示词配置
         crate::proxy::update_global_system_prompt_config(config.proxy.global_system_prompt.clone());
+        crate::proxy::mappers::prompt_sanitizer::PromptSanitizer::update_prompt_rewrite_config(
+            &config.proxy.prompt_rewrite,
+        );
         // [NEW] 更新全局图像思维模式配置
         crate::proxy::update_image_thinking_mode(config.proxy.image_thinking_mode.clone());
         crate::proxy::update_multimodal_config(config.proxy.multimodal.clone());
@@ -1080,8 +1081,17 @@ pub async fn set_data_dir(
     cf_state: tauri::State<'_, crate::commands::cloudflared::CloudflaredState>,
 ) -> Result<String, String> {
     {
-        let instance = proxy_state.instance.read().await;
-        if instance.is_some() {
+        let instance_running = proxy_state.instance.read().await.is_some();
+        let mut any_server_running = instance_running;
+        if !any_server_running {
+            for server in proxy_state.active_axum_servers().await {
+                if *server.is_running.read().await {
+                    any_server_running = true;
+                    break;
+                }
+            }
+        }
+        if any_server_running {
             return Err("请先停止 API 反代服务，再迁移数据目录".to_string());
         }
     }
@@ -1483,31 +1493,29 @@ pub async fn toggle_proxy_status(
         if enable { "已启用" } else { "已禁用" }
     ));
 
-    // 4. 如果反代服务正在运行,立刻同步到内存池（避免禁用后仍被选中）
-    {
-        let instance_lock = proxy_state.instance.read().await;
-        if let Some(instance) = instance_lock.as_ref() {
-            // 如果禁用的是当前固定账号，则自动关闭固定模式（内存 + 配置持久化）
-            if !enable {
-                let pref_id = instance.token_manager.get_preferred_account().await;
-                if pref_id.as_deref() == Some(&account_id) {
-                    instance.token_manager.set_preferred_account(None).await;
+    // 4. 如果反代服务正在运行,立刻同步到所有活跃内存池（覆盖 instance 与 admin_server）
+    for tm in proxy_state.active_token_managers().await {
+        // 如果禁用的是当前固定账号，则自动关闭固定模式（内存 + 配置持久化）
+        if !enable {
+            let pref_id = tm.get_preferred_account().await;
+            if pref_id.as_deref() == Some(&account_id) {
+                tm.set_preferred_account(None).await;
 
-                    if let Ok(mut cfg) = crate::modules::config::load_app_config() {
-                        if cfg.proxy.preferred_account_id.as_deref() == Some(&account_id) {
-                            cfg.proxy.preferred_account_id = None;
-                            let _ = crate::modules::config::save_app_config(&cfg);
-                        }
+                if let Ok(mut cfg) = crate::modules::config::load_app_config() {
+                    if cfg.proxy.preferred_account_id.as_deref() == Some(&account_id) {
+                        cfg.proxy.preferred_account_id = None;
+                        let _ = crate::modules::config::save_app_config(&cfg);
                     }
                 }
             }
-
-            instance
-                .token_manager
-                .reload_account(&account_id)
-                .await
-                .map_err(|e| format!("同步账号失败: {}", e))?;
+        } else {
+            // 手动重新启用时，清理遗留 QoS 隔离/失败计数/模型临时熔断/内存限流锁定
+            tm.prepare_manual_enable(&account_id);
         }
+
+        tm.reload_account(&account_id)
+            .await
+            .map_err(|e| format!("同步账号失败: {}", e))?;
     }
 
     // 5. 更新托盘菜单
@@ -1542,12 +1550,12 @@ pub async fn update_account_priority(
         priority,
         model_priorities,
     )?;
-    if let Some(instance) = proxy_state.instance.read().await.as_ref() {
-        instance.token_manager.update_account_model_priorities(
+    for tm in proxy_state.active_token_managers().await {
+        tm.update_account_model_priorities(
             &account_id,
             priority,
             if has_model_override {
-                Some(saved_model_priorities)
+                Some(saved_model_priorities.clone())
             } else {
                 None
             },

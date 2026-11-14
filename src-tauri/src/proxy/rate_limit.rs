@@ -189,6 +189,16 @@ impl RateLimitTracker {
         }
     }
 
+    /// 清除某账号的所有连续失败计数（账号级 + 模型级 key）。
+    /// 返回是否实际删除了条目。
+    fn clear_failure_counts(&self, account_id: &str) -> bool {
+        let prefix = format!("{}:", account_id);
+        let before = self.failure_counts.len();
+        self.failure_counts
+            .retain(|key, _| key != account_id && !key.starts_with(&prefix));
+        self.failure_counts.len() != before
+    }
+
     /// 获取账号剩余的等待时间(秒)
     /// 支持检查账号级和模型级锁
     pub fn get_remaining_wait(&self, account_id: &str, model: Option<&str>) -> u64 {
@@ -319,7 +329,7 @@ impl RateLimitTracker {
     /// 当账号成功完成请求后调用此方法，将其失败计数归零，
     /// 这样下次失败时会从最短的锁定时间（60秒）开始。
     pub fn mark_success(&self, account_id: &str) {
-        if self.failure_counts.remove(account_id).is_some() {
+        if self.clear_failure_counts(account_id) {
             tracing::debug!("账号 {} 请求成功，已重置失败计数", account_id);
         }
         // 清除账号级限流
@@ -625,14 +635,14 @@ impl RateLimitTracker {
                 let failure_count = if reason != RateLimitReason::ServerError {
                     // 只有非 ServerError 才累加失败计数（用于指数退避）
                     let now = SystemTime::now();
-                    // 这里我们使用 account_id 作为 key，不区分模型，
-                    // 因为这里是为了计算连续"账号级"问题的退避。
-                    // 如果需要针对模型的连续失败计数，可能需要改变 failure_counts 的 key。
-                    // 暂时保持 account_id，这样如果一个模型一直挂，也会增加计数，符合逻辑。
-                    let mut entry = self
-                        .failure_counts
-                        .entry(account_id.to_string())
-                        .or_insert((0, now));
+                    // [Fixes #3901] 失败计数与限流锁 key 对齐为 account + model 粒度，
+                    // 杜绝不同模型的 429 互相抬升退避阶梯导致跨模型连坐封锁。
+                    let failure_key = if let Some(m) = model.as_deref().filter(|s| !s.is_empty()) {
+                        self.get_limit_key(account_id, Some(m))
+                    } else {
+                        account_id.to_string()
+                    };
+                    let mut entry = self.failure_counts.entry(failure_key).or_insert((0, now));
 
                     let elapsed = now
                         .duration_since(entry.1)
@@ -1097,7 +1107,7 @@ impl RateLimitTracker {
     /// 只清除账号本身的全局限流（不清除具体的模型级配额耗尽锁定）
     pub fn clear_account_only(&self, account_id: &str) -> bool {
         let cleared = self.limits.remove(account_id).is_some();
-        self.failure_counts.remove(account_id);
+        self.clear_failure_counts(account_id);
         cleared
     }
 
@@ -1107,7 +1117,7 @@ impl RateLimitTracker {
         let before = self.limits.len();
         self.limits
             .retain(|key, _| key != account_id && !key.starts_with(&prefix));
-        self.failure_counts.remove(account_id);
+        self.clear_failure_counts(account_id);
         self.limits.len() != before
     }
 

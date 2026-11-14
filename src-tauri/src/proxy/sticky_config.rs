@@ -41,6 +41,9 @@ pub struct StickySessionConfig {
     pub mode: SchedulingMode,
     /// 缓存优先模式下的最大等待时间 (秒)
     pub max_wait_seconds: u64,
+    /// 请求级 429（无 retryDelay）首轮原地 GraceRetry 等待时间（毫秒，默认 1500）
+    #[serde(default = "default_request_429_grace_ms")]
+    pub request_429_grace_ms: u64,
     /// 并发分流使用的账号上限 (0 表示不限制，>0 时最多分流至该数量的账号)
     #[serde(default = "default_max_spillover_accounts")]
     pub max_spillover_accounts: usize,
@@ -64,6 +67,16 @@ impl StickySessionConfig {
         }
         self.affinity_scope
     }
+
+    /// 获取实际生效的请求级 429 GraceRetry 等待时间（毫秒）。
+    /// 环境变量 `ABV_REQUEST_429_GRACE_MS` 优先，范围 200–10000ms。
+    pub fn resolve_request_429_grace_ms(&self) -> u64 {
+        std::env::var("ABV_REQUEST_429_GRACE_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(self.request_429_grace_ms)
+            .clamp(200, 10_000)
+    }
 }
 
 /// 全局获取当前生效的粘性绑定维度（支持环境变量覆盖，保证与 Headless/CLI 一致）
@@ -84,6 +97,10 @@ pub fn get_affinity_scope() -> AffinityScope {
         .unwrap_or_default()
 }
 
+fn default_request_429_grace_ms() -> u64 {
+    1500
+}
+
 fn default_max_spillover_accounts() -> usize {
     0
 }
@@ -93,6 +110,7 @@ impl Default for StickySessionConfig {
         Self {
             mode: SchedulingMode::Balance,
             max_wait_seconds: 60,
+            request_429_grace_ms: 1500,
             max_spillover_accounts: 0,
             affinity_scope: AffinityScope::Session,
         }
@@ -108,6 +126,7 @@ mod tests {
         let cfg = StickySessionConfig::default();
         assert_eq!(cfg.mode, SchedulingMode::Balance);
         assert_eq!(cfg.affinity_scope, AffinityScope::Session);
+        assert_eq!(cfg.request_429_grace_ms, 1500);
         assert_eq!(cfg.resolve_affinity_scope(), AffinityScope::Session);
     }
 
@@ -117,6 +136,7 @@ mod tests {
         let cfg: StickySessionConfig = serde_json::from_str(json_str).unwrap();
         assert_eq!(cfg.mode, SchedulingMode::CacheFirst);
         assert_eq!(cfg.max_wait_seconds, 90);
+        assert_eq!(cfg.request_429_grace_ms, 1500);
         assert_eq!(cfg.affinity_scope, AffinityScope::Session);
     }
 

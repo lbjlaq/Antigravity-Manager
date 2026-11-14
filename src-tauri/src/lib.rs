@@ -417,8 +417,8 @@ fn configure_linux_graphics() {
     }
 }
 
-/// Increase file descriptor limit for macOS to prevent "Too many open files" errors
-#[cfg(target_os = "macos")]
+/// Increase file descriptor limit on Unix (macOS/Linux) to prevent "Too many open files" errors
+#[cfg(unix)]
 fn increase_nofile_limit() {
     unsafe {
         let mut rl = libc::rlimit {
@@ -538,8 +538,8 @@ pub fn run() {
 
     let is_headless = args.iter().any(|arg| arg == "--headless");
 
-    // Increase file descriptor limit (macOS only)
-    #[cfg(target_os = "macos")]
+    // Increase file descriptor limit (Unix: macOS/Linux)
+    #[cfg(unix)]
     increase_nofile_limit();
 
     // Initialize logger
@@ -912,6 +912,7 @@ pub fn run() {
             commands::proxy::detect_remote_hub_fingerprint,
             commands::proxy::check_hub_update,
             commands::proxy::get_effective_first_byte_timeouts,
+            commands::proxy::get_effective_timeout_config,
             commands::proxy::clear_proxy_rate_limit,
             commands::proxy::clear_all_proxy_rate_limits,
             // Proxy Pool Binding commands

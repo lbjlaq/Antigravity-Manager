@@ -56,6 +56,27 @@ fn cold_bucket_of(uncached_tokens: u32) -> u8 {
     ((uncached_tokens / COLD_BUCKET_TOKENS).min(15)) as u8
 }
 
+/// 首包预判结果（两阶段 QoS 评估第一阶段）
+#[derive(Debug, Clone, PartialEq)]
+pub enum PreUsageQoSOutcome {
+    /// 已在首包阶段完成最终裁决（如功能关闭，或即使按 0 缓存全量冷启动也已明显超标）
+    Evaluated(QoSAction),
+    /// 处于灰色区间（未超全量冷启动兜底线），暂挂等待流尾 `usageMetadata` 实算核销
+    Deferred,
+}
+
+struct StrikeAssessment {
+    missing_cold_baseline: bool,
+    global_congestion: bool,
+    peer_avg_secs: Option<f64>,
+    is_strike: bool,
+    threshold_secs: f64,
+    vindicate_threshold_secs: f64,
+    uncached_bonus_secs: f64,
+    is_cold_start: bool,
+    bucket: u8,
+}
+
 /// 裁决动作
 #[derive(Debug, Clone, PartialEq)]
 pub enum QoSAction {
@@ -345,34 +366,17 @@ impl QoSGuardian {
         Some(values.iter().sum::<f64>() / values.len() as f64)
     }
 
-    /// 评估单次请求的 TTFT 并流转状态机
-    pub fn record_and_evaluate<F>(
+    /// 只读估算当前会话在水位线之后的预期未缓存 Token 规模
+    fn estimate_uncached_from_watermark(
         &self,
         account_id: &str,
         session_id: Option<&str>,
-        tier: &str,
-        ttft_ms: f64,
-        is_deep_thinking: bool,
         input_tokens: Option<u32>,
-        all_accounts: &[ProxyToken],
-        is_unhealthy_or_limited: F,
-    ) -> QoSAction
-    where
-        F: Fn(&str) -> bool,
-    {
-        // 若未启用自动限流进小黑屋机制，直接忽略校验时长，不标记疑似限速，不进小黑屋，不解绑会话
-        if !self.is_auto_jail_enabled() {
-            return QoSAction::None;
-        }
-
-        let ttft_secs = ttft_ms / 1000.0;
-        let now = Instant::now();
-
-        // 1. 未缓存 Token 规模计算 (Uncached Tokens)
-        // 区分大 Token 冷启动 (Cold Start Prefill) 与 热缓存交互 (Hot Cache Turn)
-        let uncached_tokens = if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+        now: Instant,
+    ) -> u32 {
+        if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
             let key = (account_id.to_string(), sid.to_string());
-            let uncached = match self.session_watermarks.get(&key) {
+            match self.session_watermarks.get(&key) {
                 Some(prev) => {
                     let (prev_toks, prev_time) = *prev.value();
                     // 若距离上次请求超过 5 分钟，上游 KV Cache 大概率已失效淘汰，按全量冷启动计算
@@ -382,23 +386,46 @@ impl QoSGuardian {
                         input_tokens.unwrap_or(0).saturating_sub(prev_toks)
                     }
                 }
-                None => {
-                    // 该会话在该账号上的首次请求 (冷启动 Prefill)
-                    input_tokens.unwrap_or(0)
-                }
-            };
-            if let Some(tokens) = input_tokens {
-                self.session_watermarks.insert(key, (tokens, now));
+                None => input_tokens.unwrap_or(0),
             }
-            uncached
         } else {
             input_tokens.unwrap_or(0)
-        };
+        }
+    }
 
+    /// 刷新会话上下文水位（用于无 usageMetadata 时的水位差估算兜底）
+    pub fn update_watermark(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        input_tokens: Option<u32>,
+    ) {
+        let now = Instant::now();
+        if let (Some(sid), Some(tokens)) = (session_id.filter(|s| !s.is_empty()), input_tokens) {
+            let key = (account_id.to_string(), sid.to_string());
+            self.session_watermarks.insert(key, (tokens, now));
+        }
         if self.session_watermarks.len() > 2000 {
             self.session_watermarks
                 .retain(|_, (_, ts)| now.duration_since(*ts).as_secs() < 15 * 60);
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assess_strike<F>(
+        &self,
+        account_id: &str,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        uncached_tokens: u32,
+        all_accounts: &[ProxyToken],
+        is_unhealthy_or_limited: &F,
+    ) -> StrikeAssessment
+    where
+        F: Fn(&str) -> bool,
+    {
+        let ttft_secs = ttft_ms / 1000.0;
 
         // 2. 动态预算补偿算法：
         // - 每 100K 未缓存 Token 额外补偿 +15.0s 物理 Prefill 耗时
@@ -424,13 +451,303 @@ impl QoSGuardian {
                 tier,
                 bucket,
                 all_accounts,
-                &is_unhealthy_or_limited,
+                is_unhealthy_or_limited,
             )
         } else {
             None
         };
 
         if is_cold_start && cold_peer_avg.is_none() {
+            return StrikeAssessment {
+                missing_cold_baseline: true,
+                global_congestion: false,
+                peer_avg_secs: None,
+                is_strike: false,
+                threshold_secs,
+                vindicate_threshold_secs,
+                uncached_bonus_secs,
+                is_cold_start,
+                bucket,
+            };
+        }
+
+        // 3. 提取同侪均值 (秒)：冷启动对比同桶冷启动，常规对比热缓存样本
+        let peer_avg_secs = if is_cold_start {
+            cold_peer_avg
+        } else {
+            self.calculate_pure_peer_avg(account_id, tier, all_accounts, is_unhealthy_or_limited)
+        }
+        .map(|ms| ms / 1000.0);
+
+        // 3.1 冷启动的相对阈值：有同桶基线时，拿“同桶均值的 1.5 倍”与绝对阈值取大。
+        // 否则 150K 冷启动的 42.5s 绝对线会卡在实测 36~44s 的抖动区间，依旧可能误杀。
+        let threshold_secs = match (is_cold_start, peer_avg_secs) {
+            (true, Some(peer_avg)) => threshold_secs.max(peer_avg * 1.5),
+            _ => threshold_secs,
+        };
+
+        // 4. 检查全局雪崩防护：若纯净同行均值本身也 >= threshold_secs，说明上游机房大面积拥堵，刹车不触发单号惩罚
+        if let Some(peer_avg) = peer_avg_secs {
+            if peer_avg >= threshold_secs {
+                return StrikeAssessment {
+                    missing_cold_baseline: false,
+                    global_congestion: true,
+                    peer_avg_secs: Some(peer_avg),
+                    is_strike: false,
+                    threshold_secs,
+                    vindicate_threshold_secs,
+                    uncached_bonus_secs,
+                    is_cold_start,
+                    bucket,
+                };
+            }
+        }
+
+        // 5. 判定是否构成一次卡顿打击 (Strike)
+        let is_strike = match peer_avg_secs {
+            // 同行健康，唯独当前账号超标
+            Some(_) => ttft_secs > threshold_secs,
+            // 纯净同行不足时，退化为绝对阈值防护 (额外 +10.0s 兜底)
+            None => ttft_secs > (threshold_secs + 10.0),
+        };
+
+        StrikeAssessment {
+            missing_cold_baseline: false,
+            global_congestion: false,
+            peer_avg_secs,
+            is_strike,
+            threshold_secs,
+            vindicate_threshold_secs,
+            uncached_bonus_secs,
+            is_cold_start,
+            bucket,
+        }
+    }
+
+    /// 两阶段评估 Phase 1（首包到达时、上游 usageMetadata 尚未返回）：
+    /// 仅当「即便按 0 缓存全量冷启动」仍严重超标时立即触发打击；
+    /// 否则暂挂等待流尾 `usageMetadata` 实算核销，彻底消除上游隐式缓存冷丢失导致的误杀。
+    #[allow(clippy::too_many_arguments)]
+    pub fn evaluate_pre_usage<F>(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        input_tokens: Option<u32>,
+        all_accounts: &[ProxyToken],
+        is_unhealthy_or_limited: F,
+    ) -> PreUsageQoSOutcome
+    where
+        F: Fn(&str) -> bool,
+    {
+        if !self.is_auto_jail_enabled() {
+            return PreUsageQoSOutcome::Evaluated(QoSAction::None);
+        }
+
+        let now = Instant::now();
+        let est_uncached =
+            self.estimate_uncached_from_watermark(account_id, session_id, input_tokens, now);
+        let worst_case_uncached = input_tokens.unwrap_or(est_uncached).max(est_uncached);
+
+        let cold_assessment = self.assess_strike(
+            account_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            worst_case_uncached,
+            all_accounts,
+            &is_unhealthy_or_limited,
+        );
+
+        if !cold_assessment.missing_cold_baseline
+            && !cold_assessment.global_congestion
+            && cold_assessment.is_strike
+        {
+            let action = self.evaluate_with_uncached(
+                account_id,
+                session_id,
+                tier,
+                ttft_ms,
+                is_deep_thinking,
+                worst_case_uncached,
+                input_tokens,
+                all_accounts,
+                &is_unhealthy_or_limited,
+            );
+            PreUsageQoSOutcome::Evaluated(action)
+        } else {
+            PreUsageQoSOutcome::Deferred
+        }
+    }
+
+    /// 两阶段评估 Phase 2（已从上游 `usageMetadata` 提取权威缓存实数）：
+    /// 用真实的 `uncached_tokens = total_input_tokens - cached_tokens` 完成最终裁决并正确入桶。
+    #[allow(clippy::too_many_arguments)]
+    pub fn reconcile_with_usage<F>(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        total_input_tokens: u32,
+        uncached_tokens: u32,
+        all_accounts: &[ProxyToken],
+        is_unhealthy_or_limited: F,
+    ) -> QoSAction
+    where
+        F: Fn(&str) -> bool,
+    {
+        if !self.is_auto_jail_enabled() {
+            return QoSAction::None;
+        }
+        self.evaluate_with_uncached(
+            account_id,
+            session_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            uncached_tokens,
+            Some(total_input_tokens),
+            all_accounts,
+            &is_unhealthy_or_limited,
+        )
+    }
+
+    /// 两阶段评估 Phase 2 兜底（流在收到 `usageMetadata` 前中断）：
+    /// 仅当首包耗时低于预期热缓存阈值时正常记录健康/平反样本；
+    /// 若处于无法确认是否丢缓存的灰色区间，保守跳过打击与入桶，避免误伤。
+    #[allow(clippy::too_many_arguments)]
+    pub fn reconcile_without_usage<F>(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        input_tokens: Option<u32>,
+        all_accounts: &[ProxyToken],
+        is_unhealthy_or_limited: F,
+    ) -> QoSAction
+    where
+        F: Fn(&str) -> bool,
+    {
+        if !self.is_auto_jail_enabled() {
+            return QoSAction::None;
+        }
+
+        let now = Instant::now();
+        let est_uncached =
+            self.estimate_uncached_from_watermark(account_id, session_id, input_tokens, now);
+        let assessment = self.assess_strike(
+            account_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            est_uncached,
+            all_accounts,
+            &is_unhealthy_or_limited,
+        );
+
+        if assessment.is_strike {
+            tracing::debug!(
+                "[QoS Guardian] Skipping ambiguous strike on stream without usageMetadata (account={}, ttft={:.2}s, est_uncached={})",
+                account_id,
+                ttft_ms / 1000.0,
+                est_uncached
+            );
+            return QoSAction::None;
+        }
+
+        self.evaluate_with_uncached(
+            account_id,
+            session_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            est_uncached,
+            input_tokens,
+            all_accounts,
+            &is_unhealthy_or_limited,
+        )
+    }
+
+    /// 评估单次请求的 TTFT 并流转状态机
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_and_evaluate<F>(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        input_tokens: Option<u32>,
+        all_accounts: &[ProxyToken],
+        is_unhealthy_or_limited: F,
+    ) -> QoSAction
+    where
+        F: Fn(&str) -> bool,
+    {
+        // 若未启用自动限流进小黑屋机制，直接忽略校验时长，不标记疑似限速，不进小黑屋，不解绑会话
+        if !self.is_auto_jail_enabled() {
+            return QoSAction::None;
+        }
+
+        let now = Instant::now();
+        let uncached_tokens =
+            self.estimate_uncached_from_watermark(account_id, session_id, input_tokens, now);
+        self.evaluate_with_uncached(
+            account_id,
+            session_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            uncached_tokens,
+            input_tokens,
+            all_accounts,
+            &is_unhealthy_or_limited,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_with_uncached<F>(
+        &self,
+        account_id: &str,
+        session_id: Option<&str>,
+        tier: &str,
+        ttft_ms: f64,
+        is_deep_thinking: bool,
+        uncached_tokens: u32,
+        watermark_tokens: Option<u32>,
+        all_accounts: &[ProxyToken],
+        is_unhealthy_or_limited: &F,
+    ) -> QoSAction
+    where
+        F: Fn(&str) -> bool,
+    {
+        self.update_watermark(account_id, session_id, watermark_tokens);
+
+        let ttft_secs = ttft_ms / 1000.0;
+        let now = Instant::now();
+        let assessment = self.assess_strike(
+            account_id,
+            tier,
+            ttft_ms,
+            is_deep_thinking,
+            uncached_tokens,
+            all_accounts,
+            is_unhealthy_or_limited,
+        );
+
+        let threshold_secs = assessment.threshold_secs;
+        let vindicate_threshold_secs = assessment.vindicate_threshold_secs;
+        let uncached_bonus_secs = assessment.uncached_bonus_secs;
+        let is_cold_start = assessment.is_cold_start;
+        let bucket = assessment.bucket;
+
+        if assessment.missing_cold_baseline {
             tracing::debug!(
                 "[QoS] cold-start without same-bucket baseline | account={} ttft={:.2}s uncached={} bucket={} strike_threshold={:.1}s",
                 account_id,
@@ -443,47 +760,24 @@ impl QoSGuardian {
             return QoSAction::None;
         }
 
-        // 3. 提取同侪均值 (秒)：冷启动对比同桶冷启动，常规对比热缓存样本
-        let peer_avg_secs = if is_cold_start {
-            cold_peer_avg
-        } else {
-            self.calculate_pure_peer_avg(account_id, tier, all_accounts, &is_unhealthy_or_limited)
-        }
-        .map(|ms| ms / 1000.0);
-
-        // 3.1 冷启动的相对阈值：有同桶基线时，拿“同桶均值的 1.5 倍”与绝对阈值取大。
-        // 否则 150K 冷启动的 42.5s 绝对线会卡在实测 36~44s 的抖动区间，依旧可能误杀。
-        let threshold_secs = match (is_cold_start, peer_avg_secs) {
-            (true, Some(peer_avg)) => threshold_secs.max(peer_avg * 1.5),
-            _ => threshold_secs,
-        };
-
-        // 4. 检查全局雪崩防护：若纯净同行均值本身也 >= 20s，说明上游机房大面积拥堵，刹车不触发单号惩罚
-        if let Some(peer_avg) = peer_avg_secs {
-            if peer_avg >= threshold_secs {
+        if assessment.global_congestion {
+            if let Some(peer_avg) = assessment.peer_avg_secs {
                 tracing::warn!(
                     "🌐 [QoS Guardian] Global upstream congestion detected (peer_avg={:.2}s >= {:.2}s). Bypassing strike for account {}",
                     peer_avg, threshold_secs, account_id
                 );
-                // 记录采样后退出
-                self.push_sample_with_bucket(
-                    account_id,
-                    ttft_ms,
-                    is_deep_thinking,
-                    is_cold_start,
-                    bucket,
-                );
-                return QoSAction::None;
             }
+            self.push_sample_with_bucket(
+                account_id,
+                ttft_ms,
+                is_deep_thinking,
+                is_cold_start,
+                bucket,
+            );
+            return QoSAction::None;
         }
 
-        // 5. 判定是否构成一次卡顿打击 (Strike)
-        let is_strike = match peer_avg_secs {
-            // 同行健康 (<20s)，唯独当前账号超标
-            Some(_) => ttft_secs > threshold_secs,
-            // 纯净同行不足时，退化为绝对阈值防护 (额外 +10.0s 兜底)
-            None => ttft_secs > (threshold_secs + 10.0),
-        };
+        let is_strike = assessment.is_strike;
 
         let mut current_state = self
             .states
@@ -1254,5 +1548,176 @@ mod tests {
         assert_eq!(guardian.get_state("acc_a"), AccountQoSState::Healthy);
         assert!(!guardian.is_suspicious("acc_a"));
         assert!(guardian.is_healthy("acc_a"));
+    }
+
+    #[test]
+    fn test_two_phase_reconcile_prevents_false_strike_on_upstream_cache_miss() {
+        let guardian = QoSGuardian::new();
+        guardian.set_auto_jail_enabled(true);
+        let acc_a = create_test_token("acc_a", "PRO");
+        let acc_b = create_test_token("acc_b", "PRO");
+        let all = vec![acc_a.clone(), acc_b.clone()];
+
+        // 同行健康热缓存基线 4.0s
+        guardian.push_sample("acc_b", 4000.0, false, false);
+
+        // 先建立会话高水位：334K tokens，正常热缓存响应 6.3s
+        let act0 = guardian.reconcile_with_usage(
+            "acc_a",
+            Some("sess-cache-drop"),
+            "PRO",
+            6300.0,
+            true,
+            334_244,
+            3_469,
+            &all,
+            |_| false,
+        );
+        assert_eq!(act0, QoSAction::None);
+
+        // 下一轮总上下文 335K，增量仅 ~773 tokens：
+        // 若上游突然丢弃隐式缓存导致全量冷重算，TTFT 达 58.39s：
+        // - Phase 1 仅按水位差会误以为只有 773 uncached（阈值 35.12s），
+        //   但按最坏全量 335K 冷启动（阈值 85.25s）并未超标 -> 必须暂挂 Deferred！
+        let phase1 = guardian.evaluate_pre_usage(
+            "acc_a",
+            Some("sess-cache-drop"),
+            "PRO",
+            58_390.0,
+            true,
+            Some(335_017),
+            &all,
+            |_| false,
+        );
+        assert_eq!(phase1, PreUsageQoSOutcome::Deferred);
+        assert_eq!(guardian.get_state("acc_a"), AccountQoSState::Healthy);
+
+        // Phase 2 收到上游真实 usageMetadata（cached=0，real_uncached=335_017）：
+        // 实算阈值 85.25s，58.39s 豁免不误杀，且样本正确归入冷启动桶（不污染热缓存桶）
+        let phase2 = guardian.reconcile_with_usage(
+            "acc_a",
+            Some("sess-cache-drop"),
+            "PRO",
+            58_390.0,
+            true,
+            335_017,
+            335_017,
+            &all,
+            |_| false,
+        );
+        assert_eq!(phase2, QoSAction::None);
+        assert_eq!(guardian.get_state("acc_a"), AccountQoSState::Healthy);
+        let acc_a_samples = guardian.samples.get("acc_a").unwrap();
+        let last_sample = acc_a_samples.last().unwrap();
+        assert!(last_sample.is_cold_start);
+        assert_eq!(last_sample.uncached_bucket, 15);
+    }
+
+    #[test]
+    fn test_two_phase_reconcile_catches_real_throttle_and_severe_cold_stall() {
+        let guardian = QoSGuardian::new();
+        guardian.set_auto_jail_enabled(true);
+        let acc_a = create_test_token("acc_a", "PRO");
+        let acc_b = create_test_token("acc_b", "PRO");
+        let acc_c = create_test_token("acc_c", "PRO");
+        let all = vec![acc_a.clone(), acc_b.clone(), acc_c.clone()];
+
+        // 注入热缓存同行基线与 300K+ 同桶冷启动基线（>= 3 个样本）
+        guardian.push_sample("acc_b", 4000.0, false, false);
+        guardian.push_sample_with_bucket("acc_b", 45_000.0, true, true, 15);
+        guardian.push_sample_with_bucket("acc_b", 48_000.0, true, true, 15);
+        guardian.push_sample_with_bucket("acc_c", 47_000.0, true, true, 15);
+
+        // 先建立 334K 水位
+        let _ = guardian.reconcile_with_usage(
+            "acc_a",
+            Some("sess-real-throttle"),
+            "PRO",
+            5000.0,
+            true,
+            334_000,
+            2_000,
+            &all,
+            |_| false,
+        );
+
+        // 场景 A：58.39s 首包暂挂后，尾包显示真实命中了缓存（real_uncached 仅 1,017），确认被限流！
+        let p1 = guardian.evaluate_pre_usage(
+            "acc_a",
+            Some("sess-real-throttle"),
+            "PRO",
+            58_390.0,
+            true,
+            Some(335_017),
+            &all,
+            |_| false,
+        );
+        assert_eq!(p1, PreUsageQoSOutcome::Deferred);
+        let p2 = guardian.reconcile_with_usage(
+            "acc_a",
+            Some("sess-real-throttle"),
+            "PRO",
+            58_390.0,
+            true,
+            335_017,
+            1_017,
+            &all,
+            |_| false,
+        );
+        assert_eq!(p2, QoSAction::TaggedSuspicious);
+        assert!(guardian.is_suspicious("acc_a"));
+
+        // 场景 B：严重卡顿（110s > 85.25s 全量冷启动线），Phase 1 当场判定不等待尾包，二次打击进小黑屋
+        let severe = guardian.evaluate_pre_usage(
+            "acc_a",
+            Some("sess-real-throttle"),
+            "PRO",
+            110_000.0,
+            true,
+            Some(336_000),
+            &all,
+            |_| false,
+        );
+        assert!(matches!(
+            severe,
+            PreUsageQoSOutcome::Evaluated(QoSAction::TriggerJailedAndUnbind { .. })
+        ));
+    }
+
+    #[test]
+    fn test_two_phase_without_usage_skips_ambiguous_strike() {
+        let guardian = QoSGuardian::new();
+        guardian.set_auto_jail_enabled(true);
+        let acc_a = create_test_token("acc_a", "PRO");
+        let acc_b = create_test_token("acc_b", "PRO");
+        let all = vec![acc_a.clone(), acc_b.clone()];
+        guardian.push_sample("acc_b", 4000.0, false, false);
+
+        // 建立 334K 水位
+        let _ = guardian.reconcile_with_usage(
+            "acc_a",
+            Some("sess-drop"),
+            "PRO",
+            5000.0,
+            true,
+            334_000,
+            2_000,
+            &all,
+            |_| false,
+        );
+
+        // 流在收到 usageMetadata 前意外断开，且耗时 58s 处于灰色区间：保守跳过打击，不误杀
+        let act = guardian.reconcile_without_usage(
+            "acc_a",
+            Some("sess-drop"),
+            "PRO",
+            58_000.0,
+            true,
+            Some(335_000),
+            &all,
+            |_| false,
+        );
+        assert_eq!(act, QoSAction::None);
+        assert_eq!(guardian.get_state("acc_a"), AccountQoSState::Healthy);
     }
 }

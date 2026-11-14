@@ -12,6 +12,22 @@ import { isTauri } from '../../utils/env';
 import { RequestDetailModal } from './RequestDetailModal';
 import { QoSStatusBadge } from '../accounts/QoSStatusBadge';
 
+// 网关前置拦截哨兵：账号列展示高亮角标与全语言可读文案
+const GATE_SENTINEL_BADGES: Record<string, { i18nKey: string; badgeClass: string }> = {
+    'model not exist': {
+        i18nKey: 'monitor.gate_reasons.model_not_exist',
+        badgeClass: 'text-rose-600 bg-rose-50 dark:text-rose-300 dark:bg-rose-500/15',
+    },
+    'no available accounts': {
+        i18nKey: 'monitor.gate_reasons.no_available_accounts',
+        badgeClass: 'text-orange-600 bg-orange-50 dark:text-orange-300 dark:bg-orange-500/15',
+    },
+    'no quota accounts': {
+        i18nKey: 'monitor.gate_reasons.no_quota_accounts',
+        badgeClass: 'text-amber-600 bg-amber-50 dark:text-amber-300 dark:bg-amber-500/15',
+    },
+};
+
 
 interface ProxyRequestLog {
     id: string;
@@ -463,17 +479,15 @@ const LogTable: React.FC<LogTableProps> = ({
                                      <div className="flex items-center gap-1.5 min-w-0 max-w-full">
                                          {(() => {
                                              const account = log.account_email || '';
-                                             // 网关前置拦截哨兵：账号列直接亮出拒答原因（亮色/暗色都保持高对比度）
-                                             if (account === 'model not exist' || account === 'no quota accounts') {
-                                                 const isNotFound = account === 'model not exist';
+                                             // 网关前置拦截哨兵：账号列直接亮出拒答原因（亮色/暗色都保持高对比度，多语言本地化展示）
+                                             const gateBadge = GATE_SENTINEL_BADGES[account];
+                                             if (gateBadge) {
                                                  return (
                                                      <span
-                                                         className={`inline-flex items-center font-sans font-semibold text-[11px] leading-none px-1.5 py-0.5 rounded whitespace-nowrap ${isNotFound
-                                                             ? 'text-rose-600 bg-rose-50 dark:text-rose-300 dark:bg-rose-500/15'
-                                                             : 'text-amber-600 bg-amber-50 dark:text-amber-300 dark:bg-amber-500/15'}`}
+                                                         className={`inline-flex items-center font-sans font-semibold text-[11px] leading-none px-1.5 py-0.5 rounded whitespace-nowrap ${gateBadge.badgeClass}`}
                                                          title={account}
                                                      >
-                                                         {account}
+                                                         {t(gateBadge.i18nKey, account)}
                                                      </span>
                                                  );
                                              }
