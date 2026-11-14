@@ -282,8 +282,56 @@ jobs:
             src-tauri/target/**/release/bundle/rpm/*.sig
           if-no-files-found: warn
 
+  # Android ARM64 原生 Termux Headless 服务端构建与打包
+  build-android-arm64:
+    name: Build Android ARM64 Server (Termux)
+    needs: verify-release-target
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: true
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build frontend
+        run: |
+          npm install --legacy-peer-deps
+          npm run build
+
+      - name: Build Android ARM64 headless server binary
+        run: |
+          cd src-tauri
+          cargo ndk -t arm64-v8a build --release --bin antigravity-server
+
+      - name: Package Android ARM64 artifact
+        run: |
+          mkdir -p dist-android
+          cp src-tauri/target/aarch64-linux-android/release/antigravity-server dist-android/
+          cp -r dist dist-android/dist
+          tar -czvf antigravity-server-android-arm64.tar.gz -C dist-android antigravity-server dist
+
+      - name: Upload Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-android
+          path: antigravity-server-android-arm64.tar.gz
+          if-no-files-found: error
+
   publish-release:
-    needs: [verify-release-target, build-tauri]
+    needs: [verify-release-target, build-tauri, build-android-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -436,11 +484,15 @@ jobs:
             -name "*.msi" -o \
             -name "*.exe" -o \
             -name "*.rpm" -o \
-            -name "*.app.tar.gz" -o \
+            -name "*.tar.gz" -o \
             -name "*.sig" \
           \) -print0 | while IFS= read -r -d '' file; do
             cp "$file" release-files/
           done
+          # 包含 Termux 一键安装脚本
+          if [ -f scripts/install-termux.sh ]; then
+            cp scripts/install-termux.sh release-files/
+          fi
           # 同步生成点号规范命名的副本，确保与 updater.json 中的下载 URL 100% 绝对一致
           cd release-files
           for f in *\ *; do
