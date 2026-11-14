@@ -5803,4 +5803,141 @@ mod tests {
             json!("XHIGH")
         );
     }
+
+    #[test]
+    fn test_pure_text_turns_after_function_responses_keep_distinct_signatures_on_gemini() {
+        let session_id = format!("t:inbound-fr-plaintext-{}", uuid::Uuid::new_v4());
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&session_id);
+
+        let tool_sig_1 = format!("EsID{}", "a".repeat(56));
+        let text_sig_1 = format!("EtgD{}", "b".repeat(56));
+        let tool_sig_2 = format!("EuID{}", "c".repeat(56));
+        let text_sig_2 = format!("EvID{}", "d".repeat(56));
+
+        // Cycle 1: tool call -> tool response #1 -> outbound pure-text allow #1
+        let mut req1_contents = vec![
+            json!({ "role": "user", "parts": [{ "text": "Check cmd 1" }] }),
+            json!({
+                "role": "model",
+                "parts": [
+                    { "functionCall": { "id": "call_1", "name": "bash", "args": { "cmd": "ls" } }, "thoughtSignature": tool_sig_1 }
+                ]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "functionResponse": { "id": "call_1", "name": "bash", "response": { "output": "file1" } } }]
+            }),
+        ];
+        InboundThinkingPipeline::process_contents(
+            &mut req1_contents,
+            "gemini-4-hydrogen-low",
+            true,
+            Some(&session_id),
+            false,
+        );
+        // Gemini normalizes functionResponse role from "user" to "model"
+        assert_eq!(req1_contents[2]["role"], "model");
+        crate::proxy::thinking_store::capture_gemini_response_with_preceding(
+            &session_id,
+            &json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "text": r#"{"outcome":"allow"}"#, "thoughtSignature": text_sig_1 }]
+                    }
+                }]
+            }),
+            req1_contents.last(),
+        );
+
+        // Cycle 2: tool call -> tool response #2 -> outbound pure-text allow #2
+        let mut req2_contents = vec![
+            json!({ "role": "user", "parts": [{ "text": "Check cmd 1" }] }),
+            json!({
+                "role": "model",
+                "parts": [{ "functionCall": { "id": "call_1", "name": "bash", "args": { "cmd": "ls" } } }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "functionResponse": { "id": "call_1", "name": "bash", "response": { "output": "file1" } } }]
+            }),
+            json!({
+                "role": "model",
+                "parts": [{ "text": r#"{"outcome":"allow"}"# }]
+            }),
+            json!({ "role": "user", "parts": [{ "text": "Check cmd 2" }] }),
+            json!({
+                "role": "model",
+                "parts": [
+                    { "functionCall": { "id": "call_2", "name": "bash", "args": { "cmd": "pwd" } }, "thoughtSignature": tool_sig_2 }
+                ]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "functionResponse": { "id": "call_2", "name": "bash", "response": { "output": "/tmp" } } }]
+            }),
+        ];
+        InboundThinkingPipeline::process_contents(
+            &mut req2_contents,
+            "gemini-4-hydrogen-low",
+            true,
+            Some(&session_id),
+            false,
+        );
+        assert_eq!(req2_contents[3]["parts"][0]["thoughtSignature"], text_sig_1);
+        assert_eq!(req2_contents[6]["role"], "model");
+        crate::proxy::thinking_store::capture_gemini_response_with_preceding(
+            &session_id,
+            &json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{ "text": r#"{"outcome":"allow"}"#, "thoughtSignature": text_sig_2 }]
+                    }
+                }]
+            }),
+            req2_contents.last(),
+        );
+
+        // Cycle 3: both pure-text turns following distinct functionResponses must restore their own signatures
+        let mut req3_contents = vec![
+            json!({ "role": "user", "parts": [{ "text": "Check cmd 1" }] }),
+            json!({
+                "role": "model",
+                "parts": [{ "functionCall": { "id": "call_1", "name": "bash", "args": { "cmd": "ls" } } }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "functionResponse": { "id": "call_1", "name": "bash", "response": { "output": "file1" } } }]
+            }),
+            json!({
+                "role": "model",
+                "parts": [{ "text": r#"{"outcome":"allow"}"# }]
+            }),
+            json!({ "role": "user", "parts": [{ "text": "Check cmd 2" }] }),
+            json!({
+                "role": "model",
+                "parts": [{ "functionCall": { "id": "call_2", "name": "bash", "args": { "cmd": "pwd" } } }]
+            }),
+            json!({
+                "role": "user",
+                "parts": [{ "functionResponse": { "id": "call_2", "name": "bash", "response": { "output": "/tmp" } } }]
+            }),
+            json!({
+                "role": "model",
+                "parts": [{ "text": r#"{"outcome":"allow"}"# }]
+            }),
+            json!({ "role": "user", "parts": [{ "text": "Next" }] }),
+        ];
+        InboundThinkingPipeline::process_contents(
+            &mut req3_contents,
+            "gemini-4-hydrogen-low",
+            true,
+            Some(&session_id),
+            false,
+        );
+        assert_eq!(req3_contents[3]["parts"][0]["thoughtSignature"], text_sig_1);
+        assert_eq!(req3_contents[7]["parts"][0]["thoughtSignature"], text_sig_2);
+
+        let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&session_id);
+        crate::proxy::thinking_store::ThinkingStore::global().end_session(&session_id);
+    }
 }
