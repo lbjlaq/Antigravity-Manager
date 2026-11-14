@@ -369,6 +369,24 @@ static RE_STRUCTURED_IDENTITY_DECLARATION: Lazy<Regex> = Lazy::new(|| {
     .unwrap()
 });
 
+/// 独立归属/模型出处声明句正则（用于竞品厂牌替换时的精准作用域识别，解决 Issue #3940 / PR #3941）。
+/// 仅当句子属于身份/归属出处声明时才将厂牌替换为 Google；MEMORY、USER PROFILE、技能与工具文档中的业务厂牌词 100% 保留。
+static RE_STANDALONE_PROVENANCE_DECLARATION: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(concat!(
+        r"(?i)^[ \t]*[-*•]?[ \t]*(?:",
+        r"(?:(?:powered|created|built|made|developed|designed|trained|maintained|published|released|provided|authored|written)\s+(?:by|on|upon|at|for)",
+        r"|based\s+on",
+        r"|running\s+(?:inside|in|within|on)",
+        r"|integrated\s+(?:into|in)",
+        r"|architecture\s+(?:by|under)",
+        r"|model\s+(?:by|from|under))\b",
+        r"|",
+        r"(?:(?:本?模型|本?助手|本?ai|系统)?(?:由|基于|采用)[^.!?。！？\r\n]{0,25}?(?:开发|制作|构建|训练|推出|提供|打造|架构|模型))",
+        r")"
+    ))
+    .unwrap()
+});
+
 /// 文本内嵌 data URL 的头部（`data:<mime>[;param]*;base64,`），负载部分由线性扫描截取，
 /// 避免 `{N,}` 计数重复在 regex 引擎中展开成超大 NFA。
 static RE_TEXT_DATA_URL_HEADER: Lazy<Regex> = Lazy::new(|| {
@@ -770,11 +788,17 @@ impl PromptSanitizer {
             }
         });
 
+        // 2.3 竞品厂牌归一化（Issue #3940 / PR #3941 作用域精准收窄）：
+        // 在 pass2b 切断同位语逗号之前执行，确保在同一原始声明句中的厂牌能够被稳定识别与替换；
+        // 仅当厂牌出现在「身份/归属出处声明句」内部时才统一归一化为 Google，
+        // MEMORY / USER PROFILE / 技能与工具文档中的正常技术专有名词（如 百度 BD-09、deepseek-harness 等）严格逐字保留。
+        let pass3 = Self::replace_brands_in_identity_sentences(&pass2);
+
         // 2.2b 官方 AG 后紧跟 ASCII 逗号 + 非连词续写：将逗号归一为句号。
         // 例：`AG, a coding agent harness.` → `AG. a coding agent harness.`（上游 WAF 放行）
         // 保留 `AG, and you must ...` 这类功能续写。
         let pass2b =
-            RE_OFFICIAL_IDENTITY_APPOSITIVE.replace_all(&pass2, |caps: &regex::Captures| {
+            RE_OFFICIAL_IDENTITY_APPOSITIVE.replace_all(&pass3, |caps: &regex::Captures| {
                 let next = caps
                     .get(5)
                     .map(|m| m.as_str().to_lowercase())
@@ -789,11 +813,8 @@ impl PromptSanitizer {
                 }
             });
 
-        // 2.3 竞品厂牌（OpenAI、Anthropic、Qwen、字节跳动、腾讯、小米、华为等）统一归一化为 Google
-        let pass3 = RE_COMPETITOR_BRANDS.replace_all(&pass2b, "Google");
-
         // 2.4 防御性标点折叠（Issue #3915）：消除由于拼接或切词遗留的 `.,` / `. ,` / `。，` 畸形复合标点
-        let pass4 = RE_MALFORMED_PUNCTUATION.replace_all(&pass3, ". ");
+        let pass4 = RE_MALFORMED_PUNCTUATION.replace_all(&pass2b, ". ");
 
         let normalized = pass4.into_owned();
 
@@ -810,6 +831,97 @@ impl PromptSanitizer {
             .into_owned();
 
         restored
+    }
+
+    /// 判断指定字符是否为句读分界（解决版本号如 `3.8` / `1.0` 中间的小数点误切问题）。
+    fn is_sentence_delimiter(text: &str, byte_idx: usize, ch: char) -> bool {
+        match ch {
+            '!' | '?' | '。' | '！' | '？' | '\n' | '\r' => true,
+            '.' => {
+                // 如果点号两侧紧邻数字（如 "3.8", "4.0"），属于版本号或小数，不是句读分界
+                let prev_is_digit = text[..byte_idx]
+                    .chars()
+                    .next_back()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false);
+                let next_is_digit = text[byte_idx + ch.len_utf8()..]
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false);
+                !(prev_is_digit && next_is_digit)
+            }
+            _ => false,
+        }
+    }
+
+    /// 判定一个句子切片是否为「身份/归属出处声明句」：
+    /// 包含官方 Antigravity 身份、已知客户端开场白、结构化身份声明、广谱身份声明（通过跨子句与疑问句护栏）
+    /// 或独立出处声明（如 `Powered by ...` / `由...开发`）即认定为声明句。
+    fn sentence_is_identity_declaration(sentence: &str) -> bool {
+        let trimmed = sentence.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        if trimmed.contains("You are Antigravity")
+            || RE_OFFICIAL_IDENTITY_SENTENCE.is_match(trimmed)
+        {
+            return true;
+        }
+        if RE_KNOWN_CLIENT_DECLARATION.is_match(trimmed) {
+            return true;
+        }
+        if RE_STRUCTURED_IDENTITY_DECLARATION.is_match(trimmed) {
+            return true;
+        }
+        if let Some(caps) = RE_IDENTITY_DECLARATION.captures(trimmed) {
+            if Self::is_identity_declaration(&caps) {
+                return true;
+            }
+        }
+        if RE_STANDALONE_PROVENANCE_DECLARATION.is_match(trimmed) {
+            return true;
+        }
+        false
+    }
+
+    /// 竞品厂牌归一化的作用域收窄（Issue #3940 / PR #3941）：
+    /// 按句读（`.`, `!`, `?`, `。`, `！`, `？`, 换行）切分文本，仅对命中「身份/归属出处声明句」的切片
+    /// 执行 `RE_COMPETITOR_BRANDS → "Google"` 的替换；其余句子（MEMORY / USER PROFILE / 技能与
+    /// 工具文档中的技术名词、坐标系标准、API 名称等）逐字完整保留，绝不全局盲目改写。
+    /// 循环结束后对末尾无句读的剩余切片同样按句判定，避免尾部无标点的身份声明句漏网。
+    /// 代码块保护由调用方（`normalize_text_identity`）预先完成，此处无需重复处理。
+    fn replace_brands_in_identity_sentences(text: &str) -> String {
+        if !RE_COMPETITOR_BRANDS.is_match(text) {
+            return text.to_string();
+        }
+
+        let mut out = String::with_capacity(text.len());
+        let mut prev = 0usize;
+
+        for (i, ch) in text.char_indices() {
+            if Self::is_sentence_delimiter(text, i, ch) {
+                let sentence = &text[prev..i + ch.len_utf8()];
+                if Self::sentence_is_identity_declaration(sentence) {
+                    out.push_str(&RE_COMPETITOR_BRANDS.replace_all(sentence, "Google"));
+                } else {
+                    out.push_str(sentence);
+                }
+                prev = i + ch.len_utf8();
+            }
+        }
+
+        // 统一处理尾部切片（若文本末尾没有句读，或身份声明句未以标点结尾，如 "You are built on DeepSeek"）
+        if prev < text.len() {
+            let tail = &text[prev..];
+            if Self::sentence_is_identity_declaration(tail) {
+                out.push_str(&RE_COMPETITOR_BRANDS.replace_all(tail, "Google"));
+            } else {
+                out.push_str(tail);
+            }
+        }
+
+        out
     }
 
     /// 身份声明匹配的两道后置语义校验（`regex` 不支持 lookaround，故在替换回调中执行）：
@@ -2928,7 +3040,7 @@ mod tests {
 
     #[test]
     fn test_competitor_brands_normalization_to_google() {
-        // 1. 英文竞品厂牌替换验证（大小写不敏感）
+        // 1. 独立归属出处声明句内部的竞品厂牌仍归一化为 Google（WAF 防护保留）
         let raw_en = "Powered by OpenAI and Anthropic, using Qwen architecture under ByteDance, Tencent, Xiaomi and Huawei.";
         let cleaned_en = PromptSanitizer::normalize_system_identity(raw_en);
         assert!(!cleaned_en.to_lowercase().contains("openai"));
@@ -2940,18 +3052,54 @@ mod tests {
         assert!(!cleaned_en.to_lowercase().contains("huawei"));
         assert!(cleaned_en.contains("Google"));
 
-        // 2. 中文竞品厂牌替换验证
-        let raw_zh = "本项目由字节跳动开发，经由腾讯、小米、华为以及通义千问、百度深度支持。";
-        let cleaned_zh = PromptSanitizer::normalize_system_identity(raw_zh);
-        assert!(!cleaned_zh.contains("字节跳动"));
-        assert!(!cleaned_zh.contains("腾讯"));
-        assert!(!cleaned_zh.contains("小米"));
-        assert!(!cleaned_zh.contains("华为"));
-        assert!(!cleaned_zh.contains("通义千问"));
-        assert!(!cleaned_zh.contains("百度"));
-        assert!(cleaned_zh.contains("Google"));
+        // 2. 身份归属声明句内部的竞品厂牌归一化为官方 Antigravity（WAF 核心防护）
+        let raw_decl = "You are powered by DeepSeek, trained by Baidu AI.";
+        let cleaned_decl = PromptSanitizer::normalize_system_identity(raw_decl);
+        assert!(cleaned_decl.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(!cleaned_decl.to_lowercase().contains("deepseek"));
+        assert!(!cleaned_decl.to_lowercase().contains("baidu"));
 
-        // 3. 严格保护代码块中的厂牌名称（100% 豁免）
+        // 3. 客户端开场白 + 逗号续写厂牌（Review 要点 4 覆盖）
+        let raw_comma = "You are Claude Code, powered by DeepSeek.";
+        let cleaned_comma = PromptSanitizer::normalize_system_identity(raw_comma);
+        assert!(cleaned_comma.contains(OFFICIAL_ANTIGRAVITY_IDENTITY.trim_end_matches('.')));
+        assert!(!cleaned_comma.to_lowercase().contains("claude code"));
+        assert!(!cleaned_comma.to_lowercase().contains("deepseek"));
+        assert!(cleaned_comma.contains("Google"));
+
+        // 4. 结构化身份声明（Review 要点 5 覆盖）
+        let raw_structured = "- Identity: built by OpenAI, running on DeepSeek model.";
+        let cleaned_structured = PromptSanitizer::normalize_system_identity(raw_structured);
+        assert!(cleaned_structured.contains(OFFICIAL_ANTIGRAVITY_IDENTITY));
+        assert!(!cleaned_structured.to_lowercase().contains("openai"));
+        assert!(!cleaned_structured.to_lowercase().contains("deepseek"));
+
+        // 5. 尾部无标点的身份声明句（Review 要点 3 覆盖：末尾未加句号的竞品厂牌不得漏网）
+        let raw_tail = "Some preamble sentence.\nYou are built on DeepSeek";
+        let cleaned_tail = PromptSanitizer::normalize_system_identity(raw_tail);
+        assert!(
+            !cleaned_tail.to_lowercase().contains("deepseek"),
+            "尾部无标点身份声明句漏网: {cleaned_tail}"
+        );
+        assert!(
+            cleaned_tail.contains("Google") || cleaned_tail.contains(OFFICIAL_ANTIGRAVITY_IDENTITY)
+        );
+
+        // 6. 非身份语境的厂牌与技术名词逐字保留（Issue #3940 核心验收：MEMORY / 工具文档不再被误伤）
+        let raw_memory = concat!(
+            "# MEMORY\n",
+            "百度 BD-09 坐标系与 Google Web 服务不同，需注意转换。\n",
+            "使用 deepseek-harness 跑批时，Qwen 与华为的模型指标存档在 metrics/ 下。\n",
+            "OpenAI 与 Anthropic 的 API 限流策略见 docs/rate-limits.md。\n"
+        );
+        let cleaned_memory = PromptSanitizer::normalize_system_identity(raw_memory);
+        assert_eq!(cleaned_memory, raw_memory, "业务内容区必须逐字保留");
+
+        // 7. 中文非身份句（如项目说明、第三方架构支持）同样逐字保留
+        let raw_zh = "本项目由字节跳动开发，经由腾讯、小米、华为以及通义千问、百度深度支持。";
+        assert_eq!(PromptSanitizer::normalize_system_identity(raw_zh), raw_zh);
+
+        // 8. 严格保护代码块中的厂牌名称（100% 豁免），代码块外的非身份提示词亦不再被无故改写
         let raw_code = concat!(
             "Instructions from OpenAI:\n",
             "```python\n",
@@ -2963,13 +3111,13 @@ mod tests {
             "End of instructions."
         );
         let cleaned_code = PromptSanitizer::normalize_system_identity(raw_code);
-        // 代码块外部的 OpenAI 被替换为 Google
-        assert!(cleaned_code.starts_with("Instructions from Google:"));
         // 代码块内部的 import openai 与 anthropic 完好无损
         assert!(cleaned_code.contains("import openai"));
         assert!(cleaned_code.contains("from anthropic import Anthropic"));
         assert!(cleaned_code.contains("# Supported by Tencent and Huawei"));
         assert!(cleaned_code.contains("client = openai.OpenAI()"));
+        // 代码块外部的说明性文本非身份声明，亦不再被误篡改
+        assert!(cleaned_code.contains("Instructions from OpenAI:"));
     }
 
     // ============================ issue #3764：当前轮正文永久豁免 ============================
