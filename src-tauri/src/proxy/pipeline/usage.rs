@@ -108,29 +108,6 @@ impl CanonicalUsage {
             }
         }
 
-        let raw_output = usage
-            .get("total_output_tokens")
-            .or_else(|| usage.get("candidatesTokenCount"))
-            .or_else(|| usage.get("candidates_token_count"))
-            .or_else(|| usage.get("completion_tokens"))
-            .or_else(|| usage.get("output_tokens"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-
-        let has_new_format = usage.get("total_output_tokens").is_some();
-        let tool_use = usage
-            .get("total_tool_use_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-
-        let output = if has_new_format {
-            raw_output
-                .saturating_add(reasoning)
-                .saturating_add(tool_use)
-        } else {
-            raw_output
-        };
-
         // 计算全量与增量
         // 如果输入数据是 Anthropic 格式（raw_input 存的是 uncached），做加和还原全量
         let (canonical_total_input, uncached_input) = if let Some(cr) = usage
@@ -149,12 +126,55 @@ impl CanonicalUsage {
             (total_input, total_input.saturating_sub(cached))
         };
 
-        let total = usage
+        let raw_output = usage
+            .get("total_output_tokens")
+            .or_else(|| usage.get("candidatesTokenCount"))
+            .or_else(|| usage.get("candidates_token_count"))
+            .or_else(|| usage.get("completion_tokens"))
+            .or_else(|| usage.get("output_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        let has_new_format = usage.get("total_output_tokens").is_some();
+        let has_separate_thought_field = usage.get("thoughtsTokenCount").is_some()
+            || usage.get("total_thought_tokens").is_some()
+            || usage.get("totalThoughtTokens").is_some();
+
+        let tool_use = usage
+            .get("total_tool_use_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        let raw_total = usage
             .get("total_tokens")
             .or_else(|| usage.get("totalTokenCount"))
             .and_then(|v| v.as_u64())
-            .map(|v| v as u32)
-            .unwrap_or_else(|| canonical_total_input.saturating_add(output));
+            .map(|v| v as u32);
+
+        // 权威对齐 OpenAI 规范与 Issue #3951：
+        // total_tokens = prompt_tokens + completion_tokens，
+        // 其中 completion_tokens 必须为全部生成 tokens 的总和（正文 output_tokens + 思考 reasoning_tokens）。
+        // 判断 raw_output 是否已经包含了 reasoning：
+        // 1. 若上游返回了明确的 totalTokenCount，且 <= canonical_total_input + raw_output 且 raw_output >= reasoning，说明 raw_output 已涵盖了思考；
+        // 2. 若无 totalTokenCount，且非新格式、无独立思考分立字段且 raw_output >= reasoning，推断已包含；
+        // 3. 其余情况（如新格式 total_output_tokens、独立 thoughtsTokenCount 或 raw_output < reasoning），说明 raw_output 仅为纯文本，必须补齐加和 reasoning 与 tool_use。
+        let output_already_includes_reasoning = if let Some(tot) = raw_total {
+            tot <= canonical_total_input.saturating_add(raw_output) && raw_output >= reasoning
+        } else {
+            !has_new_format && !has_separate_thought_field && raw_output >= reasoning
+        };
+
+        let output = if output_already_includes_reasoning {
+            raw_output
+        } else {
+            raw_output
+                .saturating_add(reasoning)
+                .saturating_add(tool_use)
+        };
+
+        let total = raw_total
+            .unwrap_or_else(|| canonical_total_input.saturating_add(output))
+            .max(canonical_total_input.saturating_add(output));
 
         Self {
             total_input_tokens: canonical_total_input,
@@ -271,5 +291,40 @@ mod tests {
         assert_eq!(usage.cached_tokens, 94000);
         assert_eq!(usage.uncached_input_tokens, 5000);
         assert_eq!(usage.output_tokens, 110);
+    }
+
+    #[test]
+    fn test_canonical_usage_separate_thoughts_token_count_issue_3951() {
+        // Issue #3951: Google Gemini v1beta / tiered 模型返回单独的 thoughtsTokenCount，
+        // candidatesTokenCount (50) 仅包含文本，未包含思考 (200)，总数 350。
+        // 网关必须将 completion_tokens 纠正为 text + reasoning = 250，
+        // 使得 prompt_tokens (100) + completion_tokens (250) == total_tokens (350)。
+        let gemini_raw = json!({
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 50,
+                "thoughtsTokenCount": 200,
+                "totalTokenCount": 350
+            }
+        });
+
+        let usage = CanonicalUsage::from_gemini(&gemini_raw);
+        assert_eq!(usage.total_input_tokens, 100);
+        assert_eq!(usage.reasoning_tokens, 200);
+        assert_eq!(usage.output_tokens, 250); // 50 text + 200 reasoning
+        assert_eq!(usage.total_tokens, 350); // 100 prompt + 250 completion = 350
+
+        // 验证散开到 OpenAI 格式
+        let openai_usage = crate::proxy::mappers::openai::models::OpenAIUsage::from(&usage);
+        assert_eq!(openai_usage.prompt_tokens, 100);
+        assert_eq!(openai_usage.completion_tokens, 250);
+        assert_eq!(openai_usage.total_tokens, 350);
+        assert_eq!(
+            openai_usage
+                .completion_tokens_details
+                .unwrap()
+                .reasoning_tokens,
+            Some(200)
+        );
     }
 }

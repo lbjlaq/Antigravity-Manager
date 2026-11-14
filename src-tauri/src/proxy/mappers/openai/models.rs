@@ -115,7 +115,7 @@ pub struct ReasoningConfig {
     pub max_tokens: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResponseFormatJSONSchema {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -127,11 +127,31 @@ pub struct ResponseFormatJSONSchema {
     pub strict: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseFormat {
-    pub r#type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub json_schema: Option<ResponseFormatJSONSchema>,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ResponseFormat {
+    TypeObject {
+        r#type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        json_schema: Option<ResponseFormatJSONSchema>,
+    },
+    TypeString(String),
+}
+
+impl ResponseFormat {
+    pub fn r#type(&self) -> &str {
+        match self {
+            ResponseFormat::TypeObject { r#type, .. } => r#type.as_str(),
+            ResponseFormat::TypeString(s) => s.as_str(),
+        }
+    }
+
+    pub fn json_schema(&self) -> Option<&ResponseFormatJSONSchema> {
+        match self {
+            ResponseFormat::TypeObject { json_schema, .. } => json_schema.as_ref(),
+            ResponseFormat::TypeString(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

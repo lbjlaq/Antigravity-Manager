@@ -73,6 +73,7 @@ where
         client_tool_names,
         include_usage,
         None,
+        false,
     )
 }
 
@@ -94,6 +95,8 @@ pub struct OpenAIChatStreamHandler {
     pub is_thinking_active: bool,
     pub has_emitted_finish_reason: bool,
     pub has_emitted_done: bool,
+    pub is_structured_output: bool,
+    pub fence_prefix_stripped: bool,
 }
 
 impl ProtocolStreamHandler for OpenAIChatStreamHandler {
@@ -337,6 +340,34 @@ impl ProtocolStreamHandler for OpenAIChatStreamHandler {
 
                     if !content_out.is_empty() || finish_reason.is_some() {
                         self.is_thinking_active = false;
+
+                        // [Issue #3951] 结构化 JSON 模式输出保底剥离：
+                        // 当客户端请求了 json_object 或 json_schema 时，若上游输出包裹了 Markdown 代码围栏（如 ```json ... ```），
+                        // 在首块剥离开场白围栏，在终结块剥离尾随代码围栏，确保客户端获取的是 100% 纯净可反序列化的合法 JSON。
+                        if self.is_structured_output && !content_out.is_empty() {
+                            if !self.fence_prefix_stripped {
+                                let trimmed = content_out.trim_start();
+                                if let Some(rest) = trimmed
+                                    .strip_prefix("```json")
+                                    .or_else(|| trimmed.strip_prefix("```JSON"))
+                                    .or_else(|| trimmed.strip_prefix("```"))
+                                {
+                                    if let Some(nl_idx) = rest.find('\n') {
+                                        content_out = rest[nl_idx + 1..].to_string();
+                                    } else {
+                                        content_out.clear();
+                                    }
+                                }
+                                self.fence_prefix_stripped = true;
+                            }
+                            if finish_reason.is_some() {
+                                let trimmed = content_out.trim_end();
+                                if let Some(rest) = trimmed.strip_suffix("```") {
+                                    content_out = rest.trim_end().to_string();
+                                }
+                            }
+                        }
+
                         if !content_out.is_empty() {
                             self.has_content = true;
                         }
@@ -552,6 +583,7 @@ pub fn create_openai_sse_stream_with_anchor<S, E>(
     client_tool_names: Option<std::collections::HashSet<String>>,
     include_usage: bool,
     causal_anchor: Option<String>,
+    is_structured_output: bool,
 ) -> Pin<Box<dyn Stream<Item = Result<Bytes, String>> + Send>>
 where
     S: Stream<Item = Result<Bytes, E>> + Send + ?Sized + 'static,
@@ -589,6 +621,8 @@ where
         is_thinking_active: false,
         has_emitted_finish_reason: false,
         has_emitted_done: false,
+        is_structured_output,
+        fence_prefix_stripped: false,
     };
 
     let config =
@@ -3136,5 +3170,78 @@ mod tests {
 
         let _ = crate::modules::proxy_db::delete_thinking_records_for_session(&session_id);
         crate::proxy::thinking_store::ThinkingStore::global().end_session(&session_id);
+    }
+
+    #[tokio::test]
+    async fn test_openai_stream_structured_json_fence_stripping_issue_3951() {
+        let chunk1_json = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{ "text": "```json\n{\"status\": \"ok\", " }]
+                }
+            }]
+        });
+        let chunk2_json = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{ "text": "\"count\": 1}\n```" }]
+                },
+                "finishReason": "STOP"
+            }]
+        });
+
+        let items: Vec<Result<Bytes, String>> = vec![
+            Ok(Bytes::from(format!("data: {}\n\n", chunk1_json))),
+            Ok(Bytes::from(format!("data: {}\n\n", chunk2_json))),
+        ];
+
+        let gemini_stream = Box::pin(stream::iter(items));
+
+        // is_structured_output = true (开启 Issue #3951 JSON 围栏保底清洗)
+        let mut openai_stream = create_openai_sse_stream_with_anchor(
+            gemini_stream,
+            "gemini-3.8-flash-tiered".to_string(),
+            "session-json-strip".to_string(),
+            0,
+            None,
+            false,
+            None,
+            true,
+        );
+
+        let mut accumulated_content = String::new();
+        while let Some(result) = openai_stream.next().await {
+            if let Ok(bytes) = result {
+                let s = String::from_utf8_lossy(&bytes).to_string();
+                for line in s.lines() {
+                    if line.starts_with("data: ") && !line.contains("[DONE]") {
+                        let json_str = line.trim_start_matches("data: ").trim();
+                        if let Ok(json) = serde_json::from_str::<Value>(json_str) {
+                            if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
+                                for choice in choices {
+                                    if let Some(delta_content) = choice
+                                        .get("delta")
+                                        .and_then(|d| d.get("content"))
+                                        .and_then(|c| c.as_str())
+                                    {
+                                        accumulated_content.push_str(delta_content);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 验证：首尾围栏被彻底剥离，输出可直接被 json.loads 解析的合法纯净 JSON
+        assert!(!accumulated_content.contains("```"));
+        let parsed: Result<Value, _> = serde_json::from_str(&accumulated_content);
+        assert!(
+            parsed.is_ok(),
+            "Accumulated content must be valid JSON: {}",
+            accumulated_content
+        );
+        assert_eq!(parsed.unwrap(), json!({ "status": "ok", "count": 1 }));
     }
 }

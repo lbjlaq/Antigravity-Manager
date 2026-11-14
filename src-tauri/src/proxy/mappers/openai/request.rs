@@ -985,7 +985,7 @@ pub fn transform_openai_request_with_session(
             let format = text.get("format")?;
             let fmt_type = format.get("type")?.as_str()?;
             if fmt_type == "json_schema" {
-                Some(ResponseFormat {
+                Some(ResponseFormat::TypeObject {
                     r#type: "json_schema".to_string(),
                     json_schema: Some(ResponseFormatJSONSchema {
                         name: format
@@ -1001,7 +1001,7 @@ pub fn transform_openai_request_with_session(
                     }),
                 })
             } else if fmt_type == "json_object" {
-                Some(ResponseFormat {
+                Some(ResponseFormat::TypeObject {
                     r#type: "json_object".to_string(),
                     json_schema: None,
                 })
@@ -1012,11 +1012,11 @@ pub fn transform_openai_request_with_session(
     });
 
     if let Some(fmt) = &effective_response_format {
-        if fmt.r#type == "json_object" {
+        if fmt.r#type() == "json_object" {
             gen_config["responseMimeType"] = json!("application/json");
-        } else if fmt.r#type == "json_schema" {
+        } else if fmt.r#type() == "json_schema" {
             gen_config["responseMimeType"] = json!("application/json");
-            if let Some(js) = &fmt.json_schema {
+            if let Some(js) = fmt.json_schema() {
                 if let Some(mut schema) = js.schema.clone() {
                     crate::proxy::common::json_schema::clean_response_schema(&mut schema);
                     gen_config["responseSchema"] = schema;
